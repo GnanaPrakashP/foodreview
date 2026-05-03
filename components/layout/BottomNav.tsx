@@ -3,46 +3,83 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+const TABS = [
+  { href: "/",         label: "Circle",   icon: "👥",  center: false },
+  { href: "/trending", label: "Trending", icon: "🔥",  center: false },
+  { href: "/reviews/new", label: "Share", icon: "📸",  center: true  },
+  { href: "/people",   label: "People",   icon: "🔍",  center: false },
+  { href: "/me",       label: "Me",       icon: "👤",  center: false },
+];
+
 export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-100 pb-safe">
+    <nav
+      className="fixed bottom-0 inset-x-0 z-40 pb-safe"
+      style={{
+        background: "var(--surface)",
+        borderTop: "1px solid var(--border)",
+        overflow: "visible",          /* lets the center button float above */
+      }}
+    >
       <div className="max-w-lg mx-auto flex items-center justify-around h-16">
-        <Link
-          href="/"
-          className={`flex flex-col items-center gap-0.5 px-5 py-1 rounded-xl transition-colors ${
-            pathname === "/" ? "text-orange-500" : "text-gray-400 hover:text-gray-600"
-          }`}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-            />
-          </svg>
-          <span className="text-xs font-medium">Feed</span>
-        </Link>
+        {TABS.map((tab) => {
+          const active =
+            tab.href === "/"
+              ? pathname === "/"
+              : pathname.startsWith(tab.href);
 
-        <Link
-          href="/reviews/new"
-          className="flex items-center justify-center w-12 h-12 bg-orange-500 rounded-2xl text-white shadow-lg hover:bg-orange-600 active:bg-orange-700 transition-colors"
-          aria-label="Post a review"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2.5}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-        </Link>
+          /* ── Center elevated Share button ── */
+          if (tab.center) {
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                style={{ position: "relative", top: "-14px", flexShrink: 0 }}
+                aria-label="Share"
+              >
+                <div
+                  style={{
+                    width: "54px",
+                    height: "54px",
+                    background: "var(--orange)",
+                    borderRadius: "18px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "24px",
+                    boxShadow:
+                      "0 8px 24px rgba(240,96,48,0.40), 0 2px 8px rgba(0,0,0,0.35)",
+                  }}
+                >
+                  {tab.icon}
+                </div>
+              </Link>
+            );
+          }
 
-        {/* Spacer to keep the + button centered */}
-        <div className="w-16" />
+          /* ── Regular tab ── */
+          return (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              className="flex flex-col items-center gap-0.5 px-2 py-1"
+            >
+              <span className="text-lg leading-none">{tab.icon}</span>
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 600,
+                  letterSpacing: "0.2px",
+                  color: active ? "var(--orange)" : "var(--muted)",
+                }}
+              >
+                {tab.label}
+              </span>
+            </Link>
+          );
+        })}
       </div>
     </nav>
   );

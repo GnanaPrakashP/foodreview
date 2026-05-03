@@ -1,69 +1,220 @@
 import Link from "next/link";
-import StarRating from "@/components/ui/StarRating";
-import { formatDate } from "@/lib/utils";
 import type { Review } from "@/lib/types";
 
 interface ReviewCardProps {
   review: Review;
 }
 
+function restaurantEmoji(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin")) return "🥘";
+  if (n.includes("ramen") || n.includes("noodle") || n.includes("chinese")) return "🍜";
+  if (n.includes("pizza") || n.includes("italiano")) return "🍕";
+  if (n.includes("burger") || n.includes("grill")) return "🍔";
+  if (n.includes("sushi") || n.includes("japanese")) return "🍱";
+  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
+  if (n.includes("mess") || n.includes("mutton") || n.includes("chicken") || n.includes("madurai")) return "🍖";
+  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
+  return "🍽️";
+}
+
+function avgRating(review: Review): number {
+  if (!review.items.length) return 0;
+  return review.items.reduce((s, it) => s + it.rating, 0) / review.items.length;
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 export default function ReviewCard({ review }: ReviewCardProps) {
   const firstItem = review.items[0];
-  const extraCount = review.items.length - 1;
+  const rating = avgRating(review);
 
   return (
-    <article className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      {review.photo_url && (
-        <div className="h-48 w-full bg-gray-100">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+    <article
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "20px",
+        overflow: "hidden",
+      }}
+    >
+      {/* Sender row */}
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+        <div
+          style={{
+            width: "40px",
+            height: "40px",
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #F06030, #C04020)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontWeight: 700,
+            fontSize: "14px",
+            color: "white",
+            flexShrink: 0,
+          }}
+        >
+          {review.reviewer_name?.[0]?.toUpperCase() ?? "?"}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p style={{ fontSize: "14px", fontWeight: 500, color: "var(--cream)" }}>
+            {review.reviewer_name} shared a spot 📍
+          </p>
+          <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "1px" }}>
+            {timeAgo(review.created_at)}
+          </p>
+        </div>
+      </div>
+
+      {/* Image / emoji hero */}
+      <div
+        style={{
+          margin: "0 16px",
+          height: "160px",
+          borderRadius: "16px",
+          background: "linear-gradient(160deg, #2A1008 0%, #6B3318 50%, #A04020 100%)",
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        }}
+      >
+        {review.photo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={review.photo_url}
-            alt={`${firstItem?.name} at ${review.restaurant_name}`}
-            className="w-full h-full object-cover"
+            alt={firstItem?.name ?? review.restaurant_name}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
-        </div>
-      )}
+        ) : (
+          <span style={{ fontSize: "56px", filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.5))" }}>
+            {restaurantEmoji(review.restaurant_name)}
+          </span>
+        )}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)",
+          }}
+        />
+        {firstItem && (
+          <span
+            style={{
+              position: "absolute",
+              bottom: "10px",
+              left: "10px",
+              background: "rgba(255,255,255,0.1)",
+              backdropFilter: "blur(8px)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "white",
+              fontSize: "11px",
+              fontWeight: 500,
+              padding: "4px 10px",
+              borderRadius: "20px",
+            }}
+          >
+            {firstItem.name}
+          </span>
+        )}
+      </div>
 
-      <div className="p-4">
-        {/* Restaurant */}
-        <p className="text-sm text-orange-500 font-semibold mb-2">
+      {/* Body */}
+      <div className="px-4 pt-3 pb-1">
+        <h2
+          style={{
+            fontFamily: "'Syne', sans-serif",
+            fontSize: "18px",
+            fontWeight: 800,
+            color: "var(--cream)",
+          }}
+        >
           {review.restaurant_name}
-        </p>
+        </h2>
 
-        {/* Items */}
-        <div className="flex flex-col gap-1.5 mb-3">
-          {review.items.slice(0, 2).map((item, i) => (
-            <div key={i} className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-gray-900 truncate">
-                {item.name}
-              </span>
-              <StarRating value={item.rating} readonly size="sm" />
-            </div>
-          ))}
-          {extraCount > 1 && (
-            <p className="text-xs text-gray-400">+{extraCount - 1} more item{extraCount - 1 !== 1 ? "s" : ""}</p>
-          )}
-        </div>
-
-        {/* Body snippet */}
-        {review.body && (
-          <p className="text-sm text-gray-500 leading-relaxed mb-3 line-clamp-2">
-            {review.body}
+        {review.items.length > 1 && (
+          <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "3px" }}>
+            {review.items.map((it) => it.name).join(" · ")}
           </p>
         )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          <span className="text-xs text-gray-500">{review.reviewer_name}</span>
-          <div className="flex items-center gap-2">
-            <time className="text-xs text-gray-400">{formatDate(review.created_at)}</time>
-            <Link
-              href={`/reviews/${review.id}`}
-              className="text-xs text-orange-500 font-medium hover:underline"
+        {review.body && (
+          <div
+            style={{
+              marginTop: "10px",
+              padding: "10px 12px",
+              background: "var(--surface)",
+              borderLeft: "3px solid var(--orange)",
+              borderRadius: "0 10px 10px 0",
+            }}
+          >
+            <p
+              style={{
+                fontFamily: "'Instrument Serif', serif",
+                fontStyle: "italic",
+                fontSize: "14px",
+                color: "var(--cream)",
+                lineHeight: "1.5",
+              }}
             >
-              Read more
-            </Link>
+              "{review.body}"
+            </p>
           </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between mt-3 pb-3">
+          {rating > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                background: "rgba(232,168,48,0.12)",
+                border: "1px solid rgba(232,168,48,0.2)",
+                padding: "5px 10px",
+                borderRadius: "20px",
+              }}
+            >
+              <span>⭐</span>
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: "var(--gold)",
+                  fontWeight: 600,
+                }}
+              >
+                {rating.toFixed(1)} avg
+              </span>
+            </div>
+          )}
+          <Link
+            href={`/reviews/${review.id}`}
+            style={{
+              marginLeft: "auto",
+              background: "var(--orange)",
+              color: "white",
+              border: "none",
+              borderRadius: "12px",
+              padding: "8px 16px",
+              fontFamily: "'Syne', sans-serif",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              textDecoration: "none",
+            }}
+          >
+            I want to go →
+          </Link>
         </div>
       </div>
     </article>

@@ -1,5 +1,18 @@
 import { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
+const inputBase: React.CSSProperties = {
+  width: "100%",
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: "14px",
+  padding: "14px",
+  color: "var(--cream)",
+  fontSize: "14px",
+  outline: "none",
+};
+
+const errorBorder: React.CSSProperties = { borderColor: "#EF4444" };
+
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: ReactNode;
   error?: string;
@@ -10,53 +23,55 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   error?: string;
 }
 
-export function Input({ label, error, className = "", ...props }: InputProps) {
+function FieldLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
-      {label && (
-        <label className="text-sm font-medium text-gray-700">{label}</label>
-      )}
+    <label
+      style={{
+        fontSize: "10px",
+        fontWeight: 600,
+        color: "var(--muted)",
+        textTransform: "uppercase",
+        letterSpacing: "1px",
+        display: "block",
+        marginBottom: "8px",
+      }}
+    >
+      {children}
+    </label>
+  );
+}
+
+export function Input({ label, error, style, ...props }: InputProps) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+      {label && <FieldLabel>{label}</FieldLabel>}
       <input
         {...props}
-        className={`
-          w-full rounded-xl border px-4 py-3 text-sm
-          bg-white text-gray-900 placeholder-gray-400
-          border-gray-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-100
-          outline-none transition-colors
-          disabled:opacity-50
-          ${error ? "border-red-400 focus:border-red-400 focus:ring-red-100" : ""}
-          ${className}
-        `}
+        style={{ ...inputBase, ...(error ? errorBorder : {}), ...style }}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p style={{ fontSize: "11px", color: "#EF4444" }}>{error}</p>}
     </div>
   );
 }
 
-export function Textarea({
-  label,
-  error,
-  className = "",
-  ...props
-}: TextareaProps) {
+export function Textarea({ label, error, style, ...props }: TextareaProps) {
   return (
-    <div className="flex flex-col gap-1">
-      {label && (
-        <label className="text-sm font-medium text-gray-700">{label}</label>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+      {label && <FieldLabel>{label}</FieldLabel>}
       <textarea
         {...props}
-        className={`
-          w-full rounded-xl border px-4 py-3 text-sm
-          bg-white text-gray-900 placeholder-gray-400
-          border-gray-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-100
-          outline-none transition-colors resize-none
-          disabled:opacity-50
-          ${error ? "border-red-400 focus:border-red-400 focus:ring-red-100" : ""}
-          ${className}
-        `}
+        style={{
+          ...inputBase,
+          resize: "none",
+          fontFamily: "'Instrument Serif', serif",
+          fontStyle: "italic",
+          fontSize: "16px",
+          lineHeight: "1.4",
+          ...(error ? errorBorder : {}),
+          ...style,
+        }}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p style={{ fontSize: "11px", color: "#EF4444" }}>{error}</p>}
     </div>
   );
 }

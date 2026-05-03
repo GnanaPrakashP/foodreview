@@ -43,23 +43,41 @@ export default function PhotoUpload({ onFileSelect }: PhotoUploadProps) {
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-sm font-medium text-gray-700">
-        Photo <span className="text-gray-400 font-normal">(optional)</span>
-      </label>
-
+    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
       {preview ? (
-        <div className="relative rounded-2xl overflow-hidden border border-gray-200">
+        <div
+          style={{
+            position: "relative",
+            borderRadius: "18px",
+            overflow: "hidden",
+            height: "200px",
+          }}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={preview}
             alt="Preview"
-            className="w-full h-48 object-cover"
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
           <button
             type="button"
             onClick={removePhoto}
-            className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-black/80 transition-colors"
+            style={{
+              position: "absolute",
+              top: "10px",
+              right: "10px",
+              background: "rgba(0,0,0,0.6)",
+              border: "none",
+              color: "white",
+              borderRadius: "50%",
+              width: "28px",
+              height: "28px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              fontSize: "13px",
+            }}
             aria-label="Remove photo"
           >
             ✕
@@ -71,23 +89,24 @@ export default function PhotoUpload({ onFileSelect }: PhotoUploadProps) {
           onClick={() => inputRef.current?.click()}
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
-          className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-sm text-gray-500 hover:border-orange-400 hover:bg-orange-50 transition-colors cursor-pointer"
+          style={{
+            height: "160px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            borderRadius: "18px",
+            border: "2px dashed var(--border)",
+            background: "var(--card)",
+            color: "var(--muted)",
+            fontSize: "13px",
+            cursor: "pointer",
+          }}
         >
-          <svg
-            className="w-8 h-8 text-gray-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-            />
-          </svg>
-          <span>Tap to upload or drag & drop</span>
-          <span className="text-xs text-gray-400">PNG, JPG, WEBP · max 5 MB</span>
+          <span style={{ fontSize: "32px" }}>📷</span>
+          <span>Tap to add a photo</span>
+          <span style={{ fontSize: "11px", color: "var(--border)" }}>PNG · JPG · WEBP · max 5 MB</span>
         </button>
       )}
 
@@ -95,11 +114,13 @@ export default function PhotoUpload({ onFileSelect }: PhotoUploadProps) {
         ref={inputRef}
         type="file"
         accept="image/*"
-        className="hidden"
+        style={{ display: "none" }}
         onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
       />
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && (
+        <p style={{ fontSize: "12px", color: "#EF4444" }}>{error}</p>
+      )}
     </div>
   );
 }
