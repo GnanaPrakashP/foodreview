@@ -9,11 +9,45 @@ drop function if exists public.handle_new_user();
 drop table if exists public.reviews cascade;
 drop table if exists public.profiles cascade;
 
+-- =============================================
+-- PROFILES  (one row per auth user)
+-- =============================================
+create table public.profiles (
+  id           uuid        primary key references auth.users(id) on delete cascade,
+  first_name   text        not null,
+  last_name    text        not null,
+  username     text        not null,
+  avatar_url   text,
+  account_type text        not null default 'private',
+  created_at   timestamptz not null default now(),
+  constraint profiles_username_unique  unique (username),
+  constraint profiles_username_format  check  (username ~ '^[a-z0-9_]{3,20}$'),
+  constraint profiles_account_type_check check (account_type in ('private', 'public'))
+);
+
+create index if not exists profiles_username_idx on public.profiles(username);
+
+alter table public.profiles enable row level security;
+
+-- Anyone logged in can read all profiles (username uniqueness checks)
+create policy "Profiles readable by authenticated users"
+  on public.profiles for select to authenticated using (true);
+
+-- Users can only create / update their own row
+create policy "Users can insert own profile"
+  on public.profiles for insert to authenticated
+  with check (auth.uid() = id);
+
+create policy "Users can update own profile"
+  on public.profiles for update to authenticated
+  using (auth.uid() = id);
+
 -- REVIEWS
 create table public.reviews (
   id               uuid        primary key default gen_random_uuid(),
   reviewer_name    text        not null,
   restaurant_name  text        not null,
+  area             text,
   items            jsonb       not null default '[]',
   body             text,
   photo_url        text,
@@ -100,6 +134,21 @@ order by avg_score_10 desc, unique_raters desc;
 -- Migration: run this if the table already exists
 -- (safe to run on a fresh setup too)
 -- =============================================
+
+-- Add area column (run once if table already exists)
+alter table public.reviews add column if not exists area text;
+
+alter table public.profiles add column if not exists account_type text not null default 'private';
+
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'profiles_account_type_check'
+  ) then
+    alter table public.profiles
+      add constraint profiles_account_type_check
+      check (account_type in ('private', 'public'));
+  end if;
+end $$;
 
 -- No new columns needed — dish data lives in items[] JSONB.
 -- To query dish data directly in SQL, use the dish_scores view above.
@@ -190,7 +239,7 @@ create table if not exists public.notifications (
   id               uuid        primary key default gen_random_uuid(),
   recipient_name   text        not null,
   actor_name       text        not null,
-  type             text        not null,  -- 'like' | 'comment' | 'also_commented'
+  type             text        not null,  -- 'like' | 'comment' | 'also_commented' | circle events
   post_id          uuid        not null references public.reviews(id) on delete cascade,
   restaurant_name  text,
   content          text,
@@ -203,6 +252,78 @@ alter table public.notifications enable row level security;
 create policy "Notifications readable by everyone" on public.notifications for select using (true);
 create policy "Anyone can create notifications"    on public.notifications for insert with check (true);
 create policy "Anyone can mark read"               on public.notifications for update using (true);
+
+-- =============================================
+-- MIGRATION: make notifications.post_id nullable
+-- (run once if the table already exists)
+-- =============================================
+do $$ begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='notifications'
+      and column_name='post_id' and is_nullable='NO'
+  ) then
+    alter table public.notifications alter column post_id drop not null;
+  end if;
+end $$;
+
+-- =============================================
+-- CIRCLE REQUESTS
+-- =============================================
+create table if not exists public.circle_requests (
+  id            uuid        primary key default gen_random_uuid(),
+  sender_name   text        not null,
+  receiver_name text        not null,
+  status        text        not null default 'pending',
+  created_at    timestamptz not null default now(),
+  unique(sender_name, receiver_name),
+  check(status in ('pending', 'accepted', 'rejected')),
+  check(sender_name != receiver_name)
+);
+create index if not exists circle_requests_sender_idx   on public.circle_requests(sender_name);
+create index if not exists circle_requests_receiver_idx on public.circle_requests(receiver_name);
+alter table public.circle_requests enable row level security;
+create policy "Circle requests readable by everyone"    on public.circle_requests for select using (true);
+create policy "Anyone can send circle request"          on public.circle_requests for insert with check (true);
+create policy "Anyone can respond to circle request"    on public.circle_requests for update using (true);
+
+-- =============================================
+-- CIRCLE MEMBERSHIPS
+-- Directed Circle edges. If A adds B, store (B, A):
+-- A is inside B's Circle and receives B's posts.
+-- Mutual Circle is represented by both directions existing.
+-- =============================================
+create table if not exists public.circle_memberships (
+  id           uuid        primary key default gen_random_uuid(),
+  user_name    text        not null,
+  member_name  text        not null,
+  created_at   timestamptz not null default now(),
+  unique(user_name, member_name),
+  check(user_name != member_name)
+);
+create index if not exists circle_memberships_user_idx
+  on public.circle_memberships(user_name);
+create index if not exists circle_memberships_member_idx
+  on public.circle_memberships(member_name);
+alter table public.circle_memberships enable row level security;
+create policy "Circle memberships readable by everyone"
+  on public.circle_memberships for select using (true);
+create policy "Anyone can add to circle"
+  on public.circle_memberships for insert with check (true);
+create policy "Anyone can remove from circle"
+  on public.circle_memberships for delete using (true);
+
+insert into public.circle_memberships (user_name, member_name)
+select sender_name, receiver_name
+from public.circle_requests
+where status = 'accepted'
+on conflict (user_name, member_name) do nothing;
+
+insert into public.circle_memberships (user_name, member_name)
+select receiver_name, sender_name
+from public.circle_requests
+where status = 'accepted'
+on conflict (user_name, member_name) do nothing;
 
 -- =============================================
 -- WISHLIST

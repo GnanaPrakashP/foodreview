@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import PhotoUpload from "@/components/reviews/PhotoUpload";
-import type { FoodItem } from "@/lib/types";
+import type { FoodItem, Review } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
+import { UtensilsCrossed, Star, X, Search, MapPin } from "lucide-react";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -34,7 +35,7 @@ function FieldLabel({ children, optional }: { children: React.ReactNode; optiona
     >
       {children}
       {optional && (
-        <span style={{ color: "var(--border)", fontWeight: 400, marginLeft: "4px", textTransform: "none", letterSpacing: 0 }}>
+        <span style={{ color: "var(--muted)", fontWeight: 400, marginLeft: "6px", textTransform: "none", letterSpacing: 0, fontSize: "10px" }}>
           optional
         </span>
       )}
@@ -92,7 +93,7 @@ function DishRow({
           gap: "10px",
         }}
       >
-        <span style={{ fontSize: "18px", flexShrink: 0 }}>🍽️</span>
+        <UtensilsCrossed size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
         <input
           ref={inputRef}
           type="text"
@@ -111,9 +112,14 @@ function DishRow({
               type="button"
               onClick={() => onChange("rating", item.rating === star ? 0 : star)}
               title={RATING_LABELS[star]}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: "1px", fontSize: "17px", lineHeight: 1, opacity: star <= item.rating ? 1 : 0.2 }}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", lineHeight: 1, display: "flex", alignItems: "center" }}
             >
-              ⭐
+              <Star
+                size={16}
+                strokeWidth={1.8}
+                color="var(--gold)"
+                fill={star <= item.rating ? "var(--gold)" : "none"}
+              />
             </button>
           ))}
         </div>
@@ -121,9 +127,9 @@ function DishRow({
           <button
             type="button"
             onClick={onRemove}
-            style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "14px", flexShrink: 0, paddingLeft: "4px" }}
+            style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", flexShrink: 0, paddingLeft: "4px", display: "flex", alignItems: "center" }}
           >
-            ✕
+            <X size={14} strokeWidth={2} />
           </button>
         )}
       </div>
@@ -162,7 +168,7 @@ function DishRow({
                 gap: "8px",
               }}
             >
-              <span style={{ color: "var(--muted)", fontSize: "12px" }}>🔍</span>
+              <Search size={12} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
               {s}
             </button>
           ))}
@@ -197,7 +203,11 @@ export default function ReviewForm() {
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const { data } = await supabase.from("reviews").select("items").limit(300);
+      const { data } = await supabase
+        .from("reviews")
+        .select("items")
+        .limit(300)
+        .returns<Pick<Review, "items">[]>();
       const names = new Set<string>();
       for (const r of data ?? []) {
         for (const it of (r.items as FoodItem[])) {
@@ -237,6 +247,7 @@ export default function ReviewForm() {
   function validate() {
     const e: Record<string, string> = {};
     if (!restaurantName.trim()) e.restaurantName = "Restaurant name is required.";
+    if (items.filter((it) => it.name.trim()).length === 0) e.items = "Add at least one dish.";
     if (body.trim() && body.trim().length < 5) e.body = "One-liner must be at least 5 characters.";
     return e;
   }
@@ -279,7 +290,7 @@ export default function ReviewForm() {
         return it;
       });
 
-      const { data: review, error: insertError } = await supabase
+      const { data: review, error: insertError } = await (supabase as any)
         .from("reviews")
         .insert({
           reviewer_name: reviewerName.trim(),
@@ -292,6 +303,28 @@ export default function ReviewForm() {
         .single();
 
       if (insertError) throw insertError;
+
+      // Notify people who can see this post in their Circle feed.
+      const poster = reviewerName.trim();
+      const { data: circleData } = await supabase
+        .from("circle_memberships")
+        .select("member_name")
+        .eq("user_name", poster)
+        .returns<{ member_name: string }[]>();
+
+      const circleMembers = (circleData ?? []).map((row) => row.member_name);
+
+      if (circleMembers.length > 0) {
+        await (supabase as any).from("notifications").insert(
+          circleMembers.map((member) => ({
+            recipient_name: member,
+            actor_name: poster,
+            type: "circle_post",
+            post_id: review.id,
+            restaurant_name: restaurantName.trim(),
+          }))
+        );
+      }
 
       router.push(`/reviews/${review.id}`);
       router.refresh();
@@ -307,6 +340,7 @@ export default function ReviewForm() {
 
       {/* 1 — Photo */}
       <div className="px-5 pb-4">
+        <FieldLabel optional>Photo</FieldLabel>
         <PhotoUpload onFileSelect={setPhotoFile} />
       </div>
 
@@ -324,10 +358,10 @@ export default function ReviewForm() {
             padding: "12px 14px",
           }}
         >
-          <span style={{ fontSize: "18px" }}>📍</span>
+          <MapPin size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
           <input
             type="text"
-            placeholder="e.g. Madurai Mess"
+            placeholder="e.g. Bawarchi"
             value={restaurantName}
             onChange={(e) => setRestaurantName(e.target.value)}
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'Syne', sans-serif", fontWeight: 700 }}
@@ -340,7 +374,7 @@ export default function ReviewForm() {
 
       {/* 3 — Dishes */}
       <div className="px-5 pb-4">
-        <FieldLabel optional>Dishes</FieldLabel>
+        <FieldLabel>Dishes</FieldLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {items.map((item, i) => (
             <DishRow
@@ -363,7 +397,7 @@ export default function ReviewForm() {
             fontSize: "13px",
             fontWeight: 500,
             cursor: "pointer",
-            padding: "8px 0 0",
+            padding: "16px 0 0",
             display: "flex",
             alignItems: "center",
             gap: "6px",
@@ -372,6 +406,9 @@ export default function ReviewForm() {
           <span style={{ width: "22px", height: "22px", borderRadius: "50%", background: "var(--orange-dim)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: "var(--orange)" }}>+</span>
           Add more dishes
         </button>
+        {errors.items && (
+          <p style={{ fontSize: "11px", color: "#EF4444", marginTop: "6px" }}>{errors.items}</p>
+        )}
       </div>
 
       {/* 4 — One-liner (visit-aware) */}
@@ -426,11 +463,12 @@ export default function ReviewForm() {
                 placeholder={
                   visitPrompt
                     ? `"${visitPrompt.placeholder}"`
-                    : '"Been thinking about this for 3 days."'
+                    : 'Write something...'
                 }
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={2}
+                className="one-line-textarea"
                 style={{
                   width: "100%",
                   background: "var(--card)",
@@ -438,10 +476,9 @@ export default function ReviewForm() {
                   borderRadius: "14px",
                   padding: "14px",
                   color: "var(--cream)",
-                  fontFamily: "'Instrument Serif', serif",
-                  fontStyle: "italic",
-                  fontSize: "16px",
-                  lineHeight: "1.4",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: "14px",
+                  lineHeight: "1.5",
                   outline: "none",
                   resize: "none",
                 }}
@@ -470,7 +507,7 @@ export default function ReviewForm() {
           disabled={submitting}
           style={{ width: "100%", background: submitting ? "var(--muted)" : "var(--orange)", color: "white", border: "none", borderRadius: "16px", padding: "16px", fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", letterSpacing: "0.3px" }}
         >
-          {submitting ? "Posting…" : "Post it →"}
+          {submitting ? "Posting…" : "Post it"}
         </button>
       </div>
     </form>

@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
+import { Heart, MessageCircle, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import PostDetailSheet from "@/components/reviews/PostDetailSheet";
 import type { Review, Comment } from "@/lib/types";
+import { restaurantGradient } from "@/lib/profile";
 
 interface Props {
   review: Review;
-  rank: number | null;
-  totalByReviewer: number;
-  visitCount: number;
   initialLikeCount: number;
   initialCommentCount: number;
   topComment: Comment | null;
@@ -43,29 +43,8 @@ function avatarInitials(name: string): string {
   return name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
 }
 
-function restaurantEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin") || n.includes("murugan")) return "🥘";
-  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
-  if (n.includes("ramen") || n.includes("nagi") || n.includes("japanese") || n.includes("sushi")) return "🍜";
-  if (n.includes("pizza") || n.includes("italiano") || n.includes("pasta")) return "🍕";
-  if (n.includes("burger") || n.includes("grill")) return "🍔";
-  if (n.includes("mess") || n.includes("madurai") || n.includes("mutton") || n.includes("chicken")) return "🍖";
-  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
-  return "🍽️";
-}
 
-function RankPill({ rank, total }: { rank: number; total: number }) {
-  const isTop = rank === 1;
-  const label = rank === 1 ? "Their #1 pick" : rank === 2 ? "#2 on their list" : rank === 3 ? "#3 on their list" : `#${rank} of ${total}`;
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: isTop ? "rgba(232,168,48,0.15)" : "rgba(232,168,48,0.08)", border: `1px solid ${isTop ? "rgba(232,168,48,0.4)" : "rgba(232,168,48,0.18)"}`, borderRadius: "20px", padding: "5px 10px", flexShrink: 0 }}>
-      <span style={{ fontSize: "11px", color: "var(--gold)", fontWeight: 600 }}>{isTop ? "🏆" : "📍"} {label}</span>
-    </div>
-  );
-}
-
-export default function CircleFeedCard({ review, rank, totalByReviewer, visitCount, initialLikeCount, initialCommentCount, topComment }: Props) {
+export default function CircleFeedCard({ review, initialLikeCount, initialCommentCount, topComment }: Props) {
   const [myName, setMyName] = useState("");
   const [mounted, setMounted] = useState(false);
   const [liked, setLiked] = useState(false);
@@ -76,6 +55,8 @@ export default function CircleFeedCard({ review, rank, totalByReviewer, visitCou
   const [commentCount, setCommentCount] = useState(initialCommentCount);
   const [previewComment, setPreviewComment] = useState<Comment | null>(topComment);
   const [showDetail, setShowDetail] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const initials = review.reviewer_name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
 
@@ -155,91 +136,96 @@ export default function CircleFeedCard({ review, rank, totalByReviewer, visitCou
 
         {/* Header */}
         <div style={{ padding: "13px 14px 11px", display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{ width: "38px", height: "38px", borderRadius: "50%", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
-            {initials || "?"}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: "14px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif" }}>
-              <strong>{review.reviewer_name}</strong>
-              <span style={{ color: "var(--muted)", fontWeight: 400 }}> shared a spot</span>
-            </p>
-          </div>
+          <Link href={`/people/${encodeURIComponent(review.reviewer_name)}`} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+              {initials || "?"}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: "14px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif" }}>
+                <strong>{review.reviewer_name}</strong>
+                <span style={{ color: "var(--muted)", fontWeight: 400 }}> shared a spot</span>
+              </p>
+            </div>
+          </Link>
           <span style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {timeAgo(review.created_at)}
           </span>
         </div>
 
-        {/* Photo / emoji hero */}
-        <div style={{ position: "relative", height: "230px", background: "linear-gradient(160deg,#2A1008 0%,#6B3318 50%,#A04020 100%)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-          {review.photo_url
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={review.photo_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            : <span style={{ fontSize: "76px", filter: "drop-shadow(0 6px 18px rgba(0,0,0,0.5))" }}>{restaurantEmoji(review.restaurant_name)}</span>
-          }
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 55%)" }} />
-          {review.items[0]?.name && (
-            <span style={{ position: "absolute", bottom: "12px", left: "12px", background: "rgba(255,255,255,0.1)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.15)", color: "white", fontSize: "11px", fontWeight: 500, padding: "4px 10px", borderRadius: "20px", zIndex: 1 }}>
-              {review.items[0].name}
-            </span>
-          )}
-        </div>
+        {/* Photo / hero */}
+        {(() => {
+          const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
+          if (!photos.length) return null;
+          return (
+            <div style={{ position: "relative" }}>
+              <div
+                ref={scrollRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  const idx = Math.round(el.scrollLeft / el.clientWidth);
+                  setPhotoIndex(idx);
+                }}
+                style={{
+                  display: "flex", overflowX: "auto", scrollSnapType: "x mandatory",
+                  scrollbarWidth: "none", aspectRatio: "3/2",
+                }}
+                className="hide-scrollbar"
+              >
+                {photos.map((url, i) => (
+                  <div key={i} style={{ position: "relative", flexShrink: 0, width: "100%", scrollSnapAlign: "start" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)" }} />
+                  </div>
+                ))}
+              </div>
+              {photos.length > 1 && (
+                <div style={{
+                  position: "absolute", top: 10, right: 10,
+                  background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)",
+                  borderRadius: 20, padding: "3px 9px",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: "white",
+                  pointerEvents: "none",
+                }}>
+                  {photoIndex + 1}/{photos.length}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Body */}
-        <div style={{ padding: "14px 14px 0" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "19px", fontWeight: 800, color: "var(--cream)", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {review.restaurant_name}
-              </h2>
-              <div style={{ display: "flex", alignItems: "center", gap: "5px", marginTop: "5px", fontSize: "12px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
-                <span>📍</span><span>Near you</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, paddingTop: "2px" }}>
-              {rank !== null && <RankPill rank={rank} total={totalByReviewer} />}
-              <button
-                key={`bm-${bookmarkBounceKey}`}
-                onClick={toggleBookmark}
-                className={bookmarkBounceKey > 0 ? "like-pop" : ""}
-                style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", color: bookmarked ? "#F06030" : "#7A6E65", lineHeight: 0, transition: "color 0.15s" }}
-                aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill={bookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {visitCount >= 3 && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "var(--orange-dim)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: "20px", padding: "4px 10px", marginTop: "8px" }}>
-              <span style={{ fontSize: "11px" }}>🏠</span>
-              <span style={{ fontSize: "11px", color: "var(--orange)", fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
-                {review.reviewer_name.split(" ")[0]} has been here {visitCount} times — ask them what to order
-              </span>
-            </div>
-          )}
-
-          {review.body && (
-            <div style={{ marginTop: "12px", padding: "11px 13px", background: "var(--surface)", borderLeft: "3px solid var(--orange)", borderRadius: "0 12px 12px 0" }}>
-              <p style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontSize: "15px", color: "var(--cream)", lineHeight: 1.55 }}>
-                &ldquo;{review.body}&rdquo;
+        <div style={{ padding: "12px 14px 0" }}>
+          {/* Restaurant name */}
+          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: "6px" }}>
+            {review.restaurant_name}
+          </h2>
+{review.body && (
+            <div style={{ padding: "8px 10px", background: "var(--orange-dim)", borderLeft: "3px solid var(--orange)", borderRadius: "0 8px 8px 0", marginBottom: "10px" }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.5 }}>
+                {review.body}
               </p>
             </div>
           )}
 
           {review.items.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "10px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
               {review.items.map((item, i) => (
-                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "20px", padding: "4px 10px", fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
-                  {item.name}{item.rating > 0 && <span style={{ fontSize: "10px", letterSpacing: "-1px" }}>{"⭐".repeat(item.rating)}</span>}
+                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "4px 8px", fontSize: "11px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif" }}>
+                  {item.name}
+                  {item.rating > 0 && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "2px", background: "rgba(232,168,48,0.15)", border: "1px solid rgba(232,168,48,0.25)", borderRadius: "5px", padding: "1px 5px" }}>
+                      <Star size={8} strokeWidth={0} fill="#E8A830" />
+                      <span style={{ fontSize: "10px", color: "var(--gold)", fontWeight: 700, lineHeight: 1 }}>{item.rating}</span>
+                    </span>
+                  )}
                 </span>
               ))}
             </div>
           )}
 
           {/* Engagement row */}
-          <div style={{ display: "flex", alignItems: "center", gap: "16px", marginTop: "14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", paddingTop: "8px", borderTop: "1px solid var(--border)", marginBottom: "8px" }}>
             <button
               key={bounceKey}
               onClick={toggleLike}
@@ -247,27 +233,40 @@ export default function CircleFeedCard({ review, rank, totalByReviewer, visitCou
               className={bounceKey > 0 ? "like-pop" : ""}
               style={{ background: "none", border: "none", cursor: mounted && myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
             >
-              <span style={{ fontSize: "16px", color: liked ? "#E84040" : "#7A6E65", transition: "color 0.15s" }}>♥</span>
+              <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
             </button>
             <button
               onClick={() => setShowDetail(true)}
               style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}
             >
+              <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
-                💬 {commentCount} comment{commentCount !== 1 ? "s" : ""}
+                {commentCount} comment{commentCount !== 1 ? "s" : ""}
               </span>
+            </button>
+            <button
+              key={`bm-${bookmarkBounceKey}`}
+              onClick={toggleBookmark}
+              className={bookmarkBounceKey > 0 ? "like-pop" : ""}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
+              aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill={bookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+              </svg>
             </button>
           </div>
 
           {/* Top comment preview */}
           {previewComment && (
-            <div style={{ display: "flex", alignItems: "center", gap: "7px", marginTop: "8px" }}>
-              <div style={{ width: "24px", height: "24px", borderRadius: "50%", background: avatarGradient(previewComment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "8px", background: "var(--surface)", borderRadius: "10px", marginBottom: "6px" }}>
+              <div style={{ width: "22px", height: "22px", borderRadius: "7px", background: avatarGradient(previewComment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", fontWeight: 700, color: "white", flexShrink: 0 }}>
                 {avatarInitials(previewComment.user_name)}
               </div>
-              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <strong>{previewComment.user_name}</strong> {previewComment.content}
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", lineHeight: 1.4, minWidth: 0 }}>
+                <span style={{ color: "var(--cream)", fontWeight: 600 }}>{previewComment.user_name}</span>{" "}
+                {previewComment.content}
               </p>
             </div>
           )}
@@ -276,7 +275,7 @@ export default function CircleFeedCard({ review, rank, totalByReviewer, visitCou
           {commentCount > 1 && (
             <button
               onClick={() => setShowDetail(true)}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 0 0", fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--muted)", display: "block" }}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "0 0 2px", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--orange)", fontWeight: 500, display: "block" }}
             >
               View all {commentCount} comments →
             </button>

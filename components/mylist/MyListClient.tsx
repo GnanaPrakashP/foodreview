@@ -6,25 +6,13 @@ import type { Review } from "@/lib/types";
 import { computeGapSuggestions, type GapSuggestion } from "@/lib/discovery";
 import { isWishlisted, toggleWishlist } from "@/lib/wishlist";
 import { buildMyDishMap, buildAllDishMap, getRegulars, getMenuExplorers } from "@/lib/visits";
+import { restaurantGradient } from "@/lib/profile";
 
 /* ─── helpers ────────────────────────────────────── */
 
 function avgRating(review: Review): number {
   if (!review.items.length) return 0;
   return review.items.reduce((s, it) => s + it.rating, 0) / review.items.length;
-}
-
-function restaurantEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin")) return "🥘";
-  if (n.includes("ramen") || n.includes("noodle") || n.includes("chinese")) return "🍜";
-  if (n.includes("pizza") || n.includes("italiano")) return "🍕";
-  if (n.includes("burger") || n.includes("grill")) return "🍔";
-  if (n.includes("sushi") || n.includes("japanese")) return "🍱";
-  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
-  if (n.includes("mess") || n.includes("mutton") || n.includes("chicken") || n.includes("madurai")) return "🍖";
-  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
-  return "🍽️";
 }
 
 const RANK_COLORS = ["#E8A830", "#9CA3AF", "#CD7C2F"];
@@ -286,7 +274,7 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
     return (
       <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
         <div className="px-5 pt-6 pb-2">
-          <h1 style={{ fontFamily: "'Instrument Serif', serif", fontSize: "26px", color: "var(--cream)" }}>Your Food Map</h1>
+          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", color: "var(--cream)" }}>Your Food Map</h1>
         </div>
         <NameSetup onSet={setMyName} />
       </div>
@@ -299,7 +287,7 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
       {/* Header */}
       <div className="px-5 pt-6 pb-2 flex items-end justify-between">
         <div>
-          <h1 style={{ fontFamily: "'Instrument Serif', serif", fontSize: "26px", color: "var(--cream)" }}>
+          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", color: "var(--cream)" }}>
             Your Food Map
           </h1>
           <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
@@ -426,9 +414,9 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
                       {i + 1}
                     </div>
 
-                    {/* Emoji */}
-                    <div style={{ width: "44px", height: "44px", background: "var(--card)", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>
-                      {restaurantEmoji(review.restaurant_name)}
+                    {/* Avatar */}
+                    <div style={{ width: "44px", height: "44px", background: restaurantGradient(review.restaurant_name), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+                      {review.restaurant_name[0]?.toUpperCase() ?? "?"}
                     </div>
 
                     {/* Info */}

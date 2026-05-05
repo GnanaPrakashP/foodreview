@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Dark theme (default) ── */
 :root {
   --bg:          #0E0B08;
   --surface:     #1A1410;
@@ -13,6 +14,93 @@
   --cream:       #F5EDD8;
   --muted:       #7A6E65;
   --green:       #3DD68C;
+  --on-green:    #0E0B08;
+  --auth-card:   rgba(33, 28, 23, 0.92);
+  --auth-field:  rgba(14, 11, 8, 0.55);
+  --auth-tab:    rgba(14, 11, 8, 0.60);
+  --auth-border: rgba(46, 39, 32, 0.90);
+  --auth-divider: rgba(46, 39, 32, 0.80);
+  --auth-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(240, 96, 48, 0.05);
+  --oauth-bg:    #F5EDD8;
+  --oauth-text:  #1A1208;
+  --oauth-disabled: #D0CAB8;
+  color-scheme: dark;
+}
+
+/* ── Light theme: follows system preference ── */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:          #F7F5F0;
+    --surface:     #EEF0E9;
+    --card:        #FFFFFF;
+    --border:      #D8D2C7;
+    --orange:      #C84A1C;
+    --orange-dim:  rgba(200, 74, 28, 0.10);
+    --gold:        #A96F04;
+    --cream:       #19140E;
+    --muted:       #665F57;
+    --green:       #0F7F52;
+    --on-green:    #FFFFFF;
+    --auth-card:   #FFFFFF;
+    --auth-field:  #EEF0E9;
+    --auth-tab:    #EEF0E9;
+    --auth-border: #D8D2C7;
+    --auth-divider: #D8D2C7;
+    --auth-shadow: 0 24px 64px rgba(25, 20, 14, 0.14), 0 0 0 1px var(--orange-dim);
+    --oauth-bg:    #FFFFFF;
+    --oauth-text:  #19140E;
+    --oauth-disabled: #EEF0E9;
+    color-scheme: light;
+  }
+}
+
+/* ── Manual overrides ── */
+[data-theme="light"] {
+  --bg:          #F7F5F0;
+  --surface:     #EEF0E9;
+  --card:        #FFFFFF;
+  --border:      #D8D2C7;
+  --orange:      #C84A1C;
+  --orange-dim:  rgba(200, 74, 28, 0.10);
+  --gold:        #A96F04;
+  --cream:       #19140E;
+  --muted:       #665F57;
+  --green:       #0F7F52;
+  --on-green:    #FFFFFF;
+  --auth-card:   #FFFFFF;
+  --auth-field:  #EEF0E9;
+  --auth-tab:    #EEF0E9;
+  --auth-border: #D8D2C7;
+  --auth-divider: #D8D2C7;
+  --auth-shadow: 0 24px 64px rgba(25, 20, 14, 0.14), 0 0 0 1px var(--orange-dim);
+  --oauth-bg:    #FFFFFF;
+  --oauth-text:  #19140E;
+  --oauth-disabled: #EEF0E9;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg:          #0E0B08;
+  --surface:     #1A1410;
+  --card:        #211C17;
+  --border:      #2E2720;
+  --orange:      #F06030;
+  --orange-dim:  rgba(240, 96, 48, 0.12);
+  --gold:        #E8A830;
+  --cream:       #F5EDD8;
+  --muted:       #7A6E65;
+  --green:       #3DD68C;
+  --on-green:    #0E0B08;
+  --auth-card:   rgba(33, 28, 23, 0.92);
+  --auth-field:  rgba(14, 11, 8, 0.55);
+  --auth-tab:    rgba(14, 11, 8, 0.60);
+  --auth-border: rgba(46, 39, 32, 0.90);
+  --auth-divider: rgba(46, 39, 32, 0.80);
+  --auth-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(240, 96, 48, 0.05);
+  --oauth-bg:    #F5EDD8;
+  --oauth-text:  #1A1208;
+  --oauth-disabled: #D0CAB8;
+  color-scheme: dark;
 }
 
 html {
@@ -38,6 +126,7 @@ body {
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 0; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
 
 @keyframes like-pop {
   0%   { transform: scale(1); }
@@ -46,3 +135,9 @@ body {
   100% { transform: scale(1); }
 }
 .like-pop { animation: like-pop 0.3s cubic-bezier(0.36,0.07,0.19,0.97); }
+
+.one-line-textarea::placeholder {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--muted);
+}

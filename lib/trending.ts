@@ -1,15 +1,23 @@
 import type { Review } from "@/lib/types";
 
+export interface CircleReviewItem {
+  friend_name: string;
+  rating: number;
+  text: string;
+  time_ago: string;
+}
+
 export interface TrendingRestaurant {
   restaurant_name: string;
   cuisine_type: string;
+  area: string | null;
   trending_score: number;
   users_week: number;
   users_month: number;
   users_all_time: number;
   recency_boost: boolean;
   avg_score: number;    // out of 10
-  top_dish: string | null;
+  top_dishes: string[];
   photo_url: string | null;
   total_logs: number;
 }
@@ -69,34 +77,40 @@ export function computeTrending(reviews: Review[]): {
     let totalRating = 0;
     let ratingCount = 0;
     const dishCounts = new Map<string, number>();
+    const areaCounts = new Map<string, number>();
 
     for (const r of b.reviews) {
       for (const item of r.items) {
         if (item.rating > 0) { totalRating += item.rating; ratingCount++; }
         if (item.name.trim()) dishCounts.set(item.name, (dishCounts.get(item.name) ?? 0) + 1);
       }
+      if (r.area?.trim()) areaCounts.set(r.area.trim(), (areaCounts.get(r.area.trim()) ?? 0) + 1);
     }
 
     const avgScore = ratingCount > 0
       ? Math.round((totalRating / ratingCount) * 20) / 10  // 1-5 → 2-10
       : 0;
 
-    let topDish: string | null = null;
-    let maxCount = 0;
-    for (const [dish, count] of dishCounts) {
-      if (count > maxCount) { maxCount = count; topDish = dish; }
-    }
+    const topDishes = Array.from(dishCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([dish]) => dish);
+
+    const area = areaCounts.size > 0
+      ? Array.from(areaCounts.entries()).sort((a, b) => b[1] - a[1])[0][0]
+      : null;
 
     return {
       restaurant_name: name,
       cuisine_type: getCuisineType(name),
+      area,
       trending_score: trendingScore,
       users_week: usersWeek,
       users_month: usersMonth,
       users_all_time: usersAll,
       recency_boost: recencyBoost,
       avg_score: avgScore,
-      top_dish: topDish,
+      top_dishes: topDishes,
       photo_url: b.reviews.find((r) => r.photo_url)?.photo_url ?? null,
       total_logs: b.reviews.length,
     };

@@ -114,7 +114,7 @@ function DishCard({ result }: { result: DishResult }) {
           >
             <p
               style={{
-                fontFamily: "'Instrument Serif', serif",
+                fontFamily: "'Syne', sans-serif",
                 fontStyle: "italic",
                 fontSize: "14px",
                 color: "var(--cream)",
@@ -176,7 +176,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
         </p>
         <h1
           style={{
-            fontFamily: "'Instrument Serif', serif",
+            fontFamily: "'Syne', sans-serif",
             fontSize: "26px",
             color: "var(--cream)",
             marginTop: "4px",
@@ -217,7 +217,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
               outline: "none",
               color: "var(--cream)",
               fontSize: "16px",
-              fontFamily: "'Instrument Serif', serif",
+              fontFamily: "'Syne', sans-serif",
               fontStyle: query ? "normal" : "italic",
             }}
           />
@@ -247,7 +247,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
               width: "100%",
               marginTop: "10px",
               background: "var(--green)",
-              color: "#0E0B08",
+              color: "var(--on-green)",
               border: "none",
               borderRadius: "14px",
               padding: "13px",

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import type { CircleMember } from "@/app/people/page";
+import type { Review } from "@/lib/types";
+import { Check, X } from "lucide-react";
 
 /* ─── Constants ──────────────────────────────────── */
 
@@ -14,8 +16,12 @@ const APP_URL = "https://foodcircle.app";
 interface SearchResult {
   name: string;
   totalPlaces: number;
-  inCircle: boolean;
 }
+
+type ProfileSearchRow = {
+  first_name: string;
+  last_name: string;
+};
 
 /* ─── Helpers ────────────────────────────────────── */
 
@@ -33,7 +39,7 @@ function avatarColor(name: string): string {
   return gradients[hash % gradients.length];
 }
 
-function Avatar({ name, size = 40 }: { name: string; size?: number }) {
+function Avatar({ name, size = 44 }: { name: string; size?: number }) {
   const initials = name
     .split(" ")
     .slice(0, 2)
@@ -44,15 +50,16 @@ function Avatar({ name, size = 40 }: { name: string; size?: number }) {
       style={{
         width: size,
         height: size,
-        borderRadius: "50%",
+        borderRadius: "14px",
         background: avatarColor(name),
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         fontWeight: 700,
-        fontSize: size * 0.35,
+        fontSize: size * 0.34,
         color: "white",
         flexShrink: 0,
+        fontFamily: "'DM Sans', sans-serif",
       }}
     >
       {initials || "?"}
@@ -60,16 +67,21 @@ function Avatar({ name, size = 40 }: { name: string; size?: number }) {
   );
 }
 
+function toHandle(name: string): string {
+  return "@" + name.toLowerCase().replace(/\s+/g, "_");
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <p
       style={{
+        padding: "0 20px 10px",
         fontSize: "10px",
         fontWeight: 600,
         color: "var(--muted)",
         textTransform: "uppercase",
         letterSpacing: "1.5px",
-        marginBottom: "10px",
+        fontFamily: "'DM Sans', sans-serif",
       }}
     >
       {children}
@@ -77,41 +89,188 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PillButton({
-  children,
-  onClick,
-  active,
-  danger,
+function Divider() {
+  return <div style={{ height: "1px", background: "var(--border)", margin: "0 16px 14px" }} />;
+}
+
+/* ─── Person card ────────────────────────────────── */
+
+type PersonStatus = "mutual" | "one_way" | "sent" | "none";
+
+function PersonCard({
+  name,
+  sub,
+  status,
+  onAdd,
 }: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  active?: boolean;
-  danger?: boolean;
+  name: string;
+  sub: string;
+  status: PersonStatus;
+  onAdd?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
+    <div
       style={{
-        background: danger
-          ? "rgba(239,68,68,0.12)"
-          : active
-          ? "var(--orange)"
-          : "var(--card)",
-        border: `1px solid ${
-          danger ? "rgba(239,68,68,0.3)" : active ? "var(--orange)" : "var(--border)"
-        }`,
-        borderRadius: "20px",
-        padding: "6px 14px",
-        color: danger ? "#EF4444" : active ? "white" : "var(--muted)",
-        fontSize: "12px",
-        fontWeight: 600,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
+        margin: "0 16px 10px",
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "16px",
+        padding: "12px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
       }}
     >
-      {children}
-    </button>
+      <Link
+        href={`/people/${encodeURIComponent(name)}`}
+        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}
+      >
+        <Avatar name={name} size={44} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>
+            {name}
+          </p>
+          <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
+            {sub}
+          </p>
+        </div>
+      </Link>
+      {status === "mutual" || status === "one_way" ? (
+        <button
+          style={{
+            background: "var(--orange-dim)",
+            border: "1.5px solid rgba(240,96,48,0.35)",
+            color: "var(--orange)",
+            fontSize: "11px",
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: "100px",
+            cursor: "default",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          {status === "mutual" ? "Mutual Circle" : "In Circle"}
+        </button>
+      ) : status === "sent" ? (
+        <button
+          onClick={onAdd}
+          title="Tap to cancel request"
+          style={{
+            background: "var(--surface)",
+            border: "1.5px solid var(--border)",
+            color: "var(--muted)",
+            fontSize: "11px",
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: "100px",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          Requested
+        </button>
+      ) : (
+        <button
+          onClick={onAdd}
+          style={{
+            background: "transparent",
+            border: "1.5px solid var(--border)",
+            color: "var(--muted)",
+            fontSize: "11px",
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: "100px",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            fontFamily: "'DM Sans', sans-serif",
+            transition: "all 0.15s",
+          }}
+        >
+          Add
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ─── Request card (incoming) ────────────────────── */
+
+function RequestCard({
+  name,
+  onAccept,
+  onReject,
+}: {
+  name: string;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <div
+      style={{
+        margin: "0 16px 10px",
+        background: "var(--card)",
+        border: "1px solid rgba(240,96,48,0.25)",
+        borderRadius: "16px",
+        padding: "12px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+      }}
+    >
+      <Link
+        href={`/people/${encodeURIComponent(name)}`}
+        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}
+      >
+        <Avatar name={name} size={44} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>
+            {name}
+          </p>
+          <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
+            wants to join your circle
+          </p>
+        </div>
+      </Link>
+      <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+        <button
+          onClick={onReject}
+          style={{
+            width: "32px",
+            height: "32px",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "100px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+          }}
+        >
+          <X size={14} strokeWidth={2.5} color="var(--muted)" />
+        </button>
+        <button
+          onClick={onAccept}
+          style={{
+            width: "32px",
+            height: "32px",
+            background: "var(--orange)",
+            border: "none",
+            borderRadius: "100px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+          }}
+        >
+          <Check size={14} strokeWidth={2.5} color="white" />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -146,11 +305,21 @@ function InviteSection() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  /* Name not set yet — show prompt */
+  function shareOn(platform: "whatsapp" | "x") {
+    if (!inviteUrl) return;
+    const text = encodeURIComponent(`Join me on FoodCircle — see what I'm eating! ${inviteUrl}`);
+    const url =
+      platform === "whatsapp"
+        ? `https://wa.me/?text=${text}`
+        : `https://x.com/intent/tweet?text=${text}`;
+    window.open(url, "_blank", "noopener");
+  }
+
   if (!myName) {
     return (
       <div
         style={{
+          margin: "0 16px",
           background: "var(--card)",
           border: "1px solid var(--border)",
           borderRadius: "18px",
@@ -158,18 +327,10 @@ function InviteSection() {
         }}
       >
         <span style={{ fontSize: "36px", display: "block", marginBottom: "10px" }}>🔗</span>
-        <p
-          style={{
-            fontFamily: "'Syne', sans-serif",
-            fontSize: "15px",
-            fontWeight: 700,
-            color: "var(--cream)",
-            marginBottom: "6px",
-          }}
-        >
+        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 700, color: "var(--cream)", marginBottom: "6px" }}>
           Create your invite link
         </p>
-        <p style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "16px", lineHeight: 1.5 }}>
+        <p style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "16px", lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif" }}>
           Enter your name to generate a personal link you can share with friends.
         </p>
         <div
@@ -198,6 +359,7 @@ function InviteSection() {
               outline: "none",
               color: "var(--cream)",
               fontSize: "15px",
+              fontFamily: "'DM Sans', sans-serif",
             }}
           />
         </div>
@@ -224,50 +386,90 @@ function InviteSection() {
     );
   }
 
-  /* Link + copy UI */
   return (
-    <div
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "14px",
-        padding: "12px 14px",
-        display: "flex",
-        alignItems: "center",
-        gap: "10px",
-      }}
-    >
-      <span
+    <>
+      <div
         style={{
-          flex: 1,
-          fontSize: "12px",
-          color: "var(--muted)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          fontFamily: "monospace",
+          margin: "0 16px",
+          background: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "16px",
+          padding: "12px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
         }}
       >
-        {inviteUrl}
-      </span>
-      <button
-        onClick={copyLink}
-        style={{
-          background: copied ? "rgba(61,214,140,0.15)" : "var(--orange-dim)",
-          border: `1px solid ${copied ? "rgba(61,214,140,0.3)" : "var(--orange)"}`,
-          borderRadius: "10px",
-          padding: "6px 14px",
-          color: copied ? "var(--green)" : "var(--orange)",
-          fontSize: "12px",
-          fontWeight: 700,
-          cursor: "pointer",
-          flexShrink: 0,
-          transition: "all 0.15s",
-        }}
-      >
-        {copied ? "✓ Copied" : "Copy"}
-      </button>
-    </div>
+        <span
+          style={{
+            flex: 1,
+            fontSize: "11px",
+            color: "var(--cream)",
+            lineHeight: 1.4,
+            letterSpacing: "0.3px",
+            wordBreak: "break-all",
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          {inviteUrl}
+        </span>
+        <button
+          onClick={copyLink}
+          style={{
+            background: "transparent",
+            border: `1.5px solid ${copied ? "rgba(61,214,140,0.4)" : "var(--orange)"}`,
+            borderRadius: "10px",
+            padding: "7px 13px",
+            color: copied ? "var(--green)" : "var(--orange)",
+            fontSize: "12px",
+            fontWeight: 600,
+            cursor: "pointer",
+            flexShrink: 0,
+            transition: "all 0.15s",
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "8px", padding: "8px 16px 0" }}>
+        <button
+          onClick={() => shareOn("whatsapp")}
+          style={{
+            flex: 1,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: "12px",
+            padding: "10px",
+            textAlign: "center",
+            fontSize: "12px",
+            color: "var(--cream)",
+            cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          Share on WhatsApp
+        </button>
+        <button
+          onClick={() => shareOn("x")}
+          style={{
+            flex: 1,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: "12px",
+            padding: "10px",
+            textAlign: "center",
+            fontSize: "12px",
+            color: "var(--cream)",
+            cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          Share on X
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -281,212 +483,254 @@ export default function PeopleTab({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [myName, setMyName] = useState("");
 
-  // Circle managed in local state — starts from server data
-  const [circle, setCircle] = useState<CircleMember[]>(initialCircle);
-  const [removedNames, setRemovedNames] = useState<Set<string>>(new Set());
+  // Circle state from API
+  const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
+  const [mutualMembers, setMutualMembers] = useState<Set<string>>(new Set());
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
+  const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
 
-  /* ── Search ──────────────────────────────────── */
+  /* ── Load circle status from API ── */
+
+  const loadCircleStatus = useCallback(async (name: string) => {
+    if (!name) return;
+    const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
+    const data = await res.json();
+    setCircleMembers(new Set(data.members ?? []));
+    setMutualMembers(new Set(data.mutualMembers ?? []));
+    setPendingSent(new Set(data.pendingSent ?? []));
+    setPendingIncoming(data.pendingIncoming ?? []);
+  }, []);
+
+  useEffect(() => {
+    const me = localStorage.getItem("fc_my_name") ?? "";
+    setMyName(me);
+    loadCircleStatus(me);
+  }, [loadCircleStatus]);
+
+  /* ── Send request ── */
+
+  async function sendRequest(receiverName: string) {
+    if (!myName) return;
+    setPendingSent((prev) => new Set([...prev, receiverName]));
+    const res = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: myName, receiverName }),
+    });
+    const data = await res.json();
+    if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
+      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+      setCircleMembers((prev) => new Set([...prev, receiverName]));
+      setMutualMembers((prev) => new Set([...prev, receiverName]));
+    } else if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way") {
+      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+      setCircleMembers((prev) => new Set([...prev, receiverName]));
+    }
+  }
+
+  /* ── Respond to incoming request ── */
+
+  async function respondToRequest(senderName: string, action: "accept" | "reject") {
+    if (!myName) return;
+    await fetch("/api/circle/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ myName, senderName, action }),
+    });
+    setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
+    if (action === "accept") {
+      setCircleMembers((prev) => new Set([...prev, senderName]));
+      setMutualMembers((prev) => new Set([...prev, senderName]));
+    }
+  }
+
+  /* ── Cancel sent request ── */
+
+  async function cancelRequest(receiverName: string) {
+    if (!myName) return;
+    // Optimistic update
+    setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+    await fetch("/api/circle/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: myName, receiverName }),
+    });
+  }
+
+  /* ── Search (reviews + profiles) ── */
 
   const search = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setSearchResults([]);
-      return;
-    }
+    if (!q.trim()) { setSearchResults([]); return; }
     setSearching(true);
     const supabase = createClient();
-    const { data } = await supabase
-      .from("reviews")
-      .select("reviewer_name")
-      .ilike("reviewer_name", `%${q.trim()}%`);
+
+    const [{ data: reviewData }, { data: profileData }] = await Promise.all([
+      supabase
+        .from("reviews")
+        .select("reviewer_name")
+        .ilike("reviewer_name", `%${q.trim()}%`)
+        .returns<Pick<Review, "reviewer_name">[]>(),
+      supabase.from("profiles").select("first_name, last_name").or(
+        `first_name.ilike.%${q.trim()}%,last_name.ilike.%${q.trim()}%`
+      ).returns<ProfileSearchRow[]>(),
+    ]);
 
     const map = new Map<string, number>();
-    for (const r of data ?? []) {
+    for (const r of reviewData ?? []) {
       map.set(r.reviewer_name, (map.get(r.reviewer_name) ?? 0) + 1);
     }
+    for (const p of profileData ?? []) {
+      const name = `${p.first_name} ${p.last_name}`.trim();
+      if (name && !map.has(name)) map.set(name, 0);
+    }
 
-    setSearchResults(
-      Array.from(map.entries()).map(([name, count]) => ({
-        name,
-        totalPlaces: count,
-        inCircle: circle.some((c) => c.name === name) && !removedNames.has(name),
-      }))
-    );
+    setSearchResults(Array.from(map.entries()).map(([name, totalPlaces]) => ({ name, totalPlaces })));
     setSearching(false);
-  }, [circle, removedNames]);
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => search(searchQuery), 350);
     return () => clearTimeout(t);
   }, [searchQuery, search]);
 
-  /* ── Circle helpers ──────────────────────────── */
+  /* ── Derived ── */
 
-  function addToCircle(name: string, totalPlaces: number, lastPlace?: string | null) {
-    setRemovedNames((prev) => {
-      const next = new Set(prev);
-      next.delete(name);
-      return next;
-    });
-    setCircle((prev) =>
-      prev.some((m) => m.name === name)
-        ? prev
-        : [...prev, { name, totalPlaces, lastPlace: lastPlace ?? null }]
-    );
+  const suggested = initialCircle.filter(
+    (m) => !circleMembers.has(m.name) && m.name !== myName
+  );
+
+  function personStatus(name: string): PersonStatus {
+    if (mutualMembers.has(name)) return "mutual";
+    if (circleMembers.has(name)) return "one_way";
+    if (pendingSent.has(name)) return "sent";
+    return "none";
   }
 
-  /* ── Render ──────────────────────────────────── */
+  /* ── Render ── */
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
 
       {/* Header */}
-      <div className="px-5 pt-6 pb-3">
-        <p
-          style={{
-            fontSize: "10px",
-            fontWeight: 600,
-            letterSpacing: "2px",
-            textTransform: "uppercase",
-            color: "var(--orange)",
-          }}
-        >
+      <div style={{ padding: "16px 20px 14px" }}>
+        <p style={{ fontSize: "10px", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", color: "var(--orange)", marginBottom: "4px", fontFamily: "'DM Sans', sans-serif" }}>
           People
         </p>
-        <h1
-          style={{
-            fontFamily: "'Instrument Serif', serif",
-            fontSize: "26px",
-            color: "var(--cream)",
-            marginTop: "4px",
-            lineHeight: "1.2",
-          }}
-        >
+        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "22px", color: "var(--cream)" }}>
           Build your food circle
         </h1>
       </div>
 
-      {/* ── Section 1: Search ── */}
-      <div className="px-5 pb-5">
-
-        {/* Search input */}
-        <div
+      {/* Search bar */}
+      <div
+        style={{
+          margin: "0 16px 16px",
+          background: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "16px",
+          padding: "12px 16px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+        }}
+      >
+        <span style={{ fontSize: "16px", flexShrink: 0 }}>🔍</span>
+        <input
+          type="text"
+          placeholder="Search by name or @username…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          autoComplete="off"
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: "16px",
-            padding: "12px 14px",
-            marginBottom: "14px",
+            flex: 1,
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            color: "var(--cream)",
+            fontSize: "14px",
+            fontFamily: "'DM Sans', sans-serif",
           }}
-        >
-          <span style={{ fontSize: "16px", flexShrink: 0 }}>🔍</span>
-          <input
-            type="text"
-            placeholder="Search by name…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            autoComplete="off"
-            style={{
-              flex: 1,
-              background: "transparent",
-              border: "none",
-              outline: "none",
-              color: "var(--cream)",
-              fontSize: "15px",
-            }}
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--muted)",
-                cursor: "pointer",
-                fontSize: "16px",
-                lineHeight: 1,
-                flexShrink: 0,
-              }}
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* Search results */}
-        {searchQuery.trim() !== "" && (
-          <>
-            <SectionLabel>Results</SectionLabel>
-
-            {searching && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {[1, 2].map((i) => (
-                  <div
-                    key={i}
-                    style={{ height: "64px", background: "var(--card)", borderRadius: "16px", opacity: 0.5 }}
-                    className="animate-pulse"
-                  />
-                ))}
-              </div>
-            )}
-
-            {!searching && searchResults.length === 0 && (
-              <p style={{ fontSize: "13px", color: "var(--muted)", textAlign: "center", padding: "24px 0" }}>
-                No one found for &ldquo;{searchQuery}&rdquo;
-              </p>
-            )}
-
-            {!searching && searchResults.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {searchResults.map((result) => (
-                  <div
-                    key={result.name}
-                    style={{
-                      background: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "16px",
-                      padding: "12px 14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px",
-                    }}
-                  >
-                    <Avatar name={result.name} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)" }}>
-                        {result.name}
-                      </p>
-                      <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
-                        {result.totalPlaces} place{result.totalPlaces !== 1 ? "s" : ""} tried
-                      </p>
-                    </div>
-                    {result.inCircle ? (
-                      <PillButton active>In circle ✓</PillButton>
-                    ) : (
-                      <PillButton onClick={() => addToCircle(result.name, result.totalPlaces, null)}>
-                        Add to Circle
-                      </PillButton>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: "16px", lineHeight: 1, flexShrink: 0 }}
+          >
+            ✕
+          </button>
         )}
       </div>
 
-      {/* Divider */}
-      <div style={{ height: "1px", background: "var(--border)", margin: "0 20px 20px" }} />
+      {/* Search results */}
+      {searchQuery.trim() !== "" && (
+        <div style={{ marginBottom: "8px" }}>
+          {searching && (
+            <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              {[1, 2].map((i) => (
+                <div key={i} style={{ height: "64px", background: "var(--card)", borderRadius: "16px", opacity: 0.5 }} className="animate-pulse" />
+              ))}
+            </div>
+          )}
+          {!searching && searchResults.length === 0 && (
+            <p style={{ fontSize: "13px", color: "var(--muted)", textAlign: "center", padding: "24px 0", fontFamily: "'DM Sans', sans-serif" }}>
+              No one found for &ldquo;{searchQuery}&rdquo;
+            </p>
+          )}
+          {!searching && searchResults.map((result) => (
+            <PersonCard
+              key={result.name}
+              name={result.name}
+              sub={`${toHandle(result.name)} · ${result.totalPlaces} place${result.totalPlaces !== 1 ? "s" : ""}`}
+              status={personStatus(result.name)}
+              onAdd={personStatus(result.name) === "sent" ? () => cancelRequest(result.name) : () => sendRequest(result.name)}
+            />
+          ))}
+        </div>
+      )}
 
-      {/* ── Section 2: Invite Friends ── */}
-      <div className="px-5 pb-5">
-        <SectionLabel>Invite Friends</SectionLabel>
-        <InviteSection />
-      </div>
+      {/* Incoming requests */}
+      {pendingIncoming.length > 0 && (
+        <>
+          <Divider />
+          <SectionLabel>Circle Requests · {pendingIncoming.length}</SectionLabel>
+          {pendingIncoming.map((name) => (
+            <RequestCard
+              key={name}
+              name={name}
+              onAccept={() => respondToRequest(name, "accept")}
+              onReject={() => respondToRequest(name, "reject")}
+            />
+          ))}
+        </>
+      )}
 
+      <Divider />
+
+      {/* Invite link */}
+      <SectionLabel>Your Invite Link</SectionLabel>
+      <InviteSection />
+
+      {/* Suggested Circle */}
+      {suggested.length > 0 && (
+        <>
+          <div style={{ height: "20px" }} />
+          <Divider />
+          <SectionLabel>Suggested Circle</SectionLabel>
+          {suggested.map((member) => (
+            <PersonCard
+              key={member.name}
+              name={member.name}
+              sub={`${toHandle(member.name)} · ${member.totalPlaces} place${member.totalPlaces !== 1 ? "s" : ""}`}
+              status={personStatus(member.name)}
+              onAdd={personStatus(member.name) === "sent" ? () => cancelRequest(member.name) : () => sendRequest(member.name)}
+            />
+          ))}
+        </>
+      )}
+
+      <div style={{ height: "100px" }} />
     </div>
   );
 }

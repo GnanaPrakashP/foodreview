@@ -30,17 +30,6 @@ function initials(name: string): string {
   return name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
 }
 
-function restaurantEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin") || n.includes("murugan")) return "🥘";
-  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
-  if (n.includes("ramen") || n.includes("nagi") || n.includes("japanese") || n.includes("sushi")) return "🍜";
-  if (n.includes("pizza") || n.includes("italiano") || n.includes("pasta")) return "🍕";
-  if (n.includes("burger") || n.includes("grill")) return "🍔";
-  if (n.includes("mess") || n.includes("madurai") || n.includes("mutton") || n.includes("chicken")) return "🍖";
-  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
-  return "🍽️";
-}
 
 interface Props {
   review: Review;
@@ -130,7 +119,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
         style={{
           position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
           width: "100%", maxWidth: "512px", height: "95dvh",
-          background: "#0E0B08", borderRadius: "20px 20px 0 0", zIndex: 61,
+          background: "var(--bg)", borderRadius: "20px 20px 0 0", zIndex: 61,
           display: "flex", flexDirection: "column",
         }}
       >
@@ -140,7 +129,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
             ← Back
           </button>
           <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "#2E2720" }} />
+            <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "var(--border)" }} />
           </div>
           <div style={{ width: "52px" }} />
         </div>
@@ -148,19 +137,18 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
         {/* Scrollable body */}
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", paddingBottom: "84px" }}>
           {/* Post summary */}
-          <div style={{ padding: "0 16px 16px", borderBottom: "1px solid #2E2720" }}>
-            <div style={{ height: "200px", borderRadius: "16px", overflow: "hidden", background: "linear-gradient(160deg,#2A1008 0%,#6B3318 50%,#A04020 100%)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "12px", position: "relative" }}>
-              {review.photo_url
-                // eslint-disable-next-line @next/next/no-img-element
-                ? <img src={review.photo_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                : <span style={{ fontSize: "64px" }}>{restaurantEmoji(review.restaurant_name)}</span>
-              }
-              {review.items[0]?.name && (
-                <span style={{ position: "absolute", bottom: "10px", left: "10px", background: "rgba(255,255,255,0.1)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.15)", color: "white", fontSize: "11px", fontWeight: 500, padding: "4px 10px", borderRadius: "20px" }}>
-                  {review.items[0].name}
-                </span>
-              )}
-            </div>
+          <div style={{ padding: "0 16px 16px", borderBottom: "1px solid var(--border)" }}>
+            {review.photo_url && (
+              <div style={{ height: "200px", borderRadius: "16px", overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "12px", position: "relative" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={review.photo_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                {review.items[0]?.name && (
+                  <span style={{ position: "absolute", bottom: "10px", left: "10px", background: "rgba(255,255,255,0.1)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.15)", color: "white", fontSize: "11px", fontWeight: 500, padding: "4px 10px", borderRadius: "20px" }}>
+                    {review.items[0].name}
+                  </span>
+                )}
+              </div>
+            )}
 
             <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "4px" }}>
               {review.restaurant_name}
@@ -168,7 +156,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
 
             {review.body && (
               <div style={{ padding: "10px 12px", background: "var(--surface)", borderLeft: "3px solid var(--orange)", borderRadius: "0 10px 10px 0", marginBottom: "10px" }}>
-                <p style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontSize: "15px", color: "var(--cream)", lineHeight: 1.5 }}>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "15px", color: "var(--cream)", lineHeight: 1.5 }}>
                   &ldquo;{review.body}&rdquo;
                 </p>
               </div>
@@ -186,7 +174,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
 
             <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
               <button onClick={onLike} disabled={!myName} style={{ background: "none", border: "none", cursor: myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}>
-                <span style={{ fontSize: "16px", color: liked ? "#E84040" : "#7A6E65", transition: "color 0.15s" }}>♥</span>
+                <span style={{ fontSize: "16px", color: liked ? "#E84040" : "var(--muted)", transition: "color 0.15s" }}>♥</span>
                 <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
               </button>
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
@@ -215,7 +203,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
                 onMouseLeave={endLongPress}
                 onTouchStart={() => startLongPress(c.id, c.user_name)}
                 onTouchEnd={endLongPress}
-                style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "12px 0", borderBottom: "1px solid #2E2720" }}
+                style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "12px 0", borderBottom: "1px solid var(--border)" }}
               >
                 <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: gradient(c.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: "white", flexShrink: 0 }}>
                   {initials(c.user_name)}
@@ -234,7 +222,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
         </div>
 
         {/* Comment input */}
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, borderTop: "1px solid #2E2720", background: "#211C17", padding: "10px 14px", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, borderTop: "1px solid var(--border)", background: "var(--card)", padding: "10px 14px", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", display: "flex", alignItems: "center", gap: "10px" }}>
           {myName && (
             <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: gradient(myName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: "white", flexShrink: 0 }}>
               {initials(myName)}

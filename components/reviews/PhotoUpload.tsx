@@ -106,7 +106,7 @@ export default function PhotoUpload({ onFileSelect }: PhotoUploadProps) {
         >
           <span style={{ fontSize: "32px" }}>📷</span>
           <span>Tap to add a photo</span>
-          <span style={{ fontSize: "11px", color: "var(--border)" }}>PNG · JPG · WEBP · max 5 MB</span>
+          <span style={{ fontSize: "11px", color: "var(--muted)" }}>PNG · JPG · WEBP · max 5 MB</span>
         </button>
       )}
 

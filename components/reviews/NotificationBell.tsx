@@ -35,7 +35,29 @@ export default function NotificationBell() {
       .eq("recipient_name", name)
       .order("created_at", { ascending: false })
       .limit(20) as { data: Notification[] | null };
-    setNotifications(data ?? []);
+
+    const notifs = data ?? [];
+
+    // For circle_request notifications, only keep them if the request is still pending
+    const circleReqNotifs = notifs.filter(n => n.type === "circle_request");
+    if (circleReqNotifs.length > 0) {
+      const senderNames = circleReqNotifs.map(n => n.actor_name);
+      const { data: pending, error: pendingErr } = await supabase
+        .from("circle_requests")
+        .select("sender_name")
+        .in("sender_name", senderNames)
+        .eq("receiver_name", name)
+        .eq("status", "pending");
+      if (pendingErr) {
+        // Can't verify — show all notifications as-is rather than hiding everything
+        setNotifications(notifs);
+        return;
+      }
+      const stillPending = new Set((pending ?? []).map((r: { sender_name: string }) => r.sender_name));
+      setNotifications(notifs.filter(n => n.type !== "circle_request" || stillPending.has(n.actor_name)));
+    } else {
+      setNotifications(notifs);
+    }
   }
 
   async function openSheet() {
@@ -56,7 +78,12 @@ export default function NotificationBell() {
   function notifText(n: Notification): string {
     if (n.type === "like") return `liked your post${n.restaurant_name ? ` at ${n.restaurant_name}` : ""}`;
     if (n.type === "comment") return `commented on your ${n.restaurant_name ?? "post"}`;
-    return `also commented — ${n.content ?? ""}`;
+    if (n.type === "also_commented") return `also commented — ${n.content ?? ""}`;
+    if (n.type === "circle_request") return "wants to join your circle";
+    if (n.type === "circle_accepted") return "accepted your circle request";
+    if (n.type === "circle_added") return "joined your circle";
+    if (n.type === "circle_post") return `posted a new review${n.restaurant_name ? ` at ${n.restaurant_name}` : ""}`;
+    return "";
   }
 
   return (
@@ -77,9 +104,9 @@ export default function NotificationBell() {
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60 }} />
-          <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "512px", maxHeight: "70vh", background: "#1A1410", borderRadius: "20px 20px 0 0", zIndex: 61, display: "flex", flexDirection: "column", borderTop: "1px solid #2E2720" }}>
+          <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "512px", maxHeight: "70vh", background: "var(--surface)", borderRadius: "20px 20px 0 0", zIndex: 61, display: "flex", flexDirection: "column", borderTop: "1px solid var(--border)" }}>
             <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
-              <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "#2E2720" }} />
+              <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "var(--border)" }} />
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 20px 14px" }}>
               <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "16px", color: "var(--cream)" }}>Notifications</p>
@@ -91,7 +118,7 @@ export default function NotificationBell() {
                   <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>No notifications yet</p>
                 </div>
               ) : notifications.map(n => (
-                <div key={n.id} style={{ padding: "12px 0", borderBottom: "1px solid #2E2720", display: "flex", alignItems: "flex-start", gap: "10px", opacity: n.read ? 0.6 : 1 }}>
+                <div key={n.id} style={{ padding: "12px 0", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "flex-start", gap: "10px", opacity: n.read ? 0.6 : 1 }}>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.4 }}>
                       <strong>{n.actor_name}</strong> {notifText(n)}

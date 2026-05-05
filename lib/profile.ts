@@ -51,6 +51,20 @@ export function computeExplorationScore(myReviews: Review[], allReviews: Review[
   return Math.min(100, Math.round(cuisineScore + breadthScore + varietyScore));
 }
 
+export function restaurantGradient(name: string): string {
+  const G = [
+    "linear-gradient(135deg,#F59E0B,#D97706)",
+    "linear-gradient(135deg,#EF4444,#B91C1C)",
+    "linear-gradient(135deg,#8B5CF6,#6D28D9)",
+    "linear-gradient(135deg,#06B6D4,#0E7490)",
+    "linear-gradient(135deg,#10B981,#059669)",
+    "linear-gradient(135deg,#F43F5E,#BE123C)",
+  ];
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return G[h % G.length];
+}
+
 export function avatarGradient(name: string): string {
   const G = [
     "linear-gradient(135deg,#F06030,#C04020)",

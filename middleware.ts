@@ -25,8 +25,45 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session cookie on every request
-  await supabase.auth.getUser();
+  // Refresh session cookie on every request (required by @supabase/ssr)
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const { pathname } = request.nextUrl;
+
+  const isAuthRoute       = pathname.startsWith("/auth");
+  const isLoginRoute      = pathname === "/login";
+  const isOnboardingRoute = pathname === "/onboarding";
+  const isResetRoute      = pathname.startsWith("/auth/reset-password");
+
+  // 1. Not logged in → send to /login
+  if (!user && !isLoginRoute && !isAuthRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // 2. Logged in but trying to see /login → send home
+  if (user && isLoginRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    return NextResponse.redirect(url);
+  }
+
+  // 3. Logged in but onboarding not done → send to /onboarding
+  //    (skip if already on onboarding, any /auth/** route, or reset-password)
+  const onboardingDone = !!user?.user_metadata?.username;
+  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/onboarding";
+    return NextResponse.redirect(url);
+  }
+
+  // 4. Onboarding done, don't let them back to /onboarding
+  if (user && onboardingDone && isOnboardingRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    return NextResponse.redirect(url);
+  }
 
   return supabaseResponse;
 }

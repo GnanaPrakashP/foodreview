@@ -1,86 +1,89 @@
 import { createClient } from "@/lib/supabase/server";
-import ReviewCard from "@/components/reviews/ReviewCard";
-import type { Review } from "@/lib/types";
-import Link from "next/link";
+import type { Review, Comment } from "@/lib/types";
+import CircleFeedClient from "@/components/circle/CircleFeedClient";
+import NotificationBell from "@/components/reviews/NotificationBell";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+
+function avgRating(review: Review): number {
+  if (!review.items.length) return 0;
+  return review.items.reduce((s, it) => s + it.rating, 0) / review.items.length;
+}
 
 export default async function CirclePage() {
   const supabase = await createClient();
 
-  const { data: reviews, error } = await supabase
-    .from("reviews")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(50)
-    .returns<Review[]>();
+  const [{ data: reviews }, { data: rawLikes }, { data: rawComments }] = await Promise.all([
+    supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(200).returns<Review[]>(),
+    supabase.from("likes").select("post_id"),
+    supabase.from("comments").select("id, post_id, user_name, content, created_at").order("created_at", { ascending: false }).limit(1000).returns<Comment[]>(),
+  ]);
+
+  const allReviews = reviews ?? [];
+
+  const likeCountMap: Record<string, number> = {};
+  for (const like of (rawLikes ?? []) as { post_id: string }[]) {
+    likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
+  }
+
+  const commentMap: Record<string, { count: number; top: Comment }> = {};
+  for (const comment of rawComments ?? []) {
+    const ex = commentMap[comment.post_id];
+    if (!ex) {
+      commentMap[comment.post_id] = { count: 1, top: comment };
+    } else {
+      ex.count++;
+    }
+  }
+
+  const visitCounts = new Map<string, number>();
+  for (const r of allReviews) {
+    const k = `${r.reviewer_name}\x00${r.restaurant_name}`;
+    visitCounts.set(k, (visitCounts.get(k) ?? 0) + 1);
+  }
+
+  const byReviewer = new Map<string, Review[]>();
+  for (const r of allReviews) {
+    const g = byReviewer.get(r.reviewer_name) ?? [];
+    g.push(r);
+    byReviewer.set(r.reviewer_name, g);
+  }
+  const rankMap: Record<string, { rank: number; total: number; visitCount: number }> = {};
+  for (const [, group] of byReviewer) {
+    const sorted = [...group].sort((a, b) => avgRating(b) - avgRating(a));
+    sorted.forEach((r, i) => {
+      rankMap[r.id] = {
+        rank: i + 1,
+        total: group.length,
+        visitCount: visitCounts.get(`${r.reviewer_name}\x00${r.restaurant_name}`) ?? 1,
+      };
+    });
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
+
       {/* Header */}
-      <div className="px-5 pt-6 pb-4">
-        <p
-          style={{
-            fontSize: "10px",
-            fontWeight: 600,
-            letterSpacing: "2px",
-            textTransform: "uppercase",
-            color: "var(--orange)",
-          }}
-        >
-          Your Circle
-        </p>
-        <h1
-          style={{
-            fontFamily: "'Instrument Serif', serif",
-            fontSize: "26px",
-            color: "var(--cream)",
-            marginTop: "4px",
-            lineHeight: "1.2",
-          }}
-        >
-          What everyone's been eating
-        </h1>
-      </div>
-
-      {/* Feed */}
-      <div className="px-4 flex flex-col gap-4">
-        {error && (
-          <p style={{ color: "#EF4444", textAlign: "center", padding: "40px 0", fontSize: "14px" }}>
-            Failed to load. Please try again.
+      <div style={{ padding: "16px 20px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <p style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "4px", fontFamily: "'DM Sans', sans-serif" }}>
+            Your circle
           </p>
-        )}
-
-        {!error && (!reviews || reviews.length === 0) && (
-          <div className="flex flex-col items-center gap-3 py-20 text-center">
-            <span style={{ fontSize: "52px" }}>👥</span>
-            <p style={{ color: "var(--muted)", fontSize: "14px" }}>
-              Your circle is quiet right now.
-            </p>
-            <Link href="/reviews/new">
-              <button
-                style={{
-                  background: "var(--orange)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "14px",
-                  padding: "12px 24px",
-                  fontFamily: "'Syne', sans-serif",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Share first →
-              </button>
-            </Link>
-          </div>
-        )}
-
-        {reviews?.map((review) => (
-          <ReviewCard key={review.id} review={review} />
-        ))}
+          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "26px", color: "var(--cream)", lineHeight: "1.2" }}>
+            What they&apos;re <em style={{ fontStyle: "italic", color: "var(--orange)" }}>eating</em>
+          </h1>
+        </div>
+        <div style={{ paddingTop: "4px" }}>
+          <NotificationBell />
+        </div>
       </div>
+
+      <CircleFeedClient
+        allReviews={allReviews}
+        likeCountMap={likeCountMap}
+        commentMap={commentMap}
+        rankMap={rankMap}
+      />
     </div>
   );
 }

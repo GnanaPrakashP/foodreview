@@ -3,22 +3,10 @@ import { notFound } from "next/navigation";
 import { formatDate } from "@/lib/utils";
 import type { Review } from "@/lib/types";
 import Link from "next/link";
+import { restaurantGradient } from "@/lib/profile";
 
 interface Props {
   params: Promise<{ id: string }>;
-}
-
-function restaurantEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin")) return "🥘";
-  if (n.includes("ramen") || n.includes("noodle") || n.includes("chinese")) return "🍜";
-  if (n.includes("pizza") || n.includes("italiano")) return "🍕";
-  if (n.includes("burger") || n.includes("grill")) return "🍔";
-  if (n.includes("sushi") || n.includes("japanese")) return "🍱";
-  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
-  if (n.includes("mess") || n.includes("mutton") || n.includes("chicken") || n.includes("madurai")) return "🍖";
-  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
-  return "🍽️";
 }
 
 function avgRating(review: Review): number {
@@ -92,11 +80,11 @@ export default async function ReviewDetailPage({ params }: Props) {
           overflow: "hidden",
         }}
       >
-        {/* Image / emoji hero */}
+        {/* Image / hero */}
         <div
           style={{
             height: "200px",
-            background: "linear-gradient(160deg, #2A1008 0%, #6B3318 50%, #A04020 100%)",
+            background: review.photo_url ? "#000" : restaurantGradient(review.restaurant_name),
             position: "relative",
             display: "flex",
             alignItems: "center",
@@ -112,13 +100,8 @@ export default async function ReviewDetailPage({ params }: Props) {
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
           ) : (
-            <span
-              style={{
-                fontSize: "72px",
-                filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.5))",
-              }}
-            >
-              {restaurantEmoji(review.restaurant_name)}
+            <span style={{ fontSize: "72px", fontWeight: 800, color: "rgba(255,255,255,0.25)", fontFamily: "'Syne', sans-serif", userSelect: "none", lineHeight: 1 }}>
+              {review.restaurant_name[0]?.toUpperCase() ?? "?"}
             </span>
           )}
           <div
@@ -206,7 +189,7 @@ export default async function ReviewDetailPage({ params }: Props) {
             >
               <p
                 style={{
-                  fontFamily: "'Instrument Serif', serif",
+                  fontFamily: "'Syne', sans-serif",
                   fontStyle: "italic",
                   fontSize: "16px",
                   color: "var(--cream)",

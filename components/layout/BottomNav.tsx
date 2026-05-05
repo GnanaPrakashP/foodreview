@@ -2,17 +2,27 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Users, Flame, Camera, Search, User } from "lucide-react";
 
 const TABS = [
-  { href: "/",         label: "Circle",   icon: "👥",  center: false },
-  { href: "/trending", label: "Trending", icon: "🔥",  center: false },
-  { href: "/reviews/new", label: "Share", icon: "📸",  center: true  },
-  { href: "/people",   label: "People",   icon: "🔍",  center: false },
-  { href: "/me",       label: "Me",       icon: "👤",  center: false },
+  { href: "/",         label: "Circle",   Icon: Users,   center: false },
+  { href: "/trending", label: "Trending", Icon: Flame,   center: false },
+  { href: "/reviews/new", label: "Share", Icon: Camera,  center: true  },
+  { href: "/people",   label: "People",   Icon: Search,  center: false },
+  { href: "/me",       label: "Me",       Icon: User,    center: false },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
+
+  if (
+    pathname === "/login" ||
+    pathname === "/onboarding" ||
+    pathname.startsWith("/auth/reset-password") ||
+    pathname === "/privacy" ||
+    pathname === "/terms"
+  )
+    return null;
 
   return (
     <nav
@@ -20,7 +30,7 @@ export default function BottomNav() {
       style={{
         background: "var(--surface)",
         borderTop: "1px solid var(--border)",
-        overflow: "visible",          /* lets the center button float above */
+        overflow: "visible",
       }}
     >
       <div className="max-w-lg mx-auto flex items-center justify-around h-16">
@@ -48,31 +58,32 @@ export default function BottomNav() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: "24px",
                     boxShadow:
                       "0 8px 24px rgba(240,96,48,0.40), 0 2px 8px rgba(0,0,0,0.35)",
                   }}
                 >
-                  {tab.icon}
+                  <tab.Icon size={22} strokeWidth={2.2} color="white" />
                 </div>
               </Link>
             );
           }
 
           /* ── Regular tab ── */
+          const color = active ? "var(--orange)" : "var(--muted)";
           return (
             <Link
               key={tab.href}
               href={tab.href}
-              className="flex flex-col items-center gap-0.5 px-2 py-1"
+              className="flex flex-col items-center gap-1 px-2 py-1"
             >
-              <span className="text-lg leading-none">{tab.icon}</span>
+              <tab.Icon size={20} strokeWidth={active ? 2.4 : 1.8} color={color} />
               <span
                 style={{
                   fontSize: "9px",
                   fontWeight: 600,
                   letterSpacing: "0.2px",
-                  color: active ? "var(--orange)" : "var(--muted)",
+                  color,
+                  fontFamily: "'DM Sans', sans-serif",
                 }}
               >
                 {tab.label}

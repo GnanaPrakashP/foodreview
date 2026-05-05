@@ -91,7 +91,7 @@ export default async function JoinPage({
       {/* Headline */}
       <h1
         style={{
-          fontFamily: "'Instrument Serif', serif",
+          fontFamily: "'Syne', sans-serif",
           fontSize: "26px",
           color: "var(--cream)",
           lineHeight: 1.3,

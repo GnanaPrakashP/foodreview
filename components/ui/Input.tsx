@@ -63,7 +63,7 @@ export function Textarea({ label, error, style, ...props }: TextareaProps) {
         style={{
           ...inputBase,
           resize: "none",
-          fontFamily: "'Instrument Serif', serif",
+          fontFamily: "'Syne', sans-serif",
           fontStyle: "italic",
           fontSize: "16px",
           lineHeight: "1.4",

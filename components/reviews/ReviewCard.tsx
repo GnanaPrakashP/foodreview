@@ -5,19 +5,6 @@ interface ReviewCardProps {
   review: Review;
 }
 
-function restaurantEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("idli") || n.includes("dosa") || n.includes("tiffin")) return "🥘";
-  if (n.includes("ramen") || n.includes("noodle") || n.includes("chinese")) return "🍜";
-  if (n.includes("pizza") || n.includes("italiano")) return "🍕";
-  if (n.includes("burger") || n.includes("grill")) return "🍔";
-  if (n.includes("sushi") || n.includes("japanese")) return "🍱";
-  if (n.includes("biryani") || n.includes("mughal") || n.includes("dum")) return "🍛";
-  if (n.includes("mess") || n.includes("mutton") || n.includes("chicken") || n.includes("madurai")) return "🍖";
-  if (n.includes("cafe") || n.includes("coffee") || n.includes("brew")) return "☕";
-  return "🍽️";
-}
-
 function avgRating(review: Review): number {
   if (!review.items.length) return 0;
   return review.items.reduce((s, it) => s + it.rating, 0) / review.items.length;
@@ -74,59 +61,55 @@ export default function ReviewCard({ review }: ReviewCardProps) {
         </div>
       </div>
 
-      {/* Image / emoji hero */}
-      <div
-        style={{
-          margin: "0 16px",
-          height: "160px",
-          borderRadius: "16px",
-          background: "linear-gradient(160deg, #2A1008 0%, #6B3318 50%, #A04020 100%)",
-          position: "relative",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        }}
-      >
-        {review.photo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
+      {/* Image / hero */}
+      {review.photo_url && (
+        <div
+          style={{
+            margin: "0 16px",
+            height: "160px",
+            borderRadius: "16px",
+            background: "#000",
+            position: "relative",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={review.photo_url}
             alt={firstItem?.name ?? review.restaurant_name}
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
-        ) : (
-          <span style={{ fontSize: "56px", filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.5))" }}>
-            {restaurantEmoji(review.restaurant_name)}
-          </span>
-        )}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)",
-          }}
-        />
-        {firstItem && (
-          <span
+          <div
             style={{
               position: "absolute",
-              bottom: "10px",
-              left: "10px",
-              background: "rgba(255,255,255,0.1)",
-              backdropFilter: "blur(8px)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              color: "white",
-              fontSize: "11px",
-              fontWeight: 500,
-              padding: "4px 10px",
-              borderRadius: "20px",
+              inset: 0,
+              background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)",
             }}
-          >
-            {firstItem.name}
-          </span>
-        )}
-      </div>
+          />
+          {firstItem && (
+            <span
+              style={{
+                position: "absolute",
+                bottom: "10px",
+                left: "10px",
+                background: "rgba(255,255,255,0.1)",
+                backdropFilter: "blur(8px)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                color: "white",
+                fontSize: "11px",
+                fontWeight: 500,
+                padding: "4px 10px",
+                borderRadius: "20px",
+              }}
+            >
+              {firstItem.name}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Body */}
       <div className="px-4 pt-3 pb-1">
@@ -159,7 +142,7 @@ export default function ReviewCard({ review }: ReviewCardProps) {
           >
             <p
               style={{
-                fontFamily: "'Instrument Serif', serif",
+                fontFamily: "'Syne', sans-serif",
                 fontStyle: "italic",
                 fontSize: "14px",
                 color: "var(--cream)",
