@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Bookmark, Heart, MessageCircle, Send, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
-import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
+import { avatarGradient, avatarInitials } from "@/lib/profile";
 
 type Props = {
   review: Review;
@@ -197,7 +197,7 @@ export default function ReviewDetailClient({
             </span>
           </div>
 
-          {photos.length > 0 ? (
+          {photos.length > 0 && (
             <div style={{ position: "relative" }}>
               <div
                 ref={scrollRef}
@@ -222,10 +222,6 @@ export default function ReviewDetailClient({
                   {photoIndex + 1}/{photos.length}
                 </div>
               )}
-            </div>
-          ) : (
-            <div style={{ aspectRatio: "3/2", background: restaurantGradient(review.restaurant_name), display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "72px", fontWeight: 900, color: "rgba(255,255,255,0.24)" }}>{review.restaurant_name[0]?.toUpperCase() ?? "?"}</span>
             </div>
           )}
 
