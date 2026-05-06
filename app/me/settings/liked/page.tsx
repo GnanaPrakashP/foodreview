@@ -100,7 +100,6 @@ export default function LikedPostsPage() {
             review={review}
             initialLikeCount={likeCountMap[review.id] ?? 0}
             initialCommentCount={commentMap[review.id]?.count ?? 0}
-            topComment={commentMap[review.id]?.top ?? null}
           />
         ))}
       </div>

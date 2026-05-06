@@ -111,7 +111,6 @@ export default function CircleFeedClient({ allReviews, likeCountMap, commentMap,
               review={review}
               initialLikeCount={likeCountMap[review.id] ?? 0}
               initialCommentCount={eng?.count ?? 0}
-              topComment={eng?.top ?? null}
             />
           );
         })}

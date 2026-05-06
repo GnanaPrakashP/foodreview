@@ -42,7 +42,6 @@ export default function RestaurantPostsClient({
                 review={review}
                 initialLikeCount={likeCountMap[review.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
-                topComment={eng?.top ?? null}
               />
             );
           })

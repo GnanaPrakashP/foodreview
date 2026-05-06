@@ -4,15 +4,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Heart, MessageCircle, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import PostDetailSheet from "@/components/reviews/PostDetailSheet";
-import type { Review, Comment } from "@/lib/types";
-import { restaurantGradient } from "@/lib/profile";
+import type { Review } from "@/lib/types";
 
 interface Props {
   review: Review;
   initialLikeCount: number;
   initialCommentCount: number;
-  topComment: Comment | null;
 }
 
 function timeAgo(dateStr: string): string {
@@ -39,12 +36,7 @@ function avatarGradient(name: string): string {
   return G[h % G.length];
 }
 
-function avatarInitials(name: string): string {
-  return name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
-}
-
-
-export default function CircleFeedCard({ review, initialLikeCount, initialCommentCount, topComment }: Props) {
+export default function CircleFeedCard({ review, initialLikeCount, initialCommentCount }: Props) {
   const [myName, setMyName] = useState("");
   const [mounted, setMounted] = useState(false);
   const [liked, setLiked] = useState(false);
@@ -52,9 +44,7 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
   const [bounceKey, setBounceKey] = useState(0);
   const [bookmarked, setBookmarked] = useState(false);
   const [bookmarkBounceKey, setBookmarkBounceKey] = useState(0);
-  const [commentCount, setCommentCount] = useState(initialCommentCount);
-  const [previewComment, setPreviewComment] = useState<Comment | null>(topComment);
-  const [showDetail, setShowDetail] = useState(false);
+  const commentCount = initialCommentCount;
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -87,22 +77,21 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
       setLikeCount(c => c - 1);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from("likes").delete().eq("post_id", review.id).eq("user_name", myName);
+      await fetch("/api/notifications/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "POST_UNLIKED", reviewId: review.id, actorName: myName }),
+      }).catch(() => {});
     } else {
       setLiked(true);
       setLikeCount(c => c + 1);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from("likes").insert({ post_id: review.id, user_name: myName });
-      // Notification for post owner
-      if (review.reviewer_name !== myName) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any).from("notifications").insert({
-          recipient_name: review.reviewer_name,
-          actor_name: myName,
-          type: "like",
-          post_id: review.id,
-          restaurant_name: review.restaurant_name,
-        });
-      }
+      await fetch("/api/notifications/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "POST_LIKED", reviewId: review.id, actorName: myName }),
+      }).catch(() => {});
     }
   }, [myName, mounted, liked, review]);
 
@@ -121,17 +110,6 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
 
   return (
     <>
-      {showDetail && (
-        <PostDetailSheet
-          review={review}
-          myName={myName}
-          liked={liked}
-          likeCount={likeCount}
-          onLike={toggleLike}
-          onClose={() => setShowDetail(false)}
-        />
-      )}
-
       <article style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden" }}>
 
         {/* Header */}
@@ -236,15 +214,15 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
               <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
             </button>
-            <button
-              onClick={() => setShowDetail(true)}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}
+            <Link
+              href={`/comments/${encodeURIComponent(review.id)}`}
+              style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
             >
               <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
               <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
                 {commentCount} comment{commentCount !== 1 ? "s" : ""}
               </span>
-            </button>
+            </Link>
             <button
               key={`bm-${bookmarkBounceKey}`}
               onClick={toggleBookmark}
@@ -257,29 +235,6 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
               </svg>
             </button>
           </div>
-
-          {/* Top comment preview */}
-          {previewComment && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "8px", background: "var(--surface)", borderRadius: "10px", marginBottom: "6px" }}>
-              <div style={{ width: "22px", height: "22px", borderRadius: "7px", background: avatarGradient(previewComment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", fontWeight: 700, color: "white", flexShrink: 0 }}>
-                {avatarInitials(previewComment.user_name)}
-              </div>
-              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", lineHeight: 1.4, minWidth: 0 }}>
-                <span style={{ color: "var(--cream)", fontWeight: 600 }}>{previewComment.user_name}</span>{" "}
-                {previewComment.content}
-              </p>
-            </div>
-          )}
-
-          {/* View all comments */}
-          {commentCount > 1 && (
-            <button
-              onClick={() => setShowDetail(true)}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: "0 0 2px", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--orange)", fontWeight: 500, display: "block" }}
-            >
-              View all {commentCount} comments →
-            </button>
-          )}
 
           <div style={{ height: "14px" }} />
         </div>

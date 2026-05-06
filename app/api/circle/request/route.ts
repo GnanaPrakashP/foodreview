@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { addCircleEdge, addMutualCircleEdges, getAccountTypeForName, hasCircleEdge } from "@/lib/circle-db";
+import { createNotificationForNames, upsertCircleRequestNotification } from "@/lib/notifications";
 
 type CircleSupabaseClient = ReturnType<typeof createServerClient>;
 
@@ -19,19 +20,38 @@ async function createCircleNotification(
   notification: {
     recipient_name: string;
     actor_name: string;
-    type: "circle_request" | "circle_accepted" | "circle_added";
+    type: "CIRCLE_REQUEST_RECEIVED" | "CIRCLE_REQUEST_ACCEPTED" | "ADDED_TO_CIRCLE" | "MUTUAL_CIRCLE_CREATED";
+    message: string;
+    requestId?: string | null;
   }
 ) {
-  const { error } = await supabase.from("notifications").insert({
-    ...notification,
-    post_id: null,
-  });
-
-  if (error) {
-    // Circle membership is the source of truth. Notification schema drift should
-    // not make the Add button fail.
-    console.error("[circle/request] notification insert failed:", error.message, error.code, error.details);
+  if (notification.type === "CIRCLE_REQUEST_RECEIVED") {
+    // Upsert: reuse any existing row (including soft-deleted) for this pair
+    // so cancel/resend cycles never accumulate duplicate notification rows.
+    await upsertCircleRequestNotification(supabase, {
+      recipientName: notification.recipient_name,
+      actorName: notification.actor_name,
+      message: notification.message,
+      requestId: notification.requestId ?? null,
+    });
+    return;
   }
+  await createNotificationForNames(supabase, {
+    recipientName: notification.recipient_name,
+    actorName: notification.actor_name,
+    type: notification.type,
+    title: "Circle",
+    message: notification.message,
+    entityType: "CIRCLE_REQUEST",
+    entityId: notification.requestId ?? `${notification.actor_name}:${notification.recipient_name}`,
+    metadata: {
+      senderName: notification.actor_name,
+      receiverName: notification.recipient_name,
+      requestId: notification.requestId ?? null,
+      status: "accepted",
+    },
+    dedupe: true,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -95,7 +115,9 @@ async function handleCircleRequest(req: NextRequest) {
       await createCircleNotification(supabase, {
         recipient_name: receiver,
         actor_name: sender,
-        type: "circle_accepted",
+        type: "CIRCLE_REQUEST_ACCEPTED",
+        message: `${sender} accepted your circle request`,
+        requestId: reverse.id,
       });
       return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
     }
@@ -107,7 +129,8 @@ async function handleCircleRequest(req: NextRequest) {
     await createCircleNotification(supabase, {
       recipient_name: receiver,
       actor_name: sender,
-      type: "circle_accepted",
+      type: "MUTUAL_CIRCLE_CREATED",
+      message: `You and ${sender} are now in each other's circles`,
     });
     return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
   }
@@ -119,7 +142,14 @@ async function handleCircleRequest(req: NextRequest) {
     await createCircleNotification(supabase, {
       recipient_name: receiver,
       actor_name: sender,
-      type: "circle_added",
+      type: "ADDED_TO_CIRCLE",
+      message: `${sender} joined your circle`,
+    });
+    await createCircleNotification(supabase, {
+      recipient_name: sender,
+      actor_name: receiver,
+      type: "CIRCLE_REQUEST_ACCEPTED",
+      message: `You joined ${receiver}'s circle`,
     });
     return NextResponse.json({ status: "one_way", state: "CIRCLE_ONE_WAY" });
   }
@@ -135,6 +165,7 @@ async function handleCircleRequest(req: NextRequest) {
 
   if (existingError) return circleError("failed to read existing circle request", existingError);
   const existing = existingRows?.[0];
+  let requestId = existing?.id ?? null;
 
   if (existing) {
     if (existing.status === "accepted") {
@@ -143,6 +174,13 @@ async function handleCircleRequest(req: NextRequest) {
       return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
     }
     if (existing.status === "pending") {
+      await createCircleNotification(supabase, {
+        recipient_name: receiver,
+        actor_name: sender,
+        type: "CIRCLE_REQUEST_RECEIVED",
+        message: `${sender} requested to join your circle`,
+        requestId,
+      });
       return NextResponse.json({ status: "pending", state: "PENDING" });
     }
 
@@ -153,9 +191,11 @@ async function handleCircleRequest(req: NextRequest) {
 
     if (error) return circleError("failed to reopen circle request", error);
   } else {
-    const { error } = await supabase
+    const { data: createdRequest, error } = await supabase
       .from("circle_requests")
-      .insert({ sender_name: sender, receiver_name: receiver, status: "pending" });
+      .insert({ sender_name: sender, receiver_name: receiver, status: "pending" })
+      .select("id")
+      .single();
 
     if (error) {
       if (error.code === "23505") {
@@ -163,13 +203,16 @@ async function handleCircleRequest(req: NextRequest) {
       }
       return circleError("failed to create circle request", error);
     }
+    requestId = createdRequest?.id ?? null;
   }
 
   // Notify the receiver
   await createCircleNotification(supabase, {
     recipient_name: receiver,
     actor_name: sender,
-    type: "circle_request",
+    type: "CIRCLE_REQUEST_RECEIVED",
+    message: `${sender} requested to join your circle`,
+    requestId,
   });
 
   return NextResponse.json({ status: "pending", state: "PENDING" });

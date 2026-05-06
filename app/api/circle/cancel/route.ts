@@ -31,10 +31,10 @@ export async function POST(req: NextRequest) {
   // Delete the corresponding circle_request notification (clean up receiver's inbox)
   await supabase
     .from("notifications")
-    .delete()
+    .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("actor_name", senderName)
     .eq("recipient_name", receiverName)
-    .eq("type", "circle_request");
+    .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
   return NextResponse.json({ ok: true });
 }

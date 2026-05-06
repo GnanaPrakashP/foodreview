@@ -307,27 +307,11 @@ export default function ReviewForm() {
 
       if (insertError) throw insertError;
 
-      // Notify people who can see this post in their Circle feed.
-      const poster = reviewerName.trim();
-      const { data: circleData } = await supabase
-        .from("circle_memberships")
-        .select("member_name")
-        .eq("user_name", poster)
-        .returns<{ member_name: string }[]>();
-
-      const circleMembers = (circleData ?? []).map((row) => row.member_name);
-
-      if (circleMembers.length > 0) {
-        await (supabase as any).from("notifications").insert(
-          circleMembers.map((member) => ({
-            recipient_name: member,
-            actor_name: poster,
-            type: "circle_post",
-            post_id: review.id,
-            restaurant_name: restaurantName.trim(),
-          }))
-        );
-      }
+      await fetch("/api/notifications/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "CIRCLE_POST_CREATED", reviewId: review.id, actorName: reviewerName.trim() }),
+      }).catch(() => {});
 
       router.push(`/reviews/${review.id}`);
       router.refresh();

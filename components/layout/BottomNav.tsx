@@ -19,6 +19,7 @@ export default function BottomNav() {
     pathname === "/login" ||
     pathname === "/onboarding" ||
     pathname.startsWith("/auth/reset-password") ||
+    pathname.startsWith("/comments/") ||
     pathname === "/privacy" ||
     pathname === "/terms"
   )

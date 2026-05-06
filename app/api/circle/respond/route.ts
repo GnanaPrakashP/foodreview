@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { addMutualCircleEdges } from "@/lib/circle-db";
+import { createNotificationForNames } from "@/lib/notifications";
 
 export async function POST(req: NextRequest) {
   const { myName, senderName, action } = await req.json();
@@ -19,6 +20,29 @@ export async function POST(req: NextRequest) {
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
 
+  const { data: requestRow } = await supabase
+    .from("circle_requests")
+    .select("id, status")
+    .eq("sender_name", sender)
+    .eq("receiver_name", me)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Idempotent: already in desired state
+  if (requestRow?.status === "accepted" && action === "accept") {
+    return NextResponse.json({ ok: true, state: "CIRCLE_MUTUAL" });
+  }
+  if (requestRow?.status === "rejected" && action === "reject") {
+    return NextResponse.json({ ok: true, state: "NONE" });
+  }
+  if (requestRow && requestRow.status !== "pending") {
+    return NextResponse.json({ error: "Request is no longer pending" }, { status: 409 });
+  }
+  if (!requestRow) {
+    return NextResponse.json({ error: "No pending request found" }, { status: 404 });
+  }
+
   const newStatus = action === "accept" ? "accepted" : "rejected";
   const { error } = await supabase
     .from("circle_requests")
@@ -32,13 +56,41 @@ export async function POST(req: NextRequest) {
   if (action === "accept") {
     const { error: edgeError } = await addMutualCircleEdges(supabase, me, sender);
     if (edgeError) return NextResponse.json({ error: edgeError.message }, { status: 500 });
-    await supabase.from("notifications").insert({
-      recipient_name: sender,
-      actor_name: me,
-      type: "circle_accepted",
-      post_id: null,
+    await createNotificationForNames(supabase, {
+      recipientName: sender,
+      actorName: me,
+      type: "CIRCLE_REQUEST_ACCEPTED",
+      title: "Circle request accepted",
+      message: `${me} accepted your circle request`,
+      entityType: "CIRCLE_REQUEST",
+      entityId: requestRow?.id ?? `${sender}:${me}`,
+      metadata: {
+        senderName: sender,
+        receiverName: me,
+        requestId: requestRow?.id ?? null,
+        status: "accepted",
+      },
+      dedupe: true,
     });
   }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("notifications")
+    .update({
+      is_read: true,
+      read: true,
+      updated_at: now,
+      metadata: {
+        senderName: sender,
+        receiverName: me,
+        requestId: requestRow?.id ?? null,
+        status: newStatus,
+      },
+    })
+    .eq("recipient_name", me)
+    .eq("actor_name", sender)
+    .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
   return NextResponse.json({
     ok: true,

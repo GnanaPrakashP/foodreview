@@ -3,22 +3,22 @@ import { notFound } from "next/navigation";
 import type { Comment, Review } from "@/lib/types";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { canViewerSeeReview } from "@/lib/visibility";
-import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
 import { notificationProfileName } from "@/lib/notifications";
+import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
 
 interface Props {
   params: Promise<{ id: string }>;
 }
 
-export default async function ReviewDetailPage({ params }: Props) {
+export default async function CommentPostPage({ params }: Props) {
   const { id } = await params;
   const supabase = await createClient();
 
   const [{ data: review }, { data: { user } }] = await Promise.all([
     supabase
-    .from("reviews")
-    .select("*")
-    .eq("id", id)
+      .from("reviews")
+      .select("*")
+      .eq("id", id)
       .single<Review>(),
     supabase.auth.getUser(),
   ]);
@@ -34,6 +34,7 @@ export default async function ReviewDetailPage({ params }: Props) {
       .maybeSingle();
     if (profile) myName = notificationProfileName(profile);
   }
+
   let circleOwnerNames = new Set<string>();
   if (myName && myName !== review.reviewer_name) {
     const canSeeCirclePost = await hasCircleAccess(supabase, review.reviewer_name, myName);
@@ -58,6 +59,8 @@ export default async function ReviewDetailPage({ params }: Props) {
       initialLikeCount={likeRows?.length ?? 0}
       initialComments={comments ?? []}
       initialMyName={myName}
+      autoFocusComment
+      backHref="/"
     />
   );
 }

@@ -263,18 +263,42 @@ create policy "Anyone can delete own comments"   on public.comments for delete u
 -- NOTIFICATIONS
 -- =============================================
 create table if not exists public.notifications (
-  id               uuid        primary key default gen_random_uuid(),
-  recipient_name   text        not null,
-  actor_name       text        not null,
-  type             text        not null,  -- 'like' | 'comment' | 'also_commented' | circle events
-  post_id          uuid        not null references public.reviews(id) on delete cascade,
-  restaurant_name  text,
-  content          text,
-  read             boolean     not null default false,
-  created_at       timestamptz not null default now()
+  id                 uuid        primary key default gen_random_uuid(),
+  recipient_user_id  uuid        references public.profiles(id) on delete cascade,
+  actor_user_id      uuid        references public.profiles(id) on delete set null,
+  recipient_name     text        not null,
+  actor_name         text,
+  type               text        not null,
+  title              text,
+  message            text,
+  entity_type        text,
+  entity_id          text,
+  metadata           jsonb       not null default '{}',
+  is_read            boolean     not null default false,
+  post_id            uuid        references public.reviews(id) on delete cascade,
+  restaurant_name    text,
+  content            text,
+  read               boolean     not null default false,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  deleted_at         timestamptz
 );
 create index if not exists notifications_recipient_idx
   on public.notifications(recipient_name, read, created_at desc);
+create index if not exists notifications_recipient_created_idx
+  on public.notifications(recipient_user_id, created_at desc)
+  where deleted_at is null;
+create index if not exists notifications_recipient_read_idx
+  on public.notifications(recipient_user_id, is_read)
+  where deleted_at is null;
+create index if not exists notifications_actor_idx
+  on public.notifications(actor_user_id);
+create index if not exists notifications_type_idx
+  on public.notifications(type);
+create index if not exists notifications_entity_idx
+  on public.notifications(entity_type, entity_id);
+create index if not exists notifications_created_at_idx
+  on public.notifications(created_at desc);
 alter table public.notifications enable row level security;
 create policy "Notifications readable by everyone" on public.notifications for select using (true);
 create policy "Anyone can create notifications"    on public.notifications for insert with check (true);
@@ -295,6 +319,86 @@ do $$ begin
 end $$;
 
 -- =============================================
+-- NOTIFICATION LIFECYCLE INDEXES
+-- Speeds up entity-state validation queries in GET /notifications
+-- =============================================
+
+-- For validating like notifications: find likes by (post_id, user_name)
+create index if not exists likes_post_user_idx on public.likes(post_id, user_name);
+
+-- For validating circle request notifications: pending requests by sender
+create index if not exists circle_requests_pending_sender_idx
+  on public.circle_requests(sender_name, status)
+  where status = 'pending';
+
+-- For notification upsert: find existing circle request notification by actor+recipient
+create index if not exists notifications_actor_recipient_type_idx
+  on public.notifications(actor_name, recipient_name, type);
+
+-- For like notification removal by actor+post
+create index if not exists notifications_actor_post_type_idx
+  on public.notifications(actor_name, post_id, type)
+  where deleted_at is null;
+
+-- For comment notification removal by metadata.commentId (jsonb containment)
+create index if not exists notifications_metadata_gin_idx
+  on public.notifications using gin(metadata)
+  where deleted_at is null;
+
+alter table public.notifications add column if not exists recipient_user_id uuid references public.profiles(id) on delete cascade;
+alter table public.notifications add column if not exists actor_user_id uuid references public.profiles(id) on delete set null;
+alter table public.notifications alter column actor_name drop not null;
+alter table public.notifications add column if not exists title text;
+alter table public.notifications add column if not exists message text;
+alter table public.notifications add column if not exists entity_type text;
+alter table public.notifications add column if not exists entity_id text;
+alter table public.notifications add column if not exists metadata jsonb not null default '{}';
+alter table public.notifications add column if not exists is_read boolean not null default false;
+alter table public.notifications add column if not exists updated_at timestamptz not null default now();
+alter table public.notifications add column if not exists deleted_at timestamptz;
+
+update public.notifications
+set
+  is_read = coalesce(is_read, read, false),
+  message = coalesce(
+    message,
+    case
+      when type in ('like', 'POST_LIKED') then coalesce(actor_name, 'Someone') || ' liked your post'
+      when type in ('comment', 'POST_COMMENTED') then coalesce(actor_name, 'Someone') || ' commented on your post'
+      when type in ('also_commented', 'THREAD_REPLY') then coalesce(actor_name, 'Someone') || ' replied in a discussion you joined'
+      when type in ('circle_request', 'CIRCLE_REQUEST_RECEIVED') then coalesce(actor_name, 'Someone') || ' requested to join your circle'
+      when type in ('circle_accepted', 'CIRCLE_REQUEST_ACCEPTED') then coalesce(actor_name, 'Someone') || ' accepted your circle request'
+      when type in ('circle_added', 'ADDED_TO_CIRCLE') then coalesce(actor_name, 'Someone') || ' joined your circle'
+      when type in ('circle_post', 'CIRCLE_POST_CREATED') then coalesce(actor_name, 'Someone') || ' posted about ' || coalesce(restaurant_name, 'a restaurant')
+      else 'You have a new notification'
+    end
+  ),
+  entity_type = coalesce(
+    entity_type,
+    case
+      when post_id is not null then 'POST'
+      when type like 'CIRCLE_REQUEST%' or type like 'circle_%' then 'CIRCLE_REQUEST'
+      else 'SYSTEM'
+    end
+  ),
+  entity_id = coalesce(entity_id, post_id::text),
+  metadata = coalesce(metadata, '{}'::jsonb)
+where true;
+
+update public.notifications n
+set recipient_user_id = p.id
+from public.profiles p
+where n.recipient_user_id is null
+  and (n.recipient_name = trim(p.first_name || ' ' || p.last_name) or n.recipient_name = p.username);
+
+update public.notifications n
+set actor_user_id = p.id
+from public.profiles p
+where n.actor_user_id is null
+  and n.actor_name is not null
+  and (n.actor_name = trim(p.first_name || ' ' || p.last_name) or n.actor_name = p.username);
+
+-- =============================================
 -- CIRCLE REQUESTS
 -- =============================================
 create table if not exists public.circle_requests (
@@ -313,6 +417,7 @@ alter table public.circle_requests enable row level security;
 create policy "Circle requests readable by everyone"    on public.circle_requests for select using (true);
 create policy "Anyone can send circle request"          on public.circle_requests for insert with check (true);
 create policy "Anyone can respond to circle request"    on public.circle_requests for update using (true);
+create policy "Anyone can delete circle request"        on public.circle_requests for delete using (true);
 
 -- =============================================
 -- CIRCLE MEMBERSHIPS

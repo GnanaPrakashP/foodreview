@@ -83,17 +83,13 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
       .single() as { data: Comment | null };
     if (data) setComments(prev => prev.map(c => c.id === tempId ? data : c));
 
-    // Notifications: post owner + other commenters
-    const notifs: object[] = [];
-    if (review.reviewer_name !== myName) {
-      notifs.push({ recipient_name: review.reviewer_name, actor_name: myName, type: "comment", post_id: review.id, restaurant_name: review.restaurant_name, content: content.slice(0, 40) });
+    if (data) {
+      await fetch("/api/notifications/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "POST_COMMENTED", reviewId: review.id, commentId: data.id, actorName: myName }),
+      }).catch(() => {});
     }
-    const otherCommenters = [...new Set(comments.map(c => c.user_name))].filter(n => n !== myName && n !== review.reviewer_name);
-    for (const commenter of otherCommenters) {
-      notifs.push({ recipient_name: commenter, actor_name: myName, type: "also_commented", post_id: review.id, restaurant_name: review.restaurant_name, content: content.slice(0, 40) });
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (notifs.length > 0) await (supabase as any).from("notifications").insert(notifs);
 
     setSending(false);
   }
@@ -104,6 +100,11 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("comments").delete().eq("id", id).eq("user_name", myName);
+    await fetch("/api/notifications/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "POST_COMMENT_DELETED", commentId: id, actorName: myName }),
+    }).catch(() => {});
   }
 
   function startLongPress(commentId: string, owner: string) {

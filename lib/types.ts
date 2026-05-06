@@ -139,14 +139,24 @@ export interface Database {
         Row: Notification;
         Insert: {
           id?: string;
+          recipient_user_id?: string | null;
+          actor_user_id?: string | null;
           recipient_name: string;
-          actor_name: string;
+          actor_name?: string | null;
           type: Notification["type"];
+          title?: string | null;
+          message?: string | null;
+          entity_type?: Notification["entity_type"];
+          entity_id?: string | null;
+          metadata?: Json;
+          is_read?: boolean;
           post_id?: string | null;
           restaurant_name?: string | null;
           content?: string | null;
           read?: boolean;
           created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
         };
         Update: Partial<Notification>;
         Relationships: [];
@@ -227,12 +237,40 @@ export interface Comment {
 
 export interface Notification {
   id: string;
+  recipient_user_id: string | null;
+  actor_user_id: string | null;
   recipient_name: string;
-  actor_name: string;
-  type: "like" | "comment" | "also_commented" | "circle_request" | "circle_accepted" | "circle_added" | "circle_post";
+  actor_name: string | null;
+  type:
+    | "like"
+    | "comment"
+    | "also_commented"
+    | "circle_request"
+    | "circle_accepted"
+    | "circle_added"
+    | "circle_post"
+    | "CIRCLE_REQUEST_RECEIVED"
+    | "CIRCLE_REQUEST_ACCEPTED"
+    | "CIRCLE_REQUEST_REJECTED"
+    | "ADDED_TO_CIRCLE"
+    | "MUTUAL_CIRCLE_CREATED"
+    | "POST_LIKED"
+    | "POST_COMMENTED"
+    | "THREAD_REPLY"
+    | "CIRCLE_POST_CREATED"
+    | "COMMON_RESTAURANT_SCORE_UPDATED"
+    | "SYSTEM_ANNOUNCEMENT";
+  title: string | null;
+  message: string | null;
+  entity_type: "USER" | "POST" | "RESTAURANT" | "CIRCLE_REQUEST" | "SYSTEM" | null;
+  entity_id: string | null;
+  metadata: Json;
+  is_read: boolean;
   post_id: string | null;
   restaurant_name: string | null;
   content: string | null;
   read: boolean;
   created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
 }
