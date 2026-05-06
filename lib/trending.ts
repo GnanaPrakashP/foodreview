@@ -24,6 +24,8 @@ export interface TrendingRestaurant {
 
 export type TrendingWindow = "week" | "month" | "alltime";
 
+export type TrendingPeopleCounts = Record<TrendingWindow, number>;
+
 type BucketData = {
   reviews: Review[];
   weekUsers: Set<string>;
@@ -36,7 +38,7 @@ export function computeTrending(reviews: Review[]): {
   week: TrendingRestaurant[];
   month: TrendingRestaurant[];
   alltime: TrendingRestaurant[];
-  totalUsersThisWeek: number;
+  peopleCounts: TrendingPeopleCounts;
 } {
   const now = Date.now();
   const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -63,8 +65,13 @@ export function computeTrending(reviews: Review[]): {
   }
 
   const allWeekUsers = new Set<string>();
+  const allMonthUsers = new Set<string>();
+  const allTimeUsers = new Set<string>();
   for (const r of reviews) {
-    if (new Date(r.created_at).getTime() > now - WEEK) allWeekUsers.add(r.reviewer_name);
+    const ts = new Date(r.created_at).getTime();
+    allTimeUsers.add(r.reviewer_name);
+    if (ts > now - MONTH) allMonthUsers.add(r.reviewer_name);
+    if (ts > now - WEEK) allWeekUsers.add(r.reviewer_name);
   }
 
   function buildEntry(name: string, b: BucketData): TrendingRestaurant {
@@ -122,7 +129,11 @@ export function computeTrending(reviews: Review[]): {
     week:    [...entries].sort((a, b) => b.trending_score - a.trending_score),
     month:   [...entries].sort((a, b) => (b.users_month * 3 + b.users_all_time) - (a.users_month * 3 + a.users_all_time)),
     alltime: [...entries].sort((a, b) => b.users_all_time - a.users_all_time),
-    totalUsersThisWeek: allWeekUsers.size,
+    peopleCounts: {
+      week: allWeekUsers.size,
+      month: allMonthUsers.size,
+      alltime: allTimeUsers.size,
+    },
   };
 }
 

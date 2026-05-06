@@ -46,18 +46,24 @@ create policy "Users can update own profile"
 create table public.reviews (
   id               uuid        primary key default gen_random_uuid(),
   reviewer_name    text        not null,
+  restaurant_id    text,
   restaurant_name  text        not null,
   area             text,
   items            jsonb       not null default '[]',
   body             text,
   photo_url        text,
+  visibility       text        not null default 'public',
   created_at       timestamptz not null default now()
 );
 
 -- Indexes
 create index reviews_created_at_desc_idx  on public.reviews(created_at desc);
+create index reviews_restaurant_id_idx    on public.reviews(restaurant_id);
 create index reviews_restaurant_name_idx  on public.reviews(restaurant_name);
 create index reviews_reviewer_name_idx    on public.reviews(reviewer_name);
+create index reviews_visibility_idx       on public.reviews(visibility);
+create index reviews_reviewer_restaurant_visibility_idx
+  on public.reviews(reviewer_name, restaurant_id, restaurant_name, visibility);
 
 -- =============================================
 -- Trending score helper view
@@ -142,6 +148,10 @@ order by avg_score_10 desc, unique_raters desc;
 
 -- Add area column (run once if table already exists)
 alter table public.reviews add column if not exists area text;
+
+-- Optional stable restaurant identity. Current app data may have null here;
+-- application logic falls back to a normalized restaurant_name until this is populated.
+alter table public.reviews add column if not exists restaurant_id text;
 
 -- Add visibility column (public = everyone, circle = friends only, me = private log)
 alter table public.reviews add column if not exists visibility text not null default 'public';

@@ -5,12 +5,22 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, MessageCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { restaurantGradient } from "@/lib/profile";
+import type { Review } from "@/lib/types";
 
 interface MyComment {
   id: string;
+  post_id: string;
   content: string;
   created_at: string;
-  reviews: { restaurant_name: string } | null;
+  reviews: Review | Review[] | null;
+}
+
+function nestedReview(value: Review | Review[] | null): Review | null {
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+function commentDate(value: string): string {
+  return new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
 export default function MyCommentsPage() {
@@ -23,16 +33,21 @@ export default function MyCommentsPage() {
     if (!myName) { setLoading(false); return; }
 
     const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
-      .from("comments")
-      .select("id, content, created_at, reviews(restaurant_name)")
-      .eq("user_name", myName)
-      .order("created_at", { ascending: false })
-      .then(({ data }: { data: MyComment[] | null }) => {
-        setItems(data ?? []);
-        setLoading(false);
-      });
+
+    async function loadComments() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .from("comments")
+        .select("id, post_id, content, created_at, reviews(*)")
+        .eq("user_name", myName)
+        .order("created_at", { ascending: false });
+
+      const comments = (data ?? []) as MyComment[];
+      setItems(comments);
+      setLoading(false);
+    }
+
+    loadComments();
   }, []);
 
   return (
@@ -46,29 +61,51 @@ export default function MyCommentsPage() {
 
       <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
         {loading ? (
-          [1,2,3].map(i => <div key={i} style={{ height: 80, background: "var(--card)", borderRadius: 14, opacity: 0.5 }} className="animate-pulse" />)
+          [1,2,3].map(i => <div key={i} style={{ height: 118, background: "var(--card)", borderRadius: 16, opacity: 0.5 }} className="animate-pulse" />)
         ) : items.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
             <MessageCircle size={32} strokeWidth={1.5} color="var(--muted)" />
             <p style={{ fontSize: "14px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>No comments yet</p>
           </div>
         ) : items.map((c) => {
-          const restaurantName = c.reviews?.restaurant_name ?? "Unknown";
+          const review = nestedReview(c.reviews);
+          const restaurantName = review?.restaurant_name ?? "Unknown";
           return (
-            <div key={c.id} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "12px 14px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-                <div style={{ width: 28, height: 28, background: restaurantGradient(restaurantName), borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
-                  {restaurantName[0]?.toUpperCase() ?? "?"}
-                </div>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 700, color: "var(--cream)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {restaurantName}
-                </p>
-                <p style={{ fontSize: "10px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
-                  {new Date(c.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            <button
+              key={c.id}
+              onClick={() => review && router.push(`/reviews/${review.id}`)}
+              disabled={!review}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: "16px",
+                padding: "14px",
+                cursor: review ? "pointer" : "default",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "10px" }}>
+                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 800, color: "var(--cream)" }}>Your comment</p>
+                <p style={{ fontSize: "10px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>{commentDate(c.created_at)}</p>
+              </div>
+
+              <div style={{ background: "var(--surface)", borderLeft: "3px solid var(--orange)", borderRadius: "0 10px 10px 0", padding: "10px 12px", marginBottom: "11px" }}>
+                <p style={{ fontSize: "14px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.45 }}>
+                  &ldquo;{c.content}&rdquo;
                 </p>
               </div>
-              <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{c.content}</p>
-            </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+                <div style={{ width: 26, height: 26, background: restaurantGradient(restaurantName), borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+                  {restaurantName[0]?.toUpperCase() ?? "?"}
+                </div>
+                <p style={{ flex: 1, minWidth: 0, fontSize: "12px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  On {restaurantName}{review ? ` by ${review.reviewer_name}` : ""}
+                </p>
+                {review && <span style={{ fontSize: "11px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, flexShrink: 0 }}>View post</span>}
+              </div>
+            </button>
           );
         })}
       </div>

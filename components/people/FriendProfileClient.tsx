@@ -15,11 +15,12 @@ interface RankedPlace {
   name: string;
   score10: number;
   visitCount: number;
+  dishCount: number;
   isRegular: boolean;
 }
 
 function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
-  const map = new Map<string, { totalRating: number; ratingCount: number; visitCount: number }>();
+  const map = new Map<string, { totalRating: number; ratingCount: number; visitCount: number; dishes: Set<string> }>();
   for (const r of reviews) {
     const existing = map.get(r.restaurant_name);
     const rated = r.items.filter((it) => it.rating > 0);
@@ -28,8 +29,11 @@ function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
       existing.visitCount++;
       existing.totalRating += sum;
       existing.ratingCount += rated.length;
+      for (const it of r.items) if (it.name.trim()) existing.dishes.add(it.name.trim().toLowerCase());
     } else {
-      map.set(r.restaurant_name, { totalRating: sum, ratingCount: rated.length, visitCount: 1 });
+      const dishes = new Set<string>();
+      for (const it of r.items) if (it.name.trim()) dishes.add(it.name.trim().toLowerCase());
+      map.set(r.restaurant_name, { totalRating: sum, ratingCount: rated.length, visitCount: 1, dishes });
     }
   }
   return [...map.entries()]
@@ -37,6 +41,7 @@ function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
       name,
       score10: d.ratingCount > 0 ? Math.round((d.totalRating / d.ratingCount) * 2 * 10) / 10 : 0,
       visitCount: d.visitCount,
+      dishCount: d.dishes.size,
       isRegular: d.visitCount >= 5,
     }))
     .sort((a, b) => b.score10 - a.score10);
@@ -61,6 +66,7 @@ export default function FriendProfileClient({
   const [myName, setMyName] = useState("");
   const [circleStatus, setCircleStatus] = useState<CircleStatus>("none");
   const [theirCircleCount, setTheirCircleCount] = useState(0);
+  const [commonRestaurantCount, setCommonRestaurantCount] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
 
   const isOwnProfile = myName === name;
@@ -110,6 +116,17 @@ export default function FriendProfileClient({
     const me = localStorage.getItem("fc_my_name") ?? "";
     setMyName(me);
     if (!me) { setMounted(true); return; }
+
+    if (me !== name) {
+      fetch(`/api/users/${encodeURIComponent(name)}/common-restaurants`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (typeof data?.commonRestaurantCount === "number") {
+            setCommonRestaurantCount(data.commonRestaurantCount);
+          }
+        })
+        .catch(() => {});
+    }
 
     loadCircleStatus(me).finally(() => setMounted(true));
   }, [loadCircleStatus]);
@@ -195,7 +212,18 @@ export default function FriendProfileClient({
             {avatarInitials(name)}
           </div>
           <div>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)" }}>{name}</p>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{name}</p>
+              {mounted && !isOwnProfile && commonRestaurantCount !== null && (
+                <span
+                  aria-label={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
+                  title={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "3px", border: "1px solid rgba(240,96,48,0.28)", background: "rgba(240,96,48,0.12)", borderRadius: "999px", padding: "2px 7px", fontSize: "12px", lineHeight: 1.35, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}
+                >
+                  {commonRestaurantCount} 🧑‍🍳
+                </span>
+              )}
+            </div>
             <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
               @{name.toLowerCase().replace(/\s+/g, "_")}
             </p>
@@ -326,6 +354,7 @@ export default function FriendProfileClient({
                 </p>
                 <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
                   {place.visitCount} visit{place.visitCount !== 1 ? "s" : ""}
+                  {place.dishCount > 0 && ` · ${place.dishCount} dish${place.dishCount !== 1 ? "es" : ""}`}
                   {place.isRegular && (
                     <span style={{ marginLeft: "8px", background: "rgba(240,96,48,0.12)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: "20px", padding: "1px 7px", fontSize: "9px", fontWeight: 700, color: "var(--orange)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                       Regular

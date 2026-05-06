@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { TrendingRestaurant, TrendingWindow, CircleReviewItem } from "@/lib/trending";
+import type { TrendingRestaurant, TrendingWindow, CircleReviewItem, TrendingPeopleCounts } from "@/lib/trending";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ function CircleBadge({ reviews }: { reviews: CircleReviewItem[] }) {
       <span style={{ fontSize: 11, color: "#F59E0B", fontWeight: 500 }}>
         ✦ {shown.length === 1
           ? `${shown[0].friend_name.split(" ")[0]} visited this`
-          : `${shown.length} from your Circle`}
+          : `${reviews.length} from your Circle`}
       </span>
     </div>
   );
@@ -85,13 +85,16 @@ function RestaurantsTab({
   month,
   alltime,
   circleReviews,
+  timeFilter,
+  onTimeFilterChange,
 }: {
   week: TrendingRestaurant[];
   month: TrendingRestaurant[];
   alltime: TrendingRestaurant[];
   circleReviews: Record<string, CircleReviewItem[]>;
+  timeFilter: TrendingWindow;
+  onTimeFilterChange: (timeFilter: TrendingWindow) => void;
 }) {
-  const [timeFilter, setTimeFilter] = useState<TrendingWindow>("week");
   const [search, setSearch] = useState("");
 
   const list = timeFilter === "week" ? week : timeFilter === "month" ? month : alltime;
@@ -120,7 +123,7 @@ function RestaurantsTab({
       {/* Time filter pills */}
       <div style={{ padding: "0 20px 14px", display: "flex", gap: 7 }}>
         {(["week", "month", "alltime"] as TrendingWindow[]).map((t) => (
-          <button key={t} onClick={() => setTimeFilter(t)}
+          <button key={t} onClick={() => onTimeFilterChange(t)}
             style={{
               padding: "4px 14px", borderRadius: 99, fontSize: 11, fontWeight: 500, cursor: "pointer",
               background: timeFilter === t ? "#F59E0B" : "transparent",
@@ -204,13 +207,16 @@ function CirclePicksTab({
   month,
   alltime,
   circleReviews,
+  timeFilter,
+  onTimeFilterChange,
 }: {
   week: TrendingRestaurant[];
   month: TrendingRestaurant[];
   alltime: TrendingRestaurant[];
   circleReviews: Record<string, CircleReviewItem[]>;
+  timeFilter: TrendingWindow;
+  onTimeFilterChange: (timeFilter: TrendingWindow) => void;
 }) {
-  const [timeFilter, setTimeFilter] = useState<TrendingWindow>("week");
   const [search, setSearch] = useState("");
 
   const list = timeFilter === "week" ? week : timeFilter === "month" ? month : alltime;
@@ -237,7 +243,7 @@ function CirclePicksTab({
 
       <div style={{ padding: "0 20px 14px", display: "flex", gap: 7 }}>
         {(["week", "month", "alltime"] as TrendingWindow[]).map((t) => (
-          <button key={t} onClick={() => setTimeFilter(t)}
+          <button key={t} onClick={() => onTimeFilterChange(t)}
             style={{
               padding: "4px 14px", borderRadius: 99, fontSize: 11, fontWeight: 500, cursor: "pointer",
               background: timeFilter === t ? "#F59E0B" : "transparent",
@@ -303,15 +309,39 @@ interface Props {
   week: TrendingRestaurant[];
   month: TrendingRestaurant[];
   alltime: TrendingRestaurant[];
-  totalUsersThisWeek: number;
+  peopleCounts: TrendingPeopleCounts;
   circleReviews: Record<string, CircleReviewItem[]>;
   circleWeek: TrendingRestaurant[];
   circleMonth: TrendingRestaurant[];
   circleAlltime: TrendingRestaurant[];
+  circlePeopleCounts: TrendingPeopleCounts;
 }
 
-export default function TrendingClient({ week, month, alltime, totalUsersThisWeek, circleReviews, circleWeek, circleMonth, circleAlltime }: Props) {
+function timeLabel(timeFilter: TrendingWindow): string {
+  if (timeFilter === "week") return "this week";
+  if (timeFilter === "month") return "this month";
+  return "all time";
+}
+
+function peopleSummary(tab: "restaurants" | "circle", count: number, timeFilter: TrendingWindow): string {
+  const people = count === 1 ? "person" : "people";
+  if (tab === "circle") return `${count} ${people} from your Circle eating out ${timeLabel(timeFilter)}`;
+  return `${count} ${people} eating out ${timeLabel(timeFilter)}`;
+}
+
+export default function TrendingClient({ week, month, alltime, peopleCounts, circleReviews, circleWeek, circleMonth, circleAlltime, circlePeopleCounts }: Props) {
   const [tab, setTab] = useState<"restaurants" | "circle">("restaurants");
+  const [timeFilters, setTimeFilters] = useState<Record<"restaurants" | "circle", TrendingWindow>>({
+    restaurants: "week",
+    circle: "week",
+  });
+  const activeTimeFilter = timeFilters[tab];
+  const activePeopleCounts = tab === "restaurants" ? peopleCounts : circlePeopleCounts;
+  const activePeopleCount = activePeopleCounts[activeTimeFilter];
+
+  function updateTimeFilter(timeFilter: TrendingWindow) {
+    setTimeFilters((prev) => ({ ...prev, [tab]: timeFilter }));
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", fontFamily: "'DM Sans',sans-serif", color: "var(--cream)" }}>
@@ -321,9 +351,9 @@ export default function TrendingClient({ week, month, alltime, totalUsersThisWee
         <div style={{ padding: "18px 20px 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 30, fontWeight: 700, color: "var(--cream)", letterSpacing: "-0.5px", lineHeight: 1 }}>Trending</h1>
-            {totalUsersThisWeek > 0 && (
+            {activePeopleCount > 0 && (
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                {totalUsersThisWeek} {totalUsersThisWeek === 1 ? "person" : "people"} eating out this week
+                {peopleSummary(tab, activePeopleCount, activeTimeFilter)}
               </div>
             )}
           </div>
@@ -349,9 +379,25 @@ export default function TrendingClient({ week, month, alltime, totalUsersThisWee
 
       <div style={{ paddingBottom: 100 }}>
         {tab === "restaurants" && (
-          <RestaurantsTab week={week} month={month} alltime={alltime} circleReviews={circleReviews} />
+          <RestaurantsTab
+            week={week}
+            month={month}
+            alltime={alltime}
+            circleReviews={circleReviews}
+            timeFilter={timeFilters.restaurants}
+            onTimeFilterChange={updateTimeFilter}
+          />
         )}
-        {tab === "circle" && <CirclePicksTab week={circleWeek} month={circleMonth} alltime={circleAlltime} circleReviews={circleReviews} />}
+        {tab === "circle" && (
+          <CirclePicksTab
+            week={circleWeek}
+            month={circleMonth}
+            alltime={circleAlltime}
+            circleReviews={circleReviews}
+            timeFilter={timeFilters.circle}
+            onTimeFilterChange={updateTimeFilter}
+          />
+        )}
       </div>
 
     </div>

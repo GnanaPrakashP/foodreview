@@ -29,6 +29,7 @@ const {
   canViewerSeeReview,
   filterCircleTrendingReviews,
   filterGlobalTrendingReviews,
+  filterPublicCircleTrendingReviews,
   filterProfileReviews,
 } = loadVisibilityModule();
 
@@ -163,6 +164,23 @@ test("circle trending is strict to circle owners and public or circle posts", ()
   assert.equal(restaurants.has("Private A Circle"), true);
   assert.equal(restaurants.has("Private A Public"), true);
   assert.equal(restaurants.has("Private B Circle"), false);
+});
+
+test("public circle trending only includes public posts from circle owners", () => {
+  const posts = [
+    review("User A", "public", "A Public"),
+    review("User A", "circle", "A Circle"),
+    review("User A", "me", "A Only Me"),
+    review("User B", "public", "B Public"),
+    review("Viewer", "public", "Viewer Public"),
+  ];
+
+  const circlePosts = filterPublicCircleTrendingReviews(posts, {
+    viewerName: "Viewer",
+    circleOwnerNames: ["User A"],
+  });
+
+  assert.deepEqual(ids(circlePosts), [posts[0].id]);
 });
 
 test("suppressed and blocked posts are excluded before visibility checks", () => {

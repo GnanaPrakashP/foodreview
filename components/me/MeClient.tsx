@@ -292,7 +292,11 @@ export default function MeClient({
           ) : (
             <div>
               {rankedPlaces.map((place, i) => (
-                <div key={place.name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "13px 0", borderBottom: "1px solid var(--border)" }}>
+                <Link
+                  key={place.name}
+                  href={`/people/${encodeURIComponent(myName)}/${encodeURIComponent(place.name)}`}
+                  style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", padding: "13px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
+                >
                   <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 700, color: RANK_COLORS[i + 1] ?? "var(--border)", width: "24px", textAlign: "center", flexShrink: 0 }}>
                     {i + 1}
                   </div>
@@ -317,7 +321,7 @@ export default function MeClient({
                       <span style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>/10</span>
                     </div>
                   )}
-                </div>
+                </Link>
               ))}
             </div>
           )}

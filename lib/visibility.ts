@@ -61,6 +61,14 @@ export function canShowInCircleTrending(review: Review, context: ViewerContext):
   return visibility === "public" || visibility === "circle";
 }
 
+export function canShowInPublicCircleTrending(review: Review, context: ViewerContext): boolean {
+  if (!canShowInGlobalTrending(review, context)) return false;
+
+  const viewerName = context.viewerName ?? "";
+  if (!viewerName || review.reviewer_name === viewerName) return false;
+  return toSet(context.circleOwnerNames).has(review.reviewer_name);
+}
+
 export function filterProfileReviews(
   reviews: Review[],
   ownerName: string,
@@ -83,4 +91,11 @@ export function filterCircleTrendingReviews(
   context: ViewerContext
 ): Review[] {
   return reviews.filter((review) => canShowInCircleTrending(review, context));
+}
+
+export function filterPublicCircleTrendingReviews(
+  reviews: Review[],
+  context: ViewerContext
+): Review[] {
+  return reviews.filter((review) => canShowInPublicCircleTrending(review, context));
 }

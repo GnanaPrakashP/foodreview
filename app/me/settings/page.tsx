@@ -124,7 +124,7 @@ export default function SettingsPage() {
       <div style={{ margin: "0 16px 10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
         {([
           { label: "Liked Posts",  icon: <Heart size={16} strokeWidth={2} color="var(--muted)" />,         sheet: "liked" },
-          { label: "Saved Places", icon: <Bookmark size={16} strokeWidth={2} color="var(--muted)" />,      sheet: "saved" },
+          { label: "Saved Posts",  icon: <Bookmark size={16} strokeWidth={2} color="var(--muted)" />,      sheet: "saved" },
           { label: "My Comments",  icon: <MessageCircle size={16} strokeWidth={2} color="var(--muted)" />, sheet: "comments" },
         ]).map(({ label, icon, sheet }, idx, arr) => (
           <div key={sheet} style={{ borderBottom: idx < arr.length - 1 ? "1px solid var(--border)" : "none" }}>

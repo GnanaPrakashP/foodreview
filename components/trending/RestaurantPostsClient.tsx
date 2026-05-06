@@ -1,65 +1,27 @@
 "use client";
 
-import { useState } from "react";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
-import { canShowInCircleFeed } from "@/lib/circle";
-
-interface RankInfo { rank: number; total: number; visitCount: number }
 
 interface Props {
   restaurantReviews: Review[];
-  myName: string;
-  circleMembers: string[];
-  mutualCircleMembers: string[];
+  circleRestaurantReviews: Review[];
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
-  rankMap: Record<string, RankInfo>;
   circleOnly?: boolean;
 }
 
 export default function RestaurantPostsClient({
   restaurantReviews,
-  myName,
-  circleMembers,
-  mutualCircleMembers,
+  circleRestaurantReviews,
   likeCountMap,
   commentMap,
   circleOnly = false,
 }: Props) {
-  const [filter, setFilter] = useState<"all" | "circle">("all");
-
-  const hasCircle = circleMembers.length > 0 && !circleOnly;
-  const circleSet = new Set(circleMembers);
-  const mutualSet = new Set(mutualCircleMembers);
-  const circleShown = restaurantReviews.filter((review) =>
-    canShowInCircleFeed(review, myName, circleSet, mutualSet)
-  );
-  const shown = (circleOnly || filter === "circle")
-    ? circleShown
-    : restaurantReviews;
+  const shown = circleOnly ? circleRestaurantReviews : restaurantReviews;
 
   return (
     <div>
-      {/* Toggle */}
-      {hasCircle && (
-        <div style={{ display: "flex", padding: "0 20px", borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
-          {(["all", "circle"] as const).map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-              style={{
-                flex: 1, padding: "10px 0", fontSize: 12, fontWeight: 500, cursor: "pointer",
-                color: filter === f ? "#F59E0B" : "var(--muted)",
-                background: "none", border: "none",
-                borderBottom: `2px solid ${filter === f ? "#F59E0B" : "transparent"}`,
-                fontFamily: "'DM Sans',sans-serif",
-                marginBottom: -1,
-              }}>
-              {f === "all" ? "Everyone" : "Circle"}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Posts */}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "0 16px 20px" }}>
         {shown.length === 0 ? (

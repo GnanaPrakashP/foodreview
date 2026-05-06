@@ -52,6 +52,7 @@ export interface Database {
         Row: {
           id: string;
           reviewer_name: string;
+          restaurant_id: string | null;
           restaurant_name: string;
           area: string | null;
           items: FoodItem[];
@@ -64,6 +65,7 @@ export interface Database {
         Insert: {
           id?: string;
           reviewer_name: string;
+          restaurant_id?: string | null;
           restaurant_name: string;
           area?: string | null;
           items: FoodItem[];
@@ -76,6 +78,7 @@ export interface Database {
         Update: {
           id?: string;
           reviewer_name?: string;
+          restaurant_id?: string | null;
           restaurant_name?: string;
           area?: string | null;
           items?: FoodItem[];
