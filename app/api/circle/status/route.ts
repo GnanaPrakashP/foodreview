@@ -37,8 +37,7 @@ export async function GET(req: NextRequest) {
     supabase
       .from("circle_requests")
       .select("sender_name, receiver_name, status")
-      .or(`sender_name.eq.${name},receiver_name.eq.${name}`)
-      .eq("status", "pending"),
+      .or(`sender_name.eq.${name},receiver_name.eq.${name}`),
     getAccountTypeForName(supabase, name),
   ]);
 
@@ -49,18 +48,33 @@ export async function GET(req: NextRequest) {
     if (row.member_name === name) joinedCirclesSet.add(row.user_name);
   }
 
+  const pendingIncomingSet = new Set<string>();
+  const pendingSentSet = new Set<string>();
+
+  for (const row of requestRows ?? []) {
+    if (row.status === "accepted") {
+      if (row.sender_name === name) {
+        circleMembersSet.add(row.receiver_name);
+        joinedCirclesSet.add(row.receiver_name);
+      }
+      if (row.receiver_name === name) {
+        circleMembersSet.add(row.sender_name);
+        joinedCirclesSet.add(row.sender_name);
+      }
+      continue;
+    }
+
+    if (row.status !== "pending") continue;
+    if (row.receiver_name === name && !circleMembersSet.has(row.sender_name)) pendingIncomingSet.add(row.sender_name);
+    if (row.sender_name === name && !joinedCirclesSet.has(row.receiver_name)) pendingSentSet.add(row.receiver_name);
+  }
+
   const circleMembers = Array.from(circleMembersSet);
   const joinedCircles = Array.from(joinedCirclesSet);
   const mutualMembers = joinedCircles.filter((member) => circleMembersSet.has(member));
   const oneWayMembers = joinedCircles.filter((member) => !circleMembersSet.has(member));
-
-  const pendingIncoming: string[] = [];
-  const pendingSent: string[] = [];
-
-  for (const row of requestRows ?? []) {
-    if (row.receiver_name === name) pendingIncoming.push(row.sender_name);
-    if (row.sender_name === name) pendingSent.push(row.receiver_name);
-  }
+  const pendingIncoming = Array.from(pendingIncomingSet);
+  const pendingSent = Array.from(pendingSentSet);
 
   const memberStates: Record<string, CircleRelationshipState> = {};
   for (const member of joinedCircles) {

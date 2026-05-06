@@ -16,16 +16,14 @@ function applyTheme(mode: ThemeMode) {
 
 export function useTheme() {
   const [mode, setMode] = useState<ThemeMode>("system");
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("fc_theme") as ThemeMode | null;
-    if (saved === "light" || saved === "dark") {
-      setMode(saved);
-      applyTheme(saved);
-    } else {
-      setMode("system");
-      applyTheme("system");
-    }
+    const resolved = saved === "light" || saved === "dark" ? saved : "system";
+    setMode(resolved);
+    applyTheme(resolved);
+    setMounted(true);
   }, []);
 
   function setThemeMode(next: ThemeMode) {
@@ -38,5 +36,5 @@ export function useTheme() {
     applyTheme(next);
   }
 
-  return { mode, setThemeMode };
+  return { mode, setThemeMode, mounted };
 }

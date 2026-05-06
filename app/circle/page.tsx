@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
+import { getCircleRelationshipsForName } from "@/lib/circle-db";
+import { filterCircleTrendingReviews } from "@/lib/visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +15,34 @@ function avgRating(review: Review): number {
 export default async function CirclePage() {
   const supabase = await createClient();
 
-  const [{ data: reviews }, { data: rawLikes }, { data: rawComments }] = await Promise.all([
+  const [{ data: { user } }, { data: reviews }] = await Promise.all([
+    supabase.auth.getUser(),
     supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(200).returns<Review[]>(),
-    supabase.from("likes").select("post_id"),
-    supabase.from("comments").select("id, post_id, user_name, content, created_at").order("created_at", { ascending: false }).limit(1000).returns<Comment[]>(),
   ]);
 
-  const allReviews = reviews ?? [];
+  const myName = user?.user_metadata?.full_name ?? "";
+  let joinedCircles = new Set<string>();
+  if (myName) {
+    joinedCircles = (await getCircleRelationshipsForName(supabase, myName)).joinedCircles;
+  }
+
+  const allReviews = filterCircleTrendingReviews(reviews ?? [], {
+    viewerName: myName,
+    circleOwnerNames: joinedCircles,
+  });
+  const postIds = allReviews.map((review) => review.id);
+
+  const [{ data: rawLikes }, { data: rawComments }] = postIds.length > 0
+    ? await Promise.all([
+        supabase.from("likes").select("post_id").in("post_id", postIds),
+        supabase
+          .from("comments")
+          .select("id, post_id, user_name, content, created_at")
+          .in("post_id", postIds)
+          .order("created_at", { ascending: false })
+          .returns<Comment[]>(),
+      ])
+    : [{ data: [] }, { data: [] }];
 
   const likeCountMap: Record<string, number> = {};
   for (const like of (rawLikes ?? []) as { post_id: string }[]) {

@@ -4,6 +4,8 @@ import { formatDate } from "@/lib/utils";
 import type { Review } from "@/lib/types";
 import Link from "next/link";
 import { restaurantGradient } from "@/lib/profile";
+import { hasCircleAccess } from "@/lib/circle-db";
+import { canViewerSeeReview } from "@/lib/visibility";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -26,13 +28,25 @@ export default async function ReviewDetailPage({ params }: Props) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: review } = await supabase
+  const [{ data: review }, { data: { user } }] = await Promise.all([
+    supabase
     .from("reviews")
     .select("*")
     .eq("id", id)
-    .single<Review>();
+      .single<Review>(),
+    supabase.auth.getUser(),
+  ]);
 
   if (!review) notFound();
+
+  const myName = user?.user_metadata?.full_name ?? "";
+  let circleOwnerNames = new Set<string>();
+  if (myName && myName !== review.reviewer_name) {
+    const canSeeCirclePost = await hasCircleAccess(supabase, review.reviewer_name, myName);
+    if (canSeeCirclePost) circleOwnerNames = new Set([review.reviewer_name]);
+  }
+
+  if (!canViewerSeeReview(review, { viewerName: myName, circleOwnerNames })) notFound();
 
   const rating = avgRating(review);
 

@@ -3,6 +3,7 @@ import { getPopularDishes } from "@/lib/dishes";
 import type { SlimReview } from "@/lib/dishes";
 import type { Review } from "@/lib/types";
 import DishSearch from "@/components/dishes/DishSearch";
+import { filterGlobalTrendingReviews } from "@/lib/visibility";
 
 export const revalidate = 300;
 
@@ -11,12 +12,12 @@ export default async function DishesPage() {
 
   const { data: reviews } = await supabase
     .from("reviews")
-    .select("id, restaurant_name, reviewer_name, items, body, created_at")
+    .select("id, restaurant_name, reviewer_name, items, body, visibility, created_at")
     .order("created_at", { ascending: false })
     .limit(500)
     .returns<Review[]>();
 
-  const slim: SlimReview[] = (reviews ?? []).map((r) => ({
+  const slim: SlimReview[] = filterGlobalTrendingReviews(reviews ?? []).map((r) => ({
     id: r.id,
     restaurant_name: r.restaurant_name,
     reviewer_name: r.reviewer_name,

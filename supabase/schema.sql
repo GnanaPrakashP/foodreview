@@ -72,25 +72,29 @@ with
     select restaurant_name,
            count(distinct reviewer_name) as users_week
     from public.reviews
-    where created_at > now() - interval '7 days'
+    where visibility = 'public'
+      and created_at > now() - interval '7 days'
     group by restaurant_name
   ),
   this_month as (
     select restaurant_name,
            count(distinct reviewer_name) as users_month
     from public.reviews
-    where created_at > now() - interval '30 days'
+    where visibility = 'public'
+      and created_at > now() - interval '30 days'
     group by restaurant_name
   ),
   recent as (
     select distinct restaurant_name
     from public.reviews
-    where created_at > now() - interval '2 days'
+    where visibility = 'public'
+      and created_at > now() - interval '2 days'
   ),
   all_time as (
     select restaurant_name,
            count(distinct reviewer_name) as users_all_time
     from public.reviews
+    where visibility = 'public'
     group by restaurant_name
   )
 select
@@ -127,6 +131,7 @@ from public.reviews r,
      lateral jsonb_array_elements(r.items) as item
 where (item ->> 'name') is not null
   and (item ->> 'name') != ''
+  and r.visibility = 'public'
 group by r.restaurant_name, item ->> 'name'
 order by avg_score_10 desc, unique_raters desc;
 
@@ -137,6 +142,18 @@ order by avg_score_10 desc, unique_raters desc;
 
 -- Add area column (run once if table already exists)
 alter table public.reviews add column if not exists area text;
+
+-- Add visibility column (public = everyone, circle = friends only, me = private log)
+alter table public.reviews add column if not exists visibility text not null default 'public';
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'reviews_visibility_check'
+  ) then
+    alter table public.reviews
+      add constraint reviews_visibility_check
+      check (visibility in ('public', 'circle', 'me'));
+  end if;
+end $$;
 
 alter table public.profiles add column if not exists account_type text not null default 'private';
 

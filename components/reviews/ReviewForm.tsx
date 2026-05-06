@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import PhotoUpload from "@/components/reviews/PhotoUpload";
 import type { FoodItem, Review } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
-import { UtensilsCrossed, Star, X, Search, MapPin } from "lucide-react";
+import { UtensilsCrossed, Star, X, Search, MapPin, Globe, Users, Lock } from "lucide-react";
+import type { Visibility } from "@/lib/types";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -193,6 +194,7 @@ export default function ReviewForm() {
   const [allDishNames, setAllDishNames] = useState<string[]>([]);
 
   const [body, setBody] = useState("");
+  const [visibility, setVisibility] = useState<Visibility>("public");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -298,6 +300,7 @@ export default function ReviewForm() {
           items: allItems,
           body: body.trim() || null,
           photo_url: photoUrl,
+          visibility,
         })
         .select("id")
         .single();
@@ -492,7 +495,44 @@ export default function ReviewForm() {
       </div>
 
 
-{serverError && (
+      {/* 5 — Visibility */}
+      <div className="px-5 pb-4">
+        <FieldLabel>Share with</FieldLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+          {([
+            { value: "public",  icon: <Globe  size={18} strokeWidth={1.8} />, label: "Public",  sub: "Everyone" },
+            { value: "circle",  icon: <Users  size={18} strokeWidth={1.8} />, label: "Circle",  sub: "Your friends" },
+            { value: "me",      icon: <Lock   size={18} strokeWidth={1.8} />, label: "Just me", sub: "Private log" },
+          ] as { value: Visibility; icon: React.ReactNode; label: string; sub: string }[]).map(({ value, icon, label, sub }) => {
+            const active = visibility === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setVisibility(value)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "14px 8px",
+                  background: active ? "var(--orange-dim)" : "var(--card)",
+                  border: `1.5px solid ${active ? "var(--orange)" : "var(--border)"}`,
+                  borderRadius: "14px",
+                  cursor: "pointer",
+                  color: active ? "var(--orange)" : "var(--muted)",
+                }}
+              >
+                {icon}
+                <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "12px", color: active ? "var(--orange)" : "var(--cream)" }}>{label}</span>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", color: "var(--muted)" }}>{sub}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {serverError && (
         <div className="px-5 pb-4">
           <p style={{ fontSize: "13px", color: "#EF4444", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "12px", padding: "12px 14px" }}>
             {serverError}

@@ -1,4 +1,5 @@
 import type { AccountType, CircleRelationshipState, Review } from "@/lib/types";
+import { canShowInCircleTrending } from "@/lib/visibility";
 
 export const DEFAULT_ACCOUNT_TYPE: AccountType = "private";
 
@@ -23,6 +24,8 @@ export function canShowInCircleFeed(
   joinedCircles: Set<string>,
   _mutualMembers?: Set<string>
 ): boolean {
-  if (!viewerName || review.reviewer_name === viewerName) return false;
-  return joinedCircles.has(review.reviewer_name);
+  return canShowInCircleTrending(review, {
+    viewerName,
+    circleOwnerNames: joinedCircles,
+  });
 }

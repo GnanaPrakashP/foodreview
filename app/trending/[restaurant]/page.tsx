@@ -5,6 +5,8 @@ import type { Review, Comment } from "@/lib/types";
 import RestaurantPostsClient from "@/components/trending/RestaurantPostsClient";
 import { ArrowLeft } from "lucide-react";
 import { restaurantGradient } from "@/lib/profile";
+import { getCircleRelationshipsForName } from "@/lib/circle-db";
+import { filterCircleTrendingReviews, filterGlobalTrendingReviews } from "@/lib/visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -41,25 +43,29 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
   ]);
 
   const reviews = allReviews ?? [];
-  const restaurantReviews = reviews.filter((r) => r.restaurant_name === restaurantName);
+  const myName = user?.user_metadata?.full_name ?? "";
 
-  if (restaurantReviews.length === 0) notFound();
-
-  // Fetch circle members for the current user
+  // Fetch circle members for the current user before filtering; the server
+  // must never send non-visible restaurant posts to the client.
   let circleMembers: string[] = [];
   let mutualCircleMembers: string[] = [];
-  const myName = user?.user_metadata?.full_name ?? "";
+  let joinedCircles = new Set<string>();
   if (myName) {
-    const { data: circleRaw } = await (supabase as ReturnType<typeof supabase.from>)
-      .from("circle_memberships")
-      .select("user_name, member_name")
-      .or(`user_name.eq.${myName},member_name.eq.${myName}`) as unknown as { data: { user_name: string; member_name: string }[] | null };
-
-    const myCircleMembers = new Set((circleRaw ?? []).filter((r) => r.user_name === myName).map((r) => r.member_name));
-    const joinedCircles = new Set((circleRaw ?? []).filter((r) => r.member_name === myName).map((r) => r.user_name));
+    const relationships = await getCircleRelationshipsForName(supabase, myName);
+    joinedCircles = relationships.joinedCircles;
     circleMembers = Array.from(joinedCircles);
-    mutualCircleMembers = circleMembers.filter((member) => myCircleMembers.has(member));
+    mutualCircleMembers = Array.from(relationships.mutualMembers);
   }
+
+  const visibleRankReviews = circleOnly
+    ? filterCircleTrendingReviews(reviews, {
+        viewerName: myName,
+        circleOwnerNames: joinedCircles,
+      })
+    : filterGlobalTrendingReviews(reviews);
+  const restaurantReviews = visibleRankReviews.filter((r) => r.restaurant_name === restaurantName);
+
+  if (restaurantReviews.length === 0) notFound();
 
   const reviewIds = restaurantReviews.map((r) => r.id);
 
@@ -89,13 +95,13 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
 
   // Rank each review within its reviewer's full history
   const visitCounts = new Map<string, number>();
-  for (const r of reviews) {
+  for (const r of visibleRankReviews) {
     const k = `${r.reviewer_name}\x00${r.restaurant_name}`;
     visitCounts.set(k, (visitCounts.get(k) ?? 0) + 1);
   }
 
   const byReviewer = new Map<string, Review[]>();
-  for (const r of reviews) {
+  for (const r of visibleRankReviews) {
     const g = byReviewer.get(r.reviewer_name) ?? [];
     g.push(r);
     byReviewer.set(r.reviewer_name, g);

@@ -5,6 +5,21 @@ type CircleDb = {
   from: (table: string) => any;
 };
 
+type CircleDbError = {
+  message: string;
+  code?: string;
+  details?: string | null;
+};
+
+function isMissingTableError(error: CircleDbError | null | undefined): boolean {
+  return error?.code === "PGRST205" || Boolean(error?.message?.includes("Could not find the table"));
+}
+
+function logUnexpectedCircleDbError(message: string, error: CircleDbError | null | undefined) {
+  if (!error || isMissingTableError(error)) return;
+  console.warn(message, error.message, error.code, error.details);
+}
+
 type ProfileRow = {
   first_name: string;
   last_name: string;
@@ -53,33 +68,127 @@ export async function getAccountTypesForNames(
 }
 
 export async function hasCircleEdge(db: CircleDb, userName: string, memberName: string): Promise<boolean> {
-  const { data } = await db
+  const { data, error } = await db
     .from("circle_memberships")
     .select("id")
     .eq("user_name", userName)
     .eq("member_name", memberName)
-    .maybeSingle();
+    .limit(1);
 
-  return Boolean(data);
+  if (error) {
+    logUnexpectedCircleDbError("[circle-db] failed to read circle edge:", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+async function hasAcceptedCircleRequest(db: CircleDb, firstName: string, secondName: string): Promise<boolean> {
+  const [{ data: firstRows, error: firstError }, { data: secondRows, error: secondError }] = await Promise.all([
+    db
+      .from("circle_requests")
+      .select("id")
+      .eq("sender_name", firstName)
+      .eq("receiver_name", secondName)
+      .eq("status", "accepted")
+      .limit(1),
+    db
+      .from("circle_requests")
+      .select("id")
+      .eq("sender_name", secondName)
+      .eq("receiver_name", firstName)
+      .eq("status", "accepted")
+      .limit(1),
+  ]);
+
+  logUnexpectedCircleDbError("[circle-db] failed to read accepted circle request:", firstError);
+  logUnexpectedCircleDbError("[circle-db] failed to read accepted circle request:", secondError);
+
+  return (firstRows ?? []).length > 0 || (secondRows ?? []).length > 0;
+}
+
+export async function hasCircleAccess(db: CircleDb, ownerName: string, viewerName: string): Promise<boolean> {
+  if (!ownerName || !viewerName) return false;
+  if (ownerName === viewerName) return true;
+  if (await hasCircleEdge(db, ownerName, viewerName)) return true;
+  return hasAcceptedCircleRequest(db, ownerName, viewerName);
+}
+
+export async function getCircleRelationshipsForName(db: CircleDb, name: string): Promise<{
+  circleMembers: Set<string>;
+  joinedCircles: Set<string>;
+  mutualMembers: Set<string>;
+}> {
+  const circleMembers = new Set<string>();
+  const joinedCircles = new Set<string>();
+
+  if (!name) return { circleMembers, joinedCircles, mutualMembers: new Set() };
+
+  const [{ data: edgeRows, error: edgeError }, { data: acceptedRows, error: acceptedError }] = await Promise.all([
+    db
+      .from("circle_memberships")
+      .select("user_name, member_name")
+      .or(`user_name.eq.${name},member_name.eq.${name}`),
+    db
+      .from("circle_requests")
+      .select("sender_name, receiver_name")
+      .or(`sender_name.eq.${name},receiver_name.eq.${name}`)
+      .eq("status", "accepted"),
+  ]);
+
+  logUnexpectedCircleDbError("[circle-db] failed to read circle memberships:", edgeError);
+  logUnexpectedCircleDbError("[circle-db] failed to read accepted circle requests:", acceptedError);
+
+  for (const row of edgeRows ?? []) {
+    if (row.user_name === name) circleMembers.add(row.member_name);
+    if (row.member_name === name) joinedCircles.add(row.user_name);
+  }
+
+  for (const row of acceptedRows ?? []) {
+    const otherName = row.sender_name === name ? row.receiver_name : row.sender_name;
+    if (!otherName || otherName === name) continue;
+    circleMembers.add(otherName);
+    joinedCircles.add(otherName);
+  }
+
+  const mutualMembers = new Set(Array.from(joinedCircles).filter((member) => circleMembers.has(member)));
+  return { circleMembers, joinedCircles, mutualMembers };
+}
+
+async function insertCircleEdge(db: CircleDb, userName: string, memberName: string): Promise<CircleDbError | null> {
+  if (await hasCircleEdge(db, userName, memberName)) return null;
+
+  const { error } = await db
+    .from("circle_memberships")
+    .insert({ user_name: userName, member_name: memberName });
+
+  // If the live DB has the unique constraint, a concurrent insert can still race.
+  if (!error || error.code === "23505") return null;
+  if (isMissingTableError(error)) {
+    return ensureAcceptedCircleRequest(db, memberName, userName);
+  }
+  return error;
+}
+
+async function ensureAcceptedCircleRequest(db: CircleDb, senderName: string, receiverName: string): Promise<CircleDbError | null> {
+  if (await hasAcceptedCircleRequest(db, senderName, receiverName)) return null;
+
+  const { error } = await db
+    .from("circle_requests")
+    .insert({ sender_name: senderName, receiver_name: receiverName, status: "accepted" });
+
+  if (!error || error.code === "23505") return null;
+  return error;
 }
 
 export async function addCircleEdge(db: CircleDb, userName: string, memberName: string) {
-  return db
-    .from("circle_memberships")
-    .upsert(
-      { user_name: userName, member_name: memberName },
-      { onConflict: "user_name,member_name", ignoreDuplicates: true }
-    );
+  return { error: await insertCircleEdge(db, userName, memberName) };
 }
 
 export async function addMutualCircleEdges(db: CircleDb, firstName: string, secondName: string) {
-  return db
-    .from("circle_memberships")
-    .upsert(
-      [
-        { user_name: firstName, member_name: secondName },
-        { user_name: secondName, member_name: firstName },
-      ],
-      { onConflict: "user_name,member_name", ignoreDuplicates: true }
-    );
+  const firstError = await insertCircleEdge(db, firstName, secondName);
+  if (firstError) return { error: firstError };
+
+  const secondError = await insertCircleEdge(db, secondName, firstName);
+  return { error: secondError };
 }

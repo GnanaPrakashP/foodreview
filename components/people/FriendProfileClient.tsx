@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { AccountType, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Lock } from "lucide-react";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -49,30 +50,26 @@ export default function FriendProfileClient({
   name,
   accountType,
   reviews,
+  hasHiddenCirclePosts = false,
 }: {
   name: string;
   accountType: AccountType;
   reviews: Review[];
+  hasHiddenCirclePosts?: boolean;
 }) {
+  const router = useRouter();
   const [myName, setMyName] = useState("");
   const [circleStatus, setCircleStatus] = useState<CircleStatus>("none");
   const [theirCircleCount, setTheirCircleCount] = useState(0);
   const [mounted, setMounted] = useState(false);
 
   const isOwnProfile = myName === name;
-  const canViewPrivateContent =
-    isOwnProfile || accountType === "public" || circleStatus === "mutual" || circleStatus === "one_way";
-  const isPrivateLocked = mounted && accountType === "private" && !canViewPrivateContent;
-  const isCheckingPrivateAccess = !mounted && accountType === "private" && !isOwnProfile;
+  const isPrivateLocked = false;
+  const isCheckingPrivateAccess = false;
 
   const visibleReviews = useMemo(() => {
-    if (isOwnProfile) return reviews;
-    if (accountType === "private" && !mounted) return [];
-    if (accountType === "private" && circleStatus !== "mutual" && circleStatus !== "one_way") return [];
-    if (circleStatus === "mutual" || circleStatus === "one_way") return reviews;
-    if (accountType === "public") return reviews;
-    return [];
-  }, [accountType, circleStatus, isOwnProfile, mounted, reviews]);
+    return reviews;
+  }, [reviews]);
 
   const uniquePlaces = useMemo(() => new Set(reviews.map((r) => r.restaurant_name)).size, [reviews]);
 
@@ -88,12 +85,9 @@ export default function FriendProfileClient({
   const totalVisits = useMemo(() => reviews.length, [reviews]);
   const rankedPlaces = useMemo(() => buildRankedPlaces(visibleReviews), [visibleReviews]);
 
-  useEffect(() => {
-    const me = localStorage.getItem("fc_my_name") ?? "";
-    setMyName(me);
-    if (!me) { setMounted(true); return; }
-
-    Promise.all([
+  const loadCircleStatus = useCallback((me: string) => {
+    if (!me) return Promise.resolve();
+    return Promise.all([
       fetch(`/api/circle/status?name=${encodeURIComponent(me)}`).then((r) => r.json()),
       fetch(`/api/circle/status?name=${encodeURIComponent(name)}`).then((r) => r.json()),
     ]).then(([myStatus, theirStatus]) => {
@@ -109,11 +103,25 @@ export default function FriendProfileClient({
       else setCircleStatus("none");
 
       setTheirCircleCount(theirStatus.circleCount ?? (theirStatus.displayMembers ?? theirStatus.members ?? []).length);
-    }).catch(() => {}).finally(() => setMounted(true));
+    }).catch(() => {});
   }, [name]);
 
+  useEffect(() => {
+    const me = localStorage.getItem("fc_my_name") ?? "";
+    setMyName(me);
+    if (!me) { setMounted(true); return; }
+
+    loadCircleStatus(me).finally(() => setMounted(true));
+  }, [loadCircleStatus]);
+
+  async function refreshAfterCircleChange() {
+    await loadCircleStatus(myName);
+    router.refresh();
+  }
+
   async function sendRequest() {
-    if (!myName) return;
+    if (!myName || myName === name) return;
+    const previousStatus = circleStatus;
     setCircleStatus("sent");
     const res = await fetch("/api/circle/request", {
       method: "POST",
@@ -121,6 +129,10 @@ export default function FriendProfileClient({
       body: JSON.stringify({ senderName: myName, receiverName: name }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      setCircleStatus(previousStatus);
+      return;
+    }
     if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
       setCircleStatus("mutual");
       setTheirCircleCount((c) => c + 1);
@@ -130,27 +142,40 @@ export default function FriendProfileClient({
     } else {
       setCircleStatus("sent");
     }
+    await refreshAfterCircleChange();
   }
 
   async function cancelRequest() {
     if (!myName) return;
+    const previousStatus = circleStatus;
     setCircleStatus("none");
-    await fetch("/api/circle/cancel", {
+    const res = await fetch("/api/circle/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ senderName: myName, receiverName: name }),
     });
+    if (!res.ok) {
+      setCircleStatus(previousStatus);
+      return;
+    }
+    await refreshAfterCircleChange();
   }
 
   async function removeFromCircle() {
     if (!myName) return;
+    const previousStatus = circleStatus;
     setCircleStatus("none");
     setTheirCircleCount((c) => Math.max(0, c - 1));
-    await fetch("/api/circle/remove", {
+    const res = await fetch("/api/circle/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ myName, otherName: name }),
     });
+    if (!res.ok) {
+      setCircleStatus(previousStatus);
+      return;
+    }
+    await refreshAfterCircleChange();
   }
 
   return (
@@ -232,6 +257,24 @@ export default function FriendProfileClient({
               Add
             </button>
           )}
+        </div>
+      )}
+
+      {hasHiddenCirclePosts && (
+        <div style={{ padding: "0 20px 18px" }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "13px 14px" }}>
+            <div style={{ width: "34px", height: "34px", borderRadius: "10px", background: "rgba(240,96,48,0.12)", border: "1px solid rgba(240,96,48,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Lock size={16} strokeWidth={2} color="var(--orange)" />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, color: "var(--cream)", fontSize: "13px", fontWeight: 700, fontFamily: "'Syne', sans-serif" }}>
+                Private account
+              </p>
+              <p style={{ margin: "3px 0 0", color: "var(--muted)", fontSize: "12px", lineHeight: 1.45, fontFamily: "'DM Sans', sans-serif" }}>
+                Some posts are visible only to their circle.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

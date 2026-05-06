@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { CircleMember } from "@/app/people/page";
 import type { Review } from "@/lib/types";
@@ -480,6 +481,7 @@ export default function PeopleTab({
 }: {
   initialCircle: CircleMember[];
 }) {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -512,7 +514,7 @@ export default function PeopleTab({
   /* ── Send request ── */
 
   async function sendRequest(receiverName: string) {
-    if (!myName) return;
+    if (!myName || myName === receiverName) return;
     setPendingSent((prev) => new Set([...prev, receiverName]));
     const res = await fetch("/api/circle/request", {
       method: "POST",
@@ -520,6 +522,10 @@ export default function PeopleTab({
       body: JSON.stringify({ senderName: myName, receiverName }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+      return;
+    }
     if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
       setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
       setCircleMembers((prev) => new Set([...prev, receiverName]));
@@ -528,22 +534,27 @@ export default function PeopleTab({
       setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
       setCircleMembers((prev) => new Set([...prev, receiverName]));
     }
+    await loadCircleStatus(myName);
+    router.refresh();
   }
 
   /* ── Respond to incoming request ── */
 
   async function respondToRequest(senderName: string, action: "accept" | "reject") {
     if (!myName) return;
-    await fetch("/api/circle/respond", {
+    const res = await fetch("/api/circle/respond", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ myName, senderName, action }),
     });
+    if (!res.ok) return;
     setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
     if (action === "accept") {
       setCircleMembers((prev) => new Set([...prev, senderName]));
       setMutualMembers((prev) => new Set([...prev, senderName]));
     }
+    await loadCircleStatus(myName);
+    router.refresh();
   }
 
   /* ── Cancel sent request ── */
@@ -552,11 +563,17 @@ export default function PeopleTab({
     if (!myName) return;
     // Optimistic update
     setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
-    await fetch("/api/circle/cancel", {
+    const res = await fetch("/api/circle/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ senderName: myName, receiverName }),
     });
+    if (!res.ok) {
+      setPendingSent((prev) => new Set([...prev, receiverName]));
+      return;
+    }
+    await loadCircleStatus(myName);
+    router.refresh();
   }
 
   /* ── Search (reviews + profiles) ── */
@@ -570,6 +587,7 @@ export default function PeopleTab({
       supabase
         .from("reviews")
         .select("reviewer_name")
+        .eq("visibility", "public")
         .ilike("reviewer_name", `%${q.trim()}%`)
         .returns<Pick<Review, "reviewer_name">[]>(),
       supabase.from("profiles").select("first_name, last_name").or(
@@ -586,9 +604,13 @@ export default function PeopleTab({
       if (name && !map.has(name)) map.set(name, 0);
     }
 
-    setSearchResults(Array.from(map.entries()).map(([name, totalPlaces]) => ({ name, totalPlaces })));
+    setSearchResults(
+      Array.from(map.entries())
+        .filter(([name]) => name !== myName)
+        .map(([name, totalPlaces]) => ({ name, totalPlaces }))
+    );
     setSearching(false);
-  }, []);
+  }, [myName]);
 
   useEffect(() => {
     const t = setTimeout(() => search(searchQuery), 350);

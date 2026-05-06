@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
+    "test": "node --test tests/visibility.test.mjs",
     "start": "next start"
   },
   "dependencies": {

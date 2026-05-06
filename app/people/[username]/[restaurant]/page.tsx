@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import type { Review, Comment } from "@/lib/types";
 import RestaurantDetailClient from "@/components/people/RestaurantDetailClient";
-import { getAccountTypeForName } from "@/lib/circle-db";
+import { hasCircleAccess } from "@/lib/circle-db";
+import { filterProfileReviews } from "@/lib/visibility";
 
 interface Props {
   params: Promise<{ username: string; restaurant: string }>;
@@ -22,24 +23,16 @@ export default async function RestaurantDetailPage({ params }: Props) {
   const restaurantName = decodeURIComponent(restaurant);
 
   const supabase = await createClient();
-  const [{ data: { user } }, accountType] = await Promise.all([
-    supabase.auth.getUser(),
-    getAccountTypeForName(supabase, name),
-  ]);
+  const { data: { user } } = await supabase.auth.getUser();
 
   const myName = user?.user_metadata?.full_name ?? "";
-  if (accountType === "private" && myName !== name) {
-    const { data: edge } = await (supabase as any)
-      .from("circle_memberships")
-      .select("id")
-      .eq("user_name", name)
-      .eq("member_name", myName)
-      .maybeSingle();
-
-    if (!edge) notFound();
+  let circleOwnerNames = new Set<string>();
+  if (myName && myName !== name) {
+    const canSeeCirclePosts = await hasCircleAccess(supabase, name, myName);
+    if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
   }
 
-  // All reviews by this person (for rank context) + filter to this restaurant
+  // All reviews by this person (for visible rank context) + filter to this restaurant.
   const { data: allReviews } = await supabase
     .from("reviews")
     .select("*")
@@ -47,7 +40,10 @@ export default async function RestaurantDetailPage({ params }: Props) {
     .order("created_at", { ascending: false })
     .returns<Review[]>();
 
-  const reviews = allReviews ?? [];
+  const reviews = filterProfileReviews(allReviews ?? [], name, {
+    viewerName: myName,
+    circleOwnerNames,
+  });
   const posts = reviews.filter((r) => r.restaurant_name === restaurantName);
 
   if (posts.length === 0) notFound();

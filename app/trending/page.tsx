@@ -3,7 +3,8 @@ import { computeTrending } from "@/lib/trending";
 import TrendingClient from "@/components/trending/TrendingClient";
 import type { Review } from "@/lib/types";
 import type { CircleReviewItem } from "@/lib/trending";
-import { canShowInCircleFeed } from "@/lib/circle";
+import { getCircleRelationshipsForName } from "@/lib/circle-db";
+import { filterCircleTrendingReviews, filterGlobalTrendingReviews } from "@/lib/visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,9 @@ export default async function TrendingPage() {
   ]);
 
   const allReviews = reviews ?? [];
-  const { week, month, alltime, totalUsersThisWeek } = computeTrending(allReviews);
+  // Public trending only counts publicly visible posts
+  const publicReviews = filterGlobalTrendingReviews(allReviews);
+  const { week, month, alltime, totalUsersThisWeek } = computeTrending(publicReviews);
 
   // Fetch circle members' reviews for the current user
   let circleReviews: Record<string, CircleReviewItem[]> = {};
@@ -31,19 +34,13 @@ export default async function TrendingPage() {
   const myName = user?.user_metadata?.full_name ?? "";
 
   if (myName) {
-    const { data: circleRaw } = await (supabase as ReturnType<typeof supabase.from>)
-      .from("circle_memberships")
-      .select("user_name, member_name")
-      .or(`user_name.eq.${myName},member_name.eq.${myName}`) as unknown as { data: { user_name: string; member_name: string }[] | null };
-
-    const myCircleMembers = new Set((circleRaw ?? []).filter((r) => r.user_name === myName).map((r) => r.member_name));
-    const joinedCircles = new Set((circleRaw ?? []).filter((r) => r.member_name === myName).map((r) => r.user_name));
-    const mutualMembers = new Set(Array.from(joinedCircles).filter((member) => myCircleMembers.has(member)));
+    const { joinedCircles } = await getCircleRelationshipsForName(supabase, myName);
 
     if (joinedCircles.size > 0) {
-      const allFriendReviews = allReviews.filter((review) =>
-        canShowInCircleFeed(review, myName, joinedCircles, mutualMembers)
-      );
+      const allFriendReviews = filterCircleTrendingReviews(allReviews, {
+        viewerName: myName,
+        circleOwnerNames: joinedCircles,
+      });
 
       // Compute trending purely from circle friends' activity
       const circleTrending = computeTrending(allFriendReviews);

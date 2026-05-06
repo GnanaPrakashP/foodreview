@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import type { Review } from "@/lib/types";
 import FriendProfileClient from "@/components/people/FriendProfileClient";
 import { normalizeAccountType } from "@/lib/circle";
+import { hasCircleAccess } from "@/lib/circle-db";
+import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 
 interface Props {
   params: Promise<{ username: string }>;
@@ -22,7 +24,8 @@ export default async function UserProfilePage({ params }: Props) {
 
   const supabase = await createClient();
 
-  const [{ data: reviews }, { data: profiles }] = await Promise.all([
+  const [{ data: { user } }, { data: reviews }, { data: profiles }] = await Promise.all([
+    supabase.auth.getUser(),
     supabase
       .from("reviews")
       .select("*")
@@ -40,11 +43,33 @@ export default async function UserProfilePage({ params }: Props) {
 
   if ((!reviews || reviews.length === 0) && !profile) notFound();
 
+  const myName = user?.user_metadata?.full_name ?? "";
+  let circleOwnerNames = new Set<string>();
+  if (myName && myName !== name) {
+    const canSeeCirclePosts = await hasCircleAccess(supabase, name, myName);
+    if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
+  }
+
+  const accountType = normalizeAccountType(profile?.account_type);
+  const rawReviews = reviews ?? [];
+  const isCircleMember = circleOwnerNames.has(name);
+  const hasHiddenCirclePosts =
+    accountType === "private" &&
+    myName !== name &&
+    !isCircleMember &&
+    rawReviews.some((review) => !isReviewSuppressed(review) && normalizeVisibility(review.visibility) === "circle");
+
+  const visibleReviews = filterProfileReviews(rawReviews, name, {
+    viewerName: myName,
+    circleOwnerNames,
+  });
+
   return (
     <FriendProfileClient
       name={name}
-      accountType={normalizeAccountType(profile?.account_type)}
-      reviews={reviews ?? []}
+      accountType={accountType}
+      reviews={visibleReviews}
+      hasHiddenCirclePosts={hasHiddenCirclePosts}
     />
   );
 }

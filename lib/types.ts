@@ -12,6 +12,7 @@ export type FoodItem = {
 };
 
 export type AccountType = "private" | "public";
+export type Visibility = "public" | "circle" | "me";
 export type CircleRelationshipState = "NONE" | "PENDING" | "CIRCLE_ONE_WAY" | "CIRCLE_MUTUAL";
 
 export interface Database {
@@ -57,6 +58,7 @@ export interface Database {
           body: string | null;
           photo_url: string | null;
           photo_urls: string[];
+          visibility: Visibility;
           created_at: string;
         };
         Insert: {
@@ -68,6 +70,7 @@ export interface Database {
           body?: string | null;
           photo_url?: string | null;
           photo_urls?: string[];
+          visibility?: Visibility;
           created_at?: string;
         };
         Update: {
@@ -79,6 +82,7 @@ export interface Database {
           body?: string | null;
           photo_url?: string | null;
           photo_urls?: string[];
+          visibility?: Visibility;
           created_at?: string;
         };
         Relationships: [];
