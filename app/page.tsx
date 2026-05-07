@@ -20,10 +20,17 @@ export default async function CirclePage() {
     supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(200).returns<Review[]>(),
   ]);
 
-  const myName = user?.user_metadata?.full_name ?? "";
-  let joinedCircles = new Set<string>();
+  const myName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "";
+  let joinedCircles: string[] = [];
+  let mutualMembers: string[] = [];
   if (myName) {
-    joinedCircles = (await getCircleRelationshipsForName(supabase, myName)).joinedCircles;
+    const relationships = await getCircleRelationshipsForName(supabase, myName);
+    joinedCircles = [...relationships.joinedCircles];
+    mutualMembers = [...relationships.mutualMembers];
   }
 
   const allReviews = filterCircleTrendingReviews(reviews ?? [], {
@@ -31,23 +38,38 @@ export default async function CirclePage() {
     circleOwnerNames: joinedCircles,
   });
   const postIds = allReviews.map((review) => review.id);
+  const restaurantNames = [...new Set(allReviews.map((review) => review.restaurant_name))];
 
-  const [{ data: rawLikes }, { data: rawComments }] = postIds.length > 0
+  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }] = postIds.length > 0
     ? await Promise.all([
-        supabase.from("likes").select("post_id").in("post_id", postIds),
+        supabase.from("likes").select("post_id, user_name").in("post_id", postIds),
         supabase
           .from("comments")
           .select("id, post_id, user_name, content, created_at")
           .in("post_id", postIds)
           .order("created_at", { ascending: false })
           .returns<Comment[]>(),
+        myName && restaurantNames.length > 0
+          ? supabase
+              .from("wishlist")
+              .select("restaurant_name")
+              .eq("user_name", myName)
+              .in("restaurant_name", restaurantNames)
+          : Promise.resolve({ data: [] }),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }];
 
   // Like count per post
   const likeCountMap: Record<string, number> = {};
-  for (const like of (rawLikes ?? []) as { post_id: string }[]) {
+  const likedByMeMap: Record<string, boolean> = {};
+  for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
     likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
+    if (like.user_name === myName) likedByMeMap[like.post_id] = true;
+  }
+
+  const bookmarkedRestaurantMap: Record<string, boolean> = {};
+  for (const item of (rawWishlist ?? []) as { restaurant_name: string }[]) {
+    bookmarkedRestaurantMap[item.restaurant_name] = true;
   }
 
   // Comment count + most recent comment per post
@@ -108,6 +130,11 @@ export default async function CirclePage() {
         likeCountMap={likeCountMap}
         commentMap={commentMap}
         rankMap={rankMap}
+        initialMyName={myName}
+        initialCircle={joinedCircles}
+        initialMutualCircle={mutualMembers}
+        initialLikedMap={likedByMeMap}
+        initialBookmarkedRestaurantMap={bookmarkedRestaurantMap}
       />
     </div>
   );

@@ -18,7 +18,7 @@ create table public.profiles (
   last_name    text        not null,
   username     text        not null,
   avatar_url   text,
-  account_type text        not null default 'private',
+  account_type text        not null default 'public',
   created_at   timestamptz not null default now(),
   constraint profiles_username_unique  unique (username),
   constraint profiles_username_format  check  (username ~ '^[a-z0-9_]{3,20}$'),
@@ -165,7 +165,8 @@ do $$ begin
   end if;
 end $$;
 
-alter table public.profiles add column if not exists account_type text not null default 'private';
+alter table public.profiles add column if not exists account_type text not null default 'public';
+alter table public.profiles alter column account_type set default 'public';
 
 do $$ begin
   if not exists (

@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { getAccountTypeForName, getAccountTypesForNames } from "@/lib/circle-db";
 import type { CircleRelationshipState } from "@/lib/types";
 
@@ -8,7 +9,7 @@ export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name");
   if (!name) {
     return NextResponse.json({
-      accountType: "private",
+      accountType: DEFAULT_ACCOUNT_TYPE,
       members: [],
       mutualMembers: [],
       oneWayMembers: [],

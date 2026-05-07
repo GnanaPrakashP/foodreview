@@ -17,7 +17,7 @@ export default function OnboardingPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
-  const [accountType, setAccountType] = useState<AccountType>("private");
+  const [accountType, setAccountType] = useState<AccountType>("public");
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>("idle");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -228,7 +228,7 @@ export default function OnboardingPage() {
               Account Type
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px" }}>
-              {(["private", "public"] as AccountType[]).map((type) => {
+              {(["public", "private"] as AccountType[]).map((type) => {
                 const selected = accountType === type;
                 return (
                   <button

@@ -492,6 +492,7 @@ export default function PeopleTab({
   const [mutualMembers, setMutualMembers] = useState<Set<string>>(new Set());
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
+  const [keptSuggestions, setKeptSuggestions] = useState<Set<string>>(new Set());
 
   /* ── Load circle status from API ── */
 
@@ -515,6 +516,7 @@ export default function PeopleTab({
 
   async function sendRequest(receiverName: string) {
     if (!myName || myName === receiverName) return;
+    setKeptSuggestions((prev) => new Set([...prev, receiverName]));
     setPendingSent((prev) => new Set([...prev, receiverName]));
     const res = await fetch("/api/circle/request", {
       method: "POST",
@@ -524,18 +526,20 @@ export default function PeopleTab({
     const data = await res.json();
     if (!res.ok) {
       setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+      setKeptSuggestions((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
       return;
     }
     if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
       setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
       setCircleMembers((prev) => new Set([...prev, receiverName]));
       setMutualMembers((prev) => new Set([...prev, receiverName]));
+      setKeptSuggestions((prev) => new Set([...prev, receiverName]));
     } else if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way") {
       setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
       setCircleMembers((prev) => new Set([...prev, receiverName]));
+      setKeptSuggestions((prev) => new Set([...prev, receiverName]));
     }
     await loadCircleStatus(myName);
-    router.refresh();
   }
 
   /* ── Respond to incoming request ── */
@@ -620,8 +624,21 @@ export default function PeopleTab({
   /* ── Derived ── */
 
   const suggested = initialCircle.filter(
-    (m) => !circleMembers.has(m.name) && m.name !== myName
-  );
+    (m) =>
+      m.accountType === "public" &&
+      (!circleMembers.has(m.name) || keptSuggestions.has(m.name)) &&
+      (!pendingSent.has(m.name) || keptSuggestions.has(m.name)) &&
+      !pendingIncoming.includes(m.name) &&
+      m.name !== myName
+  ).slice(0, 3);
+
+  function suggestionSub(member: CircleMember): string {
+    if (member.commonRestaurantCount > 0) {
+      const places = member.commonRestaurantCount === 1 ? "place" : "places";
+      return `${member.commonRestaurantCount} ${places} in common`;
+    }
+    return `${toHandle(member.name)} · ${member.totalPlaces} place${member.totalPlaces !== 1 ? "s" : ""}`;
+  }
 
   function personStatus(name: string): PersonStatus {
     if (mutualMembers.has(name)) return "mutual";
@@ -744,7 +761,7 @@ export default function PeopleTab({
             <PersonCard
               key={member.name}
               name={member.name}
-              sub={`${toHandle(member.name)} · ${member.totalPlaces} place${member.totalPlaces !== 1 ? "s" : ""}`}
+              sub={suggestionSub(member)}
               status={personStatus(member.name)}
               onAdd={personStatus(member.name) === "sent" ? () => cancelRequest(member.name) : () => sendRequest(member.name)}
             />

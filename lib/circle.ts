@@ -1,10 +1,10 @@
 import type { AccountType, CircleRelationshipState, Review } from "@/lib/types";
 import { canShowInCircleTrending } from "@/lib/visibility";
 
-export const DEFAULT_ACCOUNT_TYPE: AccountType = "private";
+export const DEFAULT_ACCOUNT_TYPE: AccountType = "public";
 
 export function normalizeAccountType(value: string | null | undefined): AccountType {
-  return value === "public" ? "public" : "private";
+  return value === "private" ? "private" : DEFAULT_ACCOUNT_TYPE;
 }
 
 export function accountTypeLabel(accountType: AccountType): string {

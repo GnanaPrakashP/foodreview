@@ -12,16 +12,33 @@ interface Props {
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   rankMap: Record<string, { rank: number; total: number; visitCount: number }>;
+  initialMyName?: string;
+  initialCircle?: string[];
+  initialMutualCircle?: string[];
+  initialLikedMap?: Record<string, boolean>;
+  initialBookmarkedRestaurantMap?: Record<string, boolean>;
 }
 
-export default function CircleFeedClient({ allReviews, likeCountMap, commentMap, rankMap }: Props) {
-  const [circle, setCircle] = useState<string[]>([]);
-  const [mutualCircle, setMutualCircle] = useState<string[]>([]);
-  const [myName, setMyName] = useState("");
-  const [mounted, setMounted] = useState(false);
+export default function CircleFeedClient({
+  allReviews,
+  likeCountMap,
+  commentMap,
+  rankMap,
+  initialMyName = "",
+  initialCircle = [],
+  initialMutualCircle = [],
+  initialLikedMap = {},
+  initialBookmarkedRestaurantMap = {},
+}: Props) {
+  const hasInitialIdentity = initialMyName.length > 0;
+  const [circle, setCircle] = useState<string[]>(initialCircle);
+  const [mutualCircle, setMutualCircle] = useState<string[]>(initialMutualCircle);
+  const [myName, setMyName] = useState(initialMyName);
+  const [mounted, setMounted] = useState(hasInitialIdentity);
 
   useEffect(() => {
-    const name = localStorage.getItem("fc_my_name") ?? "";
+    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
+    if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
     if (!name) { setMounted(true); return; }
     fetch(`/api/circle/status?name=${encodeURIComponent(name)}`)
@@ -32,7 +49,7 @@ export default function CircleFeedClient({ allReviews, likeCountMap, commentMap,
       })
       .catch(() => {})
       .finally(() => setMounted(true));
-  }, []);
+  }, [initialMyName]);
 
   const circleSet = useMemo(() => new Set(circle), [circle]);
   const mutualSet = useMemo(() => new Set(mutualCircle), [mutualCircle]);
@@ -111,6 +128,9 @@ export default function CircleFeedClient({ allReviews, likeCountMap, commentMap,
               review={review}
               initialLikeCount={likeCountMap[review.id] ?? 0}
               initialCommentCount={eng?.count ?? 0}
+              initialLiked={initialLikedMap[review.id] ?? false}
+              initialBookmarked={initialBookmarkedRestaurantMap[review.restaurant_name] ?? false}
+              initialMyName={myName}
             />
           );
         })}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Heart, MessageCircle, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Review } from "@/lib/types";
@@ -10,6 +11,9 @@ interface Props {
   review: Review;
   initialLikeCount: number;
   initialCommentCount: number;
+  initialLiked?: boolean;
+  initialBookmarked?: boolean;
+  initialMyName?: string;
 }
 
 function timeAgo(dateStr: string): string {
@@ -36,25 +40,35 @@ function avatarGradient(name: string): string {
   return G[h % G.length];
 }
 
-export default function CircleFeedCard({ review, initialLikeCount, initialCommentCount }: Props) {
-  const [myName, setMyName] = useState("");
-  const [mounted, setMounted] = useState(false);
-  const [liked, setLiked] = useState(false);
+export default function CircleFeedCard({
+  review,
+  initialLikeCount,
+  initialCommentCount,
+  initialLiked = false,
+  initialBookmarked = false,
+  initialMyName = "",
+}: Props) {
+  const router = useRouter();
+  const [myName, setMyName] = useState(initialMyName);
+  const [mounted, setMounted] = useState(Boolean(initialMyName));
+  const [liked, setLiked] = useState(initialLiked);
   const [likeCount, setLikeCount] = useState(initialLikeCount);
   const [bounceKey, setBounceKey] = useState(0);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(initialBookmarked);
   const [bookmarkBounceKey, setBookmarkBounceKey] = useState(0);
   const commentCount = initialCommentCount;
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const initials = review.reviewer_name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
+  const postHref = `/reviews/${encodeURIComponent(review.id)}`;
 
   useEffect(() => {
-    const name = localStorage.getItem("fc_my_name") ?? "";
+    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
+    if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
     setMounted(true);
-    if (!name) return;
+    if (!name || initialMyName) return;
     // Check if already liked
     (async () => {
       const supabase = createClient();
@@ -66,7 +80,7 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
       if (likeData) setLiked(true);
       if (wishData) setBookmarked(true);
     })();
-  }, [review.id, review.restaurant_name]);
+  }, [initialMyName, review.id, review.restaurant_name]);
 
   const toggleLike = useCallback(async () => {
     if (!myName || !mounted) return;
@@ -110,11 +124,27 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
 
   return (
     <>
-      <article style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden" }}>
+      <article
+        role="link"
+        tabIndex={0}
+        onClick={() => router.push(postHref)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            router.push(postHref);
+          }
+        }}
+        onPointerEnter={() => router.prefetch(postHref)}
+        style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden", cursor: "pointer" }}
+      >
 
         {/* Header */}
         <div style={{ padding: "13px 14px 11px", display: "flex", alignItems: "center", gap: "10px" }}>
-          <Link href={`/people/${encodeURIComponent(review.reviewer_name)}`} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+          <Link
+            href={`/people/${encodeURIComponent(review.reviewer_name)}`}
+            onClick={(event) => event.stopPropagation()}
+            style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}
+          >
             <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
               {initials || "?"}
             </div>
@@ -206,7 +236,10 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
           <div style={{ display: "flex", alignItems: "center", gap: "14px", paddingTop: "8px", borderTop: "1px solid var(--border)", marginBottom: "8px" }}>
             <button
               key={bounceKey}
-              onClick={toggleLike}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleLike();
+              }}
               disabled={!mounted || !myName}
               className={bounceKey > 0 ? "like-pop" : ""}
               style={{ background: "none", border: "none", cursor: mounted && myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
@@ -216,6 +249,7 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
             </button>
             <Link
               href={`/comments/${encodeURIComponent(review.id)}`}
+              onClick={(event) => event.stopPropagation()}
               style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
             >
               <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
@@ -225,7 +259,10 @@ export default function CircleFeedCard({ review, initialLikeCount, initialCommen
             </Link>
             <button
               key={`bm-${bookmarkBounceKey}`}
-              onClick={toggleBookmark}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleBookmark();
+              }}
               className={bookmarkBounceKey > 0 ? "like-pop" : ""}
               style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
               aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}

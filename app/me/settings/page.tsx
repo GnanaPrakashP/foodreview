@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ArrowLeft, LogOut, Trash2, FileText, Shield, Settings, Sun, Moon, Monitor, ChevronRight, Heart, Bookmark, MessageCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useTheme, type ThemeMode } from "@/lib/useTheme";
+import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 
 type AccountType = "private" | "public";
 
@@ -14,7 +15,7 @@ export default function SettingsPage() {
   const { mode: themeMode, setThemeMode, mounted: themeMounted } = useTheme();
   const [myName, setMyName] = useState("");
   const [userId, setUserId] = useState("");
-  const [accountType, setAccountType] = useState<AccountType>("private");
+  const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
   const [typeLoaded, setTypeLoaded] = useState(false);
   const [pendingType, setPendingType] = useState<AccountType | null>(null);
   const [saving, setSaving] = useState(false);
@@ -29,7 +30,7 @@ export default function SettingsPage() {
       setMyName(name);
       // Read from user metadata — always in sync with the authenticated session
       const stored = user.user_metadata?.account_type;
-      setAccountType(stored === "public" ? "public" : "private");
+      setAccountType(stored === "private" ? "private" : DEFAULT_ACCOUNT_TYPE);
       setTypeLoaded(true);
     });
   }, []);

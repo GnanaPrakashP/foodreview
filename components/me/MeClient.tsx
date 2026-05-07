@@ -145,12 +145,16 @@ function CircleSheet({ circle, allReviews, onClose }: {
 
 export default function MeClient({
   allReviews,
+  initialMyName = "",
+  initialCircle = [],
 }: {
   allReviews: Review[];
+  initialMyName?: string;
+  initialCircle?: string[];
 }) {
-  const [mounted, setMounted] = useState(false);
-  const [myName, setMyName] = useState("");
-  const [circle, setCircle] = useState<string[]>([]);
+  const [mounted, setMounted] = useState(Boolean(initialMyName));
+  const [myName, setMyName] = useState(initialMyName);
+  const [circle, setCircle] = useState<string[]>(initialCircle);
 
   // All derived — unconditional
   const myReviews = useMemo(
@@ -177,7 +181,8 @@ export default function MeClient({
   const rankedPlaces = useMemo(() => buildRankedPlaces(myReviews), [myReviews]);
 
   useEffect(() => {
-    const name = localStorage.getItem("fc_my_name") ?? "";
+    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
+    if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
     setMounted(true);
     if (name) {
@@ -188,7 +193,7 @@ export default function MeClient({
         })
         .catch(() => {});
     }
-  }, []);
+  }, [initialMyName]);
 
   /* ── skeleton ── */
   if (!mounted) {
@@ -315,12 +320,15 @@ export default function MeClient({
                       )}
                     </p>
                   </div>
-                  {place.score10 > 0 && (
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)" }}>{place.score10}</span>
-                      <span style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>/10</span>
-                    </div>
-                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, marginLeft: "4px" }}>
+                    {place.score10 > 0 && (
+                      <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{place.score10}</span>
+                        <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
+                      </div>
+                    )}
+                    <ChevronRight size={15} strokeWidth={2} color="var(--muted)" />
+                  </div>
                 </Link>
               ))}
             </div>

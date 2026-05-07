@@ -169,6 +169,11 @@ export default function ReviewDetailClient({
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   }
 
+  function focusCommentInput() {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    window.setTimeout(() => inputRef.current?.focus(), 80);
+  }
+
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", paddingBottom: "92px" }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, background: "var(--bg)", borderBottom: "1px solid var(--border)", padding: "12px 16px", display: "flex", alignItems: "center", gap: "12px" }}>
@@ -259,7 +264,7 @@ export default function ReviewDetailClient({
                 <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
                 <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
               </button>
-              <button onClick={() => inputRef.current?.focus()} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}>
+              <button onClick={focusCommentInput} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}>
                 <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
                 <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
                   {comments.length} comment{comments.length !== 1 ? "s" : ""}

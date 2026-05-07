@@ -7,6 +7,7 @@ import { ArrowLeft, ChevronRight, Users } from "lucide-react";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
+import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 
 interface Member {
   name: string;
@@ -19,7 +20,7 @@ export default function FriendCirclePage() {
   const firstName = name.split(" ")[0];
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [accountType, setAccountType] = useState<AccountType>("private");
+  const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
   const [circleCount, setCircleCount] = useState(0);
   const [locked, setLocked] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -28,7 +29,7 @@ export default function FriendCirclePage() {
     (async () => {
       const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
       const data = await res.json();
-      setAccountType(data.accountType ?? "private");
+      setAccountType(data.accountType ?? DEFAULT_ACCOUNT_TYPE);
       const memberNames: string[] = data.displayMembers ?? data.members ?? [];
       setCircleCount(memberNames.length);
 

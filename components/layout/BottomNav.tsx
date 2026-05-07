@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Users, Flame, Camera, Search, User } from "lucide-react";
 
 const TABS = [
@@ -14,12 +15,29 @@ const TABS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      for (const tab of TABS) {
+        if (tab.href !== pathname) router.prefetch(tab.href);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [pathname, router]);
 
   if (
     pathname === "/login" ||
     pathname === "/onboarding" ||
     pathname.startsWith("/auth/reset-password") ||
     pathname.startsWith("/comments/") ||
+    (pathname.startsWith("/reviews/") && pathname !== "/reviews/new") ||
     pathname === "/privacy" ||
     pathname === "/terms"
   )
@@ -37,9 +55,15 @@ export default function BottomNav() {
       <div className="max-w-lg mx-auto flex items-center justify-around h-16">
         {TABS.map((tab) => {
           const active =
-            tab.href === "/"
+            pendingHref === tab.href ||
+            (tab.href === "/"
               ? pathname === "/"
-              : pathname.startsWith(tab.href);
+              : pathname.startsWith(tab.href));
+
+          const beginNavigation = () => {
+            if (tab.href !== pathname) setPendingHref(tab.href);
+            router.prefetch(tab.href);
+          };
 
           /* ── Center elevated Share button ── */
           if (tab.center) {
@@ -47,6 +71,9 @@ export default function BottomNav() {
               <Link
                 key={tab.href}
                 href={tab.href}
+                onClick={beginNavigation}
+                onPointerEnter={() => router.prefetch(tab.href)}
+                onFocus={() => router.prefetch(tab.href)}
                 style={{ position: "relative", top: "-14px", flexShrink: 0 }}
                 aria-label="Share"
               >
@@ -75,7 +102,12 @@ export default function BottomNav() {
             <Link
               key={tab.href}
               href={tab.href}
+              onClick={beginNavigation}
+              onPointerEnter={() => router.prefetch(tab.href)}
+              onFocus={() => router.prefetch(tab.href)}
               className="flex flex-col items-center gap-1 px-2 py-1"
+              aria-current={active ? "page" : undefined}
+              style={{ transform: active ? "translateY(-1px)" : "none", transition: "transform 120ms ease" }}
             >
               <tab.Icon size={20} strokeWidth={active ? 2.4 : 1.8} color={color} />
               <span

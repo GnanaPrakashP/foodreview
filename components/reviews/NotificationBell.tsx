@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-export default function NotificationBell() {
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [mounted, setMounted] = useState(false);
+export default function NotificationBell({ initialUnreadCount = 0 }: { initialUnreadCount?: number }) {
+  const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
 
   useEffect(() => {
     let active = true;
@@ -21,7 +20,6 @@ export default function NotificationBell() {
       }
     }
 
-    setMounted(true);
     loadUnreadCount();
     const interval = window.setInterval(loadUnreadCount, 45_000);
     return () => {
@@ -29,8 +27,6 @@ export default function NotificationBell() {
       window.clearInterval(interval);
     };
   }, []);
-
-  if (!mounted) return null;
 
   return (
     <Link
