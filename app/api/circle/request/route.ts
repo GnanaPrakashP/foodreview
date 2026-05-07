@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { addCircleEdge, addMutualCircleEdges, getAccountTypeForName, hasCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames, upsertCircleRequestNotification } from "@/lib/notifications";
 
-type CircleSupabaseClient = ReturnType<typeof createServerClient>;
+type CircleSupabaseClient = { from: (table: string) => any };
 
 function circleError(message: string, error: { message?: string; code?: string; details?: string | null } | null) {
   console.error("[circle/request]", message, {
@@ -64,13 +66,10 @@ export async function POST(req: NextRequest) {
 }
 
 async function handleCircleRequest(req: NextRequest) {
-  const { senderName, receiverName } = await req.json();
-  if (!senderName?.trim() || !receiverName?.trim() || senderName === receiverName) {
+  const { receiverName } = await req.json();
+  if (!receiverName?.trim()) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
-
-  const sender = senderName.trim();
-  const receiver = receiverName.trim();
 
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -79,8 +78,18 @@ async function handleCircleRequest(req: NextRequest) {
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
 
-  const senderAlreadyInReceiverCircle = await hasCircleEdge(supabase, receiver, sender);
-  const receiverAlreadyInSenderCircle = await hasCircleEdge(supabase, sender, receiver);
+  const actor = await getAuthenticatedCircleActor(supabase);
+  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
+  const admin = createAdminClient();
+  const sender = actor.actorName;
+  const receiver = receiverName.trim();
+  if (sender === receiver) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  const senderAlreadyInReceiverCircle = await hasCircleEdge(admin, receiver, sender);
+  const receiverAlreadyInSenderCircle = await hasCircleEdge(admin, sender, receiver);
 
   if (senderAlreadyInReceiverCircle) {
     return NextResponse.json({
@@ -90,7 +99,7 @@ async function handleCircleRequest(req: NextRequest) {
   }
 
   // If the other person already sent a request to me, auto-accept it
-  const { data: reverseRows, error: reverseError } = await supabase
+  const { data: reverseRows, error: reverseError } = await admin
     .from("circle_requests")
     .select("id, status")
     .eq("sender_name", receiver)
@@ -103,16 +112,16 @@ async function handleCircleRequest(req: NextRequest) {
 
   if (reverse) {
     if (reverse.status === "accepted") {
-      const { error } = await addMutualCircleEdges(supabase, sender, receiver);
+      const { error } = await addMutualCircleEdges(admin, sender, receiver);
       if (error) return circleError("failed to restore accepted reverse circle request", error);
       return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
     }
     if (reverse.status === "pending") {
-      const { error: requestError } = await supabase.from("circle_requests").update({ status: "accepted" }).eq("id", reverse.id);
+      const { error: requestError } = await admin.from("circle_requests").update({ status: "accepted" }).eq("id", reverse.id);
       if (requestError) return circleError("failed to accept reverse circle request", requestError);
-      const { error } = await addMutualCircleEdges(supabase, sender, receiver);
+      const { error } = await addMutualCircleEdges(admin, sender, receiver);
       if (error) return circleError("failed to create mutual circle edges", error);
-      await createCircleNotification(supabase, {
+      await createCircleNotification(admin, {
         recipient_name: receiver,
         actor_name: sender,
         type: "CIRCLE_REQUEST_ACCEPTED",
@@ -124,9 +133,9 @@ async function handleCircleRequest(req: NextRequest) {
   }
 
   if (receiverAlreadyInSenderCircle) {
-    const { error } = await addCircleEdge(supabase, receiver, sender);
+    const { error } = await addCircleEdge(admin, receiver, sender);
     if (error) return circleError("failed to complete existing one-way circle", error);
-    await createCircleNotification(supabase, {
+    await createCircleNotification(admin, {
       recipient_name: receiver,
       actor_name: sender,
       type: "MUTUAL_CIRCLE_CREATED",
@@ -135,17 +144,17 @@ async function handleCircleRequest(req: NextRequest) {
     return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
   }
 
-  const receiverAccountType = await getAccountTypeForName(supabase, receiver);
+  const receiverAccountType = await getAccountTypeForName(admin, receiver);
   if (receiverAccountType === "public") {
-    const { error } = await addCircleEdge(supabase, receiver, sender);
+    const { error } = await addCircleEdge(admin, receiver, sender);
     if (error) return circleError("failed to add sender to public account circle", error);
-    await createCircleNotification(supabase, {
+    await createCircleNotification(admin, {
       recipient_name: receiver,
       actor_name: sender,
       type: "ADDED_TO_CIRCLE",
       message: `${sender} joined your circle`,
     });
-    await createCircleNotification(supabase, {
+    await createCircleNotification(admin, {
       recipient_name: sender,
       actor_name: receiver,
       type: "CIRCLE_REQUEST_ACCEPTED",
@@ -155,7 +164,7 @@ async function handleCircleRequest(req: NextRequest) {
   }
 
   // Check if I already sent one
-  const { data: existingRows, error: existingError } = await supabase
+  const { data: existingRows, error: existingError } = await admin
     .from("circle_requests")
     .select("id, status")
     .eq("sender_name", sender)
@@ -169,12 +178,12 @@ async function handleCircleRequest(req: NextRequest) {
 
   if (existing) {
     if (existing.status === "accepted") {
-      const { error } = await addMutualCircleEdges(supabase, sender, receiver);
+      const { error } = await addMutualCircleEdges(admin, sender, receiver);
       if (error) return circleError("failed to restore accepted circle request", error);
       return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
     }
     if (existing.status === "pending") {
-      await createCircleNotification(supabase, {
+      await createCircleNotification(admin, {
         recipient_name: receiver,
         actor_name: sender,
         type: "CIRCLE_REQUEST_RECEIVED",
@@ -184,14 +193,14 @@ async function handleCircleRequest(req: NextRequest) {
       return NextResponse.json({ status: "pending", state: "PENDING" });
     }
 
-    const { error } = await supabase
+    const { error } = await admin
       .from("circle_requests")
       .update({ status: "pending" })
       .eq("id", existing.id);
 
     if (error) return circleError("failed to reopen circle request", error);
   } else {
-    const { data: createdRequest, error } = await supabase
+    const { data: createdRequest, error } = await admin
       .from("circle_requests")
       .insert({ sender_name: sender, receiver_name: receiver, status: "pending" })
       .select("id")
@@ -207,7 +216,7 @@ async function handleCircleRequest(req: NextRequest) {
   }
 
   // Notify the receiver
-  await createCircleNotification(supabase, {
+  await createCircleNotification(admin, {
     recipient_name: receiver,
     actor_name: sender,
     type: "CIRCLE_REQUEST_RECEIVED",

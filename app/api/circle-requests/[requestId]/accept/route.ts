@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addMutualCircleEdges } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createRouteSupabase, getNotificationViewer, unauthorized } from "@/app/api/notifications/_utils";
+
+type CircleRequestRow = {
+  id: string;
+  sender_name: string;
+  receiver_name: string;
+  status: "pending" | "accepted" | "rejected";
+};
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ requestId: string }> }) {
   const supabase = await createRouteSupabase();
   const viewer = await getNotificationViewer(supabase);
   if (!viewer?.name) return unauthorized();
 
+  const admin = createAdminClient();
   const { requestId } = await params;
-  const { data: request, error: requestError } = await supabase
+  const { data: request, error: requestError } = await admin
     .from("circle_requests")
     .select("id, sender_name, receiver_name, status")
     .eq("id", requestId)
-    .maybeSingle();
+    .maybeSingle<CircleRequestRow>();
 
   if (requestError) return NextResponse.json({ error: requestError.message }, { status: 500 });
   if (!request || request.receiver_name !== viewer.name) {
@@ -27,13 +36,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
     return NextResponse.json({ error: "Request is no longer pending" }, { status: 409 });
   }
 
-  const { error } = await supabase.from("circle_requests").update({ status: "accepted" }).eq("id", requestId);
+  const { error } = await admin.from("circle_requests").update({ status: "accepted" }).eq("id", requestId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const { error: edgeError } = await addMutualCircleEdges(supabase, request.receiver_name, request.sender_name);
+  const { error: edgeError } = await addMutualCircleEdges(admin, request.receiver_name, request.sender_name);
   if (edgeError) return NextResponse.json({ error: edgeError.message }, { status: 500 });
 
-  await createNotificationForNames(supabase, {
+  await createNotificationForNames(admin, {
     recipientName: request.sender_name,
     actorName: request.receiver_name,
     type: "CIRCLE_REQUEST_ACCEPTED",
@@ -45,7 +54,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
     dedupe: true,
   });
 
-  await supabase
+  await admin
     .from("notifications")
     .update({ is_read: true, read: true, updated_at: new Date().toISOString(), metadata: { requestId: request.id, senderName: request.sender_name, receiverName: request.receiver_name, status: "accepted" } })
     .eq("recipient_name", request.receiver_name)

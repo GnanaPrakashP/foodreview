@@ -1,0 +1,215 @@
+/**
+ * Seed script for E2E test users.
+ *
+ * Creates three test users (A = public, B = public, C = private) whose
+ * credentials come from .env.e2e.  Reviews for A and B at a shared
+ * restaurant ("E2E Kitchen") are inserted so the common-restaurant badge
+ * and visibility tests have pre-existing data.  A mutual circle edge
+ * between A and B is created so circle-visibility tests work without
+ * first running the "add to circle" flow.
+ *
+ * Prerequisites:
+ *   - .env.e2e  — E2E_USER_{A,B,C}_{EMAIL,PASSWORD,NAME}
+ *   - .env.local — NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+ *
+ * Run:
+ *   node scripts/seed-e2e.mjs
+ *
+ * Re-running is safe — existing users and rows are skipped.
+ */
+
+import { createClient } from "@supabase/supabase-js";
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function loadEnv(file) {
+  try {
+    return Object.fromEntries(
+      readFileSync(resolve(__dirname, "..", file), "utf8")
+        .split("\n")
+        .filter((l) => l && !l.startsWith("#") && l.includes("="))
+        .map((l) => {
+          const idx = l.indexOf("=");
+          return [l.slice(0, idx).trim(), l.slice(idx + 1).trim()];
+        })
+    );
+  } catch {
+    return {};
+  }
+}
+
+const local = loadEnv(".env.local");
+const e2e = loadEnv(".env.e2e");
+
+const SUPABASE_URL = local.NEXT_PUBLIC_SUPABASE_URL;
+const SERVICE_ROLE_KEY = local.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+  console.error(
+    "\n❌  NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing from .env.local\n"
+  );
+  process.exit(1);
+}
+
+function requiredEnv(key) {
+  const v = e2e[key];
+  if (!v) {
+    console.error(`\n❌  ${key} missing from .env.e2e\n`);
+    process.exit(1);
+  }
+  return v;
+}
+
+const users = [
+  {
+    email:       requiredEnv("E2E_USER_A_EMAIL"),
+    password:    requiredEnv("E2E_USER_A_PASSWORD"),
+    name:        requiredEnv("E2E_USER_A_NAME"),
+    accountType: "public",
+  },
+  {
+    email:       requiredEnv("E2E_USER_B_EMAIL"),
+    password:    requiredEnv("E2E_USER_B_PASSWORD"),
+    name:        requiredEnv("E2E_USER_B_NAME"),
+    accountType: "public",
+  },
+  {
+    email:       requiredEnv("E2E_USER_C_EMAIL"),
+    password:    requiredEnv("E2E_USER_C_PASSWORD"),
+    name:        requiredEnv("E2E_USER_C_NAME"),
+    accountType: "private",
+  },
+];
+
+const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
+
+const E2E_RESTAURANT = "E2E Kitchen";
+
+function reviewsFor(name) {
+  const base = {
+    reviewer_name:   name,
+    restaurant_name: E2E_RESTAURANT,
+    area:            "Test Area",
+  };
+  const isA = name === users[0].name;
+  return [
+    { ...base, items: [{ name: "E2E Idli",   rating: 5 }], body: "E2E seed review (public)",       visibility: "public"  },
+    ...(isA
+      ? [{ ...base, items: [{ name: "E2E Dosa",  rating: 4 }], body: "E2E seed review (circle-only)", visibility: "circle" }]
+      : []),
+  ];
+}
+
+async function seedUser(u) {
+  const [firstName, ...rest] = u.name.split(" ");
+  const lastName = rest.join(" ") || "";
+  const username = u.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+
+  process.stdout.write(`  ${u.name} (${u.email})… `);
+
+  // 1. Auth user
+  const { data: existing } = await admin.auth.admin.listUsers();
+  const existingUser = existing?.users?.find((usr) => usr.email === u.email);
+
+  let userId;
+  if (existingUser) {
+    userId = existingUser.id;
+    process.stdout.write("auth exists ");
+  } else {
+    const { data, error } = await admin.auth.admin.createUser({
+      email:         u.email,
+      password:      u.password,
+      email_confirm: true,
+      user_metadata: { full_name: u.name, username, onboarding_complete: true },
+    });
+    if (error) {
+      console.log(`❌  auth: ${error.message}`);
+      return null;
+    }
+    userId = data.user.id;
+    process.stdout.write("auth created ");
+  }
+
+  // 2. Profile (account_type omitted — may not exist on all DB versions; defaults to 'public')
+  const { error: profileErr } = await admin.from("profiles").upsert({
+    id:         userId,
+    first_name: firstName,
+    last_name:  lastName,
+    username,
+  });
+  if (profileErr) process.stdout.write(`⚠️ profile: ${profileErr.message} `);
+  else process.stdout.write("profile ok ");
+
+  // 3. Reviews (skip if seeded row already exists)
+  const reviews = reviewsFor(u.name);
+  if (reviews.length) {
+    const { data: existing2 } = await admin
+      .from("reviews")
+      .select("id")
+      .eq("reviewer_name", u.name)
+      .eq("restaurant_name", E2E_RESTAURANT)
+      .limit(1);
+    if (!existing2?.length) {
+      const { error: revErr } = await admin.from("reviews").insert(reviews);
+      if (revErr) process.stdout.write(`⚠️ reviews: ${revErr.message} `);
+      else process.stdout.write(`${reviews.length} reviews created `);
+    } else {
+      process.stdout.write("reviews exist ");
+    }
+  }
+
+  console.log("✅");
+  return { userId, name: u.name };
+}
+
+async function seedCircle(nameA, nameB) {
+  process.stdout.write(`  Circle edge ${nameA} ↔ ${nameB}… `);
+
+  const { data: existing } = await admin
+    .from("circle_memberships")
+    .select("user_name")
+    .eq("user_name", nameA)
+    .eq("member_name", nameB)
+    .limit(1);
+
+  if (existing?.length) {
+    console.log("already exists ✅");
+    return;
+  }
+
+  const { error: e1 } = await admin.from("circle_memberships").insert({ user_name: nameA, member_name: nameB });
+  const { error: e2 } = await admin.from("circle_memberships").insert({ user_name: nameB, member_name: nameA });
+  if (e1 || e2) {
+    console.log(`⚠️  ${e1?.message ?? ""} ${e2?.message ?? ""}`);
+  } else {
+    console.log("created ✅");
+  }
+}
+
+async function run() {
+  console.log("🌱  Seeding E2E test users…\n");
+
+  const results = [];
+  for (const u of users) {
+    const r = await seedUser(u);
+    if (r) results.push(r);
+  }
+
+  // Create mutual circle between A and B so visibility + badge tests work immediately
+  if (results.length >= 2) {
+    console.log("");
+    await seedCircle(results[0].name, results[1].name);
+  }
+
+  console.log("\n✅  Done.  Run: npx playwright test e2e/production-smoke.spec.ts --project=chromium\n");
+}
+
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

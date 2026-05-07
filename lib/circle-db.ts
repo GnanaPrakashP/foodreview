@@ -31,10 +31,13 @@ function profileName(profile: Pick<ProfileRow, "first_name" | "last_name">): str
 }
 
 export async function getAccountTypeForName(db: CircleDb, name: string): Promise<AccountType> {
+  const firstName = name.trim().split(/\s+/)[0] ?? "";
+
   const { data } = await db
     .from("profiles")
     .select("first_name, last_name, account_type")
-    .limit(1000);
+    .ilike("first_name", firstName)
+    .limit(100);
 
   const profile = ((data ?? []) as ProfileRow[]).find((row) => profileName(row) === name);
   return profile ? normalizeAccountType(profile.account_type) : DEFAULT_ACCOUNT_TYPE;
@@ -50,9 +53,15 @@ export async function getAccountTypesForNames(
   const wanted = new Set(uniqueNames);
   const result: Record<string, AccountType> = {};
 
+  const firstNames = [...new Set(
+    uniqueNames.map((n) => n.trim().split(/\s+/)[0]).filter(Boolean)
+  )];
+
+  const orFilter = firstNames.map((f) => `first_name.ilike.${f}`).join(",");
   const { data } = await db
     .from("profiles")
     .select("first_name, last_name, account_type")
+    .or(orFilter)
     .limit(1000);
 
   for (const row of (data ?? []) as ProfileRow[]) {
@@ -128,11 +137,11 @@ export async function getCircleRelationshipsForName(db: CircleDb, name: string):
     db
       .from("circle_memberships")
       .select("user_name, member_name")
-      .or(`user_name.eq.${name},member_name.eq.${name}`),
+      .or(`user_name.eq."${name}",member_name.eq."${name}"`),
     db
       .from("circle_requests")
       .select("sender_name, receiver_name")
-      .or(`sender_name.eq.${name},receiver_name.eq.${name}`)
+      .or(`sender_name.eq."${name}",receiver_name.eq."${name}"`)
       .eq("status", "accepted"),
   ]);
 

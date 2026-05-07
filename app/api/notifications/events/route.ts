@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Comment, Review } from "@/lib/types";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   createCirclePostNotifications,
   createPostCommentNotifications,
@@ -22,24 +23,25 @@ export async function POST(req: NextRequest) {
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 
+  const admin = createAdminClient();
   const payload = await req.json() as NotificationEvent;
-  const actorName = (payload.actorName?.trim() || viewer.name || await getAuthenticatedProfileName(supabase, viewer.id) || "").trim();
+  const actorName = (payload.actorName?.trim() || viewer.name || await getAuthenticatedProfileName(admin, viewer.id) || "").trim();
   if (!actorName || (viewer.name && actorName !== viewer.name)) {
     return NextResponse.json({ error: "Invalid actor" }, { status: 400 });
   }
 
   // Events that don't require the post to exist
   if (payload.event === "POST_UNLIKED") {
-    await removeLikeNotification(supabase, payload.reviewId, actorName);
+    await removeLikeNotification(admin, payload.reviewId, actorName);
     return NextResponse.json({ ok: true });
   }
 
   if (payload.event === "POST_COMMENT_DELETED") {
-    await removeCommentNotification(supabase, payload.commentId);
+    await removeCommentNotification(admin, payload.commentId);
     return NextResponse.json({ ok: true });
   }
 
-  const { data: review, error: reviewError } = await supabase
+  const { data: review, error: reviewError } = await admin
     .from("reviews")
     .select("*")
     .eq("id", payload.reviewId)
@@ -49,19 +51,19 @@ export async function POST(req: NextRequest) {
   if (!review) return NextResponse.json({ error: "Post not found" }, { status: 404 });
 
   if (payload.event === "POST_LIKED") {
-    const { data: like } = await supabase
+    const { data: like } = await admin
       .from("likes")
       .select("id")
       .eq("post_id", payload.reviewId)
       .eq("user_name", actorName)
       .maybeSingle();
 
-    if (like) await createPostLikeNotification(supabase, review as Review, actorName);
+    if (like) await createPostLikeNotification(admin, review as Review, actorName);
     return NextResponse.json({ ok: true });
   }
 
   if (payload.event === "POST_COMMENTED") {
-    const { data: comment, error: commentError } = await supabase
+    const { data: comment, error: commentError } = await admin
       .from("comments")
       .select("*")
       .eq("id", payload.commentId)
@@ -71,14 +73,14 @@ export async function POST(req: NextRequest) {
     if (commentError) return NextResponse.json({ error: commentError.message }, { status: 500 });
     if (!comment || comment.user_name !== actorName) return NextResponse.json({ error: "Comment not found" }, { status: 404 });
 
-    const { data: priorComments } = await supabase
+    const { data: priorComments } = await admin
       .from("comments")
       .select("user_name")
       .eq("post_id", payload.reviewId)
       .lt("created_at", comment.created_at);
 
     await createPostCommentNotifications(
-      supabase,
+      admin,
       review as Review,
       actorName,
       comment as Pick<Comment, "id" | "content">,
@@ -92,7 +94,7 @@ export async function POST(req: NextRequest) {
     if ((review as Review).reviewer_name !== actorName) {
       return NextResponse.json({ error: "Invalid actor" }, { status: 400 });
     }
-    await createCirclePostNotifications(supabase, review as Review);
+    await createCirclePostNotifications(admin, review as Review);
     return NextResponse.json({ ok: true });
   }
 

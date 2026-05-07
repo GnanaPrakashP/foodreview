@@ -214,7 +214,7 @@ export default function FriendProfileClient({
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{name}</p>
-              {mounted && !isOwnProfile && commonRestaurantCount !== null && (
+              {mounted && !isOwnProfile && commonRestaurantCount !== null && (circleStatus === "one_way" || circleStatus === "mutual") && (
                 <span
                   aria-label={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
                   title={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
@@ -277,7 +277,7 @@ export default function FriendProfileClient({
           )}
           {circleStatus === "incoming" && (
             <button onClick={sendRequest} style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "13px", color: "white", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
-              Add
+              Accept Request
             </button>
           )}
           {circleStatus === "none" && (

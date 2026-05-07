@@ -1,6 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getAccountTypeForName } from "@/lib/circle-db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,14 +19,8 @@ function isMissingCircleMembershipsTable(error: { message?: string; code?: strin
 }
 
 async function removeFromCircle(req: NextRequest) {
-  const { myName, otherName } = await req.json();
-  if (typeof myName !== "string" || typeof otherName !== "string") {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
-  }
-
-  const me = myName.trim();
-  const other = otherName.trim();
-  if (!me || !other || me === other) {
+  const { otherName } = await req.json();
+  if (typeof otherName !== "string") {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
@@ -34,7 +31,38 @@ async function removeFromCircle(req: NextRequest) {
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
 
-  const { error } = await supabase
+  const actor = await getAuthenticatedCircleActor(supabase);
+  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
+  const admin = createAdminClient();
+  const me = actor.actorName;
+  const other = otherName.trim();
+  if (!other || me === other) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  // Decide whether to dissolve both edges:
+  //   - Both private → full mutual dissolution (friendship model)
+  //   - Either private + mutual → still dissolve both, otherwise the orphaned edge
+  //     on the private account allows the other party to bypass the private request
+  //     flow and instantly recreate mutual on the next "Add" click.
+  //   - Both public → one-way leave only (independent open-follow circles)
+  const [meAccountType, otherAccountType, reverseEdgeResult] = await Promise.all([
+    getAccountTypeForName(admin, me),
+    getAccountTypeForName(admin, other),
+    admin
+      .from("circle_memberships")
+      .select("id")
+      .eq("user_name", me)
+      .eq("member_name", other)
+      .limit(1),
+  ]);
+
+  const isMutual = (reverseEdgeResult.data ?? []).length > 0;
+  const shouldDissolveBoth =
+    isMutual && (meAccountType === "private" || otherAccountType === "private");
+
+  const { error } = await admin
     .from("circle_memberships")
     .delete()
     .eq("user_name", other)
@@ -46,18 +74,31 @@ async function removeFromCircle(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Dissolve the reverse edge to prevent orphaned memberships and request-flow bypasses.
+  if (shouldDissolveBoth && !membershipsTableMissing) {
+    const { error: reverseError } = await admin
+      .from("circle_memberships")
+      .delete()
+      .eq("user_name", me)
+      .eq("member_name", other);
+
+    if (reverseError && !isMissingCircleMembershipsTable(reverseError)) {
+      console.error("[circle/remove] reverse membership delete failed:", reverseError.message, reverseError.code, reverseError.details);
+    }
+  }
+
   // Accepted request rows are historical now, but remove them so old data
   // cannot recreate a mutual edge after both people leave the relationship.
   // Use updates rather than deletes because older deployed schemas may not
   // include a delete policy for circle_requests.
   const cleanupResults = await Promise.all([
-    supabase
+    admin
       .from("circle_requests")
       .update({ status: "rejected" })
       .eq("sender_name", me)
       .eq("receiver_name", other)
       .eq("status", "accepted"),
-    supabase
+    admin
       .from("circle_requests")
       .update({ status: "rejected" })
       .eq("sender_name", other)

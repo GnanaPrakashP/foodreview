@@ -1,0 +1,2028 @@
+================================================================================
+CIRCLE FEATURE — MANUAL QA CHECKLIST
+================================================================================
+App: FoodReview
+Feature: Circle (social connection system)
+Last updated: 2026-05-07
+
+LEGEND
+------
+Priority H = High   (must pass before every deploy)
+Priority M = Medium (must pass before every release)
+Priority L = Low    (regression / edge case, test when time allows)
+
+Account types
+  Public  — anyone can add them; they are joined immediately, no approval needed
+  Private — requests must be sent and manually accepted before circle is created
+
+Circle direction vocabulary (for backend state notes)
+  "A's circle"           = rows WHERE user_name = A
+  "A joined B's circle"  = row WHERE user_name = B, member_name = A
+  "mutual"               = both A→B and B→A edges exist
+  "one-way"              = only one edge exists (B's circle has A, not vice versa)
+
+Pass/Fail format
+  [ ] PASS
+  [ ] FAIL
+
+================================================================================
+SECTION 1 — PUBLIC ACCOUNT ADD FLOW
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-001
+Title: Add a public account — button state transitions correctly
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User A is logged in
+  - User B has a PUBLIC account
+  - A and B have no existing circle relationship
+
+User A setup: logged in as A
+User B setup: public account, no connection to A
+
+Steps:
+  1. Navigate to User B's profile page as User A
+  2. Observe the button label next to User B's name
+  3. Click the Add/Follow button
+  4. Observe the button label immediately after clicking
+
+Expected UI result:
+  Step 2: Button reads "Add" (or equivalent)
+  Step 4: Button changes to "In Circle" without a page reload
+          No "Requested" intermediate state should appear for public accounts
+
+Expected backend state:
+  circle_memberships: row added WHERE user_name = B, member_name = A
+  circle_memberships: NO row added WHERE user_name = A, member_name = B
+  circle_requests: NO pending row created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-002
+Title: Add a public account — duplicate click does not duplicate membership
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-001 completed (A is already in B's circle)
+
+Steps:
+  1. Navigate to User B's profile as User A
+  2. Confirm button reads "In Circle" (or similar)
+  3. Click the button again (if the UI allows re-clicking)
+  4. Refresh the page
+
+Expected UI result:
+  Step 3: Button should not change to "Add" and back; clicking while already
+          in circle should either be disabled or re-confirm same state
+  Step 4: Button still reads "In Circle" after refresh
+
+Expected backend state:
+  Still exactly one circle_memberships row for (user_name=B, member_name=A)
+  No duplicate rows created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-003
+Title: Add a public account — User B sees A in their circle member list
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-001 completed (A joined B's public circle)
+
+Steps:
+  1. Log out and log in as User B
+  2. Navigate to the People / Circle section
+  3. Look for User A in the list of circle members
+
+Expected UI result:
+  User A appears in B's circle member list
+  User B is NOT automatically shown in A's circle
+
+Expected backend state:
+  circle_memberships: row (user_name=B, member_name=A) exists
+  circle_memberships: row (user_name=A, member_name=B) does NOT exist
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-004
+Title: Public account add — A sees B's circle posts after joining
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has joined B's circle (CIR-001 completed)
+  - User B has at least one post with visibility set to "circle"
+
+Steps:
+  1. Log in as User A
+  2. Navigate to the feed or to User B's profile
+
+Expected UI result:
+  B's circle-visibility posts are visible to A
+  B's me-only posts are NOT visible to A
+
+Expected backend state:
+  No change needed (read-only check)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-005
+Title: Public account add — A's feed updates after joining B's circle
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has NOT yet joined B's circle
+  - User B has circle-visibility posts
+
+Steps:
+  1. Log in as A; check the circle/trending feed and confirm B's posts are absent
+  2. Navigate to B's profile and click Add
+  3. Return to the circle feed
+
+Expected UI result:
+  After adding B, B's circle-visibility posts appear in A's feed (may require
+  a page refresh depending on implementation)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 2 — PRIVATE ACCOUNT REQUEST FLOW
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-006
+Title: Send request to private account — button transitions to "Requested"
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User A is logged in
+  - User B has a PRIVATE account
+  - No existing circle relationship
+
+Steps:
+  1. Navigate to User B's profile as User A
+  2. Observe the button label
+  3. Click the button to send a request
+  4. Observe the button label immediately after
+
+Expected UI result:
+  Step 2: Button reads "Add" or "Send Request"
+  Step 4: Button changes to "Requested" without page reload
+          No "In Circle" or "Mutual" state appears immediately
+
+Expected backend state:
+  circle_requests: one row with sender_name=A, receiver_name=B, status=pending
+  circle_memberships: NO row created yet
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-007
+Title: Private account request — notification appears in B's notification bell
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-006 completed (A sent request to B)
+
+Steps:
+  1. Log out and log in as User B
+  2. Look at the notification bell/icon
+  3. Click to open notifications
+  4. Find the circle request notification from A
+
+Expected UI result:
+  Notification badge appears on the bell indicating unread notifications
+  The notification reads something like "A requested to join your circle"
+  Notification has Accept and Decline/Reject buttons
+
+Expected backend state:
+  notifications table: row with recipient_name=B, actor_name=A,
+    type=CIRCLE_REQUEST_RECEIVED (or circle_request), is_read=false
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-008
+Title: Private account request — duplicate request does not create second row
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-006 completed (pending request exists)
+
+Steps:
+  1. Navigate to B's profile as A (button should show "Requested")
+  2. If the button is clickable, click it again
+  3. Check the notification bell as User B
+
+Expected UI result:
+  Button remains "Requested"
+  B still sees only ONE circle request notification from A, not two
+
+Expected backend state:
+  circle_requests: exactly one row with sender_name=A, receiver_name=B
+  notifications: exactly one notification row for this pair (upserted, not duplicated)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-009
+Title: Private account request — page refresh preserves "Requested" state
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-006 completed (pending request exists)
+
+Steps:
+  1. While on B's profile as A, hard-refresh the page (Ctrl+Shift+R / Cmd+Shift+R)
+
+Expected UI result:
+  Button still shows "Requested" after reload
+  Not reset to "Add"
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-010
+Title: Private request — resend after rejection reactivates to "Requested"
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A had a previous request that B rejected
+  - A is logged in and on B's profile
+
+Steps:
+  1. Confirm button shows "Add" (previous request was rejected, so A can resend)
+  2. Click the button to resend the request
+  3. Observe the button state
+
+Expected UI result:
+  Button transitions to "Requested" again
+  No error shown to A
+
+Expected backend state:
+  circle_requests: existing row updated to status=pending (no new row created)
+  notifications: B receives a new/updated circle request notification
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-011
+Title: Private request — A cannot see B's circle-only posts before acceptance
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has a pending request to B
+  - B has at least one circle-visibility post
+
+Steps:
+  1. Navigate to B's profile as A
+  2. Count visible posts
+
+Expected UI result:
+  Only B's PUBLIC posts are visible to A
+  B's circle-visibility posts do NOT appear
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-012
+Title: Reverse pending auto-accept — A sends to B who already requested A
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B (private) sent a request to User A that is still pending
+  - User A (any type) has NOT yet responded
+
+Steps:
+  1. Log in as User A
+  2. Navigate to User B's profile
+  3. Click Add / Send Request on B's profile
+  4. Observe the resulting button state
+
+Expected UI result:
+  Button immediately shows "Mutual" or "In Circle" (not "Requested")
+  The flow completes instantly — no separate accept step needed
+
+Expected backend state:
+  circle_requests: B's pending request updated to status=accepted
+  circle_memberships: TWO rows created — (user_name=A, member_name=B)
+    AND (user_name=B, member_name=A)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 3 — CANCEL REQUEST
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-013
+Title: Cancel pending request from B's profile — button resets to "Add"
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has a pending request to B (private account)
+  - Button shows "Requested" on B's profile
+
+Steps:
+  1. Navigate to B's profile as A
+  2. Click "Cancel Request" (or click "Requested" to reveal cancel action)
+  3. Confirm the cancellation in any dialog that appears
+  4. Observe the button state
+
+Expected UI result:
+  Button reverts to "Add" / "Send Request"
+  No error message
+
+Expected backend state:
+  circle_requests: pending row WHERE sender=A, receiver=B deleted (or status=cancelled)
+  notifications: B's circle request notification soft-deleted (deleted_at set)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-014
+Title: Cancel pending request — B's notification disappears
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has a pending request to B
+  - B can see the notification in their bell
+
+Steps:
+  1. As User A, cancel the request (see CIR-013 steps)
+  2. Log in as User B
+  3. Open the notification bell
+
+Expected UI result:
+  The circle request notification from A is no longer visible
+  Notification count badge decreases or disappears
+
+Expected backend state:
+  notifications row for this pair: deleted_at is set (soft-deleted)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-015
+Title: Cancel pending request — page refresh preserves cancellation
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-013 completed (request cancelled)
+
+Steps:
+  1. Hard-refresh B's profile page while logged in as A
+  2. Observe the button state
+
+Expected UI result:
+  Button still reads "Add" after refresh, not "Requested"
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-016
+Title: Cancel accepted request — blocked by UI or returns error
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent a request to B (private); B accepted it
+  - A and B are now in circle
+
+Steps:
+  1. Navigate to B's profile as A
+  2. Attempt to use any "cancel" or "remove" action
+  3. Observe the resulting action / error
+
+Expected UI result:
+  If a cancel action is presented: the UI shows an error or redirects A to the
+  remove flow ("Remove from circle") instead of silently doing nothing
+  The circle membership remains intact after the attempt
+
+Expected backend state:
+  circle_memberships: both edges unchanged
+  No circle_requests rows deleted
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 4 — ACCEPT REQUEST FROM NOTIFICATION BELL
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-017
+Title: Accept circle request from notification bell — mutual circle created
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent a request to B (private account)
+  - B is logged in and can see the notification
+
+Steps:
+  1. Log in as User B
+  2. Open the notification bell
+  3. Find the circle request notification from A
+  4. Click "Accept"
+  5. Observe the notification state
+  6. Navigate to A's profile as B and observe the button
+
+Expected UI result:
+  Step 5: Notification updates (may show "Accepted" state or disappear)
+  Step 6: Button reads "Mutual" or "In Circle" indicating mutual connection
+
+Expected backend state:
+  circle_requests: row updated to status=accepted
+  circle_memberships: (user_name=B, member_name=A) AND (user_name=A, member_name=B)
+    both created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-018
+Title: Accept request — A receives "accepted" notification
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-017 completed (B accepted A's request)
+
+Steps:
+  1. Log in as User A
+  2. Open the notification bell
+  3. Look for a "B accepted your circle request" notification
+
+Expected UI result:
+  A sees a notification indicating B accepted their request
+  Notification links to B's profile (if applicable)
+
+Expected backend state:
+  notifications: row with recipient_name=A, actor_name=B,
+    type=CIRCLE_REQUEST_ACCEPTED
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-019
+Title: Accept request — A sees B's circle posts immediately after acceptance
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-017 completed
+  - B has at least one circle-visibility post
+
+Steps:
+  1. Log in as User A after B has accepted
+  2. Navigate to B's profile
+
+Expected UI result:
+  B's circle-visibility posts are now visible to A
+  A does not need to re-add or re-send a request
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-020
+Title: Double accept — accepting the same request twice is idempotent
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - B has already accepted A's request
+
+Steps:
+  1. Log in as User B
+  2. If the notification still shows, attempt to click Accept again
+  3. Observe the result
+
+Expected UI result:
+  No error shown to B
+  State remains "Mutual" — no duplicate circle edges created
+
+Expected backend state:
+  circle_memberships: still exactly two rows (one per direction)
+  No duplicate rows
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 5 — REJECT REQUEST FROM NOTIFICATION BELL
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-021
+Title: Reject circle request from notification bell — no circle created
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent a request to B (private account)
+  - B can see the notification
+
+Steps:
+  1. Log in as User B
+  2. Open notifications and find A's request
+  3. Click "Decline" / "Reject"
+  4. Navigate to A's profile as B
+
+Expected UI result:
+  Step 3: Notification shows rejected/dismissed state or disappears
+  Step 4: No circle connection shown
+
+Expected backend state:
+  circle_requests: row updated to status=rejected
+  circle_memberships: NO rows created for this pair
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-022
+Title: Reject request — A's button resets to "Add" after rejection
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-021 completed (B rejected A's request)
+
+Steps:
+  1. Log in as User A
+  2. Navigate to B's profile
+  3. Observe the button state
+
+Expected UI result:
+  Button reads "Add" or "Send Request" (not "Requested")
+  A can resend a request if desired
+
+Expected backend state:
+  circle_requests: row with status=rejected for this pair
+  circle_memberships: no rows
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 6 — ACCEPT / REJECT FROM USER PROFILE (if supported)
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-023
+Title: Accept incoming request from A's profile page as B
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent a request to B (private)
+  - B visits A's profile directly (not via notification bell)
+
+Steps:
+  1. Log in as User B
+  2. Navigate directly to A's profile page
+  3. Look for an "Accept Request" or "Incoming Request" button
+  4. Click Accept
+
+Expected UI result:
+  Button state on A's profile updates to "Mutual" or accepted state
+  If there is no button on the profile for incoming requests, mark this test N/A
+
+Expected backend state:
+  Same as CIR-017
+
+[ ] PASS
+[ ] FAIL
+[ ] N/A — incoming request only handled via notification bell
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-024
+Title: Profile shows correct button for each relationship state
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Set up the following pairs (requires multiple test accounts):
+      Pair 1: No relationship → should show "Add"
+      Pair 2: A sent to B (pending) → should show "Requested" for A
+      Pair 3: B sent to A (pending) → should show "Accept Request" for A
+      Pair 4: One-way (A in B's circle, B not in A's) → show "In Circle" for A
+      Pair 5: Mutual → show "Mutual" or "In Circle" for both
+
+Steps:
+  1. Log in as User A and navigate to each counterpart's profile
+  2. Record the button label for each relationship state
+
+Expected UI result:
+  Each profile shows the correct button for its relationship state
+  No state bleeds into another (e.g., "Requested" when mutual)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-025
+Title: Incoming request button shows "Accept Request" not "Add"
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B (private) sent a request to User A
+
+Steps:
+  1. Log in as User A
+  2. Navigate to User B's profile
+
+Expected UI result:
+  Button reads "Accept Request" (or equivalent indicating incoming request)
+  Button does NOT read "Add" — clicking "Add" on an incoming request should
+  auto-accept, not create a duplicate outgoing request
+
+Expected backend state:
+  No new circle_requests row created
+  If A clicks the button: existing B→A request updated to accepted,
+    mutual edges created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 7 — NOTIFICATION DISAPPEARANCE AFTER ACTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-026
+Title: Notification disappears after A cancels their outgoing request
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has a pending request to B (private)
+  - B has an unread notification from A
+
+Steps:
+  1. Log in as A, cancel the request on B's profile
+  2. Without refreshing, log in as B in a different browser/tab
+  3. Check B's notification bell
+
+Expected UI result:
+  The "A requested to join your circle" notification is either gone or marked
+  as deleted/dismissed in B's notification list
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-027
+Title: Notification marked read after B accepts from bell
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has pending request to B
+
+Steps:
+  1. Log in as B, open notification bell, click Accept on A's request
+  2. Close and reopen the notification bell
+
+Expected UI result:
+  The request notification no longer shows as unread (badge cleared)
+  Notification may still be visible but in a "read" state, or it may disappear
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-028
+Title: Resend after cancel — B gets a fresh notification, not duplicated one
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A previously cancelled a request to B (CIR-013 completed)
+
+Steps:
+  1. Log in as A, resend the circle request to B
+  2. Log in as B and check notifications
+
+Expected UI result:
+  B sees exactly ONE circle request notification from A
+  Not two (one for the old request and one for the new)
+
+Expected backend state:
+  notifications: the same row updated (upserted) with deleted_at=null,
+    not a new duplicate row
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 8 — STALE NOTIFICATION HANDLING
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-029
+Title: Stale accept — A cancels request AFTER B opens notification but BEFORE
+       B clicks Accept
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has a pending request to B
+
+Steps:
+  1. Log in as B in Browser 1, open the notification (do NOT click Accept yet)
+  2. Log in as A in Browser 2, cancel the request
+  3. In Browser 1 (as B), click Accept on the now-stale notification
+
+Expected UI result:
+  Browser 1 shows an error or "Request no longer available" message
+  B is NOT added to A's circle
+  No circle membership created
+
+Expected backend state:
+  circle_memberships: no rows for this pair (or only pre-existing rows)
+  circle_requests: row deleted (cancelled by A before accept)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-030
+Title: Stale reject — same scenario as CIR-029 but B clicks Reject
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - Same as CIR-029
+
+Steps:
+  1. Log in as B in Browser 1, open the notification (do NOT click Reject yet)
+  2. Log in as A in Browser 2, cancel the request
+  3. In Browser 1, click Reject on the stale notification
+
+Expected UI result:
+  Error or silent no-op (reject on non-existent pending request)
+  No crash or misleading success message
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-031
+Title: Stale notification after B already accepted via profile
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent request to B
+  - B accepted via profile button (not via notification bell)
+
+Steps:
+  1. B clicks Accept on the notification bell for the same request afterward
+
+Expected UI result:
+  Idempotent — no error, state shows already-accepted/mutual
+  No duplicate circle edges created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-032
+Title: Accept rejected request is blocked
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent request to B; B rejected it (status=rejected)
+  - B tries to re-interact with the stale notification (if still visible)
+
+Steps:
+  1. Log in as B
+  2. If the notification is still in B's list (read state), click Accept
+
+Expected UI result:
+  Error shown: "Request is no longer pending" or equivalent
+  No circle membership created
+
+Expected backend state:
+  circle_requests: status remains rejected
+  circle_memberships: no rows created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 9 — PAGE REFRESH AFTER ACTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-033
+Title: Refresh after Add (public) — "In Circle" persists
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Add a public account (button becomes "In Circle")
+  2. Hard-refresh the profile page
+
+Expected UI result:
+  Button still reads "In Circle" after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-034
+Title: Refresh after Request (private) — "Requested" persists
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Send request to private account (button becomes "Requested")
+  2. Hard-refresh the profile page
+
+Expected UI result:
+  Button still reads "Requested" after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-035
+Title: Refresh after Accept — mutual state persists
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Accept A's request as B (button on A's profile becomes "Mutual")
+  2. Hard-refresh A's profile
+
+Expected UI result:
+  Button still reads "Mutual" after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-036
+Title: Refresh after Cancel — button resets to "Add" and persists
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Cancel a pending request (button reverts to "Add")
+  2. Hard-refresh the profile page
+
+Expected UI result:
+  Button still reads "Add" after refresh, not "Requested"
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-037
+Title: Refresh after Remove — button resets to "Add" and persists
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Remove someone from circle (button should revert to "Add")
+  2. Hard-refresh the profile page
+
+Expected UI result:
+  Button still reads "Add" after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-038
+Title: Refresh after Reject — A's button shows "Add" after reload
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. B rejects A's request
+  2. A hard-refreshes B's profile page
+
+Expected UI result:
+  A's button reads "Add" (can resend) after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 10 — MULTI-TAB STALE STATE BEHAVIOR
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-039
+Title: Two tabs — accept in one tab, other tab still shows "Requested"
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - B has A's profile open in Tab 1 showing "Requested" button
+  - B has the notification bell open in Tab 2
+
+Steps:
+  1. In Tab 2, accept A's request
+  2. Return to Tab 1 without refreshing
+
+Expected UI result:
+  Tab 1 may still show "Requested" (stale state) — this is acceptable
+  After refreshing Tab 1, the button should update to reflect the accepted state
+  NOTE: Mark FAIL only if Tab 1 shows an error or broken UI state
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-040
+Title: Add on public profile in one tab — second tab reflects correct state
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Open User B's profile in Tab 1 and Tab 2 (both showing "Add")
+  2. Click Add in Tab 1 (button becomes "In Circle")
+  3. In Tab 2, click Add again (button still shows "Add" from stale state)
+
+Expected UI result:
+  Tab 2 Add click should not create a duplicate membership
+  After Tab 2 refreshes, button shows "In Circle"
+
+Expected backend state:
+  Still exactly one circle_memberships row (no duplicate)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-041
+Title: Cancel in one tab while other tab still shows "Requested"
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Open B's profile in Tab 1 (shows "Requested")
+  2. Cancel the request in Tab 2
+  3. In Tab 1 (stale), click "Requested" or interact with the button
+
+Expected UI result:
+  No crash or console error visible to the user
+  After Tab 1 refreshes, button shows "Add"
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-042
+Title: Remove in one tab — second tab still shows "Mutual"
+Priority: L
+--------------------------------------------------------------------------------
+Steps:
+  1. Open partner's profile in two tabs, both showing "Mutual"
+  2. Remove in Tab 1 (button reverts to "Add")
+  3. Click "Mutual" button in Tab 2 (stale)
+
+Expected UI result:
+  Tab 2 action should not crash the UI
+  After Tab 2 refreshes, button shows "Add"
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 11 — SEARCH RESULT BUTTON STATES
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-043
+Title: Search results show correct button for each relationship state
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Prepare test accounts with the following states relative to the logged-in user:
+      User X: no relationship → "Add"
+      User Y: pending outgoing request → "Requested"
+      User Z: mutual circle → "Mutual" or "In Circle"
+      User W: one-way (W in logged-in user's circle, not vice versa) → relevant label
+
+Steps:
+  1. Log in as the test user
+  2. Use the People search/explore to find each of X, Y, Z, W
+  3. Record the button shown next to each name in search results
+
+Expected UI result:
+  Each user in search results shows the correct button matching their relationship
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-044
+Title: Search result Add button — public account — works without navigating
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Find a public account (User B) in search results
+  2. Click "Add" directly from the search results list (without opening profile)
+  3. Observe the button state in search results
+
+Expected UI result:
+  Button changes to "In Circle" inline, without a page navigation
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-045
+Title: Search result — private account button shows "Send Request" or "Add"
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Find a private account in search results
+  2. Click the button to send a request
+  3. Observe the button in search results
+
+Expected UI result:
+  Button changes to "Requested" immediately in the search list
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 12 — PROFILE BUTTON STATES
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-046
+Title: Own profile — no circle button shown to yourself
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Log in and navigate to your own profile
+
+Expected UI result:
+  No "Add" or circle button appears on your own profile
+  Instead: edit profile or settings options may be shown
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-047
+Title: Profile button updates after Remove without page reload
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to a mutual circle partner's profile
+  2. Click Remove / Leave circle
+  3. Observe the button without refreshing
+
+Expected UI result:
+  Button immediately updates to "Add" (or equivalent)
+  No page reload needed
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-048
+Title: Profile button shows "Accept Request" for incoming private requests
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B (private) sent a request to logged-in User A
+
+Steps:
+  1. Navigate to User B's profile as User A
+
+Expected UI result:
+  Button reads "Accept Request" (not "Add")
+  Clicking the button accepts the request and both enter circle mutually
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 13 — PUBLIC / PRIVATE ACCOUNT SWITCH BEHAVIOR
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-049
+Title: Public account switches to private — existing circle members retained
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B is public; User A is in B's circle (one-way, A joined B)
+
+Steps:
+  1. Log in as B, switch account type to Private in settings
+  2. Log in as A, navigate to B's profile
+
+Expected UI result:
+  A's button should still show "In Circle" (A is already in B's circle)
+  A does NOT need to re-request
+
+Expected backend state:
+  circle_memberships row (user_name=B, member_name=A) still exists
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-050
+Title: Private account switches to public — pending requests unaffected
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B is private; User A sent a pending request to B
+
+Steps:
+  1. Log in as B, switch account type to Public in settings
+  2. Log in as A, navigate to B's profile
+
+Expected UI result:
+  Pending request should ideally still be shown as "Requested" to A
+  OR the system auto-accepts on the account type change
+  NOTE: Document actual behavior observed
+
+Expected backend state:
+  Document what happens to the pending circle_requests row
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-051
+Title: New Add attempt after switching public → private requires approval
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B switched from public to private (CIR-050)
+  - User C has NO relationship with B
+
+Steps:
+  1. Log in as C, navigate to B's (now private) profile
+  2. Click Add
+
+Expected UI result:
+  Button shows "Requested" (not immediately "In Circle")
+  B must approve C's request
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 14 — COMMON RESTAURANT BADGE VISIBILITY
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-052
+Title: Common restaurant badge visible only to circle members
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B have reviewed at least one common restaurant
+  - User A is in User B's circle
+
+Setup:
+  User A: reviewed "Pasta Palace" and "Sushi Spot"
+  User B: reviewed "Pasta Palace" and "Burger Barn"
+
+Steps:
+  1. Log in as User A (who is in B's circle)
+  2. Navigate to User B's profile
+  3. Observe the area next to B's name for a restaurant count badge (e.g., "1 🧑‍🍳")
+  4. Log out and log in as User C (no relationship with B)
+  5. Navigate to User B's profile
+
+Expected UI result:
+  Step 3: Badge is VISIBLE to User A (who is in B's circle)
+           Badge shows count of commonly reviewed restaurants (e.g., "1 🧑‍🍳")
+  Step 5: Badge is NOT visible to User C (not in B's circle)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-053
+Title: Common restaurant badge — mutual circle both see badge on each other
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B are in mutual circle, both have reviewed common restaurants
+
+Steps:
+  1. Log in as A, navigate to B's profile — note badge count
+  2. Log in as B, navigate to A's profile — note badge count
+
+Expected UI result:
+  Both A and B see the badge on each other's profiles
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-054
+Title: Common restaurant badge — not visible to sender before acceptance
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A sent a pending request to B (private account)
+  - A and B have common restaurants
+
+Steps:
+  1. Log in as A and navigate to B's profile
+
+Expected UI result:
+  Badge is NOT visible (A is not yet in B's circle)
+  After B accepts, badge should appear
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-055
+Title: Common restaurant badge — not visible after removal
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B were in circle; A could see the badge on B's profile
+  - A removes themselves from B's circle
+
+Steps:
+  1. As A, remove from B's circle
+  2. Navigate to B's profile
+
+Expected UI result:
+  Badge is no longer visible after removal
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-056
+Title: Common restaurant badge — zero common restaurants shows no badge
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B are in circle
+  - A and B have NOT reviewed any common restaurants
+
+Steps:
+  1. Log in as A, navigate to B's profile
+
+Expected UI result:
+  No badge appears (0 common restaurants → badge hidden)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 15 — CIRCLE-ONLY POST VISIBILITY
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-057
+Title: Circle-visibility post visible to mutual circle member
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B are in mutual circle
+  - B has a post with visibility = "circle"
+
+Steps:
+  1. Log in as A and navigate to B's profile (or feed)
+
+Expected UI result:
+  B's circle-visibility post is visible to A
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-058
+Title: Circle-visibility post NOT visible to non-member
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User C has no relationship with B
+  - B has a circle-visibility post
+
+Steps:
+  1. Log in as C and navigate to B's profile
+
+Expected UI result:
+  B's circle post is NOT visible to C
+  Only B's public posts appear
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-059
+Title: Circle post NOT visible to one-way follower who A has NOT joined
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A joined B's circle (one-way: user_name=B, member_name=A)
+  - B has NOT joined A's circle
+  - A has a circle-visibility post
+
+Steps:
+  1. Log in as B and navigate to A's profile
+
+Expected UI result:
+  A's circle post is NOT visible to B
+  (B is in A's audience but A has not joined B's circle as a viewer —
+   wait, re-read: A's circle post is for A's audience, which is people
+   whose member_name=A. B is not in A's circle as member. So B cannot
+   see A's circle posts.)
+
+  Actually: A's circle post is visible to members of A's own circle.
+  Since B is NOT a member of A's circle (user_name=A, member_name=B does
+  not exist), B cannot see A's circle posts.
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-060
+Title: Me-only post not visible to anyone including circle members
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A and B are in mutual circle
+  - B has a post with visibility = "me" (only me)
+
+Steps:
+  1. Log in as A, navigate to B's profile
+
+Expected UI result:
+  B's "me-only" post is NOT visible to A
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-061
+Title: Circle post visibility survives page refresh
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A can see B's circle post
+
+Steps:
+  1. Navigate to B's profile as A and confirm circle post is visible
+  2. Hard-refresh the page
+
+Expected UI result:
+  Circle post remains visible after refresh
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 16 — PUBLIC POST VISIBILITY FROM PRIVATE ACCOUNTS
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-062
+Title: Public posts from private accounts visible to everyone
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B has a PRIVATE account
+  - B has a post with visibility = "public"
+
+Steps:
+  1. Log in as User C (no relationship with B)
+  2. Navigate to B's profile
+
+Expected UI result:
+  B's public post IS visible to C despite B having a private account
+  (Post visibility is determined by post setting, not account type)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-063
+Title: Private account public posts appear in global trending
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - User B (private account) has a public post at a popular restaurant
+
+Steps:
+  1. Navigate to the trending page (without logging in or as a non-circle user)
+  2. Check if the restaurant appears in global trending
+
+Expected UI result:
+  The restaurant DOES appear in global trending (driven by public posts,
+  not account type)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 17 — TRENDING PAGE BEHAVIOR
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-064
+Title: Circle feed shows posts from joined circles only
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has joined B's circle and C's circle
+  - A has NOT joined D's circle
+  - B, C, D all have circle-visibility posts
+
+Steps:
+  1. Log in as A and navigate to the circle/trending feed
+
+Expected UI result:
+  Posts from B and C appear in the circle feed
+  Posts from D do NOT appear (A has not joined D's circle)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-065
+Title: Trending page updates after A joins a new circle
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has not joined E's circle
+  - E has circle-visibility posts
+
+Steps:
+  1. Log in as A, check the circle feed — confirm E's posts are absent
+  2. Add E (public) to circle
+  3. Return to circle feed (refresh if needed)
+
+Expected UI result:
+  E's circle posts now appear in A's feed after joining
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-066
+Title: Trending page updates after A removes from circle
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - A has joined B's circle and B's posts appear in A's feed
+
+Steps:
+  1. Remove B from A's circle connections
+  2. Check the circle feed
+
+Expected UI result:
+  B's circle posts NO LONGER appear in A's feed after removal
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 18 — REMOVE FROM CIRCLE
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-067
+Title: Remove from public mutual circle — only removes A from B's circle
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Both A and B are public
+  - A joined B's circle (B's circle has A); B joined A's circle (A's circle has B)
+  - It is a mutual one-way-in-both-directions situation
+
+Steps:
+  1. Log in as A, navigate to B's profile
+  2. Click "Remove" / "Leave circle"
+  3. Observe the button state from A's perspective
+  4. Log in as B, navigate to A's profile
+
+Expected UI result:
+  Step 3: A's button reverts to "Add" (A left B's circle)
+  Step 4: From B's perspective, B is still in A's circle (B's button on A's
+    profile still shows "In Circle")
+
+Expected backend state:
+  circle_memberships: (user_name=B, member_name=A) DELETED
+  circle_memberships: (user_name=A, member_name=B) REMAINS intact
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-068
+Title: Remove from private mutual circle — dissolves both edges
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Both A and B are private
+  - A and B are in mutual circle (both edges exist)
+
+Steps:
+  1. Log in as A, navigate to B's profile
+  2. Click Remove
+  3. Log in as B, navigate to A's profile and observe
+
+Expected UI result:
+  Step 2: A's button reverts to "Add"
+  Step 3: B's button on A's profile also reverts to "Add"
+    (B was automatically removed from A's circle too)
+
+Expected backend state:
+  circle_memberships: BOTH edges deleted
+    (user_name=A, member_name=B) DELETED
+    (user_name=B, member_name=A) DELETED
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-069
+Title: Remove from mixed private+public mutual — dissolves both edges
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - User A is public, User B is private
+  - A and B are in mutual circle
+
+Steps:
+  1. Log in as A, remove from circle (leave B's circle)
+  2. Log in as B, navigate to A's profile
+
+Expected UI result:
+  B's button on A's profile also shows "Add" (both edges dissolved)
+  (Because either party being private triggers full dissolution on mutual remove)
+
+Expected backend state:
+  Both circle_memberships rows DELETED
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-070
+Title: Remove flow — mutual private removes do not leave stale pending requests
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - CIR-068 completed (both edges removed)
+
+Steps:
+  1. As A, send a new request to B (now private again)
+  2. Observe the button and request flow
+
+Expected UI result:
+  A sees "Requested" (new pending request sent)
+  B must re-approve — A cannot instantly recreate mutual circle
+
+Expected backend state:
+  New circle_requests row with status=pending
+  No immediate circle_memberships row
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-071
+Title: Remove does not affect third-party relationships
+Priority: L
+--------------------------------------------------------------------------------
+Preconditions:
+  - A is in B's circle AND C's circle
+  - A removes from B's circle
+
+Steps:
+  1. As A, remove from B's circle
+  2. Navigate to C's profile as A
+
+Expected UI result:
+  A's relationship with C is unchanged (still "In Circle" with C)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 19 — MOBILE RESPONSIVE CHECKS
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-072
+Title: Profile circle button visible and tappable on mobile screen
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Test on actual mobile device or browser DevTools at 375px width (iPhone SE)
+
+Steps:
+  1. Open a user profile page
+  2. Locate the Add / In Circle / Requested button
+  3. Verify it is not overlapping other UI elements
+  4. Tap the button
+
+Expected UI result:
+  Button is fully visible and responds to tap
+  No overlap with name, avatar, or other UI elements
+  Button state updates after tap (same as desktop behavior)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-073
+Title: Notification bell on mobile — circle request accepts/rejects work
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Test on mobile or DevTools at 375px
+  - A pending request exists
+
+Steps:
+  1. Open notification bell on mobile
+  2. Tap Accept on a circle request notification
+
+Expected UI result:
+  Accept/Reject buttons are tappable (not too small, not overlapping)
+  Action completes and notification updates
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-074
+Title: People search on mobile — button states correct and usable
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Open the People / search page on mobile
+  2. Verify circle buttons next to search results are visible and tappable
+
+Expected UI result:
+  Buttons are properly sized and not clipped or hidden
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-075
+Title: Common restaurant badge renders correctly on mobile
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to a circle member's profile on mobile
+  2. Observe the badge area next to the name
+
+Expected UI result:
+  Badge is visible and not overlapping with other content
+  Text is legible at small screen sizes
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+SECTION 20 — NEGATIVE AND ERROR CASES
+================================================================================
+
+--------------------------------------------------------------------------------
+CIR-076
+Title: Network failure during Add — UI shows error, does not leave ghost state
+Priority: H
+--------------------------------------------------------------------------------
+Preconditions:
+  - Use browser DevTools to throttle network to "Offline" or block the API
+
+Steps:
+  1. Navigate to a public user's profile
+  2. Enable network block in DevTools
+  3. Click Add
+
+Expected UI result:
+  An error toast or message appears (e.g., "Unable to update circle")
+  Button does NOT remain in a loading/spinner state indefinitely
+  Button reverts to "Add" after error (not stuck in "In Circle")
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-077
+Title: Network failure during Accept — notification not marked handled prematurely
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Block network in DevTools
+  2. Click Accept on a circle request notification
+
+Expected UI result:
+  Error shown to user
+  Notification still shows as pending/unread after failure
+  No circle membership created
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-078
+Title: Rapid double-click on Add button — no duplicate membership
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to a public user's profile
+  2. Double-click the Add button very quickly
+
+Expected UI result:
+  Button transitions to "In Circle" once
+  No visible error or glitch
+
+Expected backend state:
+  Exactly one circle_memberships row (no duplicate)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-079
+Title: Rapid double-click on Send Request (private) — no duplicate request row
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to a private user's profile
+  2. Double-click the Send Request button quickly
+
+Expected UI result:
+  Button shows "Requested" once, no duplicate spinner or flash
+
+Expected backend state:
+  Exactly one circle_requests row with status=pending
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-080
+Title: Logged-out user visits private profile — no Add button shown
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Log out
+  2. Navigate directly to a user's profile URL
+
+Expected UI result:
+  No Add / circle button is shown (or user is redirected to login)
+  No circle actions accessible to unauthenticated users
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-081
+Title: Logged-out user visits public profile — cannot initiate circle action
+Priority: H
+--------------------------------------------------------------------------------
+Steps:
+  1. Log out
+  2. Navigate to a public user's profile
+
+Expected UI result:
+  Either: no circle button shown
+  Or: button shown but clicking redirects to login page
+  No circle membership created for an unauthenticated user
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-082
+Title: Add button works for names with spaces and special characters
+Priority: M
+--------------------------------------------------------------------------------
+Preconditions:
+  - At least one user has a name containing spaces (e.g., "Alice Smith")
+
+Steps:
+  1. Navigate to the profile of a user with a multi-word name
+  2. Click Add
+
+Expected UI result:
+  Button transitions correctly; no encoding errors or "user not found" messages
+
+Expected backend state:
+  circle_memberships row created with correct full name (e.g., member_name="Alice Smith")
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-083
+Title: Circle status loads correctly after navigating via browser Back button
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to User B's profile (note button state)
+  2. Navigate to another page
+  3. Press browser Back button to return to B's profile
+
+Expected UI result:
+  Circle button shows correct state (not briefly flickering or showing wrong state)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+--------------------------------------------------------------------------------
+CIR-084
+Title: Circle count in People tab is accurate
+Priority: M
+--------------------------------------------------------------------------------
+Steps:
+  1. Navigate to the People / Circle tab in the app
+  2. Observe the displayed circle count
+  3. Compare against number of visible circle members
+
+Expected UI result:
+  Displayed count matches the actual number of people in your circle audience
+  (your circle members, not the circles you've joined)
+
+[ ] PASS
+[ ] FAIL
+Notes: ___________________________________________________________________
+
+================================================================================
+RECOMMENDED MANUAL TEST ORDER
+================================================================================
+
+Run tests in the following order to build up state progressively and catch
+regressions at each step.
+
+Phase 1 — Foundation (run first, always)
+  1.  CIR-001  Public account add — button transitions
+  2.  CIR-006  Private account send request — button transitions
+  3.  CIR-046  Own profile — no circle button
+  4.  CIR-080  Logged-out user — no circle actions
+
+Phase 2 — Core Request Lifecycle
+  5.  CIR-007  Private request notification appears in bell
+  6.  CIR-017  Accept from notification bell — mutual circle created
+  7.  CIR-018  Accepted notification sent to requester
+  8.  CIR-021  Reject from notification bell — no circle created
+  9.  CIR-013  Cancel pending request — button resets
+  10. CIR-014  Cancel — B's notification disappears
+
+Phase 3 — Page Refresh Persistence
+  11. CIR-033  Refresh after Add — "In Circle" persists
+  12. CIR-034  Refresh after Request — "Requested" persists
+  13. CIR-035  Refresh after Accept — mutual persists
+  14. CIR-036  Refresh after Cancel — "Add" persists
+
+Phase 4 — Visibility
+  15. CIR-057  Circle post visible to mutual member
+  16. CIR-058  Circle post NOT visible to non-member
+  17. CIR-052  Common restaurant badge visible only to circle members
+  18. CIR-054  Badge NOT visible before acceptance
+  19. CIR-062  Public post from private account visible to everyone
+
+Phase 5 — Remove Flows
+  20. CIR-067  Public mutual remove — only one edge deleted
+  21. CIR-068  Private mutual remove — both edges deleted
+  22. CIR-069  Mixed private+public — both edges deleted
+
+Phase 6 — Stale and Edge Cases
+  23. CIR-029  Stale accept after cancel — blocked
+  24. CIR-016  Cancel accepted request — blocked (409)
+  25. CIR-025  Incoming request shows "Accept Request" not "Add"
+  26. CIR-012  Reverse pending auto-accept
+  27. CIR-010  Resend after rejection
+
+Phase 7 — Multi-tab / Concurrent
+  28. CIR-039  Two tabs — accept in one, other tab shows stale state
+  29. CIR-040  Duplicate add from two tabs — no duplicate membership
+
+Phase 8 — Mobile
+  30. CIR-072  Profile circle button on mobile
+  31. CIR-073  Notification accept on mobile
+
+Phase 9 — Error Cases
+  32. CIR-076  Network failure during Add — UI recovers
+  33. CIR-078  Rapid double-click — no duplicate membership
+
+================================================================================
+SMOKE TEST CHECKLIST
+================================================================================
+
+Run these 8 tests before EVERY deployment. Each should take under 2 minutes.
+Total smoke test time: approximately 10–15 minutes.
+
+  [ ] SMOKE-1  CIR-001  Add a public account — button goes "Add" → "In Circle"
+  [ ] SMOKE-2  CIR-006  Send request to private account — button goes "Add" → "Requested"
+  [ ] SMOKE-3  CIR-017  Accept from notification bell — mutual circle created, both see "Mutual"
+  [ ] SMOKE-4  CIR-013  Cancel pending request — button reverts to "Add"
+  [ ] SMOKE-5  CIR-067  Remove from public circle — only removes one edge, other direction intact
+  [ ] SMOKE-6  CIR-057  Circle-only post visible to circle member, NOT to outsider
+  [ ] SMOKE-7  CIR-052  Common restaurant badge visible to circle member, hidden to outsider
+  [ ] SMOKE-8  CIR-033  Hard refresh after Add — "In Circle" state persists (not reset to "Add")
+
+If all 8 pass: proceed with deployment.
+If any fail: block deployment and investigate before proceeding.
+
+================================================================================
+END OF CHECKLIST
+================================================================================
+Total test cases: 84
+High priority:    49
+Medium priority:  33
+Low priority:      2
+N/A cases:         1 (CIR-023 if profile-level accept not supported)
+================================================================================

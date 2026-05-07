@@ -196,9 +196,45 @@ create policy "Reviews are readable by everyone"
   on public.reviews for select
   using (true);
 
-create policy "Anyone can post reviews"
-  on public.reviews for insert
-  with check (true);
+drop policy if exists "Anyone can post reviews" on public.reviews;
+create policy "Authenticated users can insert own reviews"
+  on public.reviews for insert to authenticated
+  with check (
+    reviewer_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
+
+drop policy if exists "Users can update own reviews" on public.reviews;
+create policy "Users can update own reviews"
+  on public.reviews for update to authenticated
+  using (
+    reviewer_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  )
+  with check (
+    reviewer_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
+
+drop policy if exists "Users can delete own reviews" on public.reviews;
+create policy "Users can delete own reviews"
+  on public.reviews for delete to authenticated
+  using (
+    reviewer_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
 
 
 -- =============================================
@@ -224,8 +260,8 @@ create policy "Anyone can view review photos"
   on storage.objects for select
   using (bucket_id = 'review-photos');
 
-create policy "Anyone can upload review photos"
-  on storage.objects for insert
+create policy "Authenticated users can upload review photos"
+  on storage.objects for insert to authenticated
   with check (bucket_id = 'review-photos');
 
 -- =============================================
@@ -241,8 +277,26 @@ create table if not exists public.likes (
 create index if not exists likes_post_id_idx on public.likes(post_id);
 alter table public.likes enable row level security;
 create policy "Likes readable by everyone" on public.likes for select using (true);
-create policy "Anyone can like"            on public.likes for insert with check (true);
-create policy "Anyone can unlike"          on public.likes for delete using (true);
+drop policy if exists "Anyone can like" on public.likes;
+create policy "Authenticated users can insert own likes"
+  on public.likes for insert to authenticated
+  with check (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
+drop policy if exists "Anyone can unlike" on public.likes;
+create policy "Users can delete own likes"
+  on public.likes for delete to authenticated
+  using (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
 
 -- =============================================
 -- COMMENTS
@@ -256,9 +310,27 @@ create table if not exists public.comments (
 );
 create index if not exists comments_post_id_idx on public.comments(post_id, created_at desc);
 alter table public.comments enable row level security;
-create policy "Comments readable by everyone"    on public.comments for select using (true);
-create policy "Anyone can comment"               on public.comments for insert with check (true);
-create policy "Anyone can delete own comments"   on public.comments for delete using (true);
+create policy "Comments readable by everyone" on public.comments for select using (true);
+drop policy if exists "Anyone can comment" on public.comments;
+create policy "Authenticated users can insert own comments"
+  on public.comments for insert to authenticated
+  with check (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
+drop policy if exists "Anyone can delete own comments" on public.comments;
+create policy "Users can delete own comments"
+  on public.comments for delete to authenticated
+  using (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
 
 -- =============================================
 -- NOTIFICATIONS
@@ -301,9 +373,39 @@ create index if not exists notifications_entity_idx
 create index if not exists notifications_created_at_idx
   on public.notifications(created_at desc);
 alter table public.notifications enable row level security;
-create policy "Notifications readable by everyone" on public.notifications for select using (true);
-create policy "Anyone can create notifications"    on public.notifications for insert with check (true);
-create policy "Anyone can mark read"               on public.notifications for update using (true);
+drop policy if exists "Notifications readable by everyone" on public.notifications;
+drop policy if exists "Anyone can create notifications" on public.notifications;
+drop policy if exists "Anyone can mark read" on public.notifications;
+drop policy if exists "Notifications readable by recipient" on public.notifications;
+drop policy if exists "Users can mark own notifications read" on public.notifications;
+create policy "Notifications readable by recipient"
+  on public.notifications for select to authenticated
+  using (
+    recipient_user_id = auth.uid()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
+    )
+  );
+create policy "Users can mark own notifications read"
+  on public.notifications for update to authenticated
+  using (
+    recipient_user_id = auth.uid()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
+    )
+  )
+  with check (
+    recipient_user_id = auth.uid()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
+    )
+  );
 
 -- =============================================
 -- MIGRATION: make notifications.post_id nullable
@@ -415,10 +517,25 @@ create table if not exists public.circle_requests (
 create index if not exists circle_requests_sender_idx   on public.circle_requests(sender_name);
 create index if not exists circle_requests_receiver_idx on public.circle_requests(receiver_name);
 alter table public.circle_requests enable row level security;
-create policy "Circle requests readable by everyone"    on public.circle_requests for select using (true);
-create policy "Anyone can send circle request"          on public.circle_requests for insert with check (true);
-create policy "Anyone can respond to circle request"    on public.circle_requests for update using (true);
-create policy "Anyone can delete circle request"        on public.circle_requests for delete using (true);
+drop policy if exists "Circle requests readable by everyone" on public.circle_requests;
+drop policy if exists "Anyone can send circle request" on public.circle_requests;
+drop policy if exists "Anyone can respond to circle request" on public.circle_requests;
+drop policy if exists "Anyone can delete circle request" on public.circle_requests;
+drop policy if exists "Users can read own circle requests" on public.circle_requests;
+create policy "Users can read own circle requests"
+  on public.circle_requests for select to authenticated
+  using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and (
+          sender_name = trim(p.first_name || ' ' || p.last_name)
+          or receiver_name = trim(p.first_name || ' ' || p.last_name)
+          or sender_name = p.username
+          or receiver_name = p.username
+        )
+    )
+  );
 
 -- =============================================
 -- CIRCLE MEMBERSHIPS
@@ -439,12 +556,11 @@ create index if not exists circle_memberships_user_idx
 create index if not exists circle_memberships_member_idx
   on public.circle_memberships(member_name);
 alter table public.circle_memberships enable row level security;
+drop policy if exists "Circle memberships readable by everyone" on public.circle_memberships;
+drop policy if exists "Anyone can add to circle" on public.circle_memberships;
+drop policy if exists "Anyone can remove from circle" on public.circle_memberships;
 create policy "Circle memberships readable by everyone"
-  on public.circle_memberships for select using (true);
-create policy "Anyone can add to circle"
-  on public.circle_memberships for insert with check (true);
-create policy "Anyone can remove from circle"
-  on public.circle_memberships for delete using (true);
+  on public.circle_memberships for select to authenticated using (true);
 
 insert into public.circle_memberships (user_name, member_name)
 select sender_name, receiver_name
@@ -472,5 +588,23 @@ create table if not exists public.wishlist (
 create index if not exists wishlist_user_idx on public.wishlist(user_name);
 alter table public.wishlist enable row level security;
 create policy "Wishlist readable by everyone" on public.wishlist for select using (true);
-create policy "Anyone can bookmark"           on public.wishlist for insert with check (true);
-create policy "Anyone can unbookmark"         on public.wishlist for delete using (true);
+drop policy if exists "Anyone can bookmark" on public.wishlist;
+create policy "Authenticated users can bookmark"
+  on public.wishlist for insert to authenticated
+  with check (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
+drop policy if exists "Anyone can unbookmark" on public.wishlist;
+create policy "Users can delete own bookmarks"
+  on public.wishlist for delete to authenticated
+  using (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );

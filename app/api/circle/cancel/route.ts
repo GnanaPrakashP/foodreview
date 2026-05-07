@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(req: NextRequest) {
-  const { senderName, receiverName } = await req.json();
-  if (!senderName || !receiverName) {
+  const { receiverName } = await req.json();
+  if (!receiverName) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
@@ -15,12 +17,40 @@ export async function POST(req: NextRequest) {
     { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
   );
 
+  const actor = await getAuthenticatedCircleActor(supabase);
+  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
+  const admin = createAdminClient();
+  const senderName = actor.actorName;
+  const receiver = receiverName.trim();
+  if (!receiver || receiver === senderName) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  // Guard: do not silently no-op when the request is already accepted.
+  // The caller should use the remove route instead.
+  const { data: existing } = await admin
+    .from("circle_requests")
+    .select("status")
+    .eq("sender_name", senderName)
+    .eq("receiver_name", receiver)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.status === "accepted") {
+    return NextResponse.json(
+      { error: "Request already accepted. Use the remove route to leave the circle." },
+      { status: 409 }
+    );
+  }
+
   // Delete the pending request
-  const { error } = await supabase
+  const { error } = await admin
     .from("circle_requests")
     .delete()
     .eq("sender_name", senderName)
-    .eq("receiver_name", receiverName)
+    .eq("receiver_name", receiver)
     .eq("status", "pending");
 
   if (error) {
@@ -29,11 +59,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Delete the corresponding circle_request notification (clean up receiver's inbox)
-  await supabase
+  await admin
     .from("notifications")
     .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("actor_name", senderName)
-    .eq("recipient_name", receiverName)
+    .eq("recipient_name", receiver)
     .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
   return NextResponse.json({ ok: true });
