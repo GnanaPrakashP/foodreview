@@ -4,6 +4,41 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 
 const VALID_VISIBILITIES = new Set(["public", "circle", "me"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidId(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
+function normalizeItems(items: unknown): { items?: { name: string; rating: number }[]; error?: string } {
+  if (!Array.isArray(items)) {
+    return { error: "At least one dish is required" };
+  }
+
+  const normalized = [];
+  for (const item of items as { name?: string; rating?: unknown }[]) {
+    const name = item?.name?.trim();
+    if (!name) continue;
+
+    if (
+      item.rating !== undefined
+      && (typeof item.rating !== "number" || item.rating < 1 || item.rating > 5)
+    ) {
+      return { error: "Invalid rating" };
+    }
+
+    normalized.push({
+      name,
+      rating: item.rating ?? 0,
+    });
+  }
+
+  if (normalized.length === 0) {
+    return { error: "At least one dish is required" };
+  }
+
+  return { items: normalized };
+}
 
 async function getSupabaseAndActor(req: NextRequest) {
   const cookieStore = await cookies();
@@ -21,6 +56,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isValidId(id)) {
+    return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
+  }
+
   const { supabase, actor } = await getSupabaseAndActor(req);
 
   if (!actor) {
@@ -59,6 +98,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isValidId(id)) {
+    return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
+  }
+
   const { supabase, actor } = await getSupabaseAndActor(req);
 
   if (!actor) {
@@ -98,10 +141,11 @@ export async function PATCH(
   }
 
   if (items !== undefined) {
-    if (!Array.isArray(items) || items.filter((it: { name?: string }) => it?.name?.trim()).length === 0) {
-      return NextResponse.json({ error: "At least one dish is required" }, { status: 400 });
+    const normalizedItems = normalizeItems(items);
+    if (normalizedItems.error) {
+      return NextResponse.json({ error: normalizedItems.error }, { status: 400 });
     }
-    updates.items = items.filter((it: { name?: string }) => it?.name?.trim());
+    updates.items = normalizedItems.items;
   }
 
   const { error } = await supabase

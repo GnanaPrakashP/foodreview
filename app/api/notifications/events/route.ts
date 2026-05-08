@@ -24,7 +24,12 @@ export async function POST(req: NextRequest) {
   if (!viewer) return unauthorized();
 
   const admin = createAdminClient();
-  const payload = await req.json() as NotificationEvent;
+  let payload: NotificationEvent;
+  try {
+    payload = await req.json() as NotificationEvent;
+  } catch {
+    return NextResponse.json({ error: "Invalid notification event payload" }, { status: 400 });
+  }
   const actorName = (payload.actorName?.trim() || viewer.name || await getAuthenticatedProfileName(admin, viewer.id) || "").trim();
   if (!actorName || (viewer.name && actorName !== viewer.name)) {
     return NextResponse.json({ error: "Invalid actor" }, { status: 400 });

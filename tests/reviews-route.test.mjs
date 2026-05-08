@@ -67,7 +67,7 @@ function mockDb(...responses) {
  * Capturing mock DB: records the argument passed to `.insert()` so tests
  * can verify what row was written to the database.
  */
-function capturingDb(resolveWith = { data: { id: "rev-1" }, error: null }) {
+function capturingDb(resolveWith = { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null }) {
   let insertedRow;
   return {
     get _inserted() { return insertedRow; },
@@ -187,6 +187,13 @@ test("POST /reviews: invalid visibility value returns 400", async () => {
   assert.match(body(res).error, /visibility/i);
 });
 
+test("POST /reviews: invalid rating returns 400", async () => {
+  const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
+  const res = await POST(makeReq({ ...VALID_BODY, items: [{ name: "Biryani", rating: 6 }] }));
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /rating/i);
+});
+
 test("POST /reviews: visibility=circle is accepted", async () => {
   const db = capturingDb();
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
@@ -237,8 +244,15 @@ test("POST /reviews: DB error returns 500", async () => {
 
 test("DELETE /reviews/[id]: logged-out user is rejected with 401", async () => {
   const { DELETE } = loadRoute(src.byId, { db: mockDb(), authName: null });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "rev-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 401);
+});
+
+test("DELETE /reviews/[id]: malformed review id returns 400", async () => {
+  const { DELETE } = loadRoute(src.byId, { db: mockDb(), authName: "Alice" });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "not-a-review-id" }) });
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /review id/i);
 });
 
 test("DELETE /reviews/[id]: review not found returns 404", async () => {
@@ -246,7 +260,7 @@ test("DELETE /reviews/[id]: review not found returns 404", async () => {
     db: mockDb({ data: null, error: null }),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "rev-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 404);
 });
 
@@ -258,7 +272,7 @@ test("DELETE /reviews/[id]: another user cannot delete someone else's review", a
     ),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "rev-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 403);
   assert.match(body(res).error, /not your review/i);
 });
@@ -271,9 +285,22 @@ test("DELETE /reviews/[id]: owner can delete their own review", async () => {
     ),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "rev-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+});
+
+test("DELETE /reviews/[id]: DB delete error returns 500", async () => {
+  const { DELETE } = loadRoute(src.byId, {
+    db: mockDb(
+      { data: { reviewer_name: "Alice" }, error: null },
+      { data: null, error: { message: "delete failed" } }
+    ),
+    authName: "Alice",
+  });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
+  assert.equal(status(res), 500);
+  assert.match(body(res).error, /delete failed/);
 });
 
 test("DELETE /reviews/[id]: DB fetch error returns 404", async () => {
@@ -281,7 +308,7 @@ test("DELETE /reviews/[id]: DB fetch error returns 404", async () => {
     db: mockDb({ data: null, error: { message: "fetch failed" } }),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "rev-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 404);
 });
 
@@ -291,9 +318,19 @@ test("PATCH /reviews/[id]: logged-out user is rejected with 401", async () => {
   const { PATCH } = loadRoute(src.byId, { db: mockDb(), authName: null });
   const res = await PATCH(
     makeReq({ visibility: "circle" }),
-    { params: Promise.resolve({ id: "rev-1" }) }
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 401);
+});
+
+test("PATCH /reviews/[id]: malformed review id returns 400", async () => {
+  const { PATCH } = loadRoute(src.byId, { db: mockDb(), authName: "Alice" });
+  const res = await PATCH(
+    makeReq({ visibility: "circle" }),
+    { params: Promise.resolve({ id: "not-a-review-id" }) }
+  );
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /review id/i);
 });
 
 test("PATCH /reviews/[id]: another user cannot edit someone else's review", async () => {
@@ -306,7 +343,7 @@ test("PATCH /reviews/[id]: another user cannot edit someone else's review", asyn
   });
   const res = await PATCH(
     makeReq({ visibility: "circle" }),
-    { params: Promise.resolve({ id: "rev-1" }) }
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 403);
   assert.match(body(res).error, /not your review/i);
@@ -322,7 +359,7 @@ test("PATCH /reviews/[id]: invalid visibility value returns 400", async () => {
   });
   const res = await PATCH(
     makeReq({ visibility: "everyone" }),
-    { params: Promise.resolve({ id: "rev-1" }) }
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 400);
   assert.match(body(res).error, /visibility/i);
@@ -335,7 +372,7 @@ test("PATCH /reviews/[id]: body shorter than 5 chars returns 400", async () => {
   });
   const res = await PATCH(
     makeReq({ body: "meh" }),
-    { params: Promise.resolve({ id: "rev-1" }) }
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 400);
 });
@@ -350,10 +387,26 @@ test("PATCH /reviews/[id]: owner can update visibility", async () => {
   });
   const res = await PATCH(
     makeReq({ visibility: "circle" }),
-    { params: Promise.resolve({ id: "rev-1" }) }
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+});
+
+test("PATCH /reviews/[id]: DB update error returns 500", async () => {
+  const { PATCH } = loadRoute(src.byId, {
+    db: mockDb(
+      { data: { reviewer_name: "Alice" }, error: null },
+      { data: null, error: { message: "update failed" } }
+    ),
+    authName: "Alice",
+  });
+  const res = await PATCH(
+    makeReq({ visibility: "circle" }),
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+  );
+  assert.equal(status(res), 500);
+  assert.match(body(res).error, /update failed/);
 });
 
 test("PATCH /reviews/[id]: review not found returns 404", async () => {
@@ -363,7 +416,7 @@ test("PATCH /reviews/[id]: review not found returns 404", async () => {
   });
   const res = await PATCH(
     makeReq({ visibility: "public" }),
-    { params: Promise.resolve({ id: "rev-99" }) }
+    { params: Promise.resolve({ id: "99999999-9999-4999-8999-999999999999" }) }
   );
   assert.equal(status(res), 404);
 });

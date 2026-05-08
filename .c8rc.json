@@ -1,0 +1,30 @@
+{
+  "all": true,
+  "clean": true,
+  "check-coverage": false,
+  "extension": [".js", ".mjs", ".cjs", ".ts", ".tsx"],
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "lib/**/*.ts",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "hooks/**/*.ts",
+    "hooks/**/*.tsx"
+  ],
+  "exclude": [
+    "tests/**",
+    "e2e/**",
+    "node_modules/**",
+    ".next/**",
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
+    "*.config.*",
+    "next-env.d.ts",
+    "middleware.ts",
+    "tailwind.config.ts",
+    "postcss.config.mjs",
+    "playwright.config.ts"
+  ]
+}

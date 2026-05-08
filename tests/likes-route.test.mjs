@@ -180,6 +180,17 @@ test("DELETE /likes: unlike uses authenticated actor's user_name, not request bo
   assert.notEqual(eqFilters(deleteEntry).user_name, "Mallory");
 });
 
+test("DELETE /likes: another user cannot unlike by forging the owner name", async () => {
+  const db = spyDb({ error: null });
+  const { DELETE } = loadRoute(src, { db, authName: "Bob" });
+  const res = await DELETE(makeReq({ postId: "post-1", userName: "Alice" }));
+  assert.equal(status(res), 200);
+  const deleteEntry = db._calls.find((c) => c.ops.some(([op]) => op === "delete"));
+  assert.ok(deleteEntry, "Expected a delete call");
+  assert.equal(eqFilters(deleteEntry).user_name, "Bob");
+  assert.notEqual(eqFilters(deleteEntry).user_name, "Alice");
+});
+
 test("DELETE /likes: unlike filters by the correct post_id", async () => {
   const db = spyDb({ error: null });
   const { DELETE } = loadRoute(src, { db, authName: "Alice" });
@@ -196,4 +207,14 @@ test("DELETE /likes: successful unlike returns ok", async () => {
   const res = await DELETE(makeReq({ postId: "post-1" }));
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+});
+
+test("DELETE /likes: DB error returns 500", async () => {
+  const { DELETE } = loadRoute(src, {
+    db: spyDb({ error: { message: "delete failed" } }),
+    authName: "Alice",
+  });
+  const res = await DELETE(makeReq({ postId: "post-1" }));
+  assert.equal(status(res), 500);
+  assert.match(body(res).error, /delete failed/);
 });

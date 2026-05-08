@@ -139,10 +139,18 @@ async function validateCircleRequestNotifs(supabase: SupabaseDb, notifs: Notific
 async function validateLikeNotifs(supabase: SupabaseDb, notifs: Notification[]): Promise<string[]> {
   if (notifs.length === 0) return [];
   const postIds = [...new Set(notifs.map((n) => n.post_id).filter(Boolean))] as string[];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("likes")
     .select("post_id, user_name")
     .in("post_id", postIds);
+
+  if (error) {
+    return notifs.filter((n) => n.type === "like").map((n) => n.id);
+  }
+
+  if ((data ?? []).length === 0) {
+    return notifs.filter((n) => n.type === "like").map((n) => n.id);
+  }
 
   const likeSet = new Set((data ?? []).map((l: { post_id: string; user_name: string }) => `${l.user_name}:${l.post_id}`));
 

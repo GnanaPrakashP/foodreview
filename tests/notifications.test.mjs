@@ -191,3 +191,100 @@ test("upsertCircleRequestNotification inserts when no previous notification exis
   assert.equal(opArgs(insert, "insert")[0].actor_name, "Alice");
   assert.equal(opArgs(insert, "insert")[0].type, "CIRCLE_REQUEST_RECEIVED");
 });
+
+test("removeLikeNotification soft-deletes modern like notifications", async () => {
+  const { removeLikeNotification } = loadNotifications();
+  const db = spyDb({ error: null });
+
+  await removeLikeNotification(db, "post-1", "Bob");
+
+  const update = db._calls.find((call) => call.table === "notifications" && hasOp(call, "update"));
+  assert.ok(update);
+  assert.equal(opArgs(update, "update")[0].deleted_at.length > 0, true);
+  assert.equal(opArgs(update, "in")[0], "type");
+  assert.deepEqual(Array.from(opArgs(update, "in")[1]), ["POST_LIKED", "like"]);
+});
+
+test("removeLikeNotification falls back to legacy delete on notification schema drift", async () => {
+  const { removeLikeNotification } = loadNotifications();
+  const db = spyDb(
+    { error: { code: "42703", message: "column deleted_at does not exist" } },
+    { error: null }
+  );
+
+  await removeLikeNotification(db, "post-1", "Bob");
+
+  const deleteCall = db._calls.find((call) => call.table === "notifications" && hasOp(call, "delete"));
+  assert.ok(deleteCall);
+  assert.deepEqual(
+    deleteCall.ops.filter(([op]) => op === "eq").map(([, col, val]) => [col, val]),
+    [["actor_name", "Bob"], ["post_id", "post-1"], ["type", "like"]]
+  );
+});
+
+test("createPostLikeNotification skips private and inaccessible circle reviews", async () => {
+  const { createPostLikeNotification } = loadNotifications(async () => false);
+
+  assert.equal(await createPostLikeNotification(spyDb(), review("Alice", "me"), "Bob"), null);
+  assert.equal(await createPostLikeNotification(spyDb(), review("Alice", "circle"), "Bob"), null);
+});
+
+test("createPostCommentNotifications sends owner and thread notifications without self-duplicates", async () => {
+  const { createPostCommentNotifications } = loadNotifications();
+  const db = spyDb(
+    { data: [], error: null },
+    { data: { id: "owner-notif" }, error: null },
+    { data: [], error: null },
+    { data: { id: "thread-notif" }, error: null }
+  );
+
+  await createPostCommentNotifications(
+    db,
+    review("Alice", "public"),
+    "Bob",
+    { id: "comment-1", content: `${"x".repeat(90)} trailing content` },
+    ["Alice", "Bob", "Carol", "Carol", ""]
+  );
+
+  const inserts = db._calls
+    .filter((call) => call.table === "notifications" && hasOp(call, "insert"))
+    .map((call) => opArgs(call, "insert")[0]);
+
+  assert.equal(inserts.length, 2);
+  assert.equal(inserts[0].recipient_name, "Alice");
+  assert.equal(inserts[0].type, "POST_COMMENTED");
+  assert.equal(inserts[0].metadata.commentId, "comment-1");
+  assert.equal(inserts[0].content.length, 80);
+  assert.equal(inserts[1].recipient_name, "Carol");
+  assert.equal(inserts[1].type, "THREAD_REPLY");
+});
+
+test("createCirclePostNotifications dedupes members and skips the reviewer", async () => {
+  const { createCirclePostNotifications } = loadNotifications();
+  const db = spyDb(
+    {
+      data: [
+        { member_name: "Bob" },
+        { member_name: "Bob" },
+        { member_name: "Alice" },
+        { member_name: "" },
+        { member_name: "Carol" },
+      ],
+      error: null,
+    },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: { id: "notif-bob" }, error: null },
+    { data: { id: "notif-carol" }, error: null }
+  );
+
+  await createCirclePostNotifications(db, review("Alice", "circle"));
+
+  const inserts = db._calls
+    .filter((call) => call.table === "notifications" && hasOp(call, "insert"))
+    .map((call) => opArgs(call, "insert")[0]);
+  assert.deepEqual(inserts.map((row) => row.recipient_name).sort(), ["Bob", "Carol"]);
+  assert.equal(inserts.every((row) => row.type === "CIRCLE_POST_CREATED"), true);
+});

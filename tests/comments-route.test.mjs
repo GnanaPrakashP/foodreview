@@ -90,6 +90,12 @@ function insertArg(calls) {
   return undefined;
 }
 
+function eqFilters(entry) {
+  return Object.fromEntries(
+    entry.ops.filter(([op]) => op === "eq").map(([, col, val]) => [col, val])
+  );
+}
+
 const mockNextResponse = {
   json(b, opts) { return { _body: b, _status: opts?.status ?? 200 }; },
 };
@@ -162,14 +168,14 @@ test("POST /comments: content over 500 characters returns 400", async () => {
 });
 
 test("POST /comments: content exactly 500 characters is accepted", async () => {
-  const db = mockDb({ data: { id: "cmt-1" }, error: null });
+  const db = mockDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(makeReq({ postId: "post-1", content: "x".repeat(500) }));
   assert.equal(status(res), 200);
 });
 
 test("POST /comments: user_name is always the authenticated actor, not the request body", async () => {
-  const db = spyDb({ data: { id: "cmt-1" }, error: null });
+  const db = spyDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(
     makeReq({ postId: "post-1", content: "Nice!", userName: "Mallory" })
@@ -179,6 +185,16 @@ test("POST /comments: user_name is always the authenticated actor, not the reque
   assert.ok(inserted, "Expected an insert call");
   assert.equal(inserted.user_name, "Alice");
   assert.notEqual(inserted.user_name, "Mallory");
+});
+
+test("POST /comments: inserted content is trimmed and tied to the post id", async () => {
+  const db = spyDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
+  const { POST } = loadRoute(src.create, { db, authName: "Alice" });
+  const res = await POST(makeReq({ postId: "post-1", content: "  Delicious!  " }));
+  assert.equal(status(res), 200);
+  const inserted = insertArg(db._calls);
+  assert.equal(inserted.post_id, "post-1");
+  assert.equal(inserted.content, "Delicious!");
 });
 
 test("POST /comments: valid comment returns the new comment id", async () => {
@@ -202,8 +218,15 @@ test("POST /comments: DB error returns 500", async () => {
 
 test("DELETE /comments/[id]: logged-out user is rejected with 401", async () => {
   const { DELETE } = loadRoute(src.deleteById, { db: mockDb(), authName: null });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "cmt-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 401);
+});
+
+test("DELETE /comments/[id]: malformed comment id returns 400", async () => {
+  const { DELETE } = loadRoute(src.deleteById, { db: mockDb(), authName: "Alice" });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "not-a-comment-id" }) });
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /comment id/i);
 });
 
 test("DELETE /comments/[id]: comment not found returns 404", async () => {
@@ -211,7 +234,7 @@ test("DELETE /comments/[id]: comment not found returns 404", async () => {
     db: mockDb({ data: null, error: null }),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "cmt-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 404);
 });
 
@@ -223,7 +246,7 @@ test("DELETE /comments/[id]: another user cannot delete someone else's comment",
     ),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "cmt-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 403);
   assert.match(body(res).error, /not your comment/i);
 });
@@ -236,9 +259,36 @@ test("DELETE /comments/[id]: owner can delete their own comment", async () => {
     ),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "cmt-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+});
+
+test("DELETE /comments/[id]: delete uses both id and user_name filters", async () => {
+  const db = spyDb(
+    { data: { user_name: "Alice" }, error: null },
+    { data: null, error: null }
+  );
+  const { DELETE } = loadRoute(src.deleteById, { db, authName: "Alice" });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
+  assert.equal(status(res), 200);
+  const deleteEntry = db._calls.find((call) => call.ops.some(([op]) => op === "delete"));
+  assert.ok(deleteEntry, "Expected a delete call");
+  assert.equal(eqFilters(deleteEntry).id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(eqFilters(deleteEntry).user_name, "Alice");
+});
+
+test("DELETE /comments/[id]: DB delete error returns 500", async () => {
+  const { DELETE } = loadRoute(src.deleteById, {
+    db: mockDb(
+      { data: { user_name: "Alice" }, error: null },
+      { data: null, error: { message: "delete failed" } }
+    ),
+    authName: "Alice",
+  });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
+  assert.equal(status(res), 500);
+  assert.match(body(res).error, /delete failed/);
 });
 
 test("DELETE /comments/[id]: DB fetch error returns 404", async () => {
@@ -246,6 +296,6 @@ test("DELETE /comments/[id]: DB fetch error returns 404", async () => {
     db: mockDb({ data: null, error: { message: "fetch failed" } }),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "cmt-1" }) });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 404);
 });

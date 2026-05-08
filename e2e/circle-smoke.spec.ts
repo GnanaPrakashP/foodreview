@@ -17,6 +17,10 @@ function envUser(prefix: "A" | "B" | "C"): TestUser | null {
 const userA = envUser("A");
 const userB = envUser("B");
 
+function escapedText(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
 test.describe("Circle E2E smoke", () => {
   test.skip(!userA || !userB, "Set E2E_USER_A_* and E2E_USER_B_* env vars to run Circle browser smoke tests.");
 
@@ -25,7 +29,7 @@ test.describe("Circle E2E smoke", () => {
 
     await page.goto("/people");
     await page.getByPlaceholder(/search/i).fill(userB!.name);
-    await expect(page.getByText(userB!.name)).toBeVisible();
+    await expect(page.getByRole("link", { name: escapedText(userB!.name) }).first()).toBeVisible();
 
     const action = page.getByRole("button", {
       name: /add|requested|in circle|mutual circle|accept request/i,

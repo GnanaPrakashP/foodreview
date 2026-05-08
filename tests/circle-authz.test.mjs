@@ -271,6 +271,56 @@ test("status: pending request lists are hidden for other users", async () => {
   assert.equal(Object.keys(body(res).memberStates).length, 0);
 });
 
+test("status: owner sees pending requests and relationship states", async () => {
+  const accountTypeNames = [];
+  const db = spyDb(
+    {
+      data: [
+        { user_name: "Alice", member_name: "Bob" },
+        { user_name: "Carol", member_name: "Alice" },
+      ],
+      error: null,
+    },
+    {
+      data: [
+        { sender_name: "Dave", receiver_name: "Alice", status: "accepted" },
+        { sender_name: "Erin", receiver_name: "Alice", status: "pending" },
+        { sender_name: "Alice", receiver_name: "Frank", status: "pending" },
+        { sender_name: "Grace", receiver_name: "Alice", status: "rejected" },
+      ],
+      error: null,
+    }
+  );
+  const { GET } = loadRoute(src.status, {
+    db,
+    authName: "Alice",
+    circleDb: makeCircleDb({
+      getAccountTypeForName: async () => "private",
+      getAccountTypesForNames: async (_db, names) => {
+        accountTypeNames.push(...names);
+        return Object.fromEntries(names.map((name) => [name, name === "Frank" ? "private" : "public"]));
+      },
+    }),
+  });
+
+  const res = await GET(makeStatusReq("Alice"));
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).accountType, "private");
+  assert.deepEqual(Array.from(body(res).circleMembers).sort(), ["Bob", "Dave"]);
+  assert.deepEqual(Array.from(body(res).joinedCircles).sort(), ["Carol", "Dave"]);
+  assert.deepEqual(Array.from(body(res).mutualMembers), ["Dave"]);
+  assert.deepEqual(Array.from(body(res).oneWayMembers), ["Carol"]);
+  assert.deepEqual(Array.from(body(res).pendingIncoming), ["Erin"]);
+  assert.deepEqual(Array.from(body(res).pendingSent), ["Frank"]);
+  assert.equal(body(res).memberStates.Carol, "CIRCLE_ONE_WAY");
+  assert.equal(body(res).memberStates.Dave, "CIRCLE_MUTUAL");
+  assert.equal(body(res).memberStates.Frank, "PENDING");
+  assert.equal(body(res).circleCount, 2);
+  assert.ok(accountTypeNames.includes("Erin"));
+  assert.ok(accountTypeNames.includes("Frank"));
+});
+
 test("schema: Circle RLS does not allow direct client mutation", () => {
   assert.match(schemaSql, /drop policy if exists "Anyone can send circle request"/);
   assert.match(schemaSql, /drop policy if exists "Anyone can respond to circle request"/);

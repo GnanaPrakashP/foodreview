@@ -13,7 +13,7 @@
  * so CI without credentials stays green.
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { envUser, signIn } from "./helpers";
 
 const userA = envUser("A"); // public account, reviews at "E2E Kitchen"
@@ -23,6 +23,52 @@ const userC = envUser("C"); // private account
 const SKIP_AB = !userA || !userB;
 const SKIP_ABC = SKIP_AB || !userC;
 const SKIP_MSG = "Set E2E_USER_{A,B,C}_* in .env.e2e and run node scripts/seed-e2e.mjs";
+
+function escapedText(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
+async function createPublicReview(page: Page, restaurantName: string, body: string): Promise<string> {
+  await page.goto("/reviews/new");
+  await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
+  await page.getByPlaceholder("e.g. Mutton Biryani").fill("E2E Idli");
+  await page.locator("textarea").fill(body);
+  await page.getByRole("button", { name: "Post it" }).click();
+  await page.waitForURL((url) => url.pathname.startsWith("/reviews/") && url.pathname !== "/reviews/new", { timeout: 20_000 });
+  return new URL(page.url()).pathname;
+}
+
+async function openReview(page: Page, body = "E2E seed review (public)") {
+  const reviewCard = page.locator("article[role='link']").filter({
+    hasText: body,
+  }).first();
+  await expect(reviewCard).toBeVisible({ timeout: 10_000 });
+  await reviewCard.click();
+  await expect(page).toHaveURL(/\/reviews\//, { timeout: 10_000 });
+}
+
+async function waitForNotificationEvent(page: Page, event: string, action: () => Promise<void>) {
+  await Promise.all([
+    page.waitForResponse(async (response) => {
+      if (!response.url().includes("/api/notifications/events")) return false;
+      const postData = response.request().postData() ?? "";
+      return postData.includes(`"event":"${event}"`) && response.ok();
+    }, { timeout: 15_000 }),
+    action(),
+  ]);
+}
+
+async function likePostFromDetail(page: Page) {
+  const unlikeButton = page.getByRole("button", { name: "Unlike post", exact: true });
+  if (await unlikeButton.isVisible().catch(() => false)) {
+    await waitForNotificationEvent(page, "POST_UNLIKED", () => unlikeButton.click());
+    await expect(page.getByRole("button", { name: "Like post", exact: true })).toBeVisible({ timeout: 10_000 });
+  }
+
+  await waitForNotificationEvent(page, "POST_LIKED", () =>
+    page.getByRole("button", { name: "Like post", exact: true }).click()
+  );
+}
 
 // ── 1. Sign in ────────────────────────────────────────────────────────────────
 
@@ -99,8 +145,7 @@ test("5 · A can see C's profile and has a circle action button", async ({ page 
 
   await page.goto(`/people/${encodeURIComponent(userC!.name)}`);
 
-  const aFirstName = userC!.name.split(" ")[0];
-  await expect(page.getByText(new RegExp(aFirstName, "i"))).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(userC!.name, { exact: true })).toBeVisible({ timeout: 10_000 });
 
   // Circle action button is rendered for any relationship state
   const circleBtn = page.getByRole("button", {
@@ -112,24 +157,28 @@ test("5 · A can see C's profile and has a circle action button", async ({ page 
 // ── 6. Like → notification ────────────────────────────────────────────────────
 
 test("6 · B likes A's seeded review and A sees a like notification", async ({ browser }) => {
+  test.setTimeout(60_000);
   test.skip(SKIP_AB, SKIP_MSG);
+
+  const suffix = `like-${Date.now()}`;
+  const restaurantName = `E2E Like Kitchen ${suffix}`;
+  const reviewBody = `E2E like notification review ${suffix}`;
+
+  const seedCtx = await browser.newContext();
+  const seedPage = await seedCtx.newPage();
+  await signIn(seedPage, userA!);
+  const reviewPath = await createPublicReview(seedPage, restaurantName, reviewBody);
+  await seedCtx.close();
 
   // Step 1 — B: navigate to A's restaurant page, click card to open /reviews/[id]
   const ctxB = await browser.newContext();
   const pageB = await ctxB.newPage();
   await signIn(pageB, userB!);
 
-  await pageB.goto(
-    `/people/${encodeURIComponent(userA!.name)}/${encodeURIComponent("E2E Kitchen")}`
-  );
-  // Click the card heading to trigger card-level navigation → /reviews/[id]
-  await pageB.getByRole("heading", { name: /E2E Kitchen/i }).first().click();
-  await pageB.waitForURL(/\/reviews\//, { timeout: 10_000 });
+  await pageB.goto(reviewPath);
+  await expect(pageB.getByText(reviewBody)).toBeVisible({ timeout: 10_000 });
 
-  // Like button is the first <button> on the detail page (no aria-label; Heart + count)
-  const likeBtn = pageB.locator("button").first();
-  await expect(likeBtn).toBeVisible({ timeout: 5_000 });
-  await likeBtn.click();
+  await likePostFromDetail(pageB);
   await ctxB.close();
 
   // Step 2 — A: check notifications
@@ -138,7 +187,7 @@ test("6 · B likes A's seeded review and A sees a like notification", async ({ b
   await signIn(pageA, userA!);
   await pageA.goto("/notifications");
   await expect(
-    pageA.getByText(new RegExp(`${userB!.name}.*liked your post|liked your post`, "i"))
+    pageA.getByRole("button", { name: new RegExp(`${userB!.name}.*liked your post|liked your post`, "i") }).first()
   ).toBeVisible({ timeout: 15_000 });
   await ctxA.close();
 });
@@ -146,25 +195,34 @@ test("6 · B likes A's seeded review and A sees a like notification", async ({ b
 // ── 7. Comment → notification ─────────────────────────────────────────────────
 
 test("7 · B comments on A's review and A sees a comment notification", async ({ browser }) => {
+  test.setTimeout(60_000);
   test.skip(SKIP_AB, SKIP_MSG);
+
+  const suffix = `comment-${Date.now()}`;
+  const restaurantName = `E2E Comment Kitchen ${suffix}`;
+  const reviewBody = `E2E comment notification review ${suffix}`;
+
+  const seedCtx = await browser.newContext();
+  const seedPage = await seedCtx.newPage();
+  await signIn(seedPage, userA!);
+  const reviewPath = await createPublicReview(seedPage, restaurantName, reviewBody);
+  await seedCtx.close();
 
   // Step 1 — B: navigate to A's restaurant page, click comment link to detail page
   const ctxB = await browser.newContext();
   const pageB = await ctxB.newPage();
   await signIn(pageB, userB!);
 
-  await pageB.goto(
-    `/people/${encodeURIComponent(userA!.name)}/${encodeURIComponent("E2E Kitchen")}`
-  );
-  // Click card heading to navigate to /reviews/[id]
-  await pageB.getByRole("heading", { name: /E2E Kitchen/i }).first().click();
-  await pageB.waitForURL(/\/reviews\//, { timeout: 10_000 });
+  await pageB.goto(reviewPath);
+  await expect(pageB.getByText(reviewBody)).toBeVisible({ timeout: 10_000 });
 
   // Post a comment
   const commentInput = pageB.getByPlaceholder("Add a comment...");
   await expect(commentInput).toBeVisible({ timeout: 10_000 });
   await commentInput.fill("Smoke test comment");
-  await pageB.getByRole("button", { name: /send/i }).click();
+  await waitForNotificationEvent(pageB, "POST_COMMENTED", () =>
+    pageB.getByRole("button", { name: /send/i }).click()
+  );
   await ctxB.close();
 
   // Step 2 — A: check notifications
@@ -173,7 +231,7 @@ test("7 · B comments on A's review and A sees a comment notification", async ({
   await signIn(pageA, userA!);
   await pageA.goto("/notifications");
   await expect(
-    pageA.getByText(new RegExp(`${userB!.name}.*commented on your post|commented on your post`, "i"))
+    pageA.getByRole("button", { name: new RegExp(`${userB!.name}.*commented on your post|commented on your post`, "i") }).first()
   ).toBeVisible({ timeout: 15_000 });
   await ctxA.close();
 });
@@ -187,12 +245,13 @@ test("8 · people search finds B by name; dish search returns results for 'idli'
   // People search
   await page.goto("/people");
   await page.getByPlaceholder(/search by name or @username/i).fill(userB!.name);
-  await expect(page.getByText(userB!.name)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("link", { name: escapedText(userB!.name) }).first()).toBeVisible({ timeout: 10_000 });
 
   // Dish search — uses the seeded "E2E Idli" dish
   await page.goto("/dishes");
   await page.getByPlaceholder(/e\.g\. Biryani, Ramen, Dosa/i).fill("E2E Idli");
-  await expect(page.getByText(/E2E Idli/i)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: /find "E2E Idli"/i }).click();
+  await expect(page.getByText(/spots? for "E2E Idli"/i)).toBeVisible({ timeout: 10_000 });
 });
 
 // ── 9. Common restaurant badge ────────────────────────────────────────────────
@@ -206,10 +265,12 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
 
   await page.goto(`/people/${encodeURIComponent(userB!.name)}`);
 
-  // Check the circle status first: if it shows "Add", circle infrastructure is absent
-  const circleBtn = page.getByRole("button", { name: /add/i }).first();
-  const inCircle = await circleBtn.isVisible().then((v) => !v).catch(() => false);
-  if (!inCircle) {
+  const circleBtn = page.getByRole("button", {
+    name: /add|requested|in circle|mutual circle|accept request/i,
+  }).first();
+  await expect(circleBtn).toBeVisible({ timeout: 10_000 });
+  const circleLabel = (await circleBtn.textContent())?.trim().toLowerCase() ?? "";
+  if (circleLabel === "add") {
     // eslint-disable-next-line playwright/no-skipped-test
     test.skip(true, "circle_memberships table missing from live DB — badge requires mutual circle status");
     return;

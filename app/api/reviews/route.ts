@@ -5,6 +5,36 @@ import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 
 const VALID_VISIBILITIES = new Set(["public", "circle", "me"]);
 
+function normalizeItems(items: unknown): { items?: { name: string; rating: number }[]; error?: string } {
+  if (!Array.isArray(items)) {
+    return { error: "At least one dish is required" };
+  }
+
+  const normalized = [];
+  for (const item of items as { name?: string; rating?: unknown }[]) {
+    const name = item?.name?.trim();
+    if (!name) continue;
+
+    if (
+      item.rating !== undefined
+      && (typeof item.rating !== "number" || item.rating < 1 || item.rating > 5)
+    ) {
+      return { error: "Invalid rating" };
+    }
+
+    normalized.push({
+      name,
+      rating: item.rating ?? 0,
+    });
+  }
+
+  if (normalized.length === 0) {
+    return { error: "At least one dish is required" };
+  }
+
+  return { items: normalized };
+}
+
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -33,8 +63,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
   }
 
-  if (!Array.isArray(items) || items.filter((it: { name?: string }) => it?.name?.trim()).length === 0) {
-    return NextResponse.json({ error: "At least one dish is required" }, { status: 400 });
+  const normalizedItems = normalizeItems(items);
+  if (normalizedItems.error) {
+    return NextResponse.json({ error: normalizedItems.error }, { status: 400 });
   }
 
   if (!VALID_VISIBILITIES.has(visibility)) {
@@ -45,23 +76,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Body must be at least 5 characters" }, { status: 400 });
   }
 
-  const validItems = items
-    .filter((it: { name?: string; rating?: number }) => it?.name?.trim())
-    .map((it: { name: string; rating?: number }) => ({
-      name: it.name.trim(),
-      rating:
-        typeof it.rating === "number" && it.rating >= 1 && it.rating <= 5
-          ? it.rating
-          : 0,
-    }));
-
   // reviewer_name is always derived from the authenticated session — never from the request body
   const { data, error } = await supabase
     .from("reviews")
     .insert({
       reviewer_name: actor.actorName,
       restaurant_name: restaurantName.trim(),
-      items: validItems,
+      items: normalizedItems.items,
       body: reviewBody?.trim() || null,
       visibility,
       photo_url: photoUrl ?? null,

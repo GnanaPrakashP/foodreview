@@ -90,6 +90,13 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 const E2E_RESTAURANT = "E2E Kitchen";
 
+function isMissingTableError(error) {
+  return (
+    error?.code === "PGRST205" ||
+    error?.message?.includes("Could not find the table")
+  );
+}
+
 function reviewsFor(name) {
   const base = {
     reviewer_name:   name,
@@ -170,12 +177,17 @@ async function seedUser(u) {
 async function seedCircle(nameA, nameB) {
   process.stdout.write(`  Circle edge ${nameA} ↔ ${nameB}… `);
 
-  const { data: existing } = await admin
+  const { data: existing, error: existingErr } = await admin
     .from("circle_memberships")
     .select("user_name")
     .eq("user_name", nameA)
     .eq("member_name", nameB)
     .limit(1);
+
+  if (isMissingTableError(existingErr)) {
+    await seedAcceptedCircleRequest(nameA, nameB);
+    return;
+  }
 
   if (existing?.length) {
     console.log("already exists ✅");
@@ -184,10 +196,29 @@ async function seedCircle(nameA, nameB) {
 
   const { error: e1 } = await admin.from("circle_memberships").insert({ user_name: nameA, member_name: nameB });
   const { error: e2 } = await admin.from("circle_memberships").insert({ user_name: nameB, member_name: nameA });
+  if (isMissingTableError(e1) || isMissingTableError(e2)) {
+    await seedAcceptedCircleRequest(nameA, nameB);
+    return;
+  }
   if (e1 || e2) {
     console.log(`⚠️  ${e1?.message ?? ""} ${e2?.message ?? ""}`);
   } else {
     console.log("created ✅");
+  }
+}
+
+async function seedAcceptedCircleRequest(nameA, nameB) {
+  const { error } = await admin
+    .from("circle_requests")
+    .upsert(
+      { sender_name: nameA, receiver_name: nameB, status: "accepted" },
+      { onConflict: "sender_name,receiver_name" }
+    );
+
+  if (error) {
+    console.log(`⚠️  circle_memberships missing; fallback circle_requests failed: ${error.message}`);
+  } else {
+    console.log("circle_memberships missing; accepted request fallback created ✅");
   }
 }
 

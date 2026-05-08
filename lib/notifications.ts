@@ -339,13 +339,22 @@ export async function removeLikeNotification(
   actorName: string
 ): Promise<void> {
   const now = new Date().toISOString();
-  await db
+  const { error } = await db
     .from("notifications")
     .update({ deleted_at: now, updated_at: now })
     .eq("actor_name", actorName)
     .eq("post_id", postId)
     .in("type", ["POST_LIKED", "like"])
     .is("deleted_at", null);
+
+  if (isNotificationSchemaError(error)) {
+    await db
+      .from("notifications")
+      .delete()
+      .eq("actor_name", actorName)
+      .eq("post_id", postId)
+      .eq("type", "like");
+  }
 }
 
 // Remove comment notification when a comment is deleted.
