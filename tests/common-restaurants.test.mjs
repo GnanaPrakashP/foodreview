@@ -136,3 +136,49 @@ test("current schema falls back to normalized restaurant name", () => {
   assert.equal(matches.length, 1);
   assert.equal(matches[0].restaurantId, "name:same place");
 });
+
+test("common restaurant count appears only while circle access exists", () => {
+  const posts = [
+    review("User A", "circle", "secret-1", "Secret Spot"),
+    review("User B", "public", "secret-1", "Secret Spot"),
+  ];
+
+  assert.equal(score(posts, {
+    firstCanSeeSecondCircle: false,
+    secondCanSeeFirstCircle: false,
+  }).length, 0);
+
+  assert.equal(score(posts, {
+    firstCanSeeSecondCircle: false,
+    secondCanSeeFirstCircle: true,
+  }).length, 1);
+
+  assert.equal(score(posts, {
+    firstCanSeeSecondCircle: false,
+    secondCanSeeFirstCircle: false,
+  }).length, 0);
+});
+
+test("common restaurants do not leak hidden or outsider-only circle restaurants", () => {
+  const posts = [
+    review("User A", "circle", "circle-1", "Circle Secret"),
+    review("User B", "circle", "circle-1", "Circle Secret"),
+    review("User A", "public", "hidden-1", "Hidden Public", { reported_at: "2026-05-07T00:00:00.000Z" }),
+    review("User B", "public", "hidden-1", "Hidden Public"),
+    review("User A", "me", "private-1", "Only Me Spot"),
+    review("User B", "public", "private-1", "Only Me Spot"),
+  ];
+
+  assert.equal(score(posts, {
+    firstCanSeeSecondCircle: false,
+    secondCanSeeFirstCircle: false,
+  }).length, 0);
+
+  assert.deepEqual(
+    Array.from(score(posts, {
+      firstCanSeeSecondCircle: true,
+      secondCanSeeFirstCircle: true,
+    }), (match) => match.name),
+    ["Circle Secret"]
+  );
+});
