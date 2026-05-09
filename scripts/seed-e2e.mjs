@@ -127,12 +127,30 @@ async function seedUser(u) {
   if (existingUser) {
     userId = existingUser.id;
     process.stdout.write("auth exists ");
+    const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
+      password: u.password,
+      user_metadata: {
+        ...(existingUser.user_metadata ?? {}),
+        full_name: u.name,
+        name: u.name,
+        username,
+        account_type: u.accountType,
+        onboarding_complete: true,
+      },
+    });
+    if (updateErr) process.stdout.write(`⚠️ auth metadata: ${updateErr.message} `);
   } else {
     const { data, error } = await admin.auth.admin.createUser({
       email:         u.email,
       password:      u.password,
       email_confirm: true,
-      user_metadata: { full_name: u.name, username, onboarding_complete: true },
+      user_metadata: {
+        full_name: u.name,
+        name: u.name,
+        username,
+        account_type: u.accountType,
+        onboarding_complete: true,
+      },
     });
     if (error) {
       console.log(`❌  auth: ${error.message}`);
@@ -142,15 +160,23 @@ async function seedUser(u) {
     process.stdout.write("auth created ");
   }
 
-  // 2. Profile (account_type omitted — may not exist on all DB versions; defaults to 'public')
+  // 2. Profile
   const { error: profileErr } = await admin.from("profiles").upsert({
     id:         userId,
     first_name: firstName,
     last_name:  lastName,
     username,
+    account_type: u.accountType,
   });
-  if (profileErr) process.stdout.write(`⚠️ profile: ${profileErr.message} `);
-  else process.stdout.write("profile ok ");
+  if (profileErr) {
+    process.stdout.write(`❌ profile: ${profileErr.message} `);
+    if (profileErr.message?.includes("account_type")) {
+      process.stdout.write("Run supabase/migrations/20260508185000_add_profiles_account_type.sql first. ");
+    }
+    console.log("");
+    return null;
+  }
+  process.stdout.write("profile ok ");
 
   // 3. Reviews (skip if seeded row already exists)
   const reviews = reviewsFor(u.name);

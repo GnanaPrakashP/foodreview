@@ -49,11 +49,20 @@ create table public.reviews (
   restaurant_id    text,
   restaurant_name  text        not null,
   area             text,
+  restaurant_address text,
+  restaurant_lat   double precision,
+  restaurant_lng   double precision,
   items            jsonb       not null default '[]',
   body             text,
   photo_url        text,
   visibility       text        not null default 'public',
-  created_at       timestamptz not null default now()
+  deleted_at       timestamptz,
+  hidden_at        timestamptz,
+  reported_at      timestamptz,
+  status           text        not null default 'active',
+  created_at       timestamptz not null default now(),
+  constraint reviews_visibility_check check (visibility in ('public', 'circle', 'me')),
+  constraint reviews_status_check check (status in ('active', 'deleted', 'hidden', 'reported', 'removed'))
 );
 
 -- Indexes
@@ -64,6 +73,14 @@ create index reviews_reviewer_name_idx    on public.reviews(reviewer_name);
 create index reviews_visibility_idx       on public.reviews(visibility);
 create index reviews_reviewer_restaurant_visibility_idx
   on public.reviews(reviewer_name, restaurant_id, restaurant_name, visibility);
+create index reviews_visible_feed_idx
+  on public.reviews(visibility, created_at desc)
+  where deleted_at is null
+    and hidden_at is null
+    and reported_at is null
+    and status = 'active';
+create index reviews_suppression_idx
+  on public.reviews(deleted_at, hidden_at, reported_at, status);
 
 -- =============================================
 -- Trending score helper view
@@ -79,6 +96,10 @@ with
            count(distinct reviewer_name) as users_week
     from public.reviews
     where visibility = 'public'
+      and deleted_at is null
+      and hidden_at is null
+      and reported_at is null
+      and status = 'active'
       and created_at > now() - interval '7 days'
     group by restaurant_name
   ),
@@ -87,6 +108,10 @@ with
            count(distinct reviewer_name) as users_month
     from public.reviews
     where visibility = 'public'
+      and deleted_at is null
+      and hidden_at is null
+      and reported_at is null
+      and status = 'active'
       and created_at > now() - interval '30 days'
     group by restaurant_name
   ),
@@ -94,6 +119,10 @@ with
     select distinct restaurant_name
     from public.reviews
     where visibility = 'public'
+      and deleted_at is null
+      and hidden_at is null
+      and reported_at is null
+      and status = 'active'
       and created_at > now() - interval '2 days'
   ),
   all_time as (
@@ -101,6 +130,10 @@ with
            count(distinct reviewer_name) as users_all_time
     from public.reviews
     where visibility = 'public'
+      and deleted_at is null
+      and hidden_at is null
+      and reported_at is null
+      and status = 'active'
     group by restaurant_name
   )
 select
@@ -138,6 +171,10 @@ from public.reviews r,
 where (item ->> 'name') is not null
   and (item ->> 'name') != ''
   and r.visibility = 'public'
+  and r.deleted_at is null
+  and r.hidden_at is null
+  and r.reported_at is null
+  and r.status = 'active'
 group by r.restaurant_name, item ->> 'name'
 order by avg_score_10 desc, unique_raters desc;
 
@@ -148,6 +185,9 @@ order by avg_score_10 desc, unique_raters desc;
 
 -- Add area column (run once if table already exists)
 alter table public.reviews add column if not exists area text;
+alter table public.reviews add column if not exists restaurant_address text;
+alter table public.reviews add column if not exists restaurant_lat double precision;
+alter table public.reviews add column if not exists restaurant_lng double precision;
 
 -- Optional stable restaurant identity. Current app data may have null here;
 -- application logic falls back to a normalized restaurant_name until this is populated.
@@ -165,12 +205,43 @@ do $$ begin
   end if;
 end $$;
 
-alter table public.profiles add column if not exists account_type text not null default 'public';
+alter table public.reviews add column if not exists deleted_at timestamptz;
+alter table public.reviews add column if not exists hidden_at timestamptz;
+alter table public.reviews add column if not exists reported_at timestamptz;
+alter table public.reviews add column if not exists status text;
+update public.reviews
+set status = 'active'
+where status is null
+   or lower(status) not in ('active', 'deleted', 'hidden', 'reported', 'removed');
+alter table public.reviews alter column status set default 'active';
+alter table public.reviews alter column status set not null;
+do $$ begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.reviews'::regclass
+      and conname = 'reviews_status_check'
+  ) then
+    alter table public.reviews
+      add constraint reviews_status_check
+      check (status in ('active', 'deleted', 'hidden', 'reported', 'removed'));
+  end if;
+end $$;
+
+alter table public.profiles add column if not exists account_type text;
+update public.profiles
+set account_type = 'public'
+where account_type is null
+   or account_type not in ('public', 'private');
 alter table public.profiles alter column account_type set default 'public';
+alter table public.profiles alter column account_type set not null;
 
 do $$ begin
   if not exists (
-    select 1 from pg_constraint where conname = 'profiles_account_type_check'
+    select 1
+    from pg_constraint
+    where conrelid = 'public.profiles'::regclass
+      and conname = 'profiles_account_type_check'
   ) then
     alter table public.profiles
       add constraint profiles_account_type_check
@@ -192,9 +263,158 @@ end $$;
 
 alter table public.reviews enable row level security;
 
-create policy "Reviews are readable by everyone"
-  on public.reviews for select
-  using (true);
+-- The review read policy depends on Circle tables. Define them before creating
+-- the helper functions so a fresh schema load can compile all functions.
+create table if not exists public.circle_requests (
+  id            uuid        primary key default gen_random_uuid(),
+  sender_name   text        not null,
+  receiver_name text        not null,
+  status        text        not null default 'pending',
+  created_at    timestamptz not null default now(),
+  unique(sender_name, receiver_name),
+  check(status in ('pending', 'accepted', 'rejected')),
+  check(sender_name != receiver_name)
+);
+
+create table if not exists public.circle_memberships (
+  id           uuid        primary key default gen_random_uuid(),
+  user_name    text        not null,
+  member_name  text        not null,
+  created_at   timestamptz not null default now(),
+  unique(user_name, member_name),
+  check(user_name != member_name)
+);
+
+create or replace function public.current_profile_name()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select trim(p.first_name || ' ' || p.last_name)
+  from public.profiles p
+  where p.id = auth.uid()
+  limit 1
+$$;
+
+create or replace function public.review_is_unsuppressed(
+  review_deleted_at timestamptz,
+  review_hidden_at timestamptz,
+  review_reported_at timestamptz,
+  review_status text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select review_deleted_at is null
+     and review_hidden_at is null
+     and review_reported_at is null
+     and coalesce(review_status, 'active') not in ('deleted', 'hidden', 'reported', 'removed')
+$$;
+
+create or replace function public.can_read_review_row(
+  review_owner_name text,
+  review_visibility text,
+  review_deleted_at timestamptz,
+  review_hidden_at timestamptz,
+  review_reported_at timestamptz,
+  review_status text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with viewer as (
+    select public.current_profile_name() as name
+  )
+  select public.review_is_unsuppressed(
+      review_deleted_at,
+      review_hidden_at,
+      review_reported_at,
+      review_status
+    )
+    and (
+      coalesce(review_visibility, 'public') = 'public'
+      or exists (
+        select 1
+        from viewer v
+        where v.name is not null
+          and v.name = review_owner_name
+      )
+      or (
+        coalesce(review_visibility, 'public') = 'circle'
+        and exists (
+          select 1
+          from viewer v
+          where v.name is not null
+            and (
+              exists (
+                select 1
+                from public.circle_memberships cm
+                where cm.user_name = review_owner_name
+                  and cm.member_name = v.name
+              )
+              or exists (
+                select 1
+                from public.circle_requests cr
+                where cr.status = 'accepted'
+                  and (
+                    (cr.sender_name = review_owner_name and cr.receiver_name = v.name)
+                    or (cr.sender_name = v.name and cr.receiver_name = review_owner_name)
+                  )
+              )
+            )
+        )
+      )
+    )
+$$;
+
+create or replace function public.can_read_review_id(review_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce((
+    select public.can_read_review_row(
+      r.reviewer_name,
+      r.visibility,
+      r.deleted_at,
+      r.hidden_at,
+      r.reported_at,
+      r.status
+    )
+    from public.reviews r
+    where r.id = review_id
+  ), false)
+$$;
+
+grant execute on function public.current_profile_name() to anon, authenticated;
+grant execute on function public.review_is_unsuppressed(timestamptz, timestamptz, timestamptz, text) to anon, authenticated;
+grant execute on function public.can_read_review_row(text, text, timestamptz, timestamptz, timestamptz, text) to anon, authenticated;
+grant execute on function public.can_read_review_id(uuid) to anon, authenticated;
+
+drop policy if exists "Reviews are readable by everyone" on public.reviews;
+drop policy if exists "Reviews readable by visibility" on public.reviews;
+create policy "Reviews readable by visibility"
+  on public.reviews for select to anon, authenticated
+  using (
+    public.can_read_review_row(
+      reviewer_name,
+      visibility,
+      deleted_at,
+      hidden_at,
+      reported_at,
+      status
+    )
+  );
 
 drop policy if exists "Anyone can post reviews" on public.reviews;
 create policy "Authenticated users can insert own reviews"
@@ -276,8 +496,13 @@ create table if not exists public.likes (
 );
 create index if not exists likes_post_id_idx on public.likes(post_id);
 alter table public.likes enable row level security;
-create policy "Likes readable by everyone" on public.likes for select using (true);
+drop policy if exists "Likes readable by everyone" on public.likes;
+drop policy if exists "Likes readable by visible review" on public.likes;
+create policy "Likes readable by visible review"
+  on public.likes for select to anon, authenticated
+  using (public.can_read_review_id(post_id));
 drop policy if exists "Anyone can like" on public.likes;
+drop policy if exists "Authenticated users can insert own likes" on public.likes;
 create policy "Authenticated users can insert own likes"
   on public.likes for insert to authenticated
   with check (
@@ -286,6 +511,7 @@ create policy "Authenticated users can insert own likes"
       from public.profiles p
       where p.id = auth.uid()
     )
+    and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can unlike" on public.likes;
 create policy "Users can delete own likes"
@@ -310,8 +536,13 @@ create table if not exists public.comments (
 );
 create index if not exists comments_post_id_idx on public.comments(post_id, created_at desc);
 alter table public.comments enable row level security;
-create policy "Comments readable by everyone" on public.comments for select using (true);
+drop policy if exists "Comments readable by everyone" on public.comments;
+drop policy if exists "Comments readable by visible review" on public.comments;
+create policy "Comments readable by visible review"
+  on public.comments for select to anon, authenticated
+  using (public.can_read_review_id(post_id));
 drop policy if exists "Anyone can comment" on public.comments;
+drop policy if exists "Authenticated users can insert own comments" on public.comments;
 create policy "Authenticated users can insert own comments"
   on public.comments for insert to authenticated
   with check (
@@ -320,6 +551,7 @@ create policy "Authenticated users can insert own comments"
       from public.profiles p
       where p.id = auth.uid()
     )
+    and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can delete own comments" on public.comments;
 create policy "Users can delete own comments"
@@ -555,11 +787,16 @@ create index if not exists circle_memberships_user_idx
   on public.circle_memberships(user_name);
 create index if not exists circle_memberships_member_idx
   on public.circle_memberships(member_name);
+create index if not exists circle_memberships_pair_idx
+  on public.circle_memberships(user_name, member_name);
 alter table public.circle_memberships enable row level security;
 drop policy if exists "Circle memberships readable by everyone" on public.circle_memberships;
 drop policy if exists "Anyone can add to circle" on public.circle_memberships;
 drop policy if exists "Anyone can remove from circle" on public.circle_memberships;
-create policy "Circle memberships readable by everyone"
+drop policy if exists "Users can insert circle memberships" on public.circle_memberships;
+drop policy if exists "Users can update circle memberships" on public.circle_memberships;
+drop policy if exists "Users can delete circle memberships" on public.circle_memberships;
+create policy "Circle memberships readable by authenticated users"
   on public.circle_memberships for select to authenticated using (true);
 
 insert into public.circle_memberships (user_name, member_name)
@@ -587,8 +824,19 @@ create table if not exists public.wishlist (
 );
 create index if not exists wishlist_user_idx on public.wishlist(user_name);
 alter table public.wishlist enable row level security;
-create policy "Wishlist readable by everyone" on public.wishlist for select using (true);
+drop policy if exists "Wishlist readable by everyone" on public.wishlist;
+drop policy if exists "Wishlist readable by owner" on public.wishlist;
+create policy "Wishlist readable by owner"
+  on public.wishlist for select to authenticated
+  using (
+    user_name = (
+      select trim(p.first_name || ' ' || p.last_name)
+      from public.profiles p
+      where p.id = auth.uid()
+    )
+  );
 drop policy if exists "Anyone can bookmark" on public.wishlist;
+drop policy if exists "Authenticated users can bookmark" on public.wishlist;
 create policy "Authenticated users can bookmark"
   on public.wishlist for insert to authenticated
   with check (
@@ -596,6 +844,10 @@ create policy "Authenticated users can bookmark"
       select trim(p.first_name || ' ' || p.last_name)
       from public.profiles p
       where p.id = auth.uid()
+    )
+    and (
+      post_id is null
+      or public.can_read_review_id(post_id)
     )
   );
 drop policy if exists "Anyone can unbookmark" on public.wishlist;

@@ -56,7 +56,7 @@ export default function ResetPasswordPage() {
     <Page>
       <div style={{ textAlign: "center", marginBottom: "28px" }}>
         <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
-          FoodCircle
+          CircleBites
         </p>
       </div>
 

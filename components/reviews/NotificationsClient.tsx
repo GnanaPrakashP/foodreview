@@ -210,8 +210,8 @@ export default function NotificationsClient() {
                     <div key={notification.id} style={{ borderBottom: "1px solid var(--border)", padding: "12px", opacity: unread ? 1 : 0.68 }}>
                       <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
                         <button onClick={() => openNotification(notification)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", flex: 1, display: "flex", gap: "10px", textAlign: "left", minWidth: 0 }}>
-                          <div style={{ width: 38, height: 38, borderRadius: "12px", background: avatarGradient(notification.actor_name ?? "FoodCircle"), display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "12px", fontWeight: 800, flexShrink: 0 }}>
-                            {avatarInitials(notification.actor_name ?? "FC")}
+                          <div style={{ width: 38, height: 38, borderRadius: "12px", background: avatarGradient(notification.actor_name ?? "CircleBites"), display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "12px", fontWeight: 800, flexShrink: 0 }}>
+                            {avatarInitials(notification.actor_name ?? "CB")}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", lineHeight: 1.35, fontWeight: unread ? 800 : 600 }}>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Review, Comment } from "@/lib/types";
+import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 
 function timeAgo(d: string): string {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -41,6 +42,8 @@ interface Props {
 }
 
 export default function PostDetailSheet({ review, myName, liked, likeCount, onLike, onClose }: Props) {
+  const locationLabel = restaurantLocationLabel(review);
+  const mapsUrl = googleMapsUrl(review);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -151,9 +154,19 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
               </div>
             )}
 
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "4px" }}>
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", lineHeight: 1.15, marginBottom: locationLabel ? "1px" : "4px" }}>
               {review.restaurant_name}
             </h2>
+            {locationLabel && (
+              <a
+                href={mapsUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
+              >
+                {locationLabel}
+              </a>
+            )}
 
             {review.body && (
               <div style={{ padding: "10px 12px", background: "var(--surface)", borderLeft: "3px solid var(--orange)", borderRadius: "0 10px 10px 0", marginBottom: "10px" }}>

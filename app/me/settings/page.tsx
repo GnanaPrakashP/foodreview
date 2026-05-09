@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [typeLoaded, setTypeLoaded] = useState(false);
   const [pendingType, setPendingType] = useState<AccountType | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
@@ -183,7 +184,7 @@ export default function SettingsPage() {
       {/* Account actions */}
       <div style={{ margin: "0 16px 10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
         <div style={{ borderBottom: "1px solid var(--border)" }}>
-          <Row icon={<LogOut size={16} strokeWidth={2} color="var(--muted)" />} label="Log out" onClick={handleLogout} />
+          <Row icon={<LogOut size={16} strokeWidth={2} color="var(--muted)" />} label="Log out" onClick={() => setShowLogoutConfirm(true)} />
         </div>
         <Link href="/privacy" style={{ textDecoration: "none", display: "block", borderBottom: "1px solid var(--border)" }}>
           <Row icon={<Shield size={16} strokeWidth={2} color="var(--muted)" />} label="Privacy Policy" />
@@ -205,6 +206,20 @@ export default function SettingsPage() {
               <button onClick={confirmAccountType} disabled={saving} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: saving ? "default" : "pointer", fontFamily: "'Syne', sans-serif", opacity: saving ? 0.6 : 1 }}>
                 {saving ? "Saving…" : "Confirm"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logout confirm */}
+      {showLogoutConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>Log out?</h2>
+            <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>You can sign back in anytime with your account.</p>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button onClick={() => setShowLogoutConfirm(false)} style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--cream)", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>
+              <button onClick={handleLogout} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif" }}>Log out</button>
             </div>
           </div>
         </div>

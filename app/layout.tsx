@@ -4,7 +4,7 @@ import BottomNav from "@/components/layout/BottomNav";
 import AuthSync from "@/components/auth/AuthSync";
 
 export const metadata: Metadata = {
-  title: "FoodCircle",
+  title: "CircleBites",
   description: "Your personal food recommendation layer",
 };
 

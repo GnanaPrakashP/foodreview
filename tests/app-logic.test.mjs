@@ -38,6 +38,7 @@ function loadTsModule(relativePath, extraGlobals = {}) {
       if (id === "@/lib/types" || id === "./types") return {};
       if (id === "@/lib/trending" || id === "./trending") return loadTsModule("lib/trending.ts");
       if (id === "@/lib/restaurant-id") return loadTsModule("lib/restaurant-id.ts");
+      if (id === "@/lib/location") return loadTsModule("lib/location.ts");
       throw new Error(`Unexpected require in app logic tests: ${id}`);
     },
   });
@@ -139,6 +140,32 @@ test("restaurant-id: uses stored ids, normalized fallback ids, and thumbnails", 
   assert.equal(restaurantIdForReview(withId), "rest-1");
   assert.equal(restaurantIdForReview(withoutId), "name:same place");
   assert.equal(restaurantThumbnailUrl(withoutId), "first.jpg");
+});
+
+test("location: compacts restaurant addresses and shows fallback for older posts", () => {
+  const {
+    MISSING_RESTAURANT_LOCATION_LABEL,
+    googleMapsUrl,
+    restaurantLocationLabel,
+  } = loadTsModule("lib/location.ts");
+
+  assert.equal(
+    restaurantLocationLabel(review("A", "Bawarchi", [], {
+      restaurant_address: "Gachibowli, Hyderabad, Telangana 500032, India",
+    })),
+    "Gachibowli, Hyderabad",
+  );
+  assert.equal(
+    restaurantLocationLabel(review("A", "Old Spot", [])),
+    MISSING_RESTAURANT_LOCATION_LABEL,
+  );
+  assert.equal(
+    googleMapsUrl(review("A", "Mapped Spot", [], {
+      restaurant_lat: 17.4239,
+      restaurant_lng: 78.4738,
+    })),
+    "https://www.google.com/maps/search/?api=1&query=17.4239,78.4738",
+  );
 });
 
 test("profile: cuisine detection, top cuisines, exploration score, and initials", () => {

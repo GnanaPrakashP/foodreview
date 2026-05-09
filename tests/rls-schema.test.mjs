@@ -62,6 +62,20 @@ test("schema: reviews DELETE policy binds to auth.uid()", () => {
   assert.ok(hasAuthUid(blocks), "reviews DELETE policy must reference auth.uid()");
 });
 
+test("schema: reviews SELECT policy is visibility-aware, not open", () => {
+  assert.doesNotMatch(schema, /create policy "Reviews are readable by everyone"/i);
+  const blocks = policiesFor("reviews", "select");
+  assert.ok(blocks.length > 0, "No reviews SELECT policy found");
+  assert.ok(
+    blocks.some((b) => /can_read_review_row/.test(b)),
+    "reviews SELECT policy must use the visibility helper"
+  );
+  assert.ok(
+    blocks.every((b) => !/using\s*\(\s*true\s*\)/i.test(b)),
+    "reviews SELECT policy must not be USING (true)"
+  );
+});
+
 // ── LIKES ──────────────────────────────────────────────────────────────────────
 
 test("schema: old open likes INSERT policy is dropped", () => {
@@ -94,6 +108,16 @@ test("schema: likes DELETE policy binds user_name to auth.uid()", () => {
   assert.ok(blocks.some((b) => /user_name/.test(b)), "likes DELETE policy must reference user_name");
 });
 
+test("schema: likes SELECT policy inherits parent review visibility", () => {
+  assert.doesNotMatch(schema, /create policy "Likes readable by everyone"/i);
+  const blocks = policiesFor("likes", "select");
+  assert.ok(blocks.length > 0, "No likes SELECT policy found");
+  assert.ok(
+    blocks.some((b) => /can_read_review_id\(post_id\)/.test(b)),
+    "likes SELECT policy must check parent review readability"
+  );
+});
+
 // ── COMMENTS ──────────────────────────────────────────────────────────────────
 
 test("schema: old open comments INSERT policy is dropped", () => {
@@ -124,6 +148,16 @@ test("schema: comments DELETE policy binds user_name to auth.uid()", () => {
   assert.ok(blocks.length > 0, "No comments DELETE policy found");
   assert.ok(hasAuthUid(blocks), "comments DELETE policy must reference auth.uid()");
   assert.ok(blocks.some((b) => /user_name/.test(b)), "comments DELETE policy must reference user_name");
+});
+
+test("schema: comments SELECT policy inherits parent review visibility", () => {
+  assert.doesNotMatch(schema, /create policy "Comments readable by everyone"/i);
+  const blocks = policiesFor("comments", "select");
+  assert.ok(blocks.length > 0, "No comments SELECT policy found");
+  assert.ok(
+    blocks.some((b) => /can_read_review_id\(post_id\)/.test(b)),
+    "comments SELECT policy must check parent review readability"
+  );
 });
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
@@ -162,4 +196,14 @@ test("schema: old open wishlist DELETE policy is dropped", () => {
 
 test("schema: open wishlist DELETE policy is not re-created", () => {
   assert.doesNotMatch(schema, /create policy "Anyone can unbookmark"/i);
+});
+
+test("schema: wishlist SELECT policy is owner-only", () => {
+  assert.doesNotMatch(schema, /create policy "Wishlist readable by everyone"/i);
+  const blocks = policiesFor("wishlist", "select");
+  assert.ok(blocks.length > 0, "No wishlist SELECT policy found");
+  assert.ok(
+    blocks.some((b) => /user_name/.test(b) && /auth\.uid\(\)/.test(b)),
+    "wishlist SELECT policy must bind user_name to auth.uid()"
+  );
 });

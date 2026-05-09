@@ -65,7 +65,7 @@ export default async function JoinPage({
           marginBottom: "40px",
         }}
       >
-        FoodCircle
+        CircleBites
       </p>
 
       {/* Avatar */}
@@ -112,7 +112,7 @@ export default async function JoinPage({
         </p>
       ) : (
         <p style={{ fontSize: "14px", color: "var(--muted)", marginBottom: "36px", lineHeight: 1.5 }}>
-          Join FoodCircle to see what your friends are eating.
+          Join CircleBites to see what your friends are eating.
         </p>
       )}
 
@@ -162,7 +162,7 @@ export default async function JoinPage({
             boxShadow: "0 8px 24px rgba(240,96,48,0.35)",
           }}
         >
-          Join FoodCircle →
+          Join CircleBites →
         </button>
       </Link>
 

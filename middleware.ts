@@ -34,9 +34,10 @@ export async function middleware(request: NextRequest) {
   const isLoginRoute      = pathname === "/login";
   const isOnboardingRoute = pathname === "/onboarding";
   const isResetRoute      = pathname.startsWith("/auth/reset-password");
+  const isPublicApiRoute  = pathname === "/api/places/autocomplete";
 
   // 1. Not logged in → send to /login
-  if (!user && !isLoginRoute && !isAuthRoute) {
+  if (!user && !isLoginRoute && !isAuthRoute && !isPublicApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
@@ -52,7 +53,7 @@ export async function middleware(request: NextRequest) {
   // 3. Logged in but onboarding not done → send to /onboarding
   //    (skip if already on onboarding, any /auth/** route, or reset-password)
   const onboardingDone = !!user?.user_metadata?.username;
-  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute) {
+  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute && !isPublicApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/onboarding";
     return NextResponse.redirect(url);

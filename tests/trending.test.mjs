@@ -24,7 +24,22 @@ function loadTrendingModule() {
     Date,
     require(id) {
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/location") return loadLocationModule();
       throw new Error(`Unexpected require in trending tests: ${id}`);
+    },
+  });
+  return mod.exports;
+}
+
+function loadLocationModule() {
+  const source = readFileSync(new URL("../lib/location.ts", import.meta.url), "utf8");
+  const mod = { exports: {} };
+  vm.runInNewContext(transpile(source), {
+    module: mod,
+    exports: mod.exports,
+    require(id) {
+      if (id === "@/lib/types") return {};
+      throw new Error(`Unexpected require in location tests: ${id}`);
     },
   });
   return mod.exports;

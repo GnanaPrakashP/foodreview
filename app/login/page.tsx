@@ -243,7 +243,7 @@ function Hero() {
         marginBottom: 6,
         lineHeight: 1,
       }}>
-        FoodCircle
+        CircleBites
       </h1>
 
       {/* Tagline */}

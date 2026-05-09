@@ -14,12 +14,12 @@ export default function TermsPage() {
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "20px", fontSize: "14px", color: "var(--muted)", lineHeight: 1.7, fontFamily: "'DM Sans', sans-serif" }}>
         <section>
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Using FoodCircle</h2>
-          <p>FoodCircle is a private food journal for you and your friends. You must be 13 or older to use the app. You are responsible for the content you post.</p>
+          <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Using CircleBites</h2>
+          <p>CircleBites is a private food journal for you and your friends. You must be 13 or older to use the app. You are responsible for the content you post.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Your content</h2>
-          <p>You own what you post. By sharing a review you grant FoodCircle a licence to display it to your circle. We will never use your content for advertising without your consent.</p>
+          <p>You own what you post. By sharing a review you grant CircleBites a licence to display it to your circle. We will never use your content for advertising without your consent.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Acceptable use</h2>

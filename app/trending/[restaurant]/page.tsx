@@ -5,6 +5,7 @@ import type { Review, Comment } from "@/lib/types";
 import RestaurantPostsClient from "@/components/trending/RestaurantPostsClient";
 import { ArrowLeft } from "lucide-react";
 import { restaurantGradient } from "@/lib/profile";
+import { restaurantLocationLabel } from "@/lib/location";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
 
@@ -90,7 +91,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
     ? allRated.reduce((s, it) => s + it.rating, 0) / allRated.length * 2
     : 0;
 
-  const area = displayRestaurantReviews.find((r) => r.area)?.area ?? null;
+  const area = displayRestaurantReviews.map((r) => restaurantLocationLabel(r)).find(Boolean) ?? null;
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>

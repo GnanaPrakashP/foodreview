@@ -1,4 +1,5 @@
 import type { Review } from "@/lib/types";
+import { restaurantLocationLabel } from "@/lib/location";
 
 export interface CircleReviewItem {
   friend_name: string;
@@ -91,7 +92,8 @@ export function computeTrending(reviews: Review[]): {
         if (item.rating > 0) { totalRating += item.rating; ratingCount++; }
         if (item.name.trim()) dishCounts.set(item.name, (dishCounts.get(item.name) ?? 0) + 1);
       }
-      if (r.area?.trim()) areaCounts.set(r.area.trim(), (areaCounts.get(r.area.trim()) ?? 0) + 1);
+      const locationLabel = restaurantLocationLabel(r);
+      if (locationLabel) areaCounts.set(locationLabel, (areaCounts.get(locationLabel) ?? 0) + 1);
     }
 
     const avgScore = ratingCount > 0

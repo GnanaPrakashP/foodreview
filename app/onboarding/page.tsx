@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import type { AccountType } from "@/lib/types";
-import { accountTypeLabel } from "@/lib/circle";
+import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 
 type UsernameStatus = "idle" | "checking" | "available" | "taken" | "invalid";
 
@@ -17,7 +16,6 @@ export default function OnboardingPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
-  const [accountType, setAccountType] = useState<AccountType>("public");
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>("idle");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -80,7 +78,7 @@ export default function OnboardingPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: profileError } = await (supabase as any)
       .from("profiles")
-      .insert({ id: user.id, first_name: fn, last_name: ln, username: un, account_type: accountType });
+      .insert({ id: user.id, first_name: fn, last_name: ln, username: un, account_type: DEFAULT_ACCOUNT_TYPE });
 
     if (profileError) {
       if (profileError.code === "23505") {
@@ -95,7 +93,7 @@ export default function OnboardingPage() {
 
     // Save to user metadata so middleware / AuthSync can read it
     await supabase.auth.updateUser({
-      data: { full_name: fullName, username: un, account_type: accountType, onboarding_complete: true },
+      data: { full_name: fullName, username: un, account_type: DEFAULT_ACCOUNT_TYPE, onboarding_complete: true },
     });
 
     // Also update localStorage immediately
@@ -124,7 +122,7 @@ export default function OnboardingPage() {
       {/* Wordmark */}
       <div style={{ textAlign: "center", marginBottom: "28px" }}>
         <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
-          FoodCircle
+          CircleBites
         </p>
         <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px", fontFamily: "'DM Sans', sans-serif" }}>
           One last step
@@ -222,37 +220,6 @@ export default function OnboardingPage() {
               {errorMsg}
             </p>
           )}
-
-          <div style={{ marginBottom: "16px" }}>
-            <p style={{ fontSize: "10px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px", fontFamily: "'DM Sans', sans-serif" }}>
-              Account Type
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px" }}>
-              {(["public", "private"] as AccountType[]).map((type) => {
-                const selected = accountType === type;
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setAccountType(type)}
-                    style={{
-                      background: selected ? "var(--orange-dim)" : "var(--surface)",
-                      border: `1.5px solid ${selected ? "rgba(240,96,48,0.45)" : "var(--border)"}`,
-                      borderRadius: "14px",
-                      padding: "12px",
-                      color: selected ? "var(--orange)" : "var(--cream)",
-                      fontFamily: "'Syne', sans-serif",
-                      fontSize: "13px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {accountTypeLabel(type)}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
           <button
             type="submit"

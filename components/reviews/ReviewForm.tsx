@@ -4,9 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import PhotoUpload from "@/components/reviews/PhotoUpload";
-import type { FoodItem, Review } from "@/lib/types";
+import type { FoodItem } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
-import { UtensilsCrossed, Star, X, Search, MapPin, Globe, Users, Lock } from "lucide-react";
+import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-react";
 import type { Visibility } from "@/lib/types";
 
 /* ─── helpers ────────────────────────────────────── */
@@ -18,6 +18,75 @@ function emptyItem(): FoodItem {
 const RATING_LABELS: Record<number, string> = {
   1: "Bad", 2: "Okay", 3: "Good", 4: "Great", 5: "Amazing",
 };
+
+type RestaurantSuggestion = {
+  placeId: string;
+  text: string;
+  mainText: string;
+  secondaryText: string;
+};
+
+type ReviewInsertPayload = {
+  reviewer_name: string;
+  restaurant_name: string;
+  restaurant_id?: string | null;
+  area?: string | null;
+  restaurant_address?: string | null;
+  restaurant_lat?: number | null;
+  restaurant_lng?: number | null;
+  items: FoodItem[];
+  body: string | null;
+  photo_url: string | null;
+  visibility: Visibility;
+};
+
+type PlaceDetails = {
+  placeId: string;
+  name: string;
+  formattedAddress: string;
+  shortFormattedAddress: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return String(error ?? "");
+}
+
+function isMissingOptionalReviewColumn(error: unknown): boolean {
+  const message = errorMessage(error);
+  return (
+    /schema cache|column/i.test(message)
+    && /\b(restaurant_id|area|restaurant_address|restaurant_lat|restaurant_lng)\b/i.test(message)
+  );
+}
+
+function withoutRichPlaceDetails(payload: ReviewInsertPayload): ReviewInsertPayload {
+  const {
+    restaurant_address: _restaurantAddress,
+    restaurant_lat: _restaurantLat,
+    restaurant_lng: _restaurantLng,
+    ...nextPayload
+  } = payload;
+  return nextPayload;
+}
+
+function withoutPlaceMetadata(payload: ReviewInsertPayload): ReviewInsertPayload {
+  const {
+    restaurant_id: _restaurantId,
+    area: _area,
+    restaurant_address: _restaurantAddress,
+    restaurant_lat: _restaurantLat,
+    restaurant_lng: _restaurantLng,
+    ...nextPayload
+  } = payload;
+  return nextPayload;
+}
 
 /* ─── sub-components ─────────────────────────────── */
 
@@ -44,43 +113,19 @@ function FieldLabel({ children, optional }: { children: React.ReactNode; optiona
   );
 }
 
-/* ─── Dish row with per-row autocomplete ─────────── */
+/* ─── Dish row ───────────────────────────────────── */
 
 function DishRow({
   item,
-  allDishNames,
   onChange,
   onRemove,
   showRemove,
 }: {
   item: FoodItem;
-  allDishNames: string[];
   onChange: (field: keyof FoodItem, value: string | number) => void;
   onRemove: () => void;
   showRemove: boolean;
 }) {
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function handleInput(v: string) {
-    onChange("name", v);
-    if (v.trim().length > 0) {
-      const q = v.toLowerCase();
-      const matches = allDishNames.filter((n) => n.toLowerCase().includes(q)).slice(0, 5);
-      setSuggestions(matches);
-      setShowSuggestions(matches.length > 0);
-    } else {
-      setShowSuggestions(false);
-    }
-  }
-
-  function pick(name: string) {
-    onChange("name", name);
-    setShowSuggestions(false);
-    inputRef.current?.blur();
-  }
-
   return (
     <div style={{ position: "relative" }}>
       <div
@@ -96,13 +141,10 @@ function DishRow({
       >
         <UtensilsCrossed size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
         <input
-          ref={inputRef}
           type="text"
           placeholder="e.g. Mutton Biryani"
           value={item.name}
-          onChange={(e) => handleInput(e.target.value)}
-          onFocus={() => item.name.trim() && setShowSuggestions(suggestions.length > 0)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          onChange={(e) => onChange("name", e.target.value)}
           autoComplete="off"
           style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", minWidth: 0 }}
         />
@@ -134,47 +176,6 @@ function DishRow({
           </button>
         )}
       </div>
-
-      {showSuggestions && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            right: 0,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "14px",
-            overflow: "hidden",
-            zIndex: 20,
-          }}
-        >
-          {suggestions.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onMouseDown={() => pick(s)}
-              style={{
-                width: "100%",
-                background: "none",
-                border: "none",
-                borderBottom: "1px solid var(--border)",
-                padding: "11px 14px",
-                color: "var(--cream)",
-                fontSize: "14px",
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-              }}
-            >
-              <Search size={12} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -188,10 +189,19 @@ export default function ReviewForm() {
     typeof window !== "undefined" ? localStorage.getItem("fc_my_name") ?? "" : ""
   );
   const [restaurantName, setRestaurantName] = useState("");
+  const [restaurantId, setRestaurantId] = useState<string | null>(null);
+  const [restaurantArea, setRestaurantArea] = useState<string | null>(null);
+  const [restaurantAddress, setRestaurantAddress] = useState<string | null>(null);
+  const [restaurantLat, setRestaurantLat] = useState<number | null>(null);
+  const [restaurantLng, setRestaurantLng] = useState<number | null>(null);
+  const [restaurantSuggestions, setRestaurantSuggestions] = useState<RestaurantSuggestion[]>([]);
+  const [showRestaurantSuggestions, setShowRestaurantSuggestions] = useState(false);
+  const [placesSessionToken, setPlacesSessionToken] = useState("");
+  const restaurantInputRef = useRef<HTMLInputElement>(null);
+  const pickedRestaurantNameRef = useRef<string | null>(null);
   const [existingVisitCount, setExistingVisitCount] = useState<number | null>(null);
 
   const [items, setItems] = useState<FoodItem[]>([emptyItem()]);
-  const [allDishNames, setAllDishNames] = useState<string[]>([]);
 
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("public");
@@ -201,25 +211,52 @@ export default function ReviewForm() {
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState("");
 
-  // Load autocomplete dish names once
+  // Start a Google Places session for restaurant autocomplete.
   useEffect(() => {
-    async function load() {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("reviews")
-        .select("items")
-        .limit(300)
-        .returns<Pick<Review, "items">[]>();
-      const names = new Set<string>();
-      for (const r of data ?? []) {
-        for (const it of (r.items as FoodItem[])) {
-          if (it.name.trim()) names.add(it.name.trim());
-        }
-      }
-      setAllDishNames(Array.from(names));
-    }
-    load();
+    setPlacesSessionToken(crypto.randomUUID());
   }, []);
+
+  useEffect(() => {
+    const q = restaurantName.trim();
+    if (q.length < 2) {
+      setRestaurantSuggestions([]);
+      setShowRestaurantSuggestions(false);
+      return;
+    }
+    if (pickedRestaurantNameRef.current?.trim().toLowerCase() === q.toLowerCase()) {
+      setRestaurantSuggestions([]);
+      setShowRestaurantSuggestions(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ input: q });
+        if (placesSessionToken) params.set("sessionToken", placesSessionToken);
+        const res = await fetch(`/api/places/autocomplete?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const payload = (await res.json()) as { suggestions?: RestaurantSuggestion[] };
+        const suggestions = (payload.suggestions ?? [])
+          .filter((suggestion) => suggestion.placeId)
+          .slice(0, 5);
+        setRestaurantSuggestions(suggestions);
+        setShowRestaurantSuggestions(suggestions.length > 0);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setRestaurantSuggestions([]);
+        setShowRestaurantSuggestions(false);
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
+  }, [restaurantName, placesSessionToken]);
 
   // Look up how many times this reviewer has been to this restaurant
   useEffect(() => {
@@ -246,9 +283,76 @@ export default function ReviewForm() {
     setItems((prev) => prev.filter((_, i) => i !== index));
   }
 
+  async function pickRestaurant(suggestion: RestaurantSuggestion) {
+    pickedRestaurantNameRef.current = suggestion.mainText;
+    setRestaurantName(suggestion.mainText);
+    setRestaurantId(suggestion.placeId);
+    setRestaurantArea(suggestion.secondaryText || null);
+    setRestaurantAddress(null);
+    setRestaurantLat(null);
+    setRestaurantLng(null);
+    setShowRestaurantSuggestions(false);
+    setRestaurantSuggestions([]);
+    setErrors((prev) => {
+      if (!prev.restaurantName) return prev;
+      const next = { ...prev };
+      delete next.restaurantName;
+      return next;
+    });
+    restaurantInputRef.current?.blur();
+
+    if (suggestion.placeId) {
+      try {
+        const params = new URLSearchParams({ placeId: suggestion.placeId });
+        if (placesSessionToken) params.set("sessionToken", placesSessionToken);
+        const res = await fetch(`/api/places/details?${params.toString()}`, { cache: "no-store" });
+        if (res.ok) {
+          const payload = (await res.json()) as { details?: PlaceDetails | null };
+          const details = payload.details;
+          if (details) {
+            const resolvedName = details.name || suggestion.mainText;
+            pickedRestaurantNameRef.current = resolvedName;
+            setRestaurantName(resolvedName);
+            setRestaurantId(details.placeId || suggestion.placeId);
+            setRestaurantArea(details.shortFormattedAddress || suggestion.secondaryText || null);
+            setRestaurantAddress(details.formattedAddress || null);
+            setRestaurantLat(details.latitude);
+            setRestaurantLng(details.longitude);
+          }
+        }
+      } catch {
+        // Autocomplete selection is still useful even if details lookup fails.
+      }
+    }
+
+    setPlacesSessionToken(crypto.randomUUID());
+  }
+
+  function handleRestaurantInput(v: string) {
+    pickedRestaurantNameRef.current = null;
+    setRestaurantName(v);
+    setRestaurantId(null);
+    setRestaurantArea(null);
+    setRestaurantAddress(null);
+    setRestaurantLat(null);
+    setRestaurantLng(null);
+    setErrors((prev) => {
+      if (!prev.restaurantName) return prev;
+      const next = { ...prev };
+      delete next.restaurantName;
+      return next;
+    });
+  }
+
   function validate() {
     const e: Record<string, string> = {};
-    if (!restaurantName.trim()) e.restaurantName = "Restaurant name is required.";
+    const selectedRestaurantName = pickedRestaurantNameRef.current?.trim().toLowerCase();
+    const currentRestaurantName = restaurantName.trim().toLowerCase();
+    if (!restaurantName.trim()) {
+      e.restaurantName = "Restaurant name is required.";
+    } else if (!restaurantId || selectedRestaurantName !== currentRestaurantName) {
+      e.restaurantName = "Select a restaurant from the dropdown list.";
+    }
     if (items.filter((it) => it.name.trim()).length === 0) e.items = "Add at least one dish.";
     if (body.trim() && body.trim().length < 5) e.body = "One-liner must be at least 5 characters.";
     return e;
@@ -256,6 +360,8 @@ export default function ReviewForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return;
+
     const validationErrors = validate();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
@@ -280,30 +386,45 @@ export default function ReviewForm() {
         photoUrl = urlData.publicUrl;
       }
 
-      // Normalize dish names via fuse.js — prevents "chicken" and "chiken" counting separately
-      const rawItems = items.filter((it) => it.name.trim());
-      const { default: Fuse } = await import("fuse.js");
-      const fuse = new Fuse(allDishNames, { threshold: 0.15, includeScore: true });
-      const allItems = rawItems.map((it) => {
-        const results = fuse.search(it.name);
-        if (results.length > 0 && (results[0].score ?? 1) <= 0.15) {
-          return { ...it, name: results[0].item };
-        }
-        return it;
-      });
+      const allItems = items
+        .filter((it) => it.name.trim())
+        .map((it) => ({ name: it.name.trim(), rating: it.rating }));
 
-      const { data: review, error: insertError } = await (supabase as any)
-        .from("reviews")
-        .insert({
-          reviewer_name: reviewerName.trim(),
-          restaurant_name: restaurantName.trim(),
-          items: allItems,
-          body: body.trim() || null,
-          photo_url: photoUrl,
-          visibility,
-        })
-        .select("id")
-        .single();
+      const reviewPayload: ReviewInsertPayload = {
+        reviewer_name: reviewerName.trim(),
+        restaurant_name: restaurantName.trim(),
+        items: allItems,
+        body: body.trim() || null,
+        photo_url: photoUrl,
+        visibility,
+      };
+      if (restaurantId) reviewPayload.restaurant_id = restaurantId;
+      if (restaurantArea) reviewPayload.area = restaurantArea;
+      if (restaurantAddress) reviewPayload.restaurant_address = restaurantAddress;
+      if (restaurantLat !== null) reviewPayload.restaurant_lat = restaurantLat;
+      if (restaurantLng !== null) reviewPayload.restaurant_lng = restaurantLng;
+
+      async function insertReview(payload: ReviewInsertPayload) {
+        return (supabase as any)
+          .from("reviews")
+          .insert(payload)
+          .select("id")
+          .single();
+      }
+
+      let { data: review, error: insertError } = await insertReview(reviewPayload);
+
+      if (insertError && isMissingOptionalReviewColumn(insertError)) {
+        const retry = await insertReview(withoutRichPlaceDetails(reviewPayload));
+        review = retry.data;
+        insertError = retry.error;
+      }
+
+      if (insertError && isMissingOptionalReviewColumn(insertError)) {
+        const retry = await insertReview(withoutPlaceMetadata(reviewPayload));
+        review = retry.data;
+        insertError = retry.error;
+      }
 
       if (insertError) throw insertError;
 
@@ -316,8 +437,7 @@ export default function ReviewForm() {
       router.push(`/reviews/${review.id}`);
       router.refresh();
     } catch (err: unknown) {
-      setServerError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
+      setServerError(errorMessage(err) || "Something went wrong.");
       setSubmitting(false);
     }
   }
@@ -334,26 +454,82 @@ export default function ReviewForm() {
       {/* 2 — Restaurant */}
       <div className="px-5 pb-4">
         <FieldLabel>Restaurant</FieldLabel>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            background: "var(--card)",
-            border: `1px solid ${errors.restaurantName ? "#EF4444" : "var(--border)"}`,
-            borderRadius: "14px",
-            padding: "12px 14px",
-          }}
-        >
-          <MapPin size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
-          <input
-            type="text"
-            placeholder="e.g. Bawarchi"
-            value={restaurantName}
-            onChange={(e) => setRestaurantName(e.target.value)}
-            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'Syne', sans-serif", fontWeight: 700 }}
-          />
+        <div style={{ position: "relative" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              background: "var(--card)",
+              border: `1px solid ${errors.restaurantName ? "#EF4444" : "var(--border)"}`,
+              borderRadius: "14px",
+              padding: "12px 14px",
+            }}
+          >
+            <MapPin size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
+            <input
+              ref={restaurantInputRef}
+              type="text"
+              placeholder="e.g. Bawarchi"
+              value={restaurantName}
+              onChange={(e) => handleRestaurantInput(e.target.value)}
+              onFocus={() => {
+                if (restaurantSuggestions.length > 0) setShowRestaurantSuggestions(true);
+              }}
+              autoComplete="off"
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'Syne', sans-serif", fontWeight: 700 }}
+            />
+          </div>
+          {showRestaurantSuggestions && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                right: 0,
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: "14px",
+                overflow: "hidden",
+                zIndex: 25,
+              }}
+            >
+              {restaurantSuggestions.map((s, i) => (
+                <button
+                  key={`${s.placeId}-${i}`}
+                  type="button"
+                  onMouseDown={() => pickRestaurant(s)}
+                  style={{
+                    width: "100%",
+                    background: "none",
+                    border: "none",
+                    borderBottom: i === restaurantSuggestions.length - 1 ? "none" : "1px solid var(--border)",
+                    padding: "10px 12px",
+                    color: "var(--cream)",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "8px",
+                  }}
+                >
+                  <MapPin size={13} strokeWidth={2} color="var(--muted)" style={{ marginTop: "2px", flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>{s.mainText}</p>
+                    {s.secondaryText && (
+                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", lineHeight: 1.2, marginTop: "2px" }}>
+                        {s.secondaryText}
+                      </p>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+        {restaurantArea && (
+          <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px" }}>{restaurantArea}</p>
+        )}
         {errors.restaurantName && (
           <p style={{ fontSize: "11px", color: "#EF4444", marginTop: "4px" }}>{errors.restaurantName}</p>
         )}
@@ -367,7 +543,6 @@ export default function ReviewForm() {
             <DishRow
               key={i}
               item={item}
-              allDishNames={allDishNames}
               onChange={(field, value) => updateItem(i, field, value)}
               onRemove={() => removeItem(i)}
               showRemove={items.length > 1}

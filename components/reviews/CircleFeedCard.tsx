@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Heart, MessageCircle, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Review } from "@/lib/types";
+import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 
 interface Props {
   review: Review;
@@ -49,6 +50,8 @@ export default function CircleFeedCard({
   initialMyName = "",
 }: Props) {
   const router = useRouter();
+  const locationLabel = restaurantLocationLabel(review);
+  const mapsUrl = googleMapsUrl(review);
   const [myName, setMyName] = useState(initialMyName);
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [liked, setLiked] = useState(initialLiked);
@@ -205,9 +208,20 @@ export default function CircleFeedCard({
         {/* Body */}
         <div style={{ padding: "12px 14px 0" }}>
           {/* Restaurant name */}
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: "6px" }}>
+          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "1px" : "6px" }}>
             {review.restaurant_name}
           </h2>
+          {locationLabel && (
+            <a
+              href={mapsUrl ?? undefined}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
+            >
+              {locationLabel}
+            </a>
+          )}
 {review.body && (
             <div style={{ padding: "8px 10px", background: "var(--orange-dim)", borderLeft: "3px solid var(--orange)", borderRadius: "0 8px 8px 0", marginBottom: "10px" }}>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.5 }}>

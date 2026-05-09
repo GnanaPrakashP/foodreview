@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Review } from "@/lib/types";
+import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 
 interface ReviewCardProps {
   review: Review;
@@ -22,6 +23,8 @@ function timeAgo(dateStr: string): string {
 export default function ReviewCard({ review }: ReviewCardProps) {
   const firstItem = review.items[0];
   const rating = avgRating(review);
+  const locationLabel = restaurantLocationLabel(review);
+  const mapsUrl = googleMapsUrl(review);
 
   return (
     <article
@@ -119,10 +122,23 @@ export default function ReviewCard({ review }: ReviewCardProps) {
             fontSize: "18px",
             fontWeight: 800,
             color: "var(--cream)",
+            lineHeight: 1.15,
+            margin: 0,
           }}
         >
           {review.restaurant_name}
         </h2>
+        {locationLabel && (
+          <a
+            href={mapsUrl ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            style={{ display: "inline-block", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: "1px", textDecoration: "none" }}
+          >
+            {locationLabel}
+          </a>
+        )}
 
         {review.items.length > 1 && (
           <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "3px" }}>

@@ -31,6 +31,7 @@ function loadTsModule(relativePath) {
     Date,
     require(id) {
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/location") return loadTsModule("lib/location.ts");
       throw new Error(`Unexpected require in trending privacy tests: ${id}`);
     },
   });

@@ -55,6 +55,9 @@ export interface Database {
           restaurant_id: string | null;
           restaurant_name: string;
           area: string | null;
+          restaurant_address: string | null;
+          restaurant_lat: number | null;
+          restaurant_lng: number | null;
           items: FoodItem[];
           body: string | null;
           photo_url: string | null;
@@ -68,6 +71,9 @@ export interface Database {
           restaurant_id?: string | null;
           restaurant_name: string;
           area?: string | null;
+          restaurant_address?: string | null;
+          restaurant_lat?: number | null;
+          restaurant_lng?: number | null;
           items: FoodItem[];
           body?: string | null;
           photo_url?: string | null;
@@ -81,6 +87,9 @@ export interface Database {
           restaurant_id?: string | null;
           restaurant_name?: string;
           area?: string | null;
+          restaurant_address?: string | null;
+          restaurant_lat?: number | null;
+          restaurant_lng?: number | null;
           items?: FoodItem[];
           body?: string | null;
           photo_url?: string | null;

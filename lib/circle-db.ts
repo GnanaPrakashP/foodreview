@@ -186,7 +186,15 @@ async function ensureAcceptedCircleRequest(db: CircleDb, senderName: string, rec
     .from("circle_requests")
     .insert({ sender_name: senderName, receiver_name: receiverName, status: "accepted" });
 
-  if (!error || error.code === "23505") return null;
+  if (!error) return null;
+  if (error.code === "23505") {
+    const { error: updateError } = await db
+      .from("circle_requests")
+      .update({ status: "accepted" })
+      .eq("sender_name", senderName)
+      .eq("receiver_name", receiverName);
+    return updateError ?? null;
+  }
   return error;
 }
 

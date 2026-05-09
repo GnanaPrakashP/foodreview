@@ -19,7 +19,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>How we use it</h2>
-          <p>Your data is used solely to power the FoodCircle experience — showing your reviews to your circle and letting you discover what friends are eating.</p>
+          <p>Your data is used solely to power the CircleBites experience — showing your reviews to your circle and letting you discover what friends are eating.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Deleting your data</h2>

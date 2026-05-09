@@ -42,10 +42,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: ["**/mobile-smoke.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "mobile",
+      testIgnore: ["**/batch4-smoke.spec.ts"],
       use: { ...devices["Pixel 5"] },
     },
   ],

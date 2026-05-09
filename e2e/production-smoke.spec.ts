@@ -14,7 +14,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { envUser, signIn } from "./helpers";
+import { envUser, mockRestaurantPlace, signIn } from "./helpers";
 
 const userA = envUser("A"); // public account, reviews at "E2E Kitchen"
 const userB = envUser("B"); // public account, reviews at "E2E Kitchen", mutual circle with A
@@ -30,7 +30,9 @@ function escapedText(value: string): RegExp {
 
 async function createPublicReview(page: Page, restaurantName: string, body: string): Promise<string> {
   await page.goto("/reviews/new");
+  await mockRestaurantPlace(page, restaurantName);
   await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
+  await page.getByRole("button", { name: escapedText(restaurantName) }).first().click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill("E2E Idli");
   await page.locator("textarea").fill(body);
   await page.getByRole("button", { name: "Post it" }).click();
@@ -87,7 +89,9 @@ test("2 · A can create a public review and it appears on /me", async ({ page })
   await signIn(page, userA!);
 
   await page.goto("/reviews/new");
+  await mockRestaurantPlace(page, "Smoke Test Eats");
   await page.getByPlaceholder("e.g. Bawarchi").fill("Smoke Test Eats");
+  await page.getByRole("button", { name: /Smoke Test Eats/i }).first().click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill("Smoke Dish");
   // Ensure "Public" visibility is selected (it's the default)
   await expect(page.getByRole("button", { name: /public/i })).toBeVisible();

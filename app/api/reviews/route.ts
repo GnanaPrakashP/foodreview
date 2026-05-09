@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
     photoUrl,
     area,
     restaurantId,
+    restaurantAddress,
+    restaurantLat,
+    restaurantLng,
   } = body;
 
   if (!restaurantName?.trim()) {
@@ -88,6 +91,9 @@ export async function POST(req: NextRequest) {
       photo_url: photoUrl ?? null,
       area: area?.trim() || null,
       restaurant_id: restaurantId ?? null,
+      restaurant_address: restaurantAddress?.trim() || null,
+      restaurant_lat: typeof restaurantLat === "number" ? restaurantLat : null,
+      restaurant_lng: typeof restaurantLng === "number" ? restaurantLng : null,
     })
     .select("id")
     .single();

@@ -308,7 +308,7 @@ function InviteSection() {
 
   function shareOn(platform: "whatsapp" | "x") {
     if (!inviteUrl) return;
-    const text = encodeURIComponent(`Join me on FoodCircle — see what I'm eating! ${inviteUrl}`);
+    const text = encodeURIComponent(`Join me on CircleBites — see what I'm eating! ${inviteUrl}`);
     const url =
       platform === "whatsapp"
         ? `https://wa.me/?text=${text}`

@@ -66,8 +66,15 @@ export async function POST(req: NextRequest) {
 }
 
 async function handleCircleRequest(req: NextRequest) {
-  const { receiverName } = await req.json();
-  if (!receiverName?.trim()) {
+  let body: { receiverName?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  const { receiverName } = body;
+  if (typeof receiverName !== "string" || !receiverName.trim()) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 

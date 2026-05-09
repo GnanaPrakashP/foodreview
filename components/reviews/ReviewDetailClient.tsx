@@ -6,6 +6,7 @@ import { ArrowLeft, Bookmark, Heart, MessageCircle, Send, Star } from "lucide-re
 import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
+import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 
 type Props = {
   review: Review;
@@ -34,6 +35,8 @@ export default function ReviewDetailClient({
   autoFocusComment = false,
   backHref = "/",
 }: Props) {
+  const locationLabel = restaurantLocationLabel(review);
+  const mapsUrl = googleMapsUrl(review);
   const [myName, setMyName] = useState(initialMyName);
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(initialLikeCount);
@@ -231,9 +234,19 @@ export default function ReviewDetailClient({
           )}
 
           <div style={{ padding: "12px 14px 0" }}>
-            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: "6px" }}>
+            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "1px" : "6px" }}>
               {review.restaurant_name}
             </h1>
+            {locationLabel && (
+              <a
+                href={mapsUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
+              >
+                {locationLabel}
+              </a>
+            )}
 
             {review.body && (
               <div style={{ padding: "8px 10px", background: "var(--orange-dim)", borderLeft: "3px solid var(--orange)", borderRadius: "0 8px 8px 0", marginBottom: "10px" }}>
