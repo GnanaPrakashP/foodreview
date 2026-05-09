@@ -11,7 +11,6 @@ const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -23,6 +22,7 @@ export default function OnboardingPage() {
 
   // Pre-fill from Google user metadata
   useEffect(() => {
+    const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
       const full = user.user_metadata?.full_name || user.user_metadata?.name || "";
@@ -30,7 +30,6 @@ export default function OnboardingPage() {
       if (parts[0]) setFirstName(parts[0]);
       if (parts.length > 1) setLastName(parts.slice(1).join(" "));
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounced username availability check
@@ -43,6 +42,7 @@ export default function OnboardingPage() {
 
     setUsernameStatus("checking");
     checkTimerRef.current = setTimeout(async () => {
+      const supabase = createClient();
       const { data } = await supabase
         .from("profiles" as never)
         .select("id")
@@ -54,7 +54,6 @@ export default function OnboardingPage() {
     return () => {
       if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -69,6 +68,7 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setErrorMsg("");
 
+    const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
 

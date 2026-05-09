@@ -13,7 +13,6 @@ type Status = "idle" | "loading" | "success" | "error";
 
 export default function LoginPage() {
   const router   = useRouter();
-  const supabase = createClient();
 
   const [view,            setView]            = useState<View>("sign_in");
   const [email,           setEmail]           = useState("");
@@ -35,6 +34,7 @@ export default function LoginPage() {
   /* ── Google ── */
   async function handleGoogle() {
     setGoogleLoading(true);
+    const supabase = createClient();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -46,6 +46,7 @@ export default function LoginPage() {
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setStatus("loading"); setErrorMsg("");
+    const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) { setErrorMsg(error.message); setStatus("error"); }
     else        { router.push("/"); router.refresh(); }
@@ -57,6 +58,7 @@ export default function LoginPage() {
     if (password !== confirmPassword) { setErrorMsg("Passwords don't match."); setStatus("error"); return; }
     if (password.length < 8)          { setErrorMsg("Password must be at least 8 characters."); setStatus("error"); return; }
     setStatus("loading"); setErrorMsg("");
+    const supabase = createClient();
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error)          { setErrorMsg(error.message); setStatus("error"); }
     else if (data.session) { router.push("/onboarding"); router.refresh(); }
@@ -67,6 +69,7 @@ export default function LoginPage() {
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
     setStatus("loading"); setErrorMsg("");
+    const supabase = createClient();
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
     });
