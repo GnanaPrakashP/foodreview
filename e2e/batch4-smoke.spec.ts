@@ -105,6 +105,7 @@ test("review smoke: logged-in user can create a public review and see it on prof
   });
 
   await expect(page.getByText(restaurantName, { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("E2E Area, Hyderabad").first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(body)).toBeVisible();
 
   await page.goto("/me");
@@ -120,6 +121,19 @@ test("review validation smoke: required fields are handled in the UI", async ({ 
 
   await expect(page.getByText("Restaurant name is required.")).toBeVisible();
   await expect(page.getByText("Add at least one dish.")).toBeVisible();
+  await expect(page).toHaveURL(/\/reviews\/new/);
+
+  await page.route("**/api/places/autocomplete**", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ suggestions: [] }),
+    });
+  }, { times: 1 });
+  await page.getByPlaceholder("e.g. Bawarchi").fill("Typed Without Selecting");
+  await page.getByPlaceholder("e.g. Mutton Biryani").fill("Smoke Dish");
+  await page.getByTitle("Amazing").first().click();
+  await page.getByRole("button", { name: "Post it" }).click();
+  await expect(page.getByText("Select a restaurant from the dropdown list.")).toBeVisible();
   await expect(page).toHaveURL(/\/reviews\/new/);
 });
 

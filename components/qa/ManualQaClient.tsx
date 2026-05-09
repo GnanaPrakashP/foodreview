@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Circle, Database, Download, ExternalLink, RotateCcw, Terminal, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Database, ExternalLink, RotateCcw, Terminal, XCircle } from "lucide-react";
 import { manualQaSections, manualQaSmokeIds, manualQaTests, type ManualQaPriority, type ManualQaTest } from "@/lib/qa/manual-tests";
 
 type QaStatus = "not_tested" | "pass" | "fail" | "na";
-type Filter = "all" | "smoke" | "p0" | "failed" | "not_tested" | "section";
+type Filter = "all" | "smoke" | "failed" | "not_tested" | "section";
 type QaView = "manual" | "automated" | "e2e" | "supabase";
 
 interface QaResult {
@@ -35,7 +35,6 @@ const statusLabels: Record<QaStatus, string> = {
 const filters: Array<{ id: Filter; label: string }> = [
   { id: "all", label: "All" },
   { id: "smoke", label: "Smoke" },
-  { id: "p0", label: "P0" },
   { id: "failed", label: "Failed" },
   { id: "not_tested", label: "Not tested" },
   { id: "section", label: "Section" },
@@ -96,7 +95,8 @@ const supabaseChecks = [
   {
     title: "Apply safe migrations to existing DB",
     command: "npx supabase db push",
-    detail: "Use migrations for existing/local/staging/prod DBs. Do not run schema.sql on a DB with data.",
+    detail: "Use this from your local terminal while connected to the Supabase project you are verifying. Do not run schema.sql on a DB with data.",
+    expected: "The command finishes without errors and Supabase reports that migrations are applied or already up to date.",
   },
   {
     title: "Verify required tables/columns",
@@ -109,7 +109,8 @@ const supabaseChecks = [
       and table_name = 'profiles'
       and column_name = 'account_type'
   ) as profiles_account_type;`,
-    detail: "Both values should confirm the migration is present.",
+    detail: "Use this in the Supabase SQL editor for the live/staging database.",
+    expected: "circle_memberships is public.circle_memberships and profiles_account_type is true.",
   },
   {
     title: "Verify privacy policies",
@@ -118,7 +119,8 @@ from pg_policies
 where schemaname = 'public'
   and tablename in ('reviews', 'comments', 'likes', 'wishlist', 'circle_memberships')
 order by tablename, policyname;`,
-    detail: "Expected policies include Reviews readable by visibility, Comments/Likes readable by visible review, Wishlist readable by owner.",
+    detail: "Use this in the Supabase SQL editor to inspect the actual deployed RLS policies.",
+    expected: "Policies are scoped by visibility/ownership. Reviews should be readable by visibility, comments/likes by visible review, wishlist by owner, and circle memberships by participant.",
   },
   {
     title: "Old open read policies must be absent",
@@ -131,12 +133,42 @@ where schemaname = 'public'
     'Likes readable by everyone',
     'Wishlist readable by everyone'
   );`,
-    detail: "This query should return zero rows.",
+    detail: "Use this in the Supabase SQL editor after migrations are applied.",
+    expected: "Zero rows. If any row appears, an old open read policy is still present and production is not ready.",
   },
   {
-    title: "New empty DB baseline",
+    title: "Verify Google Places review columns",
+    command: `select column_name, data_type
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'reviews'
+  and column_name in (
+    'restaurant_id',
+    'area',
+    'restaurant_address',
+    'restaurant_lat',
+    'restaurant_lng'
+  )
+order by column_name;`,
+    detail: "Use this in the Supabase SQL editor to confirm the live reviews table can store selected restaurant details.",
+    expected: "Five rows are returned. restaurant_lat and restaurant_lng should be double precision; restaurant_id, area, and restaurant_address should be text.",
+  },
+  {
+    title: "Verify review photo storage policy",
+    command: `select policyname, cmd, roles, qual, with_check
+from pg_policies
+where schemaname = 'storage'
+  and tablename = 'objects'
+  and policyname ilike '%review%photo%'
+order by policyname;`,
+    detail: "Use this in the Supabase SQL editor to confirm review photo uploads are not publicly writable.",
+    expected: "Upload/insert policy is limited to authenticated users. There should be no policy like Anyone can upload review photos.",
+  },
+  {
+    title: "Fresh DB only warning",
     command: "Run supabase/schema.sql only on a fresh empty DB or reset DB.",
-    detail: "schema.sql still has destructive setup at the top, so never run it against existing data.",
+    detail: "Use migrations for existing local/staging/production databases.",
+    expected: "You do not run schema.sql against production or any database with real data.",
   },
 ];
 
@@ -171,38 +203,6 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function downloadFile(fileName: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function buildMarkdown(results: QaResultMap) {
-  const lines = ["# CircleBites Manual QA Results", "", `Exported: ${new Date().toISOString()}`, ""];
-
-  for (const test of manualQaTests) {
-    const result = getResult(results, test.id);
-    lines.push(`## ${test.id} - ${test.title}`);
-    lines.push("");
-    lines.push(`- Section: ${test.section}`);
-    lines.push(`- Priority: ${test.priority}`);
-    lines.push(`- Route: ${test.route}`);
-    lines.push(`- Smoke: ${manualQaSmokeIds.has(test.id) ? "yes" : "no"}`);
-    lines.push(`- Status: ${statusLabels[result.status]}`);
-    lines.push(`- Updated: ${result.updatedAt ?? "Not updated"}`);
-    lines.push(`- Notes: ${result.notes.trim() || "-"}`);
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div
@@ -224,7 +224,17 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-function CommandCard({ title, command, detail }: { title: string; command: string; detail: string }) {
+function CommandCard({
+  title,
+  command,
+  detail,
+  expected,
+}: {
+  title: string;
+  command: string;
+  detail: string;
+  expected?: string;
+}) {
   return (
     <article
       style={{
@@ -239,6 +249,7 @@ function CommandCard({ title, command, detail }: { title: string; command: strin
       <h2 style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800 }}>
         {title}
       </h2>
+      <p style={labelStyle}>Use this</p>
       <pre
         style={{
           margin: 0,
@@ -256,6 +267,21 @@ function CommandCard({ title, command, detail }: { title: string; command: strin
         <code>{command}</code>
       </pre>
       <p style={bodyStyle}>{detail}</p>
+      {expected && (
+        <div
+          style={{
+            border: "1px solid rgba(68,214,121,0.3)",
+            borderRadius: "8px",
+            background: "rgba(68,214,121,0.08)",
+            padding: "10px 11px",
+            display: "grid",
+            gap: "5px",
+          }}
+        >
+          <p style={labelStyle}>Expected result</p>
+          <p style={bodyStyle}>{expected}</p>
+        </div>
+      )}
     </article>
   );
 }
@@ -269,7 +295,7 @@ function CommandSection({
   eyebrow: string;
   title: string;
   description: string;
-  checks: Array<{ title: string; command: string; detail: string }>;
+  checks: Array<{ title: string; command: string; detail: string; expected?: string }>;
 }) {
   return (
     <section style={{ display: "grid", gap: "12px" }}>
@@ -523,9 +549,20 @@ export default function ManualQaClient() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(results));
   }, [loaded, results]);
 
+  const visibleTests = useMemo(() => {
+    return manualQaTests.filter((test) => {
+      const status = getResult(results, test.id).status;
+      if (filter === "smoke") return manualQaSmokeIds.has(test.id);
+      if (filter === "failed") return status === "fail";
+      if (filter === "not_tested") return status === "not_tested";
+      if (filter === "section") return test.section === section;
+      return true;
+    });
+  }, [filter, results, section]);
+
   const summary = useMemo(() => {
-    const counts = { total: manualQaTests.length, pass: 0, fail: 0, na: 0, notTested: 0 };
-    for (const test of manualQaTests) {
+    const counts = { total: visibleTests.length, pass: 0, fail: 0, na: 0, notTested: 0 };
+    for (const test of visibleTests) {
       const status = getResult(results, test.id).status;
       if (status === "pass") counts.pass += 1;
       else if (status === "fail") counts.fail += 1;
@@ -533,20 +570,11 @@ export default function ManualQaClient() {
       else counts.notTested += 1;
     }
     const tested = counts.pass + counts.fail + counts.na;
-    return { ...counts, completion: Math.round((tested / counts.total) * 100) };
-  }, [results]);
-
-  const visibleTests = useMemo(() => {
-    return manualQaTests.filter((test) => {
-      const status = getResult(results, test.id).status;
-      if (filter === "smoke") return manualQaSmokeIds.has(test.id);
-      if (filter === "p0") return test.priority === "P0";
-      if (filter === "failed") return status === "fail";
-      if (filter === "not_tested") return status === "not_tested";
-      if (filter === "section") return test.section === section;
-      return true;
-    });
-  }, [filter, results, section]);
+    return {
+      ...counts,
+      completion: counts.total === 0 ? 0 : Math.round((tested / counts.total) * 100),
+    };
+  }, [results, visibleTests]);
 
   function updateResult(id: string, patch: Partial<QaResult>) {
     setResults((prev) => ({
@@ -564,24 +592,6 @@ export default function ManualQaClient() {
     if (!ok) return;
     setResults({});
     window.localStorage.removeItem(STORAGE_KEY);
-  }
-
-  function exportJson() {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      storageKey: STORAGE_KEY,
-      summary,
-      results: manualQaTests.map((test) => ({
-        ...test,
-        smoke: manualQaSmokeIds.has(test.id),
-        ...getResult(results, test.id),
-      })),
-    };
-    downloadFile("manual-qa-results.json", JSON.stringify(payload, null, 2), "application/json");
-  }
-
-  function exportMarkdown() {
-    downloadFile("manual-qa-results.md", buildMarkdown(results), "text/markdown");
   }
 
   return (
@@ -605,24 +615,6 @@ export default function ManualQaClient() {
           </h1>
         </div>
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <a href="/qa/circle" style={actionButtonStyle}>
-            <Circle size={14} />
-            Circle QA
-          </a>
-          <button type="button" onClick={exportJson} style={actionButtonStyle}>
-            <Download size={14} />
-            JSON
-          </button>
-          <button type="button" onClick={exportMarkdown} style={actionButtonStyle}>
-            <Download size={14} />
-            Markdown
-          </button>
-          <button type="button" onClick={resetAll} style={{ ...actionButtonStyle, color: "#FF6B6B" }}>
-            <RotateCcw size={14} />
-            Reset
-          </button>
-        </div>
       </header>
 
       <section style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
@@ -774,7 +766,7 @@ export default function ManualQaClient() {
             </div>
           )}
 
-          {summary.fail === 0 && summary.notTested === 0 && (
+          {summary.total > 0 && summary.fail === 0 && summary.notTested === 0 && (
             <div
               style={{
                 border: "1px solid rgba(68,214,121,0.4)",
@@ -795,20 +787,65 @@ export default function ManualQaClient() {
             </div>
           )}
 
-          <section style={{ display: "grid", gap: "10px" }}>
-            {visibleTests.map((test) => {
-              const result = getResult(results, test.id);
-              return (
-                <TestCard
-                  key={test.id}
-                  test={test}
-                  result={result}
-                  onStatus={(status) => updateResult(test.id, { status })}
-                  onNotes={(notes) => updateResult(test.id, { notes })}
-                />
-              );
-            })}
-          </section>
+          {summary.total === 0 && filter !== "failed" ? (
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                background: "var(--card)",
+                color: "var(--muted)",
+                padding: "14px",
+                fontSize: "13px",
+                fontWeight: 800,
+              }}
+            >
+              No manual QA checks match this filter.
+            </div>
+          ) : summary.total > 0 ? (
+            <section style={{ display: "grid", gap: "10px" }}>
+              {visibleTests.map((test) => {
+                const result = getResult(results, test.id);
+                return (
+                  <TestCard
+                    key={test.id}
+                    test={test}
+                    result={result}
+                    onStatus={(status) => updateResult(test.id, { status })}
+                    onNotes={(notes) => updateResult(test.id, { notes })}
+                  />
+                );
+              })}
+            </section>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={resetAll}
+            title="Reset manual QA statuses and notes"
+            style={{
+              position: "fixed",
+              right: "16px",
+              bottom: "16px",
+              zIndex: 60,
+              minHeight: "42px",
+              borderRadius: "999px",
+              border: "1px solid rgba(255,107,107,0.42)",
+              background: "rgba(37, 30, 24, 0.94)",
+              color: "#FF8F8F",
+              padding: "10px 14px",
+              fontSize: "12px",
+              fontWeight: 900,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "7px",
+              cursor: "pointer",
+              boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+              backdropFilter: "blur(10px)",
+            }}
+          >
+            <RotateCcw size={14} />
+            Reset
+          </button>
         </>
       )}
     </main>

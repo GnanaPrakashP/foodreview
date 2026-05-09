@@ -13,6 +13,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+const placeDetailsMigration = readFileSync(
+  new URL("../supabase/migrations/20260509170000_add_restaurant_place_details.sql", import.meta.url),
+  "utf8"
+);
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +78,33 @@ test("schema: reviews SELECT policy is visibility-aware, not open", () => {
     blocks.every((b) => !/using\s*\(\s*true\s*\)/i.test(b)),
     "reviews SELECT policy must not be USING (true)"
   );
+});
+
+test("schema: reviews include Google Places restaurant metadata columns", () => {
+  for (const [column, typePattern] of [
+    ["restaurant_id", /text/i],
+    ["area", /text/i],
+    ["restaurant_address", /text/i],
+    ["restaurant_lat", /double precision/i],
+    ["restaurant_lng", /double precision/i],
+  ]) {
+    assert.match(
+      schema,
+      new RegExp(`(?:${column}\\s+${typePattern.source}|add column if not exists ${column}\\s+${typePattern.source})`, "i"),
+      `reviews schema must include ${column}`
+    );
+    assert.match(
+      placeDetailsMigration,
+      new RegExp(`add column if not exists ${column}\\s+${typePattern.source}`, "i"),
+      `place details migration must add ${column}`
+    );
+  }
+});
+
+test("schema: reviews have an index for stored restaurant coordinates", () => {
+  assert.match(schema, /reviews_restaurant_location_idx/i);
+  assert.match(placeDetailsMigration, /reviews_restaurant_location_idx/i);
+  assert.match(placeDetailsMigration, /on public\.reviews\s*\(\s*restaurant_lat\s*,\s*restaurant_lng\s*\)/i);
 });
 
 // ── LIKES ──────────────────────────────────────────────────────────────────────

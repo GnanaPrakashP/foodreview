@@ -239,6 +239,42 @@ test("CREATE: visibility=me is stored correctly", async () => {
   assert.equal(insertArg(db._calls).visibility, "me");
 });
 
+test("CREATE: selected Google Places metadata is stored with the review", async () => {
+  const db = spyDb({ data: { id: "11111111-1111-4111-8111-111111111111" }, error: null });
+  const { POST } = loadRoute(src.create, { db, authName: "Alice" });
+  const res = await POST(makeReq({
+    ...VALID_BODY,
+    restaurantId: "places-bawarchi-gachibowli",
+    area: "  Gachibowli, Hyderabad  ",
+    restaurantAddress: "  Gachibowli, Hyderabad, Telangana 500032, India  ",
+    restaurantLat: 17.4239,
+    restaurantLng: 78.4738,
+  }));
+
+  assert.equal(status(res), 200);
+  const row = insertArg(db._calls);
+  assert.equal(row.restaurant_id, "places-bawarchi-gachibowli");
+  assert.equal(row.area, "Gachibowli, Hyderabad");
+  assert.equal(row.restaurant_address, "Gachibowli, Hyderabad, Telangana 500032, India");
+  assert.equal(row.restaurant_lat, 17.4239);
+  assert.equal(row.restaurant_lng, 78.4738);
+});
+
+test("CREATE: invalid coordinate types are stored as null", async () => {
+  const db = spyDb({ data: { id: "11111111-1111-4111-8111-111111111111" }, error: null });
+  const { POST } = loadRoute(src.create, { db, authName: "Alice" });
+  await POST(makeReq({
+    ...VALID_BODY,
+    restaurantId: "places-bawarchi",
+    restaurantLat: "17.4239",
+    restaurantLng: { value: 78.4738 },
+  }));
+
+  const row = insertArg(db._calls);
+  assert.equal(row.restaurant_lat, null);
+  assert.equal(row.restaurant_lng, null);
+});
+
 // ── DELETE /api/reviews/[id] — double-filter guard ────────────────────────────
 
 test("DELETE: DB call uses both id and reviewer_name as eq filters", async () => {

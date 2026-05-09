@@ -38,6 +38,7 @@ export default function BottomNav() {
     pathname.startsWith("/auth/reset-password") ||
     pathname.startsWith("/comments/") ||
     (pathname.startsWith("/reviews/") && pathname !== "/reviews/new") ||
+    pathname.startsWith("/qa") ||
     pathname === "/privacy" ||
     pathname === "/terms"
   )

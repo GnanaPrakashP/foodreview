@@ -1,30 +1,24 @@
 {
-  "all": true,
-  "clean": true,
-  "check-coverage": false,
-  "extension": [".js", ".mjs", ".cjs", ".ts", ".tsx"],
+  "all": false,
   "include": [
-    "app/**/*.ts",
-    "app/**/*.tsx",
-    "lib/**/*.ts",
-    "components/**/*.ts",
-    "components/**/*.tsx",
-    "hooks/**/*.ts",
-    "hooks/**/*.tsx"
+    "app/api/**/*.ts",
+    "app/auth/callback/route.ts",
+    "lib/**/*.ts"
   ],
   "exclude": [
-    "tests/**",
+    "**/*.d.ts",
+    "**/*.tsx",
+    "app/**/page.tsx",
+    "app/**/layout.tsx",
+    "app/**/loading.tsx",
+    "app/**/not-found.tsx",
+    "components/**",
     "e2e/**",
-    "node_modules/**",
-    ".next/**",
-    "coverage/**",
-    "playwright-report/**",
-    "test-results/**",
-    "*.config.*",
-    "next-env.d.ts",
-    "middleware.ts",
-    "tailwind.config.ts",
-    "postcss.config.mjs",
-    "playwright.config.ts"
-  ]
+    "lib/qa/**",
+    "lib/supabase/**",
+    "lib/types.ts",
+    "lib/useTheme.ts",
+    "tests/**"
+  ],
+  "excludeAfterRemap": true
 }

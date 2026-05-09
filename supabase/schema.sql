@@ -71,6 +71,10 @@ create index reviews_restaurant_id_idx    on public.reviews(restaurant_id);
 create index reviews_restaurant_name_idx  on public.reviews(restaurant_name);
 create index reviews_reviewer_name_idx    on public.reviews(reviewer_name);
 create index reviews_visibility_idx       on public.reviews(visibility);
+create index if not exists reviews_restaurant_location_idx
+  on public.reviews(restaurant_lat, restaurant_lng)
+  where restaurant_lat is not null
+    and restaurant_lng is not null;
 create index reviews_reviewer_restaurant_visibility_idx
   on public.reviews(reviewer_name, restaurant_id, restaurant_name, visibility);
 create index reviews_visible_feed_idx
