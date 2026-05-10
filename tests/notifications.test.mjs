@@ -150,6 +150,63 @@ test("createNotificationForNames dedupes by updating an existing notification", 
   assert.equal(opArgs(update, "update")[0].is_read, false);
 });
 
+test("createNotificationForNames dedupes legacy like notifications per post", async () => {
+  const { createNotificationForNames } = loadNotifications();
+  const db = spyDb(
+    {
+      data: [
+        { id: "recipient-id", first_name: "Alice", last_name: "Smith", username: "alice", avatar_url: null },
+        { id: "actor-id", first_name: "Bob", last_name: "Jones", username: "bob", avatar_url: null },
+      ],
+      error: null,
+    },
+    {
+      data: null,
+      error: { code: "42703", message: "column message does not exist" },
+    },
+    {
+      data: [],
+      error: null,
+    },
+    {
+      data: null,
+      error: { code: "42703", message: "column message does not exist" },
+    },
+    {
+      data: { id: "legacy-new", type: "like", post_id: "post-1" },
+      error: null,
+    }
+  );
+
+  const result = await createNotificationForNames(db, {
+    recipientName: "Alice Smith",
+    actorName: "Bob Jones",
+    type: "POST_LIKED",
+    title: "New like",
+    message: "Bob liked your post",
+    entityType: "POST",
+    entityId: "post-1",
+    postId: "post-1",
+    dedupe: true,
+  });
+
+  assert.equal(result.id, "legacy-new");
+  const legacyLookup = db._calls[2];
+  assert.equal(legacyLookup.table, "notifications");
+  assert.deepEqual(
+    legacyLookup.ops.filter(([op]) => op === "eq").map(([, col, val]) => [col, val]),
+    [
+      ["recipient_name", "Alice Smith"],
+      ["actor_name", "Bob Jones"],
+      ["type", "like"],
+      ["post_id", "post-1"],
+    ]
+  );
+
+  const legacyInsert = db._calls.find((call) => call.table === "notifications" && hasOp(call, "insert") && opArgs(call, "insert")[0].type === "like");
+  assert.ok(legacyInsert, "new legacy like notification should be inserted when only other posts had old likes");
+});
+
 test("upsertCircleRequestNotification reopens an existing soft-deleted request notification", async () => {
   const { upsertCircleRequestNotification } = loadNotifications();
   const db = spyDb(

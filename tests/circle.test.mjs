@@ -218,30 +218,24 @@ test("hasCircleAccess: true when direct circle edge exists", async () => {
   assert.equal(await hasCircleAccess(db, "Alice", "Bob"), true);
 });
 
-test("hasCircleAccess: true when accepted circle request exists (A→B direction)", async () => {
+test("hasCircleAccess: false when only accepted circle request exists (A→B direction)", async () => {
   const db = mockDb(
     { data: [], error: null },            // hasCircleEdge: no edge
-    { data: [{ id: "1" }], error: null }, // request A→B: found
-    { data: [], error: null }             // request B→A: not needed but consumed
+    { data: [{ id: "1" }], error: null }  // stale accepted request: ignored
   );
-  assert.equal(await hasCircleAccess(db, "Alice", "Bob"), true);
+  assert.equal(await hasCircleAccess(db, "Alice", "Bob"), false);
 });
 
-test("hasCircleAccess: true when accepted circle request exists (B→A direction)", async () => {
+test("hasCircleAccess: false when only accepted circle request exists (B→A direction)", async () => {
   const db = mockDb(
     { data: [], error: null }, // hasCircleEdge: no edge
-    { data: [], error: null }, // request A→B: not found
-    { data: [{ id: "2" }], error: null } // request B→A: found
+    { data: [{ id: "2" }], error: null } // stale accepted request: ignored
   );
-  assert.equal(await hasCircleAccess(db, "Alice", "Bob"), true);
+  assert.equal(await hasCircleAccess(db, "Alice", "Bob"), false);
 });
 
-test("hasCircleAccess: false when no edge or accepted request in either direction", async () => {
-  const db = mockDb(
-    { data: [], error: null }, // hasCircleEdge
-    { data: [], error: null }, // request A→B
-    { data: [], error: null }  // request B→A
-  );
+test("hasCircleAccess: false when no membership edge exists", async () => {
+  const db = mockDb({ data: [], error: null });
   assert.equal(await hasCircleAccess(db, "Alice", "Bob"), false);
 });
 
@@ -295,25 +289,25 @@ test("getCircleRelationshipsForName: mutualMembers is intersection of both direc
   assert.equal(r.mutualMembers.size, 1);
 });
 
-test("getCircleRelationshipsForName: accepted requests add to both circleMembers and joinedCircles", async () => {
+test("getCircleRelationshipsForName: accepted outgoing requests alone do not add relationships", async () => {
   const db = mockDb(
     { data: [], error: null }, // no edge rows
-    { data: [{ sender_name: "Alice", receiver_name: "Eve" }], error: null }
+    { data: [{ sender_name: "Alice", receiver_name: "Eve" }], error: null } // stale accepted request: ignored
   );
   const r = await getCircleRelationshipsForName(db, "Alice");
-  assert.equal(r.circleMembers.has("Eve"), true);
-  assert.equal(r.joinedCircles.has("Eve"), true);
-  assert.equal(r.mutualMembers.has("Eve"), true); // in both sets → mutual
+  assert.equal(r.circleMembers.has("Eve"), false);
+  assert.equal(r.joinedCircles.has("Eve"), false);
+  assert.equal(r.mutualMembers.has("Eve"), false);
 });
 
-test("getCircleRelationshipsForName: handles incoming accepted request (receiver = name)", async () => {
+test("getCircleRelationshipsForName: accepted incoming requests alone do not add relationships", async () => {
   const db = mockDb(
     { data: [], error: null },
-    { data: [{ sender_name: "Eve", receiver_name: "Alice" }], error: null }
+    { data: [{ sender_name: "Eve", receiver_name: "Alice" }], error: null } // stale accepted request: ignored
   );
   const r = await getCircleRelationshipsForName(db, "Alice");
-  assert.equal(r.circleMembers.has("Eve"), true);
-  assert.equal(r.joinedCircles.has("Eve"), true);
+  assert.equal(r.circleMembers.has("Eve"), false);
+  assert.equal(r.joinedCircles.has("Eve"), false);
 });
 
 // ======================================================

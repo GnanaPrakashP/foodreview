@@ -44,8 +44,8 @@ create index if not exists reviews_visible_feed_idx
 create index if not exists reviews_suppression_idx
   on public.reviews(deleted_at, hidden_at, reported_at, status);
 
--- Ensure circle_requests exists because both app fallback behavior and the
--- visibility helper below depend on accepted request rows.
+-- Ensure circle_requests exists for pending/private request workflow.
+-- Circle access itself is enforced through circle_memberships.
 create table if not exists public.circle_requests (
   id            uuid        primary key default gen_random_uuid(),
   sender_name   text        not null,
@@ -210,15 +210,6 @@ as $$
                 from public.circle_memberships cm
                 where cm.user_name = review_owner_name
                   and cm.member_name = v.name
-              )
-              or exists (
-                select 1
-                from public.circle_requests cr
-                where cr.status = 'accepted'
-                  and (
-                    (cr.sender_name = review_owner_name and cr.receiver_name = v.name)
-                    or (cr.sender_name = v.name and cr.receiver_name = review_owner_name)
-                  )
               )
             )
         )

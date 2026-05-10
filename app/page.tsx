@@ -4,6 +4,9 @@ import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { filterCircleTrendingReviews } from "@/lib/visibility";
+import { rankCircleFeedReviews } from "@/lib/feed-ranking";
+import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -15,23 +18,55 @@ function avgRating(review: Review): number {
 export default async function CirclePage() {
   const supabase = await createClient();
 
-  const [{ data: { user } }, { data: reviews }] = await Promise.all([
+  const [actor, { data: { user } }] = await Promise.all([
+    getAuthenticatedCircleActor(supabase),
     supabase.auth.getUser(),
-    supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(200).returns<Review[]>(),
   ]);
 
-  const myName =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
-    user?.email?.split("@")[0] ||
-    "";
-  let joinedCircles: string[] = [];
-  let mutualMembers: string[] = [];
-  if (myName) {
-    const relationships = await getCircleRelationshipsForName(supabase, myName);
-    joinedCircles = [...relationships.joinedCircles];
-    mutualMembers = [...relationships.mutualMembers];
+  const fallbackFullName = typeof user?.user_metadata?.full_name === "string"
+    ? user.user_metadata.full_name.trim()
+    : "";
+  const fallbackName = typeof user?.user_metadata?.name === "string"
+    ? user.user_metadata.name.trim()
+    : "";
+  const fallbackEmailPrefix = user?.email?.split("@")[0]?.trim() ?? "";
+
+  const candidateNames = Array.from(
+    new Set(
+      [
+        actor?.actorName ?? "",
+        fallbackFullName,
+        fallbackName,
+        fallbackEmailPrefix,
+      ].map((name) => name.trim()).filter(Boolean)
+    )
+  );
+  const readDb = candidateNames.length > 0 ? createAdminClient() : supabase;
+
+  const relationshipSnapshots = await Promise.all(
+    candidateNames.map((name) => getCircleRelationshipsForName(readDb, name))
+  );
+
+  const joinedCircleSet = new Set<string>();
+  const mutualMemberSet = new Set<string>();
+  for (const snapshot of relationshipSnapshots) {
+    for (const member of snapshot.joinedCircles) joinedCircleSet.add(member);
+    for (const member of snapshot.mutualMembers) mutualMemberSet.add(member);
   }
+
+  const myName = candidateNames[0] ?? "";
+  const joinedCircles = Array.from(joinedCircleSet);
+  const mutualMembers = Array.from(mutualMemberSet);
+
+  const { data: reviews } = joinedCircles.length > 0
+    ? await readDb
+        .from("reviews")
+        .select("*")
+        .in("reviewer_name", joinedCircles)
+        .order("created_at", { ascending: false })
+        .limit(500)
+        .returns<Review[]>()
+    : { data: [] as Review[] };
 
   const allReviews = filterCircleTrendingReviews(reviews ?? [], {
     viewerName: myName,
@@ -42,15 +77,15 @@ export default async function CirclePage() {
 
   const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }] = postIds.length > 0
     ? await Promise.all([
-        supabase.from("likes").select("post_id, user_name").in("post_id", postIds),
-        supabase
+        readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
+        readDb
           .from("comments")
           .select("id, post_id, user_name, content, created_at")
           .in("post_id", postIds)
           .order("created_at", { ascending: false })
           .returns<Comment[]>(),
         myName && restaurantNames.length > 0
-          ? supabase
+          ? readDb
               .from("wishlist")
               .select("restaurant_name")
               .eq("user_name", myName)
@@ -82,6 +117,11 @@ export default async function CirclePage() {
       ex.count++;
     }
   }
+
+  const rankedReviews = rankCircleFeedReviews(allReviews, {
+    likeCountMap,
+    commentMap,
+  });
 
   // Visit count per (reviewer, restaurant)
   const visitCounts = new Map<string, number>();
@@ -126,7 +166,7 @@ export default async function CirclePage() {
       </div>
 
       <CircleFeedClient
-        allReviews={allReviews}
+        allReviews={rankedReviews}
         likeCountMap={likeCountMap}
         commentMap={commentMap}
         rankMap={rankMap}

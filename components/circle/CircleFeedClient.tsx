@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Review, Comment } from "@/lib/types";
-import { canShowInCircleFeed } from "@/lib/circle";
 import { Users } from "lucide-react";
 
 interface Props {
@@ -40,6 +39,12 @@ export default function CircleFeedClient({
     const name = initialMyName || localStorage.getItem("fc_my_name") || "";
     if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
+    // When server already provided authenticated identity + circle data,
+    // trust that snapshot to avoid client-side status drift hiding posts.
+    if (initialMyName) {
+      setMounted(true);
+      return;
+    }
     if (!name) { setMounted(true); return; }
     fetch(`/api/circle/status?name=${encodeURIComponent(name)}`)
       .then((r) => r.json())
@@ -51,13 +56,9 @@ export default function CircleFeedClient({
       .finally(() => setMounted(true));
   }, [initialMyName]);
 
-  const circleSet = useMemo(() => new Set(circle), [circle]);
-  const mutualSet = useMemo(() => new Set(mutualCircle), [mutualCircle]);
-
-  const circleReviews = useMemo(
-    () => allReviews.filter((r) => canShowInCircleFeed(r, myName, circleSet, mutualSet)),
-    [allReviews, circleSet, mutualSet, myName]
-  );
+  // `allReviews` is already filtered server-side for this viewer and circle graph.
+  // Keep client rendering aligned with server results to avoid drift.
+  const circleReviews = allReviews;
 
   // Don't render until we've read localStorage to avoid flash
   if (!mounted) {

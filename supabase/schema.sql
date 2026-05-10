@@ -364,15 +364,6 @@ as $$
                 where cm.user_name = review_owner_name
                   and cm.member_name = v.name
               )
-              or exists (
-                select 1
-                from public.circle_requests cr
-                where cr.status = 'accepted'
-                  and (
-                    (cr.sender_name = review_owner_name and cr.receiver_name = v.name)
-                    or (cr.sender_name = v.name and cr.receiver_name = review_owner_name)
-                  )
-              )
             )
         )
       )

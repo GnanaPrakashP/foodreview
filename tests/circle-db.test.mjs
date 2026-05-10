@@ -147,7 +147,7 @@ test("circle-db: hasCircleEdge checks owner-to-member direction", async () => {
   assert.equal(eqFilters(db._calls[0]).member_name, "Alice");
 });
 
-test("circle-db: hasCircleAccess allows self, direct edge, and accepted request fallback", async () => {
+test("circle-db: hasCircleAccess allows self and direct edges only", async () => {
   const selfDb = spyDb();
   assert.equal(await hasCircleAccess(selfDb, "Alice", "Alice"), true);
   assert.equal(selfDb._calls.length, 0);
@@ -156,19 +156,17 @@ test("circle-db: hasCircleAccess allows self, direct edge, and accepted request 
   assert.equal(await hasCircleAccess(edgeDb, "Bob", "Alice"), true);
   assert.equal(edgeDb._calls.length, 1);
 
-  const acceptedDb = spyDb(
-    { data: [], error: null },
+  const acceptedOnlyDb = spyDb(
     { data: [], error: null },
     { data: [{ id: "req-1" }], error: null }
   );
-  assert.equal(await hasCircleAccess(acceptedDb, "Bob", "Alice"), true);
-  assert.equal(eqFilters(acceptedDb._calls[1]).sender_name, "Bob");
-  assert.equal(eqFilters(acceptedDb._calls[1]).receiver_name, "Alice");
-  assert.equal(eqFilters(acceptedDb._calls[2]).sender_name, "Alice");
-  assert.equal(eqFilters(acceptedDb._calls[2]).receiver_name, "Bob");
+  assert.equal(await hasCircleAccess(acceptedOnlyDb, "Bob", "Alice"), false);
+  assert.equal(acceptedOnlyDb._calls.length, 1);
+  assert.equal(eqFilters(acceptedOnlyDb._calls[0]).user_name, "Bob");
+  assert.equal(eqFilters(acceptedOnlyDb._calls[0]).member_name, "Alice");
 });
 
-test("circle-db: relationships merge membership edges and accepted requests", async () => {
+test("circle-db: relationships come from membership edges only", async () => {
   const db = spyDb(
     {
       data: [
@@ -188,11 +186,11 @@ test("circle-db: relationships merge membership edges and accepted requests", as
 
   const relationships = await getCircleRelationshipsForName(db, "Alice");
 
-  assert.equal(JSON.stringify(setValues(relationships.circleMembers)), JSON.stringify(["Bob", "Dana", "Eli"]));
-  assert.equal(JSON.stringify(setValues(relationships.joinedCircles)), JSON.stringify(["Cara", "Dana", "Eli"]));
-  assert.equal(JSON.stringify(setValues(relationships.mutualMembers)), JSON.stringify(["Dana", "Eli"]));
+  assert.equal(JSON.stringify(setValues(relationships.circleMembers)), JSON.stringify(["Bob"]));
+  assert.equal(JSON.stringify(setValues(relationships.joinedCircles)), JSON.stringify(["Cara"]));
+  assert.equal(JSON.stringify(setValues(relationships.mutualMembers)), JSON.stringify([]));
+  assert.equal(db._calls.length, 1);
   assert.match(opArgs(db._calls[0], "or")[0], /user_name\.eq\."Alice"/);
-  assert.match(opArgs(db._calls[1], "or")[0], /sender_name\.eq\."Alice"/);
 });
 
 test("circle-db: addCircleEdge skips insert when edge already exists", async () => {

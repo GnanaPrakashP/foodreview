@@ -2,11 +2,11 @@
  * Seed script for E2E test users.
  *
  * Creates three test users (A = public, B = public, C = private) whose
- * credentials come from .env.e2e.  Reviews for A and B at a shared
- * restaurant ("E2E Kitchen") are inserted so the common-restaurant badge
- * and visibility tests have pre-existing data.  A mutual circle edge
- * between A and B is created so circle-visibility tests work without
- * first running the "add to circle" flow.
+ * credentials come from .env.e2e.  Public/circle/private reviews are inserted
+ * for each user so visibility, stats, places, and dishes tests have stable
+ * seeded data. A and B also share "E2E Kitchen" and have a mutual circle edge
+ * so common-restaurant and circle-visibility tests work without first running
+ * the "add to circle" flow.
  *
  * Prerequisites:
  *   - .env.e2e  — E2E_USER_{A,B,C}_{EMAIL,PASSWORD,NAME}
@@ -98,17 +98,35 @@ function isMissingTableError(error) {
 }
 
 function reviewsFor(name) {
+  const userLabel = name.split(/\s+/).pop() || name.replace(/\s+/g, "");
+  const uniqueRestaurant = (visibility) => `E2E ${userLabel} ${visibility} Kitchen`;
   const base = {
     reviewer_name:   name,
-    restaurant_name: E2E_RESTAURANT,
     area:            "Test Area",
   };
-  const isA = name === users[0].name;
+  const sharedBase = { ...base, restaurant_name: E2E_RESTAURANT };
+  const isUserA = name === users[0].name;
+
   return [
-    { ...base, items: [{ name: "E2E Idli",   rating: 5 }], body: "E2E seed review (public)",       visibility: "public"  },
-    ...(isA
-      ? [{ ...base, items: [{ name: "E2E Dosa",  rating: 4 }], body: "E2E seed review (circle-only)", visibility: "circle" }]
-      : []),
+    {
+      ...sharedBase,
+      items: [{ name: "E2E Idli", rating: 5 }],
+      body: isUserA ? "E2E seed review (public)" : `E2E seed review (${name} public)`,
+      visibility: "public",
+    },
+    {
+      ...sharedBase,
+      items: [{ name: "E2E Dosa", rating: 4 }],
+      body: isUserA ? "E2E seed review (circle-only)" : `E2E seed review (${name} circle-only)`,
+      visibility: "circle",
+    },
+    {
+      ...base,
+      restaurant_name: uniqueRestaurant("Private"),
+      items: [{ name: "E2E Secret Dish", rating: 5 }],
+      body: `E2E seed review (${name} private)`,
+      visibility: "me",
+    },
   ];
 }
 
@@ -178,19 +196,21 @@ async function seedUser(u) {
   }
   process.stdout.write("profile ok ");
 
-  // 3. Reviews (skip if seeded row already exists)
+  // 3. Reviews (insert each deterministic row once by body)
   const reviews = reviewsFor(u.name);
   if (reviews.length) {
     const { data: existing2 } = await admin
       .from("reviews")
-      .select("id")
+      .select("body")
       .eq("reviewer_name", u.name)
-      .eq("restaurant_name", E2E_RESTAURANT)
-      .limit(1);
-    if (!existing2?.length) {
-      const { error: revErr } = await admin.from("reviews").insert(reviews);
+      .in("body", reviews.map((review) => review.body));
+
+    const existingBodies = new Set((existing2 ?? []).map((row) => row.body));
+    const missingReviews = reviews.filter((review) => !existingBodies.has(review.body));
+    if (missingReviews.length) {
+      const { error: revErr } = await admin.from("reviews").insert(missingReviews);
       if (revErr) process.stdout.write(`⚠️ reviews: ${revErr.message} `);
-      else process.stdout.write(`${reviews.length} reviews created `);
+      else process.stdout.write(`${missingReviews.length} reviews created `);
     } else {
       process.stdout.write("reviews exist ");
     }

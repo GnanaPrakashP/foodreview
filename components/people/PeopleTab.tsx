@@ -6,11 +6,15 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { CircleMember } from "@/app/people/page";
 import type { Review } from "@/lib/types";
+import {
+  addName,
+  isAcceptedCircleResponse,
+  isOneWayCircleResponse,
+  personStatusFor,
+  removeName,
+  type PersonStatus,
+} from "@/lib/people-circle-state";
 import { Check, X } from "lucide-react";
-
-/* ─── Constants ──────────────────────────────────── */
-
-const APP_URL = "https://foodcircle.app";
 
 /* ─── Types ─────────────────────────────────────── */
 
@@ -95,8 +99,6 @@ function Divider() {
 }
 
 /* ─── Person card ────────────────────────────────── */
-
-type PersonStatus = "mutual" | "one_way" | "sent" | "none";
 
 function PersonCard({
   name,
@@ -281,6 +283,7 @@ function InviteSection() {
   const [myName, setMyName] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [copied, setCopied] = useState(false);
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   useEffect(() => {
     const saved = localStorage.getItem("fc_my_name") ?? "";
@@ -288,9 +291,7 @@ function InviteSection() {
     setNameInput(saved);
   }, []);
 
-  const inviteUrl = myName
-    ? `${APP_URL}/join/${encodeURIComponent(myName)}`
-    : "";
+  const inviteUrl = myName && origin ? origin : "";
 
   function saveName() {
     const name = nameInput.trim();
@@ -516,8 +517,8 @@ export default function PeopleTab({
 
   async function sendRequest(receiverName: string) {
     if (!myName || myName === receiverName) return;
-    setKeptSuggestions((prev) => new Set([...prev, receiverName]));
-    setPendingSent((prev) => new Set([...prev, receiverName]));
+    setKeptSuggestions((prev) => addName(prev, receiverName));
+    setPendingSent((prev) => addName(prev, receiverName));
     const res = await fetch("/api/circle/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -525,19 +526,19 @@ export default function PeopleTab({
     });
     const data = await res.json();
     if (!res.ok) {
-      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
-      setKeptSuggestions((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setKeptSuggestions((prev) => removeName(prev, receiverName));
       return;
     }
-    if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
-      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
-      setCircleMembers((prev) => new Set([...prev, receiverName]));
-      setMutualMembers((prev) => new Set([...prev, receiverName]));
-      setKeptSuggestions((prev) => new Set([...prev, receiverName]));
-    } else if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way") {
-      setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
-      setCircleMembers((prev) => new Set([...prev, receiverName]));
-      setKeptSuggestions((prev) => new Set([...prev, receiverName]));
+    if (isAcceptedCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+      setMutualMembers((prev) => addName(prev, receiverName));
+      setKeptSuggestions((prev) => addName(prev, receiverName));
+    } else if (isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+      setKeptSuggestions((prev) => addName(prev, receiverName));
     }
     await loadCircleStatus(myName);
   }
@@ -554,8 +555,8 @@ export default function PeopleTab({
     if (!res.ok) return;
     setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
     if (action === "accept") {
-      setCircleMembers((prev) => new Set([...prev, senderName]));
-      setMutualMembers((prev) => new Set([...prev, senderName]));
+      setCircleMembers((prev) => addName(prev, senderName));
+      setMutualMembers((prev) => addName(prev, senderName));
     }
     await loadCircleStatus(myName);
     router.refresh();
@@ -566,14 +567,14 @@ export default function PeopleTab({
   async function cancelRequest(receiverName: string) {
     if (!myName) return;
     // Optimistic update
-    setPendingSent((prev) => { const n = new Set(prev); n.delete(receiverName); return n; });
+    setPendingSent((prev) => removeName(prev, receiverName));
     const res = await fetch("/api/circle/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ senderName: myName, receiverName }),
     });
     if (!res.ok) {
-      setPendingSent((prev) => new Set([...prev, receiverName]));
+      setPendingSent((prev) => addName(prev, receiverName));
       return;
     }
     await loadCircleStatus(myName);
@@ -641,10 +642,7 @@ export default function PeopleTab({
   }
 
   function personStatus(name: string): PersonStatus {
-    if (mutualMembers.has(name)) return "mutual";
-    if (circleMembers.has(name)) return "one_way";
-    if (pendingSent.has(name)) return "sent";
-    return "none";
+    return personStatusFor(name, { mutualMembers, circleMembers, pendingSent });
   }
 
   /* ── Render ── */

@@ -166,6 +166,23 @@ test("circle trending is strict to circle owners and public or circle posts", ()
   assert.equal(restaurants.has("Private B Circle"), false);
 });
 
+test("circle feed: circle member's public and circle posts are both visible to viewer", () => {
+  const memberPublic = review("Circle Friend", "public", "Public Spot");
+  const memberCircle = review("Circle Friend", "circle", "Circle Spot");
+  const memberOnlyMe = review("Circle Friend", "me", "Private Spot");
+  const outsiderPublic = review("Outsider", "public", "Outsider Spot");
+
+  const visible = filterCircleTrendingReviews(
+    [memberPublic, memberCircle, memberOnlyMe, outsiderPublic],
+    {
+      viewerName: "Viewer",
+      circleOwnerNames: ["Circle Friend"],
+    }
+  );
+
+  assert.deepEqual(ids(visible), [memberPublic.id, memberCircle.id]);
+});
+
 test("public circle trending only includes public posts from circle owners", () => {
   const posts = [
     review("User A", "public", "A Public"),

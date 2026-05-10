@@ -119,8 +119,7 @@ async function hasAcceptedCircleRequest(db: CircleDb, firstName: string, secondN
 export async function hasCircleAccess(db: CircleDb, ownerName: string, viewerName: string): Promise<boolean> {
   if (!ownerName || !viewerName) return false;
   if (ownerName === viewerName) return true;
-  if (await hasCircleEdge(db, ownerName, viewerName)) return true;
-  return hasAcceptedCircleRequest(db, ownerName, viewerName);
+  return hasCircleEdge(db, ownerName, viewerName);
 }
 
 export async function getCircleRelationshipsForName(db: CircleDb, name: string): Promise<{
@@ -133,31 +132,16 @@ export async function getCircleRelationshipsForName(db: CircleDb, name: string):
 
   if (!name) return { circleMembers, joinedCircles, mutualMembers: new Set() };
 
-  const [{ data: edgeRows, error: edgeError }, { data: acceptedRows, error: acceptedError }] = await Promise.all([
-    db
-      .from("circle_memberships")
-      .select("user_name, member_name")
-      .or(`user_name.eq."${name}",member_name.eq."${name}"`),
-    db
-      .from("circle_requests")
-      .select("sender_name, receiver_name")
-      .or(`sender_name.eq."${name}",receiver_name.eq."${name}"`)
-      .eq("status", "accepted"),
-  ]);
+  const { data: edgeRows, error: edgeError } = await db
+    .from("circle_memberships")
+    .select("user_name, member_name")
+    .or(`user_name.eq."${name}",member_name.eq."${name}"`);
 
   logUnexpectedCircleDbError("[circle-db] failed to read circle memberships:", edgeError);
-  logUnexpectedCircleDbError("[circle-db] failed to read accepted circle requests:", acceptedError);
 
   for (const row of edgeRows ?? []) {
     if (row.user_name === name) circleMembers.add(row.member_name);
     if (row.member_name === name) joinedCircles.add(row.user_name);
-  }
-
-  for (const row of acceptedRows ?? []) {
-    const otherName = row.sender_name === name ? row.receiver_name : row.sender_name;
-    if (!otherName || otherName === name) continue;
-    circleMembers.add(otherName);
-    joinedCircles.add(otherName);
   }
 
   const mutualMembers = new Set(Array.from(joinedCircles).filter((member) => circleMembers.has(member)));

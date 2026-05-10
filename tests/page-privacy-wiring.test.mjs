@@ -9,9 +9,12 @@ function source(relativePath) {
 test("home/circle feed filters server reviews before fetching engagement data", () => {
   for (const file of ["app/page.tsx", "app/circle/page.tsx"]) {
     const src = source(file);
+    assert.match(src, /createAdminClient\(\)/);
+    assert.match(src, /getAuthenticatedCircleActor\(supabase\)/);
     assert.match(src, /filterCircleTrendingReviews\(reviews \?\? \[\],/);
     assert.match(src, /const postIds = allReviews\.map/);
-    assert.match(src, /<CircleFeedClient\s+allReviews=\{allReviews\}/s);
+    assert.match(src, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
+    assert.match(src, /<CircleFeedClient\s+allReviews=\{rankedReviews\}/s);
   }
 });
 
@@ -21,6 +24,14 @@ test("global trending computes rankings from public filtered reviews only", () =
   assert.match(src, /const publicReviews = filterGlobalTrendingReviews\(allReviews\)/);
   assert.match(src, /computeTrending\(publicReviews\)/);
   assert.match(src, /filterPublicCircleTrendingReviews\(publicReviews,/);
+});
+
+test("dishes page computes dish stats from public filtered reviews only", () => {
+  const src = source("app/dishes/page.tsx");
+
+  assert.match(src, /filterGlobalTrendingReviews\(reviews \?\? \[\]\)\.map/);
+  assert.match(src, /getPopularDishes\(slim\)/);
+  assert.match(src, /<DishSearch reviews=\{slim\} popularDishes=\{popularDishes\}/);
 });
 
 test("trending restaurant detail derives post ids only from visible display reviews", () => {

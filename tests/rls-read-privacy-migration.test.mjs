@@ -14,6 +14,10 @@ const migration = readFileSync(
   new URL("../supabase/migrations/20260508211500_harden_read_privacy_and_circle_memberships.sql", import.meta.url),
   "utf8"
 );
+const sourceOfTruthMigration = readFileSync(
+  new URL("../supabase/migrations/20260510143000_circle_memberships_source_of_truth.sql", import.meta.url),
+  "utf8"
+);
 const executableSql = migration
   .split("\n")
   .filter((line) => !line.trimStart().startsWith("--"))
@@ -26,6 +30,11 @@ function policyBlock(table, operation, policyName) {
     "is"
   );
   return migration.match(re)?.[0] ?? "";
+}
+
+function functionBlock(sql, functionName) {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return sql.match(new RegExp(`create or replace function public\\.${escapedName}[\\s\\S]*?\\$\\$;`, "i"))?.[0] ?? "";
 }
 
 test("read privacy migration is non-destructive", () => {
@@ -65,7 +74,7 @@ test("review visibility helper enforces public, circle, owner, and suppression r
   assert.match(migration, /v\.name\s*=\s*review_owner_name/i);
   assert.match(migration, /coalesce\(review_visibility,\s*'public'\)\s*=\s*'circle'/i);
   assert.match(migration, /from public\.circle_memberships cm/i);
-  assert.match(migration, /from public\.circle_requests cr/i);
+  assert.doesNotMatch(migration, /from public\.circle_requests cr/i);
   assert.match(migration, /public\.review_is_unsuppressed/i);
   assert.match(migration, /not in \('deleted', 'hidden', 'reported', 'removed'\)/i);
 });
@@ -114,4 +123,20 @@ test("migration grants helper execution to anon and authenticated roles", () => 
   assert.match(migration, /grant execute on function public\.current_profile_name\(\) to anon, authenticated/i);
   assert.match(migration, /grant execute on function public\.can_read_review_row/i);
   assert.match(migration, /grant execute on function public\.can_read_review_id\(uuid\) to anon, authenticated/i);
+});
+
+test("source-of-truth migration backfills memberships and keeps RLS on memberships only", () => {
+  assert.match(
+    sourceOfTruthMigration,
+    /insert into public\.circle_memberships\s*\(\s*user_name\s*,\s*member_name\s*\)\s*select sender_name,\s*receiver_name\s*from public\.circle_requests\s*where status = 'accepted'/i
+  );
+  assert.match(
+    sourceOfTruthMigration,
+    /insert into public\.circle_memberships\s*\(\s*user_name\s*,\s*member_name\s*\)\s*select receiver_name,\s*sender_name\s*from public\.circle_requests\s*where status = 'accepted'/i
+  );
+
+  const helper = functionBlock(sourceOfTruthMigration, "can_read_review_row");
+  assert.ok(helper, "source-of-truth migration must recreate the active review helper");
+  assert.match(helper, /from public\.circle_memberships cm/i);
+  assert.doesNotMatch(helper, /from public\.circle_requests cr/i);
 });

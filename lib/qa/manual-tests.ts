@@ -350,6 +350,52 @@ export const manualQaTests: ManualQaTest[] = [
     expected: "Only the authenticated disposable account is removed or disabled; other users and their content are untouched.",
     automatedCoverage: "Delete-account API authorization is covered by node route tests; live destructive UX is manual-first.",
   },
+  {
+    id: "QA-028",
+    section: "Circle",
+    priority: "P0",
+    title: "Circle feed source-of-truth and old membership posts",
+    route: "/circle",
+    steps: [
+      "Use an account with existing Circle relationships that were created before the latest Circle migration.",
+      "Confirm the old Circle owners appear in the Circle feed after a hard refresh.",
+      "Create a new public post and a new circle post from one Circle owner.",
+      "Log back in as the viewer and open /circle.",
+      "Remove one Circle relationship and refresh /circle again.",
+    ],
+    expected: "Old and new public/circle posts from joined Circle owners appear, me-only posts stay hidden, and removed relationships disappear from the feed without stale posts.",
+    automatedCoverage: "Covered by Circle DB source-of-truth tests, feed visibility tests, page wiring tests, and Playwright circle feed smoke.",
+  },
+  {
+    id: "QA-029",
+    section: "Reviews",
+    priority: "P0",
+    title: "Delete last restaurant post redirects safely",
+    route: "/people/[username]/[restaurant]",
+    steps: [
+      "Create a unique test review at a restaurant with only one post for that user.",
+      "Open the user's restaurant detail page.",
+      "Use the three-dot menu on the post and confirm Delete post.",
+      "Observe the route after deletion and refresh the resulting page.",
+    ],
+    expected: "The deleted post disappears, stats/counts no longer include it, and the app redirects to the user profile instead of showing a not-found restaurant page.",
+    automatedCoverage: "Covered by review delete UI regression tests and Playwright delete-last-post smoke.",
+  },
+  {
+    id: "QA-030",
+    section: "Visibility and privacy",
+    priority: "P0",
+    title: "Stats, places, and dishes visibility matrix",
+    route: "/people/[username], /trending, /dishes",
+    steps: [
+      "Use seeded public, circle, and private reviews for a public account and a private account.",
+      "Compare profile stats as owner, stranger, pending requester, and circle member.",
+      "Search the same seeded restaurants in /trending and dishes in /dishes.",
+      "Accept a pending Circle request and repeat the profile, restaurant, and dish checks.",
+    ],
+    expected: "Strangers and pending requesters see public-only stats. Circle members see public plus circle stats. Owners see public plus circle plus private stats. Global trending and /dishes expose public-only data.",
+    automatedCoverage: "Covered by stats visibility matrix tests, page wiring tests, RLS guards, and Playwright visibility/dish smoke.",
+  },
 ];
 
 export const manualQaSmokeIds = new Set([
@@ -372,4 +418,7 @@ export const manualQaSmokeIds = new Set([
   "QA-024",
   "QA-025",
   "QA-026",
+  "QA-028",
+  "QA-029",
+  "QA-030",
 ]);

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
@@ -62,16 +63,30 @@ export default function RestaurantDetailClient({
   commentMap,
   rankMap,
 }: Props) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"posts" | "dishes">("posts");
+  const [visiblePosts, setVisiblePosts] = useState(posts);
+  const profileHref = `/people/${encodeURIComponent(username)}`;
 
-  const dishes = useMemo(() => buildDishes(posts), [posts]);
+  const dishes = useMemo(() => buildDishes(visiblePosts), [visiblePosts]);
+
+  function handlePostDeleted(deletedPost: Review) {
+    setVisiblePosts((currentPosts) => {
+      const nextPosts = currentPosts.filter((post) => post.id !== deletedPost.id);
+      if (nextPosts.length === 0) {
+        router.replace(profileHref);
+        router.refresh();
+      }
+      return nextPosts;
+    });
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
 
       {/* Header */}
       <div style={{ padding: "16px 20px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <Link href={`/people/${encodeURIComponent(username)}`} style={{ textDecoration: "none", flexShrink: 0 }}>
+        <Link href={profileHref} style={{ textDecoration: "none", flexShrink: 0 }}>
           <div style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
           </div>
@@ -85,7 +100,7 @@ export default function RestaurantDetailClient({
               {restaurantName}
             </h1>
             <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "1px" }}>
-              {posts.length} visit{posts.length !== 1 ? "s" : ""}
+              {visiblePosts.length} visit{visiblePosts.length !== 1 ? "s" : ""}
             </p>
           </div>
         </div>
@@ -114,7 +129,7 @@ export default function RestaurantDetailClient({
       {/* Posts tab */}
       {activeTab === "posts" && (
         <div style={{ padding: "16px 16px 0", display: "flex", flexDirection: "column", gap: "16px" }}>
-          {posts.map((post) => {
+          {visiblePosts.map((post) => {
             const info = rankMap[post.id];
             const eng = commentMap[post.id];
             return (
@@ -123,6 +138,7 @@ export default function RestaurantDetailClient({
                 review={post}
                 initialLikeCount={likeCountMap[post.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
+                onDeleted={handlePostDeleted}
               />
             );
           })}

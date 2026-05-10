@@ -163,12 +163,17 @@ export async function createNotificationForNames(
       .limit(1);
 
     if (isNotificationSchemaError(existingError)) {
-      const { data: legacyExisting } = await db
+      const legacyPostId = input.postId ?? (input.entityType === "POST" ? entityId : null);
+      let legacyQuery = db
         .from("notifications")
         .select("*")
         .eq("recipient_name", recipientName)
         .eq("actor_name", actorName)
-        .eq("type", oldType)
+        .eq("type", oldType);
+
+      if (legacyPostId) legacyQuery = legacyQuery.eq("post_id", legacyPostId);
+
+      const { data: legacyExisting } = await legacyQuery
         .order("created_at", { ascending: false })
         .limit(1);
 

@@ -16,11 +16,12 @@ test("login page supports email sign-in flow", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Sign In →" })).toBeVisible();
 });
 
-test("protected QA pages redirect logged-out users to login", async ({ page }) => {
-  for (const route of ["/qa", "/qa/circle"]) {
-    await page.goto(route);
+test("QA is public on localhost and unknown QA subroutes return 404", async ({ page }) => {
+  const qaResponse = await page.goto("/qa");
+  expect(qaResponse?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: /go-live qa dashboard/i })).toBeVisible();
 
-    await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByPlaceholder("your@email.com")).toBeVisible();
-  }
+  const missingQaResponse = await page.goto("/qa/circle");
+  expect(missingQaResponse?.status()).toBe(404);
+  await expect(page).toHaveURL(/\/qa\/circle/);
 });

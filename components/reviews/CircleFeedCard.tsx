@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Heart, MessageCircle, Star } from "lucide-react";
+import { Heart, MessageCircle, MoreHorizontal, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Review } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
@@ -15,6 +15,7 @@ interface Props {
   initialLiked?: boolean;
   initialBookmarked?: boolean;
   initialMyName?: string;
+  onDeleted?: (review: Review) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -48,6 +49,7 @@ export default function CircleFeedCard({
   initialLiked = false,
   initialBookmarked = false,
   initialMyName = "",
+  onDeleted,
 }: Props) {
   const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
@@ -59,12 +61,17 @@ export default function CircleFeedCard({
   const [bounceKey, setBounceKey] = useState(0);
   const [bookmarked, setBookmarked] = useState(initialBookmarked);
   const [bookmarkBounceKey, setBookmarkBounceKey] = useState(0);
+  const [showPostActions, setShowPostActions] = useState(false);
+  const [deletingReview, setDeletingReview] = useState(false);
+  const [deleteReviewError, setDeleteReviewError] = useState("");
   const commentCount = initialCommentCount;
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const postMenuRef = useRef<HTMLDivElement>(null);
 
   const initials = review.reviewer_name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
   const postHref = `/reviews/${encodeURIComponent(review.id)}`;
+  const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
 
   useEffect(() => {
     const name = initialMyName || localStorage.getItem("fc_my_name") || "";
@@ -125,6 +132,44 @@ export default function CircleFeedCard({
     }
   }, [myName, mounted, bookmarked, review]);
 
+  async function deleteReview() {
+    if (!canDeleteReview || deletingReview) return;
+    setShowPostActions(false);
+    const ok = window.confirm("Delete this post permanently?");
+    if (!ok) return;
+
+    setDeletingReview(true);
+    setDeleteReviewError("");
+    const response = await fetch(`/api/reviews/${encodeURIComponent(review.id)}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      setDeleteReviewError("Could not delete this post. Please try again.");
+      setDeletingReview(false);
+      return;
+    }
+
+    if (onDeleted) {
+      onDeleted(review);
+      return;
+    }
+
+    router.refresh();
+  }
+
+  useEffect(() => {
+    if (!showPostActions) return;
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (target && postMenuRef.current && !postMenuRef.current.contains(target)) {
+        setShowPostActions(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [showPostActions]);
+
   return (
     <>
       <article
@@ -161,6 +206,61 @@ export default function CircleFeedCard({
           <span style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {timeAgo(review.created_at)}
           </span>
+          <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setShowPostActions((open) => !open);
+              }}
+              disabled={deletingReview}
+              aria-label="Post actions"
+              style={{
+                width: 30,
+                height: 30,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                borderRadius: "9px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: deletingReview ? "default" : "pointer",
+                opacity: deletingReview ? 0.7 : 1,
+              }}
+            >
+              <MoreHorizontal size={15} strokeWidth={2} color="var(--muted)" />
+            </button>
+            {showPostActions && (
+              <div
+                onClick={(event) => event.stopPropagation()}
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  right: 0,
+                  minWidth: "152px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "12px",
+                  padding: "6px",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                  zIndex: 15,
+                }}
+              >
+                {canDeleteReview ? (
+                  <button
+                    onClick={deleteReview}
+                    disabled={deletingReview}
+                    style={{ width: "100%", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "9px", padding: "9px 10px", color: "#EF4444", fontSize: "13px", fontWeight: 700, cursor: deletingReview ? "default" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: deletingReview ? 0.7 : 1, textAlign: "left" }}
+                  >
+                    {deletingReview ? "Deleting..." : "Delete post"}
+                  </button>
+                ) : (
+                  <p style={{ color: "var(--muted)", fontSize: "12px", margin: 0, padding: "8px 6px", fontFamily: "'DM Sans', sans-serif", textAlign: "center" }}>
+                    No actions
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Photo / hero */}
@@ -290,6 +390,11 @@ export default function CircleFeedCard({
           <div style={{ height: "14px" }} />
         </div>
       </article>
+      {deleteReviewError && (
+        <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", padding: "8px 6px 0" }}>
+          {deleteReviewError}
+        </p>
+      )}
     </>
   );
 }

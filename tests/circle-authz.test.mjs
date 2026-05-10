@@ -278,12 +278,14 @@ test("status: owner sees pending requests and relationship states", async () => 
       data: [
         { user_name: "Alice", member_name: "Bob" },
         { user_name: "Carol", member_name: "Alice" },
+        { user_name: "Alice", member_name: "Dave" },
+        { user_name: "Dave", member_name: "Alice" },
       ],
       error: null,
     },
     {
       data: [
-        { sender_name: "Dave", receiver_name: "Alice", status: "accepted" },
+        { sender_name: "AcceptedOnly", receiver_name: "Alice", status: "accepted" },
         { sender_name: "Erin", receiver_name: "Alice", status: "pending" },
         { sender_name: "Alice", receiver_name: "Frank", status: "pending" },
         { sender_name: "Grace", receiver_name: "Alice", status: "rejected" },
@@ -315,6 +317,7 @@ test("status: owner sees pending requests and relationship states", async () => 
   assert.deepEqual(Array.from(body(res).pendingSent), ["Frank"]);
   assert.equal(body(res).memberStates.Carol, "CIRCLE_ONE_WAY");
   assert.equal(body(res).memberStates.Dave, "CIRCLE_MUTUAL");
+  assert.equal(body(res).memberStates.AcceptedOnly, undefined);
   assert.equal(body(res).memberStates.Frank, "PENDING");
   assert.equal(body(res).circleCount, 2);
   assert.ok(accountTypeNames.includes("Erin"));

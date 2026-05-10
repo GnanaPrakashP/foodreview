@@ -97,6 +97,39 @@ test("manual QA checklist keeps Circle launch checks inside the main manual list
   assert.match(circleCase.expected, /stale|duplicate|refresh/i);
 });
 
+test("manual QA checklist covers Circle feed migration safety and delete-last-post redirect", () => {
+  const circleFeedCase = manualQaTests.find((entry) => entry.id === "QA-028");
+  const deleteRedirectCase = manualQaTests.find((entry) => entry.id === "QA-029");
+  const statsVisibilityCase = manualQaTests.find((entry) => entry.id === "QA-030");
+
+  assert.ok(circleFeedCase, "QA-028 should verify Circle feed source-of-truth behavior");
+  assert.equal(circleFeedCase.priority, "P0");
+  assert.equal(circleFeedCase.route, "/circle");
+  assert.match(circleFeedCase.title, /source-of-truth|old membership/i);
+  assert.match(circleFeedCase.steps.join(" "), /existing Circle relationships/i);
+  assert.match(circleFeedCase.expected, /Old and new public\/circle posts/i);
+  assert.match(circleFeedCase.automatedCoverage, /Playwright circle feed smoke/i);
+  assert.ok(manualQaSmokeIds.has(circleFeedCase.id), "Circle feed migration safety should be part of smoke sign-off");
+
+  assert.ok(deleteRedirectCase, "QA-029 should verify delete-last-post redirect safety");
+  assert.equal(deleteRedirectCase.priority, "P0");
+  assert.equal(deleteRedirectCase.route, "/people/[username]/[restaurant]");
+  assert.match(deleteRedirectCase.title, /Delete last restaurant post/i);
+  assert.match(deleteRedirectCase.expected, /not-found restaurant page/i);
+  assert.match(deleteRedirectCase.automatedCoverage, /Playwright delete-last-post smoke/i);
+  assert.ok(manualQaSmokeIds.has(deleteRedirectCase.id), "Delete-last-post redirect should be part of smoke sign-off");
+
+  assert.ok(statsVisibilityCase, "QA-030 should verify stats/places/dishes visibility");
+  assert.equal(statsVisibilityCase.priority, "P0");
+  assert.match(statsVisibilityCase.route, /\/people\/\[username\]/);
+  assert.match(statsVisibilityCase.route, /\/trending/);
+  assert.match(statsVisibilityCase.route, /\/dishes/);
+  assert.match(statsVisibilityCase.steps.join(" "), /pending requester/i);
+  assert.match(statsVisibilityCase.expected, /public plus circle plus private stats/i);
+  assert.match(statsVisibilityCase.automatedCoverage, /stats visibility matrix tests/i);
+  assert.ok(manualQaSmokeIds.has(statsVisibilityCase.id), "Stats/places/dishes visibility should be part of smoke sign-off");
+});
+
 test("manual QA checklist includes live production integration verification", () => {
   const googleOauthCase = manualQaTests.find((entry) => entry.id === "QA-023");
   const placesCase = manualQaTests.find((entry) => entry.id === "QA-024");

@@ -199,6 +199,64 @@ test("request: public account — target is NOT automatically added back to send
   assert.equal(addCalls[0][1], "Alice");
 });
 
+test("request matrix: public sender → public receiver creates one-way circle edge", async () => {
+  const addCalls = [];
+  const accountLookups = [];
+
+  const { POST } = loadRoute(src.request, {
+    db: mockDb({ data: [], error: null }),
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async (_db, name) => {
+        accountLookups.push(name);
+        return "public";
+      },
+      addCircleEdge: async (_db, userName, memberName) => {
+        addCalls.push([userName, memberName]);
+        return { error: null };
+      },
+    }),
+    notifications: makeNotifications(),
+    authName: "Alice",
+  });
+
+  const res = await POST(makeReq({ senderName: "Alice", receiverName: "Bob" }));
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).state, "CIRCLE_ONE_WAY");
+  assert.deepEqual(addCalls, [["Bob", "Alice"]]);
+  assert.deepEqual(accountLookups, ["Bob"]);
+});
+
+test("request matrix: private sender → public receiver creates one-way circle edge", async () => {
+  const addCalls = [];
+  const accountLookups = [];
+
+  const { POST } = loadRoute(src.request, {
+    db: mockDb({ data: [], error: null }),
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async (_db, name) => {
+        accountLookups.push(name);
+        return name === "Private Alice" ? "private" : "public";
+      },
+      addCircleEdge: async (_db, userName, memberName) => {
+        addCalls.push([userName, memberName]);
+        return { error: null };
+      },
+    }),
+    notifications: makeNotifications(),
+    authName: "Private Alice",
+  });
+
+  const res = await POST(makeReq({ senderName: "Private Alice", receiverName: "Bob" }));
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).state, "CIRCLE_ONE_WAY");
+  assert.deepEqual(addCalls, [["Bob", "Private Alice"]]);
+  assert.deepEqual(accountLookups, ["Bob"]);
+});
+
 test("request: forged senderName is ignored in favor of authenticated actor", async () => {
   const addCalls = [];
 
@@ -372,6 +430,91 @@ test("respond: accept pending request → CIRCLE_MUTUAL + mutual edges created",
   assert.equal(body(res).ok, true);
   assert.equal(body(res).state, "CIRCLE_MUTUAL");
   assert.equal(mutualCalled, true);
+});
+
+test("request matrix: public sender → private receiver stays pending, then accept creates mutual circle", async () => {
+  const requestRoute = loadRoute(src.request, {
+    db: mockDb(
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: { id: "req-public-private" }, error: null }
+    ),
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async (_db, name) => name === "Private Bob" ? "private" : "public",
+    }),
+    notifications: makeNotifications(),
+    authName: "Alice",
+  });
+
+  const requestRes = await requestRoute.POST(makeReq({ senderName: "Alice", receiverName: "Private Bob" }));
+  assert.equal(status(requestRes), 200);
+  assert.equal(body(requestRes).state, "PENDING");
+
+  const mutualCalls = [];
+  const respondRoute = loadRoute(src.respond, {
+    db: mockDb(
+      { data: { id: "req-public-private", status: "pending" }, error: null },
+      { error: null },
+      { error: null }
+    ),
+    circleDb: makeCircleDb({
+      addMutualCircleEdges: async (_db, firstName, secondName) => {
+        mutualCalls.push([firstName, secondName]);
+        return { error: null };
+      },
+    }),
+    notifications: makeNotifications(),
+    authName: "Private Bob",
+  });
+
+  const acceptRes = await respondRoute.POST(makeReq({ senderName: "Alice", action: "accept" }));
+  assert.equal(status(acceptRes), 200);
+  assert.equal(body(acceptRes).state, "CIRCLE_MUTUAL");
+  assert.deepEqual(mutualCalls, [["Private Bob", "Alice"]]);
+});
+
+test("request matrix: private sender → private receiver stays pending, then accept creates mutual circle", async () => {
+  const requestRoute = loadRoute(src.request, {
+    db: mockDb(
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: { id: "req-private-private" }, error: null }
+    ),
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async (_db, name) =>
+        name === "Private Bob" || name === "Private Alice" ? "private" : "public",
+    }),
+    notifications: makeNotifications(),
+    authName: "Private Alice",
+  });
+
+  const requestRes = await requestRoute.POST(makeReq({ senderName: "Private Alice", receiverName: "Private Bob" }));
+  assert.equal(status(requestRes), 200);
+  assert.equal(body(requestRes).state, "PENDING");
+
+  const mutualCalls = [];
+  const respondRoute = loadRoute(src.respond, {
+    db: mockDb(
+      { data: { id: "req-private-private", status: "pending" }, error: null },
+      { error: null },
+      { error: null }
+    ),
+    circleDb: makeCircleDb({
+      addMutualCircleEdges: async (_db, firstName, secondName) => {
+        mutualCalls.push([firstName, secondName]);
+        return { error: null };
+      },
+    }),
+    notifications: makeNotifications(),
+    authName: "Private Bob",
+  });
+
+  const acceptRes = await respondRoute.POST(makeReq({ senderName: "Private Alice", action: "accept" }));
+  assert.equal(status(acceptRes), 200);
+  assert.equal(body(acceptRes).state, "CIRCLE_MUTUAL");
+  assert.deepEqual(mutualCalls, [["Private Bob", "Private Alice"]]);
 });
 
 test("respond: accept sends CIRCLE_REQUEST_ACCEPTED notification to original sender", async () => {

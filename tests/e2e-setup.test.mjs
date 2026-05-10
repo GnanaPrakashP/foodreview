@@ -18,12 +18,13 @@ test(".env.e2e.example documents all required E2E users and seed prerequisites",
   assert.match(example, /NEXT_PUBLIC_SUPABASE_URL/);
   assert.match(example, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
   assert.match(example, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(example, /User A: public account/i);
-  assert.match(example, /User B: public account/i);
-  assert.match(example, /User C: private account/i);
+  assert.match(example, /User A: public account, owns seeded public \+ circle-only \+ private reviews/i);
+  assert.match(example, /User B: public account, mutual circle member with User A/i);
+  assert.match(example, /User C: private account, outsider to A\/B/i);
+  assert.match(example, /deterministic review\/place\/dish visibility rows/i);
 });
 
-test("seed-e2e creates the three-user privacy model expected by Playwright", () => {
+test("seed-e2e creates the three-user visibility model expected by Playwright", () => {
   const seed = read("scripts/seed-e2e.mjs");
 
   assert.match(seed, /requiredEnv\("E2E_USER_A_EMAIL"\)/);
@@ -32,8 +33,11 @@ test("seed-e2e creates the three-user privacy model expected by Playwright", () 
   assert.match(seed, /accountType:\s*"public"/);
   assert.match(seed, /accountType:\s*"private"/);
   assert.match(seed, /const E2E_RESTAURANT = "E2E Kitchen"/);
-  assert.match(seed, /body:\s*"E2E seed review \(public\)"/);
-  assert.match(seed, /body:\s*"E2E seed review \(circle-only\)"/);
+  assert.match(seed, /"E2E seed review \(public\)"/);
+  assert.match(seed, /"E2E seed review \(circle-only\)"/);
+  assert.match(seed, /body:\s*`E2E seed review \(\$\{name\} private\)`/);
+  assert.match(seed, /visibility:\s*"me"/);
+  assert.match(seed, /const missingReviews = reviews\.filter/);
   assert.match(seed, /await seedCircle\(results\[0\]\.name, results\[1\]\.name\)/);
 });
 

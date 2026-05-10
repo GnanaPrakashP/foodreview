@@ -29,15 +29,29 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+  const { hostname } = request.nextUrl;
 
   const isAuthRoute       = pathname.startsWith("/auth");
   const isLoginRoute      = pathname === "/login";
   const isOnboardingRoute = pathname === "/onboarding";
   const isResetRoute      = pathname.startsWith("/auth/reset-password");
   const isPublicApiRoute  = pathname === "/api/places/autocomplete";
+  const isQaRoute         = pathname === "/qa" || pathname.startsWith("/qa/");
+  const isLocalhost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.endsWith(".localhost");
+
+  // Keep /qa local-only. In non-local environments it should not be reachable.
+  if (isQaRoute && !isLocalhost) {
+    const notFoundUrl = request.nextUrl.clone();
+    notFoundUrl.pathname = "/404";
+    return NextResponse.rewrite(notFoundUrl, { status: 404 });
+  }
 
   // 1. Not logged in → send to /login
-  if (!user && !isLoginRoute && !isAuthRoute && !isPublicApiRoute) {
+  if (!user && !isLoginRoute && !isAuthRoute && !isPublicApiRoute && !isQaRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
@@ -53,7 +67,7 @@ export async function middleware(request: NextRequest) {
   // 3. Logged in but onboarding not done → send to /onboarding
   //    (skip if already on onboarding, any /auth/** route, or reset-password)
   const onboardingDone = !!user?.user_metadata?.username;
-  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute && !isPublicApiRoute) {
+  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute && !isPublicApiRoute && !isQaRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/onboarding";
     return NextResponse.redirect(url);

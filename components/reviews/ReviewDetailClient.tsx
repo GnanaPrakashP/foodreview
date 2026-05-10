@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bookmark, Heart, MessageCircle, Send, Star } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Bookmark, Heart, MessageCircle, MoreHorizontal, Send, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
@@ -35,6 +36,7 @@ export default function ReviewDetailClient({
   autoFocusComment = false,
   backHref = "/",
 }: Props) {
+  const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
   const mapsUrl = googleMapsUrl(review);
   const [myName, setMyName] = useState(initialMyName);
@@ -46,16 +48,22 @@ export default function ReviewDetailClient({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingReview, setDeletingReview] = useState(false);
+  const [deleteReviewError, setDeleteReviewError] = useState("");
+  const [showPostActions, setShowPostActions] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const postMenuRef = useRef<HTMLDivElement>(null);
 
   const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
   const initials = avatarInitials(review.reviewer_name);
+  const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
 
   useEffect(() => {
-    const name = localStorage.getItem("fc_my_name") || initialMyName;
+    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
+    if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
     if (!name) return;
 
@@ -69,6 +77,40 @@ export default function ReviewDetailClient({
       setBookmarked(Boolean(wishData));
     })();
   }, [initialMyName, review.id, review.restaurant_name]);
+
+  async function deleteReview() {
+    if (!canDeleteReview || deletingReview) return;
+    setShowPostActions(false);
+    const ok = window.confirm("Delete this post permanently?");
+    if (!ok) return;
+
+    setDeletingReview(true);
+    setDeleteReviewError("");
+    const response = await fetch(`/api/reviews/${encodeURIComponent(review.id)}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      setDeleteReviewError("Could not delete this post. Please try again.");
+      setDeletingReview(false);
+      return;
+    }
+
+    router.replace("/me");
+    router.refresh();
+  }
+
+  useEffect(() => {
+    if (!showPostActions) return;
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (target && postMenuRef.current && !postMenuRef.current.contains(target)) {
+        setShowPostActions(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [showPostActions]);
 
   useEffect(() => {
     if (!autoFocusComment) return;
@@ -177,14 +219,40 @@ export default function ReviewDetailClient({
     window.setTimeout(() => inputRef.current?.focus(), 80);
   }
 
+  function handleBack() {
+    try {
+      const referrer = document.referrer;
+      if (referrer) {
+        const referrerUrl = new URL(referrer);
+        if (referrerUrl.origin === window.location.origin) {
+          router.back();
+          return;
+        }
+      }
+    } catch {
+      // Ignore malformed referrer URLs and use fallback below.
+    }
+    router.push(backHref);
+  }
+
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", paddingBottom: "92px" }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, background: "var(--bg)", borderBottom: "1px solid var(--border)", padding: "12px 16px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <Link href={backHref} style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={handleBack}
+          aria-label="Go back"
+          style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0, cursor: "pointer" }}
+        >
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
-        </Link>
-        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)" }}>Post</p>
+        </button>
+        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", flex: 1 }}>Post</p>
       </div>
+      {deleteReviewError && (
+        <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", padding: "8px 16px 0" }}>
+          {deleteReviewError}
+        </p>
+      )}
 
       <div style={{ padding: "14px 16px 0" }}>
         <article style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden" }}>
@@ -203,6 +271,57 @@ export default function ReviewDetailClient({
             <span style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
               {timeAgo(review.created_at)}
             </span>
+            <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                onClick={() => setShowPostActions((open) => !open)}
+                disabled={deletingReview}
+                aria-label="Post actions"
+                style={{
+                  width: 30,
+                  height: 30,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  borderRadius: "9px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: deletingReview ? "default" : "pointer",
+                  opacity: deletingReview ? 0.7 : 1,
+                }}
+              >
+                <MoreHorizontal size={15} strokeWidth={2} color="var(--muted)" />
+              </button>
+              {showPostActions && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    right: 0,
+                    minWidth: "152px",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "12px",
+                    padding: "6px",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                    zIndex: 15,
+                  }}
+                >
+                  {canDeleteReview ? (
+                    <button
+                      onClick={deleteReview}
+                      disabled={deletingReview}
+                      style={{ width: "100%", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "9px", padding: "9px 10px", color: "#EF4444", fontSize: "13px", fontWeight: 700, cursor: deletingReview ? "default" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: deletingReview ? 0.7 : 1, textAlign: "left" }}
+                    >
+                      {deletingReview ? "Deleting..." : "Delete post"}
+                    </button>
+                  ) : (
+                    <p style={{ color: "var(--muted)", fontSize: "12px", margin: 0, padding: "8px 6px", fontFamily: "'DM Sans', sans-serif", textAlign: "center" }}>
+                      No actions
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {photos.length > 0 && (
@@ -379,6 +498,7 @@ export default function ReviewDetailClient({
           </div>
         </div>
       )}
+
     </main>
   );
 }

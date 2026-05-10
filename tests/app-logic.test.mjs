@@ -37,6 +37,7 @@ function loadTsModule(relativePath, extraGlobals = {}) {
     require(id) {
       if (id === "@/lib/types" || id === "./types") return {};
       if (id === "@/lib/trending" || id === "./trending") return loadTsModule("lib/trending.ts");
+      if (id === "@/lib/visibility" || id === "./visibility") return loadTsModule("lib/visibility.ts");
       if (id === "@/lib/restaurant-id") return loadTsModule("lib/restaurant-id.ts");
       if (id === "@/lib/location") return loadTsModule("lib/location.ts");
       throw new Error(`Unexpected require in app logic tests: ${id}`);
@@ -210,6 +211,116 @@ test("discovery: computes gaps, circle gap, and badges", () => {
   const badges = computeBadges(allReviews);
   assert.equal(badges.adventurous.name, "Me");
   assert.equal(badges.trusted.name, "Cara");
+});
+
+test("feed ranking: balances freshness, engagement, and rating quality", () => {
+  const { rankCircleFeedReviews, circleFeedScore } = loadTsModule("lib/feed-ranking.ts");
+  const nowMs = Date.parse("2026-05-10T12:00:00.000Z");
+  const freshQuiet = review("Alice", "Fresh Cafe", [{ name: "Latte", rating: 4 }], {
+    id: "fresh",
+    created_at: "2026-05-10T10:00:00.000Z",
+  });
+  const engagedYesterday = review("Bob", "Busy Dosa", [{ name: "Dosa", rating: 5 }], {
+    id: "engaged",
+    created_at: "2026-05-09T12:00:00.000Z",
+  });
+  const oldPopular = review("Cara", "Old Biryani", [{ name: "Biryani", rating: 5 }], {
+    id: "old",
+    created_at: "2026-04-20T12:00:00.000Z",
+  });
+
+  const ranked = rankCircleFeedReviews([oldPopular, freshQuiet, engagedYesterday], {
+    likeCountMap: { engaged: 8, old: 30 },
+    commentMap: { engaged: { count: 4 }, old: { count: 12 } },
+    nowMs,
+  });
+
+  assert.deepEqual(Array.from(ranked.map((item) => item.id)), ["engaged", "fresh", "old"]);
+  assert.ok(circleFeedScore(engagedYesterday, { likeCountMap: { engaged: 8 }, commentMap: { engaged: 4 }, nowMs }) > 0);
+});
+
+test("feed ranking: newer post wins when engagement and rating are equal", () => {
+  const { rankCircleFeedReviews } = loadTsModule("lib/feed-ranking.ts");
+  const older = review("Alice", "Tie Cafe", [{ name: "Latte", rating: 4 }], {
+    id: "older",
+    created_at: "2026-05-10T09:00:00.000Z",
+  });
+  const newer = review("Bob", "Tie Cafe", [{ name: "Cake", rating: 4 }], {
+    id: "newer",
+    created_at: "2026-05-10T10:00:00.000Z",
+  });
+
+  const ranked = rankCircleFeedReviews([older, newer], {
+    nowMs: Date.parse("2026-05-10T10:00:00.000Z"),
+  });
+
+  assert.equal(ranked[0].id, "newer");
+});
+
+test("stats: deleted and private posts do not leave ghost counts in global, circle, or profile stats", () => {
+  const {
+    filterCircleTrendingReviews,
+    filterGlobalTrendingReviews,
+    filterProfileReviews,
+  } = loadTsModule("lib/visibility.ts");
+  const { computeTrending } = loadTsModule("lib/trending.ts");
+
+  const ownerPublic = review("Owner", "Public Cafe", [{ name: "Latte", rating: 5 }], {
+    id: "owner-public",
+    visibility: "public",
+  });
+  const ownerCircle = review("Owner", "Circle Cafe", [{ name: "Cake", rating: 4 }], {
+    id: "owner-circle",
+    visibility: "circle",
+  });
+  const ownerPrivate = review("Owner", "Private Cafe", [{ name: "Secret", rating: 5 }], {
+    id: "owner-private",
+    visibility: "me",
+  });
+  const deletedPublic = review("Owner", "Deleted Cafe", [{ name: "Gone", rating: 5 }], {
+    id: "deleted-public",
+    visibility: "public",
+    deleted_at: "2026-05-10T00:00:00.000Z",
+  });
+  const friendPublic = review("Friend", "Friend Cafe", [{ name: "Dosa", rating: 4 }], {
+    id: "friend-public",
+    visibility: "public",
+  });
+  const outsiderCircle = review("Outsider", "Outsider Circle", [{ name: "Hidden", rating: 4 }], {
+    id: "outsider-circle",
+    visibility: "circle",
+  });
+
+  const allPosts = [ownerPublic, ownerCircle, ownerPrivate, deletedPublic, friendPublic, outsiderCircle];
+
+  const globalPosts = filterGlobalTrendingReviews(allPosts);
+  const globalStats = computeTrending(globalPosts);
+  assert.equal(
+    JSON.stringify(globalStats.alltime.map((entry) => entry.restaurant_name).sort()),
+    JSON.stringify(["Friend Cafe", "Public Cafe"])
+  );
+  assert.equal(globalStats.peopleCounts.alltime, 2);
+
+  const circlePosts = filterCircleTrendingReviews(allPosts, {
+    viewerName: "Viewer",
+    circleOwnerNames: ["Owner"],
+  });
+  const circleStats = computeTrending(circlePosts);
+  assert.equal(
+    JSON.stringify(circleStats.alltime.map((entry) => entry.restaurant_name).sort()),
+    JSON.stringify(["Circle Cafe", "Public Cafe"])
+  );
+  assert.equal(circleStats.peopleCounts.alltime, 1);
+
+  assert.equal(filterProfileReviews(allPosts, "Owner", { viewerName: "Owner" }).length, 3);
+  assert.equal(filterProfileReviews(allPosts, "Owner", { viewerName: "Random User" }).length, 1);
+  assert.equal(
+    filterProfileReviews(allPosts, "Owner", {
+      viewerName: "Circle Friend",
+      circleOwnerNames: ["Owner"],
+    }).length,
+    2
+  );
 });
 
 test("utils: formats dates, labels ratings, and truncates text", () => {

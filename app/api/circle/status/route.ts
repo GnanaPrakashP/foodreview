@@ -57,18 +57,6 @@ export async function GET(req: NextRequest) {
   const pendingSentSet = new Set<string>();
 
   for (const row of requestRows ?? []) {
-    if (row.status === "accepted") {
-      if (row.sender_name === name) {
-        circleMembersSet.add(row.receiver_name);
-        joinedCirclesSet.add(row.receiver_name);
-      }
-      if (row.receiver_name === name) {
-        circleMembersSet.add(row.sender_name);
-        joinedCirclesSet.add(row.sender_name);
-      }
-      continue;
-    }
-
     if (row.status !== "pending") continue;
     if (row.receiver_name === name && !circleMembersSet.has(row.sender_name)) pendingIncomingSet.add(row.sender_name);
     if (row.sender_name === name && !joinedCirclesSet.has(row.receiver_name)) pendingSentSet.add(row.receiver_name);
