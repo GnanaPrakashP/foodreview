@@ -95,6 +95,8 @@ test("circle trending computes from visible circle-owner posts only", () => {
     review("Bob", "public", "Bob Public"),
     review("Bob", "circle", "Bob Circle"),
     review("Viewer", "public", "Viewer Own"),
+    review("Viewer", "circle", "Viewer Own Circle"),
+    review("Viewer", "me", "Viewer Own Private"),
     review("Carol", "circle", "Carol Hidden"),
     review("Alice", "circle", "Suppressed Alice", { status: "hidden" }),
   ];
@@ -105,9 +107,16 @@ test("circle trending computes from visible circle-owner posts only", () => {
   });
   const result = computeTrending(circlePosts);
 
-  assert.deepEqual(restaurants(result.alltime), ["Alice Circle", "Alice Public", "Bob Circle", "Bob Public"]);
+  assert.deepEqual(restaurants(result.alltime), [
+    "Alice Circle",
+    "Alice Public",
+    "Bob Circle",
+    "Bob Public",
+    "Viewer Own",
+    "Viewer Own Circle",
+  ]);
   assert.equal(restaurants(result.alltime).includes("Alice Only Me"), false);
-  assert.equal(restaurants(result.alltime).includes("Viewer Own"), false);
+  assert.equal(restaurants(result.alltime).includes("Viewer Own Private"), false);
   assert.equal(restaurants(result.alltime).includes("Carol Hidden"), false);
   assert.equal(restaurants(result.alltime).includes("Suppressed Alice"), false);
 });

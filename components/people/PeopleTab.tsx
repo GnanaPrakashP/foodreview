@@ -566,6 +566,8 @@ export default function PeopleTab({
 
   async function cancelRequest(receiverName: string) {
     if (!myName) return;
+    const ok = window.confirm(`Cancel your Circle request to ${receiverName}?`);
+    if (!ok) return;
     // Optimistic update
     setPendingSent((prev) => removeName(prev, receiverName));
     const res = await fetch("/api/circle/cancel", {

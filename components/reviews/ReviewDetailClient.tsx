@@ -268,7 +268,7 @@ export default function ReviewDetailClient({
                 </p>
               </div>
             </Link>
-            <span style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
+            <span suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
               {timeAgo(review.created_at)}
             </span>
             <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
@@ -449,7 +449,7 @@ export default function ReviewDetailClient({
                   <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.4 }}>
                     <strong>{comment.user_name}</strong> {comment.content}
                   </p>
-                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>
+                  <p suppressHydrationWarning style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>
                     {timeAgo(comment.created_at)}
                   </p>
                 </div>

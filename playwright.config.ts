@@ -16,7 +16,7 @@ function loadE2eEnv() {
 
 loadE2eEnv();
 
-const PORT = Number(process.env.E2E_PORT ?? 3100);
+const PORT = Number(process.env.E2E_PORT ?? 3102);
 const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
@@ -34,7 +34,7 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: `npm run dev -- --hostname 127.0.0.1 --port ${PORT}`,
+        command: `npm run dev:e2e -- --hostname 127.0.0.1 --port ${PORT}`,
         url: baseURL,
         reuseExistingServer: true,
         timeout: 120_000,

@@ -164,6 +164,8 @@ export default function FriendProfileClient({
 
   async function cancelRequest() {
     if (!myName) return;
+    const ok = window.confirm(`Cancel your Circle request to ${name}?`);
+    if (!ok) return;
     const previousStatus = circleStatus;
     setCircleStatus("none");
     const res = await fetch("/api/circle/cancel", {
@@ -180,6 +182,8 @@ export default function FriendProfileClient({
 
   async function removeFromCircle() {
     if (!myName) return;
+    const ok = window.confirm(`Remove ${name} from your Circle?`);
+    if (!ok) return;
     const previousStatus = circleStatus;
     setCircleStatus("none");
     setTheirCircleCount((c) => Math.max(0, c - 1));

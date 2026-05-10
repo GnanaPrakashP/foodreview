@@ -40,7 +40,10 @@ test("restaurant detail delete redirects to profile when last restaurant post is
   assert.match(feedCard, /onDeleted\?: \(review: Review\) => void/);
   assert.match(feedCard, /onDeleted\(review\)/);
   assert.match(restaurantDetail, /const \[visiblePosts,\s*setVisiblePosts\] = useState\(posts\)/);
-  assert.match(restaurantDetail, /if \(nextPosts\.length === 0\) \{/);
-  assert.match(restaurantDetail, /router\.replace\(profileHref\)/);
+  assert.match(restaurantDetail, /const \[shouldRedirectToProfile,\s*setShouldRedirectToProfile\] = useState\(false\)/);
+  assert.match(restaurantDetail, /useEffect\(\(\) => \{\s*if \(!shouldRedirectToProfile\) return;\s*router\.replace\(profileHref\);\s*router\.refresh\(\);/s);
+  assert.match(restaurantDetail, /const nextPosts = visiblePosts\.filter\(\(post\) => post\.id !== deletedPost\.id\)/);
+  assert.match(restaurantDetail, /if \(nextPosts\.length === 0\) setShouldRedirectToProfile\(true\)/);
+  assert.doesNotMatch(restaurantDetail, /setVisiblePosts\(\(currentPosts\)[\s\S]*router\.replace\(profileHref\)/);
   assert.match(restaurantDetail, /onDeleted=\{handlePostDeleted\}/);
 });

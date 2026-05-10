@@ -222,7 +222,7 @@ export default function NotificationsClient() {
                                 {notification.content}
                               </p>
                             )}
-                            <p style={{ color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", marginTop: "5px" }}>{timeAgo(effectiveDate(notification))}</p>
+                            <p suppressHydrationWarning style={{ color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", marginTop: "5px" }}>{timeAgo(effectiveDate(notification))}</p>
                           </div>
                           {thumbnailUrl && (
                             // eslint-disable-next-line @next/next/no-img-element

@@ -44,8 +44,11 @@ async function clickAndWaitForPost(page: Page, endpoint: RegExp, action: () => P
   return response;
 }
 
-async function clickCircleActionAndWait(page: Page, endpoint: RegExp) {
-  return clickAndWaitForPost(page, endpoint, () => circleAction(page).click());
+async function clickCircleActionAndWait(page: Page, endpoint: RegExp, options: { acceptDialog?: boolean } = {}) {
+  return clickAndWaitForPost(page, endpoint, async () => {
+    if (options.acceptDialog) page.once("dialog", (dialog) => dialog.accept());
+    await circleAction(page).click();
+  });
 }
 
 async function openProfile(page: Page, name: string) {
@@ -63,9 +66,9 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     if (label === "add") return;
 
     if (label.includes("requested")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/);
+      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
     } else if (label.includes("circle")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/remove/);
+      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
     } else if (label.includes("accept")) {
       await clickCircleActionAndWait(page, /\/api\/circle\/request/);
     }
@@ -153,7 +156,7 @@ test("mobile circle smoke: public account add is tappable and persists after ref
   await expect(circleAction(page)).toHaveText(/in circle|mutual circle/i, { timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/remove/);
+  await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
   await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
 });
 
@@ -168,7 +171,7 @@ test("mobile private circle smoke: request and cancel remain tappable", async ({
   expect(requestBody.state).toBe("PENDING");
   await expect(circleAction(page)).toHaveText(/requested/i, { timeout: 10_000 });
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/);
+  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
   await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 });

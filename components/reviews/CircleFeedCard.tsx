@@ -203,7 +203,7 @@ export default function CircleFeedCard({
               </p>
             </div>
           </Link>
-          <span style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
+          <span suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {timeAgo(review.created_at)}
           </span>
           <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>

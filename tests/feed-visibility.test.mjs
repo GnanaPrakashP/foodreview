@@ -313,12 +313,14 @@ test("canShowInCircleTrending: post from a non-circle user is excluded", () => {
   );
 });
 
-test("canShowInCircleTrending: viewer's own posts are excluded (they belong in profile feed)", () => {
-  const p = post("Bob", "public");
-  assert.equal(
-    canShowInCircleTrending(p, { viewerName: "Bob", circleOwnerNames: ["Alice", "Bob"] }),
-    false
-  );
+test("canShowInCircleTrending: viewer's own public and circle posts are included, but own private posts are not", () => {
+  const ownPublic = post("Bob", "public");
+  const ownCircle = post("Bob", "circle");
+  const ownPrivate = post("Bob", "me");
+
+  assert.equal(canShowInCircleTrending(ownPublic, { viewerName: "Bob", circleOwnerNames: ["Alice"] }), true);
+  assert.equal(canShowInCircleTrending(ownCircle, { viewerName: "Bob", circleOwnerNames: ["Alice"] }), true);
+  assert.equal(canShowInCircleTrending(ownPrivate, { viewerName: "Bob", circleOwnerNames: ["Alice"] }), false);
 });
 
 test("canShowInCircleTrending: empty viewerName returns false", () => {

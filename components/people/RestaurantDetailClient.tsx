@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -66,19 +66,21 @@ export default function RestaurantDetailClient({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"posts" | "dishes">("posts");
   const [visiblePosts, setVisiblePosts] = useState(posts);
+  const [shouldRedirectToProfile, setShouldRedirectToProfile] = useState(false);
   const profileHref = `/people/${encodeURIComponent(username)}`;
 
   const dishes = useMemo(() => buildDishes(visiblePosts), [visiblePosts]);
 
+  useEffect(() => {
+    if (!shouldRedirectToProfile) return;
+    router.replace(profileHref);
+    router.refresh();
+  }, [profileHref, router, shouldRedirectToProfile]);
+
   function handlePostDeleted(deletedPost: Review) {
-    setVisiblePosts((currentPosts) => {
-      const nextPosts = currentPosts.filter((post) => post.id !== deletedPost.id);
-      if (nextPosts.length === 0) {
-        router.replace(profileHref);
-        router.refresh();
-      }
-      return nextPosts;
-    });
+    const nextPosts = visiblePosts.filter((post) => post.id !== deletedPost.id);
+    setVisiblePosts(nextPosts);
+    if (nextPosts.length === 0) setShouldRedirectToProfile(true);
   }
 
   return (

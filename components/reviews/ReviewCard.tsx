@@ -58,7 +58,7 @@ export default function ReviewCard({ review }: ReviewCardProps) {
           <p style={{ fontSize: "14px", fontWeight: 500, color: "var(--cream)" }}>
             {review.reviewer_name} shared a spot 📍
           </p>
-          <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "1px" }}>
+          <p suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", marginTop: "1px" }}>
             {timeAgo(review.created_at)}
           </p>
         </div>

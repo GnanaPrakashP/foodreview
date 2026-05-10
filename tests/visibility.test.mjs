@@ -170,17 +170,20 @@ test("circle feed: circle member's public and circle posts are both visible to v
   const memberPublic = review("Circle Friend", "public", "Public Spot");
   const memberCircle = review("Circle Friend", "circle", "Circle Spot");
   const memberOnlyMe = review("Circle Friend", "me", "Private Spot");
+  const ownPublic = review("Viewer", "public", "Own Public Spot");
+  const ownCircle = review("Viewer", "circle", "Own Circle Spot");
+  const ownOnlyMe = review("Viewer", "me", "Own Private Spot");
   const outsiderPublic = review("Outsider", "public", "Outsider Spot");
 
   const visible = filterCircleTrendingReviews(
-    [memberPublic, memberCircle, memberOnlyMe, outsiderPublic],
+    [memberPublic, memberCircle, memberOnlyMe, ownPublic, ownCircle, ownOnlyMe, outsiderPublic],
     {
       viewerName: "Viewer",
       circleOwnerNames: ["Circle Friend"],
     }
   );
 
-  assert.deepEqual(ids(visible), [memberPublic.id, memberCircle.id]);
+  assert.deepEqual(ids(visible), [memberPublic.id, memberCircle.id, ownPublic.id, ownCircle.id]);
 });
 
 test("public circle trending only includes public posts from circle owners", () => {

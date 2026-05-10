@@ -57,12 +57,13 @@ export default async function CirclePage() {
   const myName = candidateNames[0] ?? "";
   const joinedCircles = Array.from(joinedCircleSet);
   const mutualMembers = Array.from(mutualMemberSet);
+  const feedReviewerNames = Array.from(new Set([...joinedCircles, myName].filter(Boolean)));
 
-  const { data: reviews } = joinedCircles.length > 0
+  const { data: reviews } = feedReviewerNames.length > 0
     ? await readDb
         .from("reviews")
         .select("*")
-        .in("reviewer_name", joinedCircles)
+        .in("reviewer_name", feedReviewerNames)
         .order("created_at", { ascending: false })
         .limit(500)
         .returns<Review[]>()

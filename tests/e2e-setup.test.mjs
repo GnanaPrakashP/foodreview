@@ -45,9 +45,9 @@ test("Playwright setup loads .env.e2e and separates desktop/mobile smoke project
   const config = read("playwright.config.ts");
 
   assert.match(config, /readFileSync\("\.env\.e2e"/);
-  assert.match(config, /const PORT = Number\(process\.env\.E2E_PORT \?\? 3100\)/);
+  assert.match(config, /const PORT = Number\(process\.env\.E2E_PORT \?\? 3102\)/);
   assert.match(config, /baseURL = process\.env\.E2E_BASE_URL \?\?/);
-  assert.match(config, /command: `npm run dev -- --hostname 127\.0\.0\.1 --port \$\{PORT\}`/);
+  assert.match(config, /command: `npm run dev:e2e -- --hostname 127\.0\.0\.1 --port \$\{PORT\}`/);
   assert.match(config, /name: "chromium"/);
   assert.match(config, /testIgnore: \["\*\*\/mobile-smoke\.spec\.ts"\]/);
   assert.match(config, /name: "mobile"/);

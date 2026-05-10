@@ -53,11 +53,13 @@ export function canShowInCircleTrending(review: Review, context: ViewerContext):
   if (isReviewSuppressed(review)) return false;
 
   const viewerName = context.viewerName ?? "";
-  if (!viewerName || review.reviewer_name === viewerName) return false;
+  if (!viewerName) return false;
   if (toSet(context.blockedNames).has(review.reviewer_name)) return false;
-  if (!toSet(context.circleOwnerNames).has(review.reviewer_name)) return false;
 
   const visibility = normalizeVisibility(review.visibility);
+  if (review.reviewer_name === viewerName) return visibility === "public" || visibility === "circle";
+  if (!toSet(context.circleOwnerNames).has(review.reviewer_name)) return false;
+
   return visibility === "public" || visibility === "circle";
 }
 

@@ -226,7 +226,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
                   <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.4 }}>
                     <strong>{c.user_name}</strong> {c.content}
                   </p>
-                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>
+                  <p suppressHydrationWarning style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>
                     {timeAgo(c.created_at)}
                   </p>
                 </div>

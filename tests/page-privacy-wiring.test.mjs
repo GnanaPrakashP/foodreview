@@ -11,6 +11,7 @@ test("home/circle feed filters server reviews before fetching engagement data", 
     const src = source(file);
     assert.match(src, /createAdminClient\(\)/);
     assert.match(src, /getAuthenticatedCircleActor\(supabase\)/);
+    assert.match(src, /const feedReviewerNames = Array\.from\(new Set\(\[\.\.\.joinedCircles, myName\]\.filter\(Boolean\)\)\)/);
     assert.match(src, /filterCircleTrendingReviews\(reviews \?\? \[\],/);
     assert.match(src, /const postIds = allReviews\.map/);
     assert.match(src, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
@@ -32,6 +33,15 @@ test("dishes page computes dish stats from public filtered reviews only", () => 
   assert.match(src, /filterGlobalTrendingReviews\(reviews \?\? \[\]\)\.map/);
   assert.match(src, /getPopularDishes\(slim\)/);
   assert.match(src, /<DishSearch reviews=\{slim\} popularDishes=\{popularDishes\}/);
+});
+
+test("Circle destructive actions ask for confirmation before mutating state", () => {
+  const profile = source("components/people/FriendProfileClient.tsx");
+  const people = source("components/people/PeopleTab.tsx");
+
+  assert.match(profile, /function cancelRequest\(\)[\s\S]*window\.confirm\(`Cancel your Circle request to \$\{name\}\?`\)/);
+  assert.match(profile, /function removeFromCircle\(\)[\s\S]*window\.confirm\(`Remove \$\{name\} from your Circle\?`\)/);
+  assert.match(people, /function cancelRequest\(receiverName: string\)[\s\S]*window\.confirm\(`Cancel your Circle request to \$\{receiverName\}\?`\)/);
 });
 
 test("trending restaurant detail derives post ids only from visible display reviews", () => {

@@ -226,14 +226,16 @@ function Hero() {
     <div style={{ textAlign: "center", width: "100%", maxWidth: 400 }}>
       {/* App icon */}
       <div style={{
-        width: 72, height: 72, margin: "0 auto 18px",
-        background: "linear-gradient(135deg, #F06030 0%, #E8601A 50%, #CC4A10 100%)",
-        borderRadius: 22,
+        width: 86, height: 86, margin: "0 auto 18px",
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 34,
-        boxShadow: "0 12px 40px rgba(240,96,48,0.45), 0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15)",
       }}>
-        🍽️
+        <img
+          src="/favicon.ico"
+          alt="CircleBites logo"
+          width={72}
+          height={72}
+          style={{ display: "block", borderRadius: 16 }}
+        />
       </div>
 
       {/* Wordmark */}

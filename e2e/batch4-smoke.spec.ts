@@ -49,8 +49,11 @@ async function clickAndWaitForPost(page: Page, endpoint: RegExp, action: () => P
   return response;
 }
 
-async function clickCircleActionAndWait(page: Page, endpoint: RegExp) {
-  return clickAndWaitForPost(page, endpoint, () => circleAction(page).click());
+async function clickCircleActionAndWait(page: Page, endpoint: RegExp, options: { acceptDialog?: boolean } = {}) {
+  return clickAndWaitForPost(page, endpoint, async () => {
+    if (options.acceptDialog) page.once("dialog", (dialog) => dialog.accept());
+    await circleAction(page).click();
+  });
 }
 
 async function openProfile(page: Page, name: string) {
@@ -68,9 +71,9 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     if (label === "add") return;
 
     if (label.includes("requested")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/);
+      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
     } else if (label.includes("circle")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/remove/);
+      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
     } else if (label.includes("accept")) {
       await clickCircleActionAndWait(page, /\/api\/circle\/request/);
     }
@@ -90,7 +93,7 @@ async function ensureJoinedCircleFromViewer(page: Page, targetName: string) {
   if (label.includes("in circle") || label.includes("mutual")) return;
 
   if (label.includes("requested")) {
-    await clickCircleActionAndWait(page, /\/api\/circle\/cancel/);
+    await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
     await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
     label = ((await circleAction(page).textContent()) ?? "").trim().toLowerCase();
   }
@@ -201,11 +204,15 @@ test("visibility smoke: public, circle-only, and only-me reviews respect viewer 
 });
 
 test("circle feed smoke: joined circle owner's public and circle posts appear", async ({ browser }) => {
+  test.setTimeout(60_000);
   test.skip(SKIP_AB, SKIP_MSG);
 
   const suffix = uniqueE2eName("Circle Feed");
   const publicRestaurant = `${suffix} Public`;
   const circleRestaurant = `${suffix} Circle`;
+  const ownPublicRestaurant = `${suffix} Own Public`;
+  const ownCircleRestaurant = `${suffix} Own Circle`;
+  const ownPrivateRestaurant = `${suffix} Own Private`;
 
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
@@ -218,10 +225,16 @@ test("circle feed smoke: joined circle owner's public and circle posts appear", 
   const viewerPage = await viewerContext.newPage();
   await signIn(viewerPage, userA!);
   await ensureJoinedCircleFromViewer(viewerPage, userB!.name);
+  await createReview(viewerPage, { restaurantName: ownPublicRestaurant, visibility: "public" });
+  await createReview(viewerPage, { restaurantName: ownCircleRestaurant, visibility: "circle" });
+  await createReview(viewerPage, { restaurantName: ownPrivateRestaurant, visibility: "me" });
 
   await viewerPage.goto("/circle");
   await expect(viewerPage.getByText(publicRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(viewerPage.getByText(circleRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(viewerPage.getByText(ownPublicRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(viewerPage.getByText(ownCircleRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(viewerPage.getByText(ownPrivateRestaurant, { exact: true })).not.toBeVisible();
   await viewerContext.close();
 });
 
@@ -251,7 +264,8 @@ test("delete smoke: deleting the last restaurant post redirects to profile, not 
 
   await expect(page).toHaveURL(new RegExp(`/people/${encodeURIComponent(userA!.name)}/?$`), { timeout: 10_000 });
   await expect(page.getByText(userA!.name, { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/404|not found/i)).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: /page not found/i })).not.toBeVisible();
+  await expect(page.getByText(/this page doesn't exist or was removed/i)).not.toBeVisible();
 });
 
 test("circle smoke: private request can be sent and cancelled", async ({ page }) => {
@@ -265,11 +279,12 @@ test("circle smoke: private request can be sent and cancelled", async ({ page })
   expect(requestBody.state).toBe("PENDING");
   await expect(circleAction(page)).toHaveText(/requested/i, { timeout: 10_000 });
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/);
+  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
   await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
 });
 
 test("notification smoke: circle request creates a notification and accept updates state", async ({ browser }) => {
+  test.setTimeout(60_000);
   test.skip(SKIP_ABC, SKIP_MSG);
 
   const suffix = uniqueE2eName("Private Target");
@@ -314,7 +329,7 @@ test("notification smoke: circle request creates a notification and accept updat
   await expect(circleAction(requesterPage)).toHaveText(/mutual circle/i, { timeout: 10_000 });
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(requesterPage.getByText(targetPrivateRestaurant, { exact: true })).not.toBeVisible();
-  await clickCircleActionAndWait(requesterPage, /\/api\/circle\/remove/);
+  await clickCircleActionAndWait(requesterPage, /\/api\/circle\/remove/, { acceptDialog: true });
   await expect(circleAction(requesterPage)).toHaveText(/add/i, { timeout: 10_000 });
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).not.toBeVisible();
   await requesterContext.close();
