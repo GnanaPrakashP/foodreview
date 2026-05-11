@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { addMutualCircleEdges } from "@/lib/circle-db";
+import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
 
 export async function POST(req: NextRequest) {
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   // Idempotent: already in desired state
   if (requestRow?.status === "accepted" && action === "accept") {
-    return NextResponse.json({ ok: true, state: "CIRCLE_MUTUAL" });
+    return NextResponse.json({ ok: true, state: "CIRCLE_ONE_WAY" });
   }
   if (requestRow?.status === "rejected" && action === "reject") {
     return NextResponse.json({ ok: true, state: "NONE" });
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   if (action === "accept") {
-    const { error: edgeError } = await addMutualCircleEdges(admin, me, sender);
+    const { error: edgeError } = await addCircleEdge(admin, me, sender);
     if (edgeError) return NextResponse.json({ error: edgeError.message }, { status: 500 });
     await createNotificationForNames(admin, {
       recipientName: sender,
@@ -103,6 +103,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    state: action === "accept" ? "CIRCLE_MUTUAL" : "NONE",
+    state: action === "accept" ? "CIRCLE_ONE_WAY" : "NONE",
   });
 }

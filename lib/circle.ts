@@ -13,7 +13,7 @@ export function accountTypeLabel(accountType: AccountType): string {
 
 export function relationshipLabel(state: CircleRelationshipState): string {
   if (state === "PENDING") return "Requested";
-  if (state === "CIRCLE_MUTUAL") return "Mutual Circle";
+  if (state === "CIRCLE_MUTUAL") return "In Circle";
   if (state === "CIRCLE_ONE_WAY") return "In Circle";
   return "Not in Circle";
 }

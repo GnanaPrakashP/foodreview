@@ -14,6 +14,7 @@ import {
   removeName,
   type PersonStatus,
 } from "@/lib/people-circle-state";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Check, X } from "lucide-react";
 
 /* ─── Types ─────────────────────────────────────── */
@@ -105,11 +106,15 @@ function PersonCard({
   sub,
   status,
   onAdd,
+  onInCircleClick,
+  highlightRequest = false,
 }: {
   name: string;
   sub: string;
   status: PersonStatus;
   onAdd?: () => void;
+  onInCircleClick?: () => void;
+  highlightRequest?: boolean;
 }) {
   return (
     <div
@@ -138,32 +143,34 @@ function PersonCard({
           </p>
         </div>
       </Link>
-      {status === "mutual" || status === "one_way" ? (
+      {status === "one_way" ? (
         <button
+          onClick={onInCircleClick}
+          title={onInCircleClick ? "Tap to leave this circle" : undefined}
           style={{
-            background: "var(--orange-dim)",
-            border: "1.5px solid rgba(240,96,48,0.35)",
-            color: "var(--orange)",
+            background: "rgba(61,214,140,0.12)",
+            border: "1.5px solid rgba(61,214,140,0.35)",
+            color: "var(--green)",
             fontSize: "11px",
             fontWeight: 600,
             padding: "6px 12px",
             borderRadius: "100px",
-            cursor: "default",
+            cursor: onInCircleClick ? "pointer" : "default",
             whiteSpace: "nowrap",
             flexShrink: 0,
             fontFamily: "'DM Sans', sans-serif",
           }}
         >
-          {status === "mutual" ? "Mutual Circle" : "In Circle"}
+          In Circle
         </button>
       ) : status === "sent" ? (
         <button
           onClick={onAdd}
           title="Tap to cancel request"
           style={{
-            background: "var(--surface)",
-            border: "1.5px solid var(--border)",
-            color: "var(--muted)",
+            background: "rgba(240,96,48,0.12)",
+            border: "1.5px solid rgba(240,96,48,0.35)",
+            color: "var(--orange)",
             fontSize: "11px",
             fontWeight: 600,
             padding: "6px 12px",
@@ -180,9 +187,9 @@ function PersonCard({
         <button
           onClick={onAdd}
           style={{
-            background: "transparent",
-            border: "1.5px solid var(--border)",
-            color: "var(--muted)",
+            background: "rgba(240,96,48,0.12)",
+            border: "1.5px solid rgba(240,96,48,0.35)",
+            color: "var(--orange)",
             fontSize: "11px",
             fontWeight: 600,
             padding: "6px 12px",
@@ -194,7 +201,7 @@ function PersonCard({
             transition: "all 0.15s",
           }}
         >
-          Add
+          Request
         </button>
       )}
     </div>
@@ -490,10 +497,13 @@ export default function PeopleTab({
 
   // Circle state from API
   const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
-  const [mutualMembers, setMutualMembers] = useState<Set<string>>(new Set());
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
   const [keptSuggestions, setKeptSuggestions] = useState<Set<string>>(new Set());
+  const [confirmCancelName, setConfirmCancelName] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [confirmLeaveName, setConfirmLeaveName] = useState<string | null>(null);
+  const [leaveBusy, setLeaveBusy] = useState(false);
 
   /* ── Load circle status from API ── */
 
@@ -502,7 +512,6 @@ export default function PeopleTab({
     const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
     const data = await res.json();
     setCircleMembers(new Set(data.members ?? []));
-    setMutualMembers(new Set(data.mutualMembers ?? []));
     setPendingSent(new Set(data.pendingSent ?? []));
     setPendingIncoming(data.pendingIncoming ?? []);
   }, []);
@@ -533,7 +542,6 @@ export default function PeopleTab({
     if (isAcceptedCircleResponse(data)) {
       setPendingSent((prev) => removeName(prev, receiverName));
       setCircleMembers((prev) => addName(prev, receiverName));
-      setMutualMembers((prev) => addName(prev, receiverName));
       setKeptSuggestions((prev) => addName(prev, receiverName));
     } else if (isOneWayCircleResponse(data)) {
       setPendingSent((prev) => removeName(prev, receiverName));
@@ -556,7 +564,6 @@ export default function PeopleTab({
     setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
     if (action === "accept") {
       setCircleMembers((prev) => addName(prev, senderName));
-      setMutualMembers((prev) => addName(prev, senderName));
     }
     await loadCircleStatus(myName);
     router.refresh();
@@ -565,22 +572,46 @@ export default function PeopleTab({
   /* ── Cancel sent request ── */
 
   async function cancelRequest(receiverName: string) {
-    if (!myName) return;
-    const ok = window.confirm(`Cancel your Circle request to ${receiverName}?`);
-    if (!ok) return;
+    if (!myName || cancelBusy) return;
+    setCancelBusy(true);
     // Optimistic update
     setPendingSent((prev) => removeName(prev, receiverName));
-    const res = await fetch("/api/circle/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ senderName: myName, receiverName }),
-    });
-    if (!res.ok) {
-      setPendingSent((prev) => addName(prev, receiverName));
-      return;
+    try {
+      const res = await fetch("/api/circle/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderName: myName, receiverName }),
+      });
+      if (!res.ok) {
+        setPendingSent((prev) => addName(prev, receiverName));
+        return;
+      }
+      await loadCircleStatus(myName);
+      router.refresh();
+    } finally {
+      setCancelBusy(false);
     }
-    await loadCircleStatus(myName);
-    router.refresh();
+  }
+
+  async function leaveCircle(otherName: string) {
+    if (!myName || leaveBusy) return;
+    setLeaveBusy(true);
+    setCircleMembers((prev) => removeName(prev, otherName));
+    try {
+      const res = await fetch("/api/circle/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ myName, otherName }),
+      });
+      if (!res.ok) {
+        setCircleMembers((prev) => addName(prev, otherName));
+        return;
+      }
+      await loadCircleStatus(myName);
+      router.refresh();
+    } finally {
+      setLeaveBusy(false);
+    }
   }
 
   /* ── Search (reviews + profiles) ── */
@@ -644,7 +675,7 @@ export default function PeopleTab({
   }
 
   function personStatus(name: string): PersonStatus {
-    return personStatusFor(name, { mutualMembers, circleMembers, pendingSent });
+    return personStatusFor(name, { circleMembers, pendingSent });
   }
 
   /* ── Render ── */
@@ -723,7 +754,8 @@ export default function PeopleTab({
               name={result.name}
               sub={`${toHandle(result.name)} · ${result.totalPlaces} place${result.totalPlaces !== 1 ? "s" : ""}`}
               status={personStatus(result.name)}
-              onAdd={personStatus(result.name) === "sent" ? () => cancelRequest(result.name) : () => sendRequest(result.name)}
+              onInCircleClick={personStatus(result.name) === "one_way" ? () => setConfirmLeaveName(result.name) : undefined}
+              onAdd={personStatus(result.name) === "sent" ? () => setConfirmCancelName(result.name) : () => sendRequest(result.name)}
             />
           ))}
         </div>
@@ -763,11 +795,43 @@ export default function PeopleTab({
               name={member.name}
               sub={suggestionSub(member)}
               status={personStatus(member.name)}
-              onAdd={personStatus(member.name) === "sent" ? () => cancelRequest(member.name) : () => sendRequest(member.name)}
+              highlightRequest
+              onInCircleClick={personStatus(member.name) === "one_way" ? () => setConfirmLeaveName(member.name) : undefined}
+              onAdd={personStatus(member.name) === "sent" ? () => setConfirmCancelName(member.name) : () => sendRequest(member.name)}
             />
           ))}
         </>
       )}
+
+      <ConfirmModal
+        open={Boolean(confirmCancelName)}
+        title="Cancel request?"
+        message={confirmCancelName ? `Cancel request to join ${confirmCancelName}'s circle?` : ""}
+        confirmText="Cancel request"
+        disabled={cancelBusy}
+        onCancel={() => setConfirmCancelName(null)}
+        onConfirm={async () => {
+          const target = confirmCancelName;
+          if (!target) return;
+          setConfirmCancelName(null);
+          await cancelRequest(target);
+        }}
+      />
+      <ConfirmModal
+        open={Boolean(confirmLeaveName)}
+        title="Leave circle?"
+        message={confirmLeaveName ? `Do you no longer want to be in ${confirmLeaveName}'s circle?` : ""}
+        confirmText="Leave"
+        confirmVariant="danger"
+        disabled={leaveBusy}
+        onCancel={() => setConfirmLeaveName(null)}
+        onConfirm={async () => {
+          const target = confirmLeaveName;
+          if (!target) return;
+          setConfirmLeaveName(null);
+          await leaveCircle(target);
+        }}
+      />
 
       <div style={{ height: "100px" }} />
     </div>

@@ -28,7 +28,7 @@ test.beforeEach(async ({}, testInfo) => {
 
 function circleAction(page: Page) {
   return page.getByRole("button", {
-    name: /add|requested|in circle|mutual circle|accept request/i,
+    name: /request|requested|in circle|accept/i,
   }).first();
 }
 
@@ -44,10 +44,16 @@ async function clickAndWaitForPost(page: Page, endpoint: RegExp, action: () => P
   return response;
 }
 
-async function clickCircleActionAndWait(page: Page, endpoint: RegExp, options: { acceptDialog?: boolean } = {}) {
+async function clickCircleActionAndWait(
+  page: Page,
+  endpoint: RegExp,
+  options: { confirmButtonName?: RegExp } = {},
+) {
   return clickAndWaitForPost(page, endpoint, async () => {
-    if (options.acceptDialog) page.once("dialog", (dialog) => dialog.accept());
     await circleAction(page).click();
+    if (options.confirmButtonName) {
+      await page.getByRole("button", { name: options.confirmButtonName }).click();
+    }
   });
 }
 
@@ -63,12 +69,12 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     await expect(action).toBeVisible({ timeout: 10_000 });
 
     const label = ((await action.textContent()) ?? "").trim().toLowerCase();
-    if (label === "add") return;
+    if (label === "request") return;
 
     if (label.includes("requested")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
+      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { confirmButtonName: /cancel request/i });
     } else if (label.includes("circle")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
+      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { confirmButtonName: /leave/i });
     } else if (label.includes("accept")) {
       await clickCircleActionAndWait(page, /\/api\/circle\/request/);
     }
@@ -76,7 +82,7 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
   }
 
   await openProfile(page, targetName);
-  await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+  await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -150,14 +156,14 @@ test("mobile circle smoke: public account add is tappable and persists after ref
   await resetCircleRelationshipFromViewer(page, userA!.name);
 
   await clickCircleActionAndWait(page, /\/api\/circle\/request/);
-  await expect(circleAction(page)).toHaveText(/in circle|mutual circle/i, { timeout: 10_000 });
+  await expect(circleAction(page)).toHaveText(/in circle/i, { timeout: 10_000 });
 
   await page.reload();
-  await expect(circleAction(page)).toHaveText(/in circle|mutual circle/i, { timeout: 10_000 });
+  await expect(circleAction(page)).toHaveText(/in circle/i, { timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
-  await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+  await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { confirmButtonName: /leave/i });
+  await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 });
 
 test("mobile private circle smoke: request and cancel remain tappable", async ({ page }) => {
@@ -171,8 +177,8 @@ test("mobile private circle smoke: request and cancel remain tappable", async ({
   expect(requestBody.state).toBe("PENDING");
   await expect(circleAction(page)).toHaveText(/requested/i, { timeout: 10_000 });
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
-  await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { confirmButtonName: /cancel request/i });
+  await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 });
 
@@ -214,7 +220,7 @@ test("mobile search, trending, and common badge smoke: cards fit without overflo
   await page.goto("/people");
   await page.getByPlaceholder(/search by name or @username/i).fill(userA!.name);
   await expect(page.getByRole("link", { name: new RegExp(userA!.name, "i") }).first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("button", { name: /mutual circle|in circle|add|requested/i }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /in circle|request|requested/i }).first()).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
   await page.goto("/trending");

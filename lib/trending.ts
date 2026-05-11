@@ -12,6 +12,8 @@ export interface TrendingRestaurant {
   restaurant_name: string;
   cuisine_type: string;
   area: string | null;
+  lat: number | null;
+  lng: number | null;
   trending_score: number;
   users_week: number;
   users_month: number;
@@ -21,6 +23,16 @@ export interface TrendingRestaurant {
   top_dishes: string[];
   photo_url: string | null;
   total_logs: number;
+}
+
+export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export type TrendingWindow = "week" | "month" | "alltime";
@@ -86,6 +98,8 @@ export function computeTrending(reviews: Review[]): {
     let ratingCount = 0;
     const dishCounts = new Map<string, number>();
     const areaCounts = new Map<string, number>();
+    let lat: number | null = null;
+    let lng: number | null = null;
 
     for (const r of b.reviews) {
       for (const item of r.items) {
@@ -94,6 +108,10 @@ export function computeTrending(reviews: Review[]): {
       }
       const locationLabel = restaurantLocationLabel(r);
       if (locationLabel) areaCounts.set(locationLabel, (areaCounts.get(locationLabel) ?? 0) + 1);
+      if (lat == null && r.restaurant_lat != null && r.restaurant_lng != null) {
+        lat = r.restaurant_lat;
+        lng = r.restaurant_lng;
+      }
     }
 
     const avgScore = ratingCount > 0
@@ -113,6 +131,8 @@ export function computeTrending(reviews: Review[]): {
       restaurant_name: name,
       cuisine_type: getCuisineType(name),
       area,
+      lat,
+      lng,
       trending_score: trendingScore,
       users_week: usersWeek,
       users_month: usersMonth,

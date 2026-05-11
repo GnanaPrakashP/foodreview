@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addMutualCircleEdges } from "@/lib/circle-db";
+import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createRouteSupabase, getNotificationViewer, unauthorized } from "@/app/api/notifications/_utils";
@@ -30,7 +30,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
   }
   // Idempotent: already accepted is a success
   if (request.status === "accepted") {
-    return NextResponse.json({ ok: true, state: "CIRCLE_MUTUAL" });
+    return NextResponse.json({ ok: true, state: "CIRCLE_ONE_WAY" });
   }
   if (request.status !== "pending") {
     return NextResponse.json({ error: "Request is no longer pending" }, { status: 409 });
@@ -39,7 +39,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
   const { error } = await admin.from("circle_requests").update({ status: "accepted" }).eq("id", requestId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const { error: edgeError } = await addMutualCircleEdges(admin, request.receiver_name, request.sender_name);
+  const { error: edgeError } = await addCircleEdge(admin, request.receiver_name, request.sender_name);
   if (edgeError) return NextResponse.json({ error: edgeError.message }, { status: 500 });
 
   await createNotificationForNames(admin, {
@@ -61,5 +61,5 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
     .eq("actor_name", request.sender_name)
     .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
-  return NextResponse.json({ ok: true, state: "CIRCLE_MUTUAL" });
+  return NextResponse.json({ ok: true, state: "CIRCLE_ONE_WAY" });
 }

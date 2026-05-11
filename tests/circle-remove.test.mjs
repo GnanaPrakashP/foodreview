@@ -92,8 +92,6 @@ function makeCircleDb(overrides = {}) {
   return {
     hasCircleEdge: async () => false,
     addCircleEdge: async () => ({ error: null }),
-    addMutualCircleEdges: async () => ({ error: null }),
-    getAccountTypeForName: async () => "public",
     hasCircleAccess: async () => false,
     getCircleRelationshipsForName: async () => ({
       circleMembers: new Set(), joinedCircles: new Set(), mutualMembers: new Set(),
@@ -140,13 +138,9 @@ function loadRoute(code, { db, circleDb, notifications, authName = "Alice" }) {
 }
 
 // Remove route inline DB call sequence:
-//   response[0]  → reverseEdge SELECT (circle_memberships, is me→other mutual?)
-//   response[1]  → main DELETE (circle_memberships, user_name=other, member_name=me)
-//   response[2]  → reverse DELETE (only when shouldDissolveBoth)
-//   response[?+0]→ cleanup UPDATE circle_requests me→other accepted (parallel pair)
-//   response[?+1]→ cleanup UPDATE circle_requests other→me accepted (parallel pair)
-//
-// getAccountTypeForName is a circleDb stub and does NOT consume a mockDb response.
+//   response[0]  → main DELETE (circle_memberships, user_name=other, member_name=me)
+//   response[1]  → cleanup UPDATE circle_requests me→other accepted
+//   response[2]  → cleanup UPDATE circle_requests other→me accepted
 
 // ============================================================
 // remove/route.ts — behaviour tests
@@ -170,20 +164,16 @@ test("remove: self-remove returns 400", async () => {
   assert.equal(status(res), 400);
 });
 
-test("remove: public+public non-mutual — deletes only receiver→sender edge, not sender→receiver", async () => {
-  // reverseEdge (me→other) does not exist → isMutual=false → shouldDissolveBoth=false
+test("remove: deletes only receiver→sender edge (directional leave)", async () => {
   const db = spyDb(
-    { data: [], error: null }, // reverseEdge SELECT: not mutual
-    { error: null },           // main DELETE (other→me)
-    { error: null },           // cleanup UPDATE 1
-    { error: null }            // cleanup UPDATE 2
+    { error: null }, // main DELETE (other→me)
+    { error: null }, // cleanup UPDATE 1
+    { error: null }  // cleanup UPDATE 2
   );
 
   const { POST } = loadRoute(src.remove, {
     db,
-    circleDb: makeCircleDb({
-      getAccountTypeForName: async () => "public",
-    }),
+    circleDb: makeCircleDb(),
   });
 
   const res = await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -199,45 +189,8 @@ test("remove: public+public non-mutual — deletes only receiver→sender edge, 
   assert.equal(filters.member_name, "Alice");
 });
 
-test("remove: private+private mutual — deletes both edges", async () => {
-  // reverseEdge exists → isMutual=true; both private → shouldDissolveBoth=true
+test("remove: never deletes reverse edge me→other", async () => {
   const db = spyDb(
-    { data: [{ id: "e1" }], error: null }, // reverseEdge SELECT: mutual
-    { error: null },                       // main DELETE (other→me)
-    { error: null },                       // reverse DELETE (me→other)
-    { error: null },                       // cleanup UPDATE 1
-    { error: null }                        // cleanup UPDATE 2
-  );
-
-  const { POST } = loadRoute(src.remove, {
-    db,
-    circleDb: makeCircleDb({
-      getAccountTypeForName: async () => "private",
-    }),
-  });
-
-  const res = await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
-  assert.equal(body(res).ok, true);
-
-  const deletes = db._calls.filter(
-    (c) => c.table === "circle_memberships" && hasOp(c, "delete")
-  );
-  assert.equal(deletes.length, 2, "both edges must be deleted for private mutual");
-
-  // First delete: Bob's circle loses Alice  (user_name=Bob, member_name=Alice)
-  assert.equal(eqFilters(deletes[0]).user_name, "Bob");
-  assert.equal(eqFilters(deletes[0]).member_name, "Alice");
-
-  // Second delete: Alice's circle loses Bob (user_name=Alice, member_name=Bob)
-  assert.equal(eqFilters(deletes[1]).user_name, "Alice");
-  assert.equal(eqFilters(deletes[1]).member_name, "Bob");
-});
-
-test("remove: public+private mutual — dissolves both edges (either private triggers full dissolution)", async () => {
-  // me=Alice is public, other=Bob is private → shouldDissolveBoth=true when mutual
-  const db = spyDb(
-    { data: [{ id: "e1" }], error: null }, // reverseEdge: mutual
-    { error: null },
     { error: null },
     { error: null },
     { error: null }
@@ -245,31 +198,7 @@ test("remove: public+private mutual — dissolves both edges (either private tri
 
   const { POST } = loadRoute(src.remove, {
     db,
-    circleDb: makeCircleDb({
-      getAccountTypeForName: async (_db, name) => name === "Bob" ? "private" : "public",
-    }),
-  });
-
-  const res = await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
-  assert.equal(body(res).ok, true);
-
-  const deletes = db._calls.filter(
-    (c) => c.table === "circle_memberships" && hasOp(c, "delete")
-  );
-  assert.equal(deletes.length, 2, "private+public mutual should dissolve both edges");
-});
-
-test("remove: non-mutual public+public — reverse edge is NOT deleted", async () => {
-  const db = spyDb(
-    { data: [], error: null }, // reverseEdge: NOT mutual
-    { error: null },
-    { error: null },
-    { error: null }
-  );
-
-  const { POST } = loadRoute(src.remove, {
-    db,
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
   });
 
   await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -284,12 +213,11 @@ test("remove: membership does not exist — returns ok, does not crash", async (
   // delete matches 0 rows but returns no error
   const { POST } = loadRoute(src.remove, {
     db: mockDb(
-      { data: [], error: null }, // reverseEdge: not mutual
-      { error: null },           // delete (0 rows matched, still ok)
-      { error: null },
-      { error: null }
+      { error: null }, // delete (0 rows matched, still ok)
+      { error: null }, // cleanup 1
+      { error: null }  // cleanup 2
     ),
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
   });
 
   const res = await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -301,12 +229,11 @@ test("remove: does not invoke notification functions", async () => {
 
   const { POST } = loadRoute(src.remove, {
     db: mockDb(
-      { data: [], error: null },
       { error: null },
       { error: null },
       { error: null }
     ),
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
     notifications: notif,
   });
 
@@ -316,15 +243,14 @@ test("remove: does not invoke notification functions", async () => {
 
 test("remove: cleanup targets only accepted circle_requests, not pending ones", async () => {
   const db = spyDb(
-    { data: [], error: null }, // reverseEdge
-    { error: null },           // main delete
-    { error: null },           // cleanup 1
-    { error: null }            // cleanup 2
+    { error: null }, // main delete
+    { error: null }, // cleanup 1
+    { error: null }  // cleanup 2
   );
 
   const { POST } = loadRoute(src.remove, {
     db,
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
   });
 
   await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -346,10 +272,9 @@ test("remove: cleanup targets only accepted circle_requests, not pending ones", 
 test("remove: db error on main delete returns 500", async () => {
   const { POST } = loadRoute(src.remove, {
     db: mockDb(
-      { data: [], error: null },
       { error: { message: "write failed", code: "500" } }
     ),
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
   });
 
   const res = await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -469,7 +394,6 @@ test("cancel: no existing request — pre-check returns null, delete still runs 
 
 test("remove: cleanup UPDATE sets status=rejected on circle_requests", async () => {
   const db = spyDb(
-    { data: [], error: null },
     { error: null },
     { error: null },
     { error: null }
@@ -477,7 +401,7 @@ test("remove: cleanup UPDATE sets status=rejected on circle_requests", async () 
 
   const { POST } = loadRoute(src.remove, {
     db,
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "public" }),
+    circleDb: makeCircleDb(),
   });
 
   await POST(makeReq({ myName: "Alice", otherName: "Bob" }));
@@ -495,9 +419,8 @@ test("remove: cleanup UPDATE sets status=rejected on circle_requests", async () 
   }
 });
 
-test("remove: private mutual cleanup covers both request directions", async () => {
+test("remove: cleanup covers both request directions", async () => {
   const db = spyDb(
-    { data: [{ id: "e1" }], error: null }, // mutual
     { error: null },
     { error: null },
     { error: null },
@@ -506,7 +429,7 @@ test("remove: private mutual cleanup covers both request directions", async () =
 
   const { POST } = loadRoute(src.remove, {
     db,
-    circleDb: makeCircleDb({ getAccountTypeForName: async () => "private" }),
+    circleDb: makeCircleDb(),
   });
 
   await POST(makeReq({ myName: "Alice", otherName: "Bob" }));

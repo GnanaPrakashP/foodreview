@@ -1,4 +1,4 @@
-export type PersonStatus = "mutual" | "one_way" | "sent" | "none";
+export type PersonStatus = "one_way" | "sent" | "none";
 
 export type CircleActionResponse = {
   state?: string;
@@ -18,26 +18,23 @@ export function removeName(prev: ReadonlySet<string>, name: string): Set<string>
 export function personStatusFor(
   name: string,
   state: {
-    mutualMembers: ReadonlySet<string>;
     circleMembers: ReadonlySet<string>;
     pendingSent: ReadonlySet<string>;
   }
 ): PersonStatus {
-  if (state.mutualMembers.has(name)) return "mutual";
   if (state.circleMembers.has(name)) return "one_way";
   if (state.pendingSent.has(name)) return "sent";
   return "none";
 }
 
 export function personButtonLabel(status: PersonStatus): string {
-  if (status === "mutual") return "Mutual Circle";
   if (status === "one_way") return "In Circle";
   if (status === "sent") return "Requested";
-  return "Add";
+  return "Request";
 }
 
 export function isAcceptedCircleResponse(data: CircleActionResponse): boolean {
-  return data.state === "CIRCLE_MUTUAL" || data.status === "accepted";
+  return data.state === "CIRCLE_ONE_WAY" || data.status === "accepted" || data.status === "one_way";
 }
 
 export function isOneWayCircleResponse(data: CircleActionResponse): boolean {

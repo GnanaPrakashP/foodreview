@@ -71,8 +71,8 @@ export default function CircleFeedClient({
     );
   }
 
-  // Circle is empty
-  if (circle.length === 0) {
+  // Circle is empty and no own posts to show
+  if (circle.length === 0 && circleReviews.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
         <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>

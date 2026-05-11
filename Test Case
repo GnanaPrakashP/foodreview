@@ -1,0 +1,29 @@
+Test Cases
+
+1) Public/Private User A to Public User B
+    If the button is 'Request'
+        Clicked 'Request' changes to 'In Circle'
+        Notification is sent to User B
+
+    Else ( button should be 'In Circle' )
+        Clicked pop up comes for confirmation
+            If confirmed
+                'In Circle' changes to 'Request'
+
+2) Public/Private User A to Private User B
+    If the button is 'Request'
+        Clicked 'Request' changes to 'Requested'
+        Notification is sent to User B to either accept or reject
+        If User B accepted
+            Notification is sent to User A
+            For User A 'Requested' changes to 'In Circle'
+
+        Else ( didn't accept )
+            'Requested' changes to 'Request'
+
+    Else ( button should be 'In Circle' )
+        Clicked pop up comes for confirmation
+            If confirmed
+                'In Circle' changes to 'Request'
+
+If User A want to remove someone from his circle then 'A' could do it via circle page.

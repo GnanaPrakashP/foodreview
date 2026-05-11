@@ -35,13 +35,27 @@ test("dishes page computes dish stats from public filtered reviews only", () => 
   assert.match(src, /<DishSearch reviews=\{slim\} popularDishes=\{popularDishes\}/);
 });
 
-test("Circle destructive actions ask for confirmation before mutating state", () => {
+test("Circle destructive actions use in-app confirmation modal before mutating state", () => {
   const profile = source("components/people/FriendProfileClient.tsx");
   const people = source("components/people/PeopleTab.tsx");
 
-  assert.match(profile, /function cancelRequest\(\)[\s\S]*window\.confirm\(`Cancel your Circle request to \$\{name\}\?`\)/);
-  assert.match(profile, /function removeFromCircle\(\)[\s\S]*window\.confirm\(`Remove \$\{name\} from your Circle\?`\)/);
-  assert.match(people, /function cancelRequest\(receiverName: string\)[\s\S]*window\.confirm\(`Cancel your Circle request to \$\{receiverName\}\?`\)/);
+  assert.match(profile, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
+  assert.match(profile, /open=\{confirmAction !== null\}/);
+  assert.match(profile, /title=\{confirmAction === "leave_circle" \? "Leave circle\?" : "Cancel request\?"\}/);
+  assert.match(profile, /Do you no longer want to be in \$\{name\}'s circle\?/);
+  assert.match(profile, /Cancel request to join \$\{name\}'s circle\?/);
+  assert.match(people, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
+  assert.match(people, /open=\{Boolean\(confirmCancelName\)\}/);
+  assert.match(people, /open=\{Boolean\(confirmLeaveName\)\}/);
+});
+
+test("people profile shows incoming request card with name and accept/reject actions", () => {
+  const profile = source("components/people/FriendProfileClient.tsx");
+
+  assert.match(profile, /hasIncomingRequest && circleStatus !== "one_way"/);
+  assert.match(profile, /\{name\} requested to join your circle\./);
+  assert.match(profile, /onClick=\{\(\) => respondToIncoming\("reject"\)\}/);
+  assert.match(profile, /onClick=\{\(\) => respondToIncoming\("accept"\)\}/);
 });
 
 test("trending restaurant detail derives post ids only from visible display reviews", () => {
@@ -59,6 +73,9 @@ test("people profile page filters owner reviews before passing them to the clien
   assert.match(src, /hasCircleAccess\(supabase, name, myName\)/);
   assert.match(src, /const visibleReviews = filterProfileReviews\(rawReviews, name,/);
   assert.match(src, /reviews=\{visibleReviews\}/);
+  assert.match(src, /const hasAnyCirclePosts =[\s\S]*normalizeVisibility\(review\.visibility\) === "circle"/);
+  assert.match(src, /const hasHiddenCirclePosts =[\s\S]*myName !== name[\s\S]*!isCircleMember[\s\S]*hasAnyCirclePosts/);
+  assert.doesNotMatch(src, /accountType === "private"\s*&&[\s\S]*hasHiddenCirclePosts/);
 });
 
 test("people restaurant detail filters profile reviews before selecting restaurant posts", () => {

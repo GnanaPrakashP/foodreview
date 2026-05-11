@@ -101,7 +101,7 @@ test("accountTypeLabel: correct display strings", () => {
 
 test("relationshipLabel: correct display strings", () => {
   assert.equal(circle.relationshipLabel("PENDING"), "Requested");
-  assert.equal(circle.relationshipLabel("CIRCLE_MUTUAL"), "Mutual Circle");
+  assert.equal(circle.relationshipLabel("CIRCLE_MUTUAL"), "In Circle");
   assert.equal(circle.relationshipLabel("CIRCLE_ONE_WAY"), "In Circle");
   assert.equal(circle.relationshipLabel("NONE"), "Not in Circle");
 });

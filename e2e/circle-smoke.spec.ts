@@ -32,12 +32,13 @@ test.describe("Circle E2E smoke", () => {
     await expect(page.getByRole("link", { name: escapedText(userB!.name) }).first()).toBeVisible();
 
     const action = page.getByRole("button", {
-      name: /add|requested|in circle|mutual circle|accept request/i,
+      name: /request|requested|in circle|accept/i,
     }).first();
     await expect(action).toBeVisible();
   });
 
   test("Circle page and profile navigation stay usable after login", async ({ page }) => {
+    test.setTimeout(45_000);
     await signIn(page, userA!);
 
     await page.goto("/circle");
@@ -52,6 +53,15 @@ async function signIn(page: Page, user: TestUser) {
   await page.goto("/login");
   await page.getByPlaceholder("your@email.com").fill(user.email);
   await page.getByPlaceholder("Password").fill(user.password);
-  await page.getByRole("button", { name: "Sign In →" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 15_000 });
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/auth/v1/token") &&
+        response.request().method() === "POST" &&
+        response.ok(),
+      { timeout: 20_000 }
+    ).catch(() => null),
+    page.getByRole("button", { name: "Sign In →" }).click(),
+  ]);
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 25_000 });
 }

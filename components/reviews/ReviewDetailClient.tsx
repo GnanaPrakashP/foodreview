@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 
 type Props = {
   review: Review;
@@ -51,6 +52,7 @@ export default function ReviewDetailClient({
   const [deletingReview, setDeletingReview] = useState(false);
   const [deleteReviewError, setDeleteReviewError] = useState("");
   const [showPostActions, setShowPostActions] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -80,10 +82,6 @@ export default function ReviewDetailClient({
 
   async function deleteReview() {
     if (!canDeleteReview || deletingReview) return;
-    setShowPostActions(false);
-    const ok = window.confirm("Delete this post permanently?");
-    if (!ok) return;
-
     setDeletingReview(true);
     setDeleteReviewError("");
     const response = await fetch(`/api/reviews/${encodeURIComponent(review.id)}`, {
@@ -98,6 +96,12 @@ export default function ReviewDetailClient({
 
     router.replace("/me");
     router.refresh();
+  }
+
+  function requestDeleteReview() {
+    if (!canDeleteReview || deletingReview) return;
+    setShowPostActions(false);
+    setShowDeleteConfirm(true);
   }
 
   useEffect(() => {
@@ -308,7 +312,7 @@ export default function ReviewDetailClient({
                 >
                   {canDeleteReview ? (
                     <button
-                      onClick={deleteReview}
+                      onClick={requestDeleteReview}
                       disabled={deletingReview}
                       style={{ width: "100%", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "9px", padding: "9px 10px", color: "#EF4444", fontSize: "13px", fontWeight: 700, cursor: deletingReview ? "default" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: deletingReview ? 0.7 : 1, textAlign: "left" }}
                     >
@@ -498,6 +502,20 @@ export default function ReviewDetailClient({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Delete post?"
+        message="Delete this post permanently?"
+        confirmText={deletingReview ? "Deleting..." : "Delete"}
+        confirmVariant="danger"
+        disabled={deletingReview}
+        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={async () => {
+          setShowDeleteConfirm(false);
+          await deleteReview();
+        }}
+      />
 
     </main>
   );

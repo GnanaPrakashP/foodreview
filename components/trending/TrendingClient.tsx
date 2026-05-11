@@ -1,29 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import type { TrendingRestaurant, TrendingWindow, CircleReviewItem, TrendingPeopleCounts } from "@/lib/trending";
+import { haversineKm } from "@/lib/trending";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 
+// ── Location helpers ────────────────────────────────────────────────────────
+
+const LS_LAT = "trending_loc_lat";
+const LS_LNG = "trending_loc_lng";
+const LS_LABEL = "trending_loc_label";
+const LS_ASKED = "trending_loc_asked";
+
+type UserLocation = { lat: number; lng: number; label: string };
+
+function loadSavedLocation(): UserLocation | null {
+  try {
+    const lat = parseFloat(localStorage.getItem(LS_LAT) ?? "");
+    const lng = parseFloat(localStorage.getItem(LS_LNG) ?? "");
+    const label = localStorage.getItem(LS_LABEL) ?? "";
+    if (!isNaN(lat) && !isNaN(lng) && label) return { lat, lng, label };
+  } catch { /* SSR or blocked */ }
+  return null;
+}
+
+function saveLocation(loc: UserLocation) {
+  try {
+    localStorage.setItem(LS_LAT, String(loc.lat));
+    localStorage.setItem(LS_LNG, String(loc.lng));
+    localStorage.setItem(LS_LABEL, loc.label);
+  } catch { /* blocked */ }
+}
+
+function sortByDistance(list: TrendingRestaurant[], loc: UserLocation | null): TrendingRestaurant[] {
+  if (!loc) return list;
+  return [...list].sort((a, b) => {
+    const dA = a.lat != null && a.lng != null ? haversineKm(loc.lat, loc.lng, a.lat, a.lng) : Infinity;
+    const dB = b.lat != null && b.lng != null ? haversineKm(loc.lat, loc.lng, b.lat, b.lng) : Infinity;
+    return dA - dB;
+  });
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-
-function heatStyle(h: number) {
-  if (h >= 90) return { bg: "#FF4D0022", border: "#FF4D0044", dot: "#FF4D00", label: "On Fire" };
-  if (h >= 75) return { bg: "#F59E0B22", border: "#F59E0B44", dot: "#F59E0B", label: "Hot" };
-  if (h >= 60) return { bg: "#34D39922", border: "#34D39944", dot: "#34D399", label: "Warm" };
-  return { bg: "var(--surface)", border: "var(--border)", dot: "var(--muted)", label: "Cooling" };
-}
-
-function computeHeat(score: number, maxScore: number): number {
-  if (maxScore === 0) return 50;
-  return Math.min(100, Math.round((score / maxScore) * 100));
-}
 
 function starRating(avgScore: number): number {
   return Math.round((avgScore / 2) * 10) / 10;
 }
-
 
 // ── Small components ────────────────────────────────────────────────────────
 
@@ -37,17 +60,6 @@ function Stars({ rating, size = 10 }: { rating: number; size?: number }) {
         </svg>
       ))}
       <span style={{ fontSize: size, color: "var(--muted)", marginLeft: 3 }}>{rating.toFixed(1)}</span>
-    </div>
-  );
-}
-
-function HeatBar({ value }: { value: number }) {
-  return (
-    <div style={{ height: 3, background: "var(--surface)", borderRadius: 99, flex: 1, overflow: "hidden" }}>
-      <div style={{
-        height: "100%", borderRadius: 99, width: `${value}%`,
-        background: value >= 90 ? "linear-gradient(90deg,#FF4D00,#F59E0B)" : value >= 75 ? "#F59E0B" : value >= 60 ? "#34D399" : "var(--border)",
-      }} />
     </div>
   );
 }
@@ -75,6 +87,178 @@ function CircleBadge({ reviews }: { reviews: CircleReviewItem[] }) {
           : `${reviews.length} from your Circle`}
       </span>
     </div>
+  );
+}
+
+// ── Location Picker Sheet ────────────────────────────────────────────────────
+
+type AutocompleteItem = { placeId: string; text: string; mainText: string; secondaryText: string };
+
+function LocationPickerSheet({
+  onClose,
+  onSelect,
+}: {
+  onClose: () => void;
+  onSelect: (loc: UserLocation) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<AutocompleteItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsError, setGpsError] = useState("");
+  const sessionToken = useRef(crypto.randomUUID());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!query.trim()) { setSuggestions([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ input: query.trim(), sessionToken: sessionToken.current });
+        const res = await fetch(`/api/places/autocomplete?${params}`);
+        const json = await res.json();
+        setSuggestions(json.suggestions ?? []);
+      } catch { setSuggestions([]); }
+      finally { setLoading(false); }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
+
+  async function handleSuggestion(item: AutocompleteItem) {
+    try {
+      const params = new URLSearchParams({ placeId: item.placeId, sessionToken: sessionToken.current });
+      const res = await fetch(`/api/places/details?${params}`);
+      const json = await res.json();
+      const details = json.details;
+      if (details?.latitude != null && details?.longitude != null) {
+        const label = item.mainText || item.text;
+        onSelect({ lat: details.latitude, lng: details.longitude, label });
+      }
+    } catch { /* ignore */ }
+    sessionToken.current = crypto.randomUUID();
+  }
+
+  async function resolveLabel(lat: number, lng: number): Promise<string> {
+    try {
+      const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`);
+      const json = await res.json();
+      if (json.label) return json.label as string;
+    } catch { /* ignore */ }
+    return "Current Location";
+  }
+
+  function handleUseCurrentLocation() {
+    if (!navigator.geolocation) {
+      setGpsError("Geolocation is not supported by your browser.");
+      return;
+    }
+    setGpsLoading(true);
+    setGpsError("");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try { localStorage.setItem(LS_ASKED, "1"); } catch { /* blocked */ }
+        const { latitude: lat, longitude: lng } = pos.coords;
+        const label = await resolveLabel(lat, lng);
+        setGpsLoading(false);
+        onSelect({ lat, lng, label });
+      },
+      () => {
+        setGpsLoading(false);
+        setGpsError("Location access was denied. Please allow it in your browser settings.");
+      },
+      { timeout: 10000 },
+    );
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 60 }}
+      />
+
+      {/* Sheet */}
+      <div style={{
+        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
+        width: "100%", maxWidth: 480,
+        background: "var(--card)", borderRadius: "20px 20px 0 0",
+        zIndex: 61, padding: "16px 20px 32px",
+        boxShadow: "0 -4px 40px rgba(0,0,0,0.4)",
+      }}>
+        {/* Handle */}
+        <div style={{ width: 36, height: 4, borderRadius: 99, background: "var(--border)", margin: "0 auto 20px" }} />
+
+        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: "var(--cream)", marginBottom: 18 }}>
+          Set Location
+        </div>
+
+        {/* Use current location */}
+        <button
+          onClick={handleUseCurrentLocation}
+          disabled={gpsLoading}
+          style={{
+            width: "100%", padding: "13px 16px", borderRadius: 12,
+            background: "var(--surface)", border: "1px solid var(--border)",
+            color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 14,
+            display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+            opacity: gpsLoading ? 0.6 : 1,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>📍</span>
+          <span style={{ fontWeight: 500 }}>{gpsLoading ? "Getting location…" : "Use my current location"}</span>
+        </button>
+
+        {gpsError && (
+          <p style={{ fontSize: 12, color: "#F87171", marginTop: 8, textAlign: "center" }}>{gpsError}</p>
+        )}
+
+        {/* Divider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0" }}>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        </div>
+
+        {/* Search input */}
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 14px", display: "flex", gap: 9, alignItems: "center" }}>
+          <span style={{ color: "var(--muted)", fontSize: 15 }}>⌕</span>
+          <input
+            autoFocus
+            placeholder="Search area or city…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}
+          />
+          {loading && <span style={{ fontSize: 11, color: "var(--muted)" }}>…</span>}
+          {query && !loading && (
+            <button onClick={() => { setQuery(""); setSuggestions([]); }} style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>✕</button>
+          )}
+        </div>
+
+        {/* Suggestions */}
+        {suggestions.length > 0 && (
+          <div style={{ marginTop: 8, borderRadius: 10, border: "1px solid var(--border)", overflow: "hidden" }}>
+            {suggestions.map((s, i) => (
+              <button
+                key={s.placeId}
+                onClick={() => handleSuggestion(s)}
+                style={{
+                  width: "100%", padding: "11px 14px", textAlign: "left", cursor: "pointer",
+                  background: "var(--surface)", border: "none",
+                  borderTop: i > 0 ? "1px solid var(--border)" : "none",
+                  display: "flex", flexDirection: "column", gap: 2,
+                }}
+              >
+                <span style={{ fontSize: 13, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>{s.mainText}</span>
+                {s.secondaryText && <span style={{ fontSize: 11, color: "var(--muted)" }}>{s.secondaryText}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -301,8 +485,6 @@ function CirclePicksTab({
   );
 }
 
-// ── Detail drawer ─────────────────────────────────────────────────────────────
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -335,6 +517,50 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
     restaurants: "week",
     circle: "week",
   });
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+
+  // Load saved location and optionally trigger one-time GPS prompt
+  useEffect(() => {
+    const saved = loadSavedLocation();
+    if (saved) {
+      setUserLocation(saved);
+      return;
+    }
+    // First visit — ask browser once
+    try {
+      const alreadyAsked = localStorage.getItem(LS_ASKED);
+      if (!alreadyAsked && navigator.geolocation) {
+        localStorage.setItem(LS_ASKED, "1");
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const { latitude: lat, longitude: lng } = pos.coords;
+            try {
+              const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`);
+              const json = await res.json();
+              const label: string = json.label ?? "Current Location";
+              const loc: UserLocation = { lat, lng, label };
+              setUserLocation(loc);
+              saveLocation(loc);
+            } catch {
+              const loc: UserLocation = { lat, lng, label: "Current Location" };
+              setUserLocation(loc);
+              saveLocation(loc);
+            }
+          },
+          () => { /* denied — don't ask again */ },
+          { timeout: 10000 },
+        );
+      }
+    } catch { /* SSR or blocked */ }
+  }, []);
+
+  function handleLocationSelect(loc: UserLocation) {
+    setUserLocation(loc);
+    saveLocation(loc);
+    setShowLocationPicker(false);
+  }
+
   const activeTimeFilter = timeFilters[tab];
   const activePeopleCounts = tab === "restaurants" ? peopleCounts : circlePeopleCounts;
   const activePeopleCount = activePeopleCounts[activeTimeFilter];
@@ -342,6 +568,18 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
   function updateTimeFilter(timeFilter: TrendingWindow) {
     setTimeFilters((prev) => ({ ...prev, [tab]: timeFilter }));
   }
+
+  // Sort all six lists by distance whenever location changes
+  const sortedWeek      = useMemo(() => sortByDistance(week,        userLocation), [week,        userLocation]);
+  const sortedMonth     = useMemo(() => sortByDistance(month,       userLocation), [month,       userLocation]);
+  const sortedAlltime   = useMemo(() => sortByDistance(alltime,     userLocation), [alltime,     userLocation]);
+  const sortedCircleWk  = useMemo(() => sortByDistance(circleWeek,  userLocation), [circleWeek,  userLocation]);
+  const sortedCircleMo  = useMemo(() => sortByDistance(circleMonth, userLocation), [circleMonth, userLocation]);
+  const sortedCircleAll = useMemo(() => sortByDistance(circleAlltime,userLocation),[circleAlltime,userLocation]);
+
+  const locationLabel = userLocation
+    ? (userLocation.label.length > 18 ? userLocation.label.slice(0, 16) + "…" : userLocation.label)
+    : "Set location";
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", fontFamily: "'DM Sans',sans-serif", color: "var(--cream)" }}>
@@ -358,6 +596,23 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
             )}
           </div>
 
+          {/* Location button */}
+          <button
+            onClick={() => setShowLocationPicker(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "6px 11px", borderRadius: 99,
+              background: userLocation ? "#F59E0B18" : "var(--surface)",
+              border: `1px solid ${userLocation ? "#F59E0B55" : "var(--border)"}`,
+              color: userLocation ? "#F59E0B" : "var(--muted)",
+              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 500,
+              cursor: "pointer", marginTop: 4, flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 13 }}>📍</span>
+            <span>{locationLabel}</span>
+            <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+          </button>
         </div>
 
         {/* Tab bar */}
@@ -380,9 +635,9 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
       <div style={{ paddingBottom: 100 }}>
         {tab === "restaurants" && (
           <RestaurantsTab
-            week={week}
-            month={month}
-            alltime={alltime}
+            week={sortedWeek}
+            month={sortedMonth}
+            alltime={sortedAlltime}
             circleReviews={circleReviews}
             timeFilter={timeFilters.restaurants}
             onTimeFilterChange={updateTimeFilter}
@@ -390,9 +645,9 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
         )}
         {tab === "circle" && (
           <CirclePicksTab
-            week={circleWeek}
-            month={circleMonth}
-            alltime={circleAlltime}
+            week={sortedCircleWk}
+            month={sortedCircleMo}
+            alltime={sortedCircleAll}
             circleReviews={circleReviews}
             timeFilter={timeFilters.circle}
             onTimeFilterChange={updateTimeFilter}
@@ -400,6 +655,12 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
         )}
       </div>
 
+      {showLocationPicker && (
+        <LocationPickerSheet
+          onClose={() => setShowLocationPicker(false)}
+          onSelect={handleLocationSelect}
+        />
+      )}
     </div>
   );
 }

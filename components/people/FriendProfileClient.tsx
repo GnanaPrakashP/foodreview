@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AccountType, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
-import { ArrowLeft, Lock } from "lucide-react";
+import { normalizeVisibility } from "@/lib/visibility";
+import ConfirmModal from "@/components/ui/ConfirmModal";
+import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -47,7 +49,31 @@ function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
     .sort((a, b) => b.score10 - a.score10);
 }
 
-type CircleStatus = "mutual" | "one_way" | "sent" | "incoming" | "none";
+type CircleStatus = "one_way" | "sent" | "none";
+
+type CircleStatusPayload = {
+  members?: string[];
+  pendingSent?: string[];
+  pendingIncoming?: string[];
+  circleCount?: number;
+  displayMembers?: string[];
+};
+
+async function fetchCircleStatusPayload(personName: string): Promise<CircleStatusPayload> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 7_000);
+  try {
+    const response = await fetch(`/api/circle/status?name=${encodeURIComponent(personName)}`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) return {};
+    return await response.json();
+  } catch {
+    return {};
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 
 /* ─── main component ──────────────────────────────── */
 
@@ -63,11 +89,21 @@ export default function FriendProfileClient({
   hasHiddenCirclePosts?: boolean;
 }) {
   const router = useRouter();
+  const hasVisibleCirclePosts = useMemo(
+    () => reviews.some((review) => normalizeVisibility(review.visibility) === "circle"),
+    [reviews]
+  );
   const [myName, setMyName] = useState("");
-  const [circleStatus, setCircleStatus] = useState<CircleStatus>("none");
+  const [circleStatus, setCircleStatus] = useState<CircleStatus>(() => hasVisibleCirclePosts ? "one_way" : "none");
   const [theirCircleCount, setTheirCircleCount] = useState(0);
+  const [hasIncomingRequest, setHasIncomingRequest] = useState(false);
   const [commonRestaurantCount, setCommonRestaurantCount] = useState<number | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"cancel_request" | "leave_circle" | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [respondBusy, setRespondBusy] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const loadSeqRef = useRef(0);
+  const relationshipReady = mounted;
 
   const isOwnProfile = myName === name;
   const isPrivateLocked = false;
@@ -93,34 +129,46 @@ export default function FriendProfileClient({
 
   const loadCircleStatus = useCallback((me: string) => {
     if (!me) return Promise.resolve();
-    return Promise.all([
-      fetch(`/api/circle/status?name=${encodeURIComponent(me)}`).then((r) => r.json()),
-      fetch(`/api/circle/status?name=${encodeURIComponent(name)}`).then((r) => r.json()),
-    ]).then(([myStatus, theirStatus]) => {
+    const seq = ++loadSeqRef.current;
+    const myStatusPromise = fetchCircleStatusPayload(me).then((myStatus) => {
+      if (seq !== loadSeqRef.current) return;
       const members: string[] = myStatus.members ?? [];
-      const mutualMembers: string[] = myStatus.mutualMembers ?? [];
       const pendingSent: string[] = myStatus.pendingSent ?? [];
       const pendingIncoming: string[] = myStatus.pendingIncoming ?? [];
 
-      if (mutualMembers.includes(name)) setCircleStatus("mutual");
-      else if (members.includes(name)) setCircleStatus("one_way");
+      if (members.includes(name)) setCircleStatus("one_way");
       else if (pendingSent.includes(name)) setCircleStatus("sent");
-      else if (pendingIncoming.includes(name)) setCircleStatus("incoming");
       else setCircleStatus("none");
+      setHasIncomingRequest(pendingIncoming.includes(name));
+    });
 
+    fetchCircleStatusPayload(name).then((theirStatus) => {
+      if (seq !== loadSeqRef.current) return;
       setTheirCircleCount(theirStatus.circleCount ?? (theirStatus.displayMembers ?? theirStatus.members ?? []).length);
-    }).catch(() => {});
+    });
+
+    return myStatusPromise;
   }, [name]);
 
   useEffect(() => {
+    // Reset derived relationship state immediately when profile target changes.
+    setCircleStatus(hasVisibleCirclePosts ? "one_way" : "none");
+    setTheirCircleCount(0);
+    setHasIncomingRequest(false);
+    setCommonRestaurantCount(null);
+    setMounted(false);
+
     const me = localStorage.getItem("fc_my_name") ?? "";
     setMyName(me);
     if (!me) { setMounted(true); return; }
+
+    let active = true;
 
     if (me !== name) {
       fetch(`/api/users/${encodeURIComponent(name)}/common-restaurants`)
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
+          if (!active) return;
           if (typeof data?.commonRestaurantCount === "number") {
             setCommonRestaurantCount(data.commonRestaurantCount);
           }
@@ -128,8 +176,15 @@ export default function FriendProfileClient({
         .catch(() => {});
     }
 
-    loadCircleStatus(me).finally(() => setMounted(true));
-  }, [loadCircleStatus]);
+    loadCircleStatus(me).finally(() => {
+      if (active) setMounted(true);
+    });
+
+    return () => {
+      active = false;
+      loadSeqRef.current += 1;
+    };
+  }, [hasVisibleCirclePosts, loadCircleStatus]);
 
   async function refreshAfterCircleChange() {
     await loadCircleStatus(myName);
@@ -150,10 +205,7 @@ export default function FriendProfileClient({
       setCircleStatus(previousStatus);
       return;
     }
-    if (data.state === "CIRCLE_MUTUAL" || data.status === "accepted") {
-      setCircleStatus("mutual");
-      setTheirCircleCount((c) => c + 1);
-    } else if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way") {
+    if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way" || data.status === "accepted") {
       setCircleStatus("one_way");
       if (accountType === "public") setTheirCircleCount((c) => c + 1);
     } else {
@@ -163,40 +215,73 @@ export default function FriendProfileClient({
   }
 
   async function cancelRequest() {
-    if (!myName) return;
-    const ok = window.confirm(`Cancel your Circle request to ${name}?`);
-    if (!ok) return;
+    if (!myName || actionBusy) return;
+    setActionBusy(true);
     const previousStatus = circleStatus;
     setCircleStatus("none");
-    const res = await fetch("/api/circle/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ senderName: myName, receiverName: name }),
-    });
-    if (!res.ok) {
-      setCircleStatus(previousStatus);
-      return;
+    try {
+      const res = await fetch("/api/circle/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderName: myName, receiverName: name }),
+      });
+      if (!res.ok) {
+        setCircleStatus(previousStatus);
+        return;
+      }
+      await refreshAfterCircleChange();
+    } finally {
+      setActionBusy(false);
     }
-    await refreshAfterCircleChange();
   }
 
   async function removeFromCircle() {
-    if (!myName) return;
-    const ok = window.confirm(`Remove ${name} from your Circle?`);
-    if (!ok) return;
+    if (!myName || actionBusy) return;
+    setActionBusy(true);
     const previousStatus = circleStatus;
+    const previousCount = theirCircleCount;
     setCircleStatus("none");
     setTheirCircleCount((c) => Math.max(0, c - 1));
-    const res = await fetch("/api/circle/remove", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ myName, otherName: name }),
-    });
-    if (!res.ok) {
-      setCircleStatus(previousStatus);
-      return;
+    try {
+      const res = await fetch("/api/circle/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ myName, otherName: name }),
+      });
+      if (!res.ok) {
+        setCircleStatus(previousStatus);
+        setTheirCircleCount(previousCount);
+        return;
+      }
+      await refreshAfterCircleChange();
+    } finally {
+      setActionBusy(false);
     }
-    await refreshAfterCircleChange();
+  }
+
+  async function respondToIncoming(action: "accept" | "reject") {
+    if (!myName || respondBusy) return;
+    setRespondBusy(true);
+    const prevHasIncoming = hasIncomingRequest;
+    const prevStatus = circleStatus;
+    setHasIncomingRequest(false);
+    if (action === "accept") setCircleStatus("one_way");
+
+    try {
+      const res = await fetch("/api/circle/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderName: name, action }),
+      });
+      if (!res.ok) {
+        setHasIncomingRequest(prevHasIncoming);
+        setCircleStatus(prevStatus);
+        return;
+      }
+      await refreshAfterCircleChange();
+    } finally {
+      setRespondBusy(false);
+    }
   }
 
   return (
@@ -218,13 +303,19 @@ export default function FriendProfileClient({
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{name}</p>
-              {mounted && !isOwnProfile && commonRestaurantCount !== null && (circleStatus === "one_way" || circleStatus === "mutual") && (
+              {!relationshipReady && !isOwnProfile && (
+                <span
+                  aria-hidden
+                  style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", background: "var(--surface)", borderRadius: "999px", width: "48px", height: "22px", opacity: 0.55 }}
+                />
+              )}
+              {relationshipReady && !isOwnProfile && commonRestaurantCount !== null && circleStatus === "one_way" && (
                 <span
                   aria-label={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
                   title={`${commonRestaurantCount} common restaurant${commonRestaurantCount !== 1 ? "s" : ""}`}
                   style={{ display: "inline-flex", alignItems: "center", gap: "3px", border: "1px solid rgba(240,96,48,0.28)", background: "rgba(240,96,48,0.12)", borderRadius: "999px", padding: "2px 7px", fontSize: "12px", lineHeight: 1.35, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}
                 >
-                  {commonRestaurantCount} 🧑‍🍳
+                  {commonRestaurantCount} <ChefHat size={12} strokeWidth={2.2} />
                 </span>
               )}
             </div>
@@ -258,7 +349,9 @@ export default function FriendProfileClient({
           ) : (
             <Link href={`/people/${encodeURIComponent(name)}/circle`} style={{ textDecoration: "none" }}>
               <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center", cursor: "pointer" }}>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "24px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>{theirCircleCount}</div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "24px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
+                  {relationshipReady ? theirCircleCount : "—"}
+                </div>
                 <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>Circle</div>
               </div>
             </Link>
@@ -267,27 +360,48 @@ export default function FriendProfileClient({
       </div>
 
       {/* ── Circle action button ── */}
-      {mounted && !isOwnProfile && (
+      {!isOwnProfile && (
         <div style={{ padding: "0 20px 20px" }}>
-          {(circleStatus === "mutual" || circleStatus === "one_way") && (
-            <button onClick={removeFromCircle} style={{ width: "100%", background: "transparent", border: "1.5px solid var(--border)", borderRadius: "14px", padding: "13px", color: "var(--muted)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
-              {circleStatus === "mutual" ? "Mutual Circle" : "In Circle"}
+          {!relationshipReady && (
+            <div style={{ width: "100%", height: "48px", background: "var(--card)", border: "1.5px solid var(--border)", borderRadius: "14px", opacity: 0.55 }} />
+          )}
+          {circleStatus === "one_way" && (
+            <button onClick={() => setConfirmAction("leave_circle")} style={{ width: "100%", background: "rgba(61,214,140,0.12)", border: "1.5px solid rgba(61,214,140,0.35)", borderRadius: "14px", padding: "13px", color: "var(--green)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+              In Circle
             </button>
           )}
-          {circleStatus === "sent" && (
-            <button onClick={cancelRequest} style={{ width: "100%", background: "transparent", border: "1.5px solid var(--border)", borderRadius: "14px", padding: "13px", color: "var(--muted)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+          {relationshipReady && circleStatus === "sent" && (
+            <button onClick={() => setConfirmAction("cancel_request")} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
               Requested
             </button>
           )}
-          {circleStatus === "incoming" && (
-            <button onClick={sendRequest} style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "13px", color: "white", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
-              Accept Request
+          {relationshipReady && circleStatus === "none" && (
+            <button onClick={sendRequest} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+              Request
             </button>
           )}
-          {circleStatus === "none" && (
-            <button onClick={sendRequest} style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "13px", color: "white", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
-              Add
-            </button>
+          {relationshipReady && hasIncomingRequest && circleStatus !== "one_way" && (
+            <div style={{ marginTop: "10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "12px" }}>
+              <p style={{ margin: 0, color: "var(--cream)", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
+                {name} requested to join your circle.
+              </p>
+              <div style={{ marginTop: "10px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <button
+                  onClick={() => respondToIncoming("reject")}
+                  disabled={respondBusy}
+                  style={{ width: "100%", background: "transparent", border: "1.5px solid var(--border)", borderRadius: "11px", padding: "10px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "12px", fontWeight: 700, cursor: respondBusy ? "default" : "pointer", opacity: respondBusy ? 0.65 : 1 }}
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={() => respondToIncoming("accept")}
+                  disabled={respondBusy}
+                  style={{ width: "100%", background: "var(--orange)", border: "1.5px solid var(--orange)", borderRadius: "11px", padding: "10px", color: "white", fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 700, cursor: respondBusy ? "default" : "pointer", opacity: respondBusy ? 0.75 : 1 }}
+                >
+                  Accept
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -300,15 +414,38 @@ export default function FriendProfileClient({
             </div>
             <div style={{ minWidth: 0 }}>
               <p style={{ margin: 0, color: "var(--cream)", fontSize: "13px", fontWeight: 700, fontFamily: "'Syne', sans-serif" }}>
-                Private account
+                Circle-only posts
               </p>
               <p style={{ margin: "3px 0 0", color: "var(--muted)", fontSize: "12px", lineHeight: 1.45, fontFamily: "'DM Sans', sans-serif" }}>
-                Some posts are visible only to their circle.
+                This account has circle-only posts. Only circle members can view them.
               </p>
             </div>
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={confirmAction !== null}
+        title={confirmAction === "leave_circle" ? "Leave circle?" : "Cancel request?"}
+        message={
+          confirmAction === "leave_circle"
+            ? `Do you no longer want to be in ${name}'s circle?`
+            : `Cancel request to join ${name}'s circle?`
+        }
+        confirmText={confirmAction === "leave_circle" ? "Leave" : "Cancel request"}
+        confirmVariant={confirmAction === "leave_circle" ? "danger" : "primary"}
+        disabled={actionBusy}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={async () => {
+          const action = confirmAction;
+          setConfirmAction(null);
+          if (action === "leave_circle") {
+            await removeFromCircle();
+            return;
+          }
+          await cancelRequest();
+        }}
+      />
 
       {/* ── Ranked List ── */}
       <div style={{ padding: "0 20px" }}>

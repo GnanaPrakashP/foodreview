@@ -34,38 +34,36 @@ const {
   isOneWayCircleResponse,
 } = loadPeopleCircleState();
 
-function state({ circle = [], mutual = [], sent = [] } = {}) {
+function state({ circle = [], sent = [] } = {}) {
   return {
     circleMembers: new Set(circle),
-    mutualMembers: new Set(mutual),
     pendingSent: new Set(sent),
   };
 }
 
 test("people circle buttons: status maps to the visible label", () => {
-  assert.equal(personButtonLabel("none"), "Add");
+  assert.equal(personButtonLabel("none"), "Request");
   assert.equal(personButtonLabel("sent"), "Requested");
   assert.equal(personButtonLabel("one_way"), "In Circle");
-  assert.equal(personButtonLabel("mutual"), "Mutual Circle");
 });
 
-test("people circle buttons: Add becomes Requested during optimistic send", () => {
+test("people circle buttons: Request becomes Requested during optimistic send", () => {
   const before = state();
-  assert.equal(personButtonLabel(personStatusFor("Bob", before)), "Add");
+  assert.equal(personButtonLabel(personStatusFor("Bob", before)), "Request");
 
   const after = state({ sent: Array.from(addName(before.pendingSent, "Bob")) });
   assert.equal(personButtonLabel(personStatusFor("Bob", after)), "Requested");
 });
 
-test("people circle buttons: failed send rolls Requested back to Add", () => {
+test("people circle buttons: failed send rolls Requested back to Request", () => {
   const pending = state({ sent: ["Bob"] });
   const after = state({ sent: Array.from(removeName(pending.pendingSent, "Bob")) });
 
   assert.equal(personButtonLabel(personStatusFor("Bob", pending)), "Requested");
-  assert.equal(personButtonLabel(personStatusFor("Bob", after)), "Add");
+  assert.equal(personButtonLabel(personStatusFor("Bob", after)), "Request");
 });
 
-test("people circle buttons: public-account success changes Add to In Circle", () => {
+test("people circle buttons: public-account success changes Request to In Circle", () => {
   const pending = state({ sent: ["Bob"] });
   const after = state({
     circle: Array.from(addName(new Set(), "Bob")),
@@ -76,46 +74,43 @@ test("people circle buttons: public-account success changes Add to In Circle", (
   assert.equal(personButtonLabel(personStatusFor("Bob", after)), "In Circle");
 });
 
-test("people circle buttons: accepted success changes Add to Mutual Circle", () => {
+test("people circle buttons: accepted alias maps to In Circle", () => {
   const pending = state({ sent: ["Bob"] });
-  const circleMembers = addName(new Set(), "Bob");
-  const mutualMembers = addName(new Set(), "Bob");
   const after = state({
-    circle: Array.from(circleMembers),
-    mutual: Array.from(mutualMembers),
+    circle: Array.from(addName(new Set(), "Bob")),
     sent: Array.from(removeName(pending.pendingSent, "Bob")),
   });
 
-  assert.equal(isAcceptedCircleResponse({ state: "CIRCLE_MUTUAL" }), true);
-  assert.equal(personButtonLabel(personStatusFor("Bob", after)), "Mutual Circle");
+  assert.equal(isAcceptedCircleResponse({ status: "accepted" }), true);
+  assert.equal(personButtonLabel(personStatusFor("Bob", after)), "In Circle");
 });
 
-test("people circle buttons: status priority prefers Mutual over In Circle over Requested", () => {
-  const allStates = state({ circle: ["Bob"], mutual: ["Bob"], sent: ["Bob"] });
-  assert.equal(personStatusFor("Bob", allStates), "mutual");
-  assert.equal(personButtonLabel(personStatusFor("Bob", allStates)), "Mutual Circle");
+test("people circle buttons: status priority prefers In Circle over Requested", () => {
+  const allStates = state({ circle: ["Bob"], sent: ["Bob"] });
+  assert.equal(personStatusFor("Bob", allStates), "one_way");
+  assert.equal(personButtonLabel(personStatusFor("Bob", allStates)), "In Circle");
 });
 
-test("people circle buttons: Requested cancel changes back to Add and failure restores Requested", () => {
+test("people circle buttons: Requested cancel changes back to Request and failure restores Requested", () => {
   const pending = state({ sent: ["Bob"] });
   const afterCancelClick = state({ sent: Array.from(removeName(pending.pendingSent, "Bob")) });
   const afterCancelFailure = state({ sent: Array.from(addName(afterCancelClick.pendingSent, "Bob")) });
 
-  assert.equal(personButtonLabel(personStatusFor("Bob", afterCancelClick)), "Add");
+  assert.equal(personButtonLabel(personStatusFor("Bob", afterCancelClick)), "Request");
   assert.equal(personButtonLabel(personStatusFor("Bob", afterCancelFailure)), "Requested");
 });
 
-test("people circle buttons: incoming accept changes sender to Mutual Circle", () => {
+test("people circle buttons: accepted request changes sender to In Circle", () => {
   const afterAccept = state({
     circle: Array.from(addName(new Set(), "Alice")),
-    mutual: Array.from(addName(new Set(), "Alice")),
   });
 
-  assert.equal(personButtonLabel(personStatusFor("Alice", afterAccept)), "Mutual Circle");
+  assert.equal(personButtonLabel(personStatusFor("Alice", afterAccept)), "In Circle");
 });
 
 test("people circle buttons: API response aliases are accepted", () => {
   assert.equal(isAcceptedCircleResponse({ status: "accepted" }), true);
+  assert.equal(isAcceptedCircleResponse({ state: "CIRCLE_ONE_WAY" }), true);
   assert.equal(isOneWayCircleResponse({ status: "one_way" }), true);
   assert.equal(isAcceptedCircleResponse({ status: "pending" }), false);
   assert.equal(isOneWayCircleResponse({ state: "PENDING" }), false);

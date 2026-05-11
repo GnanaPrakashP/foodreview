@@ -43,7 +43,7 @@ export default function CircleButton({ personName }: { personName: string }) {
         gap: "8px",
       }}
     >
-      {inCircle ? "In Circle" : "Add"}
+      {inCircle ? "In Circle" : "Request"}
     </button>
   );
 }

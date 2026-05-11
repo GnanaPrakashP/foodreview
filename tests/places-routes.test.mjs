@@ -18,6 +18,7 @@ function transpile(src) {
 const sources = {
   autocomplete: transpile(readFileSync(new URL("../app/api/places/autocomplete/route.ts", import.meta.url), "utf8")),
   details: transpile(readFileSync(new URL("../app/api/places/details/route.ts", import.meta.url), "utf8")),
+  "reverse-geocode": transpile(readFileSync(new URL("../app/api/places/reverse-geocode/route.ts", import.meta.url), "utf8")),
 };
 
 const mockNextResponse = {
@@ -215,4 +216,87 @@ test("places details: Google errors are hidden from clients", async () => {
   const res = await route.GET(makeReq("/api/places/details?placeId=bad"));
   assert.equal(status(res), 200);
   assert.deepEqual(body(res), { details: null });
+});
+
+// ── reverse-geocode ──────────────────────────────────────────────────────────
+
+test("reverse-geocode: missing lat/lng returns 400", async () => {
+  const { route } = loadRoute("reverse-geocode");
+  const res = await route.GET(makeReq("/api/places/reverse-geocode"));
+  assert.equal(status(res), 400);
+});
+
+test("reverse-geocode: missing API key returns null label without calling Google", async () => {
+  const { route, fetchCalls } = loadRoute("reverse-geocode", { env: {} });
+  const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.415&lng=78.434"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res), { label: null });
+  assert.equal(fetchCalls.length, 0);
+});
+
+test("reverse-geocode: extracts sublocality + locality into a short label", async () => {
+  const { route, fetchCalls } = loadRoute("reverse-geocode", {
+    env: { GOOGLE_MAPS_API_KEY: "maps-key" },
+    fetchImpl: async () => googleResponse({
+      status: "OK",
+      results: [{
+        address_components: [
+          { long_name: "Banjara Hills", short_name: "Banjara Hills", types: ["sublocality_level_1", "sublocality", "political"] },
+          { long_name: "Hyderabad", short_name: "Hyderabad", types: ["locality", "political"] },
+          { long_name: "Telangana", short_name: "TS", types: ["administrative_area_level_1", "political"] },
+        ],
+      }],
+    }),
+  });
+
+  const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.415&lng=78.434"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res), { label: "Banjara Hills, Hyderabad" });
+
+  assert.equal(fetchCalls.length, 1);
+  const [url] = fetchCalls[0];
+  const u = new URL(url);
+  assert.equal(u.searchParams.get("latlng"), "17.415,78.434");
+  assert.equal(u.searchParams.get("result_type"), "sublocality|locality");
+  assert.equal(u.searchParams.get("key"), "maps-key");
+});
+
+test("reverse-geocode: falls back to locality when no sublocality is present", async () => {
+  const { route } = loadRoute("reverse-geocode", {
+    env: { GOOGLE_MAPS_API_KEY: "maps-key" },
+    fetchImpl: async () => googleResponse({
+      status: "OK",
+      results: [{
+        address_components: [
+          { long_name: "Hyderabad", short_name: "Hyderabad", types: ["locality", "political"] },
+        ],
+      }],
+    }),
+  });
+
+  const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.385&lng=78.486"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res), { label: "Hyderabad" });
+});
+
+test("reverse-geocode: non-OK Google status returns null label", async () => {
+  const { route } = loadRoute("reverse-geocode", {
+    env: { GOOGLE_MAPS_API_KEY: "maps-key" },
+    fetchImpl: async () => googleResponse({ status: "ZERO_RESULTS", results: [] }),
+  });
+
+  const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=0&lng=0"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res), { label: null });
+});
+
+test("reverse-geocode: Google HTTP error returns null label", async () => {
+  const { route } = loadRoute("reverse-geocode", {
+    env: { GOOGLE_MAPS_API_KEY: "maps-key" },
+    fetchImpl: async () => googleResponse({}, { ok: false, status: 403, statusText: "Forbidden" }),
+  });
+
+  const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.415&lng=78.434"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res), { label: null });
 });

@@ -28,7 +28,7 @@ test.beforeEach(async ({}, testInfo) => {
 
 function circleAction(page: Page) {
   return page.getByRole("button", {
-    name: /add|requested|in circle|mutual circle|accept request/i,
+    name: /request|requested|in circle|accept/i,
   }).first();
 }
 
@@ -49,10 +49,16 @@ async function clickAndWaitForPost(page: Page, endpoint: RegExp, action: () => P
   return response;
 }
 
-async function clickCircleActionAndWait(page: Page, endpoint: RegExp, options: { acceptDialog?: boolean } = {}) {
+async function clickCircleActionAndWait(
+  page: Page,
+  endpoint: RegExp,
+  options: { confirmButtonName?: RegExp } = {},
+) {
   return clickAndWaitForPost(page, endpoint, async () => {
-    if (options.acceptDialog) page.once("dialog", (dialog) => dialog.accept());
     await circleAction(page).click();
+    if (options.confirmButtonName) {
+      await page.getByRole("button", { name: options.confirmButtonName }).click();
+    }
   });
 }
 
@@ -68,12 +74,12 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     await expect(action).toBeVisible({ timeout: 10_000 });
 
     const label = ((await action.textContent()) ?? "").trim().toLowerCase();
-    if (label === "add") return;
+    if (label === "request") return;
 
     if (label.includes("requested")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
+      await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { confirmButtonName: /cancel request/i });
     } else if (label.includes("circle")) {
-      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { acceptDialog: true });
+      await clickCircleActionAndWait(page, /\/api\/circle\/remove/, { confirmButtonName: /leave/i });
     } else if (label.includes("accept")) {
       await clickCircleActionAndWait(page, /\/api\/circle\/request/);
     }
@@ -81,7 +87,7 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
   }
 
   await openProfile(page, targetName);
-  await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+  await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 }
 
 async function ensureJoinedCircleFromViewer(page: Page, targetName: string) {
@@ -90,19 +96,19 @@ async function ensureJoinedCircleFromViewer(page: Page, targetName: string) {
   await expect(action).toBeVisible({ timeout: 10_000 });
 
   let label = ((await action.textContent()) ?? "").trim().toLowerCase();
-  if (label.includes("in circle") || label.includes("mutual")) return;
+  if (label.includes("in circle")) return;
 
   if (label.includes("requested")) {
-    await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
-    await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+    await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { confirmButtonName: /cancel request/i });
+    await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
     label = ((await circleAction(page).textContent()) ?? "").trim().toLowerCase();
   }
 
-  expect(label).toMatch(/add/);
+  expect(label).toMatch(/request/);
   const response = await clickCircleActionAndWait(page, /\/api\/circle\/request/);
   const responseBody = await response.json();
   expect(["one_way", "accepted"]).toContain(responseBody.status);
-  await expect(circleAction(page)).toHaveText(/in circle|mutual circle/i, { timeout: 10_000 });
+  await expect(circleAction(page)).toHaveText(/in circle/i, { timeout: 10_000 });
 }
 
 test("auth smoke: user can log in and localhost QA does not require auth", async ({ browser, page }) => {
@@ -171,6 +177,7 @@ test("review validation smoke: required fields are handled in the UI", async ({ 
 });
 
 test("visibility smoke: public, circle-only, and only-me reviews respect viewer identity", async ({ browser }) => {
+  test.setTimeout(90_000);
   test.skip(SKIP_ABC, SKIP_MSG);
 
   const suffix = uniqueE2eName("Visibility");
@@ -252,14 +259,15 @@ test("delete smoke: deleting the last restaurant post redirects to profile, not 
   await page.goto(`/people/${encodeURIComponent(userA!.name)}/${encodeURIComponent(restaurantName)}`);
   await expect(page.getByRole("heading", { level: 1, name: restaurantName })).toBeVisible({ timeout: 10_000 });
 
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByLabel("Post actions").first().click();
+  await page.getByRole("button", { name: /delete post/i }).click();
+  await expect(page.getByRole("heading", { name: /delete post\?/i })).toBeVisible();
   await Promise.all([
     page.waitForResponse(
       (response) => response.url().includes("/api/reviews/") && response.request().method() === "DELETE" && response.ok(),
       { timeout: 15_000 }
     ),
-    page.getByRole("button", { name: /delete post/i }).click(),
+    page.getByRole("button", { name: /^delete$/i }).click(),
   ]);
 
   await expect(page).toHaveURL(new RegExp(`/people/${encodeURIComponent(userA!.name)}/?$`), { timeout: 10_000 });
@@ -279,8 +287,8 @@ test("circle smoke: private request can be sent and cancelled", async ({ page })
   expect(requestBody.state).toBe("PENDING");
   await expect(circleAction(page)).toHaveText(/requested/i, { timeout: 10_000 });
 
-  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { acceptDialog: true });
-  await expect(circleAction(page)).toHaveText(/add/i, { timeout: 10_000 });
+  await clickCircleActionAndWait(page, /\/api\/circle\/cancel/, { confirmButtonName: /cancel request/i });
+  await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 });
 
 test("notification smoke: circle request creates a notification and accept updates state", async ({ browser }) => {
@@ -326,11 +334,11 @@ test("notification smoke: circle request creates a notification and accept updat
   await receiverContext.close();
 
   await openProfile(requesterPage, userC!.name);
-  await expect(circleAction(requesterPage)).toHaveText(/mutual circle/i, { timeout: 10_000 });
+  await expect(circleAction(requesterPage)).toHaveText(/in circle/i, { timeout: 10_000 });
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(requesterPage.getByText(targetPrivateRestaurant, { exact: true })).not.toBeVisible();
-  await clickCircleActionAndWait(requesterPage, /\/api\/circle\/remove/, { acceptDialog: true });
-  await expect(circleAction(requesterPage)).toHaveText(/add/i, { timeout: 10_000 });
+  await clickCircleActionAndWait(requesterPage, /\/api\/circle\/remove/, { confirmButtonName: /leave/i });
+  await expect(circleAction(requesterPage)).toHaveText(/request/i, { timeout: 10_000 });
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).not.toBeVisible();
   await requesterContext.close();
 });

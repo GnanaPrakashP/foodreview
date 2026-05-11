@@ -66,7 +66,6 @@ function makeCircleDb(overrides = {}) {
   return {
     hasCircleEdge: async () => false,
     addCircleEdge: async () => ({ error: null }),
-    addMutualCircleEdges: async () => ({ error: null }),
     getAccountTypeForName: async () => "public",
     hasCircleAccess: async () => false,
     getCircleRelationshipsForName: async () => ({
@@ -297,9 +296,8 @@ test("request: private account — creates PENDING request row", async () => {
   const notif = makeNotifications();
 
   const { POST } = loadRoute(src.request, {
-    // inline DB: reverse check → [], existing check → [], insert → new row
+    // inline DB: existing check → [], insert → new row
     db: mockDb(
-      { data: [], error: null },                     // reverse request check
       { data: [], error: null },                     // existing request check
       { data: { id: "req-1" }, error: null }         // insert new request
     ),
@@ -320,7 +318,6 @@ test("request: private account — sends CIRCLE_REQUEST_RECEIVED notification to
 
   const { POST } = loadRoute(src.request, {
     db: mockDb(
-      { data: [], error: null },
       { data: [], error: null },
       { data: { id: "req-1" }, error: null }
     ),
@@ -345,7 +342,6 @@ test("request: private account — duplicate pending request does not insert a s
   const { POST } = loadRoute(src.request, {
     // existing pending found — no insert call
     db: mockDb(
-      { data: [], error: null },                                      // reverse check
       { data: [{ id: "req-1", status: "pending" }], error: null }    // existing pending
     ),
     circleDb: makeCircleDb({
@@ -368,7 +364,6 @@ test("request: resend after rejection resets existing row to pending", async () 
   const { POST } = loadRoute(src.request, {
     // existing rejected found → update to pending → then notify
     db: mockDb(
-      { data: [], error: null },                                       // reverse check
       { data: [{ id: "req-1", status: "rejected" }], error: null },   // existing rejected
       { error: null }                                                  // update to pending
     ),
@@ -385,33 +380,36 @@ test("request: resend after rejection resets existing row to pending", async () 
   assert.equal(upserts.length, 1);
 });
 
-test("request: reverse pending request is auto-accepted and creates mutual circle", async () => {
-  let mutualCalled = false;
+test("request: reverse pending request is not auto-accepted", async () => {
+  const notif = makeNotifications();
+  let addCalled = false;
 
   const { POST } = loadRoute(src.request, {
-    // inline DB: reverse check → pending row from Bob→Alice; update that row to accepted
     db: mockDb(
-      { data: [{ id: "req-2", status: "pending" }], error: null }, // reverse pending
-      { error: null }                                               // update to accepted
+      { data: [], error: null },                             // no outgoing existing request
+      { data: { id: "req-2" }, error: null }                // create outgoing pending request
     ),
     circleDb: makeCircleDb({
       hasCircleEdge: async () => false,
-      addMutualCircleEdges: async () => { mutualCalled = true; return { error: null }; },
+      getAccountTypeForName: async () => "private",
+      addCircleEdge: async () => { addCalled = true; return { error: null }; },
     }),
-    notifications: makeNotifications(),
+    notifications: notif,
   });
 
   const res = await POST(makeReq({ senderName: "Alice", receiverName: "Bob" }));
-  assert.equal(body(res).state, "CIRCLE_MUTUAL");
-  assert.equal(mutualCalled, true);
+  assert.equal(body(res).state, "PENDING");
+  assert.equal(addCalled, false);
+  const upsert = notif.calls.find((c) => c.fn === "upsertCircleRequestNotification");
+  assert.ok(upsert, "private request should notify receiver");
 });
 
 // ============================================================
 // respond/route.ts — accept / reject
 // ============================================================
 
-test("respond: accept pending request → CIRCLE_MUTUAL + mutual edges created", async () => {
-  let mutualCalled = false;
+test("respond: accept pending request → CIRCLE_ONE_WAY + receiver edge created", async () => {
+  let addCalls = [];
 
   const { POST } = loadRoute(src.respond, {
     db: mockDb(
@@ -420,7 +418,10 @@ test("respond: accept pending request → CIRCLE_MUTUAL + mutual edges created",
       { error: null }                                             // mark notification read
     ),
     circleDb: makeCircleDb({
-      addMutualCircleEdges: async () => { mutualCalled = true; return { error: null }; },
+      addCircleEdge: async (_db, userName, memberName) => {
+        addCalls.push([userName, memberName]);
+        return { error: null };
+      },
     }),
     notifications: makeNotifications(),
     authName: "Bob",
@@ -428,11 +429,11 @@ test("respond: accept pending request → CIRCLE_MUTUAL + mutual edges created",
 
   const res = await POST(makeReq({ myName: "Bob", senderName: "Alice", action: "accept" }));
   assert.equal(body(res).ok, true);
-  assert.equal(body(res).state, "CIRCLE_MUTUAL");
-  assert.equal(mutualCalled, true);
+  assert.equal(body(res).state, "CIRCLE_ONE_WAY");
+  assert.deepEqual(addCalls, [["Bob", "Alice"]]);
 });
 
-test("request matrix: public sender → private receiver stays pending, then accept creates mutual circle", async () => {
+test("request matrix: public sender → private receiver stays pending, then accept creates one-way edge", async () => {
   const requestRoute = loadRoute(src.request, {
     db: mockDb(
       { data: [], error: null },
@@ -451,7 +452,7 @@ test("request matrix: public sender → private receiver stays pending, then acc
   assert.equal(status(requestRes), 200);
   assert.equal(body(requestRes).state, "PENDING");
 
-  const mutualCalls = [];
+  const addCalls = [];
   const respondRoute = loadRoute(src.respond, {
     db: mockDb(
       { data: { id: "req-public-private", status: "pending" }, error: null },
@@ -459,8 +460,8 @@ test("request matrix: public sender → private receiver stays pending, then acc
       { error: null }
     ),
     circleDb: makeCircleDb({
-      addMutualCircleEdges: async (_db, firstName, secondName) => {
-        mutualCalls.push([firstName, secondName]);
+      addCircleEdge: async (_db, userName, memberName) => {
+        addCalls.push([userName, memberName]);
         return { error: null };
       },
     }),
@@ -470,11 +471,11 @@ test("request matrix: public sender → private receiver stays pending, then acc
 
   const acceptRes = await respondRoute.POST(makeReq({ senderName: "Alice", action: "accept" }));
   assert.equal(status(acceptRes), 200);
-  assert.equal(body(acceptRes).state, "CIRCLE_MUTUAL");
-  assert.deepEqual(mutualCalls, [["Private Bob", "Alice"]]);
+  assert.equal(body(acceptRes).state, "CIRCLE_ONE_WAY");
+  assert.deepEqual(addCalls, [["Private Bob", "Alice"]]);
 });
 
-test("request matrix: private sender → private receiver stays pending, then accept creates mutual circle", async () => {
+test("request matrix: private sender → private receiver stays pending, then accept creates one-way edge", async () => {
   const requestRoute = loadRoute(src.request, {
     db: mockDb(
       { data: [], error: null },
@@ -494,7 +495,7 @@ test("request matrix: private sender → private receiver stays pending, then ac
   assert.equal(status(requestRes), 200);
   assert.equal(body(requestRes).state, "PENDING");
 
-  const mutualCalls = [];
+  const addCalls = [];
   const respondRoute = loadRoute(src.respond, {
     db: mockDb(
       { data: { id: "req-private-private", status: "pending" }, error: null },
@@ -502,8 +503,8 @@ test("request matrix: private sender → private receiver stays pending, then ac
       { error: null }
     ),
     circleDb: makeCircleDb({
-      addMutualCircleEdges: async (_db, firstName, secondName) => {
-        mutualCalls.push([firstName, secondName]);
+      addCircleEdge: async (_db, userName, memberName) => {
+        addCalls.push([userName, memberName]);
         return { error: null };
       },
     }),
@@ -513,8 +514,8 @@ test("request matrix: private sender → private receiver stays pending, then ac
 
   const acceptRes = await respondRoute.POST(makeReq({ senderName: "Private Alice", action: "accept" }));
   assert.equal(status(acceptRes), 200);
-  assert.equal(body(acceptRes).state, "CIRCLE_MUTUAL");
-  assert.deepEqual(mutualCalls, [["Private Bob", "Private Alice"]]);
+  assert.equal(body(acceptRes).state, "CIRCLE_ONE_WAY");
+  assert.deepEqual(addCalls, [["Private Bob", "Private Alice"]]);
 });
 
 test("respond: accept sends CIRCLE_REQUEST_ACCEPTED notification to original sender", async () => {
@@ -542,7 +543,7 @@ test("respond: accept sends CIRCLE_REQUEST_ACCEPTED notification to original sen
 });
 
 test("respond: reject pending request → NONE, no circle edges created", async () => {
-  let mutualCalled = false;
+  let addCalled = false;
 
   const { POST } = loadRoute(src.respond, {
     db: mockDb(
@@ -551,7 +552,7 @@ test("respond: reject pending request → NONE, no circle edges created", async 
       { error: null }
     ),
     circleDb: makeCircleDb({
-      addMutualCircleEdges: async () => { mutualCalled = true; return { error: null }; },
+      addCircleEdge: async () => { addCalled = true; return { error: null }; },
     }),
     notifications: makeNotifications(),
     authName: "Bob",
@@ -560,24 +561,24 @@ test("respond: reject pending request → NONE, no circle edges created", async 
   const res = await POST(makeReq({ myName: "Bob", senderName: "Alice", action: "reject" }));
   assert.equal(body(res).ok, true);
   assert.equal(body(res).state, "NONE");
-  assert.equal(mutualCalled, false);
+  assert.equal(addCalled, false);
 });
 
-test("respond: double accept is idempotent — returns CIRCLE_MUTUAL without re-inserting edges", async () => {
-  let mutualCalled = false;
+test("respond: double accept is idempotent — returns CIRCLE_ONE_WAY without re-inserting edges", async () => {
+  let addCalled = false;
 
   const { POST } = loadRoute(src.respond, {
     db: mockDb({ data: { id: "req-1", status: "accepted" }, error: null }),
     circleDb: makeCircleDb({
-      addMutualCircleEdges: async () => { mutualCalled = true; return { error: null }; },
+      addCircleEdge: async () => { addCalled = true; return { error: null }; },
     }),
     notifications: makeNotifications(),
     authName: "Bob",
   });
 
   const res = await POST(makeReq({ myName: "Bob", senderName: "Alice", action: "accept" }));
-  assert.equal(body(res).state, "CIRCLE_MUTUAL");
-  assert.equal(mutualCalled, false);
+  assert.equal(body(res).state, "CIRCLE_ONE_WAY");
+  assert.equal(addCalled, false);
 });
 
 test("respond: double reject is idempotent — returns NONE", async () => {

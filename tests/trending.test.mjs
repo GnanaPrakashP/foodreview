@@ -45,7 +45,7 @@ function loadLocationModule() {
   return mod.exports;
 }
 
-const { computeTrending, getCuisineType } = loadTrendingModule();
+const { computeTrending, getCuisineType, haversineKm } = loadTrendingModule();
 
 let nextId = 0;
 function daysAgo(days) {
@@ -159,4 +159,36 @@ test("getCuisineType recognizes known restaurant styles and falls back to Restau
   assert.equal(getCuisineType("Chettinad Mutton Mess"), "Non-Veg");
   assert.equal(getCuisineType("Punjabi Dhaba"), "North Indian");
   assert.equal(getCuisineType("Plain Name"), "Restaurant");
+});
+
+test("haversineKm returns 0 for identical coordinates", () => {
+  assert.equal(haversineKm(17.385, 78.4867, 17.385, 78.4867), 0);
+});
+
+test("haversineKm returns a reasonable distance between two Hyderabad landmarks", () => {
+  // Banjara Hills to Gachibowli — roughly 10 km
+  const km = haversineKm(17.4156, 78.4347, 17.4401, 78.3489);
+  assert.ok(km > 8 && km < 12, `expected ~10 km, got ${km.toFixed(2)}`);
+});
+
+test("computeTrending carries lat/lng from the first review that has coordinates", () => {
+  const result = computeTrending([
+    review("Alice", "Geo Place", daysAgo(1), [{ name: "Dish", rating: 4 }], {
+      restaurant_lat: 17.415,
+      restaurant_lng: 78.434,
+    }),
+    review("Bob", "Geo Place", daysAgo(2), [{ name: "Dish", rating: 3 }], {
+      restaurant_lat: 17.999,
+      restaurant_lng: 78.999,
+    }),
+    review("Cara", "No Coords", daysAgo(1), [{ name: "Dish", rating: 4 }]),
+  ]);
+
+  const geo = result.week.find((e) => e.restaurant_name === "Geo Place");
+  assert.equal(geo.lat, 17.415);
+  assert.equal(geo.lng, 78.434);
+
+  const noCoords = result.week.find((e) => e.restaurant_name === "No Coords");
+  assert.equal(noCoords.lat, null);
+  assert.equal(noCoords.lng, null);
 });

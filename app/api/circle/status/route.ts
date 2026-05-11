@@ -64,14 +64,14 @@ export async function GET(req: NextRequest) {
 
   const circleMembers = Array.from(circleMembersSet);
   const joinedCircles = Array.from(joinedCirclesSet);
-  const mutualMembers = joinedCircles.filter((member) => circleMembersSet.has(member));
-  const oneWayMembers = joinedCircles.filter((member) => !circleMembersSet.has(member));
+  const mutualMembers: string[] = [];
+  const oneWayMembers = joinedCircles;
   const pendingIncoming = Array.from(pendingIncomingSet);
   const pendingSent = Array.from(pendingSentSet);
 
   const memberStates: Record<string, CircleRelationshipState> = {};
   for (const member of joinedCircles) {
-    memberStates[member] = circleMembersSet.has(member) ? "CIRCLE_MUTUAL" : "CIRCLE_ONE_WAY";
+    memberStates[member] = "CIRCLE_ONE_WAY";
   }
   if (canSeePendingState) {
     for (const pending of pendingSent) {

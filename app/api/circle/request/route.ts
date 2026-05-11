@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { addCircleEdge, addMutualCircleEdges, getAccountTypeForName, hasCircleEdge } from "@/lib/circle-db";
+import { addCircleEdge, getAccountTypeForName, hasCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames, upsertCircleRequestNotification } from "@/lib/notifications";
 
 type CircleSupabaseClient = { from: (table: string) => any };
@@ -22,7 +22,7 @@ async function createCircleNotification(
   notification: {
     recipient_name: string;
     actor_name: string;
-    type: "CIRCLE_REQUEST_RECEIVED" | "CIRCLE_REQUEST_ACCEPTED" | "ADDED_TO_CIRCLE" | "MUTUAL_CIRCLE_CREATED";
+    type: "CIRCLE_REQUEST_RECEIVED" | "ADDED_TO_CIRCLE";
     message: string;
     requestId?: string | null;
   }
@@ -96,76 +96,32 @@ async function handleCircleRequest(req: NextRequest) {
   }
 
   const senderAlreadyInReceiverCircle = await hasCircleEdge(admin, receiver, sender);
-  const receiverAlreadyInSenderCircle = await hasCircleEdge(admin, sender, receiver);
 
   if (senderAlreadyInReceiverCircle) {
     return NextResponse.json({
-      status: receiverAlreadyInSenderCircle ? "accepted" : "one_way",
-      state: receiverAlreadyInSenderCircle ? "CIRCLE_MUTUAL" : "CIRCLE_ONE_WAY",
+      status: "one_way",
+      state: "CIRCLE_ONE_WAY",
     });
-  }
-
-  // If the other person already sent a request to me, auto-accept it
-  const { data: reverseRows, error: reverseError } = await admin
-    .from("circle_requests")
-    .select("id, status")
-    .eq("sender_name", receiver)
-    .eq("receiver_name", sender)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (reverseError) return circleError("failed to read reverse circle request", reverseError);
-  const reverse = reverseRows?.[0];
-
-  if (reverse) {
-    if (reverse.status === "accepted") {
-      const { error } = await addMutualCircleEdges(admin, sender, receiver);
-      if (error) return circleError("failed to restore accepted reverse circle request", error);
-      return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
-    }
-    if (reverse.status === "pending") {
-      const { error: requestError } = await admin.from("circle_requests").update({ status: "accepted" }).eq("id", reverse.id);
-      if (requestError) return circleError("failed to accept reverse circle request", requestError);
-      const { error } = await addMutualCircleEdges(admin, sender, receiver);
-      if (error) return circleError("failed to create mutual circle edges", error);
-      await createCircleNotification(admin, {
-        recipient_name: receiver,
-        actor_name: sender,
-        type: "CIRCLE_REQUEST_ACCEPTED",
-        message: `${sender} accepted your circle request`,
-        requestId: reverse.id,
-      });
-      return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
-    }
-  }
-
-  if (receiverAlreadyInSenderCircle) {
-    const { error } = await addCircleEdge(admin, receiver, sender);
-    if (error) return circleError("failed to complete existing one-way circle", error);
-    await createCircleNotification(admin, {
-      recipient_name: receiver,
-      actor_name: sender,
-      type: "MUTUAL_CIRCLE_CREATED",
-      message: `You and ${sender} are now in each other's circles`,
-    });
-    return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
   }
 
   const receiverAccountType = await getAccountTypeForName(admin, receiver);
   if (receiverAccountType === "public") {
     const { error } = await addCircleEdge(admin, receiver, sender);
     if (error) return circleError("failed to add sender to public account circle", error);
+
+    // Keep request history coherent if the receiver switched account type.
+    await admin
+      .from("circle_requests")
+      .update({ status: "accepted" })
+      .eq("sender_name", sender)
+      .eq("receiver_name", receiver)
+      .eq("status", "pending");
+
     await createCircleNotification(admin, {
       recipient_name: receiver,
       actor_name: sender,
       type: "ADDED_TO_CIRCLE",
       message: `${sender} joined your circle`,
-    });
-    await createCircleNotification(admin, {
-      recipient_name: sender,
-      actor_name: receiver,
-      type: "CIRCLE_REQUEST_ACCEPTED",
-      message: `You joined ${receiver}'s circle`,
     });
     return NextResponse.json({ status: "one_way", state: "CIRCLE_ONE_WAY" });
   }
@@ -185,9 +141,9 @@ async function handleCircleRequest(req: NextRequest) {
 
   if (existing) {
     if (existing.status === "accepted") {
-      const { error } = await addMutualCircleEdges(admin, sender, receiver);
-      if (error) return circleError("failed to restore accepted circle request", error);
-      return NextResponse.json({ status: "accepted", state: "CIRCLE_MUTUAL" });
+      const { error } = await addCircleEdge(admin, receiver, sender);
+      if (error) return circleError("failed to restore accepted circle membership", error);
+      return NextResponse.json({ status: "one_way", state: "CIRCLE_ONE_WAY" });
     }
     if (existing.status === "pending") {
       await createCircleNotification(admin, {

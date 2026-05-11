@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import type { Review } from "@/lib/types";
 import FriendProfileClient from "@/components/people/FriendProfileClient";
@@ -23,8 +24,9 @@ export default async function UserProfilePage({ params }: Props) {
   const name = decodeURIComponent(username);
 
   const supabase = await createClient();
+  const admin = createAdminClient();
 
-  const [{ data: { user } }, { data: reviews }, { data: profiles }] = await Promise.all([
+  const [{ data: { user } }, { data: reviews }, { data: profiles }, { data: ownerAllReviews }] = await Promise.all([
     supabase.auth.getUser(),
     supabase
       .from("reviews")
@@ -37,6 +39,12 @@ export default async function UserProfilePage({ params }: Props) {
       .select("first_name, last_name, account_type")
       .limit(1000)
       .returns<ProfileSummary[]>(),
+    admin
+      .from("reviews")
+      .select("*")
+      .eq("reviewer_name", name)
+      .order("created_at", { ascending: false })
+      .returns<Review[]>(),
   ]);
 
   const profile = (profiles ?? []).find((row) => `${row.first_name} ${row.last_name}`.trim() === name);
@@ -53,11 +61,13 @@ export default async function UserProfilePage({ params }: Props) {
   const accountType = normalizeAccountType(profile?.account_type);
   const rawReviews = reviews ?? [];
   const isCircleMember = circleOwnerNames.has(name);
+  const hasAnyCirclePosts = (ownerAllReviews ?? []).some(
+    (review) => !isReviewSuppressed(review) && normalizeVisibility(review.visibility) === "circle"
+  );
   const hasHiddenCirclePosts =
-    accountType === "private" &&
     myName !== name &&
     !isCircleMember &&
-    rawReviews.some((review) => !isReviewSuppressed(review) && normalizeVisibility(review.visibility) === "circle");
+    hasAnyCirclePosts;
 
   const visibleReviews = filterProfileReviews(rawReviews, name, {
     viewerName: myName,

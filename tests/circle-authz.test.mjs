@@ -72,7 +72,6 @@ function makeCircleDb(overrides = {}) {
   return {
     hasCircleEdge: async () => false,
     addCircleEdge: async () => ({ error: null }),
-    addMutualCircleEdges: async () => ({ error: null }),
     getAccountTypeForName: async () => "public",
     getAccountTypesForNames: async () => ({}),
     ...overrides,
@@ -311,12 +310,12 @@ test("status: owner sees pending requests and relationship states", async () => 
   assert.equal(body(res).accountType, "private");
   assert.deepEqual(Array.from(body(res).circleMembers).sort(), ["Bob", "Dave"]);
   assert.deepEqual(Array.from(body(res).joinedCircles).sort(), ["Carol", "Dave"]);
-  assert.deepEqual(Array.from(body(res).mutualMembers), ["Dave"]);
-  assert.deepEqual(Array.from(body(res).oneWayMembers), ["Carol"]);
+  assert.deepEqual(Array.from(body(res).mutualMembers), []);
+  assert.deepEqual(Array.from(body(res).oneWayMembers).sort(), ["Carol", "Dave"]);
   assert.deepEqual(Array.from(body(res).pendingIncoming), ["Erin"]);
   assert.deepEqual(Array.from(body(res).pendingSent), ["Frank"]);
   assert.equal(body(res).memberStates.Carol, "CIRCLE_ONE_WAY");
-  assert.equal(body(res).memberStates.Dave, "CIRCLE_MUTUAL");
+  assert.equal(body(res).memberStates.Dave, "CIRCLE_ONE_WAY");
   assert.equal(body(res).memberStates.AcceptedOnly, undefined);
   assert.equal(body(res).memberStates.Frank, "PENDING");
   assert.equal(body(res).circleCount, 2);

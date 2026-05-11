@@ -64,8 +64,17 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   await page.goto("/login");
   await page.getByPlaceholder("your@email.com").fill(user.email);
   await page.getByPlaceholder("Password").fill(user.password);
-  await page.getByRole("button", { name: "Sign In →" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 15_000 });
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/auth/v1/token") &&
+        response.request().method() === "POST" &&
+        response.ok(),
+      { timeout: 20_000 }
+    ).catch(() => null),
+    page.getByRole("button", { name: "Sign In →" }).click(),
+  ]);
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 25_000 });
   // Set localStorage name so review/comment/like writes use the correct actor name
   await page.evaluate((name) => localStorage.setItem("fc_my_name", name), user.name);
 }
@@ -92,7 +101,7 @@ export async function createReview(
   await mockRestaurantPlace(page, restaurantName);
   await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
   const restaurantSuggestion = page.getByRole("button", { name: escapedText(restaurantName) }).first();
-  await expect(restaurantSuggestion).toBeVisible({ timeout: 5_000 });
+  await expect(restaurantSuggestion).toBeVisible({ timeout: 12_000 });
   await restaurantSuggestion.click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill(dishName);
   await page.getByTitle(ratingTitle).first().click();

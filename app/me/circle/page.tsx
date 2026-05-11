@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronRight, Users } from "lucide-react";
+import { ArrowLeft, Users } from "lucide-react";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
@@ -16,6 +16,8 @@ interface Member {
 export default function MyCirclePage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
+  const [removingName, setRemovingName] = useState<string | null>(null);
+  const [confirmRemoveName, setConfirmRemoveName] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -50,6 +52,27 @@ export default function MyCirclePage() {
       setMounted(true);
     })();
   }, []);
+
+  async function removeFromMyCircle(memberName: string) {
+    const previousMembers = members;
+    setRemovingName(memberName);
+    setMembers((prev) => prev.filter((member) => member.name !== memberName));
+
+    try {
+      const res = await fetch("/api/circle/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otherName: memberName }),
+      });
+      if (!res.ok) {
+        setMembers(previousMembers);
+      }
+    } catch {
+      setMembers(previousMembers);
+    } finally {
+      setRemovingName(null);
+    }
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
@@ -106,8 +129,11 @@ export default function MyCirclePage() {
         <div style={{ padding: "0 20px" }}>
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
             {members.map(({ name, placeCount }, i) => (
-              <Link key={name} href={`/people/${encodeURIComponent(name)}`} style={{ textDecoration: "none" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
+              <div key={name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <Link
+                  href={`/people/${encodeURIComponent(name)}`}
+                  style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}
+                >
                   <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
                     {avatarInitials(name)}
                   </div>
@@ -119,17 +145,65 @@ export default function MyCirclePage() {
                       {placeCount} place{placeCount !== 1 ? "s" : ""}
                     </p>
                   </div>
-                  <ChevronRight size={16} strokeWidth={2} color="var(--muted)" />
-                </div>
-              </Link>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemoveName(name)}
+                  disabled={removingName === name}
+                  style={{
+                    background: "rgba(239, 68, 68, 0.10)",
+                    border: "1.5px solid rgba(239, 68, 68, 0.35)",
+                    borderRadius: "10px",
+                    padding: "7px 12px",
+                    color: "#ef4444",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    fontFamily: "'DM Sans', sans-serif",
+                    cursor: removingName === name ? "default" : "pointer",
+                    opacity: removingName === name ? 0.6 : 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  {removingName === name ? "Removing..." : "Remove"}
+                </button>
+              </div>
             ))}
           </div>
 
-          <Link href="/people" style={{ textDecoration: "none" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 0", gap: "6px", color: "var(--orange)", fontSize: "13px", fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
-              + Add more friends
+        </div>
+      )}
+
+      {confirmRemoveName && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>
+              Remove from circle?
+            </h2>
+            <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>
+              Do you want to remove {confirmRemoveName} from your circle?
+            </p>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => setConfirmRemoveName(null)}
+                disabled={Boolean(removingName)}
+                style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--cream)", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", opacity: removingName ? 0.6 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const target = confirmRemoveName;
+                  if (!target) return;
+                  setConfirmRemoveName(null);
+                  await removeFromMyCircle(target);
+                }}
+                disabled={Boolean(removingName)}
+                style={{ flex: 1, background: "#EF4444", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 600, cursor: removingName ? "default" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: removingName ? 0.7 : 1 }}
+              >
+                Remove
+              </button>
             </div>
-          </Link>
+          </div>
         </div>
       )}
     </div>

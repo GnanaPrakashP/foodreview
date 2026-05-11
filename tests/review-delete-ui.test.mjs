@@ -10,9 +10,13 @@ const feedCard = src("components/reviews/CircleFeedCard.tsx");
 const detailCard = src("components/reviews/ReviewDetailClient.tsx");
 const restaurantDetail = src("components/people/RestaurantDetailClient.tsx");
 
-test("review delete UI keeps browser confirmation before delete request", () => {
-  assert.match(feedCard, /window\.confirm\("Delete this post permanently\?"\)/);
-  assert.match(detailCard, /window\.confirm\("Delete this post permanently\?"\)/);
+test("review delete UI uses in-app confirmation modal before delete request", () => {
+  assert.match(feedCard, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
+  assert.match(detailCard, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
+  assert.match(feedCard, /title="Delete post\?"/);
+  assert.match(detailCard, /title="Delete post\?"/);
+  assert.match(feedCard, /message="Delete this post permanently\?"/);
+  assert.match(detailCard, /message="Delete this post permanently\?"/);
 });
 
 test("review delete UI sends owner delete through DELETE /api/reviews/:id", () => {

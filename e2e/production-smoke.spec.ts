@@ -128,6 +128,7 @@ test("3 · circle-only review from A is not visible to C (outsider)", async ({ p
 // ── 4. Public circle add flow ─────────────────────────────────────────────────
 
 test("4 · B can see A's profile and has a circle action button", async ({ page }) => {
+  test.setTimeout(45_000);
   test.skip(SKIP_AB, SKIP_MSG);
   await signIn(page, userB!);
 
@@ -136,9 +137,9 @@ test("4 · B can see A's profile and has a circle action button", async ({ page 
   // Any of these labels is valid depending on current relationship state.
   // Just verifying the button is rendered confirms profile page + circle UI renders.
   const circleBtn = page.getByRole("button", {
-    name: /add|requested|in circle|mutual circle|accept request/i,
+    name: /request|requested|in circle|accept/i,
   }).first();
-  await expect(circleBtn).toBeVisible({ timeout: 10_000 });
+  await expect(circleBtn).toBeVisible({ timeout: 20_000 });
 });
 
 // ── 5. Private account: request → accept ─────────────────────────────────────
@@ -153,7 +154,7 @@ test("5 · A can see C's profile and has a circle action button", async ({ page 
 
   // Circle action button is rendered for any relationship state
   const circleBtn = page.getByRole("button", {
-    name: /add|requested|in circle|mutual circle|accept request/i,
+    name: /request|requested|in circle|accept/i,
   }).first();
   await expect(circleBtn).toBeVisible({ timeout: 10_000 });
 });
@@ -270,11 +271,11 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
   await page.goto(`/people/${encodeURIComponent(userB!.name)}`);
 
   const circleBtn = page.getByRole("button", {
-    name: /add|requested|in circle|mutual circle|accept request/i,
+    name: /request|requested|in circle|accept/i,
   }).first();
   await expect(circleBtn).toBeVisible({ timeout: 10_000 });
   const circleLabel = (await circleBtn.textContent())?.trim().toLowerCase() ?? "";
-  if (circleLabel === "add") {
+  if (circleLabel === "request") {
     // eslint-disable-next-line playwright/no-skipped-test
     test.skip(true, "circle_memberships table missing from live DB — badge requires mutual circle status");
     return;

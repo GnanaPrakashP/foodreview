@@ -3,7 +3,6 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAccountTypeForName } from "@/lib/circle-db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,27 +40,6 @@ async function removeFromCircle(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  // Decide whether to dissolve both edges:
-  //   - Both private → full mutual dissolution (friendship model)
-  //   - Either private + mutual → still dissolve both, otherwise the orphaned edge
-  //     on the private account allows the other party to bypass the private request
-  //     flow and instantly recreate mutual on the next "Add" click.
-  //   - Both public → one-way leave only (independent open-follow circles)
-  const [meAccountType, otherAccountType, reverseEdgeResult] = await Promise.all([
-    getAccountTypeForName(admin, me),
-    getAccountTypeForName(admin, other),
-    admin
-      .from("circle_memberships")
-      .select("id")
-      .eq("user_name", me)
-      .eq("member_name", other)
-      .limit(1),
-  ]);
-
-  const isMutual = (reverseEdgeResult.data ?? []).length > 0;
-  const shouldDissolveBoth =
-    isMutual && (meAccountType === "private" || otherAccountType === "private");
-
   const { error } = await admin
     .from("circle_memberships")
     .delete()
@@ -74,23 +52,9 @@ async function removeFromCircle(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Dissolve the reverse edge to prevent orphaned memberships and request-flow bypasses.
-  if (shouldDissolveBoth && !membershipsTableMissing) {
-    const { error: reverseError } = await admin
-      .from("circle_memberships")
-      .delete()
-      .eq("user_name", me)
-      .eq("member_name", other);
-
-    if (reverseError && !isMissingCircleMembershipsTable(reverseError)) {
-      console.error("[circle/remove] reverse membership delete failed:", reverseError.message, reverseError.code, reverseError.details);
-    }
-  }
-
-  // Accepted request rows are historical now, but remove them so old data
-  // cannot recreate a mutual edge after both people leave the relationship.
-  // Use updates rather than deletes because older deployed schemas may not
-  // include a delete policy for circle_requests.
+  // Guard against stale accepted requests auto-restoring membership.
+  // Use updates rather than deletes because older schemas may not include
+  // a delete policy for circle_requests.
   const cleanupResults = await Promise.all([
     admin
       .from("circle_requests")

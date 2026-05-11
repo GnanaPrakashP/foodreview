@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Circle, Database, ExternalLink, RotateCcw, Terminal, XCircle } from "lucide-react";
 import { manualQaSections, manualQaSmokeIds, manualQaTests, type ManualQaPriority, type ManualQaTest } from "@/lib/qa/manual-tests";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 
 type QaStatus = "not_tested" | "pass" | "fail" | "na";
 type Filter = "all" | "smoke" | "failed" | "not_tested" | "section";
@@ -532,6 +533,7 @@ export default function ManualQaClient() {
   const [filter, setFilter] = useState<Filter>("all");
   const [section, setSection] = useState(manualQaSections[0]);
   const [view, setView] = useState<QaView>("manual");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   useEffect(() => {
     try {
@@ -588,8 +590,6 @@ export default function ManualQaClient() {
   }
 
   function resetAll() {
-    const ok = window.confirm("Reset all manual QA results and notes?");
-    if (!ok) return;
     setResults({});
     window.localStorage.removeItem(STORAGE_KEY);
   }
@@ -820,7 +820,7 @@ export default function ManualQaClient() {
 
           <button
             type="button"
-            onClick={resetAll}
+            onClick={() => setShowResetConfirm(true)}
             title="Reset manual QA statuses and notes"
             style={{
               position: "fixed",
@@ -846,6 +846,18 @@ export default function ManualQaClient() {
             <RotateCcw size={14} />
             Reset
           </button>
+          <ConfirmModal
+            open={showResetConfirm}
+            title="Reset QA results?"
+            message="Reset all manual QA results and notes?"
+            confirmText="Reset"
+            confirmVariant="danger"
+            onCancel={() => setShowResetConfirm(false)}
+            onConfirm={() => {
+              setShowResetConfirm(false);
+              resetAll();
+            }}
+          />
         </>
       )}
     </main>
