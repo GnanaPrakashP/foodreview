@@ -32,7 +32,8 @@ function avatarColor(name: string): string {
 }
 
 function MiniAvatar({ name }: { name: string }) {
-  const initials = name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("");
+  const parts = name.split(/[\s_]+/).filter(Boolean);
+  const initials = parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : (parts[0]?.[0] ?? "?").toUpperCase();
   return (
     <div
       style={{

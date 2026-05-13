@@ -115,8 +115,7 @@ const profiles = [
 
 test("common restaurants route: logged-out users are rejected", async () => {
   const db = spyDb(
-    { data: { user: null }, error: null },
-    { data: profiles, error: null }
+    { data: { user: null }, error: null }
   );
   const { route } = loadRoute({ db });
 
@@ -129,20 +128,21 @@ test("common restaurants route: logged-out users are rejected", async () => {
 test("common restaurants route: requires viewer profile name", async () => {
   const db = spyDb(
     { data: { user: { id: "unknown-id", user_metadata: {} } }, error: null },
-    { data: profiles, error: null }
+    { data: { id: "unknown-id", username: null }, error: null }
   );
   const { route } = loadRoute({ db });
 
   const res = await route.GET({}, routeParams("target-id"));
 
   assert.equal(status(res), 400);
-  assert.equal(body(res).error, "Viewer profile is missing a name");
+  assert.equal(body(res).error, "Viewer profile is missing a username");
 });
 
 test("common restaurants route: returns 404 for unknown target", async () => {
   const db = spyDb(
     { data: { user: { id: "viewer-id", user_metadata: {} } }, error: null },
-    { data: profiles, error: null }
+    { data: profiles[0], error: null },
+    { data: null, error: null }
   );
   const { route } = loadRoute({ db });
 
@@ -155,7 +155,8 @@ test("common restaurants route: returns 404 for unknown target", async () => {
 test("common restaurants route: rejects comparing a user with themselves", async () => {
   const db = spyDb(
     { data: { user: { id: "viewer-id", user_metadata: {} } }, error: null },
-    { data: profiles, error: null }
+    { data: profiles[0], error: null },
+    { data: profiles[0], error: null }
   );
   const { route } = loadRoute({ db });
 
@@ -165,48 +166,51 @@ test("common restaurants route: rejects comparing a user with themselves", async
   assert.equal(body(res).error, "Target user must be a different account");
 });
 
-test("common restaurants route: resolves encoded full-name targets and passes both circle directions", async () => {
+test("common restaurants route: resolves usernames and passes both circle directions", async () => {
   const reviews = [
-    { id: "review-1", reviewer_name: "Alice Ate", restaurant_name: "Cafe One", visibility: "public" },
-    { id: "review-2", reviewer_name: "Charlie Chef", restaurant_name: "Cafe One", visibility: "public" },
+    { id: "review-1", reviewer_name: "alice", restaurant_name: "Cafe One", visibility: "public" },
+    { id: "review-2", reviewer_name: "charlie", restaurant_name: "Cafe One", visibility: "public" },
   ];
   const db = spyDb(
     { data: { user: { id: "viewer-id", user_metadata: {} } }, error: null },
-    { data: profiles, error: null },
+    { data: profiles[0], error: null },
+    { data: profiles[2], error: null },
     { data: reviews, error: null }
   );
   const { route, hasCircleAccessCalls, computeCalls } = loadRoute({
     db,
     access: {
-      "Charlie Chef:Alice Ate": true,
-      "Alice Ate:Charlie Chef": false,
+      "charlie:alice": true,
+      "alice:charlie": false,
     },
   });
 
-  const res = await route.GET({}, routeParams("Charlie%20Chef"));
+  const res = await route.GET({}, routeParams("charlie"));
 
   assert.equal(status(res), 200);
   assert.equal(body(res).targetUserId, "space-id");
+  assert.equal(body(res).targetUsername, "charlie");
   assert.equal(body(res).commonRestaurantCount, 1);
   assert.deepEqual(hasCircleAccessCalls, [
-    { ownerName: "Charlie Chef", viewerName: "Alice Ate" },
-    { ownerName: "Alice Ate", viewerName: "Charlie Chef" },
+    { ownerName: "charlie", viewerName: "alice" },
+    { ownerName: "alice", viewerName: "charlie" },
   ]);
-  assert.equal(computeCalls[0].firstUserName, "Alice Ate");
-  assert.equal(computeCalls[0].secondUserName, "Charlie Chef");
+  assert.equal(computeCalls[0].firstUserName, "alice");
+  assert.equal(computeCalls[0].secondUserName, "charlie");
   assert.equal(computeCalls[0].options.firstCanSeeSecondCircle, true);
   assert.equal(computeCalls[0].options.secondCanSeeFirstCircle, false);
   const reviewNameFilter = opArgs(db._calls.find((call) => call.table === "reviews"), "in");
   assert.equal(reviewNameFilter[0], "reviewer_name");
-  assert.equal(reviewNameFilter[1][0], "Alice Ate");
-  assert.equal(reviewNameFilter[1][1], "Charlie Chef");
+  assert.equal(reviewNameFilter[1][0], "alice");
+  assert.equal(reviewNameFilter[1][1], "charlie");
 });
 
 test("common restaurants route: can resolve target by id and username", async () => {
-  for (const target of ["target-id", "bob"]) {
+  for (const target of ["00000000-0000-0000-0000-0000000000bb", "bob"]) {
     const db = spyDb(
       { data: { user: { id: "viewer-id", user_metadata: {} } }, error: null },
-      { data: profiles, error: null },
+      { data: profiles[0], error: null },
+      { data: profiles[1], error: null },
       { data: [], error: null }
     );
     const { route } = loadRoute({ db });
@@ -216,4 +220,37 @@ test("common restaurants route: can resolve target by id and username", async ()
     assert.equal(status(res), 200);
     assert.equal(body(res).targetUserId, "target-id");
   }
+});
+
+test("common restaurants route: self-compare via UUID resolving to same username returns 400", async () => {
+  // Target UUID resolves to the same profile (and therefore same username) as the viewer
+  const db = spyDb(
+    { data: { user: { id: "viewer-id", user_metadata: {} } }, error: null },
+    { data: profiles[0], error: null },                              // viewer: username "alice"
+    { data: profiles[0], error: null }                               // target UUID resolves to same "alice"
+  );
+  const { route } = loadRoute({ db });
+
+  const res = await route.GET({}, routeParams("viewer-id"));
+
+  assert.equal(status(res), 400);
+  assert.equal(body(res).error, "Target user must be a different account");
+});
+
+test("common restaurants route: two accounts with different usernames are not blocked by self-compare guard", async () => {
+  // Both profiles share the same first/last name but have distinct usernames — comparison must proceed
+  const twin1 = { id: "twin-1-id", username: "alice_smith" };
+  const twin2 = { id: "twin-2-id", username: "alice_jones" };
+  const db = spyDb(
+    { data: { user: { id: "twin-1-id", user_metadata: {} } }, error: null },
+    { data: twin1, error: null },   // viewer: "alice_smith"
+    { data: twin2, error: null },   // target: "alice_jones"
+    { data: [], error: null }       // reviews
+  );
+  const { route } = loadRoute({ db });
+
+  const res = await route.GET({}, routeParams("alice_jones"));
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).targetUsername, "alice_jones");
 });

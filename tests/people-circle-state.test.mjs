@@ -115,3 +115,22 @@ test("people circle buttons: API response aliases are accepted", () => {
   assert.equal(isAcceptedCircleResponse({ status: "pending" }), false);
   assert.equal(isOneWayCircleResponse({ state: "PENDING" }), false);
 });
+
+test("people circle buttons: In Circle leave changes status to Request", () => {
+  const before = state({ circle: ["Bob"] });
+  assert.equal(personButtonLabel(personStatusFor("Bob", before)), "In Circle");
+
+  // Optimistic update: circleMembers is cleared immediately on leave click
+  const afterLeave = state({ circle: Array.from(removeName(before.circleMembers, "Bob")) });
+  assert.equal(personButtonLabel(personStatusFor("Bob", afterLeave)), "Request");
+});
+
+test("people circle buttons: remove failure restores In Circle", () => {
+  // Optimistic: circleMembers cleared when confirm dialog fires the API call
+  const afterOptimistic = state({});
+  assert.equal(personButtonLabel(personStatusFor("Bob", afterOptimistic)), "Request");
+
+  // API fails: previous state rolled back
+  const afterFailure = state({ circle: ["Bob"] });
+  assert.equal(personButtonLabel(personStatusFor("Bob", afterFailure)), "In Circle");
+});

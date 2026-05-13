@@ -38,7 +38,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
   ]);
 
   const reviews = allReviews ?? [];
-  const myName = user?.user_metadata?.full_name ?? "";
+  const myName = (user?.user_metadata?.username as string) ?? "";
 
   // Fetch circle members for the current user before filtering; the server
   // must never send non-visible restaurant posts to the client.

@@ -25,7 +25,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const myName = user?.user_metadata?.full_name ?? "";
+  const myName = (user?.user_metadata?.username as string) ?? "";
   let circleOwnerNames = new Set<string>();
   if (myName && myName !== name) {
     const canSeeCirclePosts = await hasCircleAccess(supabase, name, myName);

@@ -1,7 +1,5 @@
 import ReviewForm from "@/components/reviews/ReviewForm";
 
-export const dynamic = "force-dynamic";
-
 export default function NewReviewPage() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>

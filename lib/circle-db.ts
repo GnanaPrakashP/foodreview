@@ -21,26 +21,18 @@ function logUnexpectedCircleDbError(message: string, error: CircleDbError | null
 }
 
 type ProfileRow = {
-  first_name: string;
-  last_name: string;
+  username: string | null;
   account_type: string | null;
 };
 
-function profileName(profile: Pick<ProfileRow, "first_name" | "last_name">): string {
-  return `${profile.first_name} ${profile.last_name}`.trim();
-}
-
 export async function getAccountTypeForName(db: CircleDb, name: string): Promise<AccountType> {
-  const firstName = name.trim().split(/\s+/)[0] ?? "";
-
   const { data } = await db
     .from("profiles")
-    .select("first_name, last_name, account_type")
-    .ilike("first_name", firstName)
-    .limit(100);
+    .select("username, account_type")
+    .eq("username", name.trim())
+    .maybeSingle();
 
-  const profile = ((data ?? []) as ProfileRow[]).find((row) => profileName(row) === name);
-  return profile ? normalizeAccountType(profile.account_type) : DEFAULT_ACCOUNT_TYPE;
+  return data ? normalizeAccountType((data as ProfileRow).account_type) : DEFAULT_ACCOUNT_TYPE;
 }
 
 export async function getAccountTypesForNames(
@@ -50,23 +42,15 @@ export async function getAccountTypesForNames(
   const uniqueNames = Array.from(new Set(names.filter(Boolean)));
   if (uniqueNames.length === 0) return {};
 
-  const wanted = new Set(uniqueNames);
   const result: Record<string, AccountType> = {};
 
-  const firstNames = [...new Set(
-    uniqueNames.map((n) => n.trim().split(/\s+/)[0]).filter(Boolean)
-  )];
-
-  const orFilter = firstNames.map((f) => `first_name.ilike.${f}`).join(",");
   const { data } = await db
     .from("profiles")
-    .select("first_name, last_name, account_type")
-    .or(orFilter)
-    .limit(1000);
+    .select("username, account_type")
+    .in("username", uniqueNames);
 
   for (const row of (data ?? []) as ProfileRow[]) {
-    const name = profileName(row);
-    if (wanted.has(name)) result[name] = normalizeAccountType(row.account_type);
+    if (row.username) result[row.username] = normalizeAccountType(row.account_type);
   }
 
   for (const name of uniqueNames) {

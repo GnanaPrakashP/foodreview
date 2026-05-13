@@ -106,7 +106,7 @@ export default function ComparisonSection({
   if (!mounted || !myName || myName === friendName) return null;
   if (notTriedByMe.length === 0 && bothTried.length === 0) return null;
 
-  const firstName = friendName.split(" ")[0];
+  const firstName = friendName.split(/[\s_]+/)[0] ?? friendName;
 
   return (
     <div className="px-5 pb-5">

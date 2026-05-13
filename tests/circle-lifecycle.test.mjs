@@ -94,7 +94,7 @@ function makeNotifications() {
 
 // ---- load a route with injected deps (fresh VM context per call) ----
 
-function loadRoute(code, { db, circleDb, notifications, authName = "Alice" }) {
+function loadRoute(code, { db, circleDb, notifications, authName = "Alice", displayName }) {
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -109,7 +109,7 @@ function loadRoute(code, { db, circleDb, notifications, authName = "Alice" }) {
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
-            authName ? { userId: `${authName.toLowerCase()}-id`, actorName: authName } : null,
+            authName ? { userId: `${authName.toLowerCase()}-id`, actorName: authName, displayName: displayName ?? authName } : null,
         };
       }
       if (id === "@/lib/circle-db") return circleDb;
@@ -254,6 +254,29 @@ test("request matrix: private sender → public receiver creates one-way circle 
   assert.equal(body(res).state, "CIRCLE_ONE_WAY");
   assert.deepEqual(addCalls, [["Bob", "Private Alice"]]);
   assert.deepEqual(accountLookups, ["Bob"]);
+});
+
+test("request: public account — sends ADDED_TO_CIRCLE notification to receiver", async () => {
+  const notif = makeNotifications();
+
+  const { POST } = loadRoute(src.request, {
+    db: mockDb({ data: [], error: null }), // circle_requests accepted-status cleanup
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async () => "public",
+      addCircleEdge: async () => ({ error: null }),
+    }),
+    notifications: notif,
+  });
+
+  await POST(makeReq({ senderName: "Alice", receiverName: "Bob" }));
+
+  const addedNotif = notif.calls.find(
+    (c) => c.fn === "createNotificationForNames" && c.input.type === "ADDED_TO_CIRCLE"
+  );
+  assert.ok(addedNotif, "should send ADDED_TO_CIRCLE notification to receiver");
+  assert.equal(addedNotif.input.recipientName, "Bob");
+  assert.equal(addedNotif.input.actorName, "Alice");
 });
 
 test("request: forged senderName is ignored in favor of authenticated actor", async () => {
@@ -693,4 +716,81 @@ test("cancel: cancelling an already-accepted request returns 409", async () => {
 
   const res = await POST(makeReq({ senderName: "Alice", receiverName: "Bob" }));
   assert.equal(status(res), 409);
+});
+
+// ============================================================
+// displayName in notification messages
+// ============================================================
+
+test("request: ADDED_TO_CIRCLE notification message uses displayName, not actorName", async () => {
+  const notif = makeNotifications();
+
+  const { POST } = loadRoute(src.request, {
+    db: mockDb({ data: [], error: null }), // circle_requests accepted-status cleanup
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async () => "public",
+      addCircleEdge: async () => ({ error: null }),
+    }),
+    notifications: notif,
+    authName: "alice",
+    displayName: "Alice Ate",
+  });
+
+  await POST(makeReq({ senderName: "alice", receiverName: "Bob" }));
+
+  const n = notif.calls.find((c) => c.fn === "createNotificationForNames" && c.input.type === "ADDED_TO_CIRCLE");
+  assert.ok(n, "ADDED_TO_CIRCLE notification should fire");
+  assert.ok(n.input.message.includes("Alice Ate"), `message should contain displayName; got: ${n.input.message}`);
+  assert.ok(!n.input.message.includes("alice"), `message should not contain actorName; got: ${n.input.message}`);
+});
+
+test("request: CIRCLE_REQUEST_RECEIVED notification message uses displayName, not actorName", async () => {
+  const notif = makeNotifications();
+
+  const { POST } = loadRoute(src.request, {
+    db: mockDb(
+      { data: [], error: null },              // existing request check
+      { data: { id: "req-1" }, error: null }  // insert new request
+    ),
+    circleDb: makeCircleDb({
+      hasCircleEdge: async () => false,
+      getAccountTypeForName: async () => "private",
+    }),
+    notifications: notif,
+    authName: "alice",
+    displayName: "Alice Ate",
+  });
+
+  await POST(makeReq({ senderName: "alice", receiverName: "Bob" }));
+
+  const n = notif.calls.find((c) => c.fn === "upsertCircleRequestNotification");
+  assert.ok(n, "upsertCircleRequestNotification should fire");
+  assert.ok(n.input.message.includes("Alice Ate"), `message should contain displayName; got: ${n.input.message}`);
+  assert.ok(!n.input.message.includes("alice"), `message should not contain actorName; got: ${n.input.message}`);
+});
+
+test("respond: CIRCLE_REQUEST_ACCEPTED notification message uses responder's displayName", async () => {
+  const notif = makeNotifications();
+
+  const { POST } = loadRoute(src.respond, {
+    db: mockDb(
+      { data: { id: "req-1", status: "pending" }, error: null },
+      { error: null },
+      { error: null }
+    ),
+    circleDb: makeCircleDb(),
+    notifications: notif,
+    authName: "bob",
+    displayName: "Bob Bites",
+  });
+
+  await POST(makeReq({ myName: "bob", senderName: "Alice", action: "accept" }));
+
+  const n = notif.calls.find(
+    (c) => c.fn === "createNotificationForNames" && c.input.type === "CIRCLE_REQUEST_ACCEPTED"
+  );
+  assert.ok(n, "CIRCLE_REQUEST_ACCEPTED notification should fire");
+  assert.ok(n.input.message.includes("Bob Bites"), `message should contain displayName; got: ${n.input.message}`);
+  assert.ok(!n.input.message.includes("bob"), `message should not contain actorName; got: ${n.input.message}`);
 });

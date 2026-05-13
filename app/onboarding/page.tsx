@@ -19,6 +19,7 @@ export default function OnboardingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const checkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkGenerationRef = useRef(0);
 
   // Pre-fill from Google user metadata
   useEffect(() => {
@@ -41,6 +42,7 @@ export default function OnboardingPage() {
     if (!USERNAME_REGEX.test(raw)) { setUsernameStatus("invalid"); return; }
 
     setUsernameStatus("checking");
+    const generation = ++checkGenerationRef.current;
     checkTimerRef.current = setTimeout(async () => {
       const supabase = createClient();
       const { data } = await supabase
@@ -48,7 +50,9 @@ export default function OnboardingPage() {
         .select("id")
         .eq("username", raw)
         .maybeSingle();
-      setUsernameStatus(data ? "taken" : "available");
+      if (generation === checkGenerationRef.current) {
+        setUsernameStatus(data ? "taken" : "available");
+      }
     }, 500);
 
     return () => {
@@ -97,7 +101,8 @@ export default function OnboardingPage() {
     });
 
     // Also update localStorage immediately
-    localStorage.setItem("fc_my_name", fullName);
+    localStorage.setItem("fc_my_name", un);
+    localStorage.setItem("fc_display_name", fullName);
 
     router.push("/");
     router.refresh();

@@ -291,7 +291,7 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
             Your Food Map
           </h1>
           <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
-            Every place {myName.split(" ")[0]} has tried, ranked
+            Every place {myName.split(/[\s_]+/)[0]} has tried, ranked
           </p>
         </div>
         <button

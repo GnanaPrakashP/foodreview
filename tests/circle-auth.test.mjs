@@ -81,7 +81,7 @@ test("circle-auth: returns null on auth error", async () => {
   assert.equal(db._calls.length, 0);
 });
 
-test("circle-auth: derives actor name from profile full name first", async () => {
+test("circle-auth: uses username as actor name and full name as display name", async () => {
   const db = spyDb({
     user: { id: "user-1", user_metadata: { full_name: "Wrong Name" }, email: "wrong@example.com" },
     profile: { first_name: "Alice", last_name: "Ate", username: "alice" },
@@ -90,21 +90,22 @@ test("circle-auth: derives actor name from profile full name first", async () =>
   const actor = await getAuthenticatedCircleActor(db);
 
   assert.equal(actor.userId, "user-1");
-  assert.equal(actor.actorName, "Alice Ate");
+  assert.equal(actor.actorName, "alice");
+  assert.equal(actor.displayName, "Alice Ate");
   assert.equal(db._calls[0].table, "profiles");
   assert.equal(eqFilters(db._calls[0]).id, "user-1");
 });
 
-test("circle-auth: falls back to metadata full_name, metadata name, then email prefix", async () => {
+test("circle-auth: falls back to metadata username, then email prefix for actor name", async () => {
   assert.equal((await getAuthenticatedCircleActor(spyDb({
     user: { id: "user-1", user_metadata: { full_name: "  Alice Meta  " }, email: "alice@example.com" },
     profile: { first_name: "", last_name: "", username: "alice" },
-  }))).actorName, "Alice Meta");
+  }))).actorName, "alice");
 
   assert.equal((await getAuthenticatedCircleActor(spyDb({
-    user: { id: "user-2", user_metadata: { name: "  Bob Name  " }, email: "bob@example.com" },
+    user: { id: "user-2", user_metadata: { username: "  bob_name  ", name: "  Bob Name  " }, email: "bob@example.com" },
     profile: null,
-  }))).actorName, "Bob Name");
+  }))).actorName, "bob_name");
 
   assert.equal((await getAuthenticatedCircleActor(spyDb({
     user: { id: "user-3", user_metadata: {}, email: "cara@example.com" },
@@ -112,11 +113,50 @@ test("circle-auth: falls back to metadata full_name, metadata name, then email p
   }))).actorName, "cara");
 });
 
-test("circle-auth: returns null when no profile, metadata, or email name exists", async () => {
+test("circle-auth: uses profile username even when no metadata or email name exists", async () => {
   const db = spyDb({
     user: { id: "user-1", user_metadata: {}, email: null },
-    profile: { first_name: "", last_name: "", username: "fallback_username_is_not_actor_name" },
+    profile: { first_name: "", last_name: "", username: "fallback_username" },
   });
 
-  assert.equal(await getAuthenticatedCircleActor(db), null);
+  const actor = await getAuthenticatedCircleActor(db);
+  assert.equal(actor.actorName, "fallback_username");
+  assert.equal(actor.displayName, "fallback_username");
+});
+
+test("circle-auth: displayName falls back through full_name then name metadata when profile has no first/last name", async () => {
+  // full_name metadata is the first fallback after first+last name
+  const actorFullName = await getAuthenticatedCircleActor(spyDb({
+    user: { id: "u1", user_metadata: { full_name: "  Alice Meta  " }, email: "a@example.com" },
+    profile: { first_name: null, last_name: null, username: "alice" },
+  }));
+  assert.equal(actorFullName.actorName, "alice");
+  assert.equal(actorFullName.displayName, "Alice Meta");
+
+  // name metadata is the second fallback when full_name is also absent
+  const actorName = await getAuthenticatedCircleActor(spyDb({
+    user: { id: "u2", user_metadata: { name: "  Bob Name  " }, email: "b@example.com" },
+    profile: { first_name: null, last_name: null, username: "bob" },
+  }));
+  assert.equal(actorName.actorName, "bob");
+  assert.equal(actorName.displayName, "Bob Name");
+
+  // actorName is the final fallback when all name sources are absent
+  const actorFallback = await getAuthenticatedCircleActor(spyDb({
+    user: { id: "u3", user_metadata: {}, email: "c@example.com" },
+    profile: { first_name: null, last_name: null, username: "cara" },
+  }));
+  assert.equal(actorFallback.actorName, "cara");
+  assert.equal(actorFallback.displayName, "cara");
+});
+
+test("circle-auth: displayName is actorName when profile has null name fields and no metadata name", async () => {
+  const db = spyDb({
+    user: { id: "u1", user_metadata: {}, email: "zara@example.com" },
+    profile: { first_name: null, last_name: null, username: "zara" },
+  });
+
+  const actor = await getAuthenticatedCircleActor(db);
+  assert.equal(actor.actorName, "zara");
+  assert.equal(actor.displayName, "zara");
 });

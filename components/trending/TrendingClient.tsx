@@ -83,7 +83,7 @@ function CircleBadge({ reviews }: { reviews: CircleReviewItem[] }) {
       </div>
       <span style={{ fontSize: 11, color: "#F59E0B", fontWeight: 500 }}>
         ✦ {shown.length === 1
-          ? `${shown[0].friend_name.split(" ")[0]} visited this`
+          ? `${shown[0].friend_name.split(/[\s_]+/)[0]} visited this`
           : `${reviews.length} from your Circle`}
       </span>
     </div>

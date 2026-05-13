@@ -9,19 +9,25 @@ function source(relativePath) {
 test("home/circle feed filters server reviews before fetching engagement data", () => {
   for (const file of ["app/page.tsx", "app/circle/page.tsx"]) {
     const src = source(file);
-    assert.match(src, /createAdminClient\(\)/);
-    assert.match(src, /getAuthenticatedCircleActor\(supabase\)/);
-    assert.match(src, /const feedReviewerNames = Array\.from\(new Set\(\[\.\.\.joinedCircles, myName\]\.filter\(Boolean\)\)\)/);
-    assert.match(src, /filterCircleTrendingReviews\(reviews \?\? \[\],/);
-    assert.match(src, /const postIds = allReviews\.map/);
-    assert.match(src, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
-    assert.match(src, /<CircleFeedClient\s+allReviews=\{rankedReviews\}/s);
+    assert.match(src, /getCircleFeedPage\(supabase\)/);
+    assert.match(src, /<CircleFeedClient\s+allReviews=\{feed\.reviews\}/s);
   }
+
+  const helper = source("lib/circle-feed.ts");
+  assert.match(helper, /createAdminClient\(\)/);
+  assert.match(helper, /getAuthenticatedCircleActor\(supabase\)/);
+  assert.match(helper, /const feedReviewerNames = Array\.from\(new Set\(\[\.\.\.joinedCircles, myName\]\.filter\(Boolean\)\)\)/);
+  assert.match(helper, /const batch = \(rawBatch \?\? \[\]\) as Review\[]/);
+  assert.match(helper, /filterCircleTrendingReviews\(batch,/);
+  assert.match(helper, /const postIds = allReviews\.map/);
+  assert.match(helper, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
 });
 
 test("global trending computes rankings from public filtered reviews only", () => {
-  const src = source("app/trending/page.tsx");
+  const page = source("app/trending/page.tsx");
+  const src = source("lib/trending-page-data.ts");
 
+  assert.match(page, /getTrendingPageData\(supabase, myName\)/);
   assert.match(src, /const publicReviews = filterGlobalTrendingReviews\(allReviews\)/);
   assert.match(src, /computeTrending\(publicReviews\)/);
   assert.match(src, /filterPublicCircleTrendingReviews\(publicReviews,/);
@@ -42,8 +48,8 @@ test("Circle destructive actions use in-app confirmation modal before mutating s
   assert.match(profile, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
   assert.match(profile, /open=\{confirmAction !== null\}/);
   assert.match(profile, /title=\{confirmAction === "leave_circle" \? "Leave circle\?" : "Cancel request\?"\}/);
-  assert.match(profile, /Do you no longer want to be in \$\{name\}'s circle\?/);
-  assert.match(profile, /Cancel request to join \$\{name\}'s circle\?/);
+  assert.match(profile, /Do you no longer want to be in \$\{displayName \|\| name\}'s circle\?/);
+  assert.match(profile, /Cancel request to join \$\{displayName \|\| name\}'s circle\?/);
   assert.match(people, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
   assert.match(people, /open=\{Boolean\(confirmCancelName\)\}/);
   assert.match(people, /open=\{Boolean\(confirmLeaveName\)\}/);
@@ -53,7 +59,7 @@ test("people profile shows incoming request card with name and accept/reject act
   const profile = source("components/people/FriendProfileClient.tsx");
 
   assert.match(profile, /hasIncomingRequest && circleStatus !== "one_way"/);
-  assert.match(profile, /\{name\} requested to join your circle\./);
+  assert.match(profile, /\{displayName \|\| name\} requested to join your circle\./);
   assert.match(profile, /onClick=\{\(\) => respondToIncoming\("reject"\)\}/);
   assert.match(profile, /onClick=\{\(\) => respondToIncoming\("accept"\)\}/);
 });

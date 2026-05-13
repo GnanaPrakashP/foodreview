@@ -1,6 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Notification } from "@/lib/types";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createRouteSupabase, filterValidNotifications, getNotificationViewer, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
+
+type ProfileLookupDb = {
+  from: (table: string) => any;
+};
+
+type ProfileRow = {
+  id: string | null;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
+function displayName(profile: ProfileRow): string {
+  return [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+}
+
+async function buildNotificationProfileMap(
+  fallbackDb: ProfileLookupDb,
+  notifications: Notification[]
+): Promise<Record<string, string>> {
+  const actorNames = Array.from(new Set(notifications.map((n) => n.actor_name?.trim()).filter(Boolean))) as string[];
+  const actorIds = Array.from(new Set(notifications.map((n) => n.actor_user_id).filter(Boolean))) as string[];
+  const aliasesById = new Map<string, string[]>();
+  for (const notification of notifications) {
+    if (!notification.actor_user_id || !notification.actor_name) continue;
+    const aliases = aliasesById.get(notification.actor_user_id) ?? [];
+    aliases.push(notification.actor_name);
+    aliasesById.set(notification.actor_user_id, aliases);
+  }
+
+  const profileMap: Record<string, string> = {};
+  if (actorNames.length === 0 && actorIds.length === 0) return profileMap;
+
+  let profileDb: ProfileLookupDb = fallbackDb;
+  try {
+    profileDb = createAdminClient();
+  } catch {
+    profileDb = fallbackDb;
+  }
+
+  const [byUsername, byId] = await Promise.all([
+    actorNames.length > 0
+      ? profileDb
+          .from("profiles")
+          .select("id, username, first_name, last_name")
+          .in("username", actorNames)
+      : Promise.resolve({ data: [], error: null }),
+    actorIds.length > 0
+      ? profileDb
+          .from("profiles")
+          .select("id, username, first_name, last_name")
+          .in("id", actorIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  for (const profile of ([...(byUsername.data ?? []), ...(byId.data ?? [])] as ProfileRow[])) {
+    const name = displayName(profile);
+    if (!name) continue;
+    if (profile.username) profileMap[profile.username] = name;
+    if (profile.id) {
+      for (const alias of aliasesById.get(profile.id) ?? []) {
+        profileMap[alias] = name;
+      }
+    }
+  }
+
+  return profileMap;
+}
 
 export async function GET(req: NextRequest) {
   const supabase = await createRouteSupabase();
@@ -46,7 +115,11 @@ export async function GET(req: NextRequest) {
       }
 
       const merged = mergeNotifications(legacy as Notification[]).slice(0, limit);
-      return NextResponse.json({ notifications: await filterValidNotifications(supabase, merged) });
+      const validNotifications = await filterValidNotifications(supabase, merged);
+      return NextResponse.json({
+        notifications: validNotifications,
+        profileMap: await buildNotificationProfileMap(supabase, validNotifications),
+      });
     }
 
     console.error("[notifications] list failed:", byIdError ?? byNameError);
@@ -54,5 +127,8 @@ export async function GET(req: NextRequest) {
   }
 
   const merged = mergeNotifications(byId as Notification[], byName as Notification[]).slice(0, limit);
-  return NextResponse.json({ notifications: await filterValidNotifications(supabase, merged) });
+  const validNotifications = await filterValidNotifications(supabase, merged);
+  const profileMap = await buildNotificationProfileMap(supabase, validNotifications);
+
+  return NextResponse.json({ notifications: validNotifications, profileMap });
 }

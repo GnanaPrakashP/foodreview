@@ -8,6 +8,7 @@ import type { FoodItem } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
 import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-react";
 import type { Visibility } from "@/lib/types";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -27,8 +28,11 @@ type RestaurantSuggestion = {
 };
 
 type ReviewInsertPayload = {
-  reviewer_name: string;
-  restaurant_name: string;
+  restaurantName: string;
+  restaurantId?: string | null;
+  restaurantAddress?: string | null;
+  restaurantLat?: number | null;
+  restaurantLng?: number | null;
   restaurant_id?: string | null;
   area?: string | null;
   restaurant_address?: string | null;
@@ -36,7 +40,7 @@ type ReviewInsertPayload = {
   restaurant_lng?: number | null;
   items: FoodItem[];
   body: string | null;
-  photo_url: string | null;
+  photoUrl: string | null;
   visibility: Visibility;
 };
 
@@ -68,6 +72,9 @@ function isMissingOptionalReviewColumn(error: unknown): boolean {
 
 function withoutRichPlaceDetails(payload: ReviewInsertPayload): ReviewInsertPayload {
   const {
+    restaurantAddress: _restaurantAddressCamel,
+    restaurantLat: _restaurantLatCamel,
+    restaurantLng: _restaurantLngCamel,
     restaurant_address: _restaurantAddress,
     restaurant_lat: _restaurantLat,
     restaurant_lng: _restaurantLng,
@@ -78,6 +85,10 @@ function withoutRichPlaceDetails(payload: ReviewInsertPayload): ReviewInsertPayl
 
 function withoutPlaceMetadata(payload: ReviewInsertPayload): ReviewInsertPayload {
   const {
+    restaurantId: _restaurantIdCamel,
+    restaurantAddress: _restaurantAddressCamel,
+    restaurantLat: _restaurantLatCamel,
+    restaurantLng: _restaurantLngCamel,
     restaurant_id: _restaurantId,
     area: _area,
     restaurant_address: _restaurantAddress,
@@ -391,25 +402,29 @@ export default function ReviewForm() {
         .map((it) => ({ name: it.name.trim(), rating: it.rating }));
 
       const reviewPayload: ReviewInsertPayload = {
-        reviewer_name: reviewerName.trim(),
-        restaurant_name: restaurantName.trim(),
+        restaurantName: restaurantName.trim(),
         items: allItems,
         body: body.trim() || null,
-        photo_url: photoUrl,
+        photoUrl,
         visibility,
       };
-      if (restaurantId) reviewPayload.restaurant_id = restaurantId;
+      if (restaurantId) reviewPayload.restaurantId = restaurantId;
       if (restaurantArea) reviewPayload.area = restaurantArea;
-      if (restaurantAddress) reviewPayload.restaurant_address = restaurantAddress;
-      if (restaurantLat !== null) reviewPayload.restaurant_lat = restaurantLat;
-      if (restaurantLng !== null) reviewPayload.restaurant_lng = restaurantLng;
+      if (restaurantAddress) reviewPayload.restaurantAddress = restaurantAddress;
+      if (restaurantLat !== null) reviewPayload.restaurantLat = restaurantLat;
+      if (restaurantLng !== null) reviewPayload.restaurantLng = restaurantLng;
 
       async function insertReview(payload: ReviewInsertPayload) {
-        return (supabase as any)
-          .from("reviews")
-          .insert(payload)
-          .select("id")
-          .single();
+        const response = await fetch("/api/reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await response.json().catch(() => ({}));
+        return {
+          data: response.ok ? json : null,
+          error: response.ok ? null : new Error(json.error || "Unable to save review"),
+        };
       }
 
       let { data: review, error: insertError } = await insertReview(reviewPayload);
@@ -434,6 +449,8 @@ export default function ReviewForm() {
         body: JSON.stringify({ event: "CIRCLE_POST_CREATED", reviewId: review.id, actorName: reviewerName.trim() }),
       }).catch(() => {});
 
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/me");
       router.push(`/reviews/${review.id}`);
       router.refresh();
     } catch (err: unknown) {

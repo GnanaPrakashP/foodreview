@@ -38,7 +38,7 @@ test("seed-e2e creates the three-user visibility model expected by Playwright", 
   assert.match(seed, /body:\s*`E2E seed review \(\$\{name\} private\)`/);
   assert.match(seed, /visibility:\s*"me"/);
   assert.match(seed, /const missingReviews = reviews\.filter/);
-  assert.match(seed, /await seedCircle\(results\[0\]\.name, results\[1\]\.name\)/);
+  assert.match(seed, /await seedCircle\(results\[0\]\.username, results\[1\]\.username\)/);
 });
 
 test("Playwright setup loads .env.e2e and separates desktop/mobile smoke projects", () => {

@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Heart, MessageCircle, MoreHorizontal, Star } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import type { Review } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 interface Props {
   review: Review;
@@ -16,7 +17,11 @@ interface Props {
   initialLiked?: boolean;
   initialBookmarked?: boolean;
   initialMyName?: string;
+  profileMap?: Record<string, string>;
+  priorityImage?: boolean;
   onDeleted?: (review: Review) => void;
+  requestStatus?: "idle" | "loading" | "pending" | "joined";
+  onRequestClick?: () => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -43,6 +48,27 @@ function avatarGradient(name: string): string {
   return G[h % G.length];
 }
 
+function feedImageUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.hostname.endsWith(".supabase.co") &&
+      parsed.pathname.startsWith("/storage/v1/object/public/")
+    ) {
+      const objectPath = parsed.pathname.replace("/storage/v1/object/public/", "");
+      parsed.pathname = `/storage/v1/render/image/public/${objectPath}`;
+      parsed.searchParams.set("width", "960");
+      parsed.searchParams.set("height", "640");
+      parsed.searchParams.set("resize", "cover");
+      parsed.searchParams.set("quality", "78");
+      return parsed.toString();
+    }
+  } catch {
+    return url;
+  }
+  return url;
+}
+
 export default function CircleFeedCard({
   review,
   initialLikeCount,
@@ -50,7 +76,11 @@ export default function CircleFeedCard({
   initialLiked = false,
   initialBookmarked = false,
   initialMyName = "",
+  profileMap,
+  priorityImage = false,
   onDeleted,
+  requestStatus,
+  onRequestClick,
 }: Props) {
   const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
@@ -71,7 +101,13 @@ export default function CircleFeedCard({
   const scrollRef = useRef<HTMLDivElement>(null);
   const postMenuRef = useRef<HTMLDivElement>(null);
 
-  const initials = review.reviewer_name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
+  const rn = review.reviewer_name;
+  const reviewerDisplayName = profileMap?.[rn] || rn;
+  const initials = (() => {
+    const parts = reviewerDisplayName.split(/[\s_]+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return (parts[0]?.[0] ?? reviewerDisplayName[0] ?? "?").toUpperCase();
+  })();
   const postHref = `/reviews/${encodeURIComponent(review.id)}`;
   const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
 
@@ -80,29 +116,24 @@ export default function CircleFeedCard({
     if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
     setMounted(true);
-    if (!name || initialMyName) return;
-    // Check if already liked
-    (async () => {
-      const supabase = createClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const [{ data: likeData }, { data: wishData }] = await Promise.all([
-        (supabase as any).from("likes").select("id").eq("post_id", review.id).eq("user_name", name).maybeSingle(),
-        (supabase as any).from("wishlist").select("id").eq("user_name", name).eq("restaurant_name", review.restaurant_name).maybeSingle(),
-      ]);
-      if (likeData) setLiked(true);
-      if (wishData) setBookmarked(true);
-    })();
-  }, [initialMyName, review.id, review.restaurant_name]);
+  }, [initialMyName]);
 
   const toggleLike = useCallback(async () => {
     if (!myName || !mounted) return;
     setBounceKey(k => k + 1);
-    const supabase = createClient();
     if (liked) {
       setLiked(false);
       setLikeCount(c => c - 1);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from("likes").delete().eq("post_id", review.id).eq("user_name", myName);
+      const response = await fetch("/api/likes", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: review.id }),
+      });
+      if (!response.ok) {
+        setLiked(true);
+        setLikeCount(c => c + 1);
+        return;
+      }
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -111,8 +142,16 @@ export default function CircleFeedCard({
     } else {
       setLiked(true);
       setLikeCount(c => c + 1);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from("likes").insert({ post_id: review.id, user_name: myName });
+      const response = await fetch("/api/likes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: review.id }),
+      });
+      if (!response.ok) {
+        setLiked(false);
+        setLikeCount(c => c - 1);
+        return;
+      }
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -124,13 +163,22 @@ export default function CircleFeedCard({
   const toggleBookmark = useCallback(async () => {
     if (!myName || !mounted) return;
     setBookmarkBounceKey(k => k + 1);
-    const supabase = createClient();
     if (bookmarked) {
       setBookmarked(false);
-      await (supabase as any).from("wishlist").delete().eq("user_name", myName).eq("restaurant_name", review.restaurant_name);
+      const response = await fetch("/api/wishlist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restaurantName: review.restaurant_name }),
+      });
+      if (!response.ok) setBookmarked(true);
     } else {
       setBookmarked(true);
-      await (supabase as any).from("wishlist").insert({ user_name: myName, restaurant_name: review.restaurant_name, post_id: review.id });
+      const response = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restaurantName: review.restaurant_name, postId: review.id }),
+      });
+      if (!response.ok) setBookmarked(false);
     }
   }, [myName, mounted, bookmarked, review]);
 
@@ -147,6 +195,9 @@ export default function CircleFeedCard({
       setDeletingReview(false);
       return;
     }
+
+    invalidateCachedJson("/api/me");
+    invalidateCachedJson("/api/feed/circle");
 
     if (onDeleted) {
       onDeleted(review);
@@ -197,12 +248,12 @@ export default function CircleFeedCard({
             onClick={(event) => event.stopPropagation()}
             style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}
           >
-            <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(rn), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
               {initials || "?"}
             </div>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: "14px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif" }}>
-                <strong>{review.reviewer_name}</strong>
+                <strong>{reviewerDisplayName}</strong>
                 <span style={{ color: "var(--muted)", fontWeight: 400 }}> shared a spot</span>
               </p>
             </div>
@@ -210,6 +261,31 @@ export default function CircleFeedCard({
           <span suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {timeAgo(review.created_at)}
           </span>
+          {requestStatus !== undefined && review.reviewer_name !== myName && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestClick?.(); }}
+              disabled={requestStatus === "loading"}
+              style={{
+                flexShrink: 0,
+                background: requestStatus === "joined"
+                  ? "rgba(61,214,140,0.12)"
+                  : "rgba(240,96,48,0.12)",
+                border: requestStatus === "joined"
+                  ? "1.5px solid rgba(61,214,140,0.35)"
+                  : "1.5px solid rgba(240,96,48,0.35)",
+                color: requestStatus === "joined" ? "var(--green)" : "var(--orange)",
+                fontSize: "11px",
+                fontWeight: 600,
+                padding: "6px 12px",
+                borderRadius: "100px",
+                cursor: requestStatus === "loading" ? "default" : "pointer",
+                whiteSpace: "nowrap",
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              {requestStatus === "pending" ? "Requested" : requestStatus === "joined" ? "In Circle" : "Request"}
+            </button>
+          )}
           <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={(event) => {
@@ -287,9 +363,16 @@ export default function CircleFeedCard({
                 className="hide-scrollbar"
               >
                 {photos.map((url, i) => (
-                  <div key={i} style={{ position: "relative", flexShrink: 0, width: "100%", scrollSnapAlign: "start" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <div key={i} style={{ position: "relative", flexShrink: 0, width: "100%", height: "100%", scrollSnapAlign: "start" }}>
+                    <Image
+                      src={feedImageUrl(url)}
+                      alt={review.restaurant_name}
+                      fill
+                      sizes="(max-width: 512px) 100vw, 512px"
+                      priority={priorityImage && i === 0}
+                      loading={priorityImage && i === 0 ? undefined : "lazy"}
+                      style={{ objectFit: "cover" }}
+                    />
                     <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)" }} />
                   </div>
                 ))}
@@ -323,7 +406,7 @@ export default function CircleFeedCard({
               onClick={(event) => event.stopPropagation()}
               style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
             >
-              {locationLabel}
+              📍 {locationLabel}
             </a>
           )}
 {review.body && (

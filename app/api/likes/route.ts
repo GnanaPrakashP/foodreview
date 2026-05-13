@@ -3,6 +3,12 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  (globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+  }).__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+}
+
 async function getActorAndDb() {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -37,6 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateCircleFeedCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }
 
@@ -61,5 +68,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateCircleFeedCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }

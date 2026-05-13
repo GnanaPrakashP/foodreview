@@ -83,6 +83,8 @@ export default function ReviewCard({ review }: ReviewCardProps) {
           <img
             src={review.photo_url}
             alt={firstItem?.name ?? review.restaurant_name}
+            loading="lazy"
+            decoding="async"
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
           <div
@@ -136,7 +138,7 @@ export default function ReviewCard({ review }: ReviewCardProps) {
             onClick={(event) => event.stopPropagation()}
             style={{ display: "inline-block", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: "1px", textDecoration: "none" }}
           >
-            {locationLabel}
+            📍 {locationLabel}
           </a>
         )}
 

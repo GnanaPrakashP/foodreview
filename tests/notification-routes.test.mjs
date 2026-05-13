@@ -110,7 +110,12 @@ function mergeNotifications(...groups) {
   );
 }
 
-function loadRoute(code, { db, viewer = { id: "viewer-id", name: "Alice" }, filterValidNotifications = async (_db, notifications) => notifications } = {}) {
+function loadRoute(code, {
+  db,
+  admin = db,
+  viewer = { id: "viewer-id", name: "Alice" },
+  filterValidNotifications = async (_db, notifications) => notifications,
+} = {}) {
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -120,6 +125,7 @@ function loadRoute(code, { db, viewer = { id: "viewer-id", name: "Alice" }, filt
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/supabase/admin") return { createAdminClient: () => admin };
       if (id.endsWith("_utils")) {
         return {
           createRouteSupabase: async () => db,
@@ -147,6 +153,59 @@ test("unread count: logged-out direct API call is rejected", async () => {
   assert.equal(body(res).error, "Unauthorized");
 });
 
+test("notification list: resolves actor usernames to display names through admin profile lookup", async () => {
+  const db = spyDb(
+    {
+      data: [
+        {
+          id: "notif-1",
+          recipient_user_id: "viewer-id",
+          actor_user_id: "rahul-id",
+          actor_name: "rahul_gupta",
+          type: "POST_COMMENTED",
+          message: "rahul_gupta commented on your post",
+          created_at: "2026-01-04T00:00:00.000Z",
+        },
+      ],
+      error: null,
+    },
+    { data: [], error: null }
+  );
+  const admin = spyDb(
+    {
+      data: [
+        {
+          id: "rahul-id",
+          username: "rahul_gupta",
+          first_name: "Rahul",
+          last_name: "Gupta",
+        },
+      ],
+      error: null,
+    },
+    {
+      data: [
+        {
+          id: "rahul-id",
+          username: "rahul_gupta",
+          first_name: "Rahul",
+          last_name: "Gupta",
+        },
+      ],
+      error: null,
+    }
+  );
+  const { GET } = loadRoute(src.list, { db, admin });
+
+  const res = await GET(makeReq());
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).profileMap.rahul_gupta, "Rahul Gupta");
+  assert.equal(admin._calls.length, 2);
+  assert.equal(admin._calls[0].table, "profiles");
+  assert.equal(admin._calls[1].table, "profiles");
+});
+
 test("unread count: combines user-id and legacy-name rows without double-counting", async () => {
   const db = spyDb(
     { data: [{ id: "notif-1" }, { id: "notif-2" }], error: null },
@@ -159,9 +218,56 @@ test("unread count: combines user-id and legacy-name rows without double-countin
   assert.equal(status(res), 200);
   assert.equal(body(res).unreadCount, 3);
   assert.equal(eqFilters(db._calls[0]).recipient_user_id, "viewer-id");
-  assert.equal(eqFilters(db._calls[0]).is_read, false);
   assert.equal(eqFilters(db._calls[1]).recipient_name, "Alice");
-  assert.equal(eqFilters(db._calls[1]).is_read, false);
+});
+
+test("unread count: filters stale unread rows before counting badge total", async () => {
+  const db = spyDb(
+    {
+      data: [
+        { id: "stale", type: "CIRCLE_REQUEST_RECEIVED", recipient_name: "Alice", actor_name: "Rahul", created_at: "2026-01-01T00:00:00.000Z" },
+        { id: "valid", type: "POST_LIKED", recipient_name: "Alice", actor_name: "Priya", created_at: "2026-01-02T00:00:00.000Z" },
+      ],
+      error: null,
+    },
+    { data: [{ id: "valid", type: "POST_LIKED", recipient_name: "Alice", actor_name: "Priya", created_at: "2026-01-02T00:00:00.000Z" }], error: null }
+  );
+  const filterCalls = [];
+  const { GET } = loadRoute(src.unreadCount, {
+    db,
+    filterValidNotifications: async (_db, notifications) => {
+      filterCalls.push(notifications.map((notification) => notification.id));
+      return notifications.filter((notification) => notification.id !== "stale");
+    },
+  });
+
+  const res = await GET();
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).unreadCount, 1);
+  assert.deepEqual(filterCalls, [["valid", "stale"]]);
+  assert.equal(opArgs(db._calls[0], "select")[0], "*");
+  assert.equal(opArgs(db._calls[1], "select")[0], "*");
+});
+
+test("unread count: matches client read-state logic across is_read and legacy read flags", async () => {
+  const db = spyDb(
+    {
+      data: [
+        { id: "modern-read", is_read: true, read: false, created_at: "2026-01-03T00:00:00.000Z" },
+        { id: "legacy-read", is_read: false, read: true, created_at: "2026-01-02T00:00:00.000Z" },
+        { id: "unread", is_read: false, read: false, created_at: "2026-01-01T00:00:00.000Z" },
+      ],
+      error: null,
+    },
+    { data: [], error: null }
+  );
+  const { GET } = loadRoute(src.unreadCount, { db });
+
+  const res = await GET();
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).unreadCount, 1);
 });
 
 test("mark read: cannot mark another recipient notification", async () => {
@@ -235,6 +341,71 @@ test("read all: updates both authenticated user-id rows and legacy name rows", a
   assert.equal(eqFilters(updates[1]).recipient_name, "Alice");
   assert.equal(opArgs(updates[0], "update")[0].is_read, true);
   assert.equal(opArgs(updates[1], "update")[0].read, true);
+});
+
+test("unread count: legacy schema path (42703 error) passes rows through filterValidNotifications before counting", async () => {
+  // byId triggers schema error → legacy path fetches by name, runs filter, then counts isUnread rows
+  const db = spyDb(
+    { data: null, error: { code: "42703", message: "column deleted_at does not exist" } }, // byId: schema error
+    { data: null, error: { code: "42703", message: "column deleted_at does not exist" } }, // byName: schema error
+    {
+      data: [
+        { id: "stale", type: "CIRCLE_REQUEST_RECEIVED", recipient_name: "Alice", actor_name: "Rahul", read: false, is_read: false, created_at: "2026-01-01T00:00:00.000Z" },
+        { id: "read-notif", type: "POST_LIKED", recipient_name: "Alice", actor_name: "Priya", read: true, is_read: false, created_at: "2026-01-02T00:00:00.000Z" },
+        { id: "unread", type: "POST_LIKED", recipient_name: "Alice", actor_name: "Dev", read: false, is_read: false, created_at: "2026-01-03T00:00:00.000Z" },
+      ],
+      error: null,
+    }
+  );
+  const { GET } = loadRoute(src.unreadCount, {
+    db,
+    filterValidNotifications: async (_db, notifications) =>
+      notifications.filter((n) => n.id !== "stale"),
+  });
+
+  const res = await GET();
+
+  assert.equal(status(res), 200);
+  // "stale" removed by filter, "read-notif" excluded by isUnread, only "unread" counted
+  assert.equal(body(res).unreadCount, 1);
+});
+
+test("notification list: profileMap is empty object when there are no notifications", async () => {
+  const db = spyDb(
+    { data: [], error: null },  // byId: empty
+    { data: [], error: null }   // byName: empty
+  );
+  const admin = spyDb(); // must not be called
+
+  const { GET } = loadRoute(src.list, { db, admin });
+  const res = await GET(makeReq());
+
+  assert.equal(status(res), 200);
+  assert.equal(Object.keys(body(res).profileMap).length, 0);
+  assert.equal(admin._calls.length, 0, "should not query profiles when there are no notifications");
+});
+
+test("notification list: profileMap uses actor username as key for notifications with only actor_user_id", async () => {
+  // actor_name is null — only actor_user_id is present
+  const db = spyDb(
+    {
+      data: [{ id: "notif-1", actor_user_id: "rahul-id", actor_name: null, type: "POST_LIKED", created_at: "2026-01-01T00:00:00.000Z" }],
+      error: null,
+    },
+    { data: [], error: null }   // byName
+  );
+  // actorNames=[] → byUsername branch uses Promise.resolve (no admin call); byId branch consumes idx 0
+  const admin = spyDb(
+    { data: [{ id: "rahul-id", username: "rahul_gupta", first_name: "Rahul", last_name: "Gupta" }], error: null }  // byId
+  );
+
+  const { GET } = loadRoute(src.list, { db, admin });
+  const res = await GET(makeReq());
+
+  assert.equal(status(res), 200);
+  // Profile is keyed by username from the profile row, not by null actor_name
+  assert.equal(body(res).profileMap["rahul_gupta"], "Rahul Gupta");
+  assert.equal("null" in body(res).profileMap, false);
 });
 
 test("notification list: clamps limit, merges duplicate rows, and filters final list", async () => {

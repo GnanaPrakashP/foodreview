@@ -80,9 +80,7 @@ export function avatarGradient(name: string): string {
 }
 
 export function avatarInitials(name: string): string {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map(w => w[0]?.toUpperCase() ?? "")
-    .join("");
+  const parts = name.split(/[\s_]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0]?.[0] ?? name[0] ?? "?").toUpperCase();
 }

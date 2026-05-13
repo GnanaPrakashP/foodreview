@@ -5,6 +5,7 @@ import { hasCircleAccess } from "@/lib/circle-db";
 import { canViewerSeeReview } from "@/lib/visibility";
 import { notificationProfileName } from "@/lib/notifications";
 import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
+import { buildProfileDisplayMap } from "@/lib/profile-display";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -25,7 +26,7 @@ export default async function CommentPostPage({ params }: Props) {
 
   if (!review) notFound();
 
-  let myName = user?.user_metadata?.full_name ?? "";
+  let myName = (user?.user_metadata?.username as string) ?? "";
   if (!myName && user) {
     const { data: profile } = await supabase
       .from("profiles")
@@ -53,12 +54,19 @@ export default async function CommentPostPage({ params }: Props) {
       .returns<Comment[]>(),
   ]);
 
+  const profileMap = await buildProfileDisplayMap(supabase, [
+    review.reviewer_name,
+    myName,
+    ...(comments ?? []).map((c: Comment) => c.user_name),
+  ]);
+
   return (
     <ReviewDetailClient
       review={review}
       initialLikeCount={likeRows?.length ?? 0}
       initialComments={comments ?? []}
       initialMyName={myName}
+      profileMap={profileMap}
       autoFocusComment
       backHref="/"
     />

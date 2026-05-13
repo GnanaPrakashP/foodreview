@@ -79,7 +79,7 @@ function fullName(profile: Pick<ProfileRow, "first_name" | "last_name">): string
 }
 
 export function notificationProfileName(profile: Pick<ProfileRow, "first_name" | "last_name" | "username">): string {
-  return fullName(profile) || profile.username;
+  return profile.username || fullName(profile);
 }
 
 async function resolveProfiles(db: NotificationDb, names: string[]): Promise<Map<string, ProfileRow>> {
@@ -386,15 +386,16 @@ export async function canViewReview(db: NotificationDb, review: Pick<Review, "re
   return false;
 }
 
-export async function createPostLikeNotification(db: NotificationDb, review: Review, actorName: string) {
+export async function createPostLikeNotification(db: NotificationDb, review: Review, actorName: string, actorDisplayName?: string) {
   if (review.visibility === "me") return null;
   if (!(await canViewReview(db, review, actorName))) return null;
+  const displayName = actorDisplayName || actorName;
   return createNotificationForNames(db, {
     recipientName: review.reviewer_name,
     actorName,
     type: "POST_LIKED",
     title: "New like",
-    message: `${actorName} liked your post`,
+    message: `${displayName} liked your post`,
     entityType: "POST",
     entityId: review.id,
     postId: review.id,
@@ -412,18 +413,20 @@ export async function createPostCommentNotifications(
   review: Review,
   actorName: string,
   comment: { id: string; content: string },
-  priorCommenters: string[]
+  priorCommenters: string[],
+  actorDisplayName?: string
 ) {
   if (review.visibility === "me") return;
   if (!(await canViewReview(db, review, actorName))) return;
 
+  const displayName = actorDisplayName || actorName;
   const preview = comment.content.slice(0, 80);
   await createNotificationForNames(db, {
     recipientName: review.reviewer_name,
     actorName,
     type: "POST_COMMENTED",
     title: "New comment",
-    message: `${actorName} commented on your post`,
+    message: `${displayName} commented on your post`,
     entityType: "POST",
     entityId: review.id,
     postId: review.id,
@@ -442,7 +445,7 @@ export async function createPostCommentNotifications(
     actorName,
     type: "THREAD_REPLY",
     title: "New reply",
-    message: `${actorName} replied in a discussion you joined`,
+    message: `${displayName} replied in a discussion you joined`,
     entityType: "POST",
     entityId: review.id,
     postId: review.id,
@@ -459,15 +462,20 @@ export async function createPostCommentNotifications(
 export async function createCirclePostNotifications(db: NotificationDb, review: Review) {
   if (review.visibility === "me") return;
 
-  const { data, error } = await db
-    .from("circle_memberships")
-    .select("member_name")
-    .eq("user_name", review.reviewer_name);
+  const [{ data, error }, { data: reviewerProfile }] = await Promise.all([
+    db.from("circle_memberships").select("member_name").eq("user_name", review.reviewer_name),
+    db.from("profiles").select("first_name, last_name").eq("username", review.reviewer_name).maybeSingle(),
+  ]);
 
   if (error) {
     console.warn("[notifications] circle post recipients failed:", error.message);
     return;
   }
+
+  const reviewerDisplay =
+    reviewerProfile
+      ? `${(reviewerProfile as { first_name: string | null; last_name: string | null }).first_name ?? ""} ${(reviewerProfile as { first_name: string | null; last_name: string | null }).last_name ?? ""}`.trim() || review.reviewer_name
+      : review.reviewer_name;
 
   const recipients = Array.from(new Set(((data ?? []) as { member_name: string }[]).map((row) => row.member_name)))
     .filter((name) => name && name !== review.reviewer_name);
@@ -477,7 +485,7 @@ export async function createCirclePostNotifications(db: NotificationDb, review: 
     actorName: review.reviewer_name,
     type: "CIRCLE_POST_CREATED",
     title: "New circle post",
-    message: `${review.reviewer_name} posted about ${review.restaurant_name}`,
+    message: `${reviewerDisplay} posted about ${review.restaurant_name}`,
     entityType: "POST",
     entityId: review.id,
     postId: review.id,

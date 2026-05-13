@@ -3,6 +3,12 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  (globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+  }).__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function DELETE(
@@ -28,7 +34,7 @@ export async function DELETE(
 
   const { data: comment, error: fetchError } = await supabase
     .from("comments")
-    .select("user_name")
+    .select("user_name, post_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -50,5 +56,6 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateCircleFeedCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }

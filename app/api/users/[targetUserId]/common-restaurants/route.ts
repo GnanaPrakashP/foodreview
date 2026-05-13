@@ -6,59 +6,53 @@ import { computeCommonRestaurants } from "@/lib/common-restaurants";
 
 type ProfileRow = {
   id: string;
-  first_name: string;
-  last_name: string;
-  username: string;
+  username: string | null;
 };
 
 interface Props {
   params: Promise<{ targetUserId: string }>;
 }
 
-function profileName(profile: Pick<ProfileRow, "first_name" | "last_name">): string {
-  return `${profile.first_name} ${profile.last_name}`.trim();
-}
-
-function findProfile(profiles: ProfileRow[], target: string): ProfileRow | null {
-  const decoded = decodeURIComponent(target);
-  return profiles.find((profile) =>
-    profile.id === decoded ||
-    profile.username === decoded ||
-    profileName(profile) === decoded
-  ) ?? null;
-}
-
 export async function GET(_req: NextRequest, { params }: Props) {
   const { targetUserId } = await params;
   const supabase = await createClient();
 
-  const [{ data: { user } }, { data: profiles }] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase
-      .from("profiles")
-      .select("id, first_name, last_name, username")
-      .limit(1000)
-      .returns<ProfileRow[]>(),
-  ]);
-
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const profileRows = profiles ?? [];
-  const viewerProfile = profileRows.find((profile) => profile.id === user.id);
-  const viewerName = viewerProfile ? profileName(viewerProfile) : user.user_metadata?.full_name ?? "";
-  const targetProfile = findProfile(profileRows, targetUserId);
+  const { data: viewerProfile } = await supabase
+    .from("profiles")
+    .select("id, username")
+    .eq("id", user.id)
+    .maybeSingle()
+    .returns<ProfileRow>();
 
+  const viewerName = (viewerProfile as ProfileRow | null)?.username
+    || (user.user_metadata?.username as string)
+    || user.email?.split("@")[0]
+    || "";
   if (!viewerName) {
-    return NextResponse.json({ error: "Viewer profile is missing a name" }, { status: 400 });
+    return NextResponse.json({ error: "Viewer profile is missing a username" }, { status: 400 });
   }
-  if (!targetProfile) {
+
+  // Resolve targetUserId — accepts either a UUID or a username
+  const decoded = decodeURIComponent(targetUserId);
+  const targetQuery = supabase
+    .from("profiles")
+    .select("id, username")
+    .eq(/^[0-9a-f-]{36}$/i.test(decoded) ? "id" : "username", decoded)
+    .maybeSingle()
+    .returns<ProfileRow>();
+  const { data: targetProfile } = await targetQuery;
+  const target = targetProfile as ProfileRow | null;
+  if (!target?.username) {
     return NextResponse.json({ error: "Target user not found" }, { status: 404 });
   }
 
-  const targetName = profileName(targetProfile);
-  if (!targetName || targetName === viewerName) {
+  const targetName = target.username;
+  if (targetName === viewerName) {
     return NextResponse.json({ error: "Target user must be a different account" }, { status: 400 });
   }
 
@@ -82,7 +76,8 @@ export async function GET(_req: NextRequest, { params }: Props) {
   });
 
   return NextResponse.json({
-    targetUserId: targetProfile.id,
+    targetUserId: target.id,
+    targetUsername: targetName,
     commonRestaurantCount: commonRestaurants.length,
     commonRestaurants,
   });

@@ -7,6 +7,7 @@ import { ArrowLeft, LogOut, Trash2, FileText, Shield, Settings, Sun, Moon, Monit
 import { createClient } from "@/lib/supabase/client";
 import { useTheme, type ThemeMode } from "@/lib/useTheme";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 type AccountType = "private" | "public";
 
@@ -27,7 +28,7 @@ export default function SettingsPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
       setUserId(user.id);
-      const name = user.user_metadata?.full_name ?? localStorage.getItem("fc_my_name") ?? "";
+      const name = (user.user_metadata?.username as string) || localStorage.getItem("fc_my_name") || "";
       setMyName(name);
       // Read from user metadata — always in sync with the authenticated session
       const stored = user.user_metadata?.account_type;
@@ -57,6 +58,7 @@ export default function SettingsPage() {
     const supabase = createClient();
     await supabase.auth.signOut();
     localStorage.removeItem("fc_my_name");
+    invalidateCachedJson("");
     router.push("/login");
   }
 
@@ -70,6 +72,7 @@ export default function SettingsPage() {
     await (supabase as any).from("profiles").delete().eq("id", userId);
     await supabase.auth.signOut();
     localStorage.removeItem("fc_my_name");
+    invalidateCachedJson("");
     router.push("/login");
   }
 

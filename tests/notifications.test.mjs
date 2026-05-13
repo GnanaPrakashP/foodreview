@@ -72,9 +72,9 @@ function review(owner, visibility) {
   };
 }
 
-test("notificationProfileName prefers full profile name over username", () => {
+test("notificationProfileName prefers username identity over display name", () => {
   const { notificationProfileName } = loadNotifications();
-  assert.equal(notificationProfileName({ first_name: "Alice", last_name: "Smith", username: "alice" }), "Alice Smith");
+  assert.equal(notificationProfileName({ first_name: "Alice", last_name: "Smith", username: "alice" }), "alice");
   assert.equal(notificationProfileName({ first_name: "", last_name: "", username: "alice" }), "alice");
 });
 
@@ -314,6 +314,98 @@ test("createPostCommentNotifications sends owner and thread notifications withou
   assert.equal(inserts[0].content.length, 80);
   assert.equal(inserts[1].recipient_name, "Carol");
   assert.equal(inserts[1].type, "THREAD_REPLY");
+});
+
+test("notificationProfileName falls back to full name when username is empty", () => {
+  const { notificationProfileName } = loadNotifications();
+  assert.equal(notificationProfileName({ first_name: "Alice", last_name: "Ate", username: "" }), "Alice Ate");
+  assert.equal(notificationProfileName({ first_name: "Alice", last_name: "Ate", username: null }), "Alice Ate");
+});
+
+test("createPostLikeNotification: message uses actorDisplayName when provided", async () => {
+  const { createPostLikeNotification } = loadNotifications();
+  const db = spyDb(
+    { data: [], error: null },                    // resolveProfiles
+    { data: { id: "notif-1" }, error: null }      // insert
+  );
+
+  await createPostLikeNotification(db, review("Bob", "public"), "alice", "Alice Ate");
+
+  const insert = db._calls.find((c) => c.table === "notifications" && hasOp(c, "insert"));
+  assert.ok(insert, "should insert a notification");
+  assert.equal(opArgs(insert, "insert")[0].message, "Alice Ate liked your post");
+});
+
+test("createPostLikeNotification: message falls back to actorName when displayName is omitted", async () => {
+  const { createPostLikeNotification } = loadNotifications();
+  const db = spyDb(
+    { data: [], error: null },
+    { data: { id: "notif-1" }, error: null }
+  );
+
+  await createPostLikeNotification(db, review("Bob", "public"), "alice");
+
+  const insert = db._calls.find((c) => c.table === "notifications" && hasOp(c, "insert"));
+  assert.ok(insert, "should insert a notification");
+  assert.equal(opArgs(insert, "insert")[0].message, "alice liked your post");
+});
+
+test("createPostCommentNotifications: message uses actorDisplayName when provided", async () => {
+  const { createPostCommentNotifications } = loadNotifications();
+  const db = spyDb(
+    { data: [], error: null },                  // resolveProfiles for POST_COMMENTED
+    { data: { id: "owner-notif" }, error: null }
+  );
+
+  await createPostCommentNotifications(
+    db,
+    review("Bob", "public"),
+    "alice",
+    { id: "cmt-1", content: "Looks great" },
+    [], // no prior commenters → only the POST_COMMENTED notification fires
+    "Alice Ate"
+  );
+
+  const inserts = db._calls
+    .filter((c) => c.table === "notifications" && hasOp(c, "insert"))
+    .map((c) => opArgs(c, "insert")[0]);
+  assert.equal(inserts.length, 1);
+  assert.equal(inserts[0].type, "POST_COMMENTED");
+  assert.equal(inserts[0].message, "Alice Ate commented on your post");
+});
+
+test("createCirclePostNotifications: message uses reviewer display name from profiles", async () => {
+  const { createCirclePostNotifications } = loadNotifications();
+  const db = spyDb(
+    { data: [{ member_name: "Bob" }], error: null },                    // circle_memberships
+    { data: { first_name: "Alice", last_name: "Ate" }, error: null },   // reviewer profile
+    { data: [], error: null },                                          // resolveProfiles for Bob
+    { data: [], error: null },                                          // dedupe check for Bob
+    { data: { id: "notif-bob" }, error: null }                          // insert for Bob
+  );
+
+  await createCirclePostNotifications(db, review("alice", "circle"));
+
+  const insert = db._calls.find((c) => c.table === "notifications" && hasOp(c, "insert"));
+  assert.ok(insert, "should insert a notification for Bob");
+  assert.equal(opArgs(insert, "insert")[0].message, "Alice Ate posted about Cafe One");
+});
+
+test("createCirclePostNotifications: message falls back to reviewer_name when profile is missing", async () => {
+  const { createCirclePostNotifications } = loadNotifications();
+  const db = spyDb(
+    { data: [{ member_name: "Bob" }], error: null },  // circle_memberships
+    { data: null, error: null },                      // reviewer profile → null
+    { data: [], error: null },                        // resolveProfiles for Bob
+    { data: [], error: null },                        // dedupe check for Bob
+    { data: { id: "notif-bob" }, error: null }        // insert for Bob
+  );
+
+  await createCirclePostNotifications(db, review("alice", "circle"));
+
+  const insert = db._calls.find((c) => c.table === "notifications" && hasOp(c, "insert"));
+  assert.ok(insert, "should insert a notification for Bob");
+  assert.equal(opArgs(insert, "insert")[0].message, "alice posted about Cafe One");
 });
 
 test("createCirclePostNotifications dedupes members and skips the reviewer", async () => {

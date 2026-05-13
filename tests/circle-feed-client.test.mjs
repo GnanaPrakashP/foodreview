@@ -14,7 +14,7 @@ test("circle feed trusts server-provided identity/circle snapshot before client 
 });
 
 test("circle feed still fetches circle status when only local storage identity exists", () => {
-  assert.match(source, /fetch\(`\/api\/circle\/status\?name=\$\{encodeURIComponent\(name\)\}`\)/);
+  assert.match(source, /cachedCircleStatus\(name\)/);
   assert.match(source, /setCircle\(data\.members \?\? \[\]\)/);
   assert.match(source, /setMutualCircle\(data\.mutualMembers \?\? \[\]\)/);
 });

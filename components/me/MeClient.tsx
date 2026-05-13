@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Review } from "@/lib/types";
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
 import { Settings, ChevronRight } from "lucide-react";
+import { cachedCircleStatus } from "@/lib/browser-circle-status";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -146,14 +147,17 @@ function CircleSheet({ circle, allReviews, onClose }: {
 export default function MeClient({
   allReviews,
   initialMyName = "",
+  initialDisplayName = "",
   initialCircle = [],
 }: {
   allReviews: Review[];
   initialMyName?: string;
+  initialDisplayName?: string;
   initialCircle?: string[];
 }) {
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
+  const [displayName, setDisplayName] = useState(initialDisplayName || initialMyName);
   const [circle, setCircle] = useState<string[]>(initialCircle);
 
   // All derived — unconditional
@@ -182,18 +186,19 @@ export default function MeClient({
 
   useEffect(() => {
     const name = initialMyName || localStorage.getItem("fc_my_name") || "";
+    const dName = initialDisplayName || localStorage.getItem("fc_display_name") || name;
     if (name) localStorage.setItem("fc_my_name", name);
     setMyName(name);
+    setDisplayName(dName || name);
     setMounted(true);
     if (name) {
-      fetch(`/api/circle/status?name=${encodeURIComponent(name)}`)
-        .then((r) => r.json())
+      cachedCircleStatus(name)
         .then((data) => {
           setCircle(data.displayMembers ?? data.members ?? []);
         })
         .catch(() => {});
     }
-  }, [initialMyName]);
+  }, [initialMyName, initialDisplayName]);
 
   /* ── skeleton ── */
   if (!mounted) {
@@ -229,14 +234,14 @@ export default function MeClient({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
-            {myName ? avatarInitials(myName) : "?"}
+            {myName ? avatarInitials(displayName || myName) : "?"}
           </div>
           <div>
             <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)" }}>
-              {myName || "Set your name"}
+              {displayName || myName || "Set your name"}
             </p>
             <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-              @{(myName || "you").toLowerCase().replace(/\s+/g, "_")}
+              @{myName || "you"}
             </p>
             <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
               {totalVisits} visit{totalVisits !== 1 ? "s" : ""}

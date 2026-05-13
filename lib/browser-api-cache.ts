@@ -1,0 +1,83 @@
+"use client";
+
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const memoryCache = new Map<string, CacheEntry<unknown>>();
+const pendingRequests = new Map<string, Promise<unknown>>();
+
+function storageKey(key: string) {
+  return `fc_api_cache:${key}`;
+}
+
+function readSession<T>(key: string): CacheEntry<T> | null {
+  try {
+    const raw = sessionStorage.getItem(storageKey(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEntry<T>;
+    if (!parsed || typeof parsed.expiresAt !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeSession<T>(key: string, entry: CacheEntry<T>) {
+  try {
+    sessionStorage.setItem(storageKey(key), JSON.stringify(entry));
+  } catch {
+    // Storage can be unavailable in private browsing or quota pressure.
+  }
+}
+
+export async function cachedJson<T>(url: string, ttlMs: number): Promise<T> {
+  const now = Date.now();
+  const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
+  if (memory && memory.expiresAt > now) return memory.value;
+
+  const session = readSession<T>(url);
+  if (session && session.expiresAt > now) {
+    memoryCache.set(url, session);
+    return session.value;
+  }
+
+  const pending = pendingRequests.get(url) as Promise<T> | undefined;
+  if (pending) return pending;
+
+  const request = fetch(url, { cache: "no-store" }).then(async (response) => {
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    const value = await response.json() as T;
+    const entry = { value, expiresAt: Date.now() + ttlMs };
+    memoryCache.set(url, entry);
+    writeSession(url, entry);
+    return value;
+  }).finally(() => {
+    pendingRequests.delete(url);
+  });
+
+  pendingRequests.set(url, request);
+  return request;
+}
+
+export function primeCachedJson<T>(url: string, value: T, ttlMs: number) {
+  const entry = { value, expiresAt: Date.now() + ttlMs };
+  memoryCache.set(url, entry);
+  writeSession(url, entry);
+}
+
+export function invalidateCachedJson(prefix: string) {
+  for (const key of memoryCache.keys()) {
+    if (key.startsWith(prefix)) memoryCache.delete(key);
+  }
+
+  try {
+    for (let index = sessionStorage.length - 1; index >= 0; index--) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith(storageKey(prefix))) sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage access failures.
+  }
+}

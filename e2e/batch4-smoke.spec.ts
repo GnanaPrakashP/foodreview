@@ -62,14 +62,14 @@ async function clickCircleActionAndWait(
   });
 }
 
-async function openProfile(page: Page, name: string) {
-  await page.goto(`/people/${encodeURIComponent(name)}`);
-  await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 10_000 });
+async function openProfile(page: Page, username: string, displayName = username) {
+  await page.goto(`/people/${encodeURIComponent(username)}`);
+  await expect(page.getByText(displayName, { exact: true })).toBeVisible({ timeout: 10_000 });
 }
 
-async function resetCircleRelationshipFromViewer(page: Page, targetName: string) {
+async function resetCircleRelationshipFromViewer(page: Page, targetUsername: string, targetDisplayName = targetUsername) {
   for (let attempt = 0; attempt < 4; attempt++) {
-    await openProfile(page, targetName);
+    await openProfile(page, targetUsername, targetDisplayName);
     const action = circleAction(page);
     await expect(action).toBeVisible({ timeout: 10_000 });
 
@@ -86,12 +86,12 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     await page.waitForTimeout(500);
   }
 
-  await openProfile(page, targetName);
+  await openProfile(page, targetUsername, targetDisplayName);
   await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 }
 
-async function ensureJoinedCircleFromViewer(page: Page, targetName: string) {
-  await openProfile(page, targetName);
+async function ensureJoinedCircleFromViewer(page: Page, targetUsername: string, targetDisplayName = targetUsername) {
+  await openProfile(page, targetUsername, targetDisplayName);
   const action = circleAction(page);
   await expect(action).toBeVisible({ timeout: 10_000 });
 
@@ -188,7 +188,7 @@ test("visibility smoke: public, circle-only, and only-me reviews respect viewer 
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
   await signIn(ownerPage, userA!);
-  await resetCircleRelationshipFromViewer(ownerPage, userC!.name);
+  await resetCircleRelationshipFromViewer(ownerPage, userC!.username, userC!.name);
   await createReview(ownerPage, { restaurantName: publicRestaurant, visibility: "public" });
   await createReview(ownerPage, { restaurantName: circleRestaurant, visibility: "circle" });
   await createReview(ownerPage, { restaurantName: meRestaurant, visibility: "me" });
@@ -202,7 +202,7 @@ test("visibility smoke: public, circle-only, and only-me reviews respect viewer 
   const outsiderContext = await browser.newContext();
   const outsiderPage = await outsiderContext.newPage();
   await signIn(outsiderPage, userC!);
-  await openProfile(outsiderPage, userA!.name);
+  await openProfile(outsiderPage, userA!.username, userA!.name);
 
   await expect(outsiderPage.getByText(publicRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(outsiderPage.getByText(circleRestaurant, { exact: true })).not.toBeVisible();
@@ -231,7 +231,7 @@ test("circle feed smoke: joined circle owner's public and circle posts appear", 
   const viewerContext = await browser.newContext();
   const viewerPage = await viewerContext.newPage();
   await signIn(viewerPage, userA!);
-  await ensureJoinedCircleFromViewer(viewerPage, userB!.name);
+  await ensureJoinedCircleFromViewer(viewerPage, userB!.username, userB!.name);
   await createReview(viewerPage, { restaurantName: ownPublicRestaurant, visibility: "public" });
   await createReview(viewerPage, { restaurantName: ownCircleRestaurant, visibility: "circle" });
   await createReview(viewerPage, { restaurantName: ownPrivateRestaurant, visibility: "me" });
@@ -256,7 +256,7 @@ test("delete smoke: deleting the last restaurant post redirects to profile, not 
     visibility: "public",
   });
 
-  await page.goto(`/people/${encodeURIComponent(userA!.name)}/${encodeURIComponent(restaurantName)}`);
+  await page.goto(`/people/${encodeURIComponent(userA!.username)}/${encodeURIComponent(restaurantName)}`);
   await expect(page.getByRole("heading", { level: 1, name: restaurantName })).toBeVisible({ timeout: 10_000 });
 
   await page.getByLabel("Post actions").first().click();
@@ -270,7 +270,7 @@ test("delete smoke: deleting the last restaurant post redirects to profile, not 
     page.getByRole("button", { name: /^delete$/i }).click(),
   ]);
 
-  await expect(page).toHaveURL(new RegExp(`/people/${encodeURIComponent(userA!.name)}/?$`), { timeout: 10_000 });
+  await expect(page).toHaveURL(new RegExp(`/people/${encodeURIComponent(userA!.username)}/?$`), { timeout: 10_000 });
   await expect(page.getByText(userA!.name, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("heading", { name: /page not found/i })).not.toBeVisible();
   await expect(page.getByText(/this page doesn't exist or was removed/i)).not.toBeVisible();
@@ -280,7 +280,7 @@ test("circle smoke: private request can be sent and cancelled", async ({ page })
   test.skip(SKIP_ABC, SKIP_MSG);
 
   await signIn(page, userA!);
-  await resetCircleRelationshipFromViewer(page, userC!.name);
+  await resetCircleRelationshipFromViewer(page, userC!.username, userC!.name);
 
   const requestResponse = await clickCircleActionAndWait(page, /\/api\/circle\/request/);
   const requestBody = await requestResponse.json();
@@ -309,7 +309,7 @@ test("notification smoke: circle request creates a notification and accept updat
   const requesterContext = await browser.newContext();
   const requesterPage = await requesterContext.newPage();
   await signIn(requesterPage, userA!);
-  await resetCircleRelationshipFromViewer(requesterPage, userC!.name);
+  await resetCircleRelationshipFromViewer(requesterPage, userC!.username, userC!.name);
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).not.toBeVisible();
   await expect(requesterPage.getByText(targetPrivateRestaurant, { exact: true })).not.toBeVisible();
 
@@ -333,7 +333,7 @@ test("notification smoke: circle request creates a notification and accept updat
   );
   await receiverContext.close();
 
-  await openProfile(requesterPage, userC!.name);
+  await openProfile(requesterPage, userC!.username, userC!.name);
   await expect(circleAction(requesterPage)).toHaveText(/in circle/i, { timeout: 10_000 });
   await expect(requesterPage.getByText(targetCircleRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(requesterPage.getByText(targetPrivateRestaurant, { exact: true })).not.toBeVisible();
@@ -358,7 +358,7 @@ test("trending and common badge smoke: public trends, private visibility does no
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
   await signIn(ownerPage, userA!);
-  await resetCircleRelationshipFromViewer(ownerPage, userC!.name);
+  await resetCircleRelationshipFromViewer(ownerPage, userC!.username, userC!.name);
   await createReview(ownerPage, { restaurantName: publicRestaurant, dishName: publicDish, visibility: "public" });
   await createReview(ownerPage, { restaurantName: circleRestaurant, dishName: circleDish, visibility: "circle" });
   await createReview(ownerPage, { restaurantName: meRestaurant, dishName: meDish, visibility: "me" });
@@ -386,14 +386,14 @@ test("trending and common badge smoke: public trends, private visibility does no
   await viewerPage.keyboard.press("Enter");
   await expect(viewerPage.getByText(noDishLogsText(meDish))).toBeVisible({ timeout: 10_000 });
 
-  await openProfile(viewerPage, userA!.name);
+  await openProfile(viewerPage, userA!.username, userA!.name);
   await expect(viewerPage.locator("[aria-label*='common restaurant']").first()).toBeVisible({ timeout: 10_000 });
   await viewerContext.close();
 
   const outsiderContext = await browser.newContext();
   const outsiderPage = await outsiderContext.newPage();
   await signIn(outsiderPage, userC!);
-  await openProfile(outsiderPage, userA!.name);
+  await openProfile(outsiderPage, userA!.username, userA!.name);
   await expect(outsiderPage.locator("[aria-label*='common restaurant']")).not.toBeVisible();
   await outsiderContext.close();
 });

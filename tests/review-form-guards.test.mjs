@@ -29,11 +29,12 @@ test("ReviewForm: selected restaurant details are saved into the review payload"
   assert.match(source, /setRestaurantAddress\(details\.formattedAddress \|\| null\)/);
   assert.match(source, /setRestaurantLat\(details\.latitude\)/);
   assert.match(source, /setRestaurantLng\(details\.longitude\)/);
-  assert.match(source, /if \(restaurantId\) reviewPayload\.restaurant_id = restaurantId/);
+  assert.match(source, /if \(restaurantId\) reviewPayload\.restaurantId = restaurantId/);
   assert.match(source, /if \(restaurantArea\) reviewPayload\.area = restaurantArea/);
-  assert.match(source, /if \(restaurantAddress\) reviewPayload\.restaurant_address = restaurantAddress/);
-  assert.match(source, /if \(restaurantLat !== null\) reviewPayload\.restaurant_lat = restaurantLat/);
-  assert.match(source, /if \(restaurantLng !== null\) reviewPayload\.restaurant_lng = restaurantLng/);
+  assert.match(source, /if \(restaurantAddress\) reviewPayload\.restaurantAddress = restaurantAddress/);
+  assert.match(source, /if \(restaurantLat !== null\) reviewPayload\.restaurantLat = restaurantLat/);
+  assert.match(source, /if \(restaurantLng !== null\) reviewPayload\.restaurantLng = restaurantLng/);
+  assert.match(source, /fetch\("\/api\/reviews"/);
 });
 
 test("ReviewForm: post button remains disabled while submit is in progress", () => {

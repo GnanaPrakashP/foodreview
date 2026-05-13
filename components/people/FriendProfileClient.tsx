@@ -8,6 +8,8 @@ import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profil
 import { normalizeVisibility } from "@/lib/visibility";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { ArrowLeft, ChefHat, Lock } from "lucide-react";
+import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -51,27 +53,11 @@ function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
 
 type CircleStatus = "one_way" | "sent" | "none";
 
-type CircleStatusPayload = {
-  members?: string[];
-  pendingSent?: string[];
-  pendingIncoming?: string[];
-  circleCount?: number;
-  displayMembers?: string[];
-};
-
 async function fetchCircleStatusPayload(personName: string): Promise<CircleStatusPayload> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 7_000);
   try {
-    const response = await fetch(`/api/circle/status?name=${encodeURIComponent(personName)}`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) return {};
-    return await response.json();
+    return await freshCircleStatus(personName);
   } catch {
     return {};
-  } finally {
-    window.clearTimeout(timeoutId);
   }
 }
 
@@ -79,11 +65,13 @@ async function fetchCircleStatusPayload(personName: string): Promise<CircleStatu
 
 export default function FriendProfileClient({
   name,
+  displayName,
   accountType,
   reviews,
   hasHiddenCirclePosts = false,
 }: {
   name: string;
+  displayName?: string;
   accountType: AccountType;
   reviews: Review[];
   hasHiddenCirclePosts?: boolean;
@@ -205,6 +193,10 @@ export default function FriendProfileClient({
       setCircleStatus(previousStatus);
       return;
     }
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(name);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
     if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way" || data.status === "accepted") {
       setCircleStatus("one_way");
       if (accountType === "public") setTheirCircleCount((c) => c + 1);
@@ -229,6 +221,10 @@ export default function FriendProfileClient({
         setCircleStatus(previousStatus);
         return;
       }
+      invalidateCircleStatusCache(myName);
+      invalidateCircleStatusCache(name);
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/people");
       await refreshAfterCircleChange();
     } finally {
       setActionBusy(false);
@@ -253,6 +249,10 @@ export default function FriendProfileClient({
         setTheirCircleCount(previousCount);
         return;
       }
+      invalidateCircleStatusCache(myName);
+      invalidateCircleStatusCache(name);
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/people");
       await refreshAfterCircleChange();
     } finally {
       setActionBusy(false);
@@ -298,11 +298,11 @@ export default function FriendProfileClient({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
-            {avatarInitials(name)}
+            {avatarInitials(displayName || name)}
           </div>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{name}</p>
+              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{displayName || name}</p>
               {!relationshipReady && !isOwnProfile && (
                 <span
                   aria-hidden
@@ -320,7 +320,7 @@ export default function FriendProfileClient({
               )}
             </div>
             <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-              @{name.toLowerCase().replace(/\s+/g, "_")}
+              @{name}
             </p>
             <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
               {totalVisits} visit{totalVisits !== 1 ? "s" : ""}
@@ -383,7 +383,7 @@ export default function FriendProfileClient({
           {relationshipReady && hasIncomingRequest && circleStatus !== "one_way" && (
             <div style={{ marginTop: "10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "12px" }}>
               <p style={{ margin: 0, color: "var(--cream)", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
-                {name} requested to join your circle.
+                {displayName || name} requested to join your circle.
               </p>
               <div style={{ marginTop: "10px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                 <button
@@ -429,8 +429,8 @@ export default function FriendProfileClient({
         title={confirmAction === "leave_circle" ? "Leave circle?" : "Cancel request?"}
         message={
           confirmAction === "leave_circle"
-            ? `Do you no longer want to be in ${name}'s circle?`
-            : `Cancel request to join ${name}'s circle?`
+            ? `Do you no longer want to be in ${displayName || name}'s circle?`
+            : `Cancel request to join ${displayName || name}'s circle?`
         }
         confirmText={confirmAction === "leave_circle" ? "Leave" : "Cancel request"}
         confirmVariant={confirmAction === "leave_circle" ? "danger" : "primary"}
@@ -450,7 +450,7 @@ export default function FriendProfileClient({
       {/* ── Ranked List ── */}
       <div style={{ padding: "0 20px" }}>
         <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
-          {name.split(" ")[0]}&apos;s List
+          {(displayName || name).split(" ")[0]}&apos;s List
         </p>
 
         {isPrivateLocked ? (

@@ -132,6 +132,10 @@ function review(overrides = {}) {
   };
 }
 
+function actorProfile(firstName = "Alice", lastName = "Ate") {
+  return { data: { first_name: firstName, last_name: lastName }, error: null };
+}
+
 test("events: logged-out direct API call is rejected", async () => {
   const { route } = loadRoute({ viewer: null });
 
@@ -155,6 +159,7 @@ test("events: forged actorName is rejected before notification work", async () =
 
 test("events: actorName falls back to authenticated profile name when viewer name is missing", async () => {
   const admin = spyDb(
+    actorProfile(),
     { data: review(), error: null },
     { data: { id: "like-1" }, error: null }
   );
@@ -169,10 +174,12 @@ test("events: actorName falls back to authenticated profile name when viewer nam
   assert.equal(status(res), 200);
   assert.equal(calls.createPostLikeNotification.length, 1);
   assert.equal(calls.createPostLikeNotification[0][2], "Alice");
+  assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
 });
 
 test("events: POST_LIKED creates a notification only after matching like row exists", async () => {
   const admin = spyDb(
+    actorProfile(),
     { data: review(), error: null },
     { data: { id: "like-1" }, error: null }
   );
@@ -184,12 +191,14 @@ test("events: POST_LIKED creates a notification only after matching like row exi
   assert.equal(calls.createPostLikeNotification.length, 1);
   assert.equal(calls.createPostLikeNotification[0][1].id, "review-1");
   assert.equal(calls.createPostLikeNotification[0][2], "Alice");
-  assert.equal(eqFilters(admin._calls[1]).post_id, "review-1");
-  assert.equal(eqFilters(admin._calls[1]).user_name, "Alice");
+  assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
+  assert.equal(eqFilters(admin._calls[2]).post_id, "review-1");
+  assert.equal(eqFilters(admin._calls[2]).user_name, "Alice");
 });
 
 test("events: POST_LIKED skips notification when like row is stale or missing", async () => {
   const admin = spyDb(
+    actorProfile(),
     { data: review(), error: null },
     { data: null, error: null }
   );
@@ -203,6 +212,7 @@ test("events: POST_LIKED skips notification when like row is stale or missing", 
 
 test("events: POST_COMMENTED rejects comments that do not belong to the authenticated actor", async () => {
   const admin = spyDb(
+    actorProfile(),
     { data: review(), error: null },
     {
       data: {
@@ -230,6 +240,7 @@ test("events: POST_COMMENTED rejects comments that do not belong to the authenti
 
 test("events: POST_COMMENTED creates notifications with prior commenters for a real actor comment", async () => {
   const admin = spyDb(
+    actorProfile(),
     { data: review(), error: null },
     {
       data: {
@@ -255,13 +266,14 @@ test("events: POST_COMMENTED creates notifications with prior commenters for a r
   assert.equal(status(res), 200);
   assert.equal(calls.createPostCommentNotifications.length, 1);
   assert.deepEqual(calls.createPostCommentNotifications[0][4], ["Charlie", "Dana"]);
-  assert.equal(eqFilters(admin._calls[1]).id, "comment-1");
-  assert.equal(eqFilters(admin._calls[1]).post_id, "review-1");
-  assert.equal(hasOp(admin._calls[2], "lt"), true);
+  assert.equal(calls.createPostCommentNotifications[0][5], "Alice Ate");
+  assert.equal(eqFilters(admin._calls[2]).id, "comment-1");
+  assert.equal(eqFilters(admin._calls[2]).post_id, "review-1");
+  assert.equal(hasOp(admin._calls[3], "lt"), true);
 });
 
 test("events: CIRCLE_POST_CREATED rejects posts not owned by the actor", async () => {
-  const admin = spyDb({ data: review({ reviewer_name: "Bob" }), error: null });
+  const admin = spyDb(actorProfile(), { data: review({ reviewer_name: "Bob" }), error: null });
   const { route, calls } = loadRoute({ admin });
 
   const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1", actorName: "Alice" }));
@@ -272,7 +284,7 @@ test("events: CIRCLE_POST_CREATED rejects posts not owned by the actor", async (
 });
 
 test("events: CIRCLE_POST_CREATED notifies only for actor-owned posts", async () => {
-  const admin = spyDb({ data: review({ reviewer_name: "Alice" }), error: null });
+  const admin = spyDb(actorProfile(), { data: review({ reviewer_name: "Alice" }), error: null });
   const { route, calls } = loadRoute({ admin });
 
   const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1", actorName: "Alice" }));
@@ -282,12 +294,20 @@ test("events: CIRCLE_POST_CREATED notifies only for actor-owned posts", async ()
   assert.equal(calls.createCirclePostNotifications[0][1].reviewer_name, "Alice");
 });
 
-test("events: unsupported event returns 400", async () => {
-  const admin = spyDb({ data: review(), error: null });
+test("events: unsupported event returns 400 without fetching the review", async () => {
+  const admin = spyDb(
+    actorProfile(),                   // actor display-name lookup (always happens)
+    { data: review(), error: null }   // review fetch — must NOT be consumed
+  );
   const { route } = loadRoute({ admin });
 
   const res = await route.POST(makeReq({ event: "NOT_REAL", reviewId: "review-1", actorName: "Alice" }));
 
   assert.equal(status(res), 400);
   assert.equal(body(res).error, "Unsupported event");
+  assert.equal(
+    admin._calls.find((c) => c.table === "reviews"),
+    undefined,
+    "should not query the reviews table for an unsupported event"
+  );
 });

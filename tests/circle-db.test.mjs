@@ -103,40 +103,36 @@ function setValues(set) {
   return Array.from(set).sort();
 }
 
-test("circle-db: account type lookup matches exact full name and defaults to public", async () => {
+test("circle-db: account type lookup matches exact username and defaults to public", async () => {
   const db = spyDb({
-    data: [
-      { first_name: "Alice", last_name: "Wrong", account_type: "private" },
-      { first_name: "Alice", last_name: "Ate", account_type: "private" },
-    ],
+    data: { username: "alice", account_type: "private" },
     error: null,
   });
 
-  assert.equal(await getAccountTypeForName(db, "Alice Ate"), "private");
-  assert.equal(opArgs(db._calls[0], "ilike")[0], "first_name");
-  assert.equal(opArgs(db._calls[0], "ilike")[1], "Alice");
+  assert.equal(await getAccountTypeForName(db, "alice"), "private");
+  assert.equal(eqFilters(db._calls[0]).username, "alice");
 
-  const missingDb = spyDb({ data: [], error: null });
-  assert.equal(await getAccountTypeForName(missingDb, "Missing User"), "public");
+  const missingDb = spyDb({ data: null, error: null });
+  assert.equal(await getAccountTypeForName(missingDb, "missing_user"), "public");
 });
 
-test("circle-db: bulk account type lookup dedupes names and fills defaults", async () => {
+test("circle-db: bulk account type lookup dedupes usernames and fills defaults", async () => {
   const db = spyDb({
     data: [
-      { first_name: "Alice", last_name: "Ate", account_type: "private" },
-      { first_name: "Bob", last_name: "Bites", account_type: "not-real" },
+      { username: "alice", account_type: "private" },
+      { username: "bob", account_type: "not-real" },
     ],
     error: null,
   });
 
-  const result = await getAccountTypesForNames(db, ["Alice Ate", "Alice Ate", "Bob Bites", "Cara Chef"]);
+  const result = await getAccountTypesForNames(db, ["alice", "alice", "bob", "cara"]);
 
-  assert.equal(result["Alice Ate"], "private");
-  assert.equal(result["Bob Bites"], "public");
-  assert.equal(result["Cara Chef"], "public");
-  assert.match(opArgs(db._calls[0], "or")[0], /first_name\.ilike\.Alice/);
-  assert.match(opArgs(db._calls[0], "or")[0], /first_name\.ilike\.Bob/);
-  assert.match(opArgs(db._calls[0], "or")[0], /first_name\.ilike\.Cara/);
+  assert.equal(result.alice, "private");
+  assert.equal(result.bob, "public");
+  assert.equal(result.cara, "public");
+  const inArgs = opArgs(db._calls[0], "in");
+  assert.equal(inArgs[0], "username");
+  assert.equal(JSON.stringify(inArgs[1]), JSON.stringify(["alice", "bob", "cara"]));
 });
 
 test("circle-db: hasCircleEdge checks owner-to-member direction", async () => {

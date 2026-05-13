@@ -96,7 +96,7 @@ function makeReq(body) { return { json: async () => body }; }
 function body(res) { return res._body; }
 function status(res) { return res._status; }
 
-function loadRoute(code, { db, authName }) {
+function loadRoute(code, { db, adminDb, authName }) {
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -108,6 +108,7 @@ function loadRoute(code, { db, authName }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminDb ?? db };
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
@@ -419,4 +420,15 @@ test("PATCH /reviews/[id]: review not found returns 404", async () => {
     { params: Promise.resolve({ id: "99999999-9999-4999-8999-999999999999" }) }
   );
   assert.equal(status(res), 404);
+});
+
+test("POST /reviews: write goes through the admin client, not the SSR session client", async () => {
+  const sessionDb = capturingDb({ data: null, error: null });
+  const adminDb = capturingDb();
+  const { POST } = loadRoute(src.create, { db: sessionDb, adminDb, authName: "Alice" });
+  const res = await POST(makeReq(VALID_BODY));
+  assert.equal(status(res), 200);
+  assert.ok(adminDb._inserted, "admin client should have received the insert");
+  assert.equal(adminDb._inserted.reviewer_name, "Alice");
+  assert.equal(sessionDb._inserted, undefined, "SSR session client should not have received the insert");
 });

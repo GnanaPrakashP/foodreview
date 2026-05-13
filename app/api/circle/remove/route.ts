@@ -4,6 +4,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  const cacheHooks = globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
+  };
+  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
+}
+
 export async function POST(req: NextRequest) {
   try {
     return await removeFromCircle(req);
@@ -78,5 +91,6 @@ async function removeFromCircle(req: NextRequest) {
     }
   }
 
+  invalidateCircleFeedCacheForNames([me, other]);
   return NextResponse.json({ ok: true });
 }

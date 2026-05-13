@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { CircleMember } from "@/app/people/page";
+import type { CircleMember } from "@/lib/people-page-data";
 import type { Review } from "@/lib/types";
 import {
   addName,
@@ -16,15 +15,19 @@ import {
 } from "@/lib/people-circle-state";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Check, X } from "lucide-react";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 /* ─── Types ─────────────────────────────────────── */
 
 interface SearchResult {
   name: string;
+  displayName: string;
   totalPlaces: number;
 }
 
 type ProfileSearchRow = {
+  username: string;
   first_name: string;
   last_name: string;
 };
@@ -46,11 +49,10 @@ function avatarColor(name: string): string {
 }
 
 function Avatar({ name, size = 44 }: { name: string; size?: number }) {
-  const initials = name
-    .split(" ")
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
-    .join("");
+  const parts = name.split(/[\s_]+/).filter(Boolean);
+  const initials = parts.length >= 2
+    ? (parts[0][0]! + parts[1][0]!).toUpperCase()
+    : (parts[0]?.[0] ?? "?").toUpperCase();
   return (
     <div
       style={{
@@ -73,8 +75,8 @@ function Avatar({ name, size = 44 }: { name: string; size?: number }) {
   );
 }
 
-function toHandle(name: string): string {
-  return "@" + name.toLowerCase().replace(/\s+/g, "_");
+function toHandle(username: string): string {
+  return "@" + username;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -103,6 +105,7 @@ function Divider() {
 
 function PersonCard({
   name,
+  displayName,
   sub,
   status,
   onAdd,
@@ -110,12 +113,14 @@ function PersonCard({
   highlightRequest = false,
 }: {
   name: string;
+  displayName?: string;
   sub: string;
   status: PersonStatus;
   onAdd?: () => void;
   onInCircleClick?: () => void;
   highlightRequest?: boolean;
 }) {
+  const shownName = displayName || name;
   return (
     <div
       style={{
@@ -133,10 +138,10 @@ function PersonCard({
         href={`/people/${encodeURIComponent(name)}`}
         style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}
       >
-        <Avatar name={name} size={44} />
+        <Avatar name={shownName} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-            {name}
+            {shownName}
           </p>
           <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
             {sub}
@@ -212,13 +217,16 @@ function PersonCard({
 
 function RequestCard({
   name,
+  displayName,
   onAccept,
   onReject,
 }: {
   name: string;
+  displayName?: string;
   onAccept: () => void;
   onReject: () => void;
 }) {
+  const shownName = displayName || name;
   return (
     <div
       style={{
@@ -236,10 +244,10 @@ function RequestCard({
         href={`/people/${encodeURIComponent(name)}`}
         style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}
       >
-        <Avatar name={name} size={44} />
+        <Avatar name={shownName} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-            {name}
+            {shownName}
           </p>
           <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
             wants to join your circle
@@ -489,7 +497,6 @@ export default function PeopleTab({
 }: {
   initialCircle: CircleMember[];
 }) {
-  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -500,6 +507,7 @@ export default function PeopleTab({
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
   const [keptSuggestions, setKeptSuggestions] = useState<Set<string>>(new Set());
+  const [statusLoaded, setStatusLoaded] = useState(false);
   const [confirmCancelName, setConfirmCancelName] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [confirmLeaveName, setConfirmLeaveName] = useState<string | null>(null);
@@ -508,12 +516,15 @@ export default function PeopleTab({
   /* ── Load circle status from API ── */
 
   const loadCircleStatus = useCallback(async (name: string) => {
-    if (!name) return;
-    const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
-    const data = await res.json();
+    if (!name) {
+      setStatusLoaded(true);
+      return;
+    }
+    const data = await cachedCircleStatus(name);
     setCircleMembers(new Set(data.members ?? []));
     setPendingSent(new Set(data.pendingSent ?? []));
     setPendingIncoming(data.pendingIncoming ?? []);
+    setStatusLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -526,47 +537,73 @@ export default function PeopleTab({
 
   async function sendRequest(receiverName: string) {
     if (!myName || myName === receiverName) return;
+
+    const isPublicAccount = initialCircle.find((m) => m.name === receiverName)?.accountType === "public";
+
     setKeptSuggestions((prev) => addName(prev, receiverName));
-    setPendingSent((prev) => addName(prev, receiverName));
+    if (isPublicAccount) {
+      // Public account: skip "Requested", go straight to "In Circle" optimistically
+      setCircleMembers((prev) => addName(prev, receiverName));
+    } else {
+      setPendingSent((prev) => addName(prev, receiverName));
+    }
+
     const res = await fetch("/api/circle/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ senderName: myName, receiverName }),
     });
     const data = await res.json();
+
     if (!res.ok) {
-      setPendingSent((prev) => removeName(prev, receiverName));
+      // Roll back optimistic update on failure
+      if (isPublicAccount) {
+        setCircleMembers((prev) => removeName(prev, receiverName));
+      } else {
+        setPendingSent((prev) => removeName(prev, receiverName));
+      }
       setKeptSuggestions((prev) => removeName(prev, receiverName));
       return;
     }
-    if (isAcceptedCircleResponse(data)) {
+
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
+
+    if (!isPublicAccount && (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data))) {
+      // Private account that got auto-accepted (e.g. they were already in our circle)
       setPendingSent((prev) => removeName(prev, receiverName));
       setCircleMembers((prev) => addName(prev, receiverName));
-      setKeptSuggestions((prev) => addName(prev, receiverName));
-    } else if (isOneWayCircleResponse(data)) {
-      setPendingSent((prev) => removeName(prev, receiverName));
-      setCircleMembers((prev) => addName(prev, receiverName));
-      setKeptSuggestions((prev) => addName(prev, receiverName));
     }
-    await loadCircleStatus(myName);
   }
 
   /* ── Respond to incoming request ── */
 
   async function respondToRequest(senderName: string, action: "accept" | "reject") {
     if (!myName) return;
+    // Optimistic update
+    setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
+    if (action === "accept") {
+      setCircleMembers((prev) => addName(prev, senderName));
+    }
     const res = await fetch("/api/circle/respond", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ myName, senderName, action }),
     });
-    if (!res.ok) return;
-    setPendingIncoming((prev) => prev.filter((n) => n !== senderName));
-    if (action === "accept") {
-      setCircleMembers((prev) => addName(prev, senderName));
+    if (!res.ok) {
+      // Roll back
+      setPendingIncoming((prev) => [...prev, senderName]);
+      if (action === "accept") {
+        setCircleMembers((prev) => removeName(prev, senderName));
+      }
+      return;
     }
-    await loadCircleStatus(myName);
-    router.refresh();
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(senderName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
   }
 
   /* ── Cancel sent request ── */
@@ -586,8 +623,10 @@ export default function PeopleTab({
         setPendingSent((prev) => addName(prev, receiverName));
         return;
       }
-      await loadCircleStatus(myName);
-      router.refresh();
+      invalidateCircleStatusCache(myName);
+      invalidateCircleStatusCache(receiverName);
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/people");
     } finally {
       setCancelBusy(false);
     }
@@ -607,8 +646,10 @@ export default function PeopleTab({
         setCircleMembers((prev) => addName(prev, otherName));
         return;
       }
-      await loadCircleStatus(myName);
-      router.refresh();
+      invalidateCircleStatusCache(myName);
+      invalidateCircleStatusCache(otherName);
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/people");
     } finally {
       setLeaveBusy(false);
     }
@@ -620,32 +661,44 @@ export default function PeopleTab({
     if (!q.trim()) { setSearchResults([]); return; }
     setSearching(true);
     const supabase = createClient();
+    const trimmed = q.trim();
 
     const [{ data: reviewData }, { data: profileData }] = await Promise.all([
       supabase
         .from("reviews")
         .select("reviewer_name")
         .eq("visibility", "public")
-        .ilike("reviewer_name", `%${q.trim()}%`)
+        .ilike("reviewer_name", `%${trimmed}%`)
         .returns<Pick<Review, "reviewer_name">[]>(),
-      supabase.from("profiles").select("first_name, last_name").or(
-        `first_name.ilike.%${q.trim()}%,last_name.ilike.%${q.trim()}%`
+      supabase.from("profiles").select("username, first_name, last_name").or(
+        `username.ilike.%${trimmed}%,first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%`
       ).returns<ProfileSearchRow[]>(),
     ]);
 
+    const displayNameByUsername = new Map<string, string>();
+    for (const p of profileData ?? []) {
+      if (p.username) {
+        const dn = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
+        displayNameByUsername.set(p.username, dn || p.username);
+      }
+    }
+
     const map = new Map<string, number>();
     for (const r of reviewData ?? []) {
-      map.set(r.reviewer_name, (map.get(r.reviewer_name) ?? 0) + 1);
+      if (r.reviewer_name) map.set(r.reviewer_name, (map.get(r.reviewer_name) ?? 0) + 1);
     }
     for (const p of profileData ?? []) {
-      const name = `${p.first_name} ${p.last_name}`.trim();
-      if (name && !map.has(name)) map.set(name, 0);
+      if (p.username && !map.has(p.username)) map.set(p.username, 0);
     }
 
     setSearchResults(
       Array.from(map.entries())
         .filter(([name]) => name !== myName)
-        .map(([name, totalPlaces]) => ({ name, totalPlaces }))
+        .map(([name, totalPlaces]) => ({
+          name,
+          displayName: displayNameByUsername.get(name) || name,
+          totalPlaces,
+        }))
     );
     setSearching(false);
   }, [myName]);
@@ -657,14 +710,25 @@ export default function PeopleTab({
 
   /* ── Derived ── */
 
-  const suggested = initialCircle.filter(
-    (m) =>
-      m.accountType === "public" &&
-      (!circleMembers.has(m.name) || keptSuggestions.has(m.name)) &&
-      (!pendingSent.has(m.name) || keptSuggestions.has(m.name)) &&
-      !pendingIncoming.includes(m.name) &&
-      m.name !== myName
-  ).slice(0, 3);
+  // People shown because the user just acted on them (stay visible with updated button)
+  const keptCards = statusLoaded
+    ? initialCircle.filter(
+        (m) => keptSuggestions.has(m.name) && m.accountType === "public" && m.name !== myName
+      )
+    : [];
+  // Fresh suggestions: public, not yet in circle, not pending, not incoming, not already kept
+  const freshSuggested = statusLoaded
+    ? initialCircle.filter(
+        (m) =>
+          m.accountType === "public" &&
+          !circleMembers.has(m.name) &&
+          !pendingSent.has(m.name) &&
+          !pendingIncoming.includes(m.name) &&
+          !keptSuggestions.has(m.name) &&
+          m.name !== myName
+      ).slice(0, 3)
+    : [];
+  const suggested = [...keptCards, ...freshSuggested.slice(0, Math.max(0, 3 - keptCards.length))];
 
   function suggestionSub(member: CircleMember): string {
     if (member.commonRestaurantCount > 0) {
@@ -752,6 +816,7 @@ export default function PeopleTab({
             <PersonCard
               key={result.name}
               name={result.name}
+              displayName={result.displayName}
               sub={`${toHandle(result.name)} · ${result.totalPlaces} place${result.totalPlaces !== 1 ? "s" : ""}`}
               status={personStatus(result.name)}
               onInCircleClick={personStatus(result.name) === "one_way" ? () => setConfirmLeaveName(result.name) : undefined}
@@ -766,14 +831,18 @@ export default function PeopleTab({
         <>
           <Divider />
           <SectionLabel>Circle Requests · {pendingIncoming.length}</SectionLabel>
-          {pendingIncoming.map((name) => (
-            <RequestCard
-              key={name}
-              name={name}
-              onAccept={() => respondToRequest(name, "accept")}
-              onReject={() => respondToRequest(name, "reject")}
-            />
-          ))}
+          {pendingIncoming.map((name) => {
+            const member = initialCircle.find((m) => m.name === name);
+            return (
+              <RequestCard
+                key={name}
+                name={name}
+                displayName={member?.displayName}
+                onAccept={() => respondToRequest(name, "accept")}
+                onReject={() => respondToRequest(name, "reject")}
+              />
+            );
+          })}
         </>
       )}
 
@@ -793,6 +862,7 @@ export default function PeopleTab({
             <PersonCard
               key={member.name}
               name={member.name}
+              displayName={member.displayName}
               sub={suggestionSub(member)}
               status={personStatus(member.name)}
               highlightRequest
@@ -806,7 +876,7 @@ export default function PeopleTab({
       <ConfirmModal
         open={Boolean(confirmCancelName)}
         title="Cancel request?"
-        message={confirmCancelName ? `Cancel request to join ${confirmCancelName}'s circle?` : ""}
+        message={confirmCancelName ? `Cancel request to join ${initialCircle.find(m => m.name === confirmCancelName)?.displayName || confirmCancelName}'s circle?` : ""}
         confirmText="Cancel request"
         disabled={cancelBusy}
         onCancel={() => setConfirmCancelName(null)}
@@ -820,7 +890,7 @@ export default function PeopleTab({
       <ConfirmModal
         open={Boolean(confirmLeaveName)}
         title="Leave circle?"
-        message={confirmLeaveName ? `Do you no longer want to be in ${confirmLeaveName}'s circle?` : ""}
+        message={confirmLeaveName ? `Do you no longer want to be in ${initialCircle.find(m => m.name === confirmLeaveName)?.displayName || confirmLeaveName}'s circle?` : ""}
         confirmText="Leave"
         confirmVariant="danger"
         disabled={leaveBusy}

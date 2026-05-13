@@ -98,10 +98,11 @@ function isMissingTableError(error) {
 }
 
 function reviewsFor(name) {
+  const username = usernameForName(name);
   const userLabel = name.split(/\s+/).pop() || name.replace(/\s+/g, "");
   const uniqueRestaurant = (visibility) => `E2E ${userLabel} ${visibility} Kitchen`;
   const base = {
-    reviewer_name:   name,
+    reviewer_name:   username,
     area:            "Test Area",
   };
   const sharedBase = { ...base, restaurant_name: E2E_RESTAURANT };
@@ -130,10 +131,14 @@ function reviewsFor(name) {
   ];
 }
 
+function usernameForName(name) {
+  return name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+}
+
 async function seedUser(u) {
   const [firstName, ...rest] = u.name.split(" ");
   const lastName = rest.join(" ") || "";
-  const username = u.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  const username = usernameForName(u.name);
 
   process.stdout.write(`  ${u.name} (${u.email})… `);
 
@@ -202,7 +207,7 @@ async function seedUser(u) {
     const { data: existing2 } = await admin
       .from("reviews")
       .select("body")
-      .eq("reviewer_name", u.name)
+      .eq("reviewer_name", username)
       .in("body", reviews.map((review) => review.body));
 
     const existingBodies = new Set((existing2 ?? []).map((row) => row.body));
@@ -217,7 +222,7 @@ async function seedUser(u) {
   }
 
   console.log("✅");
-  return { userId, name: u.name };
+  return { userId, name: u.name, username };
 }
 
 async function seedCircle(nameA, nameB) {
@@ -280,7 +285,7 @@ async function run() {
   // Create mutual circle between A and B so visibility + badge tests work immediately
   if (results.length >= 2) {
     console.log("");
-    await seedCircle(results[0].name, results[1].name);
+    await seedCircle(results[0].username, results[1].username);
   }
 
   console.log("\n✅  Done.  Run: npx playwright test e2e/production-smoke.spec.ts --project=chromium\n");

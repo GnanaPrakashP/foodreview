@@ -3,6 +3,19 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  const cacheHooks = globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
+  };
+  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
+}
+
 const VALID_VISIBILITIES = new Set(["public", "circle", "me"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -90,6 +103,7 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateCircleFeedCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }
 
@@ -158,5 +172,6 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateCircleFeedCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }

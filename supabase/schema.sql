@@ -296,7 +296,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select trim(p.first_name || ' ' || p.last_name)
+  select p.username
   from public.profiles p
   where p.id = auth.uid()
   limit 1
@@ -415,40 +415,20 @@ drop policy if exists "Anyone can post reviews" on public.reviews;
 create policy "Authenticated users can insert own reviews"
   on public.reviews for insert to authenticated
   with check (
-    reviewer_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    reviewer_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 drop policy if exists "Users can update own reviews" on public.reviews;
 create policy "Users can update own reviews"
   on public.reviews for update to authenticated
-  using (
-    reviewer_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
-  )
-  with check (
-    reviewer_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
-  );
+  using  (reviewer_name = (select p.username from public.profiles p where p.id = auth.uid()))
+  with check (reviewer_name = (select p.username from public.profiles p where p.id = auth.uid()));
 
 drop policy if exists "Users can delete own reviews" on public.reviews;
 create policy "Users can delete own reviews"
   on public.reviews for delete to authenticated
   using (
-    reviewer_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    reviewer_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 
@@ -501,22 +481,14 @@ drop policy if exists "Authenticated users can insert own likes" on public.likes
 create policy "Authenticated users can insert own likes"
   on public.likes for insert to authenticated
   with check (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
     and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can unlike" on public.likes;
 create policy "Users can delete own likes"
   on public.likes for delete to authenticated
   using (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 -- =============================================
@@ -541,22 +513,14 @@ drop policy if exists "Authenticated users can insert own comments" on public.co
 create policy "Authenticated users can insert own comments"
   on public.comments for insert to authenticated
   with check (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
     and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can delete own comments" on public.comments;
 create policy "Users can delete own comments"
   on public.comments for delete to authenticated
   using (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 -- =============================================
@@ -609,29 +573,17 @@ create policy "Notifications readable by recipient"
   on public.notifications for select to authenticated
   using (
     recipient_user_id = auth.uid()
-    or exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
-    )
+    or recipient_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 create policy "Users can mark own notifications read"
   on public.notifications for update to authenticated
   using (
     recipient_user_id = auth.uid()
-    or exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
-    )
+    or recipient_name = (select p.username from public.profiles p where p.id = auth.uid())
   )
   with check (
     recipient_user_id = auth.uid()
-    or exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and (recipient_name = trim(p.first_name || ' ' || p.last_name) or recipient_name = p.username)
-    )
+    or recipient_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 -- =============================================
@@ -719,14 +671,14 @@ update public.notifications n
 set recipient_user_id = p.id
 from public.profiles p
 where n.recipient_user_id is null
-  and (n.recipient_name = trim(p.first_name || ' ' || p.last_name) or n.recipient_name = p.username);
+  and (n.recipient_name = p.username or n.recipient_name = trim(p.first_name || ' ' || p.last_name));
 
 update public.notifications n
 set actor_user_id = p.id
 from public.profiles p
 where n.actor_user_id is null
   and n.actor_name is not null
-  and (n.actor_name = trim(p.first_name || ' ' || p.last_name) or n.actor_name = p.username);
+  and (n.actor_name = p.username or n.actor_name = trim(p.first_name || ' ' || p.last_name));
 
 -- =============================================
 -- CIRCLE REQUESTS
@@ -752,16 +704,8 @@ drop policy if exists "Users can read own circle requests" on public.circle_requ
 create policy "Users can read own circle requests"
   on public.circle_requests for select to authenticated
   using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and (
-          sender_name = trim(p.first_name || ' ' || p.last_name)
-          or receiver_name = trim(p.first_name || ' ' || p.last_name)
-          or sender_name = p.username
-          or receiver_name = p.username
-        )
-    )
+    sender_name   = (select p.username from public.profiles p where p.id = auth.uid())
+    or receiver_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 
 -- =============================================
@@ -824,22 +768,14 @@ drop policy if exists "Wishlist readable by owner" on public.wishlist;
 create policy "Wishlist readable by owner"
   on public.wishlist for select to authenticated
   using (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
   );
 drop policy if exists "Anyone can bookmark" on public.wishlist;
 drop policy if exists "Authenticated users can bookmark" on public.wishlist;
 create policy "Authenticated users can bookmark"
   on public.wishlist for insert to authenticated
   with check (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
     and (
       post_id is null
       or public.can_read_review_id(post_id)
@@ -849,9 +785,5 @@ drop policy if exists "Anyone can unbookmark" on public.wishlist;
 create policy "Users can delete own bookmarks"
   on public.wishlist for delete to authenticated
   using (
-    user_name = (
-      select trim(p.first_name || ' ' || p.last_name)
-      from public.profiles p
-      where p.id = auth.uid()
-    )
+    user_name = (select p.username from public.profiles p where p.id = auth.uid())
   );

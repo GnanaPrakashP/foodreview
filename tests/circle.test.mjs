@@ -73,7 +73,7 @@ function mockDb(...responses) {
         then(res, rej) { return next().then(res, rej); },
         catch(rej) { return next().catch(rej); },
       };
-      for (const m of ["select", "eq", "ilike", "or", "limit", "insert", "delete", "update"]) {
+      for (const m of ["select", "eq", "ilike", "or", "limit", "insert", "delete", "update", "in", "maybeSingle"]) {
         chain[m] = () => chain;
       }
       return chain;
@@ -130,33 +130,29 @@ test("hasCircleEdge: false on db error", async () => {
 // ======================================================
 
 test("getAccountTypeForName: public when profile not found", async () => {
-  const db = mockDb({ data: [], error: null });
-  assert.equal(await getAccountTypeForName(db, "Ghost User"), "public");
+  const db = mockDb({ data: null, error: null });
+  assert.equal(await getAccountTypeForName(db, "ghost_user"), "public");
 });
 
 test("getAccountTypeForName: private when profile has account_type 'private'", async () => {
   const db = mockDb({
-    data: [{ first_name: "Alice", last_name: "Smith", account_type: "private" }],
+    data: { username: "alice_smith", account_type: "private" },
     error: null,
   });
-  assert.equal(await getAccountTypeForName(db, "Alice Smith"), "private");
+  assert.equal(await getAccountTypeForName(db, "alice_smith"), "private");
 });
 
 test("getAccountTypeForName: public when account_type is null", async () => {
   const db = mockDb({
-    data: [{ first_name: "Bob", last_name: "Jones", account_type: null }],
+    data: { username: "bob_jones", account_type: null },
     error: null,
   });
-  assert.equal(await getAccountTypeForName(db, "Bob Jones"), "public");
+  assert.equal(await getAccountTypeForName(db, "bob_jones"), "public");
 });
 
-test("getAccountTypeForName: disambiguates by full name when first name matches multiple rows", async () => {
-  const rows = [
-    { first_name: "Alice", last_name: "Smith", account_type: "public" },
-    { first_name: "Alice", last_name: "Wonder", account_type: "private" },
-  ];
-  assert.equal(await getAccountTypeForName(mockDb({ data: rows, error: null }), "Alice Wonder"), "private");
-  assert.equal(await getAccountTypeForName(mockDb({ data: rows, error: null }), "Alice Smith"), "public");
+test("getAccountTypeForName: looks up exact username", async () => {
+  assert.equal(await getAccountTypeForName(mockDb({ data: { username: "alice_wonder", account_type: "private" }, error: null }), "alice_wonder"), "private");
+  assert.equal(await getAccountTypeForName(mockDb({ data: { username: "alice_smith", account_type: "public" }, error: null }), "alice_smith"), "public");
 });
 
 // ======================================================
@@ -170,30 +166,30 @@ test("getAccountTypesForNames: empty input returns empty object without querying
 
 test("getAccountTypesForNames: unmatched names default to public", async () => {
   const db = mockDb({ data: [], error: null });
-  const result = await getAccountTypesForNames(db, ["Ghost One", "Ghost Two"]);
-  assert.equal(result["Ghost One"], "public");
-  assert.equal(result["Ghost Two"], "public");
+  const result = await getAccountTypesForNames(db, ["ghost_one", "ghost_two"]);
+  assert.equal(result["ghost_one"], "public");
+  assert.equal(result["ghost_two"], "public");
   assert.equal(Object.keys(result).length, 2);
 });
 
 test("getAccountTypesForNames: returns correct types for found and missing names", async () => {
   const db = mockDb({
     data: [
-      { first_name: "Alice", last_name: "Smith", account_type: "private" },
-      { first_name: "Bob", last_name: "Jones", account_type: null },
+      { username: "alice_smith", account_type: "private" },
+      { username: "bob_jones", account_type: null },
     ],
     error: null,
   });
-  const result = await getAccountTypesForNames(db, ["Alice Smith", "Bob Jones", "Ghost User"]);
-  assert.equal(result["Alice Smith"], "private");
-  assert.equal(result["Bob Jones"], "public");
-  assert.equal(result["Ghost User"], "public");
+  const result = await getAccountTypesForNames(db, ["alice_smith", "bob_jones", "ghost_user"]);
+  assert.equal(result["alice_smith"], "private");
+  assert.equal(result["bob_jones"], "public");
+  assert.equal(result["ghost_user"], "public");
 });
 
 test("getAccountTypesForNames: deduplicates input names", async () => {
-  const db = mockDb({ data: [{ first_name: "Alice", last_name: "Smith", account_type: "private" }], error: null });
-  const result = await getAccountTypesForNames(db, ["Alice Smith", "Alice Smith"]);
-  assert.equal(result["Alice Smith"], "private");
+  const db = mockDb({ data: [{ username: "alice_smith", account_type: "private" }], error: null });
+  const result = await getAccountTypesForNames(db, ["alice_smith", "alice_smith"]);
+  assert.equal(result["alice_smith"], "private");
 });
 
 // ======================================================

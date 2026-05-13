@@ -116,6 +116,7 @@ function loadRoute(code, { db, authName }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
@@ -298,4 +299,43 @@ test("DELETE /comments/[id]: DB fetch error returns 404", async () => {
   });
   const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 404);
+});
+
+test("POST /comments: success response includes full comment row (id, post_id, user_name, content, created_at)", async () => {
+  const fullRow = {
+    id: "cmt-1",
+    post_id: "post-1",
+    user_name: "Alice",
+    content: "Delicious!",
+    created_at: "2026-05-01T00:00:00.000Z",
+  };
+  const db = mockDb({ data: fullRow, error: null });
+  const { POST } = loadRoute(src.create, { db, authName: "Alice" });
+
+  const res = await POST(makeReq({ postId: "post-1", content: "Delicious!" }));
+
+  assert.equal(status(res), 200);
+  assert.equal(body(res).id, "cmt-1");
+  assert.equal(body(res).post_id, "post-1");
+  assert.equal(body(res).user_name, "Alice");
+  assert.equal(body(res).content, "Delicious!");
+  assert.equal(typeof body(res).created_at, "string");
+});
+
+test("DELETE /comments/[id]: ownership check selects user_name and post_id", async () => {
+  const db = spyDb(
+    { data: { user_name: "Alice", post_id: "post-1" }, error: null },
+    { data: null, error: null }
+  );
+  const { DELETE } = loadRoute(src.deleteById, { db, authName: "Alice" });
+
+  await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
+
+  const fetchCall = db._calls.find(
+    (c) => c.table === "comments" && c.ops.some(([op]) => op === "select")
+  );
+  assert.ok(fetchCall, "should SELECT from comments");
+  const selectArg = fetchCall.ops.find(([op]) => op === "select")?.[1] ?? "";
+  assert.ok(selectArg.includes("user_name"), "select should include user_name");
+  assert.ok(selectArg.includes("post_id"), "select should include post_id");
 });

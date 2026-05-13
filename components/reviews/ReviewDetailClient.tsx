@@ -9,12 +9,14 @@ import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 type Props = {
   review: Review;
   initialLikeCount: number;
   initialComments: Comment[];
   initialMyName: string;
+  profileMap?: Record<string, string>;
   autoFocusComment?: boolean;
   backHref?: string;
 };
@@ -34,6 +36,7 @@ export default function ReviewDetailClient({
   initialLikeCount,
   initialComments,
   initialMyName,
+  profileMap = {},
   autoFocusComment = false,
   backHref = "/",
 }: Props) {
@@ -60,7 +63,8 @@ export default function ReviewDetailClient({
   const postMenuRef = useRef<HTMLDivElement>(null);
 
   const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
-  const initials = avatarInitials(review.reviewer_name);
+  const reviewerDisplayName = profileMap[review.reviewer_name] || review.reviewer_name;
+  const initials = avatarInitials(reviewerDisplayName);
   const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
 
   useEffect(() => {
@@ -94,6 +98,8 @@ export default function ReviewDetailClient({
       return;
     }
 
+    invalidateCachedJson("/api/me");
+    invalidateCachedJson("/api/feed/circle");
     router.replace("/me");
     router.refresh();
   }
@@ -172,14 +178,14 @@ export default function ReviewDetailClient({
     setComments((prev) => [...prev, temp]);
     setText("");
 
-    const supabase = createClient();
-    const { data, error } = await (supabase as any)
-      .from("comments")
-      .insert({ post_id: review.id, user_name: myName, content })
-      .select()
-      .single() as { data: Comment | null; error: Error | null };
+    const response = await fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId: review.id, content }),
+    });
+    const data = response.ok ? await response.json() as Comment : null;
 
-    if (error) {
+    if (!data) {
       setComments((prev) => prev.filter((comment) => comment.id !== tempId));
       setText(content);
       setSending(false);
@@ -267,7 +273,7 @@ export default function ReviewDetailClient({
               </div>
               <div style={{ minWidth: 0 }}>
                 <p style={{ fontSize: "14px", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif" }}>
-                  <strong>{review.reviewer_name}</strong>
+                  <strong>{reviewerDisplayName}</strong>
                   <span style={{ color: "var(--muted)", fontWeight: 400 }}> shared a spot</span>
                 </p>
               </div>
@@ -367,7 +373,7 @@ export default function ReviewDetailClient({
                 rel="noreferrer"
                 style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
               >
-                {locationLabel}
+                📍 {locationLabel}
               </a>
             )}
 
@@ -447,11 +453,11 @@ export default function ReviewDetailClient({
                 style={{ display: "flex", gap: "9px", alignItems: "flex-start", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "10px" }}
               >
                 <div style={{ width: "30px", height: "30px", borderRadius: "10px", background: avatarGradient(comment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "white", flexShrink: 0 }}>
-                  {avatarInitials(comment.user_name)}
+                  {avatarInitials(profileMap[comment.user_name] || comment.user_name)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.4 }}>
-                    <strong>{comment.user_name}</strong> {comment.content}
+                    <strong>{profileMap[comment.user_name] || comment.user_name}</strong> {comment.content}
                   </p>
                   <p suppressHydrationWarning style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", marginTop: "3px" }}>
                     {timeAgo(comment.created_at)}

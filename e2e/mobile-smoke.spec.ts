@@ -57,14 +57,14 @@ async function clickCircleActionAndWait(
   });
 }
 
-async function openProfile(page: Page, name: string) {
-  await page.goto(`/people/${encodeURIComponent(name)}`);
-  await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 10_000 });
+async function openProfile(page: Page, username: string, displayName = username) {
+  await page.goto(`/people/${encodeURIComponent(username)}`);
+  await expect(page.getByText(displayName, { exact: true })).toBeVisible({ timeout: 10_000 });
 }
 
-async function resetCircleRelationshipFromViewer(page: Page, targetName: string) {
+async function resetCircleRelationshipFromViewer(page: Page, targetUsername: string, targetDisplayName = targetUsername) {
   for (let attempt = 0; attempt < 4; attempt++) {
-    await openProfile(page, targetName);
+    await openProfile(page, targetUsername, targetDisplayName);
     const action = circleAction(page);
     await expect(action).toBeVisible({ timeout: 10_000 });
 
@@ -81,7 +81,7 @@ async function resetCircleRelationshipFromViewer(page: Page, targetName: string)
     await page.waitForTimeout(400);
   }
 
-  await openProfile(page, targetName);
+  await openProfile(page, targetUsername, targetDisplayName);
   await expect(circleAction(page)).toHaveText(/request/i, { timeout: 10_000 });
 }
 
@@ -153,7 +153,7 @@ test("mobile circle smoke: public account add is tappable and persists after ref
   test.skip(SKIP_ABC, SKIP_MSG);
 
   await signIn(page, userC!);
-  await resetCircleRelationshipFromViewer(page, userA!.name);
+  await resetCircleRelationshipFromViewer(page, userA!.username, userA!.name);
 
   await clickCircleActionAndWait(page, /\/api\/circle\/request/);
   await expect(circleAction(page)).toHaveText(/in circle/i, { timeout: 10_000 });
@@ -170,7 +170,7 @@ test("mobile private circle smoke: request and cancel remain tappable", async ({
   test.skip(SKIP_ABC, SKIP_MSG);
 
   await signIn(page, userA!);
-  await resetCircleRelationshipFromViewer(page, userC!.name);
+  await resetCircleRelationshipFromViewer(page, userC!.username, userC!.name);
 
   const requestResponse = await clickCircleActionAndWait(page, /\/api\/circle\/request/);
   const requestBody = await requestResponse.json();
@@ -188,7 +188,7 @@ test("mobile notification smoke: bell opens requests and action buttons fit", as
   const requesterContext = await browser.newContext();
   const requesterPage = await requesterContext.newPage();
   await signIn(requesterPage, userA!);
-  await resetCircleRelationshipFromViewer(requesterPage, userC!.name);
+  await resetCircleRelationshipFromViewer(requesterPage, userC!.username, userC!.name);
   await clickCircleActionAndWait(requesterPage, /\/api\/circle\/request/);
   await requesterContext.close();
 
@@ -229,7 +229,7 @@ test("mobile search, trending, and common badge smoke: cards fit without overflo
   await expect(page.getByText("E2E Kitchen", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 
-  await openProfile(page, userA!.name);
+  await openProfile(page, userA!.username, userA!.name);
   await expect(page.locator("[aria-label*='common restaurant']").first()).toBeVisible({ timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 });

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function MyListPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const myName = user?.user_metadata?.full_name ?? "";
+  const myName = (user?.user_metadata?.username as string) ?? "";
 
   if (!myName) return <MyListClient allReviews={[]} />;
 

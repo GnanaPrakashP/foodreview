@@ -8,6 +8,7 @@ import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
+import { cachedCircleStatus } from "@/lib/browser-circle-status";
 
 interface Member {
   name: string;
@@ -17,7 +18,7 @@ interface Member {
 export default function FriendCirclePage() {
   const { username } = useParams<{ username: string }>();
   const name = decodeURIComponent(username);
-  const firstName = name.split(" ")[0];
+  const firstName = name.split(/[\s_]+/)[0] ?? name;
 
   const [members, setMembers] = useState<Member[]>([]);
   const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
@@ -27,18 +28,14 @@ export default function FriendCirclePage() {
 
   useEffect(() => {
     (async () => {
-      const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
-      const data = await res.json();
+      const data = await cachedCircleStatus(name);
       setAccountType(data.accountType ?? DEFAULT_ACCOUNT_TYPE);
       const memberNames: string[] = data.displayMembers ?? data.members ?? [];
       setCircleCount(memberNames.length);
 
       const viewerName = localStorage.getItem("fc_my_name") ?? "";
       if (viewerName !== name && data.accountType === "private") {
-        const viewerRes = viewerName
-          ? await fetch(`/api/circle/status?name=${encodeURIComponent(viewerName)}`)
-          : null;
-        const viewerData = viewerRes ? await viewerRes.json() : {};
+        const viewerData = viewerName ? await cachedCircleStatus(viewerName) : {};
         const canView = (viewerData.members ?? []).includes(name);
         if (!canView) {
           setLocked(true);

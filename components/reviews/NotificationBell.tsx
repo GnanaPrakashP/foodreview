@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { cachedJson } from "@/lib/browser-api-cache";
+
+const UNREAD_COUNT_TTL_MS = 15_000;
 
 export default function NotificationBell({ initialUnreadCount = 0 }: { initialUnreadCount?: number }) {
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
@@ -11,9 +14,10 @@ export default function NotificationBell({ initialUnreadCount = 0 }: { initialUn
 
     async function loadUnreadCount() {
       try {
-        const res = await fetch("/api/notifications/unread-count", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await cachedJson<{ unreadCount?: number }>(
+          "/api/notifications/unread-count",
+          UNREAD_COUNT_TTL_MS
+        );
         if (active && typeof data.unreadCount === "number") setUnreadCount(data.unreadCount);
       } catch {
         // Keep the bell quiet if the user is logged out or the network hiccups.

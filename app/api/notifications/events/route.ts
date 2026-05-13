@@ -35,6 +35,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid actor" }, { status: 400 });
   }
 
+  // Look up display name (full name) for notification messages
+  const { data: actorProfile } = await admin
+    .from("profiles")
+    .select("first_name, last_name")
+    .eq("username", actorName)
+    .maybeSingle();
+  const actorDisplayName = actorProfile
+    ? `${(actorProfile as { first_name: string | null; last_name: string | null }).first_name ?? ""} ${(actorProfile as { first_name: string | null; last_name: string | null }).last_name ?? ""}`.trim() || actorName
+    : actorName;
+
   // Events that don't require the post to exist
   if (payload.event === "POST_UNLIKED") {
     await removeLikeNotification(admin, payload.reviewId, actorName);
@@ -44,6 +54,10 @@ export async function POST(req: NextRequest) {
   if (payload.event === "POST_COMMENT_DELETED") {
     await removeCommentNotification(admin, payload.commentId);
     return NextResponse.json({ ok: true });
+  }
+
+  if (!["POST_LIKED", "POST_COMMENTED", "CIRCLE_POST_CREATED"].includes(payload.event)) {
+    return NextResponse.json({ error: "Unsupported event" }, { status: 400 });
   }
 
   const { data: review, error: reviewError } = await admin
@@ -63,7 +77,7 @@ export async function POST(req: NextRequest) {
       .eq("user_name", actorName)
       .maybeSingle();
 
-    if (like) await createPostLikeNotification(admin, review as Review, actorName);
+    if (like) await createPostLikeNotification(admin, review as Review, actorName, actorDisplayName);
     return NextResponse.json({ ok: true });
   }
 
@@ -89,7 +103,8 @@ export async function POST(req: NextRequest) {
       review as Review,
       actorName,
       comment as Pick<Comment, "id" | "content">,
-      (priorComments ?? []).map((row: { user_name: string }) => row.user_name)
+      (priorComments ?? []).map((row: { user_name: string }) => row.user_name),
+      actorDisplayName
     );
 
     return NextResponse.json({ ok: true });

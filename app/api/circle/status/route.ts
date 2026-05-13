@@ -32,6 +32,9 @@ export async function GET(req: NextRequest) {
   );
 
   const actor = await getAuthenticatedCircleActor(supabase);
+  if (!actor) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
   const canSeePendingState = actor?.actorName === name;
 
   const [{ data: edgeRows }, { data: requestRows }, accountType] = await Promise.all([

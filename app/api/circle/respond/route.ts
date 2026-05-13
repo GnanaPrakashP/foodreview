@@ -6,6 +6,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  const cacheHooks = globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
+  };
+  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
+}
+
 export async function POST(req: NextRequest) {
   const { senderName, action } = await req.json();
   if (!senderName || !["accept", "reject"].includes(action)) {
@@ -24,6 +37,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient();
   const me = actor.actorName;
+  const meDisplay = actor.displayName;
   const sender = senderName.trim();
   if (!sender || sender === me) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -70,7 +84,7 @@ export async function POST(req: NextRequest) {
       actorName: me,
       type: "CIRCLE_REQUEST_ACCEPTED",
       title: "Circle request accepted",
-      message: `${me} accepted your circle request`,
+      message: `${meDisplay} accepted your circle request`,
       entityType: "CIRCLE_REQUEST",
       entityId: requestRow?.id ?? `${sender}:${me}`,
       metadata: {
@@ -101,6 +115,7 @@ export async function POST(req: NextRequest) {
     .eq("actor_name", sender)
     .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
+  invalidateCircleFeedCacheForNames([me, sender]);
   return NextResponse.json({
     ok: true,
     state: action === "accept" ? "CIRCLE_ONE_WAY" : "NONE",

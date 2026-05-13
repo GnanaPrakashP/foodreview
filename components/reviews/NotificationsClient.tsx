@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, X } from "lucide-react";
 import type { Json, Notification } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 function effectiveDate(notification: Notification): string {
   return notification.updated_at || notification.created_at;
@@ -37,16 +38,21 @@ function metadataOf(notification: Notification): Record<string, Json | undefined
     : {};
 }
 
-function notificationMessage(notification: Notification): string {
-  if (notification.message) return notification.message;
-  const actor = notification.actor_name ?? "Someone";
-  if (notification.type === "like") return `${actor} liked your post`;
-  if (notification.type === "comment") return `${actor} commented on your post`;
-  if (notification.type === "also_commented") return `${actor} replied in a discussion you joined`;
-  if (notification.type === "circle_request") return `${actor} requested to join your circle`;
-  if (notification.type === "circle_accepted") return `${actor} accepted your circle request`;
-  if (notification.type === "circle_added") return `${actor} joined your circle`;
-  if (notification.type === "circle_post") return `${actor} posted about ${notification.restaurant_name ?? "a restaurant"}`;
+function notificationMessage(notification: Notification, profileMap: Record<string, string>): string {
+  const username = notification.actor_name ?? "";
+  const actor = (username && profileMap[username]) || username || "Someone";
+  const storedMessage = typeof notification.message === "string" ? notification.message.trim() : "";
+
+  if (storedMessage && username && !profileMap[username]) return storedMessage;
+
+  if (notification.type === "POST_LIKED" || notification.type === "like") return `${actor} liked your post`;
+  if (notification.type === "POST_COMMENTED" || notification.type === "comment") return `${actor} commented on your post`;
+  if (notification.type === "THREAD_REPLY" || notification.type === "also_commented") return `${actor} replied in a discussion you joined`;
+  if (notification.type === "CIRCLE_REQUEST_RECEIVED" || notification.type === "circle_request") return `${actor} requested to join your circle`;
+  if (notification.type === "CIRCLE_REQUEST_ACCEPTED" || notification.type === "circle_accepted") return `${actor} accepted your circle request`;
+  if (notification.type === "ADDED_TO_CIRCLE" || notification.type === "MUTUAL_CIRCLE_CREATED" || notification.type === "circle_added") return `${actor} joined your circle`;
+  if (notification.type === "CIRCLE_POST_CREATED" || notification.type === "circle_post") return `${actor} posted about ${notification.restaurant_name ?? "a restaurant"}`;
+  if (storedMessage) return storedMessage;
   return "You have a new notification";
 }
 
@@ -75,6 +81,7 @@ export default function NotificationsClient() {
   const router = useRouter();
   const [myName, setMyName] = useState("");
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -93,7 +100,10 @@ export default function NotificationsClient() {
     try {
       const res = await fetch("/api/notifications", { cache: "no-store" });
       const data = await res.json();
-      if (res.ok) setNotifications(data.notifications ?? []);
+      if (res.ok) {
+        setNotifications(data.notifications ?? []);
+        setProfileMap(data.profileMap ?? {});
+      }
     } finally {
       setLoading(false);
     }
@@ -102,11 +112,13 @@ export default function NotificationsClient() {
   async function markRead(id: string) {
     setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true, read: true } : n));
     await fetch(`/api/notifications/${id}/read`, { method: "PATCH" }).catch(() => {});
+    invalidateCachedJson("/api/notifications/unread-count");
   }
 
   async function markAllRead() {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true, read: true })));
     await fetch("/api/notifications/read-all", { method: "PATCH" }).catch(() => {});
+    invalidateCachedJson("/api/notifications/unread-count");
   }
 
   function showToast(msg: string) {
@@ -211,11 +223,11 @@ export default function NotificationsClient() {
                       <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
                         <button onClick={() => openNotification(notification)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", flex: 1, display: "flex", gap: "10px", textAlign: "left", minWidth: 0 }}>
                           <div style={{ width: 38, height: 38, borderRadius: "12px", background: avatarGradient(notification.actor_name ?? "CircleBites"), display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "12px", fontWeight: 800, flexShrink: 0 }}>
-                            {avatarInitials(notification.actor_name ?? "CB")}
+                            {avatarInitials((notification.actor_name && profileMap[notification.actor_name]) || notification.actor_name || "CB")}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", lineHeight: 1.35, fontWeight: unread ? 800 : 600 }}>
-                              {notificationMessage(notification)}
+                              {notificationMessage(notification, profileMap)}
                             </p>
                             {notification.content && (
                               <p style={{ color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "12px", lineHeight: 1.35, marginTop: "4px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>

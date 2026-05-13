@@ -22,16 +22,6 @@ export default function BottomNav() {
     setPendingHref(null);
   }, [pathname]);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      for (const tab of TABS) {
-        if (tab.href !== pathname) router.prefetch(tab.href);
-      }
-    }, 250);
-
-    return () => window.clearTimeout(timeout);
-  }, [pathname, router]);
-
   if (
     pathname === "/login" ||
     pathname === "/onboarding" ||
@@ -72,6 +62,7 @@ export default function BottomNav() {
               <Link
                 key={tab.href}
                 href={tab.href}
+                prefetch={false}
                 onClick={beginNavigation}
                 onPointerEnter={() => router.prefetch(tab.href)}
                 onFocus={() => router.prefetch(tab.href)}
@@ -103,6 +94,7 @@ export default function BottomNav() {
             <Link
               key={tab.href}
               href={tab.href}
+              prefetch={false}
               onClick={beginNavigation}
               onPointerEnter={() => router.prefetch(tab.href)}
               onFocus={() => router.prefetch(tab.href)}

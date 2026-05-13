@@ -34,6 +34,7 @@ async function createPublicReview(page: Page, restaurantName: string, body: stri
   await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
   await page.getByRole("button", { name: escapedText(restaurantName) }).first().click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill("E2E Idli");
+  await page.getByTitle("Amazing").first().click();
   await page.locator("textarea").fill(body);
   await page.getByRole("button", { name: "Post it" }).click();
   await page.waitForURL((url) => url.pathname.startsWith("/reviews/") && url.pathname !== "/reviews/new", { timeout: 20_000 });
@@ -93,6 +94,7 @@ test("2 · A can create a public review and it appears on /me", async ({ page })
   await page.getByPlaceholder("e.g. Bawarchi").fill("Smoke Test Eats");
   await page.getByRole("button", { name: /Smoke Test Eats/i }).first().click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill("Smoke Dish");
+  await page.getByTitle("Amazing").first().click();
   // Ensure "Public" visibility is selected (it's the default)
   await expect(page.getByRole("button", { name: /public/i })).toBeVisible();
 
@@ -115,7 +117,7 @@ test("3 · circle-only review from A is not visible to C (outsider)", async ({ p
   await signIn(page, userC!);
 
   const aFirstName = userA!.name.split(" ")[0];
-  await page.goto(`/people/${encodeURIComponent(userA!.name)}`);
+  await page.goto(`/people/${encodeURIComponent(userA!.username)}`);
 
   // The page should load (A is a public account) — use the exact profile name heading
   await expect(page.getByText(userA!.name, { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -132,7 +134,7 @@ test("4 · B can see A's profile and has a circle action button", async ({ page 
   test.skip(SKIP_AB, SKIP_MSG);
   await signIn(page, userB!);
 
-  await page.goto(`/people/${encodeURIComponent(userA!.name)}`);
+  await page.goto(`/people/${encodeURIComponent(userA!.username)}`);
 
   // Any of these labels is valid depending on current relationship state.
   // Just verifying the button is rendered confirms profile page + circle UI renders.
@@ -148,7 +150,7 @@ test("5 · A can see C's profile and has a circle action button", async ({ page 
   test.skip(SKIP_ABC, SKIP_MSG);
   await signIn(page, userA!);
 
-  await page.goto(`/people/${encodeURIComponent(userC!.name)}`);
+  await page.goto(`/people/${encodeURIComponent(userC!.username)}`);
 
   await expect(page.getByText(userC!.name, { exact: true })).toBeVisible({ timeout: 10_000 });
 
@@ -268,7 +270,7 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
   // the badge never renders — this test will fail as a signal of that schema gap.
   await signIn(page, userA!);
 
-  await page.goto(`/people/${encodeURIComponent(userB!.name)}`);
+  await page.goto(`/people/${encodeURIComponent(userB!.username)}`);
 
   const circleBtn = page.getByRole("button", {
     name: /request|requested|in circle|accept/i,

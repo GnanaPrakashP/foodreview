@@ -5,7 +5,7 @@
  *   - Username validation (USERNAME_REGEX from app/onboarding)
  *   - normalizeAccountType / public-private account toggle
  *   - searchDishes edge cases: empty query, spaces, special characters, no match
- *   - getAccountTypeForName: duplicate display name risk
+ *   - getAccountTypeForName: username lookup behavior
  *
  * Already covered elsewhere (not duplicated here):
  *   - searchDishes happy path and aggregation → tests/app-logic.test.mjs
@@ -83,9 +83,26 @@ const dishesExports = (() => {
   return mod.exports;
 })();
 
+// lib/profile.ts — type-only import from @/lib/types is elided after transpile.
+const profileExports = (() => {
+  const mod = { exports: {} };
+  vm.runInNewContext(
+    transpile(readFileSync(new URL("../lib/profile.ts", import.meta.url), "utf8")),
+    {
+      module: mod, exports: mod.exports, console,
+      require(id) {
+        if (id === "@/lib/types") return {};
+        throw new Error(`Unexpected require loading profile.ts: ${id}`);
+      },
+    }
+  );
+  return mod.exports;
+})();
+
 const { normalizeAccountType } = circleExports;
 const { getAccountTypeForName } = circleDbExports;
 const { searchDishes } = dishesExports;
+const { avatarInitials } = profileExports;
 
 // ── profile DB mock ───────────────────────────────────────────────────────────
 
@@ -94,10 +111,10 @@ function makeProfileDb(rows) {
     from(_table) {
       const chain = {
         then(res, rej) {
-          return Promise.resolve({ data: rows, error: null }).then(res, rej);
+          return Promise.resolve({ data: rows[0] ?? null, error: null }).then(res, rej);
         },
         catch(rej) {
-          return Promise.resolve({ data: rows, error: null }).catch(rej);
+          return Promise.resolve({ data: rows[0] ?? null, error: null }).catch(rej);
         },
       };
       for (const m of ["select", "ilike", "limit", "eq", "or", "maybeSingle"]) {
@@ -291,40 +308,40 @@ test("searchDishes: unique_raters counts distinct reviewers, not logs", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DUPLICATE DISPLAY NAME RISK
+// USERNAME ACCOUNT LOOKUP
 //
-// getAccountTypeForName uses an ilike query on first_name, then an exact
-// match on the full name.  When two users share the same first+last name,
-// it returns the account_type of whichever profile appears FIRST in the DB
-// result.  This is a known limitation: there is no uniqueness constraint on
-// the first_name + last_name combination.
+// Account type lookup uses the canonical username identity, not display names.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("getAccountTypeForName: duplicate display names — first DB row wins", async () => {
-  // Two users both named "Alice Smith" — one private, one public.
-  // The function returns the account type of whichever row .find() picks first.
-  const dbPrivateFirst = makeProfileDb([
-    { first_name: "Alice", last_name: "Smith", account_type: "private" },
-    { first_name: "Alice", last_name: "Smith", account_type: "public" },
-  ]);
-  const dbPublicFirst = makeProfileDb([
-    { first_name: "Alice", last_name: "Smith", account_type: "public" },
-    { first_name: "Alice", last_name: "Smith", account_type: "private" },
-  ]);
+test("getAccountTypeForName: exact username controls account type", async () => {
+  const privateDb = makeProfileDb([{ username: "alice_smith", account_type: "private" }]);
+  const publicDb = makeProfileDb([{ username: "alice_public", account_type: "public" }]);
 
-  assert.equal(await getAccountTypeForName(dbPrivateFirst, "Alice Smith"), "private");
-  assert.equal(await getAccountTypeForName(dbPublicFirst, "Alice Smith"), "public");
-  // Risk: same name, different DB row ordering → different account type returned.
+  assert.equal(await getAccountTypeForName(privateDb, "alice_smith"), "private");
+  assert.equal(await getAccountTypeForName(publicDb, "alice_public"), "public");
 });
 
-test("getAccountTypeForName: multi-word name with spaces uses only first word for ilike", async () => {
-  // Searching for "Alice Smith" queries ilike("first_name", "Alice"),
-  // then filters with .find(row => fullName(row) === "Alice Smith").
-  // A row with first_name="Alice", last_name="Jones" is in the DB result but
-  // should NOT match because the full name differs.
-  const db = makeProfileDb([
-    { first_name: "Alice", last_name: "Jones", account_type: "private" },
-  ]);
-  // "Alice Smith" is not in the DB — should default to "public"
+test("getAccountTypeForName: display names do not match username lookup", async () => {
+  const db = makeProfileDb([]);
   assert.equal(await getAccountTypeForName(db, "Alice Smith"), "public");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// avatarInitials — edge cases introduced by the /[\s_]+/ split
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("avatarInitials: underscore-separated username yields two initials", () => {
+  assert.equal(avatarInitials("alice_ate"), "AA");
+});
+
+test("avatarInitials: empty string returns '?'", () => {
+  assert.equal(avatarInitials(""), "?");
+});
+
+test("avatarInitials: single-word name returns one initial", () => {
+  assert.equal(avatarInitials("alice"), "A");
+});
+
+test("avatarInitials: space-separated display name returns two initials (regression)", () => {
+  assert.equal(avatarInitials("Alice Ate"), "AA");
 });

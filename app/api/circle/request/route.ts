@@ -6,6 +6,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { addCircleEdge, getAccountTypeForName, hasCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames, upsertCircleRequestNotification } from "@/lib/notifications";
 
+function invalidateCircleFeedCacheForNames(names: string[]) {
+  const cacheHooks = globalThis as typeof globalThis & {
+    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
+    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
+  };
+  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
+  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
+}
+
 type CircleSupabaseClient = { from: (table: string) => any };
 
 function circleError(message: string, error: { message?: string; code?: string; details?: string | null } | null) {
@@ -90,6 +103,7 @@ async function handleCircleRequest(req: NextRequest) {
 
   const admin = createAdminClient();
   const sender = actor.actorName;
+  const senderDisplay = actor.displayName;
   const receiver = receiverName.trim();
   if (sender === receiver) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -121,8 +135,9 @@ async function handleCircleRequest(req: NextRequest) {
       recipient_name: receiver,
       actor_name: sender,
       type: "ADDED_TO_CIRCLE",
-      message: `${sender} joined your circle`,
+      message: `${senderDisplay} joined your circle`,
     });
+    invalidateCircleFeedCacheForNames([sender, receiver]);
     return NextResponse.json({ status: "one_way", state: "CIRCLE_ONE_WAY" });
   }
 
@@ -143,6 +158,7 @@ async function handleCircleRequest(req: NextRequest) {
     if (existing.status === "accepted") {
       const { error } = await addCircleEdge(admin, receiver, sender);
       if (error) return circleError("failed to restore accepted circle membership", error);
+      invalidateCircleFeedCacheForNames([sender, receiver]);
       return NextResponse.json({ status: "one_way", state: "CIRCLE_ONE_WAY" });
     }
     if (existing.status === "pending") {
@@ -150,7 +166,7 @@ async function handleCircleRequest(req: NextRequest) {
         recipient_name: receiver,
         actor_name: sender,
         type: "CIRCLE_REQUEST_RECEIVED",
-        message: `${sender} requested to join your circle`,
+        message: `${senderDisplay} requested to join your circle`,
         requestId,
       });
       return NextResponse.json({ status: "pending", state: "PENDING" });
@@ -183,9 +199,10 @@ async function handleCircleRequest(req: NextRequest) {
     recipient_name: receiver,
     actor_name: sender,
     type: "CIRCLE_REQUEST_RECEIVED",
-    message: `${sender} requested to join your circle`,
+    message: `${senderDisplay} requested to join your circle`,
     requestId,
   });
 
+  invalidateCircleFeedCacheForNames([sender, receiver]);
   return NextResponse.json({ status: "pending", state: "PENDING" });
 }

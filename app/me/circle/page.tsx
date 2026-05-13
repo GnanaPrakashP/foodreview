@@ -7,6 +7,7 @@ import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE, accountTypeLabel } from "@/lib/circle";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 
 interface Member {
   name: string;
@@ -25,8 +26,7 @@ export default function MyCirclePage() {
     if (!name) { setMounted(true); return; }
 
     (async () => {
-      const res = await fetch(`/api/circle/status?name=${encodeURIComponent(name)}`);
-      const data = await res.json();
+      const data = await cachedCircleStatus(name);
       setAccountType(data.accountType ?? DEFAULT_ACCOUNT_TYPE);
       const memberNames: string[] = data.displayMembers ?? data.members ?? [];
 
@@ -66,6 +66,8 @@ export default function MyCirclePage() {
       });
       if (!res.ok) {
         setMembers(previousMembers);
+      } else {
+        invalidateCircleStatusCache();
       }
     } catch {
       setMembers(previousMembers);

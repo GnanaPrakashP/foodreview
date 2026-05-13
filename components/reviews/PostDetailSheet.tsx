@@ -28,7 +28,9 @@ function gradient(name: string): string {
 }
 
 function initials(name: string): string {
-  return name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
+  const parts = name.split(/[\s_]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0]?.[0] ?? "?").toUpperCase();
 }
 
 
@@ -77,14 +79,14 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
     setText("");
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 50);
 
-    const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("comments")
-      .insert({ post_id: review.id, user_name: myName, content })
-      .select()
-      .single() as { data: Comment | null };
+    const response = await fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId: review.id, content }),
+    });
+    const data = response.ok ? await response.json() as Comment : null;
     if (data) setComments(prev => prev.map(c => c.id === tempId ? data : c));
+    else setComments(prev => prev.filter(c => c.id !== tempId));
 
     if (data) {
       await fetch("/api/notifications/events", {
@@ -164,7 +166,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
                 rel="noreferrer"
                 style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
               >
-                {locationLabel}
+                📍 {locationLabel}
               </a>
             )}
 
