@@ -27,7 +27,7 @@ export default async function UserProfilePage({ params }: Props) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const [{ data: { user } }, { data: profiles }, { data: ownerAllReviews }] = await Promise.all([
+  const [{ data: { user } }, { data: profiles }, { data: ownerAllReviews }, { data: theirMemberRows }] = await Promise.all([
     supabase.auth.getUser(),
     supabase
       .from("profiles")
@@ -41,6 +41,11 @@ export default async function UserProfilePage({ params }: Props) {
       .eq("reviewer_name", name)
       .order("created_at", { ascending: false })
       .returns<Review[]>(),
+    // Fetch circle member list for the profile owner to show their circle count immediately
+    admin
+      .from("circle_memberships")
+      .select("member_name")
+      .eq("user_name", name),
   ]);
 
   const profile = (profiles ?? [])[0] ?? null;
@@ -52,10 +57,33 @@ export default async function UserProfilePage({ params }: Props) {
     ? `${profile.first_name} ${profile.last_name}`.trim()
     : name;
 
+  const initialTheirCircleCount = (theirMemberRows ?? []).length;
+
   let circleOwnerNames = new Set<string>();
+  let initialCircleStatus: "one_way" | "sent" | "none" = "none";
+  let initialHasIncomingRequest = false;
+
   if (myName && myName !== name) {
-    const canSeeCirclePosts = await hasCircleAccess(supabase, name, myName);
+    const [canSeeCirclePosts, { data: pendingRows }] = await Promise.all([
+      hasCircleAccess(supabase, name, myName),
+      // Fetch pending requests in both directions between viewer and profile owner
+      admin
+        .from("circle_requests")
+        .select("sender_name, receiver_name")
+        .in("sender_name", [myName, name])
+        .in("receiver_name", [myName, name])
+        .eq("status", "pending"),
+    ]);
+
     if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
+
+    const rows = (pendingRows ?? []) as { sender_name: string; receiver_name: string }[];
+    initialCircleStatus = canSeeCirclePosts
+      ? "one_way"
+      : rows.some((r) => r.sender_name === myName && r.receiver_name === name)
+        ? "sent"
+        : "none";
+    initialHasIncomingRequest = rows.some((r) => r.sender_name === name && r.receiver_name === myName);
   }
 
   const accountType = normalizeAccountType(profile?.account_type);
@@ -76,11 +104,16 @@ export default async function UserProfilePage({ params }: Props) {
 
   return (
     <FriendProfileClient
+      key={name}
       name={name}
       displayName={displayName}
       accountType={accountType}
       reviews={visibleReviews}
       hasHiddenCirclePosts={hasHiddenCirclePosts}
+      initialMyName={myName}
+      initialCircleStatus={initialCircleStatus}
+      initialTheirCircleCount={initialTheirCircleCount}
+      initialHasIncomingRequest={initialHasIncomingRequest}
     />
   );
 }

@@ -69,27 +69,38 @@ export default function FriendProfileClient({
   accountType,
   reviews,
   hasHiddenCirclePosts = false,
+  initialMyName = "",
+  initialCircleStatus = "none",
+  initialTheirCircleCount = 0,
+  initialHasIncomingRequest = false,
 }: {
   name: string;
   displayName?: string;
   accountType: AccountType;
   reviews: Review[];
   hasHiddenCirclePosts?: boolean;
+  initialMyName?: string;
+  initialCircleStatus?: "one_way" | "sent" | "none";
+  initialTheirCircleCount?: number;
+  initialHasIncomingRequest?: boolean;
 }) {
   const router = useRouter();
   const hasVisibleCirclePosts = useMemo(
     () => reviews.some((review) => normalizeVisibility(review.visibility) === "circle"),
     [reviews]
   );
-  const [myName, setMyName] = useState("");
-  const [circleStatus, setCircleStatus] = useState<CircleStatus>(() => hasVisibleCirclePosts ? "one_way" : "none");
-  const [theirCircleCount, setTheirCircleCount] = useState(0);
-  const [hasIncomingRequest, setHasIncomingRequest] = useState(false);
+  const [myName, setMyName] = useState(initialMyName);
+  const [circleStatus, setCircleStatus] = useState<CircleStatus>(() =>
+    initialCircleStatus !== "none" ? initialCircleStatus : hasVisibleCirclePosts ? "one_way" : "none"
+  );
+  const [theirCircleCount, setTheirCircleCount] = useState(initialTheirCircleCount);
+  const [hasIncomingRequest, setHasIncomingRequest] = useState(initialHasIncomingRequest);
   const [commonRestaurantCount, setCommonRestaurantCount] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<"cancel_request" | "leave_circle" | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [respondBusy, setRespondBusy] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  // If the server already supplied relationship data we can show the button immediately.
+  const [mounted, setMounted] = useState(Boolean(initialMyName));
   const loadSeqRef = useRef(0);
   const relationshipReady = mounted;
 
@@ -139,15 +150,21 @@ export default function FriendProfileClient({
   }, [name]);
 
   useEffect(() => {
-    // Reset derived relationship state immediately when profile target changes.
-    setCircleStatus(hasVisibleCirclePosts ? "one_way" : "none");
-    setTheirCircleCount(0);
-    setHasIncomingRequest(false);
-    setCommonRestaurantCount(null);
-    setMounted(false);
-
-    const me = localStorage.getItem("fc_my_name") ?? "";
+    const me = initialMyName || localStorage.getItem("fc_my_name") || "";
     setMyName(me);
+    setCommonRestaurantCount(null);
+
+    // When the server did NOT supply relationship data (unauthenticated / first load
+    // without SSR auth), reset to safe defaults and show the skeleton until the
+    // client fetch resolves. When initial data is present, skip the reset so the
+    // button and circle count are visible immediately.
+    if (!initialMyName) {
+      setCircleStatus(hasVisibleCirclePosts ? "one_way" : "none");
+      setTheirCircleCount(0);
+      setHasIncomingRequest(false);
+      setMounted(false);
+    }
+
     if (!me) { setMounted(true); return; }
 
     let active = true;
@@ -164,6 +181,8 @@ export default function FriendProfileClient({
         .catch(() => {});
     }
 
+    // Background refresh keeps the displayed state fresh. When initial server data
+    // is already shown this is a silent update with no visible flash.
     loadCircleStatus(me).finally(() => {
       if (active) setMounted(true);
     });
@@ -172,7 +191,8 @@ export default function FriendProfileClient({
       active = false;
       loadSeqRef.current += 1;
     };
-  }, [hasVisibleCirclePosts, loadCircleStatus]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
 
   async function refreshAfterCircleChange() {
     await loadCircleStatus(myName);
@@ -182,7 +202,11 @@ export default function FriendProfileClient({
   async function sendRequest() {
     if (!myName || myName === name) return;
     const previousStatus = circleStatus;
-    setCircleStatus("sent");
+    // Optimistic: public accounts auto-accept so show "In Circle" immediately;
+    // private accounts require approval so show "Requested" immediately.
+    const optimisticStatus = accountType === "public" ? "one_way" : "sent";
+    setCircleStatus(optimisticStatus);
+    if (accountType === "public") setTheirCircleCount((c) => c + 1);
     const res = await fetch("/api/circle/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -191,17 +215,19 @@ export default function FriendProfileClient({
     const data = await res.json();
     if (!res.ok) {
       setCircleStatus(previousStatus);
+      if (accountType === "public") setTheirCircleCount((c) => Math.max(0, c - 1));
       return;
     }
     invalidateCircleStatusCache(myName);
     invalidateCircleStatusCache(name);
     invalidateCachedJson("/api/feed/circle");
     invalidateCachedJson("/api/people");
+    // Correct if API response disagrees with our optimistic guess
     if (data.state === "CIRCLE_ONE_WAY" || data.status === "one_way" || data.status === "accepted") {
       setCircleStatus("one_way");
-      if (accountType === "public") setTheirCircleCount((c) => c + 1);
     } else {
       setCircleStatus("sent");
+      if (accountType === "public") setTheirCircleCount((c) => Math.max(0, c - 1));
     }
     await refreshAfterCircleChange();
   }

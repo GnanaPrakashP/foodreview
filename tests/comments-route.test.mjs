@@ -117,6 +117,28 @@ function loadRoute(code, { db, authName }) {
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/server/cache-invalidation") {
+        return {
+          invalidateCircleFeedCacheForNames() {},
+          invalidateSocialCachesForNames() {},
+        };
+      }
+      if (id === "@/lib/server/route-supabase") {
+        return {
+          createRouteSupabase: async () => db,
+          getRouteActor: async () => ({
+            supabase: db,
+            actor: authName
+              ? { userId: `uid-${authName.toLowerCase()}`, actorName: authName, displayName: authName }
+              : null,
+          }),
+        };
+      }
+      if (id === "@/lib/server/review-validation") {
+        return {
+          isValidUuid: (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value),
+        };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>

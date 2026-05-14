@@ -1,33 +1,18 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
-
-function invalidateCircleFeedCacheForNames(names: string[]) {
-  (globalThis as typeof globalThis & {
-    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
-  }).__foodReviewInvalidateCircleFeedCacheForNames?.(names);
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import { isValidUuid } from "@/lib/server/review-validation";
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!UUID_RE.test(id)) {
+  if (!isValidUuid(id)) {
     return NextResponse.json({ error: "Invalid comment id" }, { status: 400 });
   }
 
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-
-  const actor = await getAuthenticatedCircleActor(supabase);
+  const { supabase, actor } = await getRouteActor();
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

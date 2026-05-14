@@ -1,14 +1,7 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-function invalidateCircleFeedCacheForNames(names: string[]) {
-  (globalThis as typeof globalThis & {
-    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
-  }).__foodReviewInvalidateCircleFeedCacheForNames?.(names);
-}
+import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 export async function POST(req: NextRequest) {
   const { postId, content } = await req.json();
@@ -23,14 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Comment is too long (max 500 characters)" }, { status: 400 });
   }
 
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-
-  const actor = await getAuthenticatedCircleActor(supabase);
+  const { actor } = await getRouteActor();
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

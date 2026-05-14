@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCircleFeedPage, parseCircleFeedCursor } from "@/lib/circle-feed";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
-import { createRouteSupabase } from "@/app/api/notifications/_utils";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
 
 function parseNumber(value: string | null, fallback: number): number {
   if (!value) return fallback;

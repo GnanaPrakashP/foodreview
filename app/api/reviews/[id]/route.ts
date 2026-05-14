@@ -1,85 +1,26 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
-
-function invalidateCircleFeedCacheForNames(names: string[]) {
-  const cacheHooks = globalThis as typeof globalThis & {
-    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
-  };
-  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
-}
-
-const VALID_VISIBILITIES = new Set(["public", "circle", "me"]);
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isValidId(id: string): boolean {
-  return UUID_RE.test(id);
-}
-
-function normalizeItems(items: unknown): { items?: { name: string; rating: number }[]; error?: string } {
-  if (!Array.isArray(items)) {
-    return { error: "At least one dish is required" };
-  }
-
-  const normalized = [];
-  for (const item of items as { name?: string; rating?: unknown }[]) {
-    const name = item?.name?.trim();
-    if (!name) continue;
-
-    if (
-      item.rating !== undefined
-      && (typeof item.rating !== "number" || item.rating < 1 || item.rating > 5)
-    ) {
-      return { error: "Invalid rating" };
-    }
-
-    normalized.push({
-      name,
-      rating: item.rating ?? 0,
-    });
-  }
-
-  if (normalized.length === 0) {
-    return { error: "At least one dish is required" };
-  }
-
-  return { items: normalized };
-}
-
-async function getSupabaseAndActor(req: NextRequest) {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-  const actor = await getAuthenticatedCircleActor(supabase);
-  return { supabase, actor };
-}
+import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!isValidId(id)) {
+  if (!isValidUuid(id)) {
     return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
   }
 
-  const { supabase, actor } = await getSupabaseAndActor(req);
+  const { actor } = await getRouteActor();
 
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const { data: review, error: fetchError } = await supabase
+  const admin = createAdminClient();
+  const { data: review, error: fetchError } = await admin
     .from("reviews")
     .select("reviewer_name")
     .eq("id", id)
@@ -93,7 +34,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Not your review" }, { status: 403 });
   }
 
-  const { error } = await supabase
+  const { error } = await admin
     .from("reviews")
     .delete()
     .eq("id", id)
@@ -103,7 +44,7 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateCircleFeedCacheForNames([actor.actorName]);
+  invalidateSocialCachesForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }
 
@@ -112,17 +53,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!isValidId(id)) {
+  if (!isValidUuid(id)) {
     return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
   }
 
-  const { supabase, actor } = await getSupabaseAndActor(req);
+  const { actor } = await getRouteActor();
 
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const { data: review, error: fetchError } = await supabase
+  const admin = createAdminClient();
+  const { data: review, error: fetchError } = await admin
     .from("reviews")
     .select("reviewer_name")
     .eq("id", id)
@@ -141,28 +83,29 @@ export async function PATCH(
   const updates: Record<string, unknown> = {};
 
   if (visibility !== undefined) {
-    if (!VALID_VISIBILITIES.has(visibility)) {
+    if (!isValidVisibility(visibility)) {
       return NextResponse.json({ error: "Invalid visibility" }, { status: 400 });
     }
     updates.visibility = visibility;
   }
 
   if (reviewBody !== undefined) {
-    if (reviewBody.trim() && reviewBody.trim().length < 5) {
-      return NextResponse.json({ error: "Body must be at least 5 characters" }, { status: 400 });
+    const normalizedBody = validateReviewBody(reviewBody);
+    if (normalizedBody.error) {
+      return NextResponse.json({ error: normalizedBody.error }, { status: 400 });
     }
-    updates.body = reviewBody.trim() || null;
+    updates.body = normalizedBody.body ?? null;
   }
 
   if (items !== undefined) {
-    const normalizedItems = normalizeItems(items);
+    const normalizedItems = normalizeReviewItems(items);
     if (normalizedItems.error) {
       return NextResponse.json({ error: normalizedItems.error }, { status: 400 });
     }
     updates.items = normalizedItems.items;
   }
 
-  const { error } = await supabase
+  const { error } = await admin
     .from("reviews")
     .update(updates)
     .eq("id", id)
@@ -172,6 +115,6 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateCircleFeedCacheForNames([actor.actorName]);
+  invalidateSocialCachesForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }

@@ -1,24 +1,6 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
-
-function invalidateCircleFeedCacheForNames(names: string[]) {
-  (globalThis as typeof globalThis & {
-    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
-  }).__foodReviewInvalidateCircleFeedCacheForNames?.(names);
-}
-
-async function getActorAndDb() {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-  const actor = await getAuthenticatedCircleActor(supabase);
-  return { supabase, actor };
-}
+import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 export async function POST(req: NextRequest) {
   const { postId } = await req.json();
@@ -26,7 +8,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { supabase, actor } = await getActorAndDb();
+  const { supabase, actor } = await getRouteActor();
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -53,7 +35,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { supabase, actor } = await getActorAndDb();
+  const { supabase, actor } = await getRouteActor();
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

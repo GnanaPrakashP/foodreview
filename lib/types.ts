@@ -63,6 +63,10 @@ export interface Database {
           photo_url: string | null;
           photo_urls: string[];
           visibility: Visibility;
+          deleted_at: string | null;
+          hidden_at: string | null;
+          reported_at: string | null;
+          status: "active" | "deleted" | "hidden" | "reported" | "removed";
           created_at: string;
         };
         Insert: {
@@ -79,6 +83,10 @@ export interface Database {
           photo_url?: string | null;
           photo_urls?: string[];
           visibility?: Visibility;
+          deleted_at?: string | null;
+          hidden_at?: string | null;
+          reported_at?: string | null;
+          status?: "active" | "deleted" | "hidden" | "reported" | "removed";
           created_at?: string;
         };
         Update: {
@@ -95,6 +103,10 @@ export interface Database {
           photo_url?: string | null;
           photo_urls?: string[];
           visibility?: Visibility;
+          deleted_at?: string | null;
+          hidden_at?: string | null;
+          reported_at?: string | null;
+          status?: "active" | "deleted" | "hidden" | "reported" | "removed";
           created_at?: string;
         };
         Relationships: [];

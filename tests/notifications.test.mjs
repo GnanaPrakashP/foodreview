@@ -437,3 +437,50 @@ test("createCirclePostNotifications dedupes members and skips the reviewer", asy
   assert.deepEqual(inserts.map((row) => row.recipient_name).sort(), ["Bob", "Carol"]);
   assert.equal(inserts.every((row) => row.type === "CIRCLE_POST_CREATED"), true);
 });
+
+// ── resolveProfiles query optimization ───────────────────────────────────────
+
+test("resolveProfiles: queries profiles using .in('username', names) not a full table scan", async () => {
+  const { createNotificationForNames } = loadNotifications();
+  // Two responses: profiles lookup + notification insert
+  const db = spyDb(
+    { data: [], error: null },                      // resolveProfiles
+    { data: { id: "notif-1" }, error: null }        // insert
+  );
+
+  await createNotificationForNames(db, {
+    recipientName: "alice",
+    actorName: "bob",
+    type: "POST_LIKED",
+    message: "bob liked your post",
+    entityType: "POST",
+    entityId: "post-1",
+  });
+
+  const profileCall = db._calls.find((c) => c.table === "profiles" && hasOp(c, "in"));
+  assert.ok(profileCall, "profiles should be queried with .in() not a full table scan");
+  assert.equal(opArgs(profileCall, "in")[0], "username", ".in() should filter by username column");
+  const queriedNames = Array.from(opArgs(profileCall, "in")[1]);
+  assert.ok(queriedNames.includes("alice"), "queried names should include the recipient");
+  assert.ok(queriedNames.includes("bob"), "queried names should include the actor");
+  assert.equal(hasOp(profileCall, "limit"), false, "should NOT use .limit() for profile lookup");
+});
+
+test("resolveProfiles: empty names list skips DB entirely", async () => {
+  const { createNotificationForNames } = loadNotifications();
+  const db = spyDb();
+
+  // Self-notification is filtered before resolveProfiles, but we can test the empty
+  // branch by checking that a notification to self returns null without DB calls
+  const result = await createNotificationForNames(db, {
+    recipientName: "alice",
+    actorName: "alice",
+    type: "POST_LIKED",
+    message: "self like",
+    entityType: "POST",
+    entityId: "post-1",
+  });
+
+  assert.equal(result, null);
+  assert.equal(db._calls.length, 0, "no DB calls should be made for self-notifications");
+});

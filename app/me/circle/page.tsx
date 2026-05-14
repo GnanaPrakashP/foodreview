@@ -11,6 +11,7 @@ import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-c
 
 interface Member {
   name: string;
+  displayName: string;
   placeCount: number;
 }
 
@@ -33,11 +34,18 @@ export default function MyCirclePage() {
       if (memberNames.length === 0) { setMounted(true); return; }
 
       const supabase = createClient();
-      const { data: reviews } = await supabase
-        .from("reviews")
-        .select("reviewer_name, restaurant_name")
-        .in("reviewer_name", memberNames)
-        .returns<Pick<Review, "reviewer_name" | "restaurant_name">[]>();
+      const [{ data: reviews }, { data: profiles }] = await Promise.all([
+        supabase
+          .from("reviews")
+          .select("reviewer_name, restaurant_name")
+          .in("reviewer_name", memberNames)
+          .returns<Pick<Review, "reviewer_name" | "restaurant_name">[]>(),
+        supabase
+          .from("profiles")
+          .select("username, first_name, last_name")
+          .in("username", memberNames)
+          .returns<{ username: string; first_name: string | null; last_name: string | null }[]>(),
+      ]);
 
       const placeCounts = new Map<string, Set<string>>();
       for (const r of reviews ?? []) {
@@ -45,8 +53,15 @@ export default function MyCirclePage() {
         placeCounts.get(r.reviewer_name)!.add(r.restaurant_name);
       }
 
+      const displayNames = new Map<string, string>();
+      for (const profile of profiles ?? []) {
+        const displayName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+        displayNames.set(profile.username, displayName || profile.username);
+      }
+
       setMembers(memberNames.map(n => ({
         name: n,
+        displayName: displayNames.get(n) ?? n,
         placeCount: placeCounts.get(n)?.size ?? 0,
       })));
       setMounted(true);
@@ -130,18 +145,18 @@ export default function MyCirclePage() {
       {mounted && members.length > 0 && (
         <div style={{ padding: "0 20px" }}>
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
-            {members.map(({ name, placeCount }, i) => (
+            {members.map(({ name, displayName, placeCount }, i) => (
               <div key={name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
                 <Link
                   href={`/people/${encodeURIComponent(name)}`}
                   style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}
                 >
-                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
-                    {avatarInitials(name)}
+                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(displayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
+                    {avatarInitials(displayName)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {name}
+                      {displayName}
                     </p>
                     <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "2px" }}>
                       {placeCount} place{placeCount !== 1 ? "s" : ""}

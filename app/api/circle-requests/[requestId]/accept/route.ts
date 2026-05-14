@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createRouteSupabase, getNotificationViewer, unauthorized } from "@/app/api/notifications/_utils";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getNotificationViewer, unauthorized } from "@/app/api/notifications/_utils";
 
 type CircleRequestRow = {
   id: string;

@@ -191,7 +191,9 @@ export default function CircleFeedCard({
     });
 
     if (!response.ok) {
-      setDeleteReviewError("Could not delete this post. Please try again.");
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      const detail = payload?.error || `Request failed with status ${response.status}`;
+      setDeleteReviewError(`Could not delete this post: ${detail}`);
       setDeletingReview(false);
       return;
     }

@@ -278,9 +278,14 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
   await expect(circleBtn).toBeVisible({ timeout: 10_000 });
   const circleLabel = (await circleBtn.textContent())?.trim().toLowerCase() ?? "";
   if (circleLabel === "request") {
-    // eslint-disable-next-line playwright/no-skipped-test
-    test.skip(true, "circle_memberships table missing from live DB — badge requires mutual circle status");
-    return;
+    await Promise.all([
+      page.waitForResponse(
+        (response) => response.url().includes("/api/circle/request") && response.request().method() === "POST" && response.ok(),
+        { timeout: 15_000 }
+      ),
+      circleBtn.click(),
+    ]);
+    await expect(circleBtn).toHaveText(/in circle/i, { timeout: 10_000 });
   }
 
   const badge = page.locator("[aria-label*='common restaurant']");

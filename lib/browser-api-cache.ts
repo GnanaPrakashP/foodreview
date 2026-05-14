@@ -67,6 +67,23 @@ export function primeCachedJson<T>(url: string, value: T, ttlMs: number) {
   writeSession(url, entry);
 }
 
+// Clears all viewer-specific API response caches. Call on logout or account deletion to
+// prevent stale data from being served to a different user on the same tab.
+export function invalidateViewerCaches() {
+  for (const prefix of [
+    "/api/me",
+    "/api/feed/",
+    "/api/circle/",
+    "/api/people",
+    // "/api/trending" uses server-side getPrivateCached, not browser sessionStorage, so this
+    // is currently a no-op — kept as a forward-compatible entry in case a client cache is added.
+    "/api/trending",
+    "/api/notifications",
+  ]) {
+    invalidateCachedJson(prefix);
+  }
+}
+
 export function invalidateCachedJson(prefix: string) {
   for (const key of memoryCache.keys()) {
     if (key.startsWith(prefix)) memoryCache.delete(key);

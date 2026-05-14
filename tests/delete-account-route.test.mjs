@@ -104,6 +104,8 @@ function loadRoute({ user = { id: "viewer-id" }, deleteUserError = null } = {}) 
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "@supabase/ssr") return { createServerClient: () => serverClient };
       if (id === "@supabase/supabase-js") return { createClient: () => adminClient };
+      if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => serverClient };
+      if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminClient };
       throw new Error(`Unexpected require in delete-account route tests: ${id}`);
     },
   });

@@ -82,6 +82,8 @@ export function notificationProfileName(profile: Pick<ProfileRow, "first_name" |
   return profile.username || fullName(profile);
 }
 
+// Expects usernames (profile.username), not display names. Callers must pass username strings;
+// display-name lookups will silently produce no match.
 async function resolveProfiles(db: NotificationDb, names: string[]): Promise<Map<string, ProfileRow>> {
   const wanted = new Set(names.map((name) => name.trim()).filter(Boolean));
   const resolved = new Map<string, ProfileRow>();
@@ -90,7 +92,7 @@ async function resolveProfiles(db: NotificationDb, names: string[]): Promise<Map
   const { data, error } = await db
     .from("profiles")
     .select("id, first_name, last_name, username, avatar_url")
-    .limit(1000);
+    .in("username", [...wanted]);
 
   if (error) {
     console.warn("[notifications] profile lookup failed:", error.message);

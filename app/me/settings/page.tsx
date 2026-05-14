@@ -7,7 +7,7 @@ import { ArrowLeft, LogOut, Trash2, FileText, Shield, Settings, Sun, Moon, Monit
 import { createClient } from "@/lib/supabase/client";
 import { useTheme, type ThemeMode } from "@/lib/useTheme";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
-import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, invalidateViewerCaches } from "@/lib/browser-api-cache";
 
 type AccountType = "private" | "public";
 
@@ -52,13 +52,20 @@ export default function SettingsPage() {
     setAccountType(pendingType);
     setPendingType(null);
     setSaving(false);
+    // Clear browser sessionStorage caches
+    invalidateCachedJson("/api/me");
+    invalidateCachedJson("/api/people");
+    // Drop server-side getPrivateCached entries for this user (me-page, people-page, trending).
+    // Fire-and-forget: browser caches are already cleared above; the server cache TTL (5 min)
+    // is the fallback if this call fails.
+    void fetch("/api/me", { method: "POST" });
   }
 
   async function handleLogout() {
     const supabase = createClient();
     await supabase.auth.signOut();
     localStorage.removeItem("fc_my_name");
-    invalidateCachedJson("");
+    invalidateViewerCaches();
     router.push("/login");
   }
 
@@ -72,7 +79,7 @@ export default function SettingsPage() {
     await (supabase as any).from("profiles").delete().eq("id", userId);
     await supabase.auth.signOut();
     localStorage.removeItem("fc_my_name");
-    invalidateCachedJson("");
+    invalidateViewerCaches();
     router.push("/login");
   }
 

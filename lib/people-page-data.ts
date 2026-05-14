@@ -59,13 +59,21 @@ export async function getPeoplePageData(supabase: SupabaseLike, myName: string) 
 
 async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promise<{ circleMembers: CircleMember[] }> {
   const [{ data: reviews }, { data: profiles }] = await Promise.all([
+    // Only public, non-suppressed reviews. Keeps the working set manageable and prevents
+    // private/circle posts from leaking into the people suggestion ranking.
     supabase
       .from("reviews")
       .select("reviewer_name, restaurant_name, visibility, created_at")
-      .order("created_at", { ascending: false }),
+      .eq("visibility", "public")
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(2000),
     supabase
       .from("profiles")
-      .select("username, account_type, first_name, last_name"),
+      .select("username, account_type, first_name, last_name")
+      .not("username", "is", null),
   ]);
 
   const allReviews = (reviews ?? []) as Pick<Review, "reviewer_name" | "restaurant_name" | "visibility" | "created_at">[] as Review[];

@@ -106,6 +106,21 @@ function loadRoute(code, { db, circleDb, notifications, authName = "Alice", disp
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/server/cache-invalidation") {
+        return {
+          invalidateCircleFeedCacheForNames() {},
+          invalidateSocialCachesForNames() {},
+        };
+      }
+      if (id === "@/lib/server/route-supabase") {
+        return {
+          createRouteSupabase: async () => db,
+          getRouteActor: async () => ({
+            supabase: db,
+            actor: authName ? { userId: `${authName.toLowerCase()}-id`, actorName: authName, displayName: displayName ?? authName } : null,
+          }),
+        };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>

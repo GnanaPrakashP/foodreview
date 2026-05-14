@@ -1,10 +1,9 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { getAccountTypeForName, getAccountTypesForNames } from "@/lib/circle-db";
 import type { CircleRelationshipState } from "@/lib/types";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
 
 export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name");
@@ -24,12 +23,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
+  const supabase = await createRouteSupabase();
 
   const actor = await getAuthenticatedCircleActor(supabase);
   if (!actor) {

@@ -1,33 +1,15 @@
-import { createServerClient } from "@supabase/ssr";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
 
 export async function POST() {
-  const cookieStore = await cookies();
-
-  // Regular server client — to verify the session
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll(); },
-        setAll() {},
-      },
-    }
-  );
-
+  const supabase = await createRouteSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // Admin client — needs service role key to delete the user
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const admin = createAdminClient();
 
   // Delete profile row first (FK constraint)
   await admin.from("profiles").delete().eq("id", user.id);

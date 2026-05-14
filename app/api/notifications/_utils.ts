@@ -1,23 +1,15 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAuthenticatedProfileName } from "@/lib/notifications";
 import type { Json, Notification } from "@/lib/types";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
+
+export { createRouteSupabase };
 
 type SupabaseLikeError = {
   message?: string;
   code?: string;
   details?: string | null;
 } | null | undefined;
-
-export async function createRouteSupabase() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-}
 
 export async function getNotificationViewer(supabase: Awaited<ReturnType<typeof createRouteSupabase>>) {
   const { data: { user }, error } = await supabase.auth.getUser();

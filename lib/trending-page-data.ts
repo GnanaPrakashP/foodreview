@@ -52,13 +52,24 @@ export async function getTrendingPageData(db: TrendingDb, myName: string): Promi
 
 async function loadTrendingPageData(db: TrendingDb, myName: string): Promise<TrendingPageData> {
   const readDb = createAdminClient();
+  // Filter to public, non-suppressed reviews at the DB level so the 500-row window
+  // is filled with usable data. filterGlobalTrendingReviews below is kept as
+  // defense-in-depth for any edge-case suppression flags not covered by SQL.
   const { data: reviews } = await readDb
     .from("reviews")
-    .select("*")
+    .select(
+      "reviewer_name, restaurant_name, items, body, created_at, " +
+      "visibility, deleted_at, hidden_at, reported_at, status"
+    )
+    .eq("visibility", "public")
+    .is("deleted_at", null)
+    .is("hidden_at", null)
+    .is("reported_at", null)
+    .eq("status", "active")
     .order("created_at", { ascending: false })
     .limit(500);
 
-  const allReviews = (reviews ?? []) as Review[];
+  const allReviews = (reviews ?? []) as unknown as Review[];
   const publicReviews = filterGlobalTrendingReviews(allReviews);
   const { week, month, alltime, peopleCounts } = computeTrending(publicReviews);
 

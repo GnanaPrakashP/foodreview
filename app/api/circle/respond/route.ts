@@ -1,23 +1,9 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
-
-function invalidateCircleFeedCacheForNames(names: string[]) {
-  const cacheHooks = globalThis as typeof globalThis & {
-    __foodReviewInvalidateCircleFeedCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidateMePageCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidatePeoplePageCacheForNames?: (names: string[]) => void;
-    __foodReviewInvalidateTrendingPageCacheForNames?: (names: string[]) => void;
-  };
-  cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(names);
-  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(names);
-}
+import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 export async function POST(req: NextRequest) {
   const { senderName, action } = await req.json();
@@ -25,14 +11,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll() { return cookieStore.getAll(); }, setAll() {} } }
-  );
-
-  const actor = await getAuthenticatedCircleActor(supabase);
+  const { actor } = await getRouteActor();
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
   const admin = createAdminClient();
@@ -115,7 +94,7 @@ export async function POST(req: NextRequest) {
     .eq("actor_name", sender)
     .in("type", ["circle_request", "CIRCLE_REQUEST_RECEIVED"]);
 
-  invalidateCircleFeedCacheForNames([me, sender]);
+  invalidateSocialCachesForNames([me, sender]);
   return NextResponse.json({
     ok: true,
     state: action === "accept" ? "CIRCLE_ONE_WAY" : "NONE",

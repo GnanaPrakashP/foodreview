@@ -26,6 +26,7 @@ function loadUtils({ profileName = "Alice" } = {}) {
     require(id) {
       if (id === "@supabase/ssr") return { createServerClient: () => ({}) };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
+      if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => ({}) };
       if (id === "next/server") {
         return {
           NextResponse: {

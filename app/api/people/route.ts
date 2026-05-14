@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPeoplePageData } from "@/lib/people-page-data";
-import { createRouteSupabase } from "@/app/api/notifications/_utils";
+import { createRouteSupabase } from "@/lib/server/route-supabase";
 
 export async function GET() {
   try {

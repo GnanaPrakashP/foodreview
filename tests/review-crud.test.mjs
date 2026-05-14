@@ -105,6 +105,49 @@ function loadRoute(code, { db, authName }) {
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/server/cache-invalidation") {
+        return {
+          invalidateCircleFeedCacheForNames() {},
+          invalidateSocialCachesForNames() {},
+        };
+      }
+      if (id === "@/lib/server/route-supabase") {
+        return {
+          createRouteSupabase: async () => db,
+          getRouteActor: async () => ({
+            supabase: db,
+            actor: authName
+              ? { userId: `uid-${authName.toLowerCase().replace(/\s/g, "-")}`, actorName: authName, displayName: authName }
+              : null,
+          }),
+        };
+      }
+      if (id === "@/lib/server/review-validation") {
+        const isValidUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+        const isValidVisibility = (value) => ["public", "circle", "me"].includes(value);
+        const normalizeReviewItems = (items) => {
+          if (!Array.isArray(items)) return { error: "At least one dish is required" };
+          const normalized = [];
+          for (const item of items) {
+            const name = item?.name?.trim();
+            if (!name) continue;
+            if (item.rating !== undefined && (typeof item.rating !== "number" || item.rating < 1 || item.rating > 5)) {
+              return { error: "Invalid rating" };
+            }
+            normalized.push({ name, rating: item.rating ?? 0 });
+          }
+          return normalized.length ? { items: normalized } : { error: "At least one dish is required" };
+        };
+        const validateReviewBody = (value) => {
+          if (value === undefined) return {};
+          if (value === null) return { body: null };
+          if (typeof value !== "string") return { error: "Invalid body" };
+          const trimmed = value.trim();
+          if (trimmed && trimmed.length < 5) return { error: "Body must be at least 5 characters" };
+          return { body: trimmed || null };
+        };
+        return { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
