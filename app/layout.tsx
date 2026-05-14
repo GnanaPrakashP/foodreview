@@ -4,6 +4,7 @@ import BottomNav from "@/components/layout/BottomNav";
 import AuthSync from "@/components/auth/AuthSync";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://circlebites.in"),
   title: "CircleBites",
   description: "Your personal food recommendation layer",
 };

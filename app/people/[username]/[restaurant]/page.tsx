@@ -6,6 +6,7 @@ import RestaurantDetailClient from "@/components/people/RestaurantDetailClient";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews } from "@/lib/visibility";
+import { buildProfileDisplayMap } from "@/lib/profile-display";
 
 interface Props {
   params: Promise<{ username: string; restaurant: string }>;
@@ -53,7 +54,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
 
   const postIds = posts.map((r) => r.id);
 
-  const [{ data: rawLikes }, { data: rawComments }] = await Promise.all([
+  const [{ data: rawLikes }, { data: rawComments }, profileMap] = await Promise.all([
     readDb.from("likes").select("post_id").in("post_id", postIds),
     readDb
       .from("comments")
@@ -61,6 +62,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
       .in("post_id", postIds)
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),
+    buildProfileDisplayMap(readDb, [name]),
   ]);
 
   const likeCountMap: Record<string, number> = {};
@@ -98,6 +100,8 @@ export default async function RestaurantDetailPage({ params }: Props) {
       likeCountMap={likeCountMap}
       commentMap={commentMap}
       rankMap={rankMap}
+      profileMap={profileMap}
+      initialMyName={myName}
     />
   );
 }

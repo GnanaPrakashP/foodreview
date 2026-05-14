@@ -19,6 +19,7 @@ type SavedPostsResponse = {
   commentMap: Record<string, { count: number; top: Comment }>;
   likedByMeMap: Record<string, boolean>;
   bookmarkedRestaurantMap: Record<string, boolean>;
+  profileMap: Record<string, string>;
   myName: string;
 };
 
@@ -30,6 +31,7 @@ export default function SavedPlacesPage() {
   const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
   const [likedByMeMap, setLikedByMeMap] = useState<Record<string, boolean>>({});
   const [bookmarkedRestaurantMap, setBookmarkedRestaurantMap] = useState<Record<string, boolean>>({});
+  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [myName, setMyName] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -45,6 +47,7 @@ export default function SavedPlacesPage() {
         setCommentMap(data.commentMap ?? {});
         setLikedByMeMap(data.likedByMeMap ?? {});
         setBookmarkedRestaurantMap(data.bookmarkedRestaurantMap ?? {});
+        setProfileMap(data.profileMap ?? {});
         setMyName(data.myName ?? "");
       } finally {
         setLoading(false);
@@ -82,6 +85,7 @@ export default function SavedPlacesPage() {
                 initialLiked={likedByMeMap[review.id] ?? false}
                 initialBookmarked={bookmarkedRestaurantMap[review.restaurant_name] ?? true}
                 initialMyName={myName}
+                profileMap={profileMap}
               />
             ))}
             {placeItems.map((item) => (

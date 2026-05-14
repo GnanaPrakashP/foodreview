@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Heart, MessageCircle, MoreHorizontal, Star } from "lucide-react";
 import type { Review } from "@/lib/types";
+import PostShareButton from "@/components/posts/PostShareButton";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
@@ -483,6 +484,7 @@ export default function CircleFeedCard({
                 <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
               </svg>
             </button>
+            <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
           </div>
 
           <div style={{ height: "14px" }} />

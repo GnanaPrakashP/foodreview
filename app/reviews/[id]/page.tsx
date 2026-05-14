@@ -3,14 +3,59 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import type { Comment, Review } from "@/lib/types";
 import { hasCircleAccess } from "@/lib/circle-db";
-import { canViewerSeeReview } from "@/lib/visibility";
+import { canViewerSeeReview, isReviewSuppressed } from "@/lib/visibility";
 import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
 import { notificationProfileName } from "@/lib/notifications";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
+import type { Metadata } from "next";
 
 interface Props {
   params: Promise<{ id: string }>;
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { id } = await params;
+  const db = createAdminClient();
+
+  const { data: review } = await db
+    .from("reviews")
+    .select("reviewer_name, restaurant_name, body, visibility, deleted_at, hidden_at, reported_at, status")
+    .eq("id", id)
+    .maybeSingle<Pick<Review, "reviewer_name" | "restaurant_name" | "body" | "visibility" | "deleted_at" | "hidden_at" | "reported_at" | "status">>();
+
+  const genericMeta: Metadata = {
+    title: "CircleBites post",
+    description: "This post may require access to view.",
+  };
+
+  if (!review || isReviewSuppressed(review as Review) || review.visibility !== "public") {
+    return genericMeta;
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://circlebites.in";
+  const title = `${review.reviewer_name} tried ${review.restaurant_name} on CircleBites`;
+  const description = review.body
+    ? review.body.slice(0, 160)
+    : "Check this food review on CircleBites";
+  const imageUrl = `${siteUrl}/api/posts/${encodeURIComponent(id)}/share-image`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url: `${siteUrl}/reviews/${encodeURIComponent(id)}`,
+      images: [{ url: imageUrl, width: 640, height: 900, alt: title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [imageUrl],
+    },
+  };
 }
 
 export default async function ReviewDetailPage({ params }: Props) {

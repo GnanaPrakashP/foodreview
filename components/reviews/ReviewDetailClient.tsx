@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bookmark, Heart, MessageCircle, MoreHorizontal, Send, Star } from "lucide-react";
+import PostShareButton from "@/components/posts/PostShareButton";
 import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
@@ -475,6 +476,7 @@ export default function ReviewDetailClient({
               >
                 <Bookmark size={18} strokeWidth={2} fill={bookmarked ? "currentColor" : "none"} />
               </button>
+              <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
             </div>
             <div style={{ height: "8px" }} />
           </div>

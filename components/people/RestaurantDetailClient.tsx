@@ -53,6 +53,8 @@ interface Props {
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   rankMap: Record<string, { rank: number; total: number; visitCount: number }>;
+  profileMap?: Record<string, string>;
+  initialMyName?: string;
 }
 
 export default function RestaurantDetailClient({
@@ -62,6 +64,8 @@ export default function RestaurantDetailClient({
   likeCountMap,
   commentMap,
   rankMap,
+  profileMap,
+  initialMyName = "",
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"posts" | "dishes">("posts");
@@ -140,6 +144,8 @@ export default function RestaurantDetailClient({
                 review={post}
                 initialLikeCount={likeCountMap[post.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
+                initialMyName={initialMyName}
+                profileMap={profileMap}
                 onDeleted={handlePostDeleted}
               />
             );
