@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
+import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 
 export async function POST(req: NextRequest) {
@@ -33,6 +33,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateCircleFeedCacheForNames([actor.actorName]);
+  invalidateSocialCachesForNames([actor.actorName]);
   return NextResponse.json(data);
 }

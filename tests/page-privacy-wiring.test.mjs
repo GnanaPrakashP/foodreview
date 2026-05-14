@@ -29,6 +29,8 @@ test("global trending computes rankings from public filtered reviews only", () =
   const src = source("lib/trending-page-data.ts");
 
   assert.match(page, /getTrendingPageData\(supabase, myName\)/);
+  assert.match(src, /import \{ REVIEW_SELECT \} from "@\/lib\/selects"/);
+  assert.match(src, /\.select\(REVIEW_SELECT\)/);
   assert.match(src, /const publicReviews = filterGlobalTrendingReviews\(allReviews\)/);
   assert.match(src, /computeTrending\(publicReviews\)/);
   assert.match(src, /filterPublicCircleTrendingReviews\(publicReviews,/);
@@ -135,4 +137,55 @@ test("review detail reads by service role then applies app visibility before ren
   assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
   assert.match(src, /readDb\.from\("likes"\)/);
   assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
+});
+
+test("comment detail reads by service role then applies app visibility before rendering", () => {
+  const src = source("app/comments/[id]/page.tsx");
+
+  assert.match(src, /const readDb = createAdminClient\(\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("reviews"\)[\s\S]*\.eq\("id", id\)/);
+  assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
+  assert.match(src, /readDb\.from\("likes"\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
+});
+
+test("settings engagement pages load through authenticated me APIs, not browser table reads", () => {
+  const liked = source("app/me/settings/liked/page.tsx");
+  const saved = source("app/me/settings/saved/page.tsx");
+  const comments = source("app/me/settings/comments/page.tsx");
+
+  assert.match(liked, /fetch\("\/api\/me\/liked", \{ cache: "no-store" \}\)/);
+  assert.match(saved, /fetch\("\/api\/me\/saved", \{ cache: "no-store" \}\)/);
+  assert.match(comments, /fetch\("\/api\/me\/comments", \{ cache: "no-store" \}\)/);
+  assert.match(comments, /setProfileMap\(data\.profileMap \?\? \{\}\)/);
+  assert.match(comments, /profileMap\[review\.reviewer_name\] \|\| review\.reviewer_name/);
+  assert.doesNotMatch(comments, /by \$\{review\.reviewer_name\}/);
+
+  for (const src of [liked, saved, comments]) {
+    assert.doesNotMatch(src, /createClient/);
+    assert.doesNotMatch(src, /getStoredActorName/);
+    assert.doesNotMatch(src, /\.from\("(likes|wishlist|comments)"\)/);
+  }
+});
+
+test("settings engagement APIs resolve the authenticated actor server-side", () => {
+  const liked = source("app/api/me/liked/route.ts");
+  const saved = source("app/api/me/saved/route.ts");
+  const comments = source("app/api/me/comments/route.ts");
+  const helper = source("lib/server/engagement-list.ts");
+
+  for (const src of [liked, saved, comments]) {
+    assert.match(src, /getRouteActor\(\)/);
+    assert.match(src, /createAdminClient\(\)/);
+    assert.match(src, /actor\.actorName/);
+  }
+
+  assert.match(liked, /likedPostsForActor\(db, actor\.actorName\)/);
+  assert.match(saved, /savedPostsForActor\(db, actor\.actorName\)/);
+  assert.match(comments, /commentsForActor\(db, actor\.actorName\)/);
+  assert.match(comments, /buildProfileDisplayMap\(/);
+  assert.match(comments, /profileMap/);
+  assert.match(helper, /likedByMeMap/);
+  assert.match(helper, /bookmarkedRestaurantMap/);
+  assert.match(helper, /commentsForActor/);
 });

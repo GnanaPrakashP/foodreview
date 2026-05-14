@@ -70,6 +70,12 @@ function feedImageUrl(url: string): string {
   return url;
 }
 
+function invalidateEngagementCaches() {
+  invalidateCachedJson("/api/me");
+  invalidateCachedJson("/api/feed/circle");
+  invalidateCachedJson("/api/feed/public");
+}
+
 export default function CircleFeedCard({
   review,
   initialLikeCount,
@@ -134,6 +140,7 @@ export default function CircleFeedCard({
         setLikeCount(c => c + 1);
         return;
       }
+      invalidateEngagementCaches();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -152,6 +159,7 @@ export default function CircleFeedCard({
         setLikeCount(c => c - 1);
         return;
       }
+      invalidateEngagementCaches();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -171,6 +179,7 @@ export default function CircleFeedCard({
         body: JSON.stringify({ restaurantName: review.restaurant_name }),
       });
       if (!response.ok) setBookmarked(true);
+      else invalidateEngagementCaches();
     } else {
       setBookmarked(true);
       const response = await fetch("/api/wishlist", {
@@ -179,6 +188,7 @@ export default function CircleFeedCard({
         body: JSON.stringify({ restaurantName: review.restaurant_name, postId: review.id }),
       });
       if (!response.ok) setBookmarked(false);
+      else invalidateEngagementCaches();
     }
   }, [myName, mounted, bookmarked, review]);
 
@@ -198,9 +208,7 @@ export default function CircleFeedCard({
       return;
     }
 
-    invalidateCachedJson("/api/me");
-    invalidateCachedJson("/api/feed/circle");
-    invalidateCachedJson("/api/feed/public");
+    invalidateEngagementCaches();
 
     if (onDeleted) {
       onDeleted(review);

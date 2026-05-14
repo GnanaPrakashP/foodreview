@@ -3,21 +3,24 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bookmark } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { restaurantGradient } from "@/lib/profile";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Comment, Review } from "@/lib/types";
-import { getStoredActorName } from "@/lib/browser-actor";
 
 interface WishlistItem {
   id: string;
   restaurant_name: string;
-  reviews: Review | Review[] | null;
 }
 
-function nestedReview(value: Review | Review[] | null): Review | null {
-  return Array.isArray(value) ? value[0] ?? null : value;
-}
+type SavedPostsResponse = {
+  reviews: Review[];
+  placeItems: WishlistItem[];
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedRestaurantMap: Record<string, boolean>;
+  myName: string;
+};
 
 export default function SavedPlacesPage() {
   const router = useRouter();
@@ -25,59 +28,27 @@ export default function SavedPlacesPage() {
   const [placeItems, setPlaceItems] = useState<WishlistItem[]>([]);
   const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
   const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
+  const [likedByMeMap, setLikedByMeMap] = useState<Record<string, boolean>>({});
+  const [bookmarkedRestaurantMap, setBookmarkedRestaurantMap] = useState<Record<string, boolean>>({});
+  const [myName, setMyName] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const myName = getStoredActorName();
-    if (!myName) { setLoading(false); return; }
-
-    const supabase = createClient();
-
     async function loadSavedPosts() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase as any)
-        .from("wishlist")
-        .select("id, restaurant_name, reviews(*)")
-        .eq("user_name", myName)
-        .order("created_at", { ascending: false });
-
-      const rows = (data ?? []) as WishlistItem[];
-      const reviews = rows
-        .map((row) => nestedReview(row.reviews))
-        .filter((review): review is Review => Boolean(review));
-      setPlaceItems(rows.filter((row) => !nestedReview(row.reviews)));
-
-      const postIds = reviews.map((review) => review.id);
-      if (postIds.length > 0) {
-        const [{ data: rawLikes }, { data: rawComments }] = await Promise.all([
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (supabase as any).from("likes").select("post_id").in("post_id", postIds),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (supabase as any)
-            .from("comments")
-            .select("id, post_id, user_name, content, created_at")
-            .in("post_id", postIds)
-            .order("created_at", { ascending: false }),
-        ]);
-
-        const likes: Record<string, number> = {};
-        for (const like of (rawLikes ?? []) as { post_id: string }[]) {
-          likes[like.post_id] = (likes[like.post_id] ?? 0) + 1;
-        }
-
-        const comments: Record<string, { count: number; top: Comment }> = {};
-        for (const comment of (rawComments ?? []) as Comment[]) {
-          const existing = comments[comment.post_id];
-          if (!existing) comments[comment.post_id] = { count: 1, top: comment };
-          else existing.count++;
-        }
-
-        setLikeCountMap(likes);
-        setCommentMap(comments);
+      try {
+        const response = await fetch("/api/me/saved", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as SavedPostsResponse;
+        setPostItems(data.reviews ?? []);
+        setPlaceItems(data.placeItems ?? []);
+        setLikeCountMap(data.likeCountMap ?? {});
+        setCommentMap(data.commentMap ?? {});
+        setLikedByMeMap(data.likedByMeMap ?? {});
+        setBookmarkedRestaurantMap(data.bookmarkedRestaurantMap ?? {});
+        setMyName(data.myName ?? "");
+      } finally {
+        setLoading(false);
       }
-
-      setPostItems(reviews);
-      setLoading(false);
     }
 
     loadSavedPosts();
@@ -108,6 +79,9 @@ export default function SavedPlacesPage() {
                 review={review}
                 initialLikeCount={likeCountMap[review.id] ?? 0}
                 initialCommentCount={commentMap[review.id]?.count ?? 0}
+                initialLiked={likedByMeMap[review.id] ?? false}
+                initialBookmarked={bookmarkedRestaurantMap[review.restaurant_name] ?? true}
+                initialMyName={myName}
               />
             ))}
             {placeItems.map((item) => (

@@ -3,10 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, MessageCircle } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { restaurantGradient } from "@/lib/profile";
 import type { Review } from "@/lib/types";
-import { getStoredActorName } from "@/lib/browser-actor";
 
 interface MyComment {
   id: string;
@@ -15,6 +13,12 @@ interface MyComment {
   created_at: string;
   reviews: Review | Review[] | null;
 }
+
+type MyCommentsResponse = {
+  comments: MyComment[];
+  profileMap: Record<string, string>;
+  myName: string;
+};
 
 function nestedReview(value: Review | Review[] | null): Review | null {
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -27,25 +31,20 @@ function commentDate(value: string): string {
 export default function MyCommentsPage() {
   const router = useRouter();
   const [items, setItems] = useState<MyComment[]>([]);
+  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const myName = getStoredActorName();
-    if (!myName) { setLoading(false); return; }
-
-    const supabase = createClient();
-
     async function loadComments() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase as any)
-        .from("comments")
-        .select("id, post_id, content, created_at, reviews(*)")
-        .eq("user_name", myName)
-        .order("created_at", { ascending: false });
-
-      const comments = (data ?? []) as MyComment[];
-      setItems(comments);
-      setLoading(false);
+      try {
+        const response = await fetch("/api/me/comments", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as MyCommentsResponse;
+        setItems(data.comments ?? []);
+        setProfileMap(data.profileMap ?? {});
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadComments();
@@ -71,6 +70,7 @@ export default function MyCommentsPage() {
         ) : items.map((c) => {
           const review = nestedReview(c.reviews);
           const restaurantName = review?.restaurant_name ?? "Unknown";
+          const reviewerName = review ? profileMap[review.reviewer_name] || review.reviewer_name : "";
           return (
             <button
               key={c.id}
@@ -102,7 +102,7 @@ export default function MyCommentsPage() {
                   {restaurantName[0]?.toUpperCase() ?? "?"}
                 </div>
                 <p style={{ flex: 1, minWidth: 0, fontSize: "12px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  On {restaurantName}{review ? ` by ${review.reviewer_name}` : ""}
+                  On {restaurantName}{review ? ` by ${reviewerName}` : ""}
                 </p>
                 {review && <span style={{ fontSize: "11px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, flexShrink: 0 }}>View post</span>}
               </div>

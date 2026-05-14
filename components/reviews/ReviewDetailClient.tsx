@@ -32,6 +32,12 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function invalidateEngagementCaches() {
+  invalidateCachedJson("/api/me");
+  invalidateCachedJson("/api/feed/circle");
+  invalidateCachedJson("/api/feed/public");
+}
+
 export default function ReviewDetailClient({
   review,
   initialLikeCount,
@@ -98,9 +104,7 @@ export default function ReviewDetailClient({
       return;
     }
 
-    invalidateCachedJson("/api/me");
-    invalidateCachedJson("/api/feed/circle");
-    invalidateCachedJson("/api/feed/public");
+    invalidateEngagementCaches();
     router.replace("/me");
     router.refresh();
   }
@@ -131,12 +135,21 @@ export default function ReviewDetailClient({
 
   const toggleLike = useCallback(async () => {
     if (!myName) return;
-    const supabase = createClient();
 
     if (liked) {
       setLiked(false);
       setLikeCount((count) => Math.max(0, count - 1));
-      await (supabase as any).from("likes").delete().eq("post_id", review.id).eq("user_name", myName);
+      const response = await fetch("/api/likes", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: review.id }),
+      });
+      if (!response.ok) {
+        setLiked(true);
+        setLikeCount((count) => count + 1);
+        return;
+      }
+      invalidateEngagementCaches();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -147,7 +160,17 @@ export default function ReviewDetailClient({
 
     setLiked(true);
     setLikeCount((count) => count + 1);
-    await (supabase as any).from("likes").insert({ post_id: review.id, user_name: myName });
+    const response = await fetch("/api/likes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId: review.id }),
+    });
+    if (!response.ok) {
+      setLiked(false);
+      setLikeCount((count) => Math.max(0, count - 1));
+      return;
+    }
+    invalidateEngagementCaches();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -158,16 +181,33 @@ export default function ReviewDetailClient({
   const toggleBookmark = useCallback(async () => {
     if (!myName) return;
     setBookmarkBounceKey((key) => key + 1);
-    const supabase = createClient();
 
     if (bookmarked) {
       setBookmarked(false);
-      await (supabase as any).from("wishlist").delete().eq("user_name", myName).eq("restaurant_name", review.restaurant_name);
+      const response = await fetch("/api/wishlist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restaurantName: review.restaurant_name }),
+      });
+      if (!response.ok) {
+        setBookmarked(true);
+        return;
+      }
+      invalidateEngagementCaches();
     } else {
       setBookmarked(true);
-      await (supabase as any).from("wishlist").insert({ user_name: myName, restaurant_name: review.restaurant_name, post_id: review.id });
+      const response = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restaurantName: review.restaurant_name, postId: review.id }),
+      });
+      if (!response.ok) {
+        setBookmarked(false);
+        return;
+      }
+      invalidateEngagementCaches();
     }
-  }, [bookmarked, myName, review.id, review.restaurant_name]);
+  }, [bookmarked, myName, review.restaurant_name, review.id]);
 
   async function sendComment() {
     const content = text.trim();
@@ -195,6 +235,7 @@ export default function ReviewDetailClient({
 
     if (data) {
       setComments((prev) => prev.map((comment) => comment.id === tempId ? data : comment));
+      invalidateEngagementCaches();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -205,10 +246,17 @@ export default function ReviewDetailClient({
   }
 
   async function deleteComment(id: string) {
+    const removed = comments.find((comment) => comment.id === id);
     setComments((prev) => prev.filter((comment) => comment.id !== id));
     setDeletingId(null);
-    const supabase = createClient();
-    await (supabase as any).from("comments").delete().eq("id", id).eq("user_name", myName);
+    const response = await fetch(`/api/comments/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      if (removed) setComments((prev) => [...prev, removed].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+      return;
+    }
+    invalidateEngagementCaches();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

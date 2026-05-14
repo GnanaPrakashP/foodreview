@@ -87,6 +87,10 @@ function loadRoute(code, { db, authName }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/server/review-access") {
+        return { canActorReadPost: async () => ({ allowed: true }) };
+      }
       if (id === "@/lib/server/cache-invalidation") {
         return {
           invalidateCircleFeedCacheForNames() {},

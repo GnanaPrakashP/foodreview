@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Review, Comment } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import { COMMENT_SELECT } from "@/lib/selects";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 function timeAgo(d: string): string {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -32,6 +33,12 @@ function initials(name: string): string {
   const parts = name.split(/[\s_]+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return (parts[0]?.[0] ?? "?").toUpperCase();
+}
+
+function invalidateEngagementCaches() {
+  invalidateCachedJson("/api/me");
+  invalidateCachedJson("/api/feed/circle");
+  invalidateCachedJson("/api/feed/public");
 }
 
 
@@ -90,6 +97,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
     else setComments(prev => prev.filter(c => c.id !== tempId));
 
     if (data) {
+      invalidateEngagementCaches();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,11 +109,17 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
   }
 
   async function deleteComment(id: string) {
+    const removed = comments.find(c => c.id === id);
     setComments(prev => prev.filter(c => c.id !== id));
     setDeletingId(null);
-    const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("comments").delete().eq("id", id).eq("user_name", myName);
+    const response = await fetch(`/api/comments/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      if (removed) setComments(prev => [...prev, removed].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+      return;
+    }
+    invalidateEngagementCaches();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

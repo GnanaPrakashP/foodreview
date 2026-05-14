@@ -4,6 +4,7 @@ import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { computeTrending, type CircleReviewItem, type TrendingPeopleCounts } from "@/lib/trending";
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
+import { REVIEW_SELECT } from "@/lib/selects";
 
 type TrendingDb = {
   from: (table: string) => any;
@@ -44,7 +45,7 @@ globalForTrendingCache.__foodReviewInvalidateTrendingPageCacheForNames = invalid
 
 export async function getTrendingPageData(db: TrendingDb, myName: string): Promise<TrendingPageData> {
   return getPrivateCached({
-    key: `trending-page:v1:${cacheName(myName)}`,
+    key: `trending-page:v2:${cacheName(myName)}`,
     ttlMs: TRENDING_CACHE_TTL_MS,
     load: async () => ({ value: await loadTrendingPageData(db, myName), tags: [`trending:${cacheName(myName)}`, "trending:all"] }),
   });
@@ -57,10 +58,7 @@ async function loadTrendingPageData(db: TrendingDb, myName: string): Promise<Tre
   // defense-in-depth for any edge-case suppression flags not covered by SQL.
   const { data: reviews } = await readDb
     .from("reviews")
-    .select(
-      "reviewer_name, restaurant_name, items, body, created_at, " +
-      "visibility, deleted_at, hidden_at, reported_at, status"
-    )
+    .select(REVIEW_SELECT)
     .eq("visibility", "public")
     .is("deleted_at", null)
     .is("hidden_at", null)
