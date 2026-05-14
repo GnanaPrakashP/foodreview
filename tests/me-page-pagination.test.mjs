@@ -93,6 +93,11 @@ function loadMePageDataModule({ circleRelationships = { circleMembers: new Set()
           invalidatePrivateCacheByTags: () => {},
         };
       }
+      if (id === "@/lib/selects") {
+        return {
+          REVIEW_SELECT: "id, reviewer_name, restaurant_id, restaurant_name, area, restaurant_address, restaurant_lat, restaurant_lng, items, body, photo_url, photo_urls, visibility, deleted_at, hidden_at, reported_at, status, created_at",
+        };
+      }
       throw new Error(`Unexpected require in me-page-pagination tests: ${id}`);
     },
   });

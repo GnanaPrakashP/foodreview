@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Notification } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayName } from "@/lib/profile-names";
+import { LEGACY_NOTIFICATION_SELECT, NOTIFICATION_SELECT } from "@/lib/selects";
 import { createRouteSupabase, filterValidNotifications, getNotificationViewer, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
 
 type ProfileLookupDb = {
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
 
   const byIdPromise = supabase
     .from("notifications")
-    .select("*")
+    .select(NOTIFICATION_SELECT)
     .eq("recipient_user_id", viewer.id)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
@@ -87,7 +88,7 @@ export async function GET(req: NextRequest) {
   const byNamePromise = viewer.name
     ? supabase
         .from("notifications")
-        .select("*")
+        .select(NOTIFICATION_SELECT)
         .eq("recipient_name", viewer.name)
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
 
       const { data: legacy, error: legacyError } = await supabase
         .from("notifications")
-        .select("*")
+        .select(LEGACY_NOTIFICATION_SELECT)
         .eq("recipient_name", viewer.name)
         .order("created_at", { ascending: false })
         .limit(limit);
@@ -111,7 +112,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: legacyError.message }, { status: 500 });
       }
 
-      const merged = mergeNotifications(legacy as Notification[]).slice(0, limit);
+      const merged = mergeNotifications(legacy as unknown as Notification[]).slice(0, limit);
       const validNotifications = await filterValidNotifications(supabase, merged);
       return NextResponse.json({
         notifications: validNotifications,
@@ -123,7 +124,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: byIdError?.message ?? byNameError?.message }, { status: 500 });
   }
 
-  const merged = mergeNotifications(byId as Notification[], byName as Notification[]).slice(0, limit);
+  const merged = mergeNotifications(
+    byId as unknown as Notification[],
+    byName as unknown as Notification[]
+  ).slice(0, limit);
   const validNotifications = await filterValidNotifications(supabase, merged);
   const profileMap = await buildNotificationProfileMap(supabase, validNotifications);
 

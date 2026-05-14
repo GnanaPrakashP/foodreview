@@ -1,6 +1,7 @@
 import type { Review } from "@/lib/types";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
+import { REVIEW_SELECT } from "@/lib/selects";
 
 const ME_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -64,7 +65,7 @@ async function loadMePageData(
 ) {
   let reviewsQuery = supabase
     .from("reviews")
-    .select("*")
+    .select(REVIEW_SELECT)
     .eq("reviewer_name", myName)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });

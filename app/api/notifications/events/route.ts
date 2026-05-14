@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Comment, Review } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayName } from "@/lib/profile-names";
+import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 import {
   createCirclePostNotifications,
   createPostCommentNotifications,
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
 
   const { data: review, error: reviewError } = await admin
     .from("reviews")
-    .select("*")
+    .select(REVIEW_SELECT)
     .eq("id", payload.reviewId)
     .maybeSingle();
 
@@ -72,21 +73,14 @@ export async function POST(req: NextRequest) {
   if (!review) return NextResponse.json({ error: "Post not found" }, { status: 404 });
 
   if (payload.event === "POST_LIKED") {
-    const { data: like } = await admin
-      .from("likes")
-      .select("id")
-      .eq("post_id", payload.reviewId)
-      .eq("user_name", actorName)
-      .maybeSingle();
-
-    if (like) await createPostLikeNotification(admin, review as Review, actorName, actorDisplayName);
+    await createPostLikeNotification(admin, review as unknown as Review, actorName, actorDisplayName);
     return NextResponse.json({ ok: true });
   }
 
   if (payload.event === "POST_COMMENTED") {
     const { data: comment, error: commentError } = await admin
       .from("comments")
-      .select("*")
+      .select(COMMENT_SELECT)
       .eq("id", payload.commentId)
       .eq("post_id", payload.reviewId)
       .maybeSingle();
@@ -102,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     await createPostCommentNotifications(
       admin,
-      review as Review,
+      review as unknown as Review,
       actorName,
       comment as Pick<Comment, "id" | "content">,
       (priorComments ?? []).map((row: { user_name: string }) => row.user_name),
@@ -113,10 +107,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (payload.event === "CIRCLE_POST_CREATED") {
-    if ((review as Review).reviewer_name !== actorName) {
+    if ((review as unknown as Review).reviewer_name !== actorName) {
       return NextResponse.json({ error: "Invalid actor" }, { status: 400 });
     }
-    await createCirclePostNotifications(admin, review as Review);
+    await createCirclePostNotifications(admin, review as unknown as Review);
     return NextResponse.json({ ok: true });
   }
 

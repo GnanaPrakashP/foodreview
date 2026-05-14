@@ -125,6 +125,13 @@ function loadRoute(code, {
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/selects") {
+        return {
+          NOTIFICATION_SELECT: "id, recipient_user_id, actor_user_id, recipient_name, actor_name, type, message, entity_type, entity_id, metadata, is_read, post_id, restaurant_name, content, read, created_at, updated_at, deleted_at",
+          LEGACY_NOTIFICATION_SELECT: "id, recipient_name, actor_name, type, post_id, restaurant_name, content, read, created_at",
+          NOTIFICATION_OWNERSHIP_SELECT: "id, recipient_user_id, recipient_name",
+        };
+      }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => admin };
       if (id === "@/lib/profile-names") {
         return {
@@ -455,4 +462,31 @@ test("notification list: clamps limit, merges duplicate rows, and filters final 
   assert.deepEqual(filterCalls, [["notif-3", "notif-2", "notif-1"]]);
   assert.equal(opArgs(db._calls[0], "limit")[0], 100);
   assert.equal(opArgs(db._calls[1], "limit")[0], 100);
+  assert.match(opArgs(db._calls[0], "select")[0], /metadata/);
+  assert.match(opArgs(db._calls[0], "select")[0], /actor_user_id/);
+  assert.doesNotMatch(opArgs(db._calls[0], "select")[0], /\*/);
+  assert.match(opArgs(db._calls[1], "select")[0], /metadata/);
+  assert.doesNotMatch(opArgs(db._calls[1], "select")[0], /\*/);
+});
+
+test("notification list: legacy fallback also avoids wildcard payloads", async () => {
+  const db = spyDb(
+    { data: null, error: { code: "42703", message: "column deleted_at does not exist" } },
+    { data: null, error: { code: "42703", message: "column deleted_at does not exist" } },
+    {
+      data: [
+        { id: "legacy-1", recipient_name: "Alice", actor_name: "Rahul", type: "like", read: false, created_at: "2026-01-01T00:00:00.000Z" },
+      ],
+      error: null,
+    }
+  );
+  const { GET } = loadRoute(src.list, { db });
+
+  const res = await GET(makeReq());
+
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res).notifications.map((notification) => notification.id), ["legacy-1"]);
+  assert.doesNotMatch(opArgs(db._calls[2], "select")[0], /\*/);
+  assert.doesNotMatch(opArgs(db._calls[2], "select")[0], /metadata|is_read|deleted_at|actor_user_id/);
+  assert.match(opArgs(db._calls[2], "select")[0], /read/);
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 type GooglePlaceDetailsResponse = {
   id?: string;
+  displayName?: { text?: string };
   formattedAddress?: string;
   shortFormattedAddress?: string;
   location?: {
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
         "X-Goog-Api-Key": apiKey,
         "X-Goog-FieldMask": [
           "id",
+          "displayName",
           "formattedAddress",
           "shortFormattedAddress",
           "location",
@@ -79,7 +81,7 @@ export async function GET(req: NextRequest) {
     const payload = (await response.json()) as GooglePlaceDetailsResponse;
     const details: PlaceDetails = {
       placeId: payload.id?.trim() || placeId,
-      name: "",
+      name: payload.displayName?.text?.trim() || "",
       formattedAddress: payload.formattedAddress?.trim() || "",
       shortFormattedAddress: payload.shortFormattedAddress?.trim() || "",
       latitude: typeof payload.location?.latitude === "number" ? payload.location.latitude : null,

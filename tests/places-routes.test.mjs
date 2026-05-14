@@ -135,9 +135,39 @@ test("places autocomplete: maps Google place predictions and skips invalid dupli
     input: "bawa",
     includeQueryPredictions: false,
     regionCode: "in",
-    includedRegionCodes: ["in"],
     sessionToken: "session-1",
   });
+});
+
+test("places autocomplete: adds locationBias circle when lat/lng params provided", async () => {
+  const { route, fetchCalls } = loadRoute("autocomplete", {
+    env: { GOOGLE_PLACES_API_KEY: "places-key" },
+    fetchImpl: async () => googleResponse({ suggestions: [] }),
+  });
+
+  await route.GET(makeReq("/api/places/autocomplete?input=sindhu&lat=13.2168&lng=79.0993"));
+
+  assert.equal(fetchCalls.length, 1);
+  const sentBody = JSON.parse(fetchCalls[0][1].body);
+  assert.deepEqual(sentBody.locationBias, {
+    circle: {
+      center: { latitude: 13.2168, longitude: 79.0993 },
+      radius: 30000,
+    },
+  });
+});
+
+test("places autocomplete: omits locationBias when lat/lng params are absent", async () => {
+  const { route, fetchCalls } = loadRoute("autocomplete", {
+    env: { GOOGLE_PLACES_API_KEY: "places-key" },
+    fetchImpl: async () => googleResponse({ suggestions: [] }),
+  });
+
+  await route.GET(makeReq("/api/places/autocomplete?input=sindhu"));
+
+  assert.equal(fetchCalls.length, 1);
+  const sentBody = JSON.parse(fetchCalls[0][1].body);
+  assert.equal(sentBody.locationBias, undefined);
 });
 
 test("places autocomplete: Google errors are hidden from clients", async () => {

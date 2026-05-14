@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import type { Review, Comment } from "@/lib/types";
 import RestaurantDetailClient from "@/components/people/RestaurantDetailClient";
 import { hasCircleAccess } from "@/lib/circle-db";
+import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews } from "@/lib/visibility";
 
 interface Props {
@@ -37,7 +38,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
   // All reviews by this person (for visible rank context) + filter to this restaurant.
   const { data: allReviews } = await readDb
     .from("reviews")
-    .select("*")
+    .select(REVIEW_SELECT)
     .eq("reviewer_name", name)
     .order("created_at", { ascending: false })
     .returns<Review[]>();
@@ -56,7 +57,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
     readDb.from("likes").select("post_id").in("post_id", postIds),
     readDb
       .from("comments")
-      .select("id, post_id, user_name, content, created_at")
+      .select(COMMENT_SELECT)
       .in("post_id", postIds)
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),

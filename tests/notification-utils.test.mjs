@@ -209,25 +209,25 @@ test("notification utils: filterValidNotifications keeps backed entities and sof
 
   const result = await filterValidNotifications(db, input);
 
+  // Like notifications are never validated against the likes table (RLS prevents
+  // cross-user reads), so both like-valid and like-stale pass through.
   assert.deepEqual(
     Array.from(result, (n) => n.id),
-    ["system", "circle-new", "like-valid", "comment-valid"]
+    ["system", "circle-new", "like-valid", "like-stale", "comment-valid"]
   );
 
   const cleanup = db._calls.find((call) => call.table === "notifications");
   assert.ok(cleanup, "Expected stale notifications to be soft-deleted");
   assert.deepEqual(
     Array.from(opArgs(cleanup, "in")[1]).sort(),
-    ["circle-old", "circle-stale", "comment-stale", "like-stale"].sort()
+    ["circle-old", "circle-stale", "comment-stale"].sort()
   );
   assert.equal(typeof opArgs(cleanup, "update")[0].deleted_at, "string");
 });
 
-test("notification utils: legacy like rows survive when backing like lookup cannot be trusted", async () => {
+test("notification utils: all like notifications pass through without validation", async () => {
   const { filterValidNotifications } = loadUtils();
-  const db = tableDb({
-    likes: [{ data: null, error: { message: "likes unavailable" } }],
-  });
+  const db = tableDb({});
   const input = [
     notif("legacy-like", "like", { actor_name: "Alice", post_id: "post-1" }),
     notif("modern-like", "POST_LIKED", { actor_name: "Alice", post_id: "post-1" }),
@@ -235,5 +235,7 @@ test("notification utils: legacy like rows survive when backing like lookup cann
 
   const result = await filterValidNotifications(db, input);
 
-  assert.deepEqual(Array.from(result, (n) => n.id), ["legacy-like"]);
+  assert.deepEqual(Array.from(result, (n) => n.id).sort(), ["legacy-like", "modern-like"].sort());
+  const likesCalls = db._calls.filter((c) => c.table === "likes");
+  assert.equal(likesCalls.length, 0, "likes table should never be queried");
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NOTIFICATION_OWNERSHIP_SELECT } from "@/lib/selects";
 import { createRouteSupabase, getNotificationViewer, isNotificationSchemaError, unauthorized } from "../_utils";
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ notificationId: string }> }) {
@@ -9,7 +10,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { notificationId } = await params;
   const { data: notification, error: readError } = await supabase
     .from("notifications")
-    .select("*")
+    .select(NOTIFICATION_OWNERSHIP_SELECT)
     .eq("id", notificationId)
     .maybeSingle();
 

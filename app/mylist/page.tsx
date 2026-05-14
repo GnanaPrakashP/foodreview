@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Review } from "@/lib/types";
 import MyListClient from "@/components/mylist/MyListClient";
+import { REVIEW_SELECT } from "@/lib/selects";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export default async function MyListPage() {
 
   const { data: reviews } = await supabase
     .from("reviews")
-    .select("*")
+    .select(REVIEW_SELECT)
     .eq("reviewer_name", myName)
     .order("created_at", { ascending: false })
     .limit(300)

@@ -1,5 +1,6 @@
 import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
+import { LEGACY_NOTIFICATION_SELECT, NOTIFICATION_SELECT } from "@/lib/selects";
 import type { Json, Notification, Review } from "@/lib/types";
 
 type NotificationDb = {
@@ -151,7 +152,7 @@ export async function createNotificationForNames(
   if (input.dedupe && actorName && entityId) {
     const { data: existing, error: existingError } = await db
       .from("notifications")
-      .select("*")
+      .select(NOTIFICATION_SELECT)
       .eq("recipient_name", recipientName)
       .eq("actor_name", actorName)
       .eq("type", input.type)
@@ -165,7 +166,7 @@ export async function createNotificationForNames(
       const legacyPostId = input.postId ?? (input.entityType === "POST" ? entityId : null);
       let legacyQuery = db
         .from("notifications")
-        .select("*")
+        .select(LEGACY_NOTIFICATION_SELECT)
         .eq("recipient_name", recipientName)
         .eq("actor_name", actorName)
         .eq("type", oldType);
@@ -225,7 +226,7 @@ export async function createNotificationForNames(
   const { data, error } = await db
     .from("notifications")
     .insert(row)
-    .select("*")
+    .select(NOTIFICATION_SELECT)
     .single();
 
   if (error) {
@@ -241,7 +242,7 @@ export async function createNotificationForNames(
           content: input.content ?? input.message,
           read: false,
         })
-        .select("*")
+        .select(LEGACY_NOTIFICATION_SELECT)
         .single();
 
       if (!legacyError) return legacyData as Notification;

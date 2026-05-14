@@ -107,6 +107,12 @@ function loadRoute({
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/selects") {
+        return {
+          REVIEW_SELECT: "id, reviewer_name, restaurant_id, restaurant_name, area, restaurant_address, restaurant_lat, restaurant_lng, items, body, photo_url, photo_urls, visibility, deleted_at, hidden_at, reported_at, status, created_at",
+          COMMENT_SELECT: "id, post_id, user_name, content, created_at",
+        };
+      }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => admin };
       if (id === "@/lib/profile-names") {
         return {
@@ -166,8 +172,7 @@ test("events: forged actorName is rejected before notification work", async () =
 test("events: actorName falls back to authenticated profile name when viewer name is missing", async () => {
   const admin = spyDb(
     actorProfile(),
-    { data: review(), error: null },
-    { data: { id: "like-1" }, error: null }
+    { data: review(), error: null }
   );
   const { route, calls } = loadRoute({
     admin,
@@ -183,11 +188,10 @@ test("events: actorName falls back to authenticated profile name when viewer nam
   assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
 });
 
-test("events: POST_LIKED creates a notification only after matching like row exists", async () => {
+test("events: POST_LIKED always creates a notification without querying the likes table", async () => {
   const admin = spyDb(
     actorProfile(),
-    { data: review(), error: null },
-    { data: { id: "like-1" }, error: null }
+    { data: review(), error: null }
   );
   const { route, calls } = loadRoute({ admin });
 
@@ -198,22 +202,8 @@ test("events: POST_LIKED creates a notification only after matching like row exi
   assert.equal(calls.createPostLikeNotification[0][1].id, "review-1");
   assert.equal(calls.createPostLikeNotification[0][2], "Alice");
   assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
-  assert.equal(eqFilters(admin._calls[2]).post_id, "review-1");
-  assert.equal(eqFilters(admin._calls[2]).user_name, "Alice");
-});
-
-test("events: POST_LIKED skips notification when like row is stale or missing", async () => {
-  const admin = spyDb(
-    actorProfile(),
-    { data: review(), error: null },
-    { data: null, error: null }
-  );
-  const { route, calls } = loadRoute({ admin });
-
-  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Alice" }));
-
-  assert.equal(status(res), 200);
-  assert.equal(calls.createPostLikeNotification.length, 0);
+  // Verify the likes table is never queried — actorName/user_name mismatch cannot block notification creation
+  assert.equal(admin._calls.filter((c) => c.table === "likes").length, 0);
 });
 
 test("events: POST_COMMENTED rejects comments that do not belong to the authenticated actor", async () => {

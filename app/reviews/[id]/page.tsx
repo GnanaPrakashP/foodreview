@@ -7,6 +7,7 @@ import { canViewerSeeReview } from "@/lib/visibility";
 import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
 import { notificationProfileName } from "@/lib/notifications";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -20,7 +21,7 @@ export default async function ReviewDetailPage({ params }: Props) {
   const [{ data: review }, { data: { user } }] = await Promise.all([
     readDb
     .from("reviews")
-    .select("*")
+    .select(REVIEW_SELECT)
     .eq("id", id)
       .single<Review>(),
     supabase.auth.getUser(),
@@ -49,7 +50,7 @@ export default async function ReviewDetailPage({ params }: Props) {
     readDb.from("likes").select("post_id").eq("post_id", review.id),
     readDb
       .from("comments")
-      .select("*")
+      .select(COMMENT_SELECT)
       .eq("post_id", review.id)
       .order("created_at", { ascending: true })
       .returns<Comment[]>(),

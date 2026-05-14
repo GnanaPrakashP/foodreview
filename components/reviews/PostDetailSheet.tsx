@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Review, Comment } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
+import { COMMENT_SELECT } from "@/lib/selects";
 
 function timeAgo(d: string): string {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -60,7 +61,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data } = await (supabase as any)
         .from("comments")
-        .select("*")
+        .select(COMMENT_SELECT)
         .eq("post_id", review.id)
         .order("created_at", { ascending: true }) as { data: Comment[] | null };
       setComments(data ?? []);

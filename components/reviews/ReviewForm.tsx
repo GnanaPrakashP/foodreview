@@ -215,7 +215,14 @@ export default function ReviewForm() {
   const [restaurantLng, setRestaurantLng] = useState<number | null>(null);
   const [restaurantSuggestions, setRestaurantSuggestions] = useState<RestaurantSuggestion[]>([]);
   const [showRestaurantSuggestions, setShowRestaurantSuggestions] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [lastSearchedQuery, setLastSearchedQuery] = useState("");
+  const [restaurantInputFocused, setRestaurantInputFocused] = useState(false);
   const [placesSessionToken, setPlacesSessionToken] = useState("");
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
+  const [userLocationLabel, setUserLocationLabel] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<"idle" | "requesting" | "granted" | "denied">("idle");
   const restaurantInputRef = useRef<HTMLInputElement>(null);
   const pickedRestaurantNameRef = useRef<string | null>(null);
   const [existingVisitCount, setExistingVisitCount] = useState<number | null>(null);
@@ -237,47 +244,71 @@ export default function ReviewForm() {
     setPlacesSessionToken(crypto.randomUUID());
   }, []);
 
+  // Use location already set on the trending page — no new permission prompt.
+  useEffect(() => {
+    try {
+      const lat = parseFloat(localStorage.getItem("trending_loc_lat") ?? "");
+      const lng = parseFloat(localStorage.getItem("trending_loc_lng") ?? "");
+      const label = localStorage.getItem("trending_loc_label") ?? null;
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setUserLat(lat);
+        setUserLng(lng);
+        setUserLocationLabel(label);
+        setLocationStatus("granted");
+      } else {
+        setLocationStatus("denied");
+      }
+    } catch {
+      setLocationStatus("denied");
+    }
+  }, []);
+
   useEffect(() => {
     const q = restaurantName.trim();
-    if (q.length < 2) {
+    if (q.length < 2 || pickedRestaurantNameRef.current?.trim().toLowerCase() === q.toLowerCase()) {
       setRestaurantSuggestions([]);
       setShowRestaurantSuggestions(false);
+      setLoadingSuggestions(false);
       return;
     }
-    if (pickedRestaurantNameRef.current?.trim().toLowerCase() === q.toLowerCase()) {
-      setRestaurantSuggestions([]);
-      setShowRestaurantSuggestions(false);
-      return;
-    }
+
+    // Show loading immediately so the dropdown opens with a spinner during the debounce wait.
+    setLoadingSuggestions(true);
 
     const controller = new AbortController();
     const t = setTimeout(async () => {
       try {
         const params = new URLSearchParams({ input: q });
         if (placesSessionToken) params.set("sessionToken", placesSessionToken);
+        if (userLat !== null) params.set("lat", String(userLat));
+        if (userLng !== null) params.set("lng", String(userLng));
         const res = await fetch(`/api/places/autocomplete?${params.toString()}`, {
           cache: "no-store",
           signal: controller.signal,
         });
+        setLastSearchedQuery(q);
+        setLoadingSuggestions(false);
         if (!res.ok) return;
         const payload = (await res.json()) as { suggestions?: RestaurantSuggestion[] };
         const suggestions = (payload.suggestions ?? [])
-          .filter((suggestion) => suggestion.placeId)
+          .filter((s) => s.placeId)
           .slice(0, 5);
         setRestaurantSuggestions(suggestions);
         setShowRestaurantSuggestions(suggestions.length > 0);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        setLastSearchedQuery(q);
+        setLoadingSuggestions(false);
         setRestaurantSuggestions([]);
         setShowRestaurantSuggestions(false);
       }
-    }, 250);
+    }, 300);
 
     return () => {
       clearTimeout(t);
       controller.abort();
     };
-  }, [restaurantName, placesSessionToken]);
+  }, [restaurantName, placesSessionToken, userLat, userLng]);
 
   // Look up how many times this reviewer has been to this restaurant
   useEffect(() => {
@@ -357,6 +388,7 @@ export default function ReviewForm() {
     setRestaurantAddress(null);
     setRestaurantLat(null);
     setRestaurantLng(null);
+    setLastSearchedQuery("");
     setErrors((prev) => {
       if (!prev.restaurantName) return prev;
       const next = { ...prev };
@@ -520,7 +552,12 @@ export default function ReviewForm() {
               padding: "12px 14px",
             }}
           >
-            <MapPin size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
+            <MapPin
+              size={16}
+              strokeWidth={1.8}
+              color={locationStatus === "granted" ? "var(--orange)" : "var(--muted)"}
+              style={{ flexShrink: 0 }}
+            />
             <input
               ref={restaurantInputRef}
               type="text"
@@ -528,59 +565,117 @@ export default function ReviewForm() {
               value={restaurantName}
               onChange={(e) => handleRestaurantInput(e.target.value)}
               onFocus={() => {
+                setRestaurantInputFocused(true);
                 if (restaurantSuggestions.length > 0) setShowRestaurantSuggestions(true);
               }}
+              onBlur={() => setRestaurantInputFocused(false)}
               autoComplete="off"
               style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'Syne', sans-serif", fontWeight: 700 }}
             />
           </div>
-          {showRestaurantSuggestions && (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 4px)",
-                left: 0,
-                right: 0,
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: "14px",
-                overflow: "hidden",
-                zIndex: 25,
-              }}
-            >
-              {restaurantSuggestions.map((s, i) => (
-                <button
-                  key={`${s.placeId}-${i}`}
-                  type="button"
-                  onMouseDown={() => pickRestaurant(s)}
-                  style={{
-                    width: "100%",
-                    background: "none",
-                    border: "none",
-                    borderBottom: i === restaurantSuggestions.length - 1 ? "none" : "1px solid var(--border)",
-                    padding: "10px 12px",
-                    color: "var(--cream)",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: "8px",
-                  }}
-                >
-                  <MapPin size={13} strokeWidth={2} color="var(--muted)" style={{ marginTop: "2px", flexShrink: 0 }} />
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>{s.mainText}</p>
-                    {s.secondaryText && (
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", lineHeight: 1.2, marginTop: "2px" }}>
-                        {s.secondaryText}
-                      </p>
-                    )}
+
+          {/* Dropdown: loading, results, or empty-state hint */}
+          {(() => {
+            const q = restaurantName.trim();
+            const isPicked = pickedRestaurantNameRef.current?.trim().toLowerCase() === q.toLowerCase();
+            const showEmptyHint =
+              !loadingSuggestions &&
+              restaurantSuggestions.length === 0 &&
+              q.length >= 2 &&
+              !isPicked &&
+              lastSearchedQuery.toLowerCase() === q.toLowerCase();
+            const showDropdown =
+              restaurantInputFocused &&
+              (loadingSuggestions || showRestaurantSuggestions || showEmptyHint);
+            if (!showDropdown) return null;
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "14px",
+                  overflow: "hidden",
+                  zIndex: 25,
+                }}
+              >
+                {loadingSuggestions ? (
+                  <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div
+                      style={{
+                        width: "12px",
+                        height: "12px",
+                        border: "2px solid var(--border)",
+                        borderTopColor: "var(--muted)",
+                        borderRadius: "50%",
+                        animation: "spin 0.7s linear infinite",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
+                      Searching…
+                    </span>
                   </div>
-                </button>
-              ))}
-            </div>
-          )}
+                ) : showEmptyHint ? (
+                  <div style={{ padding: "12px 14px" }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--muted)", lineHeight: 1.5 }}>
+                      No matches found. Try adding area or city,
+                    </p>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--muted)", lineHeight: 1.5 }}>
+                      e.g.{" "}
+                      <span style={{ color: "var(--cream)", fontStyle: "italic" }}>
+                        &ldquo;{restaurantName.trim()} Bandra&rdquo;
+                      </span>
+                    </p>
+                  </div>
+                ) : (
+                  restaurantSuggestions.map((s, i) => (
+                    <button
+                      key={`${s.placeId}-${i}`}
+                      type="button"
+                      onMouseDown={() => pickRestaurant(s)}
+                      style={{
+                        width: "100%",
+                        background: "none",
+                        border: "none",
+                        borderBottom: i === restaurantSuggestions.length - 1 ? "none" : "1px solid var(--border)",
+                        padding: "10px 12px",
+                        color: "var(--cream)",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "8px",
+                      }}
+                    >
+                      <MapPin size={13} strokeWidth={2} color="var(--muted)" style={{ marginTop: "2px", flexShrink: 0 }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>
+                          {s.mainText}
+                        </p>
+                        {s.secondaryText && (
+                          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", lineHeight: 1.2, marginTop: "2px" }}>
+                            {s.secondaryText}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            );
+          })()}
         </div>
+
+        {locationStatus === "granted" && !restaurantId && (
+          <p style={{ fontSize: "10px", color: "var(--muted)", marginTop: "5px", display: "flex", alignItems: "center", gap: "3px" }}>
+            <MapPin size={9} strokeWidth={2} />
+            {userLocationLabel ? `Showing results near ${userLocationLabel} first` : "Showing nearby restaurants first"}
+          </p>
+        )}
         {restaurantArea && (
           <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px" }}>{restaurantArea}</p>
         )}

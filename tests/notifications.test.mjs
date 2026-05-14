@@ -30,6 +30,12 @@ function loadNotifications(hasCircleAccess = async () => false) {
             [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || fallback,
         };
       }
+      if (id === "@/lib/selects") {
+        return {
+          NOTIFICATION_SELECT: "id, recipient_user_id, actor_user_id, recipient_name, actor_name, type, title, message, entity_type, entity_id, metadata, is_read, post_id, restaurant_name, content, read, created_at, updated_at, deleted_at",
+          LEGACY_NOTIFICATION_SELECT: "id, recipient_name, actor_name, type, post_id, restaurant_name, content, read, created_at",
+        };
+      }
       if (id === "@/lib/types") return {};
       throw new Error(`Unexpected require in notification tests: ${id}`);
     },

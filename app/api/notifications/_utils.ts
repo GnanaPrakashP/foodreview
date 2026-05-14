@@ -69,11 +69,14 @@ export async function filterValidNotifications(
     (n) => !circleNotifs.includes(n) && !likeNotifs.includes(n) && !commentNotifs.includes(n)
   );
 
-  const [validCircleIds, validLikeIds, validCommentIds] = await Promise.all([
+  const [validCircleIds, validCommentIds] = await Promise.all([
     validateCircleRequestNotifs(supabase, circleNotifs),
-    validateLikeNotifs(supabase, likeNotifs),
     validateCommentNotifs(supabase, commentNotifs),
   ]);
+  // Like notifications are not validated against the likes table — RLS prevents the
+  // recipient from reading the liker's row, causing false negatives. Cleanup happens
+  // via removeLikeNotification when someone unlikes.
+  const validLikeIds = likeNotifs.map((n) => n.id);
 
   const validCircleSet = new Set(validCircleIds);
   const validLikeSet = new Set(validLikeIds);
@@ -128,36 +131,6 @@ async function validateCircleRequestNotifs(supabase: SupabaseDb, notifs: Notific
   return [...latestPerPair.values()].map((n) => n.id);
 }
 
-async function validateLikeNotifs(supabase: SupabaseDb, notifs: Notification[]): Promise<string[]> {
-  if (notifs.length === 0) return [];
-  const postIds = [...new Set(notifs.map((n) => n.post_id).filter(Boolean))] as string[];
-  const { data, error } = await supabase
-    .from("likes")
-    .select("post_id, user_name")
-    .in("post_id", postIds);
-
-  if (error) {
-    return notifs.filter((n) => n.type === "like").map((n) => n.id);
-  }
-
-  if ((data ?? []).length === 0) {
-    return notifs.filter((n) => n.type === "like").map((n) => n.id);
-  }
-
-  const likeSet = new Set((data ?? []).map((l: { post_id: string; user_name: string }) => `${l.user_name}:${l.post_id}`));
-
-  // Keep only the most recently-updated like notification per (actor, post) pair.
-  const latestPerPair = new Map<string, Notification>();
-  for (const n of notifs) {
-    if (!n.actor_name || !n.post_id || !likeSet.has(`${n.actor_name}:${n.post_id}`)) continue;
-    const key = `${n.actor_name}:${n.post_id}`;
-    const existing = latestPerPair.get(key);
-    if (!existing || effectiveDate(n) > effectiveDate(existing)) {
-      latestPerPair.set(key, n);
-    }
-  }
-  return [...latestPerPair.values()].map((n) => n.id);
-}
 
 async function validateCommentNotifs(supabase: SupabaseDb, notifs: Notification[]): Promise<string[]> {
   if (notifs.length === 0) return [];

@@ -6,6 +6,7 @@ import FriendProfileClient from "@/components/people/FriendProfileClient";
 import { normalizeAccountType } from "@/lib/circle";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
+import { REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 
 interface Props {
@@ -38,7 +39,7 @@ export default async function UserProfilePage({ params }: Props) {
       .returns<ProfileSummary[]>(),
     admin
       .from("reviews")
-      .select("*")
+      .select(REVIEW_SELECT)
       .eq("reviewer_name", name)
       .order("created_at", { ascending: false })
       .returns<Review[]>(),

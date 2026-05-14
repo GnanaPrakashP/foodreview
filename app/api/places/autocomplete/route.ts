@@ -41,6 +41,10 @@ const loggedGoogleErrors = new Set<string>();
 export async function GET(req: NextRequest) {
   const input = req.nextUrl.searchParams.get("input")?.trim() ?? "";
   const sessionToken = req.nextUrl.searchParams.get("sessionToken")?.trim() ?? "";
+  const latStr = req.nextUrl.searchParams.get("lat") ?? "";
+  const lngStr = req.nextUrl.searchParams.get("lng") ?? "";
+  const lat = latStr ? parseFloat(latStr) : NaN;
+  const lng = lngStr ? parseFloat(lngStr) : NaN;
 
   if (!input) {
     return NextResponse.json({ error: "input is required" }, { status: 400 });
@@ -70,8 +74,20 @@ export async function GET(req: NextRequest) {
       input,
       includeQueryPredictions: false,
       regionCode: "in",
-      includedRegionCodes: ["in"],
+      // No includedRegionCodes — that is a hard restriction and blocks searches like "KFC Mumbai Bandra" from outside India.
+      // regionCode above is a soft bias only.
     };
+
+    // Bias results toward the user's current location (30 km radius, soft bias — not a restriction).
+    if (!isNaN(lat) && !isNaN(lng)) {
+      body.locationBias = {
+        circle: {
+          center: { latitude: lat, longitude: lng },
+          radius: 30000.0,
+        },
+      };
+    }
+
     if (sessionToken) body.sessionToken = sessionToken;
 
     const response = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
