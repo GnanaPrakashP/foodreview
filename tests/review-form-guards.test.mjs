@@ -41,6 +41,7 @@ test("ReviewForm: post button remains disabled while submit is in progress", () 
   assert.match(source, /if \(submitting\) return/);
   assert.match(source, /setSubmitting\(true\)/);
   assert.match(source, /disabled=\{submitting\}/);
-  assert.match(source, /\{submitting \? "Posting…" : "Post it"\}/);
+  assert.match(source, /submitStep === "posting"[\s\S]*\? "Posting…"/);
+  assert.match(source, /: "Post it"/);
   assert.match(source, /catch \(err: unknown\)[\s\S]*setSubmitting\(false\)/);
 });

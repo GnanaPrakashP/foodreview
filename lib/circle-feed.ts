@@ -7,6 +7,7 @@ import { filterCircleTrendingReviews } from "@/lib/visibility";
 import { CIRCLE_FEED_MAX_PAGE_SIZE, CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 type FeedDb = {
   auth: {
@@ -36,7 +37,7 @@ const REVIEW_SELECT = [
   "items",
   "body",
   "photo_url",
-  "photo_urls",
+  "review_photos(public_url, position)",
   "visibility",
   "created_at",
   "deleted_at",
@@ -235,7 +236,9 @@ async function loadCircleFeedPageForNames(
     }
 
     const { data: rawBatch } = await query.limit(batchSize);
-    const batch = (rawBatch ?? []) as Review[];
+    const batch = ((rawBatch ?? []) as unknown[]).map(
+      (r) => normalizeReview(r as Parameters<typeof normalizeReview>[0])
+    ) as Review[];
     if (batch.length === 0) {
       exhausted = true;
       break;

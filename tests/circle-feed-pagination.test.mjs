@@ -32,6 +32,7 @@ function loadCircleFeedModule() {
         if (id === "@/lib/feed-config") return { CIRCLE_FEED_PAGE_SIZE: 20, CIRCLE_FEED_MAX_PAGE_SIZE: 40 };
         if (id === "@/lib/private-cache") return { getPrivateCached: async ({ load }) => (await load()).value, invalidatePrivateCacheByTags() {} };
         if (id === "@/lib/profile-display") return { buildProfileDisplayMap: async () => ({}) };
+        if (id === "@/lib/server/normalize-review") return { normalizeReview: (review) => review };
         throw new Error(`Unexpected require in circle-feed pagination tests: ${id}`);
       },
     }

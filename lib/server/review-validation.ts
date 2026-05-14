@@ -23,7 +23,7 @@ export function normalizeReviewItems(items: unknown): { items?: FoodItem[]; erro
 
     if (
       item.rating !== undefined
-      && (typeof item.rating !== "number" || item.rating < 1 || item.rating > 5)
+      && (typeof item.rating !== "number" || item.rating < 0 || item.rating > 5)
     ) {
       return { error: "Invalid rating" };
     }

@@ -6,7 +6,8 @@ test("circle feed cards use next/image in a stable responsive media box", () => 
   const source = readFileSync(new URL("../components/reviews/CircleFeedCard.tsx", import.meta.url), "utf8");
 
   assert.match(source, /import Image from "next\/image"/);
-  assert.match(source, /aspectRatio: "3\/2"/);
+  assert.match(source, /aspectRatio: "4\/5"/);
+  assert.match(source, /set\("height", "1200"\)/);
   assert.match(source, /<Image[\s\S]*fill/);
   assert.match(source, /sizes="\(max-width: 512px\) 100vw, 512px"/);
   assert.match(source, /loading=\{priorityImage && i === 0 \? undefined : "lazy"\}/);

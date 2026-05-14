@@ -135,6 +135,9 @@ function loadRoute({ db }) {
           },
         };
       }
+      if (id === "@/lib/server/normalize-review") {
+        return { normalizeReview: (review) => review };
+      }
       throw new Error(`Unexpected require in public-feed tests: ${id}`);
     },
   });

@@ -17,7 +17,8 @@ test("home/circle feed filters server reviews before fetching engagement data", 
   assert.match(helper, /createAdminClient\(\)/);
   assert.match(helper, /getAuthenticatedCircleActor\(supabase\)/);
   assert.match(helper, /const feedReviewerNames = Array\.from\(new Set\(\[\.\.\.joinedCircles, myName\]\.filter\(Boolean\)\)\)/);
-  assert.match(helper, /const batch = \(rawBatch \?\? \[\]\) as Review\[]/);
+  assert.match(helper, /const batch = \(\(rawBatch \?\? \[\]\) as unknown\[]\)\.map/);
+  assert.match(helper, /normalizeReview\(r as Parameters<typeof normalizeReview>\[0\]\)/);
   assert.match(helper, /filterCircleTrendingReviews\(batch,/);
   assert.match(helper, /const postIds = allReviews\.map/);
   assert.match(helper, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
@@ -119,8 +120,19 @@ test("people profile page filters owner reviews before passing them to the clien
 test("people restaurant detail filters profile reviews before selecting restaurant posts", () => {
   const src = source("app/people/[username]/[restaurant]/page.tsx");
 
+  assert.match(src, /const readDb = createAdminClient\(\)/);
   assert.match(src, /hasCircleAccess\(supabase, name, myName\)/);
   assert.match(src, /const reviews = filterProfileReviews\(allReviews \?\? \[\], name,/);
   assert.match(src, /const posts = reviews\.filter/);
   assert.match(src, /const postIds = posts\.map/);
+});
+
+test("review detail reads by service role then applies app visibility before rendering", () => {
+  const src = source("app/reviews/[id]/page.tsx");
+
+  assert.match(src, /const readDb = createAdminClient\(\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("reviews"\)[\s\S]*\.eq\("id", id\)/);
+  assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
+  assert.match(src, /readDb\.from\("likes"\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
 });

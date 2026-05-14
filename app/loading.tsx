@@ -19,7 +19,7 @@ export default function Loading() {
           }}
         >
           <div
-            style={{ height: "160px", background: "var(--surface)" }}
+            style={{ aspectRatio: "4/5", background: "var(--surface)" }}
             className="animate-pulse"
           />
           <div className="p-4 flex flex-col gap-3">

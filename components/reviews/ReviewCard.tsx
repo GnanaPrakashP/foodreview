@@ -69,7 +69,7 @@ export default function ReviewCard({ review }: ReviewCardProps) {
         <div
           style={{
             margin: "0 16px",
-            height: "160px",
+            aspectRatio: "4/5",
             borderRadius: "16px",
             background: "#000",
             position: "relative",

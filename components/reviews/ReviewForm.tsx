@@ -28,6 +28,14 @@ type RestaurantSuggestion = {
   secondaryText: string;
 };
 
+type ModeratedPhoto = {
+  publicUrl: string;
+  storagePath: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
+};
+
 type ReviewInsertPayload = {
   restaurantName: string;
   restaurantId?: string | null;
@@ -42,6 +50,7 @@ type ReviewInsertPayload = {
   items: FoodItem[];
   body: string | null;
   photoUrl: string | null;
+  photos?: ModeratedPhoto[];
   visibility: Visibility;
 };
 
@@ -215,10 +224,12 @@ export default function ReviewForm() {
 
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("public");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [photoError, setPhotoError] = useState("");
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<"uploading" | "posting" | null>(null);
   const [serverError, setServerError] = useState("");
 
   // Start a Google Places session for restaurant autocomplete.
@@ -380,21 +391,42 @@ export default function ReviewForm() {
     setErrors({});
     setSubmitting(true);
     setServerError("");
+    setPhotoError("");
 
     const supabase = createClient();
 
     try {
-      let photoUrl: string | null = null;
-      if (photoFile) {
-        const ext = photoFile.name.split(".").pop();
-        const path = `public/${Date.now()}.${ext}`;
-        const { error: uploadError } = await supabase.storage
-          .from("review-photos")
-          .upload(path, photoFile, { upsert: false });
-        if (uploadError) throw uploadError;
-        const { data: urlData } = supabase.storage.from("review-photos").getPublicUrl(path);
-        photoUrl = urlData.publicUrl;
+      // --- Phase 1: upload photos to quarantine then moderate ---
+      let photos: ModeratedPhoto[] = [];
+      if (photoFiles.length > 0) {
+        setSubmitStep("uploading");
+
+        const quarantinePaths: string[] = [];
+        for (let i = 0; i < photoFiles.length; i++) {
+          const file = photoFiles[i];
+          const ext = file.name.split(".").pop() ?? "jpg";
+          const path = `quarantine/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error: uploadErr } = await supabase.storage
+            .from("review-photos")
+            .upload(path, file, { upsert: false });
+          if (uploadErr) throw new Error("Failed to upload photo for checking");
+          quarantinePaths.push(path);
+        }
+
+        const moderateRes = await fetch("/api/photos/moderate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quarantinePaths }),
+        });
+        const moderateJson = await moderateRes.json().catch(() => ({}));
+        if (!moderateRes.ok) {
+          throw new Error(moderateJson.error ?? "Photo check failed — please try different photos");
+        }
+        photos = moderateJson.photos as ModeratedPhoto[];
       }
+
+      setSubmitStep("posting");
+      const photoUrl = photos[0]?.publicUrl ?? null;
 
       const allItems = items
         .filter((it) => it.name.trim())
@@ -405,6 +437,7 @@ export default function ReviewForm() {
         items: allItems,
         body: body.trim() || null,
         photoUrl,
+        photos: photos.length > 0 ? photos : undefined,
         visibility,
       };
       if (restaurantId) reviewPayload.restaurantId = restaurantId;
@@ -455,16 +488,21 @@ export default function ReviewForm() {
     } catch (err: unknown) {
       setServerError(errorMessage(err) || "Something went wrong.");
       setSubmitting(false);
+      setSubmitStep(null);
     }
   }
 
   return (
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column" }}>
 
-      {/* 1 — Photo */}
+      {/* 1 — Photos */}
       <div className="px-5 pb-4">
-        <FieldLabel optional>Photo</FieldLabel>
-        <PhotoUpload onFileSelect={setPhotoFile} />
+        <FieldLabel optional>Photos</FieldLabel>
+        <PhotoUpload
+          files={photoFiles}
+          onFilesChange={setPhotoFiles}
+          error={photoError}
+        />
       </div>
 
       {/* 2 — Restaurant */}
@@ -722,7 +760,13 @@ export default function ReviewForm() {
           disabled={submitting}
           style={{ width: "100%", background: submitting ? "var(--muted)" : "var(--orange)", color: "white", border: "none", borderRadius: "16px", padding: "16px", fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", letterSpacing: "0.3px", lineHeight: 1 }}
         >
-          <span style={{ display: "block", lineHeight: 1 }}>{submitting ? "Posting…" : "Post it"}</span>
+          <span style={{ display: "block", lineHeight: 1 }}>
+            {submitStep === "uploading"
+              ? "Checking and uploading your photos…"
+              : submitStep === "posting"
+              ? "Posting…"
+              : "Post it"}
+          </span>
         </button>
       </div>
     </form>

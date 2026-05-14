@@ -145,7 +145,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
           {/* Post summary */}
           <div style={{ padding: "0 16px 16px", borderBottom: "1px solid var(--border)" }}>
             {review.photo_url && (
-              <div style={{ height: "200px", borderRadius: "16px", overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "12px", position: "relative" }}>
+              <div style={{ aspectRatio: "4/5", borderRadius: "16px", overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "12px", position: "relative" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={review.photo_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 {review.items[0]?.name && (

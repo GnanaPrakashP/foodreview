@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import type { Comment, Review } from "@/lib/types";
 import { hasCircleAccess } from "@/lib/circle-db";
@@ -14,9 +15,10 @@ interface Props {
 export default async function ReviewDetailPage({ params }: Props) {
   const { id } = await params;
   const supabase = await createClient();
+  const readDb = createAdminClient();
 
   const [{ data: review }, { data: { user } }] = await Promise.all([
-    supabase
+    readDb
     .from("reviews")
     .select("*")
     .eq("id", id)
@@ -44,8 +46,8 @@ export default async function ReviewDetailPage({ params }: Props) {
   if (!canViewerSeeReview(review, { viewerName: myName, circleOwnerNames })) notFound();
 
   const [{ data: likeRows }, { data: comments }] = await Promise.all([
-    supabase.from("likes").select("post_id").eq("post_id", review.id),
-    supabase
+    readDb.from("likes").select("post_id").eq("post_id", review.id),
+    readDb
       .from("comments")
       .select("*")
       .eq("post_id", review.id)

@@ -4,6 +4,8 @@ import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation"
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
 
+const MAX_REVIEW_PHOTOS = 4;
+
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor();
   if (!actor) {
@@ -17,12 +19,36 @@ export async function POST(req: NextRequest) {
     body: reviewBody,
     visibility = "public",
     photoUrl,
+    photos,
     area,
     restaurantId,
     restaurantAddress,
     restaurantLat,
     restaurantLng,
   } = body;
+
+  // photos is an optional array of moderated photo objects from /api/photos/moderate
+  type IncomingPhoto = {
+    publicUrl?: unknown;
+    storagePath?: unknown;
+    width?: unknown;
+    height?: unknown;
+    sizeBytes?: unknown;
+  };
+  if (Array.isArray(photos) && photos.length > MAX_REVIEW_PHOTOS) {
+    return NextResponse.json({ error: `Maximum ${MAX_REVIEW_PHOTOS} photos allowed` }, { status: 400 });
+  }
+
+  const validatedPhotos: IncomingPhoto[] =
+    Array.isArray(photos)
+      ? (photos as unknown[]).filter(
+          (p): p is IncomingPhoto =>
+            p !== null &&
+            typeof p === "object" &&
+            typeof (p as IncomingPhoto).publicUrl === "string" &&
+            typeof (p as IncomingPhoto).storagePath === "string"
+        )
+      : [];
 
   if (!restaurantName?.trim()) {
     return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
@@ -43,6 +69,7 @@ export async function POST(req: NextRequest) {
   }
 
   // reviewer_name is always derived from the authenticated session — never from the request body
+  console.log("[reviews POST] actor.actorName:", actor.actorName, "restaurantName:", restaurantName?.trim());
   const writeDb = createAdminClient();
   const { data, error } = await writeDb
     .from("reviews")
@@ -64,6 +91,24 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Insert review_photos rows (position = index in the array)
+  if (validatedPhotos.length > 0) {
+    const photoRows = validatedPhotos.map((p, i) => ({
+      review_id: data.id,
+      storage_path: p.storagePath as string,
+      public_url: p.publicUrl as string,
+      width: typeof p.width === "number" ? p.width : null,
+      height: typeof p.height === "number" ? p.height : null,
+      size_bytes: typeof p.sizeBytes === "number" ? p.sizeBytes : null,
+      position: i,
+    }));
+    const { error: photoError } = await writeDb.from("review_photos").insert(photoRows);
+    if (photoError) {
+      // Review was created — log and continue rather than failing the whole request
+      console.error("[reviews] Failed to insert review_photos:", photoError.message);
+    }
   }
 
   invalidateSocialCachesForNames([actor.actorName]);

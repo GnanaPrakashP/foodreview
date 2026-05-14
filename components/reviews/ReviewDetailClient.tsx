@@ -343,7 +343,7 @@ export default function ReviewDetailClient({
                   const idx = Math.round(el.scrollLeft / el.clientWidth);
                   setPhotoIndex(idx);
                 }}
-                style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", aspectRatio: "3/2" }}
+                style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", aspectRatio: "4/5" }}
                 className="hide-scrollbar"
               >
                 {photos.map((url) => (

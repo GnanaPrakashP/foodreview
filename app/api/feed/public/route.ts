@@ -4,6 +4,7 @@ import { CIRCLE_FEED_PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-con
 import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import type { Review, Comment } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 const REVIEW_SELECT = [
   "id",
@@ -17,7 +18,7 @@ const REVIEW_SELECT = [
   "items",
   "body",
   "photo_url",
-  "photo_urls",
+  "review_photos(public_url, position)",
   "visibility",
   "created_at",
   "deleted_at",
@@ -80,7 +81,8 @@ export async function GET(req: NextRequest) {
     }
 
     const excludeSet = new Set(excludeNames);
-    const filtered = ((rawRows ?? []) as unknown as Review[])
+    const filtered = ((rawRows ?? []) as unknown[])
+      .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]))
       .filter((r) => !excludeSet.has(r.reviewer_name));
 
     const hasMore = filtered.length > limit;

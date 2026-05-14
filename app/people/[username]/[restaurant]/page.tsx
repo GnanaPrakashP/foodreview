@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import type { Review, Comment } from "@/lib/types";
 import RestaurantDetailClient from "@/components/people/RestaurantDetailClient";
@@ -23,6 +24,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
   const restaurantName = decodeURIComponent(restaurant);
 
   const supabase = await createClient();
+  const readDb = createAdminClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   const myName = (user?.user_metadata?.username as string) ?? "";
@@ -33,7 +35,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
   }
 
   // All reviews by this person (for visible rank context) + filter to this restaurant.
-  const { data: allReviews } = await supabase
+  const { data: allReviews } = await readDb
     .from("reviews")
     .select("*")
     .eq("reviewer_name", name)
@@ -51,8 +53,8 @@ export default async function RestaurantDetailPage({ params }: Props) {
   const postIds = posts.map((r) => r.id);
 
   const [{ data: rawLikes }, { data: rawComments }] = await Promise.all([
-    supabase.from("likes").select("post_id").in("post_id", postIds),
-    supabase
+    readDb.from("likes").select("post_id").in("post_id", postIds),
+    readDb
       .from("comments")
       .select("id, post_id, user_name, content, created_at")
       .in("post_id", postIds)

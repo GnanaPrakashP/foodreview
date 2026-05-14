@@ -59,7 +59,7 @@ function feedImageUrl(url: string): string {
       const objectPath = parsed.pathname.replace("/storage/v1/object/public/", "");
       parsed.pathname = `/storage/v1/render/image/public/${objectPath}`;
       parsed.searchParams.set("width", "960");
-      parsed.searchParams.set("height", "640");
+      parsed.searchParams.set("height", "1200");
       parsed.searchParams.set("resize", "cover");
       parsed.searchParams.set("quality", "78");
       return parsed.toString();
@@ -360,7 +360,7 @@ export default function CircleFeedCard({
                 }}
                 style={{
                   display: "flex", overflowX: "auto", scrollSnapType: "x mandatory",
-                  scrollbarWidth: "none", aspectRatio: "3/2",
+                  scrollbarWidth: "none", aspectRatio: "4/5",
                 }}
                 className="hide-scrollbar"
               >

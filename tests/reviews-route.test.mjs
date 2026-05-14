@@ -218,6 +218,19 @@ test("POST /reviews: empty items array returns 400", async () => {
   assert.match(body(res).error, /dish/i);
 });
 
+test("POST /reviews: more than four photos returns 400", async () => {
+  const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
+  const photos = Array.from({ length: 5 }, (_, i) => ({
+    publicUrl: `https://example.test/photo-${i}.jpg`,
+    storagePath: `public/photo-${i}.jpg`,
+  }));
+
+  const res = await POST(makeReq({ ...VALID_BODY, photos }));
+
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /Maximum 4 photos/i);
+});
+
 test("POST /reviews: items with only whitespace names returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const res = await POST(makeReq({ ...VALID_BODY, items: [{ name: "  " }] }));
