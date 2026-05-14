@@ -194,7 +194,7 @@ async function seedUser(u) {
   if (profileErr) {
     process.stdout.write(`❌ profile: ${profileErr.message} `);
     if (profileErr.message?.includes("account_type")) {
-      process.stdout.write("Run supabase/migrations/20260508185000_add_profiles_account_type.sql first. ");
+      process.stdout.write("Run supabase/schema.sql on a fresh database first. ");
     }
     console.log("");
     return null;

@@ -13,10 +13,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
-const placeDetailsMigration = readFileSync(
-  new URL("../supabase/migrations/20260509170000_add_restaurant_place_details.sql", import.meta.url),
-  "utf8"
-);
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -29,9 +25,9 @@ function policiesFor(table, operation) {
   return schema.match(re) ?? [];
 }
 
-/** Return true when at least one policy in `blocks` references auth.uid(). */
-function hasAuthUid(blocks) {
-  return blocks.some((b) => /auth\.uid\(\)/.test(b));
+/** Return true when at least one policy in `blocks` binds to the authenticated actor. */
+function hasAuthenticatedActorBinding(blocks) {
+  return blocks.some((b) => /auth\.uid\(\)|current_profile_name\(\)/.test(b));
 }
 
 // ── REVIEWS ────────────────────────────────────────────────────────────────────
@@ -44,26 +40,26 @@ test("schema: open reviews INSERT policy is not re-created", () => {
   assert.doesNotMatch(schema, /create policy "Anyone can post reviews"/i);
 });
 
-test("schema: reviews INSERT policy binds reviewer_name to auth.uid()", () => {
+test("schema: reviews INSERT policy binds reviewer_name to the authenticated actor", () => {
   const blocks = policiesFor("reviews", "insert");
   assert.ok(blocks.length > 0, "No reviews INSERT policy found");
-  assert.ok(hasAuthUid(blocks), "reviews INSERT policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "reviews INSERT policy must bind to the authenticated actor");
   assert.ok(
     blocks.some((b) => /reviewer_name/.test(b)),
     "reviews INSERT policy must reference reviewer_name"
   );
 });
 
-test("schema: reviews UPDATE policy binds to auth.uid()", () => {
+test("schema: reviews UPDATE policy binds to the authenticated actor", () => {
   const blocks = policiesFor("reviews", "update");
   assert.ok(blocks.length > 0, "No reviews UPDATE policy found");
-  assert.ok(hasAuthUid(blocks), "reviews UPDATE policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "reviews UPDATE policy must bind to the authenticated actor");
 });
 
-test("schema: reviews DELETE policy binds to auth.uid()", () => {
+test("schema: reviews DELETE policy binds to the authenticated actor", () => {
   const blocks = policiesFor("reviews", "delete");
   assert.ok(blocks.length > 0, "No reviews DELETE policy found");
-  assert.ok(hasAuthUid(blocks), "reviews DELETE policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "reviews DELETE policy must bind to the authenticated actor");
 });
 
 test("schema: reviews SELECT policy is visibility-aware, not open", () => {
@@ -93,18 +89,12 @@ test("schema: reviews include Google Places restaurant metadata columns", () => 
       new RegExp(`(?:${column}\\s+${typePattern.source}|add column if not exists ${column}\\s+${typePattern.source})`, "i"),
       `reviews schema must include ${column}`
     );
-    assert.match(
-      placeDetailsMigration,
-      new RegExp(`add column if not exists ${column}\\s+${typePattern.source}`, "i"),
-      `place details migration must add ${column}`
-    );
   }
 });
 
 test("schema: reviews have an index for stored restaurant coordinates", () => {
   assert.match(schema, /reviews_restaurant_location_idx/i);
-  assert.match(placeDetailsMigration, /reviews_restaurant_location_idx/i);
-  assert.match(placeDetailsMigration, /on public\.reviews\s*\(\s*restaurant_lat\s*,\s*restaurant_lng\s*\)/i);
+  assert.match(schema, /on public\.reviews\s*\(\s*restaurant_lat\s*,\s*restaurant_lng\s*\)/i);
 });
 
 test("schema: notifications have unread badge indexes for user id and username recipients", () => {
@@ -132,17 +122,17 @@ test("schema: open likes DELETE policy is not re-created", () => {
   assert.doesNotMatch(schema, /create policy "Anyone can unlike"/i);
 });
 
-test("schema: likes INSERT policy binds user_name to auth.uid()", () => {
+test("schema: likes INSERT policy binds user_name to the authenticated actor", () => {
   const blocks = policiesFor("likes", "insert");
   assert.ok(blocks.length > 0, "No likes INSERT policy found");
-  assert.ok(hasAuthUid(blocks), "likes INSERT policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "likes INSERT policy must bind to the authenticated actor");
   assert.ok(blocks.some((b) => /user_name/.test(b)), "likes INSERT policy must reference user_name");
 });
 
-test("schema: likes DELETE policy binds user_name to auth.uid()", () => {
+test("schema: likes DELETE policy binds user_name to the authenticated actor", () => {
   const blocks = policiesFor("likes", "delete");
   assert.ok(blocks.length > 0, "No likes DELETE policy found");
-  assert.ok(hasAuthUid(blocks), "likes DELETE policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "likes DELETE policy must bind to the authenticated actor");
   assert.ok(blocks.some((b) => /user_name/.test(b)), "likes DELETE policy must reference user_name");
 });
 
@@ -174,17 +164,17 @@ test("schema: open comments DELETE policy is not re-created", () => {
   assert.doesNotMatch(schema, /create policy "Anyone can delete own comments"/i);
 });
 
-test("schema: comments INSERT policy binds user_name to auth.uid()", () => {
+test("schema: comments INSERT policy binds user_name to the authenticated actor", () => {
   const blocks = policiesFor("comments", "insert");
   assert.ok(blocks.length > 0, "No comments INSERT policy found");
-  assert.ok(hasAuthUid(blocks), "comments INSERT policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "comments INSERT policy must bind to the authenticated actor");
   assert.ok(blocks.some((b) => /user_name/.test(b)), "comments INSERT policy must reference user_name");
 });
 
-test("schema: comments DELETE policy binds user_name to auth.uid()", () => {
+test("schema: comments DELETE policy binds user_name to the authenticated actor", () => {
   const blocks = policiesFor("comments", "delete");
   assert.ok(blocks.length > 0, "No comments DELETE policy found");
-  assert.ok(hasAuthUid(blocks), "comments DELETE policy must reference auth.uid()");
+  assert.ok(hasAuthenticatedActorBinding(blocks), "comments DELETE policy must bind to the authenticated actor");
   assert.ok(blocks.some((b) => /user_name/.test(b)), "comments DELETE policy must reference user_name");
 });
 
@@ -241,7 +231,7 @@ test("schema: wishlist SELECT policy is owner-only", () => {
   const blocks = policiesFor("wishlist", "select");
   assert.ok(blocks.length > 0, "No wishlist SELECT policy found");
   assert.ok(
-    blocks.some((b) => /user_name/.test(b) && /auth\.uid\(\)/.test(b)),
-    "wishlist SELECT policy must bind user_name to auth.uid()"
+    blocks.some((b) => /user_name/.test(b) && /auth\.uid\(\)|current_profile_name\(\)/.test(b)),
+    "wishlist SELECT policy must bind user_name to the authenticated actor"
   );
 });

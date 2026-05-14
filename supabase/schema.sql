@@ -55,6 +55,7 @@ create table public.reviews (
   items            jsonb       not null default '[]',
   body             text,
   photo_url        text,
+  photo_urls       text[]      default '{}'::text[],
   visibility       text        not null default 'public',
   deleted_at       timestamptz,
   hidden_at        timestamptz,
@@ -196,6 +197,8 @@ alter table public.reviews add column if not exists restaurant_lng double precis
 -- Optional stable restaurant identity. Current app data may have null here;
 -- application logic falls back to a normalized restaurant_name until this is populated.
 alter table public.reviews add column if not exists restaurant_id text;
+alter table public.reviews add column if not exists photo_urls text[] default '{}'::text[];
+alter table public.reviews alter column photo_urls set default '{}'::text[];
 
 -- Add visibility column (public = everyone, circle = friends only, me = private log)
 alter table public.reviews add column if not exists visibility text not null default 'public';
@@ -414,22 +417,18 @@ create policy "Reviews readable by visibility"
 drop policy if exists "Anyone can post reviews" on public.reviews;
 create policy "Authenticated users can insert own reviews"
   on public.reviews for insert to authenticated
-  with check (
-    reviewer_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  with check (reviewer_name = public.current_profile_name());
 
 drop policy if exists "Users can update own reviews" on public.reviews;
 create policy "Users can update own reviews"
   on public.reviews for update to authenticated
-  using  (reviewer_name = (select p.username from public.profiles p where p.id = auth.uid()))
-  with check (reviewer_name = (select p.username from public.profiles p where p.id = auth.uid()));
+  using (reviewer_name = public.current_profile_name())
+  with check (reviewer_name = public.current_profile_name());
 
 drop policy if exists "Users can delete own reviews" on public.reviews;
 create policy "Users can delete own reviews"
   on public.reviews for delete to authenticated
-  using (
-    reviewer_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  using (reviewer_name = public.current_profile_name());
 
 
 -- =============================================
@@ -474,7 +473,9 @@ on conflict (id) do nothing;
 drop policy if exists "Anyone can view review photos" on storage.objects;
 drop policy if exists "Anyone can upload review photos" on storage.objects;
 drop policy if exists "Authenticated users can upload review photos" on storage.objects;
+drop policy if exists "Authenticated users can upload to quarantine" on storage.objects;
 drop policy if exists "Users can delete their own review photos" on storage.objects;
+drop policy if exists "Service role can delete review photos" on storage.objects;
 
 create policy "Anyone can view review photos"
   on storage.objects for select
@@ -483,6 +484,17 @@ create policy "Anyone can view review photos"
 create policy "Authenticated users can upload review photos"
   on storage.objects for insert to authenticated
   with check (bucket_id = 'review-photos');
+
+create policy "Authenticated users can upload to quarantine"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'review-photos'
+    and (storage.foldername(name))[1] = 'quarantine'
+  );
+
+create policy "Service role can delete review photos"
+  on storage.objects for delete to service_role
+  using (bucket_id = 'review-photos');
 
 -- =============================================
 -- LIKES
@@ -506,15 +518,13 @@ drop policy if exists "Authenticated users can insert own likes" on public.likes
 create policy "Authenticated users can insert own likes"
   on public.likes for insert to authenticated
   with check (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
+    user_name = public.current_profile_name()
     and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can unlike" on public.likes;
 create policy "Users can delete own likes"
   on public.likes for delete to authenticated
-  using (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  using (user_name = public.current_profile_name());
 
 -- =============================================
 -- COMMENTS
@@ -538,15 +548,13 @@ drop policy if exists "Authenticated users can insert own comments" on public.co
 create policy "Authenticated users can insert own comments"
   on public.comments for insert to authenticated
   with check (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
+    user_name = public.current_profile_name()
     and public.can_read_review_id(post_id)
   );
 drop policy if exists "Anyone can delete own comments" on public.comments;
 create policy "Users can delete own comments"
   on public.comments for delete to authenticated
-  using (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  using (user_name = public.current_profile_name());
 
 -- =============================================
 -- NOTIFICATIONS
@@ -798,15 +806,13 @@ drop policy if exists "Wishlist readable by everyone" on public.wishlist;
 drop policy if exists "Wishlist readable by owner" on public.wishlist;
 create policy "Wishlist readable by owner"
   on public.wishlist for select to authenticated
-  using (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  using (user_name = public.current_profile_name());
 drop policy if exists "Anyone can bookmark" on public.wishlist;
 drop policy if exists "Authenticated users can bookmark" on public.wishlist;
 create policy "Authenticated users can bookmark"
   on public.wishlist for insert to authenticated
   with check (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
+    user_name = public.current_profile_name()
     and (
       post_id is null
       or public.can_read_review_id(post_id)
@@ -815,6 +821,4 @@ create policy "Authenticated users can bookmark"
 drop policy if exists "Anyone can unbookmark" on public.wishlist;
 create policy "Users can delete own bookmarks"
   on public.wishlist for delete to authenticated
-  using (
-    user_name = (select p.username from public.profiles p where p.id = auth.uid())
-  );
+  using (user_name = public.current_profile_name());

@@ -1,8 +1,8 @@
 /**
- * Static guard for the production RLS hardening migration.
+ * Static guard for the production RLS hardening schema.
  *
- * These tests do not connect to Supabase. They verify that the migration we
- * ship is non-destructive and closes the direct-read leaks for reviews,
+ * These tests do not connect to Supabase. They verify that the fresh-db schema
+ * closes the direct-read leaks for reviews,
  * engagement tables, wishlist, and the missing circle_memberships table.
  */
 
@@ -10,18 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const migration = readFileSync(
-  new URL("../supabase/migrations/20260508211500_harden_read_privacy_and_circle_memberships.sql", import.meta.url),
-  "utf8"
-);
-const sourceOfTruthMigration = readFileSync(
-  new URL("../supabase/migrations/20260510143000_circle_memberships_source_of_truth.sql", import.meta.url),
-  "utf8"
-);
-const executableSql = migration
-  .split("\n")
-  .filter((line) => !line.trimStart().startsWith("--"))
-  .join("\n");
+const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 
 function policyBlock(table, operation, policyName) {
   const escapedName = policyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,7 +18,7 @@ function policyBlock(table, operation, policyName) {
     `create policy "${escapedName}"\\s+on public\\.${table} for ${operation}[^;]*;`,
     "is"
   );
-  return migration.match(re)?.[0] ?? "";
+  return schema.match(re)?.[0] ?? "";
 }
 
 function functionBlock(sql, functionName) {
@@ -37,30 +26,24 @@ function functionBlock(sql, functionName) {
   return sql.match(new RegExp(`create or replace function public\\.${escapedName}[\\s\\S]*?\\$\\$;`, "i"))?.[0] ?? "";
 }
 
-test("read privacy migration is non-destructive", () => {
-  assert.doesNotMatch(executableSql, /\bdrop\s+table\b/i);
-  assert.doesNotMatch(executableSql, /\bdrop\s+schema\b/i);
-  assert.doesNotMatch(executableSql, /\btruncate\b/i);
-});
-
-test("read privacy migration creates missing circle_memberships safely", () => {
-  assert.match(migration, /create table if not exists public\.circle_memberships/i);
-  assert.match(migration, /unique\s*\(\s*user_name\s*,\s*member_name\s*\)/i);
-  assert.match(migration, /create index if not exists circle_memberships_user_idx/i);
-  assert.match(migration, /create index if not exists circle_memberships_member_idx/i);
-  assert.match(migration, /alter table public\.circle_memberships enable row level security/i);
+test("fresh schema creates circle_memberships with RLS", () => {
+  assert.match(schema, /create table if not exists public\.circle_memberships/i);
+  assert.match(schema, /unique\s*\(\s*user_name\s*,\s*member_name\s*\)/i);
+  assert.match(schema, /create index if not exists circle_memberships_user_idx/i);
+  assert.match(schema, /create index if not exists circle_memberships_member_idx/i);
+  assert.match(schema, /alter table public\.circle_memberships enable row level security/i);
 });
 
 test("circle_memberships only exposes an authenticated read policy", () => {
-  assert.match(migration, /create policy "Circle memberships readable by authenticated users"/i);
-  assert.match(migration, /on public\.circle_memberships for select to authenticated\s+using \(true\)/i);
-  assert.doesNotMatch(migration, /on public\.circle_memberships for insert/i);
-  assert.doesNotMatch(migration, /on public\.circle_memberships for update/i);
-  assert.doesNotMatch(migration, /on public\.circle_memberships for delete/i);
+  assert.match(schema, /create policy "Circle memberships readable by authenticated users"/i);
+  assert.match(schema, /on public\.circle_memberships for select to authenticated\s+using \(true\)/i);
+  assert.doesNotMatch(schema, /on public\.circle_memberships for insert/i);
+  assert.doesNotMatch(schema, /on public\.circle_memberships for update/i);
+  assert.doesNotMatch(schema, /on public\.circle_memberships for delete/i);
 });
 
 test("reviews open SELECT policy is dropped and replaced by visibility helper", () => {
-  assert.match(migration, /drop policy if exists "Reviews are readable by everyone" on public\.reviews/i);
+  assert.match(schema, /drop policy if exists "Reviews are readable by everyone" on public\.reviews/i);
   const block = policyBlock("reviews", "select", "Reviews readable by visibility");
   assert.ok(block, "Reviews readable by visibility policy missing");
   assert.match(block, /to anon,\s*authenticated/i);
@@ -69,18 +52,18 @@ test("reviews open SELECT policy is dropped and replaced by visibility helper", 
 });
 
 test("review visibility helper enforces public, circle, owner, and suppression rules", () => {
-  assert.match(migration, /create or replace function public\.can_read_review_row/i);
-  assert.match(migration, /coalesce\(review_visibility,\s*'public'\)\s*=\s*'public'/i);
-  assert.match(migration, /v\.name\s*=\s*review_owner_name/i);
-  assert.match(migration, /coalesce\(review_visibility,\s*'public'\)\s*=\s*'circle'/i);
-  assert.match(migration, /from public\.circle_memberships cm/i);
-  assert.doesNotMatch(migration, /from public\.circle_requests cr/i);
-  assert.match(migration, /public\.review_is_unsuppressed/i);
-  assert.match(migration, /not in \('deleted', 'hidden', 'reported', 'removed'\)/i);
+  assert.match(schema, /create or replace function public\.can_read_review_row/i);
+  assert.match(schema, /coalesce\(review_visibility,\s*'public'\)\s*=\s*'public'/i);
+  assert.match(schema, /v\.name\s*=\s*review_owner_name/i);
+  assert.match(schema, /coalesce\(review_visibility,\s*'public'\)\s*=\s*'circle'/i);
+  assert.match(schema, /from public\.circle_memberships cm/i);
+  assert.doesNotMatch(functionBlock(schema, "can_read_review_row"), /from public\.circle_requests cr/i);
+  assert.match(schema, /public\.review_is_unsuppressed/i);
+  assert.match(schema, /not in \('deleted', 'hidden', 'reported', 'removed'\)/i);
 });
 
 test("comments read and insert policies inherit parent review visibility", () => {
-  assert.match(migration, /drop policy if exists "Comments readable by everyone" on public\.comments/i);
+  assert.match(schema, /drop policy if exists "Comments readable by everyone" on public\.comments/i);
   const selectBlock = policyBlock("comments", "select", "Comments readable by visible review");
   assert.ok(selectBlock, "Comments readable by visible review policy missing");
   assert.match(selectBlock, /public\.can_read_review_id\(post_id\)/i);
@@ -93,7 +76,7 @@ test("comments read and insert policies inherit parent review visibility", () =>
 });
 
 test("likes read and insert policies inherit parent review visibility", () => {
-  assert.match(migration, /drop policy if exists "Likes readable by everyone" on public\.likes/i);
+  assert.match(schema, /drop policy if exists "Likes readable by everyone" on public\.likes/i);
   const selectBlock = policyBlock("likes", "select", "Likes readable by visible review");
   assert.ok(selectBlock, "Likes readable by visible review policy missing");
   assert.match(selectBlock, /public\.can_read_review_id\(post_id\)/i);
@@ -106,7 +89,7 @@ test("likes read and insert policies inherit parent review visibility", () => {
 });
 
 test("wishlist reads are private to the owner and bookmarks cannot target hidden reviews", () => {
-  assert.match(migration, /drop policy if exists "Wishlist readable by everyone" on public\.wishlist/i);
+  assert.match(schema, /drop policy if exists "Wishlist readable by everyone" on public\.wishlist/i);
   const selectBlock = policyBlock("wishlist", "select", "Wishlist readable by owner");
   assert.ok(selectBlock, "Wishlist readable by owner policy missing");
   assert.match(selectBlock, /user_name\s*=\s*public\.current_profile_name\(\)/i);
@@ -120,23 +103,23 @@ test("wishlist reads are private to the owner and bookmarks cannot target hidden
 });
 
 test("migration grants helper execution to anon and authenticated roles", () => {
-  assert.match(migration, /grant execute on function public\.current_profile_name\(\) to anon, authenticated/i);
-  assert.match(migration, /grant execute on function public\.can_read_review_row/i);
-  assert.match(migration, /grant execute on function public\.can_read_review_id\(uuid\) to anon, authenticated/i);
+  assert.match(schema, /grant execute on function public\.current_profile_name\(\) to anon, authenticated/i);
+  assert.match(schema, /grant execute on function public\.can_read_review_row/i);
+  assert.match(schema, /grant execute on function public\.can_read_review_id\(uuid\) to anon, authenticated/i);
 });
 
-test("source-of-truth migration backfills memberships and keeps RLS on memberships only", () => {
+test("schema backfills memberships and keeps the active review helper on memberships", () => {
   assert.match(
-    sourceOfTruthMigration,
+    schema,
     /insert into public\.circle_memberships\s*\(\s*user_name\s*,\s*member_name\s*\)\s*select sender_name,\s*receiver_name\s*from public\.circle_requests\s*where status = 'accepted'/i
   );
   assert.match(
-    sourceOfTruthMigration,
+    schema,
     /insert into public\.circle_memberships\s*\(\s*user_name\s*,\s*member_name\s*\)\s*select receiver_name,\s*sender_name\s*from public\.circle_requests\s*where status = 'accepted'/i
   );
 
-  const helper = functionBlock(sourceOfTruthMigration, "can_read_review_row");
-  assert.ok(helper, "source-of-truth migration must recreate the active review helper");
+  const helper = functionBlock(schema, "can_read_review_row");
+  assert.ok(helper, "schema must create the active review helper");
   assert.match(helper, /from public\.circle_memberships cm/i);
   assert.doesNotMatch(helper, /from public\.circle_requests cr/i);
 });
