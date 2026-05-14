@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import type { Review } from "@/lib/types";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 function avgRating(review: Review): number {
   if (!review.items.length) return 0;
@@ -99,7 +100,7 @@ export default function ComparisonSection({
   }, [friendReviews, myReviews]);
 
   useEffect(() => {
-    setMyName(localStorage.getItem("fc_my_name") ?? "");
+    setMyName(getStoredActorName());
     setMounted(true);
   }, []);
 

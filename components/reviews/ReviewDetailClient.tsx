@@ -10,6 +10,7 @@ import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { resolveActorName } from "@/lib/browser-actor";
 
 type Props = {
   review: Review;
@@ -68,8 +69,7 @@ export default function ReviewDetailClient({
   const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
 
   useEffect(() => {
-    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
-    if (name) localStorage.setItem("fc_my_name", name);
+    const name = resolveActorName(initialMyName);
     setMyName(name);
     if (!name) return;
 

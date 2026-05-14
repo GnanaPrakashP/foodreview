@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { CIRCLE_FEED_PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
 import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import type { Review, Comment } from "@/lib/types";
+import { buildProfileDisplayMap } from "@/lib/profile-display";
 
 const REVIEW_SELECT = [
   "id",
@@ -132,20 +133,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const reviewerUsernames = [...new Set(reviews.map((r) => r.reviewer_name).filter(Boolean))];
-    const profileMap: Record<string, string> = {};
-    if (reviewerUsernames.length > 0) {
-      const { data: profiles } = await db
-        .from("profiles")
-        .select("username, first_name, last_name")
-        .in("username", reviewerUsernames);
-      for (const p of (profiles ?? []) as { username: string; first_name: string | null; last_name: string | null }[]) {
-        if (p.username) {
-          const dn = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-          if (dn) profileMap[p.username] = dn;
-        }
-      }
-    }
+    const profileMap = await buildProfileDisplayMap(db, reviews.map((r) => r.reviewer_name));
 
     return NextResponse.json({
       reviews,

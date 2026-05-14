@@ -117,6 +117,24 @@ function loadRoute({ db }) {
           },
         };
       }
+      if (id === "@/lib/profile-display") {
+        return {
+          buildProfileDisplayMap: async (db, names) => {
+            const usernames = Array.from(new Set(names.map((name) => name?.trim()).filter(Boolean)));
+            if (usernames.length === 0) return {};
+            const { data } = await db
+              .from("profiles")
+              .select("username, first_name, last_name")
+              .in("username", usernames);
+            const profileMap = {};
+            for (const profile of data ?? []) {
+              const displayName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+              if (profile.username && displayName) profileMap[profile.username] = displayName;
+            }
+            return profileMap;
+          },
+        };
+      }
       throw new Error(`Unexpected require in public-feed tests: ${id}`);
     },
   });

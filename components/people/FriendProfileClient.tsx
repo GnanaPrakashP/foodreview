@@ -10,6 +10,7 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { resolveActorName } from "@/lib/browser-actor";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -150,7 +151,7 @@ export default function FriendProfileClient({
   }, [name]);
 
   useEffect(() => {
-    const me = initialMyName || localStorage.getItem("fc_my_name") || "";
+    const me = resolveActorName(initialMyName);
     setMyName(me);
     setCommonRestaurantCount(null);
 

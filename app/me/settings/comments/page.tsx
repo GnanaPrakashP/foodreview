@@ -6,6 +6,7 @@ import { ArrowLeft, MessageCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { restaurantGradient } from "@/lib/profile";
 import type { Review } from "@/lib/types";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 interface MyComment {
   id: string;
@@ -29,7 +30,7 @@ export default function MyCommentsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const myName = localStorage.getItem("fc_my_name") ?? "";
+    const myName = getStoredActorName();
     if (!myName) { setLoading(false); return; }
 
     const supabase = createClient();

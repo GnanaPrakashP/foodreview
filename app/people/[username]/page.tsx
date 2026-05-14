@@ -5,6 +5,7 @@ import type { Review } from "@/lib/types";
 import FriendProfileClient from "@/components/people/FriendProfileClient";
 import { normalizeAccountType } from "@/lib/circle";
 import { hasCircleAccess } from "@/lib/circle-db";
+import { profileDisplayName } from "@/lib/profile-names";
 import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 
 interface Props {
@@ -53,9 +54,7 @@ export default async function UserProfilePage({ params }: Props) {
   if ((!ownerAllReviews || ownerAllReviews.length === 0) && !profile) notFound();
 
   const myName = (user?.user_metadata?.username as string) || user?.email?.split("@")[0] || "";
-  const displayName = profile
-    ? `${profile.first_name} ${profile.last_name}`.trim()
-    : name;
+  const displayName = profileDisplayName(profile, name);
 
   const initialTheirCircleCount = (theirMemberRows ?? []).length;
 

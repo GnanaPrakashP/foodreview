@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 interface Member {
   name: string;
@@ -33,7 +34,7 @@ export default function FriendCirclePage() {
       const memberNames: string[] = data.displayMembers ?? data.members ?? [];
       setCircleCount(memberNames.length);
 
-      const viewerName = localStorage.getItem("fc_my_name") ?? "";
+      const viewerName = getStoredActorName();
       if (viewerName !== name && data.accountType === "private") {
         const viewerData = viewerName ? await cachedCircleStatus(viewerName) : {};
         const canView = (viewerData.members ?? []).includes(name);

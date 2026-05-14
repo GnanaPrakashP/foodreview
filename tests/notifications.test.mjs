@@ -24,6 +24,12 @@ function loadNotifications(hasCircleAccess = async () => false) {
     console,
     require(id) {
       if (id === "@/lib/circle-db") return { hasCircleAccess };
+      if (id === "@/lib/profile-names") {
+        return {
+          profileDisplayName: (profile, fallback = "") =>
+            [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || fallback,
+        };
+      }
       if (id === "@/lib/types") return {};
       throw new Error(`Unexpected require in notification tests: ${id}`);
     },

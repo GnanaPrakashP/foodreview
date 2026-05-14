@@ -6,6 +6,7 @@ import type { Review } from "@/lib/types";
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
 import { Settings, ChevronRight } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
+import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -185,9 +186,8 @@ export default function MeClient({
   const rankedPlaces = useMemo(() => buildRankedPlaces(myReviews), [myReviews]);
 
   useEffect(() => {
-    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
-    const dName = initialDisplayName || localStorage.getItem("fc_display_name") || name;
-    if (name) localStorage.setItem("fc_my_name", name);
+    const name = resolveActorName(initialMyName);
+    const dName = resolveDisplayName(initialDisplayName, name);
     setMyName(name);
     setDisplayName(dName || name);
     setMounted(true);

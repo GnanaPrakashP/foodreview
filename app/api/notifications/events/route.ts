@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Comment, Review } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { profileDisplayName } from "@/lib/profile-names";
 import {
   createCirclePostNotifications,
   createPostCommentNotifications,
@@ -41,9 +42,10 @@ export async function POST(req: NextRequest) {
     .select("first_name, last_name")
     .eq("username", actorName)
     .maybeSingle();
-  const actorDisplayName = actorProfile
-    ? `${(actorProfile as { first_name: string | null; last_name: string | null }).first_name ?? ""} ${(actorProfile as { first_name: string | null; last_name: string | null }).last_name ?? ""}`.trim() || actorName
-    : actorName;
+  const actorDisplayName = profileDisplayName(
+    actorProfile as { first_name: string | null; last_name: string | null } | null,
+    actorName
+  );
 
   // Events that don't require the post to exist
   if (payload.event === "POST_UNLIKED") {

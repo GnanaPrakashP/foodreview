@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
+import { syncStoredActor } from "@/lib/browser-actor";
 
 type UsernameStatus = "idle" | "checking" | "available" | "taken" | "invalid";
 
@@ -100,9 +101,8 @@ export default function OnboardingPage() {
       data: { full_name: fullName, username: un, account_type: DEFAULT_ACCOUNT_TYPE, onboarding_complete: true },
     });
 
-    // Also update localStorage immediately
-    localStorage.setItem("fc_my_name", un);
-    localStorage.setItem("fc_display_name", fullName);
+    // Also update browser actor state immediately
+    syncStoredActor({ name: un, displayName: fullName });
 
     router.push("/");
     router.refresh();

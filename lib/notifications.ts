@@ -1,4 +1,5 @@
 import { hasCircleAccess } from "@/lib/circle-db";
+import { profileDisplayName } from "@/lib/profile-names";
 import type { Json, Notification, Review } from "@/lib/types";
 
 type NotificationDb = {
@@ -74,12 +75,8 @@ function legacyType(type: NotificationType): string {
   return type;
 }
 
-function fullName(profile: Pick<ProfileRow, "first_name" | "last_name">): string {
-  return `${profile.first_name} ${profile.last_name}`.trim();
-}
-
 export function notificationProfileName(profile: Pick<ProfileRow, "first_name" | "last_name" | "username">): string {
-  return profile.username || fullName(profile);
+  return profile.username || profileDisplayName(profile);
 }
 
 // Expects usernames (profile.username), not display names. Callers must pass username strings;
@@ -100,7 +97,7 @@ async function resolveProfiles(db: NotificationDb, names: string[]): Promise<Map
   }
 
   for (const profile of (data ?? []) as ProfileRow[]) {
-    const namesForProfile = [fullName(profile), profile.username].filter(Boolean);
+    const namesForProfile = [profileDisplayName(profile), profile.username].filter(Boolean);
     for (const name of namesForProfile) {
       if (wanted.has(name)) resolved.set(name, profile);
     }
@@ -474,10 +471,10 @@ export async function createCirclePostNotifications(db: NotificationDb, review: 
     return;
   }
 
-  const reviewerDisplay =
-    reviewerProfile
-      ? `${(reviewerProfile as { first_name: string | null; last_name: string | null }).first_name ?? ""} ${(reviewerProfile as { first_name: string | null; last_name: string | null }).last_name ?? ""}`.trim() || review.reviewer_name
-      : review.reviewer_name;
+  const reviewerDisplay = profileDisplayName(
+    reviewerProfile as { first_name: string | null; last_name: string | null } | null,
+    review.reviewer_name
+  );
 
   const recipients = Array.from(new Set(((data ?? []) as { member_name: string }[]).map((row) => row.member_name)))
     .filter((name) => name && name !== review.reviewer_name);

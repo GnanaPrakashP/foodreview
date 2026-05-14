@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Notification } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { profileDisplayName } from "@/lib/profile-names";
 import { createRouteSupabase, filterValidNotifications, getNotificationViewer, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
 
 type ProfileLookupDb = {
@@ -13,10 +14,6 @@ type ProfileRow = {
   first_name: string | null;
   last_name: string | null;
 };
-
-function displayName(profile: ProfileRow): string {
-  return [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
-}
 
 async function buildNotificationProfileMap(
   fallbackDb: ProfileLookupDb,
@@ -58,7 +55,7 @@ async function buildNotificationProfileMap(
   ]);
 
   for (const profile of ([...(byUsername.data ?? []), ...(byId.data ?? [])] as ProfileRow[])) {
-    const name = displayName(profile);
+    const name = profileDisplayName(profile);
     if (!name) continue;
     if (profile.username) profileMap[profile.username] = name;
     if (profile.id) {

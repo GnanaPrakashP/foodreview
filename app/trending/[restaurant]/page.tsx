@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import { restaurantGradient } from "@/lib/profile";
 import { restaurantLocationLabel } from "@/lib/location";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
+import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,10 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),
   ]);
+  const profileMap = await buildProfileDisplayMap(
+    supabase,
+    displayRestaurantReviews.map((review) => review.reviewer_name)
+  );
 
   // Like counts
   const likeCountMap: Record<string, number> = {};
@@ -124,6 +129,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
         circleRestaurantReviews={circleRestaurantReviews}
         likeCountMap={likeCountMap}
         commentMap={commentMap}
+        profileMap={profileMap}
         circleOnly={circleOnly}
       />
 

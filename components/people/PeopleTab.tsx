@@ -17,6 +17,8 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import { Check, X } from "lucide-react";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { profileDisplayName } from "@/lib/profile-names";
+import { getStoredActorName, setStoredActorName } from "@/lib/browser-actor";
 
 /* ─── Types ─────────────────────────────────────── */
 
@@ -301,7 +303,7 @@ function InviteSection() {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   useEffect(() => {
-    const saved = localStorage.getItem("fc_my_name") ?? "";
+    const saved = getStoredActorName();
     setMyName(saved);
     setNameInput(saved);
   }, []);
@@ -312,7 +314,7 @@ function InviteSection() {
     const name = nameInput.trim();
     if (!name) return;
     setMyName(name);
-    localStorage.setItem("fc_my_name", name);
+    setStoredActorName(name);
   }
 
   function copyLink() {
@@ -528,7 +530,7 @@ export default function PeopleTab({
   }, []);
 
   useEffect(() => {
-    const me = localStorage.getItem("fc_my_name") ?? "";
+    const me = getStoredActorName();
     setMyName(me);
     loadCircleStatus(me);
   }, [loadCircleStatus]);
@@ -678,8 +680,7 @@ export default function PeopleTab({
     const displayNameByUsername = new Map<string, string>();
     for (const p of profileData ?? []) {
       if (p.username) {
-        const dn = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
-        displayNameByUsername.set(p.username, dn || p.username);
+        displayNameByUsername.set(p.username, profileDisplayName(p, p.username));
       }
     }
 

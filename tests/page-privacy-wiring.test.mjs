@@ -73,6 +73,17 @@ test("trending restaurant detail derives post ids only from visible display revi
   assert.match(src, /const reviewIds = displayRestaurantReviews\.map/);
 });
 
+test("trending restaurant detail passes reviewer display names into post cards", () => {
+  const page = source("app/trending/[restaurant]/page.tsx");
+  const client = source("components/trending/RestaurantPostsClient.tsx");
+
+  assert.match(page, /buildProfileDisplayMap\(/);
+  assert.match(page, /displayRestaurantReviews\.map\(\(review\) => review\.reviewer_name\)/);
+  assert.match(page, /profileMap=\{profileMap\}/);
+  assert.match(client, /profileMap\?: Record<string, string>/);
+  assert.match(client, /profileMap=\{profileMap\}/);
+});
+
 test("people profile page filters owner reviews before passing them to the client", () => {
   const src = source("app/people/[username]/page.tsx");
 

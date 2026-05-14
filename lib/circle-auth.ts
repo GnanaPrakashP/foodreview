@@ -1,3 +1,5 @@
+import { profileDisplayName } from "@/lib/profile-names";
+
 type CircleAuthDb = {
   auth: {
     getUser: () => Promise<{ data: { user: { id: string; user_metadata?: Record<string, unknown>; email?: string | null } | null }; error?: unknown }>;
@@ -36,7 +38,7 @@ export async function getAuthenticatedCircleActor(db: CircleAuthDb): Promise<{
   if (!actorName) return null;
 
   const displayName =
-    [p?.first_name, p?.last_name].filter(Boolean).join(" ").trim() ||
+    profileDisplayName(p) ||
     (user.user_metadata?.full_name as string | undefined)?.trim() ||
     (user.user_metadata?.name as string | undefined)?.trim() ||
     actorName;

@@ -8,6 +8,7 @@ interface Props {
   circleRestaurantReviews: Review[];
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
+  profileMap?: Record<string, string>;
   circleOnly?: boolean;
 }
 
@@ -16,6 +17,7 @@ export default function RestaurantPostsClient({
   circleRestaurantReviews,
   likeCountMap,
   commentMap,
+  profileMap = {},
   circleOnly = false,
 }: Props) {
   const shown = circleOnly ? circleRestaurantReviews : restaurantReviews;
@@ -42,6 +44,7 @@ export default function RestaurantPostsClient({
                 review={review}
                 initialLikeCount={likeCountMap[review.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
+                profileMap={profileMap}
               />
             );
           })

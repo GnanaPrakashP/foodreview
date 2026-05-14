@@ -11,6 +11,7 @@ import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { cachedJson, primeCachedJson, invalidateCachedJson } from "@/lib/browser-api-cache";
 import { invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import ConfirmModal from "@/components/ui/ConfirmModal";
+import { resolveActorName } from "@/lib/browser-actor";
 
 interface Props {
   allReviews: Review[];
@@ -101,8 +102,7 @@ export default function CircleFeedClient({
       nextCursor: initialNextCursor,
     }, 3 * 60 * 1000);
 
-    const name = initialMyName || localStorage.getItem("fc_my_name") || "";
-    if (name) localStorage.setItem("fc_my_name", name);
+    const name = resolveActorName(initialMyName);
     setMyName(name);
     // When server already provided authenticated identity + circle data,
     // trust that snapshot to avoid client-side status drift hiding posts.

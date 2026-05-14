@@ -22,6 +22,12 @@ function loadCircleAuthModule() {
     module: mod,
     exports: mod.exports,
     require(id) {
+      if (id === "@/lib/profile-names") {
+        return {
+          profileDisplayName: (profile, fallback = "") =>
+            [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || fallback,
+        };
+      }
       throw new Error(`Unexpected require in circle-auth tests: ${id}`);
     },
   });

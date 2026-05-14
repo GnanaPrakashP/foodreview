@@ -108,6 +108,12 @@ function loadRoute({
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/types") return {};
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => admin };
+      if (id === "@/lib/profile-names") {
+        return {
+          profileDisplayName: (profile, fallback = "") =>
+            [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || fallback,
+        };
+      }
       if (id === "@/lib/notifications") return notificationFns;
       if (id.endsWith("_utils")) {
         return {

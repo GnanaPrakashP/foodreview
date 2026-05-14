@@ -2,6 +2,7 @@ import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE, normalizeAccountType } from "@/lib/circle";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
 import { filterGlobalTrendingReviews } from "@/lib/visibility";
+import { profileDisplayName } from "@/lib/profile-names";
 
 const PEOPLE_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -89,8 +90,7 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promi
   for (const profile of profileRows) {
     if (profile.username) {
       profileAccountTypes.set(profile.username, normalizeAccountType(profile.account_type));
-      const dn = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
-      displayNameMap.set(profile.username, dn || profile.username);
+      displayNameMap.set(profile.username, profileDisplayName(profile, profile.username));
     }
   }
 

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import { syncStoredActor } from "@/lib/browser-actor";
 import { createClient } from "@/lib/supabase/client";
 
-// Syncs the logged-in user's display name into localStorage so the
-// rest of the app (which reads fc_my_name) knows who the current user is.
+// Syncs the logged-in user's identity into browser actor state so older
+// client-only flows know who the current user is.
 export default function AuthSync() {
   useEffect(() => {
     const supabase = createClient();
@@ -12,8 +13,7 @@ export default function AuthSync() {
     function syncUser(meta: Record<string, unknown>, email: string | null | undefined) {
       const username = (meta.username as string) || email?.split("@")[0] || "";
       const displayName = (meta.full_name as string) || (meta.name as string) || "";
-      if (username) localStorage.setItem("fc_my_name", username);
-      if (displayName) localStorage.setItem("fc_display_name", displayName);
+      syncStoredActor({ name: username, displayName });
     }
 
     async function sync() {

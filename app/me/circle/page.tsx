@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Users } from "lucide-react";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
+import { profileDisplayName } from "@/lib/profile-names";
+import { getStoredActorName } from "@/lib/browser-actor";
 import { createClient } from "@/lib/supabase/client";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE, accountTypeLabel } from "@/lib/circle";
@@ -23,7 +25,7 @@ export default function MyCirclePage() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const name = localStorage.getItem("fc_my_name") ?? "";
+    const name = getStoredActorName();
     if (!name) { setMounted(true); return; }
 
     (async () => {
@@ -55,8 +57,7 @@ export default function MyCirclePage() {
 
       const displayNames = new Map<string, string>();
       for (const profile of profiles ?? []) {
-        const displayName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
-        displayNames.set(profile.username, displayName || profile.username);
+        displayNames.set(profile.username, profileDisplayName(profile, profile.username));
       }
 
       setMembers(memberNames.map(n => ({

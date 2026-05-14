@@ -7,6 +7,7 @@ import { ArrowLeft, Check, X } from "lucide-react";
 import type { Json, Notification } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 function effectiveDate(notification: Notification): string {
   return notification.updated_at || notification.created_at;
@@ -87,7 +88,7 @@ export default function NotificationsClient() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    setMyName(localStorage.getItem("fc_my_name") ?? "");
+    setMyName(getStoredActorName());
     loadNotifications();
 
     const onFocus = () => loadNotifications();

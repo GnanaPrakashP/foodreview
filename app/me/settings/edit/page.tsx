@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { getStoredActorName, setStoredActorName } from "@/lib/browser-actor";
 
 export default function EditProfilePage() {
   const router = useRouter();
@@ -10,14 +11,14 @@ export default function EditProfilePage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setName(localStorage.getItem("fc_my_name") ?? "");
+    setName(getStoredActorName());
   }, []);
 
   function save() {
     const trimmed = name.trim();
     if (!trimmed) return;
     setSaving(true);
-    localStorage.setItem("fc_my_name", trimmed);
+    setStoredActorName(trimmed);
     router.push("/me/settings");
   }
 

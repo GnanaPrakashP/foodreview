@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { profileDisplayMapFromRows } from "@/lib/profile-names";
 
 type ProfileLookupDb = {
   from: (table: string) => any;
@@ -9,10 +10,6 @@ type ProfileDisplayRow = {
   first_name: string | null;
   last_name: string | null;
 };
-
-function profileDisplayName(profile: ProfileDisplayRow): string {
-  return [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
-}
 
 export async function buildProfileDisplayMap(
   fallbackDb: ProfileLookupDb,
@@ -34,12 +31,5 @@ export async function buildProfileDisplayMap(
     .select("username, first_name, last_name")
     .in("username", usernames);
 
-  for (const profile of (data ?? []) as ProfileDisplayRow[]) {
-    if (!profile.username) continue;
-    const displayName = profileDisplayName(profile);
-    if (displayName) profileMap[profile.username] = displayName;
-  }
-
-  return profileMap;
+  return profileDisplayMapFromRows((data ?? []) as ProfileDisplayRow[]);
 }
-

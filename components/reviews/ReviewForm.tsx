@@ -9,6 +9,7 @@ import { getVisitPrompt } from "@/lib/visits";
 import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-react";
 import type { Visibility } from "@/lib/types";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -196,9 +197,7 @@ function DishRow({
 export default function ReviewForm() {
   const router = useRouter();
 
-  const [reviewerName] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("fc_my_name") ?? "" : ""
-  );
+  const [reviewerName] = useState(() => getStoredActorName());
   const [restaurantName, setRestaurantName] = useState("");
   const [restaurantId, setRestaurantId] = useState<string | null>(null);
   const [restaurantArea, setRestaurantArea] = useState<string | null>(null);

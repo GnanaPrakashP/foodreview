@@ -7,6 +7,7 @@ import { computeGapSuggestions, type GapSuggestion } from "@/lib/discovery";
 import { isWishlisted, toggleWishlist } from "@/lib/wishlist";
 import { buildMyDishMap, buildAllDishMap, getRegulars, getMenuExplorers } from "@/lib/visits";
 import { restaurantGradient } from "@/lib/profile";
+import { clearStoredActor, getStoredActorName, setStoredActorName } from "@/lib/browser-actor";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -178,7 +179,7 @@ function NameSetup({ onSet }: { onSet: (name: string) => void }) {
   function save() {
     const n = input.trim();
     if (!n) return;
-    localStorage.setItem("fc_my_name", n);
+    setStoredActorName(n);
     onSet(n);
   }
   return (
@@ -220,7 +221,7 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
 
   useEffect(() => {
     setMounted(true);
-    setMyName(localStorage.getItem("fc_my_name") ?? null);
+    setMyName(getStoredActorName() || null);
   }, []);
 
   // All hooks must run unconditionally — before any early returns
@@ -295,7 +296,7 @@ export default function MyListClient({ allReviews }: { allReviews: Review[] }) {
           </p>
         </div>
         <button
-          onClick={() => { localStorage.removeItem("fc_my_name"); setMyName(null); }}
+          onClick={() => { clearStoredActor(); setMyName(null); }}
           style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "11px", cursor: "pointer" }}
         >
           Not you?

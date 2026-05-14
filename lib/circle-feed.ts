@@ -6,6 +6,7 @@ import { rankCircleFeedReviews } from "@/lib/feed-ranking";
 import { filterCircleTrendingReviews } from "@/lib/visibility";
 import { CIRCLE_FEED_MAX_PAGE_SIZE, CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
+import { buildProfileDisplayMap } from "@/lib/profile-display";
 
 type FeedDb = {
   auth: {
@@ -304,21 +305,7 @@ async function loadCircleFeedPageForNames(
     commentMap,
   });
 
-  // Build profileMap: username → display name for all reviewers in this page
-  const reviewerUsernames = Array.from(new Set(allReviews.map((r) => r.reviewer_name).filter(Boolean)));
-  const profileMap: Record<string, string> = {};
-  if (reviewerUsernames.length > 0) {
-    const { data: reviewerProfiles } = await readDb
-      .from("profiles")
-      .select("username, first_name, last_name")
-      .in("username", reviewerUsernames);
-    for (const p of (reviewerProfiles ?? []) as { username: string; first_name: string | null; last_name: string | null }[]) {
-      if (p.username) {
-        const dn = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-        if (dn) profileMap[p.username] = dn;
-      }
-    }
-  }
+  const profileMap = await buildProfileDisplayMap(readDb, allReviews.map((r) => r.reviewer_name));
 
   const visitCounts = new Map<string, number>();
   for (const review of allReviews) {

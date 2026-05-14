@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import type { Review } from "@/lib/types";
 import { computeCircleGap } from "@/lib/discovery";
 import { isWishlisted, addToWishlist } from "@/lib/wishlist";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 const DISMISSED_KEY = "fc_dismissed_circle_gaps";
 
@@ -62,7 +63,7 @@ export default function CircleGapBanner({ allReviews }: { allReviews: Review[] }
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const myName = localStorage.getItem("fc_my_name");
+    const myName = getStoredActorName();
     if (!myName) return;
 
     const result = computeCircleGap(myName, allReviews);

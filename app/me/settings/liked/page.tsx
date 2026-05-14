@@ -6,6 +6,7 @@ import { ArrowLeft, Heart } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Comment, Review } from "@/lib/types";
+import { getStoredActorName } from "@/lib/browser-actor";
 
 type LikedRow = {
   post_id: string;
@@ -24,7 +25,7 @@ export default function LikedPostsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const myName = localStorage.getItem("fc_my_name") ?? "";
+    const myName = getStoredActorName();
     if (!myName) { setLoading(false); return; }
 
     const supabase = createClient();
