@@ -100,6 +100,7 @@ export default function ReviewDetailClient({
 
     invalidateCachedJson("/api/me");
     invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/feed/public");
     router.replace("/me");
     router.refresh();
   }

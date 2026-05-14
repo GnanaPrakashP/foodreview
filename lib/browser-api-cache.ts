@@ -7,6 +7,11 @@ type CacheEntry<T> = {
 
 const memoryCache = new Map<string, CacheEntry<unknown>>();
 const pendingRequests = new Map<string, Promise<unknown>>();
+const reloadBypassKeys = new Set<string>();
+
+type CachedJsonOptions = {
+  bypassOnReload?: boolean;
+};
 
 function storageKey(key: string) {
   return `fc_api_cache:${key}`;
@@ -32,15 +37,34 @@ function writeSession<T>(key: string, entry: CacheEntry<T>) {
   }
 }
 
-export async function cachedJson<T>(url: string, ttlMs: number): Promise<T> {
-  const now = Date.now();
-  const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
-  if (memory && memory.expiresAt > now) return memory.value;
+function isDocumentReload() {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return navigation?.type === "reload";
+  } catch {
+    return false;
+  }
+}
 
-  const session = readSession<T>(url);
-  if (session && session.expiresAt > now) {
-    memoryCache.set(url, session);
-    return session.value;
+function shouldBypassStoredCache(url: string, options?: CachedJsonOptions) {
+  if (!options?.bypassOnReload || !isDocumentReload() || reloadBypassKeys.has(url)) return false;
+  reloadBypassKeys.add(url);
+  return true;
+}
+
+export async function cachedJson<T>(url: string, ttlMs: number, options?: CachedJsonOptions): Promise<T> {
+  const now = Date.now();
+  const bypassStoredCache = shouldBypassStoredCache(url, options);
+
+  if (!bypassStoredCache) {
+    const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
+    if (memory && memory.expiresAt > now) return memory.value;
+
+    const session = readSession<T>(url);
+    if (session && session.expiresAt > now) {
+      memoryCache.set(url, session);
+      return session.value;
+    }
   }
 
   const pending = pendingRequests.get(url) as Promise<T> | undefined;

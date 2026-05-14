@@ -200,6 +200,7 @@ export default function CircleFeedCard({
 
     invalidateCachedJson("/api/me");
     invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/feed/public");
 
     if (onDeleted) {
       onDeleted(review);

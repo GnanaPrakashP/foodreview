@@ -184,11 +184,11 @@ export default function CircleFeedClient({
       if (myName) params.set("viewer", myName);
       if (cursor) params.set("cursor", JSON.stringify(cursor));
       const url = `/api/feed/public?${params}`;
-      // Use cachedJson for the first page (cursor=null) so sessionStorage serves it on reload.
-      // Subsequent "load more" pages are always fresh (cursor present).
+      // Use cachedJson for the first page during normal navigation. A browser reload
+      // bypasses the stored value once so deleted posts do not reappear from sessionStorage.
       const data = cursor
         ? await fetch(url, { cache: "no-store" }).then((r) => r.json())
-        : await cachedJson(url, PUBLIC_FEED_TTL_MS);
+        : await cachedJson(url, PUBLIC_FEED_TTL_MS, { bypassOnReload: true });
       if (data?.error) throw new Error(data.error);
 
       setPublicReviews((current) => {

@@ -18,3 +18,7 @@ test("circle feed still fetches circle status when only local storage identity e
   assert.match(source, /setCircle\(data\.members \?\? \[\]\)/);
   assert.match(source, /setMutualCircle\(data\.mutualMembers \?\? \[\]\)/);
 });
+
+test("public feed bypasses browser session cache once on browser reload", () => {
+  assert.match(source, /cachedJson\(url,\s*PUBLIC_FEED_TTL_MS,\s*\{\s*bypassOnReload:\s*true\s*\}\)/);
+});
