@@ -555,6 +555,12 @@ create index if not exists notifications_recipient_created_idx
 create index if not exists notifications_recipient_read_idx
   on public.notifications(recipient_user_id, is_read)
   where deleted_at is null;
+create index if not exists notifications_recipient_user_unread_idx
+  on public.notifications(recipient_user_id, is_read, read)
+  where deleted_at is null;
+create index if not exists notifications_recipient_name_unread_idx
+  on public.notifications(recipient_name, is_read, read)
+  where deleted_at is null;
 create index if not exists notifications_actor_idx
   on public.notifications(actor_user_id);
 create index if not exists notifications_type_idx

@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
     const postIds = reviews.map((r) => r.id);
     const restaurantNames = [...new Set(reviews.map((r) => r.restaurant_name))];
 
-    const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }] = postIds.length > 0
+    const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = postIds.length > 0
       ? await Promise.all([
           db.from("likes").select("post_id, user_name").in("post_id", postIds),
           db
@@ -107,8 +107,9 @@ export async function GET(req: NextRequest) {
                 .eq("user_name", myName)
                 .in("restaurant_name", restaurantNames)
             : Promise.resolve({ data: [] }),
+          Promise.resolve().then(() => buildProfileDisplayMap(db, reviews.map((r) => r.reviewer_name))),
         ])
-      : [{ data: [] }, { data: [] }, { data: [] }];
+      : [{ data: [] }, { data: [] }, { data: [] }, {}];
 
     const likeCountMap: Record<string, number> = {};
     const likedByMeMap: Record<string, boolean> = {};
@@ -132,8 +133,6 @@ export async function GET(req: NextRequest) {
         ex.count++;
       }
     }
-
-    const profileMap = await buildProfileDisplayMap(db, reviews.map((r) => r.reviewer_name));
 
     return NextResponse.json({
       reviews,

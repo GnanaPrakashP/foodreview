@@ -7,12 +7,31 @@ import { filterGlobalTrendingReviews } from "@/lib/visibility";
 
 export const revalidate = 300;
 
+const DISH_REVIEW_SELECT = [
+  "id",
+  "restaurant_name",
+  "reviewer_name",
+  "items",
+  "body",
+  "visibility",
+  "created_at",
+  "deleted_at",
+  "hidden_at",
+  "reported_at",
+  "status",
+].join(", ");
+
 export default async function DishesPage() {
   const supabase = await createClient();
 
   const { data: reviews } = await supabase
     .from("reviews")
-    .select("id, restaurant_name, reviewer_name, items, body, visibility, created_at")
+    .select(DISH_REVIEW_SELECT)
+    .eq("visibility", "public")
+    .is("deleted_at", null)
+    .is("hidden_at", null)
+    .is("reported_at", null)
+    .eq("status", "active")
     .order("created_at", { ascending: false })
     .limit(500)
     .returns<Review[]>();

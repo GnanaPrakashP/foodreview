@@ -9,6 +9,19 @@ type ProfileRow = {
   username: string | null;
 };
 
+const COMMON_RESTAURANT_REVIEW_SELECT = [
+  "reviewer_name",
+  "restaurant_id",
+  "restaurant_name",
+  "photo_url",
+  "photo_urls",
+  "visibility",
+  "deleted_at",
+  "hidden_at",
+  "reported_at",
+  "status",
+].join(", ");
+
 interface Props {
   params: Promise<{ targetUserId: string }>;
 }
@@ -65,8 +78,12 @@ export async function GET(_req: NextRequest, { params }: Props) {
     hasCircleAccess(supabase, viewerName, targetName),
     supabase
       .from("reviews")
-      .select("*")
+      .select(COMMON_RESTAURANT_REVIEW_SELECT)
       .in("reviewer_name", [viewerName, targetName])
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active")
       .returns<Review[]>(),
   ]);
 

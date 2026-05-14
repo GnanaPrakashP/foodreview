@@ -68,6 +68,7 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promi
       .eq("visibility", "public")
       .is("deleted_at", null)
       .is("hidden_at", null)
+      .is("reported_at", null)
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(2000),

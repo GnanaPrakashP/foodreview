@@ -252,8 +252,14 @@ test("unread count: filters stale unread rows before counting badge total", asyn
   assert.equal(status(res), 200);
   assert.equal(body(res).unreadCount, 1);
   assert.deepEqual(filterCalls, [["valid", "stale"]]);
-  assert.equal(opArgs(db._calls[0], "select")[0], "*");
-  assert.equal(opArgs(db._calls[1], "select")[0], "*");
+  assert.match(opArgs(db._calls[0], "select")[0], /id/);
+  assert.doesNotMatch(opArgs(db._calls[0], "select")[0], /\*/);
+  assert.equal(eqFilters(db._calls[0]).is_read, false);
+  assert.equal(eqFilters(db._calls[0]).read, false);
+  assert.match(opArgs(db._calls[1], "select")[0], /metadata/);
+  assert.doesNotMatch(opArgs(db._calls[1], "select")[0], /\*/);
+  assert.equal(eqFilters(db._calls[1]).is_read, false);
+  assert.equal(eqFilters(db._calls[1]).read, false);
 });
 
 test("unread count: matches client read-state logic across is_read and legacy read flags", async () => {
@@ -374,6 +380,8 @@ test("unread count: legacy schema path (42703 error) passes rows through filterV
   assert.equal(status(res), 200);
   // "stale" removed by filter, "read-notif" excluded by isUnread, only "unread" counted
   assert.equal(body(res).unreadCount, 1);
+  assert.doesNotMatch(opArgs(db._calls[2], "select")[0], /metadata|is_read|deleted_at/);
+  assert.match(opArgs(db._calls[2], "select")[0], /read/);
 });
 
 test("notification list: profileMap is empty object when there are no notifications", async () => {

@@ -107,6 +107,13 @@ test("schema: reviews have an index for stored restaurant coordinates", () => {
   assert.match(placeDetailsMigration, /on public\.reviews\s*\(\s*restaurant_lat\s*,\s*restaurant_lng\s*\)/i);
 });
 
+test("schema: notifications have unread badge indexes for user id and username recipients", () => {
+  assert.match(schema, /notifications_recipient_user_unread_idx/i);
+  assert.match(schema, /on public\.notifications\s*\(\s*recipient_user_id\s*,\s*is_read\s*,\s*read\s*\)/i);
+  assert.match(schema, /notifications_recipient_name_unread_idx/i);
+  assert.match(schema, /on public\.notifications\s*\(\s*recipient_name\s*,\s*is_read\s*,\s*read\s*\)/i);
+});
+
 // ── LIKES ──────────────────────────────────────────────────────────────────────
 
 test("schema: old open likes INSERT policy is dropped", () => {

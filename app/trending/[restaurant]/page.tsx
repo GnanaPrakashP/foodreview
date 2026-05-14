@@ -12,6 +12,27 @@ import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "
 
 export const dynamic = "force-dynamic";
 
+const REVIEW_SELECT = [
+  "id",
+  "reviewer_name",
+  "restaurant_id",
+  "restaurant_name",
+  "area",
+  "restaurant_address",
+  "restaurant_lat",
+  "restaurant_lng",
+  "items",
+  "body",
+  "photo_url",
+  "photo_urls",
+  "visibility",
+  "created_at",
+  "deleted_at",
+  "hidden_at",
+  "reported_at",
+  "status",
+].join(", ");
+
 interface Props {
   params: Promise<{ restaurant: string }>;
   searchParams: Promise<{ circle?: string }>;
@@ -32,13 +53,18 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
     supabase.auth.getUser(),
     supabase
       .from("reviews")
-      .select("*")
+      .select(REVIEW_SELECT)
+      .eq("restaurant_name", restaurantName)
+      .eq("visibility", "public")
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active")
       .order("created_at", { ascending: false })
-      .limit(500)
       .returns<Review[]>(),
   ]);
 
-  const reviews = allReviews ?? [];
+  const restaurantScopedReviews = allReviews ?? [];
   const myName = (user?.user_metadata?.username as string) ?? "";
 
   // Fetch circle members for the current user before filtering; the server
@@ -49,20 +75,18 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
     joinedCircles = relationships.joinedCircles;
   }
 
-  const visibleRankReviews = filterGlobalTrendingReviews(reviews);
-  const circleRankReviews = filterPublicCircleTrendingReviews(visibleRankReviews, {
+  const restaurantReviews = filterGlobalTrendingReviews(restaurantScopedReviews);
+  const circleRestaurantReviews = filterPublicCircleTrendingReviews(restaurantReviews, {
     viewerName: myName,
     circleOwnerNames: joinedCircles,
   });
-  const restaurantReviews = visibleRankReviews.filter((r) => r.restaurant_name === restaurantName);
-  const circleRestaurantReviews = circleRankReviews.filter((r) => r.restaurant_name === restaurantName);
   const displayRestaurantReviews = circleOnly ? circleRestaurantReviews : restaurantReviews;
 
   if (displayRestaurantReviews.length === 0) notFound();
 
   const reviewIds = displayRestaurantReviews.map((r) => r.id);
 
-  const [{ data: rawLikes }, { data: rawComments }] = await Promise.all([
+  const [{ data: rawLikes }, { data: rawComments }, profileMap] = await Promise.all([
     supabase.from("likes").select("post_id").in("post_id", reviewIds),
     supabase
       .from("comments")
@@ -70,11 +94,11 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
       .in("post_id", reviewIds)
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),
+    buildProfileDisplayMap(
+      supabase,
+      displayRestaurantReviews.map((review) => review.reviewer_name)
+    ),
   ]);
-  const profileMap = await buildProfileDisplayMap(
-    supabase,
-    displayRestaurantReviews.map((review) => review.reviewer_name)
-  );
 
   // Like counts
   const likeCountMap: Record<string, number> = {};

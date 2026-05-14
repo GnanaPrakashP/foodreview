@@ -36,9 +36,26 @@ test("global trending computes rankings from public filtered reviews only", () =
 test("dishes page computes dish stats from public filtered reviews only", () => {
   const src = source("app/dishes/page.tsx");
 
+  assert.match(src, /const DISH_REVIEW_SELECT = \[/);
+  assert.match(src, /\.eq\("visibility", "public"\)/);
+  assert.match(src, /\.is\("deleted_at", null\)/);
+  assert.match(src, /\.is\("hidden_at", null\)/);
+  assert.match(src, /\.is\("reported_at", null\)/);
+  assert.match(src, /\.eq\("status", "active"\)/);
   assert.match(src, /filterGlobalTrendingReviews\(reviews \?\? \[\]\)\.map/);
   assert.match(src, /getPopularDishes\(slim\)/);
   assert.match(src, /<DishSearch reviews=\{slim\} popularDishes=\{popularDishes\}/);
+});
+
+test("common restaurants API selects only fields needed for comparison", () => {
+  const src = source("app/api/users/[targetUserId]/common-restaurants/route.ts");
+
+  assert.match(src, /const COMMON_RESTAURANT_REVIEW_SELECT = \[/);
+  assert.doesNotMatch(src, /\.select\("\*"\)/);
+  assert.match(src, /\.in\("reviewer_name", \[viewerName, targetName\]\)/);
+  assert.match(src, /\.is\("deleted_at", null\)/);
+  assert.match(src, /\.is\("hidden_at", null\)/);
+  assert.match(src, /\.is\("reported_at", null\)/);
 });
 
 test("Circle destructive actions use in-app confirmation modal before mutating state", () => {
@@ -67,8 +84,12 @@ test("people profile shows incoming request card with name and accept/reject act
 test("trending restaurant detail derives post ids only from visible display reviews", () => {
   const src = source("app/trending/[restaurant]/page.tsx");
 
-  assert.match(src, /const visibleRankReviews = filterGlobalTrendingReviews\(reviews\)/);
-  assert.match(src, /const circleRankReviews = filterPublicCircleTrendingReviews\(visibleRankReviews,/);
+  assert.match(src, /\.eq\("restaurant_name", restaurantName\)/);
+  assert.match(src, /\.eq\("visibility", "public"\)/);
+  assert.match(src, /\.is\("deleted_at", null\)/);
+  assert.doesNotMatch(src, /\.limit\(500\)/);
+  assert.match(src, /const restaurantReviews = filterGlobalTrendingReviews\(restaurantScopedReviews\)/);
+  assert.match(src, /const circleRestaurantReviews = filterPublicCircleTrendingReviews\(restaurantReviews,/);
   assert.match(src, /const displayRestaurantReviews = circleOnly \? circleRestaurantReviews : restaurantReviews/);
   assert.match(src, /const reviewIds = displayRestaurantReviews\.map/);
 });

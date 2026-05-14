@@ -260,7 +260,7 @@ async function loadCircleFeedPageForNames(
   const postIds = allReviews.map((review) => review.id);
   const restaurantNames = [...new Set(allReviews.map((review) => review.restaurant_name))];
 
-  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }] = postIds.length > 0
+  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = postIds.length > 0
     ? await Promise.all([
         readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
         readDb
@@ -275,8 +275,9 @@ async function loadCircleFeedPageForNames(
               .eq("user_name", myName)
               .in("restaurant_name", restaurantNames)
           : Promise.resolve({ data: [] }),
+        Promise.resolve().then(() => buildProfileDisplayMap(readDb, allReviews.map((r) => r.reviewer_name))),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, {}];
 
   const likeCountMap: Record<string, number> = {};
   const likedByMeMap: Record<string, boolean> = {};
@@ -304,8 +305,6 @@ async function loadCircleFeedPageForNames(
     likeCountMap,
     commentMap,
   });
-
-  const profileMap = await buildProfileDisplayMap(readDb, allReviews.map((r) => r.reviewer_name));
 
   const visitCounts = new Map<string, number>();
   for (const review of allReviews) {
