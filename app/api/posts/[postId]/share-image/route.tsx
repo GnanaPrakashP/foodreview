@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import sharp from "sharp";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_SELECT } from "@/lib/selects";
 import type { FoodItem, Review } from "@/lib/types";
@@ -30,11 +31,17 @@ const GRADIENTS: [string, string][] = [
   ["#14B8A6", "#0F766E"],
 ];
 
-const SHARE_IMAGE_WIDTH = 560;
-const SHARE_IMAGE_PADDING = 16;
-const CARD_HORIZONTAL_PADDING = 44;
-const CARD_CONTENT_WIDTH = SHARE_IMAGE_WIDTH - SHARE_IMAGE_PADDING * 2 - CARD_HORIZONTAL_PADDING;
-const FOOTER_HEIGHT = 54;
+const DEFAULT_SHARE_IMAGE_WIDTH = 560;
+const MIN_SHARE_IMAGE_WIDTH = 320;
+const MAX_SHARE_IMAGE_WIDTH = 720;
+const SHARE_IMAGE_PADDING = 14;
+const CARD_HORIZONTAL_PADDING = 40;
+const FOOTER_HEIGHT = 48;
+
+function clampShareImageWidth(width: number | null): number {
+  if (!width || Number.isNaN(width)) return DEFAULT_SHARE_IMAGE_WIDTH;
+  return Math.min(MAX_SHARE_IMAGE_WIDTH, Math.max(MIN_SHARE_IMAGE_WIDTH, Math.round(width)));
+}
 
 function avatarColors(name: string): [string, string] {
   let h = 0;
@@ -57,7 +64,12 @@ function estimateTextLines(str: string | null, charsPerLine: number, maxLines: n
   return Math.max(1, Math.min(maxLines, Math.ceil(str.length / charsPerLine)));
 }
 
-function estimateItemRows(items: FoodItem[]): number {
+function responsiveChars(baseChars: number, contentWidth: number, minChars: number): number {
+  const defaultContentWidth = DEFAULT_SHARE_IMAGE_WIDTH - SHARE_IMAGE_PADDING * 2 - CARD_HORIZONTAL_PADDING;
+  return Math.max(minChars, Math.round(baseChars * (contentWidth / defaultContentWidth)));
+}
+
+function estimateItemRows(items: FoodItem[], contentWidth: number): number {
   if (items.length === 0) return 0;
 
   let rows = 1;
@@ -68,7 +80,7 @@ function estimateItemRows(items: FoodItem[]): number {
     const chipWidth = Math.min(220, 28 + trunc(item.name, 28).length * 7 + ratingWidth);
     const nextWidth = rowWidth === 0 ? chipWidth : rowWidth + 6 + chipWidth;
 
-    if (nextWidth > CARD_CONTENT_WIDTH) {
+    if (nextWidth > contentWidth) {
       rows += 1;
       rowWidth = chipWidth;
     } else {
@@ -94,10 +106,13 @@ async function loadGoogleFont(family: string, weight: number): Promise<ArrayBuff
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ postId: string }> },
 ) {
   const { postId } = await params;
+  const requestedWidth = Number(new URL(request.url).searchParams.get("w"));
+  const shareImageWidth = clampShareImageWidth(requestedWidth);
+  const cardContentWidth = shareImageWidth - SHARE_IMAGE_PADDING * 2 - CARD_HORIZONTAL_PADDING;
   const db = createAdminClient();
 
   const [{ data: review }, syne700, dmSans400, dmSans700] = await Promise.all([
@@ -130,17 +145,17 @@ export async function GET(
   const caption = captionRaw
     ? captionRaw.length > 160 ? captionRaw.slice(0, 157) + "..." : captionRaw
     : null;
-  const titleLines = estimateTextLines(trunc(restaurantName, 48), 36, 2);
-  const locationLines = estimateTextLines(location ? trunc(location, 72) : null, 58, 2);
-  const captionLines = estimateTextLines(caption, 64, 3);
-  const itemRows = estimateItemRows(items);
+  const titleLines = estimateTextLines(trunc(restaurantName, 48), responsiveChars(36, cardContentWidth, 20), 2);
+  const locationLines = estimateTextLines(location ? trunc(location, 72) : null, responsiveChars(58, cardContentWidth, 30), 2);
+  const captionLines = estimateTextLines(caption, responsiveChars(64, cardContentWidth, 34), 3);
+  const itemRows = estimateItemRows(items, cardContentWidth);
   const cardHeight =
-    40 + // card vertical padding
-    50 + // header and spacing
-    titleLines * 26 +
-    (location ? 6 + locationLines * 15 + 10 : 10) +
-    (caption ? 16 + captionLines * 20 + 10 : 0) +
-    (items.length > 0 ? itemRows * 24 + (itemRows - 1) * 6 + 10 : 0) +
+    36 + // card vertical padding
+    46 + // header and spacing
+    titleLines * 25 +
+    (location ? 5 + locationLines * 14 + 8 : 8) +
+    (caption ? 14 + captionLines * 19 + 8 : 0) +
+    (items.length > 0 ? itemRows * 22 + (itemRows - 1) * 5 + 8 : 0) +
     FOOTER_HEIGHT;
   const imageHeight = Math.ceil(cardHeight + SHARE_IMAGE_PADDING * 2 + 2);
 
@@ -152,14 +167,14 @@ export async function GET(
   if (dmSans400) fonts.push({ name: "DM Sans", data: dmSans400, weight: 400, style: "normal" });
   if (dmSans700) fonts.push({ name: "DM Sans", data: dmSans700, weight: 700, style: "normal" });
 
-  return new ImageResponse(
+  const imageResponse = new ImageResponse(
     (
       <div
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "flex-start",
-          width: `${SHARE_IMAGE_WIDTH}px`,
+          width: `${shareImageWidth}px`,
           height: `${imageHeight}px`,
           background: `
             radial-gradient(circle at 18% 0%, rgba(240,96,48,0.18), transparent 34%),
@@ -180,9 +195,9 @@ export async function GET(
             backdropFilter: "blur(18px)",
             border: `1px solid ${C.glassLine}`,
             borderTop: "1px solid rgba(255,255,255,0.18)",
-            borderRadius: "24px",
+            borderRadius: "22px",
             overflow: "hidden",
-            padding: "20px 22px",
+            padding: "18px 20px",
             boxShadow: `
               0 18px 46px rgba(0,0,0,0.36),
               inset 0 1px 0 rgba(255,255,255,0.10),
@@ -192,17 +207,17 @@ export async function GET(
         >
 
           {/* Header: avatar + "Name shared a spot" */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "9px", marginBottom: "12px" }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: "36px",
-                height: "36px",
-                borderRadius: "12px",
+                width: "34px",
+                height: "34px",
+                borderRadius: "11px",
                 background: `linear-gradient(135deg, ${gradFrom}, ${gradTo})`,
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 700,
                 color: "white",
                 flexShrink: 0,
@@ -225,11 +240,11 @@ export async function GET(
           {/* Restaurant name */}
           <div
             style={{
-              fontSize: "22px",
+              fontSize: "21px",
               fontWeight: 700,
               color: C.cream,
               lineHeight: "1.15",
-              marginBottom: location ? "6px" : "10px",
+              marginBottom: location ? "5px" : "8px",
               fontFamily: syneFamily,
             }}
           >
@@ -238,7 +253,7 @@ export async function GET(
 
           {/* Location */}
           {location && (
-            <div style={{ display: "flex", fontSize: "12px", color: C.muted, marginBottom: "10px", fontFamily: dmSansFamily }}>
+            <div style={{ display: "flex", fontSize: "12px", color: C.muted, marginBottom: "8px", fontFamily: dmSansFamily }}>
               {trunc(location, 72)}
             </div>
           )}
@@ -248,17 +263,17 @@ export async function GET(
             <div
               style={{
                 display: "flex",
-                padding: "8px 10px",
+                padding: "7px 9px",
                 background: "rgba(240,96,48,0.13)",
                 borderLeft: `3px solid ${C.orange}`,
                 borderTop: "1px solid rgba(255,255,255,0.06)",
                 borderRight: "1px solid rgba(240,96,48,0.12)",
                 borderBottom: "1px solid rgba(240,96,48,0.10)",
                 borderRadius: "0 8px 8px 0",
-                marginBottom: "10px",
+                marginBottom: "8px",
               }}
             >
-              <div style={{ fontSize: "13px", color: C.cream, lineHeight: 1.5, fontFamily: dmSansFamily }}>
+              <div style={{ fontSize: "13px", color: C.cream, lineHeight: 1.45, fontFamily: dmSansFamily }}>
                 {caption}
               </div>
             </div>
@@ -266,18 +281,18 @@ export async function GET(
 
           {/* Items */}
           {items.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "8px" }}>
               {items.map((item, i) => (
                 <div
                   key={i}
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: "5px",
+                    gap: "4px",
                     background: "rgba(26,20,16,0.62)",
                     border: "1px solid rgba(245,237,216,0.09)",
-                    borderRadius: "8px",
-                    padding: "4px 8px",
+                    borderRadius: "7px",
+                    padding: "3px 7px",
                     fontSize: "11px",
                     color: C.cream,
                     fontFamily: dmSansFamily,
@@ -313,8 +328,8 @@ export async function GET(
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              gap: "14px",
-              paddingTop: "12px",
+              gap: "12px",
+              paddingTop: "10px",
               borderTop: "1px solid rgba(245,237,216,0.10)",
             }}
           >
@@ -330,8 +345,8 @@ export async function GET(
               style={{
                 display: "flex",
                 alignItems: "center",
-                height: "28px",
-                padding: "0 10px",
+                height: "26px",
+                padding: "0 9px",
                 background: "rgba(240,96,48,0.13)",
                 border: "1px solid rgba(240,96,48,0.26)",
                 borderRadius: "999px",
@@ -350,6 +365,19 @@ export async function GET(
         </div>
       </div>
     ),
-    { width: SHARE_IMAGE_WIDTH, height: imageHeight, fonts },
+    { width: shareImageWidth, height: imageHeight, fonts },
   );
+
+  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  const sharpenedImage = await sharp(imageBuffer)
+    .sharpen({ sigma: 0.35 })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+
+  return new Response(new Uint8Array(sharpenedImage), {
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
+    },
+  });
 }

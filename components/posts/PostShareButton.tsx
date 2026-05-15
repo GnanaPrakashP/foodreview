@@ -24,7 +24,11 @@ export default function PostShareButton({ review }: Props) {
   }
 
   function getImageUrl() {
-    return `${window.location.origin}/api/posts/${encodeURIComponent(review.id)}/share-image`;
+    const url = new URL(`/api/posts/${encodeURIComponent(review.id)}/share-image`, window.location.origin);
+    const card = menuRef.current?.closest("article");
+    const width = card instanceof HTMLElement ? Math.round(card.getBoundingClientRect().width) : 0;
+    if (width > 0) url.searchParams.set("w", String(width));
+    return url.toString();
   }
 
   async function handleCopyLink() {
@@ -194,7 +198,7 @@ export default function PostShareButton({ review }: Props) {
                   ? "Downloaded"
                   : downloadStatus === "error"
                     ? "Download failed"
-                    : "Download image"}
+                    : "Download card"}
             </button>
           )}
         </div>
