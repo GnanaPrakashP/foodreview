@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import MeClient from "@/components/me/MeClient";
 import type { Review } from "@/lib/types";
 
@@ -15,7 +15,7 @@ type MeApiResponse = {
   displayName: string;
 };
 
-function MeSkeleton() {
+export function MeSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div style={{ padding: "24px 20px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -42,7 +42,12 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
 
   useEffect(() => {
     if (initialData) {
-      primeCachedJson(API_URL, initialData, ME_TTL_MS);
+      const cachedData = readCachedJson<MeApiResponse>(API_URL);
+      if (cachedData) {
+        setData(cachedData);
+      } else {
+        primeCachedJson(API_URL, initialData, ME_TTL_MS);
+      }
       return;
     }
     cachedJson<MeApiResponse>(API_URL, ME_TTL_MS)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,8 @@ import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
+import { currentTrendingApiUrl } from "@/lib/trending-location";
+import { patchPostEngagement, readPostEngagement } from "@/lib/post-engagement-cache";
 
 interface Props {
   review: Review;
@@ -25,6 +27,8 @@ interface Props {
   requestStatus?: "idle" | "loading" | "pending" | "joined";
   onRequestClick?: () => void;
 }
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -77,6 +81,10 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/feed/public");
 }
 
+function invalidateLocalTrendingCache() {
+  invalidateCachedJson(currentTrendingApiUrl());
+}
+
 export default function CircleFeedCard({
   review,
   initialLikeCount,
@@ -125,12 +133,26 @@ export default function CircleFeedCard({
     setMounted(true);
   }, [initialMyName]);
 
+  useIsomorphicLayoutEffect(() => {
+    const cached = readPostEngagement(review.id);
+    setLiked(initialLiked);
+    setLikeCount(initialLikeCount);
+    setBookmarked(initialBookmarked);
+    if (cached?.liked !== undefined) setLiked(cached.liked);
+    if (cached?.likeCount !== undefined) setLikeCount(cached.likeCount);
+    if (cached?.bookmarked !== undefined) setBookmarked(cached.bookmarked);
+  }, [initialBookmarked, initialLikeCount, initialLiked, review.id]);
+
   const toggleLike = useCallback(async () => {
     if (!myName || !mounted) return;
     setBounceKey(k => k + 1);
+    const nextLiked = !liked;
+    const nextLikeCount = liked ? Math.max(0, likeCount - 1) : likeCount + 1;
+    setLiked(nextLiked);
+    setLikeCount(nextLikeCount);
+    patchPostEngagement(review.id, { liked: nextLiked, likeCount: nextLikeCount });
+
     if (liked) {
-      setLiked(false);
-      setLikeCount(c => c - 1);
       const response = await fetch("/api/likes", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -138,18 +160,18 @@ export default function CircleFeedCard({
       });
       if (!response.ok) {
         setLiked(true);
-        setLikeCount(c => c + 1);
+        setLikeCount(likeCount);
+        patchPostEngagement(review.id, { liked: true, likeCount });
         return;
       }
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event: "POST_UNLIKED", reviewId: review.id, actorName: myName }),
       }).catch(() => {});
     } else {
-      setLiked(true);
-      setLikeCount(c => c + 1);
       const response = await fetch("/api/likes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -157,39 +179,55 @@ export default function CircleFeedCard({
       });
       if (!response.ok) {
         setLiked(false);
-        setLikeCount(c => c - 1);
+        setLikeCount(likeCount);
+        patchPostEngagement(review.id, { liked: false, likeCount });
         return;
       }
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event: "POST_LIKED", reviewId: review.id, actorName: myName }),
       }).catch(() => {});
     }
-  }, [myName, mounted, liked, review]);
+  }, [myName, mounted, liked, likeCount, review, review.id]);
 
   const toggleBookmark = useCallback(async () => {
     if (!myName || !mounted) return;
     setBookmarkBounceKey(k => k + 1);
+    const nextBookmarked = !bookmarked;
+    setBookmarked(nextBookmarked);
+    patchPostEngagement(review.id, { bookmarked: nextBookmarked });
+
     if (bookmarked) {
-      setBookmarked(false);
       const response = await fetch("/api/wishlist", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ restaurantName: review.restaurant_name }),
+        body: JSON.stringify({ postId: review.id }),
       });
-      if (!response.ok) setBookmarked(true);
-      else invalidateEngagementCaches();
+      if (!response.ok) {
+        setBookmarked(true);
+        patchPostEngagement(review.id, { bookmarked: true });
+      }
+      else {
+        invalidateEngagementCaches();
+        invalidateLocalTrendingCache();
+      }
     } else {
-      setBookmarked(true);
       const response = await fetch("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ restaurantName: review.restaurant_name, postId: review.id }),
       });
-      if (!response.ok) setBookmarked(false);
-      else invalidateEngagementCaches();
+      if (!response.ok) {
+        setBookmarked(false);
+        patchPostEngagement(review.id, { bookmarked: false });
+      }
+      else {
+        invalidateEngagementCaches();
+        invalidateLocalTrendingCache();
+      }
     }
   }, [myName, mounted, bookmarked, review]);
 
@@ -210,6 +248,7 @@ export default function CircleFeedCard({
     }
 
     invalidateEngagementCaches();
+    invalidateLocalTrendingCache();
 
     if (onDeleted) {
       onDeleted(review);
@@ -249,7 +288,6 @@ export default function CircleFeedCard({
             router.push(postHref);
           }
         }}
-        onPointerEnter={() => router.prefetch(postHref)}
         style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden", cursor: "pointer" }}
       >
 
@@ -462,6 +500,7 @@ export default function CircleFeedCard({
             </button>
             <Link
               href={`/comments/${encodeURIComponent(review.id)}`}
+              prefetch={false}
               onClick={(event) => event.stopPropagation()}
               style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
             >

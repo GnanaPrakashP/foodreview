@@ -5,6 +5,8 @@ import { computeTrending, type CircleReviewItem, type TrendingPeopleCounts } fro
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
 import { REVIEW_SELECT } from "@/lib/selects";
+import { haversineKm } from "@/lib/trending";
+import { DEFAULT_TRENDING_LOCATION_BUCKET, normalizeLocationBucket, parseLocationBucket } from "@/lib/trending-location";
 
 type TrendingDb = {
   from: (table: string) => any;
@@ -22,6 +24,14 @@ export type TrendingPageData = {
   circleMonth: ReturnType<typeof computeTrending>["month"];
   circleAlltime: ReturnType<typeof computeTrending>["alltime"];
   circlePeopleCounts: TrendingPeopleCounts;
+};
+
+type TrendingHeavyData = Pick<TrendingPageData, "week" | "month" | "alltime" | "peopleCounts"> & {
+  publicReviews: Review[];
+};
+
+type TrendingPageOptions = {
+  locationBucket?: string | null;
 };
 
 function cacheName(name: string) {
@@ -43,15 +53,41 @@ const globalForTrendingCache = globalThis as typeof globalThis & {
 
 globalForTrendingCache.__foodReviewInvalidateTrendingPageCacheForNames = invalidateTrendingPageCacheForNames;
 
-export async function getTrendingPageData(db: TrendingDb, myName: string): Promise<TrendingPageData> {
-  return getPrivateCached({
-    key: `trending-page:v2:${cacheName(myName)}`,
+export async function getTrendingPageData(
+  db: TrendingDb,
+  myName: string,
+  options: TrendingPageOptions = {}
+): Promise<TrendingPageData> {
+  const locationBucket = normalizeLocationBucket(options.locationBucket);
+  const heavy = await getPrivateCached({
+    key: `trending-page-heavy:v2:${cacheName(myName)}:${locationBucket}`,
     ttlMs: TRENDING_CACHE_TTL_MS,
-    load: async () => ({ value: await loadTrendingPageData(db, myName), tags: [`trending:${cacheName(myName)}`, "trending:all"] }),
+    load: async () => ({
+      value: await loadTrendingHeavyData(locationBucket),
+      tags: [`trending:${cacheName(myName)}`, `trending:loc:${locationBucket}`, "trending:all"],
+    }),
+  });
+
+  return mergeTrendingViewerState(db, myName, heavy);
+}
+
+function sortRestaurantsForLocation<T extends { lat: number | null; lng: number | null; trending_score: number }>(
+  list: T[],
+  locationBucket: string
+): T[] {
+  if (locationBucket === DEFAULT_TRENDING_LOCATION_BUCKET) return list;
+  const loc = parseLocationBucket(locationBucket);
+  if (!loc) return list;
+
+  return [...list].sort((a, b) => {
+    const dA = a.lat != null && a.lng != null ? haversineKm(loc.lat, loc.lng, a.lat, a.lng) : Infinity;
+    const dB = b.lat != null && b.lng != null ? haversineKm(loc.lat, loc.lng, b.lat, b.lng) : Infinity;
+    if (dA !== dB) return dA - dB;
+    return b.trending_score - a.trending_score;
   });
 }
 
-async function loadTrendingPageData(db: TrendingDb, myName: string): Promise<TrendingPageData> {
+async function loadTrendingHeavyData(locationBucket: string): Promise<TrendingHeavyData> {
   const readDb = createAdminClient();
   // Filter to public, non-suppressed reviews at the DB level so the 500-row window
   // is filled with usable data. filterGlobalTrendingReviews below is kept as
@@ -71,6 +107,21 @@ async function loadTrendingPageData(db: TrendingDb, myName: string): Promise<Tre
   const publicReviews = filterGlobalTrendingReviews(allReviews);
   const { week, month, alltime, peopleCounts } = computeTrending(publicReviews);
 
+  return {
+    publicReviews,
+    week: sortRestaurantsForLocation(week, locationBucket),
+    month: sortRestaurantsForLocation(month, locationBucket),
+    alltime: sortRestaurantsForLocation(alltime, locationBucket),
+    peopleCounts,
+  };
+}
+
+async function mergeTrendingViewerState(
+  db: TrendingDb,
+  myName: string,
+  heavy: TrendingHeavyData
+): Promise<TrendingPageData> {
+  const { publicReviews, week, month, alltime, peopleCounts } = heavy;
   let circleReviews: Record<string, CircleReviewItem[]> = {};
   let circleWeek: typeof week = [];
   let circleMonth: typeof month = [];

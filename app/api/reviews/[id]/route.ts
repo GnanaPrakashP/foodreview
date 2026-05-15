@@ -3,6 +3,7 @@ import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation"
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { invalidateTrendingPageCacheForNames } from "@/lib/trending-page-data";
 
 export async function DELETE(
   _req: NextRequest,
@@ -45,6 +46,7 @@ export async function DELETE(
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
+  invalidateTrendingPageCacheForNames([actor.actorName]);
   return NextResponse.json({ ok: true });
 }
 
@@ -116,5 +118,8 @@ export async function PATCH(
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
+  if (visibility !== undefined) {
+    invalidateTrendingPageCacheForNames([actor.actorName]);
+  }
   return NextResponse.json({ ok: true });
 }

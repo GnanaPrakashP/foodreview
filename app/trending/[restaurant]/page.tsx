@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Review, Comment } from "@/lib/types";
@@ -45,6 +46,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
   const restaurantName = decodeURIComponent(restaurant);
 
   const supabase = await createClient();
+  const readDb = createAdminClient();
 
   const [
     { data: { user } },
@@ -86,24 +88,38 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
 
   const reviewIds = displayRestaurantReviews.map((r) => r.id);
 
-  const [{ data: rawLikes }, { data: rawComments }, profileMap] = await Promise.all([
-    supabase.from("likes").select("post_id").in("post_id", reviewIds),
-    supabase
+  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = await Promise.all([
+    readDb.from("likes").select("post_id, user_name").in("post_id", reviewIds),
+    readDb
       .from("comments")
       .select("id, post_id, user_name, content, created_at")
       .in("post_id", reviewIds)
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),
+    myName
+      ? readDb
+          .from("wishlist")
+          .select("post_id")
+          .eq("user_name", myName)
+          .in("post_id", reviewIds)
+      : Promise.resolve({ data: [] }),
     buildProfileDisplayMap(
-      supabase,
+      readDb,
       displayRestaurantReviews.map((review) => review.reviewer_name)
     ),
   ]);
 
   // Like counts
   const likeCountMap: Record<string, number> = {};
-  for (const like of (rawLikes ?? []) as { post_id: string }[]) {
+  const likedByMeMap: Record<string, boolean> = {};
+  for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
     likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
+    if (myName && like.user_name === myName) likedByMeMap[like.post_id] = true;
+  }
+
+  const bookmarkedPostMap: Record<string, boolean> = {};
+  for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
+    if (item.post_id) bookmarkedPostMap[item.post_id] = true;
   }
 
   // Comment counts + top comment
@@ -154,6 +170,9 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
         likeCountMap={likeCountMap}
         commentMap={commentMap}
         profileMap={profileMap}
+        likedByMeMap={likedByMeMap}
+        bookmarkedPostMap={bookmarkedPostMap}
+        myName={myName}
         circleOnly={circleOnly}
       />
 

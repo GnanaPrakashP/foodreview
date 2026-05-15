@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Users, Flame, Camera, Search, User } from "lucide-react";
+import { DEFAULT_TRENDING_LOCATION_BUCKET, readStoredTrendingLocationBucket } from "@/lib/trending-location";
+
+function trendingHrefForBucket(locationBucket: string): string {
+  return `/trending?loc=${encodeURIComponent(locationBucket)}`;
+}
 
 const TABS = [
   { href: "/",         label: "Circle",   Icon: Users,   center: false },
@@ -15,11 +20,12 @@ const TABS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const router = useRouter();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [trendingHref, setTrendingHref] = useState(() => trendingHrefForBucket(DEFAULT_TRENDING_LOCATION_BUCKET));
 
   useEffect(() => {
     setPendingHref(null);
+    setTrendingHref(trendingHrefForBucket(readStoredTrendingLocationBucket()));
   }, [pathname]);
 
   if (
@@ -45,15 +51,15 @@ export default function BottomNav() {
     >
       <div className="max-w-lg mx-auto flex items-center justify-around h-16">
         {TABS.map((tab) => {
+          const href = tab.href === "/trending" ? trendingHref : tab.href;
           const active =
-            pendingHref === tab.href ||
+            pendingHref === href ||
             (tab.href === "/"
               ? pathname === "/"
               : pathname.startsWith(tab.href));
 
           const beginNavigation = () => {
-            if (tab.href !== pathname) setPendingHref(tab.href);
-            router.prefetch(tab.href);
+            if (tab.href !== pathname) setPendingHref(href);
           };
 
           /* ── Center elevated Share button ── */
@@ -61,11 +67,9 @@ export default function BottomNav() {
             return (
               <Link
                 key={tab.href}
-                href={tab.href}
+                href={href}
                 prefetch={false}
                 onClick={beginNavigation}
-                onPointerEnter={() => router.prefetch(tab.href)}
-                onFocus={() => router.prefetch(tab.href)}
                 style={{ position: "relative", top: "-14px", flexShrink: 0 }}
                 aria-label="Share"
               >
@@ -93,11 +97,9 @@ export default function BottomNav() {
           return (
             <Link
               key={tab.href}
-              href={tab.href}
+              href={href}
               prefetch={false}
               onClick={beginNavigation}
-              onPointerEnter={() => router.prefetch(tab.href)}
-              onFocus={() => router.prefetch(tab.href)}
               className="flex flex-col items-center gap-1 px-2 py-1"
               aria-current={active ? "page" : undefined}
               style={{ transform: active ? "translateY(-1px)" : "none", transition: "transform 120ms ease" }}

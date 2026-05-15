@@ -23,11 +23,16 @@ export default function PostShareButton({ review }: Props) {
     return `Discover food reviews from people you trust and find the best bites near you. Join CircleBites: ${window.location.origin}`;
   }
 
-  function getImageUrl() {
+  function getImageUrl(options?: { download?: boolean }) {
     const url = new URL(`/api/posts/${encodeURIComponent(review.id)}/share-image`, window.location.origin);
     const card = menuRef.current?.closest("article");
     const width = card instanceof HTMLElement ? Math.round(card.getBoundingClientRect().width) : 0;
-    if (width > 0) url.searchParams.set("w", String(width));
+    const exportWidth = options?.download ? Math.max(width, 560) : width;
+    if (exportWidth > 0) url.searchParams.set("w", String(exportWidth));
+    if (options?.download) {
+      url.searchParams.set("dpr", "3");
+      url.searchParams.set("download", "1");
+    }
     return url.toString();
   }
 
@@ -46,7 +51,7 @@ export default function PostShareButton({ review }: Props) {
     if (!isPublic || downloadStatus === "downloading") return;
     setDownloadStatus("downloading");
     try {
-      const res = await fetch(getImageUrl());
+      const res = await fetch(getImageUrl({ download: true }));
       if (!res.ok) {
         setDownloadStatus("error");
         setTimeout(() => setDownloadStatus("idle"), 2000);
@@ -56,7 +61,7 @@ export default function PostShareButton({ review }: Props) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `circlebites-${review.restaurant_name.replace(/\s+/g, "-").toLowerCase()}.png`;
+      a.download = `circlebites-${review.restaurant_name.replace(/[^\w-]+/g, "-").replace(/-+/g, "-").toLowerCase()}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

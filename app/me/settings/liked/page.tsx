@@ -11,7 +11,7 @@ type LikedPostsResponse = {
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   likedByMeMap: Record<string, boolean>;
-  bookmarkedRestaurantMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
   profileMap: Record<string, string>;
   myName: string;
 };
@@ -22,7 +22,7 @@ export default function LikedPostsPage() {
   const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
   const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
   const [likedByMeMap, setLikedByMeMap] = useState<Record<string, boolean>>({});
-  const [bookmarkedRestaurantMap, setBookmarkedRestaurantMap] = useState<Record<string, boolean>>({});
+  const [bookmarkedPostMap, setBookmarkedPostMap] = useState<Record<string, boolean>>({});
   const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [myName, setMyName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -37,7 +37,7 @@ export default function LikedPostsPage() {
         setLikeCountMap(data.likeCountMap ?? {});
         setCommentMap(data.commentMap ?? {});
         setLikedByMeMap(data.likedByMeMap ?? {});
-        setBookmarkedRestaurantMap(data.bookmarkedRestaurantMap ?? {});
+        setBookmarkedPostMap(data.bookmarkedPostMap ?? {});
         setProfileMap(data.profileMap ?? {});
         setMyName(data.myName ?? "");
       } finally {
@@ -72,7 +72,7 @@ export default function LikedPostsPage() {
             initialLikeCount={likeCountMap[review.id] ?? 0}
             initialCommentCount={commentMap[review.id]?.count ?? 0}
             initialLiked={likedByMeMap[review.id] ?? true}
-            initialBookmarked={bookmarkedRestaurantMap[review.restaurant_name] ?? false}
+            initialBookmarked={bookmarkedPostMap[review.id] ?? false}
             initialMyName={myName}
             profileMap={profileMap}
           />

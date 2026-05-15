@@ -10,6 +10,12 @@ import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-rea
 import type { Visibility } from "@/lib/types";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { getStoredActorName } from "@/lib/browser-actor";
+import {
+  currentTrendingApiUrl,
+  TRENDING_LOCATION_LABEL_STORAGE_KEY,
+  TRENDING_LOCATION_LAT_STORAGE_KEY,
+  TRENDING_LOCATION_LNG_STORAGE_KEY,
+} from "@/lib/trending-location";
 
 /* ─── helpers ────────────────────────────────────── */
 
@@ -247,9 +253,9 @@ export default function ReviewForm() {
   // Use location already set on the trending page — no new permission prompt.
   useEffect(() => {
     try {
-      const lat = parseFloat(localStorage.getItem("trending_loc_lat") ?? "");
-      const lng = parseFloat(localStorage.getItem("trending_loc_lng") ?? "");
-      const label = localStorage.getItem("trending_loc_label") ?? null;
+      const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
+      const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
+      const label = localStorage.getItem(TRENDING_LOCATION_LABEL_STORAGE_KEY) ?? null;
       if (!isNaN(lat) && !isNaN(lng)) {
         setUserLat(lat);
         setUserLng(lng);
@@ -515,6 +521,7 @@ export default function ReviewForm() {
 
       invalidateCachedJson("/api/feed/circle");
       invalidateCachedJson("/api/me");
+      invalidateCachedJson(currentTrendingApiUrl());
       router.push(`/reviews/${review.id}`);
       router.refresh();
     } catch (err: unknown) {

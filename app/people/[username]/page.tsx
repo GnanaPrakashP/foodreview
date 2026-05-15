@@ -8,6 +8,7 @@ import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
 import { REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
+import { computeCommonRestaurants } from "@/lib/common-restaurants";
 
 interface Props {
   params: Promise<{ username: string }>;
@@ -62,10 +63,12 @@ export default async function UserProfilePage({ params }: Props) {
   let circleOwnerNames = new Set<string>();
   let initialCircleStatus: "one_way" | "sent" | "none" = "none";
   let initialHasIncomingRequest = false;
+  let initialCommonRestaurantCount: number | null = null;
 
   if (myName && myName !== name) {
-    const [canSeeCirclePosts, { data: pendingRows }] = await Promise.all([
+    const [canSeeCirclePosts, targetCanSeeMyCircle, { data: pendingRows }, { data: commonReviewRows }] = await Promise.all([
       hasCircleAccess(supabase, name, myName),
+      hasCircleAccess(supabase, myName, name),
       // Fetch pending requests in both directions between viewer and profile owner
       admin
         .from("circle_requests")
@@ -73,9 +76,22 @@ export default async function UserProfilePage({ params }: Props) {
         .in("sender_name", [myName, name])
         .in("receiver_name", [myName, name])
         .eq("status", "pending"),
+      admin
+        .from("reviews")
+        .select(REVIEW_SELECT)
+        .in("reviewer_name", [myName, name])
+        .is("deleted_at", null)
+        .is("hidden_at", null)
+        .is("reported_at", null)
+        .eq("status", "active")
+        .returns<Review[]>(),
     ]);
 
     if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
+    initialCommonRestaurantCount = computeCommonRestaurants(commonReviewRows ?? [], myName, name, {
+      firstCanSeeSecondCircle: canSeeCirclePosts,
+      secondCanSeeFirstCircle: targetCanSeeMyCircle,
+    }).length;
 
     const rows = (pendingRows ?? []) as { sender_name: string; receiver_name: string }[];
     initialCircleStatus = canSeeCirclePosts
@@ -113,6 +129,7 @@ export default async function UserProfilePage({ params }: Props) {
       initialMyName={myName}
       initialCircleStatus={initialCircleStatus}
       initialTheirCircleCount={initialTheirCircleCount}
+      initialCommonRestaurantCount={initialCommonRestaurantCount}
       initialHasIncomingRequest={initialHasIncomingRequest}
     />
   );

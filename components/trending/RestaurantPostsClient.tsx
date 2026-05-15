@@ -9,6 +9,9 @@ interface Props {
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   profileMap?: Record<string, string>;
+  likedByMeMap?: Record<string, boolean>;
+  bookmarkedPostMap?: Record<string, boolean>;
+  myName?: string;
   circleOnly?: boolean;
 }
 
@@ -18,6 +21,9 @@ export default function RestaurantPostsClient({
   likeCountMap,
   commentMap,
   profileMap = {},
+  likedByMeMap = {},
+  bookmarkedPostMap = {},
+  myName = "",
   circleOnly = false,
 }: Props) {
   const shown = circleOnly ? circleRestaurantReviews : restaurantReviews;
@@ -44,6 +50,9 @@ export default function RestaurantPostsClient({
                 review={review}
                 initialLikeCount={likeCountMap[review.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
+                initialLiked={likedByMeMap[review.id] ?? false}
+                initialBookmarked={bookmarkedPostMap[review.id] ?? false}
+                initialMyName={myName}
                 profileMap={profileMap}
               />
             );

@@ -13,7 +13,6 @@ export function invalidateSocialCachesForNames(names: string[]) {
   cacheHooks.__foodReviewInvalidateCircleFeedCacheForNames?.(cleanNames);
   cacheHooks.__foodReviewInvalidateMePageCacheForNames?.(cleanNames);
   cacheHooks.__foodReviewInvalidatePeoplePageCacheForNames?.(cleanNames);
-  cacheHooks.__foodReviewInvalidateTrendingPageCacheForNames?.(cleanNames);
 }
 
 export function invalidateCircleFeedCacheForNames(names: string[]) {

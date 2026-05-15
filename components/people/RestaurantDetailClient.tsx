@@ -53,6 +53,8 @@ interface Props {
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   rankMap: Record<string, { rank: number; total: number; visitCount: number }>;
+  likedByMeMap?: Record<string, boolean>;
+  bookmarkedPostMap?: Record<string, boolean>;
   profileMap?: Record<string, string>;
   initialMyName?: string;
 }
@@ -64,6 +66,8 @@ export default function RestaurantDetailClient({
   likeCountMap,
   commentMap,
   rankMap,
+  likedByMeMap = {},
+  bookmarkedPostMap = {},
   profileMap,
   initialMyName = "",
 }: Props) {
@@ -144,6 +148,8 @@ export default function RestaurantDetailClient({
                 review={post}
                 initialLikeCount={likeCountMap[post.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
+                initialLiked={likedByMeMap[post.id] ?? false}
+                initialBookmarked={bookmarkedPostMap[post.id] ?? false}
                 initialMyName={initialMyName}
                 profileMap={profileMap}
                 onDeleted={handlePostDeleted}

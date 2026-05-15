@@ -90,12 +90,11 @@ async function actorStateMaps(db: EngagementDb, reviews: Review[], actorName: st
   if (reviews.length === 0) {
     return {
       likedByMeMap: {} as Record<string, boolean>,
-      bookmarkedRestaurantMap: {} as Record<string, boolean>,
+      bookmarkedPostMap: {} as Record<string, boolean>,
     };
   }
 
   const postIds = reviews.map((review) => review.id);
-  const restaurantNames = Array.from(new Set(reviews.map((review) => review.restaurant_name)));
   const [{ data: myLikes }, { data: myWishlist }] = await Promise.all([
     db
       .from("likes")
@@ -104,9 +103,9 @@ async function actorStateMaps(db: EngagementDb, reviews: Review[], actorName: st
       .in("post_id", postIds),
     db
       .from("wishlist")
-      .select("restaurant_name")
+      .select("post_id")
       .eq("user_name", actorName)
-      .in("restaurant_name", restaurantNames),
+      .in("post_id", postIds),
   ]);
 
   const likedByMeMap: Record<string, boolean> = {};
@@ -114,12 +113,12 @@ async function actorStateMaps(db: EngagementDb, reviews: Review[], actorName: st
     likedByMeMap[like.post_id] = true;
   }
 
-  const bookmarkedRestaurantMap: Record<string, boolean> = {};
-  for (const item of (myWishlist ?? []) as { restaurant_name: string }[]) {
-    bookmarkedRestaurantMap[item.restaurant_name] = true;
+  const bookmarkedPostMap: Record<string, boolean> = {};
+  for (const item of (myWishlist ?? []) as { post_id: string | null }[]) {
+    if (item.post_id) bookmarkedPostMap[item.post_id] = true;
   }
 
-  return { likedByMeMap, bookmarkedRestaurantMap };
+  return { likedByMeMap, bookmarkedPostMap };
 }
 
 async function reviewsById(db: EngagementDb, postIds: string[], actorName: string) {

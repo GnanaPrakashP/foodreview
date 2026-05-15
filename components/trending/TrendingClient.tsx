@@ -1,25 +1,32 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { TrendingRestaurant, TrendingWindow, CircleReviewItem, TrendingPeopleCounts } from "@/lib/trending";
-import { haversineKm } from "@/lib/trending";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
+import {
+  locationBucketFromCoords,
+  normalizeLocationLabel,
+  parseLocationBucket,
+  TRENDING_LOCATION_LABEL_COOKIE,
+  TRENDING_LOCATION_LABEL_STORAGE_KEY,
+  TRENDING_LOCATION_LAT_STORAGE_KEY,
+  TRENDING_LOCATION_LNG_STORAGE_KEY,
+} from "@/lib/trending-location";
 
 // ── Location helpers ────────────────────────────────────────────────────────
 
-const LS_LAT = "trending_loc_lat";
-const LS_LNG = "trending_loc_lng";
-const LS_LABEL = "trending_loc_label";
 const LS_ASKED = "trending_loc_asked";
+const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 
 type UserLocation = { lat: number; lng: number; label: string };
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function loadSavedLocation(): UserLocation | null {
   try {
-    const lat = parseFloat(localStorage.getItem(LS_LAT) ?? "");
-    const lng = parseFloat(localStorage.getItem(LS_LNG) ?? "");
-    const label = localStorage.getItem(LS_LABEL) ?? "";
+    const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
+    const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
+    const label = localStorage.getItem(TRENDING_LOCATION_LABEL_STORAGE_KEY) ?? "";
     if (!isNaN(lat) && !isNaN(lng) && label) return { lat, lng, label };
   } catch { /* SSR or blocked */ }
   return null;
@@ -27,19 +34,11 @@ function loadSavedLocation(): UserLocation | null {
 
 function saveLocation(loc: UserLocation) {
   try {
-    localStorage.setItem(LS_LAT, String(loc.lat));
-    localStorage.setItem(LS_LNG, String(loc.lng));
-    localStorage.setItem(LS_LABEL, loc.label);
+    localStorage.setItem(TRENDING_LOCATION_LAT_STORAGE_KEY, String(loc.lat));
+    localStorage.setItem(TRENDING_LOCATION_LNG_STORAGE_KEY, String(loc.lng));
+    localStorage.setItem(TRENDING_LOCATION_LABEL_STORAGE_KEY, loc.label);
+    document.cookie = `${TRENDING_LOCATION_LABEL_COOKIE}=${encodeURIComponent(loc.label)}; Max-Age=${LOCATION_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Lax`;
   } catch { /* blocked */ }
-}
-
-function sortByDistance(list: TrendingRestaurant[], loc: UserLocation | null): TrendingRestaurant[] {
-  if (!loc) return list;
-  return [...list].sort((a, b) => {
-    const dA = a.lat != null && a.lng != null ? haversineKm(loc.lat, loc.lng, a.lat, a.lng) : Infinity;
-    const dB = b.lat != null && b.lng != null ? haversineKm(loc.lat, loc.lng, b.lat, b.lng) : Infinity;
-    return dA - dB;
-  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -329,7 +328,7 @@ function RestaurantsTab({
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Try a different search or filter</p>
           </div>
         ) : (
-          filtered.map((r, i) => {
+          filtered.map((r) => {
             const cReviews = circleReviews[r.restaurant_name] ?? [];
             const stars = starRating(r.avg_score);
 
@@ -342,12 +341,7 @@ function RestaurantsTab({
                   borderRadius: 14, padding: 16, cursor: "pointer",
                 }}>
 
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  {/* Rank number */}
-                  <div style={{ minWidth: 26, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 21, fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>{i + 1}</span>
-                  </div>
-
+                <div style={{ display: "flex", alignItems: "flex-start" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
                       <div>
@@ -446,16 +440,13 @@ function CirclePicksTab({
             <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No circle picks</p>
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Try a different time range or add more friends.</p>
           </div>
-        ) : picks.map((r, i) => {
+        ) : picks.map((r) => {
           const cReviews = circleReviews[r.restaurant_name] ?? [];
           const stars = starRating(r.avg_score);
           return (
             <Link key={r.restaurant_name} href={`/trending/${encodeURIComponent(r.restaurant_name)}?circle=1`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
               <div style={{ background: "var(--card)", border: "1px solid #F59E0B22", borderRadius: 14, padding: 16, cursor: "pointer" }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <div style={{ minWidth: 26, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 21, fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>{i + 1}</span>
-                  </div>
+                <div style={{ display: "flex", alignItems: "flex-start" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ marginBottom: 4 }}>
                       <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 600, color: "var(--cream)", lineHeight: 1.2 }}>{r.restaurant_name}</div>
@@ -497,6 +488,9 @@ interface Props {
   circleMonth: TrendingRestaurant[];
   circleAlltime: TrendingRestaurant[];
   circlePeopleCounts: TrendingPeopleCounts;
+  initialLocationBucket?: string;
+  initialLocationLabel?: string | null;
+  onLocationBucketChange?: (locationBucket: string) => void;
 }
 
 function timeLabel(timeFilter: TrendingWindow): string {
@@ -511,22 +505,50 @@ function peopleSummary(tab: "restaurants" | "circle", count: number, timeFilter:
   return `${count} ${people} eating out ${timeLabel(timeFilter)}`;
 }
 
-export default function TrendingClient({ week, month, alltime, peopleCounts, circleReviews, circleWeek, circleMonth, circleAlltime, circlePeopleCounts }: Props) {
+export default function TrendingClient({
+  week,
+  month,
+  alltime,
+  peopleCounts,
+  circleReviews,
+  circleWeek,
+  circleMonth,
+  circleAlltime,
+  circlePeopleCounts,
+  initialLocationBucket,
+  initialLocationLabel,
+  onLocationBucketChange,
+}: Props) {
+  const initialParsedLocation = initialLocationLabel ? parseLocationBucket(initialLocationBucket ?? "") : null;
   const [tab, setTab] = useState<"restaurants" | "circle">("restaurants");
   const [timeFilters, setTimeFilters] = useState<Record<"restaurants" | "circle", TrendingWindow>>({
     restaurants: "week",
     circle: "week",
   });
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(() => {
+    const label = normalizeLocationLabel(initialLocationLabel);
+    if (!label || !initialParsedLocation) return null;
+    return { ...initialParsedLocation, label };
+  });
+  const [checkedSavedLocation, setCheckedSavedLocation] = useState(() => Boolean(initialParsedLocation && initialLocationLabel));
   const [showLocationPicker, setShowLocationPicker] = useState(false);
 
-  // Load saved location and optionally trigger one-time GPS prompt
-  useEffect(() => {
+  // Apply saved location before paint so the location label and location-bucketed
+  // list do not briefly disagree on navigation or refresh.
+  useIsomorphicLayoutEffect(() => {
     const saved = loadSavedLocation();
     if (saved) {
       setUserLocation(saved);
-      return;
+      saveLocation(saved);
+      onLocationBucketChange?.(locationBucketFromCoords(saved.lat, saved.lng));
     }
+    setCheckedSavedLocation(true);
+  }, [onLocationBucketChange]);
+
+  // Only prompt for GPS after we know there is no saved location.
+  useEffect(() => {
+    if (loadSavedLocation()) return;
+
     // First visit — ask browser once
     try {
       const alreadyAsked = localStorage.getItem(LS_ASKED);
@@ -542,10 +564,12 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
               const loc: UserLocation = { lat, lng, label };
               setUserLocation(loc);
               saveLocation(loc);
+              onLocationBucketChange?.(locationBucketFromCoords(lat, lng));
             } catch {
               const loc: UserLocation = { lat, lng, label: "Current Location" };
               setUserLocation(loc);
               saveLocation(loc);
+              onLocationBucketChange?.(locationBucketFromCoords(lat, lng));
             }
           },
           () => { /* denied — don't ask again */ },
@@ -553,12 +577,13 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
         );
       }
     } catch { /* SSR or blocked */ }
-  }, []);
+  }, [onLocationBucketChange]);
 
   function handleLocationSelect(loc: UserLocation) {
     setUserLocation(loc);
     saveLocation(loc);
     setShowLocationPicker(false);
+    onLocationBucketChange?.(locationBucketFromCoords(loc.lat, loc.lng));
   }
 
   const activeTimeFilter = timeFilters[tab];
@@ -569,17 +594,9 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
     setTimeFilters((prev) => ({ ...prev, [tab]: timeFilter }));
   }
 
-  // Sort all six lists by distance whenever location changes
-  const sortedWeek      = useMemo(() => sortByDistance(week,        userLocation), [week,        userLocation]);
-  const sortedMonth     = useMemo(() => sortByDistance(month,       userLocation), [month,       userLocation]);
-  const sortedAlltime   = useMemo(() => sortByDistance(alltime,     userLocation), [alltime,     userLocation]);
-  const sortedCircleWk  = useMemo(() => sortByDistance(circleWeek,  userLocation), [circleWeek,  userLocation]);
-  const sortedCircleMo  = useMemo(() => sortByDistance(circleMonth, userLocation), [circleMonth, userLocation]);
-  const sortedCircleAll = useMemo(() => sortByDistance(circleAlltime,userLocation),[circleAlltime,userLocation]);
-
   const locationLabel = userLocation
     ? (userLocation.label.length > 18 ? userLocation.label.slice(0, 16) + "…" : userLocation.label)
-    : "Set location";
+    : checkedSavedLocation ? "Set location" : "Location";
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", fontFamily: "'DM Sans',sans-serif", color: "var(--cream)" }}>
@@ -600,7 +617,7 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
           <button
             onClick={() => setShowLocationPicker(true)}
             style={{
-              display: "flex", alignItems: "center", gap: 5,
+              display: "flex", alignItems: "center", gap: 3,
               padding: "6px 11px", borderRadius: 99,
               background: userLocation ? "#F59E0B18" : "var(--surface)",
               border: `1px solid ${userLocation ? "#F59E0B55" : "var(--border)"}`,
@@ -611,7 +628,7 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
           >
             <span style={{ fontSize: 13 }}>📍</span>
             <span>{locationLabel}</span>
-            <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+            <span style={{ fontSize: 12, opacity: 0.7, lineHeight: 1 }}>▾</span>
           </button>
         </div>
 
@@ -635,9 +652,9 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
       <div style={{ paddingBottom: 100 }}>
         {tab === "restaurants" && (
           <RestaurantsTab
-            week={sortedWeek}
-            month={sortedMonth}
-            alltime={sortedAlltime}
+            week={week}
+            month={month}
+            alltime={alltime}
             circleReviews={circleReviews}
             timeFilter={timeFilters.restaurants}
             onTimeFilterChange={updateTimeFilter}
@@ -645,9 +662,9 @@ export default function TrendingClient({ week, month, alltime, peopleCounts, cir
         )}
         {tab === "circle" && (
           <CirclePicksTab
-            week={sortedCircleWk}
-            month={sortedCircleMo}
-            alltime={sortedCircleAll}
+            week={circleWeek}
+            month={circleMonth}
+            alltime={circleAlltime}
             circleReviews={circleReviews}
             timeFilter={timeFilters.circle}
             onTimeFilterChange={updateTimeFilter}

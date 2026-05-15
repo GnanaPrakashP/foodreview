@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import PeopleTab from "@/components/people/PeopleTab";
 import type { CircleMember } from "@/lib/people-page-data";
 
@@ -12,7 +12,7 @@ type PeopleApiResponse = {
   circleMembers: CircleMember[];
 };
 
-function PeopleSkeleton() {
+export function PeopleSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div style={{ padding: "24px 20px 14px" }}>
@@ -41,7 +41,12 @@ export default function PeoplePageClient({ initialData = null }: { initialData?:
 
   useEffect(() => {
     if (initialData) {
-      primeCachedJson(API_URL, initialData, PEOPLE_TTL_MS);
+      const cachedData = readCachedJson<PeopleApiResponse>(API_URL);
+      if (cachedData) {
+        setData(cachedData);
+      } else {
+        primeCachedJson(API_URL, initialData, PEOPLE_TTL_MS);
+      }
       return;
     }
     cachedJson<PeopleApiResponse>(API_URL, PEOPLE_TTL_MS)

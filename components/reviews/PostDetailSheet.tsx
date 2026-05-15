@@ -6,6 +6,7 @@ import type { Review, Comment } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import { COMMENT_SELECT } from "@/lib/selects";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { currentTrendingApiUrl } from "@/lib/trending-location";
 
 function timeAgo(d: string): string {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -41,6 +42,9 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/feed/public");
 }
 
+function invalidateLocalTrendingCache() {
+  invalidateCachedJson(currentTrendingApiUrl());
+}
 
 interface Props {
   review: Review;
@@ -98,6 +102,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
 
     if (data) {
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,6 +125,7 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
       return;
     }
     invalidateEngagementCaches();
+    invalidateLocalTrendingCache();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

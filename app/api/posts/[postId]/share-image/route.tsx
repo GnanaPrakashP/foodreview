@@ -34,6 +34,8 @@ const GRADIENTS: [string, string][] = [
 const DEFAULT_SHARE_IMAGE_WIDTH = 560;
 const MIN_SHARE_IMAGE_WIDTH = 320;
 const MAX_SHARE_IMAGE_WIDTH = 720;
+const DEFAULT_SHARE_IMAGE_SCALE = 2;
+const MAX_SHARE_IMAGE_SCALE = 3;
 const SHARE_IMAGE_PADDING = 14;
 const CARD_HORIZONTAL_PADDING = 40;
 const FOOTER_HEIGHT = 48;
@@ -41,6 +43,11 @@ const FOOTER_HEIGHT = 48;
 function clampShareImageWidth(width: number | null): number {
   if (!width || Number.isNaN(width)) return DEFAULT_SHARE_IMAGE_WIDTH;
   return Math.min(MAX_SHARE_IMAGE_WIDTH, Math.max(MIN_SHARE_IMAGE_WIDTH, Math.round(width)));
+}
+
+function clampShareImageScale(scale: number | null): number {
+  if (!scale || Number.isNaN(scale)) return DEFAULT_SHARE_IMAGE_SCALE;
+  return Math.min(MAX_SHARE_IMAGE_SCALE, Math.max(1, Math.round(scale)));
 }
 
 function avatarColors(name: string): [string, string] {
@@ -57,6 +64,15 @@ function avatarInitials(displayName: string): string {
 
 function trunc(str: string, max: number): string {
   return str.length > max ? str.slice(0, max - 1) + "…" : str;
+}
+
+function filenameSlug(value: string): string {
+  return value
+    .trim()
+    .replace(/[^\w-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase() || "post";
 }
 
 function estimateTextLines(str: string | null, charsPerLine: number, maxLines: number): number {
@@ -110,9 +126,14 @@ export async function GET(
   { params }: { params: Promise<{ postId: string }> },
 ) {
   const { postId } = await params;
-  const requestedWidth = Number(new URL(request.url).searchParams.get("w"));
+  const requestUrl = new URL(request.url);
+  const requestedWidth = Number(requestUrl.searchParams.get("w"));
+  const requestedScale = Number(requestUrl.searchParams.get("dpr"));
+  const isDownload = requestUrl.searchParams.get("download") === "1";
   const shareImageWidth = clampShareImageWidth(requestedWidth);
+  const shareImageScale = clampShareImageScale(requestedScale);
   const cardContentWidth = shareImageWidth - SHARE_IMAGE_PADDING * 2 - CARD_HORIZONTAL_PADDING;
+  const outputWidth = shareImageWidth * shareImageScale;
   const db = createAdminClient();
 
   const [{ data: review }, syne700, dmSans400, dmSans700] = await Promise.all([
@@ -158,6 +179,7 @@ export async function GET(
     (items.length > 0 ? itemRows * 22 + (itemRows - 1) * 5 + 8 : 0) +
     FOOTER_HEIGHT;
   const imageHeight = Math.ceil(cardHeight + SHARE_IMAGE_PADDING * 2 + 2);
+  const outputHeight = imageHeight * shareImageScale;
 
   const dmSansFamily = dmSans400 ? "'DM Sans', sans-serif" : "sans-serif";
   const syneFamily   = syne700   ? "'Syne', sans-serif"   : "sans-serif";
@@ -174,37 +196,50 @@ export async function GET(
           display: "flex",
           flexDirection: "column",
           alignItems: "flex-start",
-          width: `${shareImageWidth}px`,
-          height: `${imageHeight}px`,
-          background: `
-            radial-gradient(circle at 18% 0%, rgba(240,96,48,0.18), transparent 34%),
-            radial-gradient(circle at 90% 88%, rgba(232,168,48,0.10), transparent 30%),
-            linear-gradient(160deg, #15100C 0%, ${C.bg} 48%, #080604 100%)
-          `,
-          padding: `${SHARE_IMAGE_PADDING}px`,
-          fontFamily: dmSansFamily,
+          width: `${outputWidth}px`,
+          height: `${outputHeight}px`,
+          overflow: "hidden",
+          background: C.bg,
         }}
       >
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            width: "100%",
-            backgroundColor: C.glass,
-            backgroundImage: "linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 34%, rgba(0,0,0,0.06))",
-            backdropFilter: "blur(18px)",
-            border: `1px solid ${C.glassLine}`,
-            borderTop: "1px solid rgba(255,255,255,0.18)",
-            borderRadius: "22px",
-            overflow: "hidden",
-            padding: "18px 20px",
-            boxShadow: `
-              0 18px 46px rgba(0,0,0,0.36),
-              inset 0 1px 0 rgba(255,255,255,0.10),
-              inset 0 -1px 0 rgba(0,0,0,0.22)
+            alignItems: "flex-start",
+            width: `${shareImageWidth}px`,
+            height: `${imageHeight}px`,
+            transform: `scale(${shareImageScale})`,
+            transformOrigin: "top left",
+            background: `
+              radial-gradient(circle at 18% 0%, rgba(240,96,48,0.18), transparent 34%),
+              radial-gradient(circle at 90% 88%, rgba(232,168,48,0.10), transparent 30%),
+              linear-gradient(160deg, #15100C 0%, ${C.bg} 48%, #080604 100%)
             `,
+            padding: `${SHARE_IMAGE_PADDING}px`,
+            fontFamily: dmSansFamily,
           }}
         >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              width: "100%",
+              backgroundColor: C.glass,
+              backgroundImage: "linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 34%, rgba(0,0,0,0.06))",
+              backdropFilter: "blur(18px)",
+              border: `1px solid ${C.glassLine}`,
+              borderTop: "1px solid rgba(255,255,255,0.18)",
+              borderRadius: "22px",
+              overflow: "hidden",
+              padding: "18px 20px",
+              boxShadow: `
+                0 18px 46px rgba(0,0,0,0.36),
+                inset 0 1px 0 rgba(255,255,255,0.10),
+                inset 0 -1px 0 rgba(0,0,0,0.22)
+              `,
+            }}
+          >
 
           {/* Header: avatar + "Name shared a spot" */}
           <div style={{ display: "flex", alignItems: "center", gap: "9px", marginBottom: "12px" }}>
@@ -362,10 +397,11 @@ export async function GET(
             </div>
           </div>
 
+          </div>
         </div>
       </div>
     ),
-    { width: shareImageWidth, height: imageHeight, fonts },
+    { width: outputWidth, height: outputHeight, fonts },
   );
 
   const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
@@ -378,6 +414,9 @@ export async function GET(
     headers: {
       "Content-Type": "image/png",
       "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
+      ...(isDownload
+        ? { "Content-Disposition": `attachment; filename="circlebites-${filenameSlug(review.restaurant_name)}.png"` }
+        : {}),
     },
   });
 }

@@ -5,7 +5,7 @@
  *   - Only public-visibility posts are returned
  *   - Posts from excludeNames are filtered out client-side
  *   - hasMore / nextCursor reflect whether more pages exist
- *   - likeCountMap, likedByMeMap, commentMap, bookmarkedRestaurantMap, profileMap are built correctly
+ *   - likeCountMap, likedByMeMap, commentMap, bookmarkedPostMap, profileMap are built correctly
  */
 
 import assert from "node:assert/strict";
@@ -363,20 +363,54 @@ test("public feed: commentMap counts comments and stores top comment", async () 
   assert.equal(body(res).commentMap["post-4"].top.id, "c1");
 });
 
-// ── bookmarkedRestaurantMap ───────────────────────────────────────────────────
+// ── bookmarkedPostMap ───────────────────────────────────────────────────
 
-test("public feed: bookmarkedRestaurantMap marks restaurants in viewer's wishlist", async () => {
+test("public feed: bookmarkedPostMap marks posts in viewer's wishlist", async () => {
   const r = review({ id: "post-5", restaurant_name: "Bawarchi" });
   const db = mockDb(
     { data: [r], error: null },
     { data: [], error: null }, // likes
     { data: [], error: null }, // comments
-    { data: [{ restaurant_name: "Bawarchi" }], error: null }, // wishlist
+    { data: [{ post_id: "post-5" }], error: null }, // wishlist
     { data: [], error: null }, // profiles
   );
   const { GET } = loadRoute({ db });
   const res = await GET(makeReq("viewer=carol"));
-  assert.equal(body(res).bookmarkedRestaurantMap["Bawarchi"], true);
+  assert.equal(body(res).bookmarkedPostMap["post-5"], true);
+});
+
+test("public feed: wishlist lookup is keyed by visible post ids, not restaurant names", async () => {
+  const r = review({ id: "post-wishlist-key", restaurant_name: "Same Place" });
+  const db = spyDb(
+    { data: [r], error: null }, // reviews
+    { data: [], error: null }, // likes
+    { data: [], error: null }, // comments
+    { data: [], error: null }, // wishlist
+    { data: [], error: null }, // profiles
+  );
+  const { GET } = loadRoute({ db });
+  await GET(makeReq("viewer=viewer"));
+
+  const wishlistCall = db._calls.find((c) => c.table === "wishlist");
+  assert.ok(wishlistCall, "should query wishlist when a viewer is present");
+  assert.ok(
+    wishlistCall.ops.some(([op, col]) => op === "select" && col === "post_id"),
+    "wishlist lookup should only select post_id"
+  );
+  assert.ok(
+    wishlistCall.ops.some(
+      ([op, col, ids]) =>
+        op === "in" &&
+        col === "post_id" &&
+        Array.isArray(ids) &&
+        ids.includes("post-wishlist-key")
+    ),
+    "wishlist lookup should filter by visible post ids"
+  );
+  assert.ok(
+    !wishlistCall.ops.some(([, col]) => col === "restaurant_name"),
+    "wishlist lookup must not use restaurant_name for post save state"
+  );
 });
 
 // ── profileMap ────────────────────────────────────────────────────────────────

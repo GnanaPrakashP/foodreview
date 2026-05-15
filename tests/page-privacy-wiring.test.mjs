@@ -10,7 +10,7 @@ test("home/circle feed filters server reviews before fetching engagement data", 
   for (const file of ["app/page.tsx", "app/circle/page.tsx"]) {
     const src = source(file);
     assert.match(src, /getCircleFeedPage\(supabase\)/);
-    assert.match(src, /<CircleFeedClient\s+allReviews=\{feed\.reviews\}/s);
+    assert.match(src, /<CirclePageClient initialData=\{feed\}/);
   }
 
   const helper = source("lib/circle-feed.ts");
@@ -28,12 +28,30 @@ test("global trending computes rankings from public filtered reviews only", () =
   const page = source("app/trending/page.tsx");
   const src = source("lib/trending-page-data.ts");
 
-  assert.match(page, /getTrendingPageData\(supabase, myName\)/);
+  assert.match(page, /cookies\(\)/);
+  assert.match(page, /TRENDING_LOCATION_LABEL_COOKIE/);
+  assert.match(page, /const locationBucket = normalizeLocationBucket\(loc\)/);
+  assert.match(page, /initialLocationLabel=\{initialLocationLabel\}/);
+  assert.match(page, /getTrendingPageData\(supabase, myName, \{ locationBucket \}\)/);
   assert.match(src, /import \{ REVIEW_SELECT \} from "@\/lib\/selects"/);
   assert.match(src, /\.select\(REVIEW_SELECT\)/);
+  assert.match(src, /key: `trending-page-heavy:v2:\$\{cacheName\(myName\)\}:\$\{locationBucket\}`/);
   assert.match(src, /const publicReviews = filterGlobalTrendingReviews\(allReviews\)/);
   assert.match(src, /computeTrending\(publicReviews\)/);
+  assert.match(src, /type TrendingHeavyData/);
+  assert.match(src, /return mergeTrendingViewerState\(db, myName, heavy\)/);
   assert.match(src, /filterPublicCircleTrendingReviews\(publicReviews,/);
+});
+
+test("normal social cache invalidation does not clear trending globally", () => {
+  const social = source("lib/server/cache-invalidation.ts");
+  const reviewCreate = source("app/api/reviews/route.ts");
+  const reviewUpdate = source("app/api/reviews/[id]/route.ts");
+
+  assert.doesNotMatch(social, /__foodReviewInvalidateTrendingPageCacheForNames\?\.\(cleanNames\)/);
+  assert.match(reviewCreate, /invalidateSocialCachesForNames\(\[actor\.actorName\]\)/);
+  assert.doesNotMatch(reviewCreate, /invalidateTrendingPageCacheForNames/);
+  assert.match(reviewUpdate, /invalidateTrendingPageCacheForNames\(\[actor\.actorName\]\)/);
 });
 
 test("dishes page computes dish stats from public filtered reviews only", () => {
@@ -84,6 +102,18 @@ test("people profile shows incoming request card with name and accept/reject act
   assert.match(profile, /onClick=\{\(\) => respondToIncoming\("accept"\)\}/);
 });
 
+test("people profile passes SSR common restaurant count into the client badge", () => {
+  const page = source("app/people/[username]/page.tsx");
+  const client = source("components/people/FriendProfileClient.tsx");
+
+  assert.match(page, /import \{ computeCommonRestaurants \} from "@\/lib\/common-restaurants"/);
+  assert.match(page, /let initialCommonRestaurantCount: number \| null = null/);
+  assert.match(page, /initialCommonRestaurantCount = computeCommonRestaurants\(/);
+  assert.match(page, /initialCommonRestaurantCount=\{initialCommonRestaurantCount\}/);
+  assert.match(client, /initialCommonRestaurantCount = null/);
+  assert.match(client, /useState<number \| null>\(initialCommonRestaurantCount\)/);
+});
+
 test("trending restaurant detail derives post ids only from visible display reviews", () => {
   const src = source("app/trending/[restaurant]/page.tsx");
 
@@ -106,6 +136,21 @@ test("trending restaurant detail passes reviewer display names into post cards",
   assert.match(page, /profileMap=\{profileMap\}/);
   assert.match(client, /profileMap\?: Record<string, string>/);
   assert.match(client, /profileMap=\{profileMap\}/);
+});
+
+test("trending restaurant detail passes fresh viewer engagement state into post cards", () => {
+  const page = source("app/trending/[restaurant]/page.tsx");
+  const client = source("components/trending/RestaurantPostsClient.tsx");
+
+  assert.match(page, /\.select\("post_id, user_name"\)\.in\("post_id", reviewIds\)/);
+  assert.match(page, /\.from\("wishlist"\)/);
+  assert.match(page, /const likedByMeMap: Record<string, boolean> = \{\}/);
+  assert.match(page, /const bookmarkedPostMap: Record<string, boolean> = \{\}/);
+  assert.match(page, /likedByMeMap=\{likedByMeMap\}/);
+  assert.match(page, /bookmarkedPostMap=\{bookmarkedPostMap\}/);
+  assert.match(client, /initialLiked=\{likedByMeMap\[review\.id\] \?\? false\}/);
+  assert.match(client, /initialBookmarked=\{bookmarkedPostMap\[review\.id\] \?\? false\}/);
+  assert.match(client, /initialMyName=\{myName\}/);
 });
 
 test("people profile page filters owner reviews before passing them to the client", () => {
@@ -137,6 +182,10 @@ test("review detail reads by service role then applies app visibility before ren
   assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
   assert.match(src, /readDb\.from\("likes"\)/);
   assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", review\.id\)[\s\S]*\.eq\("user_name", myName\)/);
+  assert.match(src, /initialLiked=\{Boolean\(viewerLike\)\}/);
+  assert.match(src, /initialBookmarked=\{Boolean\(viewerBookmark\)\}/);
+  assert.match(src, /initialSnapshotAt=\{Date\.now\(\)\}/);
 });
 
 test("comment detail reads by service role then applies app visibility before rendering", () => {
@@ -147,6 +196,26 @@ test("comment detail reads by service role then applies app visibility before re
   assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
   assert.match(src, /readDb\.from\("likes"\)/);
   assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", review\.id\)[\s\S]*\.eq\("user_name", myName\)/);
+  assert.match(src, /initialLiked=\{Boolean\(viewerLike\)\}/);
+  assert.match(src, /initialBookmarked=\{Boolean\(viewerBookmark\)\}/);
+  assert.match(src, /initialSnapshotAt=\{Date\.now\(\)\}/);
+});
+
+test("review detail ignores older optimistic engagement cache after fresh SSR state", () => {
+  const client = source("components/reviews/ReviewDetailClient.tsx");
+  const cache = source("lib/post-engagement-cache.ts");
+
+  assert.match(client, /readPostEngagementEntry\(review\.id\)/);
+  assert.match(client, /cached\.updatedAt <= initialSnapshotAt/);
+  assert.match(cache, /const MAX_AGE_MS = 30 \* 1000/);
+});
+
+test("post cards do not prefetch engagement-sensitive detail routes", () => {
+  const src = source("components/reviews/CircleFeedCard.tsx");
+
+  assert.doesNotMatch(src, /router\.prefetch\(postHref\)/);
+  assert.match(src, /href=\{`\/comments\/\$\{encodeURIComponent\(review\.id\)\}`\}[\s\S]*prefetch=\{false\}/);
 });
 
 test("settings engagement pages load through authenticated me APIs, not browser table reads", () => {
@@ -186,6 +255,6 @@ test("settings engagement APIs resolve the authenticated actor server-side", () 
   assert.match(comments, /buildProfileDisplayMap\(/);
   assert.match(comments, /profileMap/);
   assert.match(helper, /likedByMeMap/);
-  assert.match(helper, /bookmarkedRestaurantMap/);
+  assert.match(helper, /bookmarkedPostMap/);
   assert.match(helper, /commentsForActor/);
 });

@@ -73,6 +73,7 @@ export default function FriendProfileClient({
   initialMyName = "",
   initialCircleStatus = "none",
   initialTheirCircleCount = 0,
+  initialCommonRestaurantCount = null,
   initialHasIncomingRequest = false,
 }: {
   name: string;
@@ -83,6 +84,7 @@ export default function FriendProfileClient({
   initialMyName?: string;
   initialCircleStatus?: "one_way" | "sent" | "none";
   initialTheirCircleCount?: number;
+  initialCommonRestaurantCount?: number | null;
   initialHasIncomingRequest?: boolean;
 }) {
   const router = useRouter();
@@ -96,7 +98,7 @@ export default function FriendProfileClient({
   );
   const [theirCircleCount, setTheirCircleCount] = useState(initialTheirCircleCount);
   const [hasIncomingRequest, setHasIncomingRequest] = useState(initialHasIncomingRequest);
-  const [commonRestaurantCount, setCommonRestaurantCount] = useState<number | null>(null);
+  const [commonRestaurantCount, setCommonRestaurantCount] = useState<number | null>(initialCommonRestaurantCount);
   const [confirmAction, setConfirmAction] = useState<"cancel_request" | "leave_circle" | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [respondBusy, setRespondBusy] = useState(false);
@@ -153,7 +155,7 @@ export default function FriendProfileClient({
   useEffect(() => {
     const me = resolveActorName(initialMyName);
     setMyName(me);
-    setCommonRestaurantCount(null);
+    setCommonRestaurantCount(initialCommonRestaurantCount);
 
     // When the server did NOT supply relationship data (unauthenticated / first load
     // without SSR auth), reset to safe defaults and show the skeleton until the
@@ -193,7 +195,7 @@ export default function FriendProfileClient({
       loadSeqRef.current += 1;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name]);
+  }, [name, initialCommonRestaurantCount]);
 
   async function refreshAfterCircleChange() {
     await loadCircleStatus(myName);

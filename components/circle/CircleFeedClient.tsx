@@ -23,7 +23,7 @@ interface Props {
   initialCircle?: string[];
   initialMutualCircle?: string[];
   initialLikedMap?: Record<string, boolean>;
-  initialBookmarkedRestaurantMap?: Record<string, boolean>;
+  initialBookmarkedPostMap?: Record<string, boolean>;
   initialHasMore?: boolean;
   initialNextCursor?: CircleFeedCursor | null;
 }
@@ -38,7 +38,7 @@ export default function CircleFeedClient({
   initialCircle = [],
   initialMutualCircle = [],
   initialLikedMap = {},
-  initialBookmarkedRestaurantMap = {},
+  initialBookmarkedPostMap = {},
   initialHasMore = false,
   initialNextCursor = null,
 }: Props) {
@@ -52,7 +52,7 @@ export default function CircleFeedClient({
   const [feedCommentMap, setFeedCommentMap] = useState(commentMap);
   const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(initialProfileMap);
   const [feedLikedMap, setFeedLikedMap] = useState(initialLikedMap);
-  const [feedBookmarkedRestaurantMap, setFeedBookmarkedRestaurantMap] = useState(initialBookmarkedRestaurantMap);
+  const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(initialBookmarkedPostMap);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -83,7 +83,7 @@ export default function CircleFeedClient({
     setFeedCommentMap(commentMap);
     setFeedProfileMap(initialProfileMap);
     setFeedLikedMap(initialLikedMap);
-    setFeedBookmarkedRestaurantMap(initialBookmarkedRestaurantMap);
+    setFeedBookmarkedPostMap(initialBookmarkedPostMap);
     setHasMore(initialHasMore);
     setNextCursor(initialNextCursor);
 
@@ -94,7 +94,7 @@ export default function CircleFeedClient({
       rankMap,
       profileMap: initialProfileMap,
       likedByMeMap: initialLikedMap,
-      bookmarkedRestaurantMap: initialBookmarkedRestaurantMap,
+      bookmarkedPostMap: initialBookmarkedPostMap,
       myName: initialMyName,
       joinedCircles: initialCircle,
       mutualMembers: initialMutualCircle,
@@ -125,7 +125,7 @@ export default function CircleFeedClient({
     rankMap,
     initialProfileMap,
     initialLikedMap,
-    initialBookmarkedRestaurantMap,
+    initialBookmarkedPostMap,
     initialMyName,
     initialCircle,
     initialMutualCircle,
@@ -159,7 +159,7 @@ export default function CircleFeedClient({
       setFeedCommentMap((current) => ({ ...current, ...(data.commentMap ?? {}) }));
       setFeedProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
       setFeedLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
-      setFeedBookmarkedRestaurantMap((current) => ({ ...current, ...(data.bookmarkedRestaurantMap ?? {}) }));
+      setFeedBookmarkedPostMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
       setHasMore(Boolean(data.hasMore));
       setNextCursor(data.nextCursor ?? null);
     } catch {
@@ -199,7 +199,7 @@ export default function CircleFeedClient({
       setPublicLikeCountMap((current) => ({ ...current, ...(data.likeCountMap ?? {}) }));
       setPublicCommentMap((current) => ({ ...current, ...(data.commentMap ?? {}) }));
       setPublicLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
-      setPublicBookmarkedMap((current) => ({ ...current, ...(data.bookmarkedRestaurantMap ?? {}) }));
+      setPublicBookmarkedMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
       setPublicProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
       setPublicHasMore(Boolean(data.hasMore));
       setPublicNextCursor(data.nextCursor ?? null);
@@ -355,7 +355,7 @@ export default function CircleFeedClient({
               initialLikeCount={feedLikeCountMap[review.id] ?? 0}
               initialCommentCount={eng?.count ?? 0}
               initialLiked={feedLikedMap[review.id] ?? false}
-              initialBookmarked={feedBookmarkedRestaurantMap[review.restaurant_name] ?? false}
+              initialBookmarked={feedBookmarkedPostMap[review.id] ?? false}
               initialMyName={myName}
               profileMap={feedProfileMap}
               priorityImage={index === 0}
@@ -418,7 +418,7 @@ export default function CircleFeedClient({
                   initialLikeCount={publicLikeCountMap[review.id] ?? 0}
                   initialCommentCount={eng?.count ?? 0}
                   initialLiked={publicLikedMap[review.id] ?? false}
-                  initialBookmarked={publicBookmarkedMap[review.restaurant_name] ?? false}
+                  initialBookmarked={publicBookmarkedMap[review.id] ?? false}
                   initialMyName={myName}
                   profileMap={publicProfileMap}
                   priorityImage={false}

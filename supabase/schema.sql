@@ -797,10 +797,15 @@ create table if not exists public.wishlist (
   user_name        text        not null,
   restaurant_name  text        not null,
   post_id          uuid        references public.reviews(id) on delete set null,
-  created_at       timestamptz not null default now(),
-  unique(user_name, restaurant_name)
+  created_at       timestamptz not null default now()
 );
 create index if not exists wishlist_user_idx on public.wishlist(user_name);
+create unique index if not exists wishlist_user_post_unique
+  on public.wishlist(user_name, post_id)
+  where post_id is not null;
+create unique index if not exists wishlist_user_place_unique
+  on public.wishlist(user_name, restaurant_name)
+  where post_id is null;
 alter table public.wishlist enable row level security;
 drop policy if exists "Wishlist readable by everyone" on public.wishlist;
 drop policy if exists "Wishlist readable by owner" on public.wishlist;

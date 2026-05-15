@@ -92,7 +92,6 @@ export async function GET(req: NextRequest) {
       : null;
 
     const postIds = reviews.map((r) => r.id);
-    const restaurantNames = [...new Set(reviews.map((r) => r.restaurant_name))];
 
     const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = postIds.length > 0
       ? await Promise.all([
@@ -102,12 +101,12 @@ export async function GET(req: NextRequest) {
             .select("id, post_id, user_name, content, created_at")
             .in("post_id", postIds)
             .order("created_at", { ascending: false }),
-          myName && restaurantNames.length > 0
+          myName && postIds.length > 0
             ? db
                 .from("wishlist")
-                .select("restaurant_name")
+                .select("post_id")
                 .eq("user_name", myName)
-                .in("restaurant_name", restaurantNames)
+                .in("post_id", postIds)
             : Promise.resolve({ data: [] }),
           Promise.resolve().then(() => buildProfileDisplayMap(db, reviews.map((r) => r.reviewer_name))),
         ])
@@ -120,9 +119,9 @@ export async function GET(req: NextRequest) {
       if (like.user_name === myName) likedByMeMap[like.post_id] = true;
     }
 
-    const bookmarkedRestaurantMap: Record<string, boolean> = {};
-    for (const item of (rawWishlist ?? []) as { restaurant_name: string }[]) {
-      bookmarkedRestaurantMap[item.restaurant_name] = true;
+    const bookmarkedPostMap: Record<string, boolean> = {};
+    for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
+      if (item.post_id) bookmarkedPostMap[item.post_id] = true;
     }
 
     type CommentRow = Comment & { post_id: string };
@@ -141,7 +140,7 @@ export async function GET(req: NextRequest) {
       likeCountMap,
       commentMap,
       likedByMeMap,
-      bookmarkedRestaurantMap,
+      bookmarkedPostMap,
       profileMap,
       hasMore,
       nextCursor,

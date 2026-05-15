@@ -37,6 +37,20 @@ function writeSession<T>(key: string, entry: CacheEntry<T>) {
   }
 }
 
+export function readCachedJson<T>(url: string): T | null {
+  const now = Date.now();
+  const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
+  if (memory && memory.expiresAt > now) return memory.value;
+
+  const session = readSession<T>(url);
+  if (session && session.expiresAt > now) {
+    memoryCache.set(url, session);
+    return session.value;
+  }
+
+  return null;
+}
+
 function isDocumentReload() {
   try {
     const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
@@ -53,18 +67,11 @@ function shouldBypassStoredCache(url: string, options?: CachedJsonOptions) {
 }
 
 export async function cachedJson<T>(url: string, ttlMs: number, options?: CachedJsonOptions): Promise<T> {
-  const now = Date.now();
   const bypassStoredCache = shouldBypassStoredCache(url, options);
 
   if (!bypassStoredCache) {
-    const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
-    if (memory && memory.expiresAt > now) return memory.value;
-
-    const session = readSession<T>(url);
-    if (session && session.expiresAt > now) {
-      memoryCache.set(url, session);
-      return session.value;
-    }
+    const cached = readCachedJson<T>(url);
+    if (cached !== null) return cached;
   }
 
   const pending = pendingRequests.get(url) as Promise<T> | undefined;
@@ -99,8 +106,6 @@ export function invalidateViewerCaches() {
     "/api/feed/",
     "/api/circle/",
     "/api/people",
-    // "/api/trending" uses server-side getPrivateCached, not browser sessionStorage, so this
-    // is currently a no-op — kept as a forward-compatible entry in case a client cache is added.
     "/api/trending",
     "/api/notifications",
   ]) {

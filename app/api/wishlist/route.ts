@@ -40,9 +40,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { restaurantName } = await req.json();
-  if (typeof restaurantName !== "string" || !restaurantName.trim()) {
-    return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
+  const { restaurantName, postId } = await req.json();
+  if (
+    (typeof postId !== "string" || !postId.trim()) &&
+    (typeof restaurantName !== "string" || !restaurantName.trim())
+  ) {
+    return NextResponse.json({ error: "postId or restaurantName is required" }, { status: 400 });
   }
 
   const { actor } = await getRouteActor();
@@ -51,11 +54,16 @@ export async function DELETE(req: NextRequest) {
   }
 
   const writeDb = createAdminClient();
-  const { error } = await writeDb
+  let query = writeDb
     .from("wishlist")
     .delete()
-    .eq("user_name", actor.actorName)
-    .eq("restaurant_name", restaurantName.trim());
+    .eq("user_name", actor.actorName);
+
+  query = typeof postId === "string" && postId.trim()
+    ? query.eq("post_id", postId.trim())
+    : query.eq("restaurant_name", restaurantName.trim()).is("post_id", null);
+
+  const { error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

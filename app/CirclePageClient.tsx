@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
 import type { CircleFeedPage } from "@/lib/circle-feed";
@@ -9,7 +9,7 @@ import type { CircleFeedPage } from "@/lib/circle-feed";
 const CIRCLE_TTL_MS = 3 * 60 * 1000;
 const API_URL = "/api/feed/circle";
 
-function CircleSkeleton() {
+export function CircleSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div className="px-5 pt-6 pb-3" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -46,7 +46,12 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
 
   useEffect(() => {
     if (initialData) {
-      primeCachedJson(API_URL, initialData, CIRCLE_TTL_MS);
+      const cachedData = readCachedJson<CircleFeedPage>(API_URL);
+      if (cachedData) {
+        setData(cachedData);
+      } else {
+        primeCachedJson(API_URL, initialData, CIRCLE_TTL_MS);
+      }
       return;
     }
     cachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
@@ -91,7 +96,7 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
         initialCircle={data.joinedCircles}
         initialMutualCircle={data.mutualMembers}
         initialLikedMap={data.likedByMeMap}
-        initialBookmarkedRestaurantMap={data.bookmarkedRestaurantMap}
+        initialBookmarkedPostMap={data.bookmarkedPostMap}
         initialHasMore={data.hasMore}
         initialNextCursor={data.nextCursor}
       />

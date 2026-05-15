@@ -235,3 +235,21 @@ test("schema: wishlist SELECT policy is owner-only", () => {
     "wishlist SELECT policy must bind user_name to the authenticated actor"
   );
 });
+
+test("schema: wishlist uniqueness is post-level, with legacy place saves separated", () => {
+  assert.match(
+    schema,
+    /create unique index if not exists wishlist_user_post_unique\s+on public\.wishlist\s*\(\s*user_name\s*,\s*post_id\s*\)\s+where post_id is not null;/i
+  );
+  assert.match(
+    schema,
+    /create unique index if not exists wishlist_user_place_unique\s+on public\.wishlist\s*\(\s*user_name\s*,\s*restaurant_name\s*\)\s+where post_id is null;/i
+  );
+
+  const wishlistTable = schema.match(/create table if not exists public\.wishlist \([\s\S]*?\n\);/i)?.[0] ?? "";
+  assert.doesNotMatch(
+    wishlistTable,
+    /unique\s*\(\s*user_name\s*,\s*restaurant_name\s*\)/i,
+    "restaurant-level uniqueness must not make every post for the same place look saved"
+  );
+});

@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson } from "@/lib/browser-api-cache";
+import { useCallback, useEffect, useState } from "react";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import TrendingClient from "@/components/trending/TrendingClient";
 import type { TrendingPageData } from "@/lib/trending-page-data";
+import { DEFAULT_TRENDING_LOCATION_BUCKET, normalizeLocationBucket, trendingApiUrl } from "@/lib/trending-location";
 
 const TRENDING_TTL_MS = 5 * 60 * 1000;
-const API_URL = "/api/trending";
 
-function TrendingSkeleton() {
+export function TrendingSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div style={{ padding: "18px 20px 0", borderBottom: "1px solid var(--border)" }}>
@@ -34,19 +34,51 @@ function TrendingSkeleton() {
   );
 }
 
-export default function TrendingPageClient({ initialData = null }: { initialData?: TrendingPageData | null }) {
+export default function TrendingPageClient({
+  initialData = null,
+  initialLocationBucket = DEFAULT_TRENDING_LOCATION_BUCKET,
+  initialLocationLabel = null,
+}: {
+  initialData?: TrendingPageData | null;
+  initialLocationBucket?: string;
+  initialLocationLabel?: string | null;
+}) {
   const [data, setData] = useState<TrendingPageData | null>(initialData);
   const [error, setError] = useState(false);
+  const [locationBucket, setLocationBucket] = useState(() => normalizeLocationBucket(initialLocationBucket));
+  const handleLocationBucketChange = useCallback((nextBucket: string) => {
+    setError(false);
+    setLocationBucket(normalizeLocationBucket(nextBucket));
+  }, []);
 
   useEffect(() => {
-    if (initialData) {
-      primeCachedJson(API_URL, initialData, TRENDING_TTL_MS);
-      return;
+    let cancelled = false;
+    const apiUrl = trendingApiUrl(locationBucket);
+
+    if (initialData && locationBucket === normalizeLocationBucket(initialLocationBucket)) {
+      const cachedData = readCachedJson<TrendingPageData>(apiUrl);
+      if (cachedData) {
+        setData(cachedData);
+      } else {
+        primeCachedJson(apiUrl, initialData, TRENDING_TTL_MS);
+      }
+      return () => { cancelled = true; };
     }
-    cachedJson<TrendingPageData>(API_URL, TRENDING_TTL_MS)
-      .then(setData)
+
+    const cachedData = readCachedJson<TrendingPageData>(apiUrl);
+    if (cachedData) {
+      setData(cachedData);
+    } else {
+      setData(null);
+    }
+
+    cachedJson<TrendingPageData>(apiUrl, TRENDING_TTL_MS)
+      .then((freshData) => {
+        if (!cancelled) setData(freshData);
+      })
       .catch(() => setError(true));
-  }, [initialData]);
+    return () => { cancelled = true; };
+  }, [initialData, initialLocationBucket, locationBucket]);
 
   if (error) {
     return (
@@ -71,6 +103,9 @@ export default function TrendingPageClient({ initialData = null }: { initialData
       circleMonth={data.circleMonth}
       circleAlltime={data.circleAlltime}
       circlePeopleCounts={data.circlePeopleCounts}
+      initialLocationBucket={locationBucket}
+      initialLocationLabel={initialLocationLabel}
+      onLocationBucketChange={handleLocationBucketChange}
     />
   );
 }

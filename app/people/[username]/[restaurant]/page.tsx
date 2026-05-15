@@ -54,20 +54,34 @@ export default async function RestaurantDetailPage({ params }: Props) {
 
   const postIds = posts.map((r) => r.id);
 
-  const [{ data: rawLikes }, { data: rawComments }, profileMap] = await Promise.all([
-    readDb.from("likes").select("post_id").in("post_id", postIds),
+  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = await Promise.all([
+    readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
     readDb
       .from("comments")
       .select(COMMENT_SELECT)
       .in("post_id", postIds)
       .order("created_at", { ascending: false })
       .returns<Comment[]>(),
+    myName
+      ? readDb
+          .from("wishlist")
+          .select("post_id")
+          .eq("user_name", myName)
+          .in("post_id", postIds)
+      : Promise.resolve({ data: [] }),
     buildProfileDisplayMap(readDb, [name]),
   ]);
 
   const likeCountMap: Record<string, number> = {};
-  for (const like of (rawLikes ?? []) as { post_id: string }[]) {
+  const likedByMeMap: Record<string, boolean> = {};
+  for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
     likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
+    if (myName && like.user_name === myName) likedByMeMap[like.post_id] = true;
+  }
+
+  const bookmarkedPostMap: Record<string, boolean> = {};
+  for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
+    if (item.post_id) bookmarkedPostMap[item.post_id] = true;
   }
 
   const commentMap: Record<string, { count: number; top: Comment }> = {};
@@ -100,6 +114,8 @@ export default async function RestaurantDetailPage({ params }: Props) {
       likeCountMap={likeCountMap}
       commentMap={commentMap}
       rankMap={rankMap}
+      likedByMeMap={likedByMeMap}
+      bookmarkedPostMap={bookmarkedPostMap}
       profileMap={profileMap}
       initialMyName={myName}
     />

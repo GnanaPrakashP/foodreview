@@ -1,27 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bookmark, Heart, MessageCircle, MoreHorizontal, Send, Star } from "lucide-react";
 import PostShareButton from "@/components/posts/PostShareButton";
-import { createClient } from "@/lib/supabase/client";
 import type { Comment, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
+import { currentTrendingApiUrl } from "@/lib/trending-location";
+import { patchPostEngagement, readPostEngagementEntry } from "@/lib/post-engagement-cache";
 
 type Props = {
   review: Review;
   initialLikeCount: number;
   initialComments: Comment[];
   initialMyName: string;
+  initialLiked?: boolean;
+  initialBookmarked?: boolean;
+  initialSnapshotAt?: number;
   profileMap?: Record<string, string>;
   autoFocusComment?: boolean;
   backHref?: string;
 };
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -39,11 +45,18 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/feed/public");
 }
 
+function invalidateLocalTrendingCache() {
+  invalidateCachedJson(currentTrendingApiUrl());
+}
+
 export default function ReviewDetailClient({
   review,
   initialLikeCount,
   initialComments,
   initialMyName,
+  initialLiked = false,
+  initialBookmarked = false,
+  initialSnapshotAt = Date.now(),
   profileMap = {},
   autoFocusComment = false,
   backHref = "/",
@@ -52,9 +65,9 @@ export default function ReviewDetailClient({
   const locationLabel = restaurantLocationLabel(review);
   const mapsUrl = googleMapsUrl(review);
   const [myName, setMyName] = useState(initialMyName);
-  const [liked, setLiked] = useState(false);
+  const [liked, setLiked] = useState(initialLiked);
   const [likeCount, setLikeCount] = useState(initialLikeCount);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(initialBookmarked);
   const [bookmarkBounceKey, setBookmarkBounceKey] = useState(0);
   const [comments, setComments] = useState(initialComments);
   const [text, setText] = useState("");
@@ -78,18 +91,19 @@ export default function ReviewDetailClient({
   useEffect(() => {
     const name = resolveActorName(initialMyName);
     setMyName(name);
-    if (!name) return;
+  }, [initialMyName]);
 
-    (async () => {
-      const supabase = createClient();
-      const [{ data: likeData }, { data: wishData }] = await Promise.all([
-        (supabase as any).from("likes").select("id").eq("post_id", review.id).eq("user_name", name).maybeSingle(),
-        (supabase as any).from("wishlist").select("id").eq("user_name", name).eq("restaurant_name", review.restaurant_name).maybeSingle(),
-      ]);
-      setLiked(Boolean(likeData));
-      setBookmarked(Boolean(wishData));
-    })();
-  }, [initialMyName, review.id, review.restaurant_name]);
+  useIsomorphicLayoutEffect(() => {
+    const cached = readPostEngagementEntry(review.id);
+    setLiked(initialLiked);
+    setLikeCount(initialLikeCount);
+    setBookmarked(initialBookmarked);
+    setComments(initialComments);
+    if (!cached || cached.updatedAt <= initialSnapshotAt) return;
+    if (cached.liked !== undefined) setLiked(cached.liked);
+    if (cached.likeCount !== undefined) setLikeCount(cached.likeCount);
+    if (cached.bookmarked !== undefined) setBookmarked(cached.bookmarked);
+  }, [initialBookmarked, initialComments, initialLikeCount, initialLiked, initialSnapshotAt, review.id]);
 
   async function deleteReview() {
     if (!canDeleteReview || deletingReview) return;
@@ -106,6 +120,7 @@ export default function ReviewDetailClient({
     }
 
     invalidateEngagementCaches();
+    invalidateLocalTrendingCache();
     router.replace("/me");
     router.refresh();
   }
@@ -136,10 +151,13 @@ export default function ReviewDetailClient({
 
   const toggleLike = useCallback(async () => {
     if (!myName) return;
+    const nextLiked = !liked;
+    const nextLikeCount = liked ? Math.max(0, likeCount - 1) : likeCount + 1;
+    setLiked(nextLiked);
+    setLikeCount(nextLikeCount);
+    patchPostEngagement(review.id, { liked: nextLiked, likeCount: nextLikeCount });
 
     if (liked) {
-      setLiked(false);
-      setLikeCount((count) => Math.max(0, count - 1));
       const response = await fetch("/api/likes", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -147,10 +165,12 @@ export default function ReviewDetailClient({
       });
       if (!response.ok) {
         setLiked(true);
-        setLikeCount((count) => count + 1);
+        setLikeCount(likeCount);
+        patchPostEngagement(review.id, { liked: true, likeCount });
         return;
       }
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -159,8 +179,6 @@ export default function ReviewDetailClient({
       return;
     }
 
-    setLiked(true);
-    setLikeCount((count) => count + 1);
     const response = await fetch("/api/likes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -168,35 +186,40 @@ export default function ReviewDetailClient({
     });
     if (!response.ok) {
       setLiked(false);
-      setLikeCount((count) => Math.max(0, count - 1));
+      setLikeCount(likeCount);
+      patchPostEngagement(review.id, { liked: false, likeCount });
       return;
     }
     invalidateEngagementCaches();
+    invalidateLocalTrendingCache();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event: "POST_LIKED", reviewId: review.id, actorName: myName }),
     }).catch(() => {});
-  }, [liked, myName, review.id]);
+  }, [liked, likeCount, myName, review.id]);
 
   const toggleBookmark = useCallback(async () => {
     if (!myName) return;
     setBookmarkBounceKey((key) => key + 1);
+    const nextBookmarked = !bookmarked;
+    setBookmarked(nextBookmarked);
+    patchPostEngagement(review.id, { bookmarked: nextBookmarked });
 
     if (bookmarked) {
-      setBookmarked(false);
       const response = await fetch("/api/wishlist", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ restaurantName: review.restaurant_name }),
+        body: JSON.stringify({ postId: review.id }),
       });
       if (!response.ok) {
         setBookmarked(true);
+        patchPostEngagement(review.id, { bookmarked: true });
         return;
       }
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
     } else {
-      setBookmarked(true);
       const response = await fetch("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,9 +227,11 @@ export default function ReviewDetailClient({
       });
       if (!response.ok) {
         setBookmarked(false);
+        patchPostEngagement(review.id, { bookmarked: false });
         return;
       }
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
     }
   }, [bookmarked, myName, review.restaurant_name, review.id]);
 
@@ -237,6 +262,7 @@ export default function ReviewDetailClient({
     if (data) {
       setComments((prev) => prev.map((comment) => comment.id === tempId ? data : comment));
       invalidateEngagementCaches();
+      invalidateLocalTrendingCache();
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -258,6 +284,7 @@ export default function ReviewDetailClient({
       return;
     }
     invalidateEngagementCaches();
+    invalidateLocalTrendingCache();
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

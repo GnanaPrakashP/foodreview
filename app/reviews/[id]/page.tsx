@@ -91,14 +91,20 @@ export default async function ReviewDetailPage({ params }: Props) {
 
   if (!canViewerSeeReview(review, { viewerName: myName, circleOwnerNames })) notFound();
 
-  const [{ data: likeRows }, { data: comments }] = await Promise.all([
-    readDb.from("likes").select("post_id").eq("post_id", review.id),
+  const [{ data: likeRows }, { data: comments }, { data: viewerLike }, { data: viewerBookmark }] = await Promise.all([
+    readDb.from("likes").select("post_id, user_name").eq("post_id", review.id),
     readDb
       .from("comments")
       .select(COMMENT_SELECT)
       .eq("post_id", review.id)
       .order("created_at", { ascending: true })
       .returns<Comment[]>(),
+    myName
+      ? readDb.from("likes").select("post_id").eq("post_id", review.id).eq("user_name", myName).maybeSingle()
+      : Promise.resolve({ data: null }),
+    myName
+      ? readDb.from("wishlist").select("post_id").eq("post_id", review.id).eq("user_name", myName).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   const profileMap = await buildProfileDisplayMap(supabase, [
@@ -113,6 +119,9 @@ export default async function ReviewDetailPage({ params }: Props) {
       initialLikeCount={likeRows?.length ?? 0}
       initialComments={comments ?? []}
       initialMyName={myName}
+      initialLiked={Boolean(viewerLike)}
+      initialBookmarked={Boolean(viewerBookmark)}
+      initialSnapshotAt={Date.now()}
       profileMap={profileMap}
     />
   );
