@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_SELECT } from "@/lib/selects";
 import type { FoodItem, Review } from "@/lib/types";
 import { isReviewSuppressed } from "@/lib/visibility";
+import { restaurantLocationLabel } from "@/lib/location";
 
 export const runtime = "nodejs";
 
@@ -160,7 +161,7 @@ export async function GET(
   const [gradFrom, gradTo] = avatarColors(review.reviewer_name);
   const initials = avatarInitials(reviewerDisplayName);
   const restaurantName = review.restaurant_name;
-  const location = review.area || review.restaurant_address || null;
+  const location = restaurantLocationLabel(review);
   const items = (review.items as FoodItem[]).slice(0, 6);
   const captionRaw = review.body ?? null;
   const caption = captionRaw
