@@ -38,7 +38,7 @@ const DEFAULT_SHARE_IMAGE_SCALE = 2;
 const MAX_SHARE_IMAGE_SCALE = 3;
 const SHARE_IMAGE_PADDING = 14;
 const CARD_HORIZONTAL_PADDING = 40;
-const FOOTER_HEIGHT = 48;
+const FOOTER_HEIGHT = 42;
 
 function clampShareImageWidth(width: number | null): number {
   if (!width || Number.isNaN(width)) return DEFAULT_SHARE_IMAGE_WIDTH;
@@ -92,9 +92,9 @@ function estimateItemRows(items: FoodItem[], contentWidth: number): number {
   let rowWidth = 0;
 
   for (const item of items) {
-    const ratingWidth = item.rating > 0 ? 42 : 0;
-    const chipWidth = Math.min(220, 28 + trunc(item.name, 28).length * 7 + ratingWidth);
-    const nextWidth = rowWidth === 0 ? chipWidth : rowWidth + 6 + chipWidth;
+    const ratingWidth = item.rating > 0 ? 34 : 0;
+    const chipWidth = Math.min(200, 24 + trunc(item.name, 28).length * 6 + ratingWidth);
+    const nextWidth = rowWidth === 0 ? chipWidth : rowWidth + 5 + chipWidth;
 
     if (nextWidth > contentWidth) {
       rows += 1;
@@ -173,12 +173,12 @@ export async function GET(
   const cardHeight =
     36 + // card vertical padding
     46 + // header and spacing
-    titleLines * 25 +
+    titleLines * 24 +
     (location ? 5 + locationLines * 14 + 8 : 8) +
     (caption ? 14 + captionLines * 19 + 8 : 0) +
-    (items.length > 0 ? itemRows * 22 + (itemRows - 1) * 5 + 8 : 0) +
+    (items.length > 0 ? itemRows * 20 + (itemRows - 1) * 5 + 8 : 0) +
     FOOTER_HEIGHT;
-  const imageHeight = Math.ceil(cardHeight + SHARE_IMAGE_PADDING * 2 + 2);
+  const imageHeight = Math.ceil(cardHeight + SHARE_IMAGE_PADDING * 2 + 1);
   const outputHeight = imageHeight * shareImageScale;
 
   const dmSansFamily = dmSans400 ? "'DM Sans', sans-serif" : "sans-serif";
