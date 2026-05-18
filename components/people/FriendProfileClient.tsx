@@ -319,7 +319,7 @@ export default function FriendProfileClient({
       {/* ── Header ── */}
       <div style={{ padding: "20px", position: "relative" }}>
         <div style={{ position: "absolute", top: "20px", right: "20px" }}>
-          <Link href="/people" style={{ textDecoration: "none" }}>
+          <Link href="/explore" style={{ textDecoration: "none" }}>
             <div style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
             </div>

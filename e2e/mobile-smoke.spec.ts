@@ -116,15 +116,15 @@ test("mobile bottom nav smoke: main tabs are visible and tappable", async ({ pag
   await page.goto("/");
 
   await expect(page.getByRole("link", { name: "Circle", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Trending", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Share", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "People", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Explore", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "+", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Hungry", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Me", exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "Trending", exact: true }).click();
-  await expect(page).toHaveURL(/\/trending/);
-  await page.getByRole("link", { name: "People", exact: true }).click();
-  await expect(page).toHaveURL(/\/people/);
+  await page.getByRole("link", { name: "Explore", exact: true }).click();
+  await expect(page).toHaveURL(/\/explore/);
+  await page.getByRole("link", { name: "Hungry", exact: true }).click();
+  await expect(page).toHaveURL(/\/hungry/);
   await page.getByRole("link", { name: "Circle", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expectNoHorizontalOverflow(page);
@@ -217,7 +217,7 @@ test("mobile search, trending, and common badge smoke: cards fit without overflo
 
   await signIn(page, userB!);
 
-  await page.goto("/people");
+  await page.goto("/explore");
   await page.getByPlaceholder(/search by name or @username/i).fill(userA!.name);
   await expect(page.getByRole("link", { name: new RegExp(userA!.name, "i") }).first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: /in circle|request|requested/i }).first()).toBeVisible();

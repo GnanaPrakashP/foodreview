@@ -4,7 +4,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Heart, MessageCircle, MoreHorizontal, Star } from "lucide-react";
+import { Heart, MapPin, MessageCircle, MoreVertical, Star } from "lucide-react";
 import type { Review } from "@/lib/types";
 import PostShareButton from "@/components/posts/PostShareButton";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
@@ -276,6 +276,51 @@ export default function CircleFeedCard({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [showPostActions]);
 
+  const engagementRow = (
+    <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "10px 12px 2px" }}>
+      <button
+        key={bounceKey}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleLike();
+        }}
+        disabled={!mounted || !myName}
+        className={bounceKey > 0 ? "like-pop" : ""}
+        style={{ background: "none", border: "none", cursor: mounted && myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
+      >
+        <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
+        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
+      </button>
+      <Link
+        href={`/comments/${encodeURIComponent(review.id)}`}
+        prefetch={false}
+        onClick={(event) => event.stopPropagation()}
+        aria-label={`${commentCount} comment${commentCount !== 1 ? "s" : ""}`}
+        style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
+      >
+        <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
+        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
+          {commentCount}
+        </span>
+      </Link>
+      <button
+        key={`bm-${bookmarkBounceKey}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleBookmark();
+        }}
+        className={bookmarkBounceKey > 0 ? "like-pop" : ""}
+        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
+        aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill={bookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+        </svg>
+      </button>
+      <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
+    </div>
+  );
+
   return (
     <>
       <article
@@ -288,17 +333,21 @@ export default function CircleFeedCard({
             router.push(postHref);
           }
         }}
-        style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden", cursor: "pointer" }}
+        style={{
+          background: "var(--bg)",
+          borderBottom: "1px solid var(--border)",
+          cursor: "pointer",
+        }}
       >
 
         {/* Header */}
-        <div style={{ padding: "13px 14px 11px", display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ padding: "12px 12px 10px", display: "flex", alignItems: "center", gap: "10px" }}>
           <Link
             href={`/people/${encodeURIComponent(review.reviewer_name)}`}
             onClick={(event) => event.stopPropagation()}
             style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}
           >
-            <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(rn), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(rn), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
               {initials || "?"}
             </div>
             <div style={{ minWidth: 0 }}>
@@ -308,9 +357,6 @@ export default function CircleFeedCard({
               </p>
             </div>
           </Link>
-          <span suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
-            {timeAgo(review.created_at)}
-          </span>
           {requestStatus !== undefined && review.reviewer_name !== myName && (
             <button
               onClick={(e) => { e.stopPropagation(); onRequestClick?.(); }}
@@ -347,9 +393,9 @@ export default function CircleFeedCard({
               style={{
                 width: 30,
                 height: 30,
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-                borderRadius: "9px",
+                border: "none",
+                background: "transparent",
+                borderRadius: "50%",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -357,7 +403,7 @@ export default function CircleFeedCard({
                 opacity: deletingReview ? 0.7 : 1,
               }}
             >
-              <MoreHorizontal size={15} strokeWidth={2} color="var(--muted)" />
+              <MoreVertical size={18} strokeWidth={2} color="var(--cream)" />
             </button>
             {showPostActions && (
               <div
@@ -393,6 +439,25 @@ export default function CircleFeedCard({
           </div>
         </div>
 
+        {/* Place */}
+        <div style={{ padding: "0 12px 10px" }}>
+          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
+            {review.restaurant_name}
+          </h2>
+          {locationLabel && (
+            <a
+              href={mapsUrl ?? undefined}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", textDecoration: "none" }}
+            >
+              <MapPin size={12} strokeWidth={2} />
+              <span>{locationLabel}</span>
+            </a>
+          )}
+        </div>
+
         {/* Photo / hero */}
         {(() => {
           const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
@@ -409,6 +474,7 @@ export default function CircleFeedCard({
                 style={{
                   display: "flex", overflowX: "auto", scrollSnapType: "x mandatory",
                   scrollbarWidth: "none", aspectRatio: "4/5",
+                  background: "var(--surface)",
                 }}
                 className="hide-scrollbar"
               >
@@ -442,26 +508,14 @@ export default function CircleFeedCard({
           );
         })()}
 
+        {engagementRow}
+
         {/* Body */}
-        <div style={{ padding: "12px 14px 0" }}>
-          {/* Restaurant name */}
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "1px" : "6px" }}>
-            {review.restaurant_name}
-          </h2>
-          {locationLabel && (
-            <a
-              href={mapsUrl ?? undefined}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => event.stopPropagation()}
-              style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
-            >
-              📍 {locationLabel}
-            </a>
-          )}
-{review.body && (
-            <div style={{ padding: "8px 10px", background: "var(--orange-dim)", borderLeft: "3px solid var(--orange)", borderRadius: "0 8px 8px 0", marginBottom: "10px" }}>
+        <div style={{ padding: "8px 12px 0" }}>
+          {review.body && (
+            <div style={{ marginBottom: "10px" }}>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.5 }}>
+                <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>{" "}
                 {review.body}
               </p>
             </div>
@@ -483,50 +537,11 @@ export default function CircleFeedCard({
             </div>
           )}
 
-          {/* Engagement row */}
-          <div style={{ display: "flex", alignItems: "center", gap: "14px", paddingTop: "8px", borderTop: "1px solid var(--border)", marginBottom: "8px" }}>
-            <button
-              key={bounceKey}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleLike();
-              }}
-              disabled={!mounted || !myName}
-              className={bounceKey > 0 ? "like-pop" : ""}
-              style={{ background: "none", border: "none", cursor: mounted && myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
-            >
-              <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
-              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
-            </button>
-            <Link
-              href={`/comments/${encodeURIComponent(review.id)}`}
-              prefetch={false}
-              onClick={(event) => event.stopPropagation()}
-              style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
-            >
-              <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
-              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
-                {commentCount} comment{commentCount !== 1 ? "s" : ""}
-              </span>
-            </Link>
-            <button
-              key={`bm-${bookmarkBounceKey}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleBookmark();
-              }}
-              className={bookmarkBounceKey > 0 ? "like-pop" : ""}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
-              aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill={bookmarked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-            <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
-          </div>
+          <p suppressHydrationWarning style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", margin: 0 }}>
+            {timeAgo(review.created_at)}
+          </p>
 
-          <div style={{ height: "14px" }} />
+          <div style={{ height: "12px" }} />
         </div>
       </article>
       {deleteReviewError && (

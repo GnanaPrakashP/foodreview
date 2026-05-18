@@ -103,7 +103,7 @@ function CircleSheet({ circle, allReviews, onClose }: {
           {members.length === 0 ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "32px 0", gap: "14px" }}>
               <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>No one in your circle yet</p>
-              <Link href="/people" onClick={onClose} style={{ textDecoration: "none" }}>
+              <Link href="/explore" onClick={onClose} style={{ textDecoration: "none" }}>
                 <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "12px", padding: "12px 24px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
                   Find friends
                 </button>
@@ -129,7 +129,7 @@ function CircleSheet({ circle, allReviews, onClose }: {
                   </Link>
                 ))}
               </div>
-              <Link href="/people" onClick={onClose} style={{ textDecoration: "none" }}>
+              <Link href="/explore" onClick={onClose} style={{ textDecoration: "none" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "18px 0 4px", gap: "6px", color: "var(--orange)", fontSize: "13px", fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
                   + Add more friends
                 </div>

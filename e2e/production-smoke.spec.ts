@@ -250,7 +250,7 @@ test("8 · people search finds B by name; dish search returns results for 'idli'
   await signIn(page, userA!);
 
   // People search
-  await page.goto("/people");
+  await page.goto("/explore");
   await page.getByPlaceholder(/search by name or @username/i).fill(userB!.name);
   await expect(page.getByRole("link", { name: escapedText(userB!.name) }).first()).toBeVisible({ timeout: 10_000 });
 

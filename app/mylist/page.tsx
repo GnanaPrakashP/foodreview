@@ -1,24 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
-import type { Review } from "@/lib/types";
-import MyListClient from "@/components/mylist/MyListClient";
-import { REVIEW_SELECT } from "@/lib/selects";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-export default async function MyListPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const myName = (user?.user_metadata?.username as string) ?? "";
-
-  if (!myName) return <MyListClient allReviews={[]} />;
-
-  const { data: reviews } = await supabase
-    .from("reviews")
-    .select(REVIEW_SELECT)
-    .eq("reviewer_name", myName)
-    .order("created_at", { ascending: false })
-    .limit(300)
-    .returns<Review[]>();
-
-  return <MyListClient allReviews={reviews ?? []} />;
+export default function MyListPage() {
+  redirect("/hungry");
 }

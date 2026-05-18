@@ -101,7 +101,7 @@ test.describe("Circle E2E smoke", () => {
     test.skip(SKIP_AB, SKIP_MSG);
 
     await signIn(page, userA!);
-    await page.goto("/people");
+    await page.goto("/explore");
     await page.getByPlaceholder(/search/i).fill(userB!.name);
     await expect(
       page.getByRole("link", { name: escapedText(userB!.name) }).first(),

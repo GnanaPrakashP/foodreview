@@ -88,7 +88,7 @@ test("manual QA checklist keeps Circle launch checks inside the main manual list
 
   assert.ok(circleCase, "QA-009 should be the Circle manual launch gate");
   assert.equal(circleCase.priority, "P0");
-  assert.equal(circleCase.route, "/people");
+  assert.equal(circleCase.route, "/explore");
   assert.match(circleCase.title, /Circle core/i);
   assert.match(circleCase.steps.join(" "), /public account/i);
   assert.match(circleCase.steps.join(" "), /private account/i);

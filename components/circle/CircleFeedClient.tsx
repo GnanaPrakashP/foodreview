@@ -289,9 +289,9 @@ export default function CircleFeedClient({
   // Don't render until we've read localStorage to avoid flash
   if (!mounted) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "4px 16px 100px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {[1, 2, 3].map((i) => (
-          <div key={i} className="animate-pulse" style={{ height: "280px", background: "var(--card)", borderRadius: "20px", opacity: 0.5 }} />
+          <div key={i} className="animate-pulse" style={{ height: "360px", background: "var(--card)", borderBottom: "1px solid var(--border)", opacity: 0.5 }} />
         ))}
       </div>
     );
@@ -311,7 +311,7 @@ export default function CircleFeedClient({
           Add friends to see what they&apos;re eating — or be the first to share a spot.
         </p>
         <div style={{ display: "flex", gap: "10px", marginTop: "8px", width: "100%", maxWidth: "320px" }}>
-          <Link href="/people" style={{ flex: 1, textDecoration: "none" }}>
+          <Link href="/explore" style={{ flex: 1, textDecoration: "none" }}>
             <button style={{ width: "100%", background: "var(--surface)", color: "var(--cream)", border: "1px solid var(--border)", borderRadius: "14px", padding: "13px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
               Find friends
             </button>
@@ -345,7 +345,7 @@ export default function CircleFeedClient({
 
   return (
     <>
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "4px 16px 100px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {circleReviews.map((review, index) => {
           const eng = feedCommentMap[review.id];
           return (
@@ -363,7 +363,7 @@ export default function CircleFeedClient({
           );
         })}
         {loadMoreError && (
-          <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: 0 }}>
+          <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 12px 0" }}>
             {loadMoreError}
           </p>
         )}
@@ -372,12 +372,13 @@ export default function CircleFeedClient({
             onClick={loadMore}
             disabled={loadingMore}
             style={{
-              width: "100%",
               background: loadingMore ? "var(--surface)" : "var(--orange)",
               color: loadingMore ? "var(--muted)" : "white",
               border: "none",
               borderRadius: "14px",
               padding: "13px",
+              margin: "16px 12px 0",
+              width: "calc(100% - 24px)",
               fontFamily: "'Syne', sans-serif",
               fontSize: "13px",
               fontWeight: 700,
@@ -392,7 +393,7 @@ export default function CircleFeedClient({
         {!hasMore && (
           <>
             {/* Section header */}
-            <div style={{ margin: "12px 0 4px", borderRadius: "18px", background: "var(--surface)", border: "1px solid var(--border)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ margin: "18px 12px 8px", borderRadius: "18px", background: "var(--surface)", border: "1px solid var(--border)", padding: "14px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", margin: 0 }}>
                   Discover People
@@ -429,7 +430,7 @@ export default function CircleFeedClient({
             })}
 
             {publicError && (
-              <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: 0 }}>
+              <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 12px 0" }}>
                 {publicError}
               </p>
             )}
@@ -439,12 +440,13 @@ export default function CircleFeedClient({
                 onClick={() => loadPublic(null)}
                 disabled={publicLoading}
                 style={{
-                  width: "100%",
                   background: "var(--surface)",
                   color: "var(--muted)",
                   border: "1px solid var(--border)",
                   borderRadius: "14px",
                   padding: "13px",
+                  margin: "16px 12px 0",
+                  width: "calc(100% - 24px)",
                   fontFamily: "'Syne', sans-serif",
                   fontSize: "13px",
                   fontWeight: 700,
@@ -460,12 +462,13 @@ export default function CircleFeedClient({
                 onClick={() => loadPublic(publicNextCursor)}
                 disabled={publicLoading}
                 style={{
-                  width: "100%",
                   background: publicLoading ? "var(--surface)" : "var(--orange)",
                   color: publicLoading ? "var(--muted)" : "white",
                   border: "none",
                   borderRadius: "14px",
                   padding: "13px",
+                  margin: "16px 12px 0",
+                  width: "calc(100% - 24px)",
                   fontFamily: "'Syne', sans-serif",
                   fontSize: "13px",
                   fontWeight: 700,

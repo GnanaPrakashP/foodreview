@@ -135,7 +135,7 @@ export default function MyCirclePage() {
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
             {accountType === "public" ? "No one has joined your circle yet" : "Add friends to build your circle"}
           </p>
-          <Link href="/people" style={{ textDecoration: "none" }}>
+          <Link href="/explore" style={{ textDecoration: "none" }}>
             <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "14px", padding: "13px 28px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
               Find friends
             </button>

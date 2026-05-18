@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
+import StoriesTray from "@/components/stories/StoriesTray";
 import type { CircleFeedPage } from "@/lib/circle-feed";
 
 const CIRCLE_TTL_MS = 3 * 60 * 1000;
@@ -12,16 +13,15 @@ const API_URL = "/api/feed/circle";
 export function CircleSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
-      <div className="px-5 pt-6 pb-3" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 12px 10px" }}>
         <div>
-          <div style={{ height: 13, width: 70, borderRadius: 6, background: "var(--card)", marginBottom: 8 }} />
           <div style={{ height: 28, width: 210, borderRadius: 8, background: "var(--card)" }} />
         </div>
-        <div style={{ paddingTop: 8 }}>
+        <div>
           <NotificationBell />
         </div>
       </div>
-      <div style={{ padding: "8px 20px 0" }}>
+      <div style={{ padding: "8px 12px 0" }}>
         {[1, 2, 3].map((i) => (
           <div key={i} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, padding: 16, marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
@@ -73,18 +73,19 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
-      <div className="px-5 pt-6 pb-3" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 12px 10px" }}>
         <div>
-          <p style={{ color: "var(--muted)", fontSize: "13px", fontFamily: "'DM Sans', sans-serif" }}>Your circle</p>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", color: "var(--cream)", lineHeight: "1.2", marginTop: "4px" }}>
+          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", color: "var(--cream)", lineHeight: "1.2", margin: 0 }}>
             What they&rsquo;re{" "}
             <span style={{ fontStyle: "italic", color: "var(--orange)" }}>eating</span>
           </h1>
         </div>
-        <div style={{ paddingTop: "8px" }}>
+        <div>
           <NotificationBell />
         </div>
       </div>
+
+      <StoriesTray />
 
       <CircleFeedClient
         allReviews={data.reviews}
