@@ -26,6 +26,7 @@ interface Props {
   onDeleted?: (review: Review) => void;
   requestStatus?: "idle" | "loading" | "pending" | "joined";
   onRequestClick?: () => void;
+  noBorder?: boolean;
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -97,6 +98,7 @@ export default function CircleFeedCard({
   onDeleted,
   requestStatus,
   onRequestClick,
+  noBorder = false,
 }: Props) {
   const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
@@ -335,7 +337,7 @@ export default function CircleFeedCard({
         }}
         style={{
           background: "var(--bg)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: noBorder ? "none" : "1px solid var(--border)",
           cursor: "pointer",
         }}
       >

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Heart, X } from "lucide-react";
 import type { Comment, Review } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 
@@ -29,7 +28,8 @@ function BoxedPostCard({
   return (
     <div
       style={{
-        height: "100%",
+        flex: "1 1 auto",
+        minHeight: 0,
         overflowY: "auto",
         overflowX: "hidden",
         borderRadius: 22,
@@ -39,7 +39,7 @@ function BoxedPostCard({
         scrollbarWidth: "none",
         touchAction: "pan-y",
       }}
-      className="hide-scrollbar"
+      className="hide-scrollbar card-slide-up"
     >
       <CircleFeedCard
         review={review}
@@ -50,6 +50,7 @@ function BoxedPostCard({
         initialMyName={myName}
         profileMap={profileMap}
         priorityImage={priority}
+        noBorder
       />
     </div>
   );
@@ -100,7 +101,6 @@ export default function SwipeStack({
   }, [onNeedMore, stack.length]);
 
   const current = stack[0];
-  const next = stack[1];
 
   function dismiss(dir: "left" | "right") {
     if (dismissDir || !current) return;
@@ -159,7 +159,7 @@ export default function SwipeStack({
 
   if (!current) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "64vh", padding: "24px" }}>
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", boxSizing: "border-box" }}>
         <div style={{ textAlign: "center" }}>
           <p style={{ fontSize: "40px", marginBottom: "10px" }}>🍽️</p>
           <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", marginBottom: "6px" }}>
@@ -174,28 +174,16 @@ export default function SwipeStack({
   }
 
   return (
-    <div style={{ padding: "0 16px 18px" }}>
-      <div style={{ position: "relative", height: "calc(100vh - 204px)", minHeight: 530, maxHeight: 720 }}>
-        {next && (
-          <div style={{ position: "absolute", inset: 0, transform: "scale(0.94) translateY(16px)", transformOrigin: "bottom center", zIndex: 1, pointerEvents: "none", opacity: 0.9 }}>
-            <BoxedPostCard
-              review={next}
-              likeCountMap={likeCountMap}
-              commentMap={commentMap}
-              likedMap={likedMap}
-              bookmarkedMap={bookmarkedMap}
-              profileMap={profileMap}
-              myName={myName}
-              priority={false}
-            />
-          </div>
-        )}
-
-        <div
+    <div style={{ height: "100%", minHeight: 0, padding: "16px", boxSizing: "border-box", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div
+          key={current.id}
           style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 2,
+            position: "relative",
+            flex: "0 0 auto",
+            width: "100%",
+            maxHeight: "100%",
+            display: "flex",
+            flexDirection: "column",
             transform: cardTransform,
             transition: cardTransition,
             touchAction: "pan-y",
@@ -235,24 +223,6 @@ export default function SwipeStack({
               <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'Syne', sans-serif" }}>Skip</span>
             </div>
           )}
-        </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 30, padding: "18px 0 0" }}>
-        <button
-          aria-label="Skip post"
-          onClick={() => dismiss("left")}
-          style={{ width: 56, height: 56, borderRadius: "50%", border: "2px solid var(--border)", background: "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 12px rgba(0,0,0,0.15)" }}
-        >
-          <X size={24} strokeWidth={2.4} color="var(--muted)" />
-        </button>
-        <button
-          aria-label="Save post to bucket"
-          onClick={() => dismiss("right")}
-          style={{ width: 64, height: 64, borderRadius: "50%", border: "none", background: "var(--orange)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 20px rgba(240,96,48,0.4)" }}
-        >
-          <Heart size={27} strokeWidth={2.3} color="white" fill="white" />
-        </button>
       </div>
     </div>
   );

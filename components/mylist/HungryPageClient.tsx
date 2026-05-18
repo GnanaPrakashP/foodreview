@@ -281,6 +281,25 @@ export default function HungryPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    const previousHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    document.documentElement.style.overscrollBehavior = "none";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+      document.documentElement.style.overscrollBehavior = previousHtmlOverscroll;
+    };
+  }, []);
+
   function handleLocationSelect(nextLocation: UserLocation) {
     setLocation(nextLocation);
     saveLocation(nextLocation);
@@ -317,8 +336,8 @@ export default function HungryPageClient() {
   }, []);
 
   return (
-    <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px 12px" }}>
+    <div style={{ position: "fixed", inset: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--bg)", overflow: "hidden", boxSizing: "border-box", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 0", flexShrink: 0 }}>
         <button
           onClick={() => setShowLocationPicker(true)}
           style={{ maxWidth: "calc(100% - 56px)", background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", gap: 8, color: "var(--cream)", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
@@ -342,18 +361,20 @@ export default function HungryPageClient() {
         </div>
       </div>
 
-      <SwipeStack
-        posts={posts}
-        loading={loading || loadingMore}
-        onSavePost={savePost}
-        onNeedMore={loadMoreIfNeeded}
-        likeCountMap={likeCountMap}
-        commentMap={commentMap}
-        likedMap={likedMap}
-        bookmarkedMap={bookmarkedMap}
-        profileMap={profileMap}
-        myName={myName}
-      />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <SwipeStack
+          posts={posts}
+          loading={loading || loadingMore}
+          onSavePost={savePost}
+          onNeedMore={loadMoreIfNeeded}
+          likeCountMap={likeCountMap}
+          commentMap={commentMap}
+          likedMap={likedMap}
+          bookmarkedMap={bookmarkedMap}
+          profileMap={profileMap}
+          myName={myName}
+        />
+      </div>
 
       {showLocationPicker && (
         <LocationPickerSheet
