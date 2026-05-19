@@ -8,9 +8,7 @@ import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { Users } from "lucide-react";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
-import { cachedJson, primeCachedJson, invalidateCachedJson } from "@/lib/browser-api-cache";
-import { invalidateCircleStatusCache } from "@/lib/browser-circle-status";
-import ConfirmModal from "@/components/ui/ConfirmModal";
+import { primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 
 interface Props {
@@ -44,7 +42,6 @@ export default function CircleFeedClient({
 }: Props) {
   const hasInitialIdentity = initialMyName.length > 0;
   const [circle, setCircle] = useState<string[]>(initialCircle);
-  const [mutualCircle, setMutualCircle] = useState<string[]>(initialMutualCircle);
   const [myName, setMyName] = useState(initialMyName);
   const [mounted, setMounted] = useState(hasInitialIdentity);
   const [feedReviews, setFeedReviews] = useState<Review[]>(allReviews);
@@ -57,25 +54,6 @@ export default function CircleFeedClient({
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
-
-  // Public feed section — shown after circle posts are exhausted
-  const [publicReviews, setPublicReviews] = useState<Review[]>([]);
-  const [publicLikeCountMap, setPublicLikeCountMap] = useState<Record<string, number>>({});
-  const [publicCommentMap, setPublicCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
-  const [publicLikedMap, setPublicLikedMap] = useState<Record<string, boolean>>({});
-  const [publicBookmarkedMap, setPublicBookmarkedMap] = useState<Record<string, boolean>>({});
-  const [publicProfileMap, setPublicProfileMap] = useState<Record<string, string>>({});
-  const [publicHasMore, setPublicHasMore] = useState(false);
-  const [publicNextCursor, setPublicNextCursor] = useState<CircleFeedCursor | null>(null);
-  const [publicLoading, setPublicLoading] = useState(false);
-  const [publicError, setPublicError] = useState("");
-  const [publicStarted, setPublicStarted] = useState(false);
-
-  // Per-person request state shared across all cards for the same reviewer
-  const [personStates, setPersonStates] = useState<Record<string, "idle" | "loading" | "pending" | "joined">>({});
-  const [confirmCancelName, setConfirmCancelName] = useState<string | null>(null);
-  const [confirmLeaveName, setConfirmLeaveName] = useState<string | null>(null);
-  const [actionBusy, setActionBusy] = useState(false);
 
   useEffect(() => {
     setFeedReviews(allReviews);
@@ -114,7 +92,6 @@ export default function CircleFeedClient({
     cachedCircleStatus(name)
       .then((data) => {
         setCircle(data.members ?? []);
-        setMutualCircle(data.mutualMembers ?? []);
       })
       .catch(() => {})
       .finally(() => setMounted(true));
@@ -169,123 +146,6 @@ export default function CircleFeedClient({
     }
   }
 
-  const PUBLIC_FEED_TTL_MS = 3 * 60 * 1000;
-
-  async function loadPublic(cursor: CircleFeedCursor | null = null) {
-    if (publicLoading) return;
-    setPublicLoading(true);
-    setPublicError("");
-    setPublicStarted(true);
-    try {
-      // Exclude everyone whose posts already appear in the circle section
-      const excludeNames = [...circle, myName].filter(Boolean);
-      const params = new URLSearchParams({ limit: String(CIRCLE_FEED_PAGE_SIZE) });
-      if (excludeNames.length > 0) params.set("exclude", excludeNames.join(","));
-      if (myName) params.set("viewer", myName);
-      if (cursor) params.set("cursor", JSON.stringify(cursor));
-      const url = `/api/feed/public?${params}`;
-      // Use cachedJson for the first page during normal navigation. A browser reload
-      // bypasses the stored value once so deleted posts do not reappear from sessionStorage.
-      const data = cursor
-        ? await fetch(url, { cache: "no-store" }).then((r) => r.json())
-        : await cachedJson(url, PUBLIC_FEED_TTL_MS, { bypassOnReload: true });
-      if (data?.error) throw new Error(data.error);
-
-      setPublicReviews((current) => {
-        const seen = new Set(current.map((r) => r.id));
-        const fresh = (data.reviews ?? []).filter((r: Review) => !seen.has(r.id));
-        return [...current, ...fresh];
-      });
-      setPublicLikeCountMap((current) => ({ ...current, ...(data.likeCountMap ?? {}) }));
-      setPublicCommentMap((current) => ({ ...current, ...(data.commentMap ?? {}) }));
-      setPublicLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
-      setPublicBookmarkedMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
-      setPublicProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
-      setPublicHasMore(Boolean(data.hasMore));
-      setPublicNextCursor(data.nextCursor ?? null);
-    } catch {
-      setPublicError("Could not load public posts. Please try again.");
-    } finally {
-      setPublicLoading(false);
-    }
-  }
-
-  function setPersonState(name: string, state: "idle" | "loading" | "pending" | "joined") {
-    setPersonStates((prev) => ({ ...prev, [name]: state }));
-  }
-
-  async function sendPublicRequest(receiverName: string) {
-    if (!myName || myName === receiverName) return;
-    // Optimistic: assume public account → In Circle immediately
-    setPersonState(receiverName, "joined");
-    try {
-      const res = await fetch("/api/circle/request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiverName }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setPersonState(receiverName, "idle"); return; }
-      // Correct if private account (pending request instead)
-      if (data.status === "pending") setPersonState(receiverName, "pending");
-      invalidateCircleStatusCache(myName);
-      invalidateCircleStatusCache(receiverName);
-      invalidateCachedJson("/api/feed/circle");
-      invalidateCachedJson("/api/people");
-    } catch {
-      setPersonState(receiverName, "idle");
-    }
-  }
-
-  async function cancelPublicRequest(receiverName: string) {
-    if (actionBusy) return;
-    setActionBusy(true);
-    setPersonState(receiverName, "loading");
-    try {
-      const res = await fetch("/api/circle/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiverName }),
-      });
-      if (!res.ok) { setPersonState(receiverName, "pending"); return; }
-      setPersonState(receiverName, "idle");
-      invalidateCircleStatusCache(myName);
-      invalidateCircleStatusCache(receiverName);
-      invalidateCachedJson("/api/feed/circle");
-      invalidateCachedJson("/api/people");
-    } finally {
-      setActionBusy(false);
-    }
-  }
-
-  async function leavePublicCircle(otherName: string) {
-    if (actionBusy) return;
-    setActionBusy(true);
-    setPersonState(otherName, "loading");
-    try {
-      const res = await fetch("/api/circle/remove", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ otherName }),
-      });
-      if (!res.ok) { setPersonState(otherName, "joined"); return; }
-      setPersonState(otherName, "idle");
-      invalidateCircleStatusCache(myName);
-      invalidateCircleStatusCache(otherName);
-      invalidateCachedJson("/api/feed/circle");
-      invalidateCachedJson("/api/people");
-    } finally {
-      setActionBusy(false);
-    }
-  }
-
-  function handleRequestClick(reviewerName: string) {
-    const state = personStates[reviewerName] ?? "idle";
-    if (state === "idle") sendPublicRequest(reviewerName);
-    else if (state === "pending") setConfirmCancelName(reviewerName);
-    else if (state === "joined") setConfirmLeaveName(reviewerName);
-  }
-
   // Don't render until we've read localStorage to avoid flash
   if (!mounted) {
     return (
@@ -297,7 +157,7 @@ export default function CircleFeedClient({
     );
   }
 
-  // Circle is empty and no own posts to show
+  // Circle is empty and there are no joined-circle posts to show.
   if (circle.length === 0 && circleReviews.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
@@ -308,17 +168,12 @@ export default function CircleFeedClient({
           Your circle is empty
         </p>
         <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: "1.5", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "260px" }}>
-          Add friends to see what they&apos;re eating — or be the first to share a spot.
+          Add friends to see what they&apos;re eating.
         </p>
         <div style={{ display: "flex", gap: "10px", marginTop: "8px", width: "100%", maxWidth: "320px" }}>
           <Link href="/explore" style={{ flex: 1, textDecoration: "none" }}>
             <button style={{ width: "100%", background: "var(--surface)", color: "var(--cream)", border: "1px solid var(--border)", borderRadius: "14px", padding: "13px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
               Find friends
-            </button>
-          </Link>
-          <Link href="/reviews/new" style={{ flex: 1, textDecoration: "none" }}>
-            <button style={{ width: "100%", background: "var(--orange)", color: "white", border: "none", borderRadius: "14px", padding: "13px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-              Share a spot
             </button>
           </Link>
         </div>
@@ -389,128 +244,12 @@ export default function CircleFeedClient({
           </button>
         )}
 
-        {/* Public section — shown once circle posts are fully loaded */}
-        {!hasMore && (
-          <>
-            {/* Section header */}
-            <div style={{ margin: "18px 12px 8px", borderRadius: "18px", background: "var(--surface)", border: "1px solid var(--border)", padding: "14px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", margin: 0 }}>
-                  Discover People
-                </p>
-                <span style={{ width: "4px", height: "4px", borderRadius: "50%", background: "var(--muted)", flexShrink: 0 }} />
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 600, color: "var(--orange)" }}>
-                  Join new circles
-                </span>
-              </div>
-              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--muted)", margin: 0, lineHeight: 1.4 }}>
-                Posts from people whose circles you haven&apos;t joined yet
-              </p>
-            </div>
-
-            {/* Public posts */}
-            {publicReviews.map((review) => {
-              const eng = publicCommentMap[review.id];
-              const rn = review.reviewer_name;
-              return (
-                <CircleFeedCard
-                  key={review.id}
-                  review={review}
-                  initialLikeCount={publicLikeCountMap[review.id] ?? 0}
-                  initialCommentCount={eng?.count ?? 0}
-                  initialLiked={publicLikedMap[review.id] ?? false}
-                  initialBookmarked={publicBookmarkedMap[review.id] ?? false}
-                  initialMyName={myName}
-                  profileMap={publicProfileMap}
-                  priorityImage={false}
-                  requestStatus={personStates[rn] ?? "idle"}
-                  onRequestClick={() => handleRequestClick(rn)}
-                />
-              );
-            })}
-
-            {publicError && (
-              <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 12px 0" }}>
-                {publicError}
-              </p>
-            )}
-
-            {!publicStarted && (
-              <button
-                onClick={() => loadPublic(null)}
-                disabled={publicLoading}
-                style={{
-                  background: "var(--surface)",
-                  color: "var(--muted)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "14px",
-                  padding: "13px",
-                  margin: "16px 12px 0",
-                  width: "calc(100% - 24px)",
-                  fontFamily: "'Syne', sans-serif",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {publicLoading ? "Loading..." : "Show public posts"}
-              </button>
-            )}
-
-            {publicStarted && publicHasMore && (
-              <button
-                onClick={() => loadPublic(publicNextCursor)}
-                disabled={publicLoading}
-                style={{
-                  background: publicLoading ? "var(--surface)" : "var(--orange)",
-                  color: publicLoading ? "var(--muted)" : "white",
-                  border: "none",
-                  borderRadius: "14px",
-                  padding: "13px",
-                  margin: "16px 12px 0",
-                  width: "calc(100% - 24px)",
-                  fontFamily: "'Syne', sans-serif",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  cursor: publicLoading ? "default" : "pointer",
-                }}
-              >
-                {publicLoading ? "Loading..." : "Load more"}
-              </button>
-            )}
-          </>
+        {!hasMore && circleReviews.length > CIRCLE_FEED_PAGE_SIZE && (
+          <p style={{ fontSize: "11px", color: "var(--muted)", textAlign: "center", padding: "10px 0 20px", fontFamily: "'DM Sans', sans-serif" }}>
+            You are caught up for now.
+          </p>
         )}
       </div>
-
-      <ConfirmModal
-        open={Boolean(confirmCancelName)}
-        title="Cancel request?"
-        message={confirmCancelName ? `Cancel your request to join ${publicProfileMap[confirmCancelName] || confirmCancelName}'s circle?` : ""}
-        confirmText="Cancel request"
-        disabled={actionBusy}
-        onCancel={() => setConfirmCancelName(null)}
-        onConfirm={async () => {
-          const target = confirmCancelName;
-          if (!target) return;
-          setConfirmCancelName(null);
-          await cancelPublicRequest(target);
-        }}
-      />
-      <ConfirmModal
-        open={Boolean(confirmLeaveName)}
-        title="Leave circle?"
-        message={confirmLeaveName ? `Do you no longer want to be in ${publicProfileMap[confirmLeaveName] || confirmLeaveName}'s circle?` : ""}
-        confirmText="Leave"
-        confirmVariant="danger"
-        disabled={actionBusy}
-        onCancel={() => setConfirmLeaveName(null)}
-        onConfirm={async () => {
-          const target = confirmLeaveName;
-          if (!target) return;
-          setConfirmLeaveName(null);
-          await leavePublicCircle(target);
-        }}
-      />
     </>
   );
 }

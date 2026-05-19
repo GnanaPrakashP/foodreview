@@ -42,6 +42,13 @@ function spyDb(...responses) {
       for (const m of ["select", "eq", "is", "or", "limit", "order", "in", "not"]) {
         chain[m] = (...args) => { entry.ops.push([m, ...args]); return chain; };
       }
+      chain.maybeSingle = (...args) => {
+        entry.ops.push(["maybeSingle", ...args]);
+        if (table === "profiles") {
+          return Promise.resolve({ data: null, error: null });
+        }
+        return chain;
+      };
       return chain;
     },
   };
@@ -95,8 +102,20 @@ function loadMePageDataModule({ circleRelationships = { circleMembers: new Set()
       }
       if (id === "@/lib/selects") {
         return {
-          REVIEW_SELECT: "id, reviewer_name, restaurant_id, restaurant_name, area, restaurant_address, restaurant_lat, restaurant_lng, items, body, photo_url, photo_urls, visibility, deleted_at, hidden_at, reported_at, status, created_at",
+          REVIEW_SELECT: "id, reviewer_name, restaurant_id, restaurant_name, area, restaurant_address, restaurant_lat, restaurant_lng, items, body, photo_url, photo_urls, review_photos(public_url, media_type, position), visibility, deleted_at, hidden_at, reported_at, status, created_at",
         };
+      }
+      if (id === "@/lib/server/normalize-review") {
+        return {
+          normalizeReview: (review) => ({
+            ...review,
+            photo_urls: review.photo_urls ?? (review.photo_url ? [review.photo_url] : []),
+            media_items: [],
+          }),
+        };
+      }
+      if (id === "@/lib/server/engagement-list") {
+        return { engagementForPosts: async () => ({}) };
       }
       throw new Error(`Unexpected require in me-page-pagination tests: ${id}`);
     },

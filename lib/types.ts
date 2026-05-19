@@ -14,7 +14,18 @@ export type FoodItem = {
 export type AccountType = "private" | "public";
 export type Visibility = "public" | "circle" | "me";
 export type StoryVisibility = "public" | "circle";
+export type ReviewMediaType = "image" | "video";
 export type CircleRelationshipState = "NONE" | "PENDING" | "CIRCLE_ONE_WAY" | "CIRCLE_MUTUAL";
+
+export type ReviewMedia = {
+  public_url: string;
+  media_type: ReviewMediaType;
+  storage_path?: string | null;
+  width?: number | null;
+  height?: number | null;
+  size_bytes?: number | null;
+  position?: number | null;
+};
 
 export interface Database {
   public: {
@@ -26,6 +37,7 @@ export interface Database {
           last_name: string;
           username: string;
           avatar_url: string | null;
+          bio: string | null;
           account_type: AccountType;
           created_at: string;
         };
@@ -35,6 +47,7 @@ export interface Database {
           last_name: string;
           username: string;
           avatar_url?: string | null;
+          bio?: string | null;
           account_type?: AccountType;
           created_at?: string;
         };
@@ -44,6 +57,7 @@ export interface Database {
           last_name?: string;
           username?: string;
           avatar_url?: string | null;
+          bio?: string | null;
           account_type?: AccountType;
           created_at?: string;
         };
@@ -266,7 +280,9 @@ export interface Database {
   };
 }
 
-export type Review = Database["public"]["Tables"]["reviews"]["Row"];
+export type Review = Database["public"]["Tables"]["reviews"]["Row"] & {
+  media_items?: ReviewMedia[];
+};
 
 export interface Story {
   id: string;

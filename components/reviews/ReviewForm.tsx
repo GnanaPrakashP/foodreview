@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import PhotoUpload from "@/components/reviews/PhotoUpload";
+import PhotoUpload, { type ReviewUploadFile } from "@/components/reviews/PhotoUpload";
 import type { FoodItem } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
 import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-react";
@@ -40,6 +40,17 @@ type ModeratedPhoto = {
   width: number;
   height: number;
   sizeBytes: number;
+  mediaType?: "image";
+};
+
+type ModeratedMedia = ModeratedPhoto | {
+  publicUrl: string;
+  storagePath: string;
+  width: null;
+  height: null;
+  sizeBytes: number;
+  durationSeconds: number;
+  mediaType: "video";
 };
 
 type ReviewInsertPayload = {
@@ -57,6 +68,7 @@ type ReviewInsertPayload = {
   body: string | null;
   photoUrl: string | null;
   photos?: ModeratedPhoto[];
+  media?: ModeratedMedia[];
   visibility: Visibility;
 };
 
@@ -237,7 +249,7 @@ export default function ReviewForm() {
 
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("public");
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [photoFiles, setPhotoFiles] = useState<ReviewUploadFile[]>([]);
   const [photoError, setPhotoError] = useState("");
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -413,6 +425,7 @@ export default function ReviewForm() {
       e.restaurantName = "Select a restaurant from the dropdown list.";
     }
     if (items.filter((it) => it.name.trim()).length === 0) e.items = "Add at least one dish.";
+    if (photoFiles.length === 0) e.media = "Add at least one photo or video.";
     if (body.trim() && body.trim().length < 5) e.body = "One-liner must be at least 5 characters.";
     return e;
   }
@@ -434,14 +447,17 @@ export default function ReviewForm() {
     const supabase = createClient();
 
     try {
-      // --- Phase 1: upload photos to quarantine then moderate ---
-      let photos: ModeratedPhoto[] = [];
-      if (photoFiles.length > 0) {
+      // --- Phase 1: upload media. Images go through moderation; videos are stored with their media type. ---
+      let media: ModeratedMedia[] = [];
+      const imageFiles = photoFiles.filter((file) => file.type.startsWith("image/"));
+      const videoFiles = photoFiles.filter((file) => file.type.startsWith("video/"));
+
+      if (imageFiles.length > 0) {
         setSubmitStep("uploading");
 
         const quarantinePaths: string[] = [];
-        for (let i = 0; i < photoFiles.length; i++) {
-          const file = photoFiles[i];
+        for (let i = 0; i < imageFiles.length; i++) {
+          const file = imageFiles[i];
           const ext = file.name.split(".").pop() ?? "jpg";
           const path = `quarantine/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
           const { error: uploadErr } = await supabase.storage
@@ -460,11 +476,36 @@ export default function ReviewForm() {
         if (!moderateRes.ok) {
           throw new Error(moderateJson.error ?? "Photo check failed — please try different photos");
         }
-        photos = moderateJson.photos as ModeratedPhoto[];
+        media = (moderateJson.photos as ModeratedPhoto[]).map((photo) => ({ ...photo, mediaType: "image" }));
+      }
+
+      if (videoFiles.length > 0) {
+        setSubmitStep("uploading");
+        const uploadedVideos: ModeratedMedia[] = [];
+        for (let i = 0; i < videoFiles.length; i++) {
+          const file = videoFiles[i];
+          const ext = file.name.split(".").pop() ?? (file.type === "video/webm" ? "webm" : "mp4");
+          const path = `public/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error: uploadErr } = await supabase.storage
+            .from("review-photos")
+            .upload(path, file, { contentType: file.type, upsert: false });
+          if (uploadErr) throw new Error("Failed to upload video");
+          const { data: urlData } = supabase.storage.from("review-photos").getPublicUrl(path);
+          uploadedVideos.push({
+            publicUrl: urlData.publicUrl,
+            storagePath: path,
+            width: null,
+            height: null,
+            sizeBytes: file.size,
+            durationSeconds: file.durationSeconds ?? 0,
+            mediaType: "video",
+          });
+        }
+        media = [...media, ...uploadedVideos];
       }
 
       setSubmitStep("posting");
-      const photoUrl = photos[0]?.publicUrl ?? null;
+      const photoUrl = media[0]?.publicUrl ?? null;
 
       const allItems = items
         .filter((it) => it.name.trim())
@@ -475,7 +516,8 @@ export default function ReviewForm() {
         items: allItems,
         body: body.trim() || null,
         photoUrl,
-        photos: photos.length > 0 ? photos : undefined,
+        photos: media.filter((item): item is ModeratedPhoto & { mediaType: "image" } => item.mediaType !== "video"),
+        media,
         visibility,
       };
       if (restaurantId) reviewPayload.restaurantId = restaurantId;
@@ -534,13 +576,23 @@ export default function ReviewForm() {
   return (
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column" }}>
 
-      {/* 1 — Photos */}
+      {/* 1 — Media */}
       <div className="px-5 pb-4">
-        <FieldLabel optional>Photos</FieldLabel>
+        <FieldLabel>Media</FieldLabel>
         <PhotoUpload
           files={photoFiles}
-          onFilesChange={setPhotoFiles}
-          error={photoError}
+          onFilesChange={(files) => {
+            setPhotoFiles(files);
+            if (files.length > 0) {
+              setErrors((prev) => {
+                if (!prev.media) return prev;
+                const next = { ...prev };
+                delete next.media;
+                return next;
+              });
+            }
+          }}
+          error={photoError || errors.media}
         />
       </div>
 

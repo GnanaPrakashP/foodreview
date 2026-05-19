@@ -2,6 +2,8 @@ import type { Review } from "@/lib/types";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
 import { REVIEW_SELECT } from "@/lib/selects";
+import { engagementForPosts } from "@/lib/server/engagement-list";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 const ME_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -81,7 +83,8 @@ async function loadMePageData(
     reviewsQuery.limit(limit + 1),
   ]);
 
-  const allReviews = (rawReviews ?? []) as Review[];
+  const allReviews = ((rawReviews ?? []) as unknown[])
+    .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]));
   const hasMore = allReviews.length > limit;
   const reviews = allReviews.slice(0, limit);
   const nextCursor: MeCursor | null =
@@ -89,10 +92,13 @@ async function loadMePageData(
       ? { createdAt: reviews[reviews.length - 1].created_at, id: reviews[reviews.length - 1].id }
       : null;
 
+  const engagement = await engagementForPosts(supabase, reviews, myName);
+
   return {
     reviews,
     circleMembers: [...relationships.circleMembers],
     hasMore,
     nextCursor,
+    ...engagement,
   };
 }

@@ -13,6 +13,7 @@ import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { currentTrendingApiUrl } from "@/lib/trending-location";
 import { patchPostEngagement, readPostEngagement } from "@/lib/post-engagement-cache";
+import { reviewMediaItems } from "@/lib/review-media";
 
 interface Props {
   review: Review;
@@ -343,7 +344,7 @@ export default function CircleFeedCard({
       >
 
         {/* Header */}
-        <div style={{ padding: "12px 12px 10px", display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ padding: "12px 4px 10px 12px", display: "flex", alignItems: "center", gap: "10px" }}>
           <Link
             href={`/people/${encodeURIComponent(review.reviewer_name)}`}
             onClick={(event) => event.stopPropagation()}
@@ -462,8 +463,8 @@ export default function CircleFeedCard({
 
         {/* Photo / hero */}
         {(() => {
-          const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
-          if (!photos.length) return null;
+          const mediaItems = reviewMediaItems(review);
+          if (!mediaItems.length) return null;
           return (
             <div style={{ position: "relative" }}>
               <div
@@ -480,22 +481,32 @@ export default function CircleFeedCard({
                 }}
                 className="hide-scrollbar"
               >
-                {photos.map((url, i) => (
-                  <div key={i} style={{ position: "relative", flexShrink: 0, width: "100%", height: "100%", scrollSnapAlign: "start" }}>
-                    <Image
-                      src={feedImageUrl(url)}
-                      alt={review.restaurant_name}
-                      fill
-                      sizes="(max-width: 512px) 100vw, 512px"
-                      priority={priorityImage && i === 0}
-                      loading={priorityImage && i === 0 ? undefined : "lazy"}
-                      style={{ objectFit: "cover" }}
-                    />
-                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)" }} />
+                {mediaItems.map((item, i) => (
+                  <div key={`${item.public_url}-${i}`} style={{ position: "relative", flexShrink: 0, width: "100%", height: "100%", scrollSnapAlign: "start" }}>
+                    {item.media_type === "video" ? (
+                      <video
+                        src={item.public_url}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      />
+                    ) : (
+                      <Image
+                        src={feedImageUrl(item.public_url)}
+                        alt={review.restaurant_name}
+                        fill
+                        sizes="(max-width: 512px) 100vw, 512px"
+                        priority={priorityImage && i === 0}
+                        loading={priorityImage && i === 0 ? undefined : "lazy"}
+                        style={{ objectFit: "cover" }}
+                      />
+                    )}
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)", pointerEvents: "none" }} />
                   </div>
                 ))}
               </div>
-              {photos.length > 1 && (
+              {mediaItems.length > 1 && (
                 <div style={{
                   position: "absolute", top: 10, right: 10,
                   background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)",
@@ -503,7 +514,7 @@ export default function CircleFeedCard({
                   fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: "white",
                   pointerEvents: "none",
                 }}>
-                  {photoIndex + 1}/{photos.length}
+                  {photoIndex + 1}/{mediaItems.length}
                 </div>
               )}
             </div>

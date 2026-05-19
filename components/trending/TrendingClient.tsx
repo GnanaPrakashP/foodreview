@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import type { TrendingRestaurant, TrendingWindow, CircleReviewItem, TrendingPeopleCounts } from "@/lib/trending";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
@@ -617,18 +618,15 @@ export default function TrendingClient({
           <button
             onClick={() => setShowLocationPicker(true)}
             style={{
-              display: "flex", alignItems: "center", gap: 3,
-              padding: "6px 11px", borderRadius: 99,
-              background: userLocation ? "#F59E0B18" : "var(--surface)",
-              border: `1px solid ${userLocation ? "#F59E0B55" : "var(--border)"}`,
-              color: userLocation ? "#F59E0B" : "var(--muted)",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 500,
-              cursor: "pointer", marginTop: 4, flexShrink: 0,
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "9px 0", background: "transparent", border: "none",
+              color: "var(--cream)", fontFamily: "'DM Sans', sans-serif",
+              fontSize: 13, fontWeight: 800, cursor: "pointer", flexShrink: 0,
             }}
           >
-            <span style={{ fontSize: 13 }}>📍</span>
-            <span>{locationLabel}</span>
-            <span style={{ fontSize: 12, opacity: 0.7, lineHeight: 1 }}>▾</span>
+            <span style={{ fontSize: 22, lineHeight: 1 }}>🧭</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{locationLabel}</span>
+            <ChevronDown size={14} strokeWidth={2.2} color="var(--muted)" />
           </button>
         </div>
 

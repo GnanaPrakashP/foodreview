@@ -4,7 +4,8 @@ import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation"
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
 
-const MAX_REVIEW_PHOTOS = 4;
+const MAX_REVIEW_MEDIA = 4;
+const MAX_REVIEW_VIDEO_DURATION_SECONDS = 10;
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor();
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest) {
     visibility = "public",
     photoUrl,
     photos,
+    media,
     area,
     restaurantId,
     restaurantAddress,
@@ -27,26 +29,30 @@ export async function POST(req: NextRequest) {
     restaurantLng,
   } = body;
 
-  // photos is an optional array of moderated photo objects from /api/photos/moderate
-  type IncomingPhoto = {
+  // media is an array of uploaded image/video objects from the client.
+  type IncomingMedia = {
     publicUrl?: unknown;
     storagePath?: unknown;
     width?: unknown;
     height?: unknown;
     sizeBytes?: unknown;
+    mediaType?: unknown;
+    durationSeconds?: unknown;
   };
-  if (Array.isArray(photos) && photos.length > MAX_REVIEW_PHOTOS) {
-    return NextResponse.json({ error: `Maximum ${MAX_REVIEW_PHOTOS} photos allowed` }, { status: 400 });
+  const incomingMedia = Array.isArray(media) ? media : photos;
+  if (Array.isArray(incomingMedia) && incomingMedia.length > MAX_REVIEW_MEDIA) {
+    return NextResponse.json({ error: `Maximum ${MAX_REVIEW_MEDIA} media items allowed` }, { status: 400 });
   }
 
-  const validatedPhotos: IncomingPhoto[] =
-    Array.isArray(photos)
-      ? (photos as unknown[]).filter(
-          (p): p is IncomingPhoto =>
+  const validatedMedia: IncomingMedia[] =
+    Array.isArray(incomingMedia)
+      ? (incomingMedia as unknown[]).filter(
+          (p): p is IncomingMedia =>
             p !== null &&
             typeof p === "object" &&
-            typeof (p as IncomingPhoto).publicUrl === "string" &&
-            typeof (p as IncomingPhoto).storagePath === "string"
+            typeof (p as IncomingMedia).publicUrl === "string" &&
+            typeof (p as IncomingMedia).storagePath === "string" &&
+            ((p as IncomingMedia).mediaType === "video" || (p as IncomingMedia).mediaType === "image" || (p as IncomingMedia).mediaType === undefined)
         )
       : [];
 
@@ -68,6 +74,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: normalizedBody.error }, { status: 400 });
   }
 
+  if (validatedMedia.length === 0) {
+    return NextResponse.json({ error: "Add at least one photo or video" }, { status: 400 });
+  }
+  const oversizedVideo = validatedMedia.find(
+    (item) =>
+      item.mediaType === "video" &&
+      (typeof item.durationSeconds !== "number" ||
+        !Number.isFinite(item.durationSeconds) ||
+        item.durationSeconds <= 0 ||
+        item.durationSeconds > MAX_REVIEW_VIDEO_DURATION_SECONDS)
+  );
+  if (oversizedVideo) {
+    return NextResponse.json({ error: "Videos must be 10 seconds or less" }, { status: 400 });
+  }
+
   // reviewer_name is always derived from the authenticated session — never from the request body
   console.log("[reviews POST] actor.actorName:", actor.actorName, "restaurantName:", restaurantName?.trim());
   const writeDb = createAdminClient();
@@ -79,7 +100,8 @@ export async function POST(req: NextRequest) {
       items: normalizedItems.items,
       body: normalizedBody.body ?? null,
       visibility,
-      photo_url: photoUrl ?? null,
+      photo_url: typeof photoUrl === "string" && photoUrl.trim() ? photoUrl : validatedMedia[0].publicUrl,
+      photo_urls: validatedMedia.map((item) => item.publicUrl as string),
       area: area?.trim() || null,
       restaurant_id: restaurantId ?? null,
       restaurant_address: restaurantAddress?.trim() || null,
@@ -93,21 +115,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Insert review_photos rows (position = index in the array)
-  if (validatedPhotos.length > 0) {
-    const photoRows = validatedPhotos.map((p, i) => ({
+  // Insert review_photos rows (position = index in the array). The table name is
+  // legacy; rows can now represent either images or videos.
+  if (validatedMedia.length > 0) {
+    const mediaRows = validatedMedia.map((p, i) => ({
       review_id: data.id,
       storage_path: p.storagePath as string,
       public_url: p.publicUrl as string,
+      media_type: p.mediaType === "video" ? "video" : "image",
       width: typeof p.width === "number" ? p.width : null,
       height: typeof p.height === "number" ? p.height : null,
       size_bytes: typeof p.sizeBytes === "number" ? p.sizeBytes : null,
       position: i,
     }));
-    const { error: photoError } = await writeDb.from("review_photos").insert(photoRows);
+    let { error: photoError } = await writeDb.from("review_photos").insert(mediaRows);
+    if (photoError && /media_type|schema cache|column/i.test(photoError.message)) {
+      const legacyRows = mediaRows.map(({ media_type: _mediaType, ...row }) => row);
+      const retry = await writeDb.from("review_photos").insert(legacyRows);
+      photoError = retry.error;
+    }
     if (photoError) {
-      // Review was created — log and continue rather than failing the whole request
-      console.error("[reviews] Failed to insert review_photos:", photoError.message);
+      console.error("[reviews] Failed to insert review media:", photoError.message);
     }
   }
 

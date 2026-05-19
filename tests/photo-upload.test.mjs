@@ -11,28 +11,35 @@ const moderateRouteSource = readFileSync(
   "utf8",
 );
 
-test("PhotoUpload uses one add button before showing camera/gallery choices", () => {
-  assert.match(source, /const MAX_PHOTOS = 4/);
+test("PhotoUpload uses one add button before showing a bottom-sheet media picker", () => {
+  assert.match(source, /const MAX_MEDIA = 4/);
+  assert.match(source, /export const MAX_VIDEO_DURATION_SECONDS = 10/);
   assert.match(source, /const \[showSourceMenu, setShowSourceMenu\] = useState\(false\)/);
-  assert.match(source, /const sourceMenuRef = useRef<HTMLDivElement>\(null\)/);
+  assert.match(source, /const videoCameraRef = useRef<HTMLInputElement>\(null\)/);
   assert.match(source, /if \(!canAddMore\) return;/);
   assert.match(source, /setShowSourceMenu\(\(open\) => !open\)/);
-  assert.match(source, /aria-haspopup="menu"/);
-  assert.match(source, /\{files\.length > 0 && !maxReached \? "Add more" : "Add photos"\}/);
+  assert.match(source, /aria-haspopup="dialog"/);
+  assert.match(source, /\{files\.length > 0 && !maxReached \? "Add more" : "Add media"\}/);
   assert.match(source, /disabled=\{maxReached\}/);
   assert.match(source, /4 per post/);
-  assert.match(source, /role="menu"/);
-  assert.match(source, /role="menuitem"/);
-  assert.match(source, /aria-label="Photo options"/);
-  assert.match(source, /position: "absolute"/);
-  assert.match(source, /top: "50%"/);
-  assert.match(source, /right: "12px"/);
-  assert.match(source, /transform: "translateY\(-50%\)"/);
-  assert.match(source, /width: "min\(calc\(100% - 24px\), 206px\)"/);
-  assert.match(source, /minWidth: "168px"/);
-  assert.match(source, /boxShadow: "0 8px 24px rgba\(0,0,0,0\.35\)"/);
+  assert.match(source, /role="dialog"/);
+  assert.match(source, /aria-label="Add media"/);
+  assert.match(source, /position: "fixed"/);
+  assert.match(source, /alignItems: "flex-end"/);
+  assert.match(source, /maxWidth: "32rem"/);
+  assert.match(source, /borderRadius: "18px 18px 0 0"/);
+  assert.match(source, /env\(safe-area-inset-bottom\)/);
+  assert.match(source, /boxShadow: "0 20px 50px rgba\(0,0,0,0\.45\)"/);
   assert.match(source, /onClick=\{openCamera\}/);
+  assert.match(source, /onClick=\{openVideoCamera\}/);
   assert.match(source, /onClick=\{openGallery\}/);
+  assert.match(source, /Take photo/);
+  assert.match(source, /Record video/);
+  assert.match(source, /Choose from library/);
+  assert.match(source, /accept="video\/\*"/);
+  assert.match(source, /getVideoDurationSeconds\(file\)/);
+  assert.match(source, /durationSeconds > MAX_VIDEO_DURATION_SECONDS/);
+  assert.match(source, /video must be 10 seconds or less/);
   assert.doesNotMatch(source, /\{!showSourceMenu \? \(/);
 });
 
@@ -46,7 +53,7 @@ test("PhotoUpload crops selected photos to the post portrait ratio before upload
   assert.match(source, /const CROP_OUTPUT_WIDTH = 1080/);
   assert.match(source, /const CROP_OUTPUT_HEIGHT = 1350/);
   assert.match(source, /function getInitialCrop\(width: number, height: number\)/);
-  assert.match(source, /setCropQueue\(\(current\) => \[\.\.\.current, \.\.\.accepted\]\)/);
+  assert.match(source, /setCropQueue\(\(current\) => \[\.\.\.current, \.\.\.imagesForCrop\]\)/);
   assert.match(source, /role="dialog"/);
   assert.match(source, /aria-label="Crop photo"/);
   assert.match(source, /startCropInteraction\("move", event\)/);

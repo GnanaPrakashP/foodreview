@@ -8,6 +8,7 @@ import { notificationProfileName } from "@/lib/notifications";
 import ReviewDetailClient from "@/components/reviews/ReviewDetailClient";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -28,6 +29,7 @@ export default async function CommentPostPage({ params }: Props) {
   ]);
 
   if (!review) notFound();
+  const normalizedReview = normalizeReview(review as Parameters<typeof normalizeReview>[0]);
 
   let myName = (user?.user_metadata?.username as string) ?? "";
   if (!myName && user) {
@@ -40,38 +42,38 @@ export default async function CommentPostPage({ params }: Props) {
   }
 
   let circleOwnerNames = new Set<string>();
-  if (myName && myName !== review.reviewer_name) {
-    const canSeeCirclePost = await hasCircleAccess(supabase, review.reviewer_name, myName);
-    if (canSeeCirclePost) circleOwnerNames = new Set([review.reviewer_name]);
+  if (myName && myName !== normalizedReview.reviewer_name) {
+    const canSeeCirclePost = await hasCircleAccess(supabase, normalizedReview.reviewer_name, myName);
+    if (canSeeCirclePost) circleOwnerNames = new Set([normalizedReview.reviewer_name]);
   }
 
-  if (!canViewerSeeReview(review, { viewerName: myName, circleOwnerNames })) notFound();
+  if (!canViewerSeeReview(normalizedReview, { viewerName: myName, circleOwnerNames })) notFound();
 
   const [{ data: likeRows }, { data: comments }, { data: viewerLike }, { data: viewerBookmark }] = await Promise.all([
-    readDb.from("likes").select("post_id, user_name").eq("post_id", review.id),
+    readDb.from("likes").select("post_id, user_name").eq("post_id", normalizedReview.id),
     readDb
       .from("comments")
       .select(COMMENT_SELECT)
-      .eq("post_id", review.id)
+      .eq("post_id", normalizedReview.id)
       .order("created_at", { ascending: true })
       .returns<Comment[]>(),
     myName
-      ? readDb.from("likes").select("post_id").eq("post_id", review.id).eq("user_name", myName).maybeSingle()
+      ? readDb.from("likes").select("post_id").eq("post_id", normalizedReview.id).eq("user_name", myName).maybeSingle()
       : Promise.resolve({ data: null }),
     myName
-      ? readDb.from("wishlist").select("post_id").eq("post_id", review.id).eq("user_name", myName).maybeSingle()
+      ? readDb.from("wishlist").select("post_id").eq("post_id", normalizedReview.id).eq("user_name", myName).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
 
   const profileMap = await buildProfileDisplayMap(supabase, [
-    review.reviewer_name,
+    normalizedReview.reviewer_name,
     myName,
     ...(comments ?? []).map((c: Comment) => c.user_name),
   ]);
 
   return (
     <ReviewDetailClient
-      review={review}
+      review={normalizedReview}
       initialLikeCount={likeRows?.length ?? 0}
       initialComments={comments ?? []}
       initialMyName={myName}

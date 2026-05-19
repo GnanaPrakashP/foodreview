@@ -7,9 +7,9 @@ import { Users, Search, Plus, Flame, User } from "lucide-react";
 
 const TABS = [
   { href: "/", label: "Circle", Icon: Users, center: false },
-  { href: "/hungry", label: "Hungry", Icon: Flame, center: false },
-  { href: "/reviews/new", label: "+", Icon: Plus, center: true },
   { href: "/explore", label: "Explore", Icon: Search, center: false },
+  { href: "/reviews/new", label: "+", Icon: Plus, center: true },
+  { href: "/hungry", label: "Hungry", Icon: Flame, center: false },
   { href: "/me", label: "Me", Icon: User, center: false },
 ];
 

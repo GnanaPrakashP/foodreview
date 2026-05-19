@@ -7,6 +7,7 @@ import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import { COMMENT_SELECT } from "@/lib/selects";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { currentTrendingApiUrl } from "@/lib/trending-location";
+import { reviewMediaItems } from "@/lib/review-media";
 
 function timeAgo(d: string): string {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -58,6 +59,7 @@ interface Props {
 export default function PostDetailSheet({ review, myName, liked, likeCount, onLike, onClose }: Props) {
   const locationLabel = restaurantLocationLabel(review);
   const mapsUrl = googleMapsUrl(review);
+  const primaryMedia = reviewMediaItems(review)[0] ?? null;
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -165,10 +167,14 @@ export default function PostDetailSheet({ review, myName, liked, likeCount, onLi
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", paddingBottom: "84px" }}>
           {/* Post summary */}
           <div style={{ padding: "0 16px 16px", borderBottom: "1px solid var(--border)" }}>
-            {review.photo_url && (
+            {primaryMedia && (
               <div style={{ aspectRatio: "4/5", borderRadius: "16px", overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "12px", position: "relative" }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={review.photo_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                {primaryMedia.media_type === "video" ? (
+                  <video src={primaryMedia.public_url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={primaryMedia.public_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                )}
                 {review.items[0]?.name && (
                   <span style={{ position: "absolute", bottom: "10px", left: "10px", background: "rgba(255,255,255,0.1)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.15)", color: "white", fontSize: "11px", fontWeight: 500, padding: "4px 10px", borderRadius: "20px" }}>
                     {review.items[0].name}

@@ -7,6 +7,7 @@ import { hasCircleAccess } from "@/lib/circle-db";
 import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews } from "@/lib/visibility";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 interface Props {
   params: Promise<{ username: string; restaurant: string }>;
@@ -44,7 +45,9 @@ export default async function RestaurantDetailPage({ params }: Props) {
     .order("created_at", { ascending: false })
     .returns<Review[]>();
 
-  const reviews = filterProfileReviews(allReviews ?? [], name, {
+  const normalizedReviews = ((allReviews ?? []) as unknown[])
+    .map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]));
+  const reviews = filterProfileReviews(normalizedReviews, name, {
     viewerName: myName,
     circleOwnerNames,
   });

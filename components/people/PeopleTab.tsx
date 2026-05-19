@@ -15,14 +15,24 @@ import {
   type PersonStatus,
 } from "@/lib/people-circle-state";
 import ConfirmModal from "@/components/ui/ConfirmModal";
-import { Check, MessageCircle, Search, Star, Store, Utensils, Users, X } from "lucide-react";
+import { Check, ChevronDown, LocateFixed, MapPin, MessageCircle, Search, Store, Utensils, Users, X } from "lucide-react";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { profileDisplayName } from "@/lib/profile-names";
 import { getStoredActorName } from "@/lib/browser-actor";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
+import {
+  normalizeLocationLabel,
+  TRENDING_LOCATION_LABEL_COOKIE,
+  TRENDING_LOCATION_LABEL_STORAGE_KEY,
+  TRENDING_LOCATION_LAT_STORAGE_KEY,
+  TRENDING_LOCATION_LNG_STORAGE_KEY,
+} from "@/lib/trending-location";
+import { reviewMediaItems } from "@/lib/review-media";
 
 const FEED_PAGE_SIZE = 24;
+const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
+const EXPLORE_NEARBY_RADIUS_KM = 30;
 
 /* ─── Categories ─────────────────────────────────── */
 
@@ -50,7 +60,8 @@ type RestaurantResult = { name: string; reviewerCount: number };
 type DishResult     = { itemName: string; rating: number; restaurantName: string; reviewerName: string; reviewerDisplayName: string };
 
 type ExploreTab = "posts" | "restaurants" | "dishes" | "people";
-type TimeFilter = "week" | "month" | "alltime";
+type UserLocation = { lat: number; lng: number; label: string };
+type AutocompleteItem = { placeId: string; text: string; mainText: string; secondaryText: string };
 
 type RestaurantSpotlight = {
   name: string;
@@ -60,16 +71,17 @@ type RestaurantSpotlight = {
   topDishes: string[];
   area: string | null;
   photo: string | null;
-  weekUsers: number;
-  monthUsers: number;
 };
 
 type DishSpotlight = {
   key: string;
   name: string;
-  rating: number;
-  restaurantName: string;
-  photo: string | null;
+  averageRating: number;
+  bestRating: number;
+  mentionCount: number;
+  reviewerCount: number;
+  topRestaurantName: string;
+  restaurants: string[];
 };
 
 type PublicFeedResponse = {
@@ -84,16 +96,6 @@ type PublicFeedResponse = {
 };
 
 /* ─── Helpers ────────────────────────────────────── */
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 function avatarColor(name: string): string {
   const gradients = [
@@ -123,11 +125,206 @@ function Avatar({ name, size = 44 }: { name: string; size?: number }) {
 
 function toHandle(username: string): string { return "@" + username; }
 
+function shortLocationLabel(label: string): string {
+  const normalized = normalizeLocationLabel(label) ?? "Set location";
+  if (normalized.length <= 24) return normalized;
+  const firstPart = normalized.split(",")[0]?.trim();
+  if (firstPart && firstPart.length <= 24) return firstPart;
+  return normalized.slice(0, 22).trimEnd() + "...";
+}
+
+function loadSavedLocation(): UserLocation | null {
+  try {
+    const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
+    const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
+    const label = normalizeLocationLabel(localStorage.getItem(TRENDING_LOCATION_LABEL_STORAGE_KEY));
+    if (Number.isFinite(lat) && Number.isFinite(lng) && label) return { lat, lng, label };
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function saveLocation(loc: UserLocation) {
+  try {
+    localStorage.setItem(TRENDING_LOCATION_LAT_STORAGE_KEY, String(loc.lat));
+    localStorage.setItem(TRENDING_LOCATION_LNG_STORAGE_KEY, String(loc.lng));
+    localStorage.setItem(TRENDING_LOCATION_LABEL_STORAGE_KEY, loc.label);
+    document.cookie = `${TRENDING_LOCATION_LABEL_COOKIE}=${encodeURIComponent(loc.label)}; Max-Age=${LOCATION_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Lax`;
+  } catch {
+    // Storage may be blocked; the in-memory Explore state still updates.
+  }
+}
+
+function locationBounds(loc: UserLocation, radiusKm = EXPLORE_NEARBY_RADIUS_KM) {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((loc.lat * Math.PI) / 180)));
+  return {
+    minLat: loc.lat - latDelta,
+    maxLat: loc.lat + latDelta,
+    minLng: loc.lng - lngDelta,
+    maxLng: loc.lng + lngDelta,
+  };
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <p style={{ padding: "0 16px 8px", fontSize: "10px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1.5px", fontFamily: "'DM Sans', sans-serif" }}>
       {children}
     </p>
+  );
+}
+
+function LocationPickerSheet({
+  currentLocation,
+  onClose,
+  onSelect,
+  anchorBottom,
+}: {
+  currentLocation: UserLocation | null;
+  onClose: () => void;
+  onSelect: (loc: UserLocation) => void;
+  anchorBottom?: number;
+}) {
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<AutocompleteItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsError, setGpsError] = useState("");
+  const sessionToken = useRef(crypto.randomUUID());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!query.trim()) {
+      setSuggestions([]);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ input: query.trim(), sessionToken: sessionToken.current });
+        if (currentLocation) {
+          params.set("lat", String(currentLocation.lat));
+          params.set("lng", String(currentLocation.lng));
+        }
+        const res = await fetch(`/api/places/autocomplete?${params}`);
+        const json = await res.json();
+        setSuggestions(json.suggestions ?? []);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [currentLocation, query]);
+
+  async function selectSuggestion(item: AutocompleteItem) {
+    try {
+      const params = new URLSearchParams({ placeId: item.placeId, sessionToken: sessionToken.current });
+      const res = await fetch(`/api/places/details?${params}`);
+      const json = await res.json();
+      const details = json.details;
+      if (details?.latitude != null && details?.longitude != null) {
+        onSelect({
+          lat: details.latitude,
+          lng: details.longitude,
+          label: details.shortFormattedAddress || item.mainText || item.text,
+        });
+      }
+    } catch {
+      // Leave the sheet open so the user can pick another result.
+    }
+    sessionToken.current = crypto.randomUUID();
+  }
+
+  async function resolveLabel(lat: number, lng: number): Promise<string> {
+    try {
+      const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`);
+      const json = await res.json();
+      if (json.label) return json.label as string;
+    } catch {
+      // Fall through to generic label.
+    }
+    return "Current location";
+  }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setGpsError("Location is not supported by this browser.");
+      return;
+    }
+    setGpsLoading(true);
+    setGpsError("");
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const label = await resolveLabel(latitude, longitude);
+        setGpsLoading(false);
+        onSelect({ lat: latitude, lng: longitude, label });
+      },
+      () => {
+        setGpsLoading(false);
+        setGpsError("Location access was denied.");
+      },
+      { timeout: 10000 }
+    );
+  }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "fixed", top: anchorBottom ?? 72, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, zIndex: 61, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", boxSizing: "border-box" }}>
+        <button
+          onClick={useCurrentLocation}
+          disabled={gpsLoading}
+          style={{ width: "100%", padding: "11px 14px", borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: gpsLoading ? "default" : "pointer", opacity: gpsLoading ? 0.7 : 1 }}
+        >
+          <LocateFixed size={16} strokeWidth={2.2} color="var(--orange)" />
+          <span style={{ fontWeight: 700 }}>{gpsLoading ? "Getting location..." : "Use current location"}</span>
+        </button>
+
+        {gpsError && <p style={{ fontSize: 12, color: "#F87171", marginTop: 8, textAlign: "center" }}>{gpsError}</p>}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0" }}>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        </div>
+
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 12px", display: "flex", gap: 9, alignItems: "center" }}>
+          <Search size={15} strokeWidth={2.2} color="var(--muted)" />
+          <input
+            autoFocus
+            placeholder="Search area or city..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}
+          />
+          {loading && <span style={{ fontSize: 11, color: "var(--muted)" }}>...</span>}
+        </div>
+
+        {suggestions.length > 0 && (
+          <div style={{ marginTop: 8, borderRadius: 10, border: "1px solid var(--border)", overflow: "hidden" }}>
+            {suggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.placeId}
+                onClick={() => selectSuggestion(suggestion)}
+                style={{ width: "100%", padding: "10px 12px", textAlign: "left", cursor: "pointer", background: "var(--surface)", border: "none", borderTop: index > 0 ? "1px solid var(--border)" : "none", display: "flex", flexDirection: "column", gap: 2 }}
+              >
+                <span style={{ fontSize: 13, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>{suggestion.mainText}</span>
+                {suggestion.secondaryText && <span style={{ fontSize: 11, color: "var(--muted)" }}>{suggestion.secondaryText}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -144,14 +341,24 @@ function formatRating(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function topRestaurantsFromFeed(feed: Review[], timeFilter: TimeFilter): RestaurantSpotlight[] {
-  const now = Date.now();
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-  const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+function score10FromRating(value: number): number {
+  return Math.round(value * 2 * 10) / 10;
+}
+
+function RatingScore({ rating }: { rating: number }) {
+  if (rating <= 0) return null;
+
+  return (
+    <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)", flexShrink: 0 }}>
+      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatRating(score10FromRating(rating))}</span>
+      <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
+    </div>
+  );
+}
+
+function topRestaurantsFromFeed(feed: Review[]): RestaurantSpotlight[] {
   const restaurants = new Map<string, {
     reviewers: Set<string>;
-    weekReviewers: Set<string>;
-    monthReviewers: Set<string>;
     ratingTotal: number;
     ratingCount: number;
     topDish: string;
@@ -163,11 +370,9 @@ function topRestaurantsFromFeed(feed: Review[], timeFilter: TimeFilter): Restaur
   }>();
 
   for (const review of feed) {
-    const photo = review.photo_urls?.[0] ?? review.photo_url;
+    const photo = reviewMediaItems(review).find((item) => item.media_type === "image")?.public_url ?? null;
     const existing = restaurants.get(review.restaurant_name) ?? {
       reviewers: new Set<string>(),
-      weekReviewers: new Set<string>(),
-      monthReviewers: new Set<string>(),
       ratingTotal: 0,
       ratingCount: 0,
       topDish: "",
@@ -179,8 +384,6 @@ function topRestaurantsFromFeed(feed: Review[], timeFilter: TimeFilter): Restaur
     };
     const ts = new Date(review.created_at).getTime();
     existing.reviewers.add(review.reviewer_name);
-    if (ts > weekAgo) existing.weekReviewers.add(review.reviewer_name);
-    if (ts > monthAgo) existing.monthReviewers.add(review.reviewer_name);
     existing.latest = Math.max(existing.latest, ts);
     if (!existing.photo && photo) existing.photo = photo;
     if (review.area) existing.areaCounts.set(review.area, (existing.areaCounts.get(review.area) ?? 0) + 1);
@@ -207,10 +410,6 @@ function topRestaurantsFromFeed(feed: Review[], timeFilter: TimeFilter): Restaur
       const area = data.areaCounts.size > 0
         ? Array.from(data.areaCounts.entries()).sort((a, b) => b[1] - a[1])[0][0]
         : null;
-      const activeUsers =
-        timeFilter === "week" ? data.weekReviewers.size :
-        timeFilter === "month" ? data.monthReviewers.size :
-        data.reviewers.size;
       return {
         name,
         reviewerCount: data.reviewers.size,
@@ -219,82 +418,84 @@ function topRestaurantsFromFeed(feed: Review[], timeFilter: TimeFilter): Restaur
         topDishes,
         area,
         photo: data.photo,
-        weekUsers: data.weekReviewers.size,
-        monthUsers: data.monthReviewers.size,
-        score: activeUsers * 100 + averageRating + data.latest / 1_000_000_000_000,
+        score: data.reviewers.size * 100 + averageRating + data.latest / 1_000_000_000_000,
       };
     })
-    .filter((restaurant) => timeFilter === "alltime" || (timeFilter === "week" ? restaurant.weekUsers > 0 : restaurant.monthUsers > 0))
     .sort((a, b) => b.score - a.score)
     .map(({ score: _score, ...restaurant }) => restaurant);
 }
 
 function bestDishesFromFeed(feed: Review[]): DishSpotlight[] {
-  const dishes = new Map<string, DishSpotlight & { latest: number }>();
+  const dishes = new Map<string, {
+    name: string;
+    ratingTotal: number;
+    ratingCount: number;
+    bestRating: number;
+    reviewers: Set<string>;
+    restaurantCounts: Map<string, number>;
+    restaurantBestRatings: Map<string, number>;
+    latest: number;
+  }>();
 
   for (const review of feed) {
-    const photo = review.photo_urls?.[0] ?? review.photo_url;
     const latest = new Date(review.created_at).getTime();
     for (const item of review.items ?? []) {
-      const key = `${item.name.toLowerCase()}|${review.restaurant_name.toLowerCase()}`;
-      const existing = dishes.get(key);
-      if (!existing || item.rating > existing.rating || (item.rating === existing.rating && latest > existing.latest)) {
-        dishes.set(key, {
-          key,
-          name: item.name,
-          rating: item.rating,
-          restaurantName: review.restaurant_name,
-          photo,
-          latest,
-        });
-      }
+      const dishName = item.name.trim();
+      if (!dishName) continue;
+      const key = dishName.toLowerCase();
+      const existing = dishes.get(key) ?? {
+        name: dishName,
+        ratingTotal: 0,
+        ratingCount: 0,
+        bestRating: 0,
+        reviewers: new Set<string>(),
+        restaurantCounts: new Map<string, number>(),
+        restaurantBestRatings: new Map<string, number>(),
+        latest: 0,
+      };
+
+      existing.ratingTotal += item.rating;
+      existing.ratingCount += 1;
+      existing.bestRating = Math.max(existing.bestRating, item.rating);
+      existing.reviewers.add(review.reviewer_name);
+      existing.latest = Math.max(existing.latest, latest);
+      existing.restaurantCounts.set(
+        review.restaurant_name,
+        (existing.restaurantCounts.get(review.restaurant_name) ?? 0) + 1
+      );
+      existing.restaurantBestRatings.set(
+        review.restaurant_name,
+        Math.max(existing.restaurantBestRatings.get(review.restaurant_name) ?? 0, item.rating)
+      );
+      dishes.set(key, existing);
     }
   }
 
-  return Array.from(dishes.values())
-    .sort((a, b) => b.rating - a.rating || b.latest - a.latest)
-    .map(({ latest: _latest, ...dish }) => dish);
-}
-
-/* ─── Feed card ──────────────────────────────────── */
-
-function FeedCard({ item }: { item: Review }) {
-  const topDish = item.items?.length > 0
-    ? item.items.reduce((a, b) => b.rating > a.rating ? b : a)
-    : null;
-  const photo = item.photo_urls?.[0] ?? item.photo_url;
-
-  return (
-    <Link
-      href={`/trending/${encodeURIComponent(item.restaurant_name)}`}
-      style={{ textDecoration: "none", display: "block", margin: "0 16px 10px" }}
-    >
-      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", overflow: "hidden", display: "flex", alignItems: "stretch", gap: 0 }}>
-        {photo && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt=""
-            style={{ width: "90px", height: "90px", objectFit: "cover", flexShrink: 0 }}
-          />
-        )}
-        <div style={{ padding: "12px 14px", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: "3px" }}>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {item.restaurant_name}
-          </p>
-          {topDish && (
-            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--orange)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {topDish.name}
-              <span style={{ color: "var(--muted)", marginLeft: "6px" }}>★ {topDish.rating}</span>
-            </p>
-          )}
-          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", margin: 0 }}>
-            by {item.reviewer_name} · {timeAgo(item.created_at)}
-          </p>
-        </div>
-      </div>
-    </Link>
-  );
+  return Array.from(dishes.entries())
+    .map(([key, data]) => {
+      const restaurants = Array.from(data.restaurantCounts.entries())
+        .sort((a, b) => {
+          const countDiff = b[1] - a[1];
+          if (countDiff !== 0) return countDiff;
+          return (data.restaurantBestRatings.get(b[0]) ?? 0) - (data.restaurantBestRatings.get(a[0]) ?? 0);
+        })
+        .map(([restaurant]) => restaurant);
+      const averageRating = data.ratingCount > 0 ? data.ratingTotal / data.ratingCount : 0;
+      return {
+        key,
+        name: data.name,
+        averageRating,
+        bestRating: data.bestRating,
+        mentionCount: data.ratingCount,
+        reviewerCount: data.reviewers.size,
+        topRestaurantName: restaurants[0] ?? "",
+        restaurants: restaurants.slice(0, 3),
+        score: averageRating * 100 + data.reviewers.size * 10 + data.ratingCount + data.latest / 1_000_000_000_000,
+      };
+    })
+    .filter((dish) => dish.topRestaurantName)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .map(({ score: _score, ...dish }) => dish);
 }
 
 /* ─── Person card ────────────────────────────────── */
@@ -394,25 +595,6 @@ function DiscoveryHeader({
   );
 }
 
-function PhotoTile({ photo, label, height = 86 }: { photo: string | null; label: string; height?: number }) {
-  if (photo) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={photo}
-        alt=""
-        style={{ width: "100%", height, objectFit: "cover", display: "block", background: "var(--surface)" }}
-      />
-    );
-  }
-
-  return (
-    <div style={{ width: "100%", height, background: "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontWeight: 700, fontSize: "24px", fontFamily: "'Syne', sans-serif" }}>
-      {label[0]?.toUpperCase() ?? "F"}
-    </div>
-  );
-}
-
 function ExploreTabs({ activeTab, onChange }: { activeTab: ExploreTab; onChange: (tab: ExploreTab) => void }) {
   const tabs: Array<{ id: ExploreTab; label: string }> = [
     { id: "posts", label: "Posts" },
@@ -450,62 +632,16 @@ function ExploreTabs({ activeTab, onChange }: { activeTab: ExploreTab; onChange:
   );
 }
 
-function Stars({ rating, size = 10 }: { rating: number; size?: number }) {
-  return (
-    <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <svg
-          key={i}
-          width={size}
-          height={size}
-          viewBox="0 0 12 12"
-          fill={i <= Math.round(rating) ? "#F59E0B" : "none"}
-          stroke="#F59E0B"
-          strokeWidth="1.5"
-        >
-          <polygon points="6,1 7.5,4.5 11,5 8.5,7.5 9,11 6,9.5 3,11 3.5,7.5 1,5 4.5,4.5" />
-        </svg>
-      ))}
-      <span style={{ fontSize: size, color: "var(--muted)", marginLeft: 3 }}>{rating.toFixed(1)}</span>
-    </div>
-  );
-}
-
 function RestaurantList({
   restaurants,
-  timeFilter,
-  onTimeFilterChange,
   loading,
 }: {
   restaurants: RestaurantSpotlight[];
-  timeFilter: TimeFilter;
-  onTimeFilterChange: (timeFilter: TimeFilter) => void;
   loading: boolean;
 }) {
   return (
     <div style={{ paddingBottom: "100px" }}>
-      <div style={{ padding: "0 16px 14px", display: "flex", gap: 7 }}>
-        {(["week", "month", "alltime"] as TimeFilter[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => onTimeFilterChange(t)}
-            style={{
-              padding: "4px 14px",
-              borderRadius: 99,
-              fontSize: 11,
-              fontWeight: 500,
-              cursor: "pointer",
-              background: timeFilter === t ? "#F59E0B" : "transparent",
-              border: `1px solid ${timeFilter === t ? "#F59E0B" : "var(--border)"}`,
-              color: timeFilter === t ? "#0D0D0D" : "var(--muted)",
-              fontFamily: "'DM Sans', sans-serif",
-            }}
-          >
-            {t === "week" ? "This Week" : t === "month" ? "This Month" : "All Time"}
-          </button>
-        ))}
-      </div>
-
+      <DiscoveryHeader title="Restaurants people love" subtitle="Ranked from real public reviews" Icon={Store} />
       <div style={{ padding: "0 16px" }}>
         {loading && restaurants.length === 0 ? (
           [1, 2, 3, 4].map((i) => (
@@ -517,90 +653,118 @@ function RestaurantList({
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts will shape this list.</p>
           </div>
         ) : (
-          restaurants.map((restaurant) => {
-            const activeVisits =
-              timeFilter === "week" ? restaurant.weekUsers :
-              timeFilter === "month" ? restaurant.monthUsers :
-              restaurant.reviewerCount;
-            return (
-              <Link key={restaurant.name} href={`/trending/${encodeURIComponent(restaurant.name)}`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
-                <div
-                  style={{
-                    background: "var(--card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 14,
-                    padding: 16,
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                        <div>
-                          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 600, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
-                          {restaurant.area && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{restaurant.area}</div>}
-                        </div>
+          restaurants.map((restaurant) => (
+            <Link key={restaurant.name} href={`/trending/${encodeURIComponent(restaurant.name)}`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
+              <div
+                style={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 14,
+                  padding: 16,
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 600, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
+                        {restaurant.area && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{restaurant.area}</div>}
                       </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        {restaurant.averageRating > 0 && <Stars rating={restaurant.averageRating} size={10} />}
-                        {restaurant.averageRating > 0 && <span style={{ fontSize: 11, color: "var(--muted)" }}>·</span>}
-                        <span style={{ fontSize: 11, color: "var(--muted)" }}>{activeVisits} visit{activeVisits !== 1 ? "s" : ""}</span>
-                      </div>
-
-                      {restaurant.topDishes.length > 0 && (
-                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                          {restaurant.topDishes.map((dish) => (
-                            <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 7px" }}>
-                              {dish}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <RatingScore rating={restaurant.averageRating} />
                     </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>{restaurant.reviewerCount} visit{restaurant.reviewerCount !== 1 ? "s" : ""}</span>
+                    </div>
+
+                    {restaurant.topDishes.length > 0 && (
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        {restaurant.topDishes.map((dish) => (
+                          <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 7px" }}>
+                            {dish}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </Link>
-            );
-          })
+              </div>
+            </Link>
+          ))
         )}
       </div>
     </div>
   );
 }
 
-function DishRail({ dishes }: { dishes: DishSpotlight[] }) {
-  if (dishes.length === 0) return null;
-
+function DishList({ dishes, loading }: { dishes: DishSpotlight[]; loading: boolean }) {
   return (
-    <section style={{ margin: "4px 0 18px" }}>
-      <DiscoveryHeader title="Best rated dishes" subtitle="Dish-first picks from recent reviews" Icon={Utensils} />
-      <div style={{ padding: "0 16px", display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px" }}>
-        {dishes.slice(0, 4).map((dish) => (
-          <Link
-            key={dish.key}
-            href={`/trending/${encodeURIComponent(dish.restaurantName)}`}
-            style={{ textDecoration: "none", minWidth: 0 }}
-          >
-            <article style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", minHeight: "174px" }}>
-              <PhotoTile photo={dish.photo} label={dish.name} height={86} />
-              <div style={{ padding: "10px 11px 12px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "4px", color: "var(--gold)", fontSize: "12px", fontWeight: 700, marginBottom: "5px" }}>
-                  <Star size={13} fill="currentColor" strokeWidth={0} />
-                  {formatRating(dish.rating)}
+    <div style={{ paddingBottom: "100px" }}>
+      <DiscoveryHeader title="Dishes people love" subtitle="Ranked from real public reviews" Icon={Utensils} />
+      <div style={{ padding: "0 16px" }}>
+        {loading && dishes.length === 0 ? (
+          [1, 2, 3, 4].map((i) => (
+            <div key={i} className="animate-pulse" style={{ height: 118, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
+          ))
+        ) : dishes.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No dishes yet</p>
+            <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts with dish ratings will shape this list.</p>
+          </div>
+        ) : (
+          dishes.map((dish) => (
+            <Link key={dish.key} href={`/trending/${encodeURIComponent(dish.topRestaurantName)}`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
+              <div
+                style={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 14,
+                  padding: 16,
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 600, color: "var(--cream)", lineHeight: 1.2 }}>{dish.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                      Best at {dish.topRestaurantName}
+                    </div>
+                  </div>
+                  <RatingScore rating={dish.averageRating} />
                 </div>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", lineHeight: 1.15, fontWeight: 700, color: "var(--cream)", margin: 0, minHeight: "32px", overflow: "hidden" }}>
-                  {dish.name}
-                </p>
-                <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {dish.restaurantName}
-                </p>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {dish.mentionCount} rating{dish.mentionCount !== 1 ? "s" : ""}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>·</span>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {dish.reviewerCount} reviewer{dish.reviewerCount !== 1 ? "s" : ""}
+                  </span>
+                  {dish.bestRating > dish.averageRating && (
+                    <>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>·</span>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>best {formatRating(score10FromRating(dish.bestRating))}/10</span>
+                    </>
+                  )}
+                </div>
+
+                {dish.restaurants.length > 0 && (
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {dish.restaurants.map((restaurant) => (
+                      <span key={restaurant} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 7px" }}>
+                        {restaurant}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-            </article>
-          </Link>
-        ))}
+            </Link>
+          ))
+        )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -648,7 +812,6 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [hasSearched, setHasSearched] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ExploreTab>("posts");
-  const [restaurantTimeFilter, setRestaurantTimeFilter] = useState<TimeFilter>("week");
   const [selectedCategory] = useState<CategoryId>("all");
   const [feed, setFeed] = useState<Review[]>([]);
   const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>({});
@@ -664,6 +827,11 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const [myName, setMyName] = useState("");
+  const [location, setLocation] = useState<UserLocation | null>(null);
+  const [locationLabel, setLocationLabel] = useState("Set location");
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [dropdownTop, setDropdownTop] = useState(0);
+  const locationWrapperRef = useRef<HTMLDivElement>(null);
   const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
@@ -690,9 +858,26 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     loadCircleStatus(me);
   }, [loadCircleStatus]);
 
+  useEffect(() => {
+    function readLocationLabel() {
+      try {
+        const savedLocation = loadSavedLocation();
+        setLocation(savedLocation);
+        setLocationLabel(savedLocation ? shortLocationLabel(savedLocation.label) : "Set location");
+      } catch {
+        setLocation(null);
+        setLocationLabel("Set location");
+      }
+    }
+
+    readLocationLabel();
+    window.addEventListener("storage", readLocationLabel);
+    return () => window.removeEventListener("storage", readLocationLabel);
+  }, []);
+
   /* ── Load discovery feed ── */
 
-  const loadFeedPage = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName) => {
+  const loadFeedPage = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName, loc = location) => {
     if (!cursor) {
       setFeedLoading(true);
       setFeedError("");
@@ -701,6 +886,10 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     try {
       const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE) });
       if (viewerName) params.set("viewer", viewerName);
+      if (loc) {
+        params.set("lat", String(loc.lat));
+        params.set("lng", String(loc.lng));
+      }
       if (cursor) params.set("cursor", JSON.stringify(cursor));
       const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });
       const data = await response.json() as PublicFeedResponse & { error?: string };
@@ -725,12 +914,17 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
       if (!cursor) setFeedLoading(false);
       else setFeedLoadingMore(false);
     }
-  }, [myName]);
+  }, [location, myName]);
 
   useEffect(() => {
     const me = getStoredActorName();
-    loadFeedPage(null, me);
-  }, [loadFeedPage]);
+    const savedLocation = loadSavedLocation();
+    setLocation(savedLocation);
+    setLocationLabel(savedLocation ? shortLocationLabel(savedLocation.label) : "Set location");
+    loadFeedPage(null, me, savedLocation);
+    // Initial feed load only; location changes are handled by the picker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "posts" || searchQuery.trim() || feedLoading || feedLoadingMore || !feedHasMore) return;
@@ -838,6 +1032,34 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     setSearching(true);
     const supabase = createClient();
     const trimmed = q.trim();
+    const bounds = location ? locationBounds(location) : null;
+    let restaurantQuery = supabase
+      .from("reviews")
+      .select("restaurant_name, reviewer_name")
+      .eq("visibility", "public")
+      .eq("status", "active")
+      .ilike("restaurant_name", `%${trimmed}%`)
+      .limit(30);
+    let dishQuery = supabase
+      .from("reviews")
+      .select("reviewer_name, restaurant_name, items")
+      .eq("visibility", "public")
+      .eq("status", "active")
+      .filter("items::text", "ilike", `%${trimmed}%`)
+      .limit(20);
+
+    if (bounds) {
+      restaurantQuery = restaurantQuery
+        .gte("restaurant_lat", bounds.minLat)
+        .lte("restaurant_lat", bounds.maxLat)
+        .gte("restaurant_lng", bounds.minLng)
+        .lte("restaurant_lng", bounds.maxLng);
+      dishQuery = dishQuery
+        .gte("restaurant_lat", bounds.minLat)
+        .lte("restaurant_lat", bounds.maxLat)
+        .gte("restaurant_lng", bounds.minLng)
+        .lte("restaurant_lng", bounds.maxLng);
+    }
 
     const [
       { data: reviewerData },
@@ -847,8 +1069,8 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     ] = await Promise.all([
       supabase.from("reviews").select("reviewer_name").eq("visibility", "public").ilike("reviewer_name", `%${trimmed}%`).returns<{ reviewer_name: string }[]>(),
       supabase.from("profiles").select("username, first_name, last_name").or(`username.ilike.%${trimmed}%,first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%`).returns<ProfileSearchRow[]>(),
-      supabase.from("reviews").select("restaurant_name, reviewer_name").eq("visibility", "public").eq("status", "active").ilike("restaurant_name", `%${trimmed}%`).limit(30).returns<{ restaurant_name: string; reviewer_name: string }[]>(),
-      supabase.from("reviews").select("reviewer_name, restaurant_name, items").eq("visibility", "public").eq("status", "active").filter("items::text", "ilike", `%${trimmed}%`).limit(20).returns<{ reviewer_name: string; restaurant_name: string; items: Array<{ name: string; rating: number }> }[]>(),
+      restaurantQuery.returns<{ restaurant_name: string; reviewer_name: string }[]>(),
+      dishQuery.returns<{ reviewer_name: string; restaurant_name: string; items: Array<{ name: string; rating: number }> }[]>(),
     ]);
 
     // People
@@ -904,7 +1126,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     setDishResults(dishes);
     setHasSearched(true);
     setSearching(false);
-  }, [myName]);
+  }, [location, myName]);
 
   useEffect(() => {
     const t = setTimeout(() => search(searchQuery), 350);
@@ -922,8 +1144,8 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     : feed.filter(item => matchesCategory(item.items ?? [], selectedCategory));
 
   const isSearching = searchQuery.trim() !== "";
-  const topRestaurants = useMemo(() => topRestaurantsFromFeed(filteredFeed, restaurantTimeFilter), [filteredFeed, restaurantTimeFilter]);
-  const bestDishes = useMemo(() => bestDishesFromFeed(filteredFeed).slice(0, 8), [filteredFeed]);
+  const topRestaurants = useMemo(() => topRestaurantsFromFeed(filteredFeed), [filteredFeed]);
+  const bestDishes = useMemo(() => bestDishesFromFeed(filteredFeed), [filteredFeed]);
   const suggestedPeople = useMemo(
     () => initialCircle
       .filter((person) => person.name !== myName)
@@ -938,13 +1160,66 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     else sendRequest(name);
   }
 
+  function handleLocationSelect(nextLocation: UserLocation) {
+    setLocation(nextLocation);
+    setLocationLabel(shortLocationLabel(nextLocation.label));
+    saveLocation(nextLocation);
+    setShowLocationPicker(false);
+    loadFeedPage(null, myName, nextLocation);
+  }
+
   /* ── Render ── */
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "22px 16px 8px" }}>
+        <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", lineHeight: 1.15, color: "var(--cream)", margin: 0 }}>
+          Explore
+        </h1>
+        <div ref={locationWrapperRef} style={{ position: "relative", minWidth: 0, maxWidth: "52%" }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (!showLocationPicker && locationWrapperRef.current) {
+                setDropdownTop(locationWrapperRef.current.getBoundingClientRect().bottom + 8);
+              }
+              setShowLocationPicker(v => !v);
+            }}
+            aria-label="Location"
+            style={{
+              width: "100%",
+              padding: "9px 0",
+              background: "transparent",
+              border: "none",
+              color: "var(--cream)",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: "13px",
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ fontSize: 22, lineHeight: 1 }}>🧭</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {locationLabel}
+            </span>
+            <ChevronDown size={14} strokeWidth={2.2} color="var(--muted)" style={{ flexShrink: 0 }} />
+          </button>
+          {showLocationPicker && (
+            <LocationPickerSheet
+              currentLocation={location}
+              onClose={() => setShowLocationPicker(false)}
+              onSelect={handleLocationSelect}
+              anchorBottom={dropdownTop}
+            />
+          )}
+        </div>
+      </div>
 
       {/* Search bar */}
-      <div style={{ padding: "16px 16px 12px" }}>
+      <div style={{ padding: "8px 16px 12px" }}>
         <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 16px", display: "flex", alignItems: "center", gap: "10px" }}>
           <Search size={17} strokeWidth={2.2} color="var(--muted)" style={{ flexShrink: 0 }} />
           <input
@@ -1033,12 +1308,12 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {d.itemName}
-                            <span style={{ color: "var(--orange)", fontWeight: 400, marginLeft: "6px" }}>★ {d.rating}</span>
                           </p>
                           <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {d.restaurantName} · by {d.reviewerDisplayName}
                           </p>
                         </div>
+                        <RatingScore rating={d.rating} />
                       </div>
                     </Link>
                   ))}
@@ -1140,17 +1415,12 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
           {activeTab === "restaurants" && (
             <RestaurantList
               restaurants={topRestaurants}
-              timeFilter={restaurantTimeFilter}
-              onTimeFilterChange={setRestaurantTimeFilter}
               loading={feedLoading}
             />
           )}
 
           {activeTab === "dishes" && (
-            <>
-              <DishRail dishes={bestDishes} />
-              <div style={{ height: "100px" }} />
-            </>
+            <DishList dishes={bestDishes} loading={feedLoading} />
           )}
 
           {activeTab === "people" && (
@@ -1196,6 +1466,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
           await leaveCircle(target);
         }}
       />
+
     </div>
   );
 }

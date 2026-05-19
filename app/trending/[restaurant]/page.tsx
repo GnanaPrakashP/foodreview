@@ -10,6 +10,7 @@ import { restaurantLocationLabel } from "@/lib/location";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
+import { normalizeReview } from "@/lib/server/normalize-review";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ const REVIEW_SELECT = [
   "body",
   "photo_url",
   "photo_urls",
+  "review_photos(public_url, media_type, position)",
   "visibility",
   "created_at",
   "deleted_at",
@@ -66,7 +68,8 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
       .returns<Review[]>(),
   ]);
 
-  const restaurantScopedReviews = allReviews ?? [];
+  const restaurantScopedReviews = ((allReviews ?? []) as unknown[])
+    .map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]));
   const myName = (user?.user_metadata?.username as string) ?? "";
 
   // Fetch circle members for the current user before filtering; the server

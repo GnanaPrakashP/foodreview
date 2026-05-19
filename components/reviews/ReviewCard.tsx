@@ -1,9 +1,11 @@
 import Link from "next/link";
 import type { Review } from "@/lib/types";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
+import { reviewMediaItems } from "@/lib/review-media";
 
 interface ReviewCardProps {
   review: Review;
+  hideSender?: boolean;
 }
 
 function avgRating(review: Review): number {
@@ -20,11 +22,12 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export default function ReviewCard({ review }: ReviewCardProps) {
+export default function ReviewCard({ review, hideSender }: ReviewCardProps) {
   const firstItem = review.items[0];
   const rating = avgRating(review);
   const locationLabel = restaurantLocationLabel(review);
   const mapsUrl = googleMapsUrl(review);
+  const primaryMedia = reviewMediaItems(review)[0] ?? null;
 
   return (
     <article
@@ -36,7 +39,7 @@ export default function ReviewCard({ review }: ReviewCardProps) {
       }}
     >
       {/* Sender row */}
-      <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+      {!hideSender && <div className="flex items-center gap-3 px-4 pt-4 pb-3">
         <div
           style={{
             width: "40px",
@@ -62,10 +65,10 @@ export default function ReviewCard({ review }: ReviewCardProps) {
             {timeAgo(review.created_at)}
           </p>
         </div>
-      </div>
+      </div>}
 
       {/* Image / hero */}
-      {review.photo_url && (
+      {primaryMedia && (
         <div
           style={{
             margin: "0 16px",
@@ -79,19 +82,24 @@ export default function ReviewCard({ review }: ReviewCardProps) {
             overflow: "hidden",
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={review.photo_url}
-            alt={firstItem?.name ?? review.restaurant_name}
-            loading="lazy"
-            decoding="async"
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
+          {primaryMedia.media_type === "video" ? (
+            <video src={primaryMedia.public_url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={primaryMedia.public_url}
+              alt={firstItem?.name ?? review.restaurant_name}
+              loading="lazy"
+              decoding="async"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          )}
           <div
             style={{
               position: "absolute",
               inset: 0,
               background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)",
+              pointerEvents: "none",
             }}
           />
           {firstItem && (

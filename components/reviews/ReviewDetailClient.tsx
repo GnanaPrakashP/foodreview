@@ -12,6 +12,7 @@ import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { currentTrendingApiUrl } from "@/lib/trending-location";
+import { reviewMediaItems } from "@/lib/review-media";
 import { patchPostEngagement, readPostEngagementEntry } from "@/lib/post-engagement-cache";
 
 type Props = {
@@ -83,7 +84,7 @@ export default function ReviewDetailClient({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const postMenuRef = useRef<HTMLDivElement>(null);
 
-  const photos = review.photo_urls?.length ? review.photo_urls : review.photo_url ? [review.photo_url] : [];
+  const mediaItems = reviewMediaItems(review);
   const reviewerDisplayName = profileMap[review.reviewer_name] || review.reviewer_name;
   const initials = avatarInitials(reviewerDisplayName);
   const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
@@ -411,7 +412,7 @@ export default function ReviewDetailClient({
             </div>
           </div>
 
-          {photos.length > 0 && (
+          {mediaItems.length > 0 && (
             <div style={{ position: "relative" }}>
               <div
                 ref={scrollRef}
@@ -423,17 +424,21 @@ export default function ReviewDetailClient({
                 style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", aspectRatio: "4/5" }}
                 className="hide-scrollbar"
               >
-                {photos.map((url) => (
-                  <div key={url} style={{ position: "relative", flexShrink: 0, width: "100%", scrollSnapAlign: "start" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)" }} />
+                {mediaItems.map((item, index) => (
+                  <div key={`${item.public_url}-${index}`} style={{ position: "relative", flexShrink: 0, width: "100%", scrollSnapAlign: "start" }}>
+                    {item.media_type === "video" ? (
+                      <video src={item.public_url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.public_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    )}
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)", pointerEvents: "none" }} />
                   </div>
                 ))}
               </div>
-              {photos.length > 1 && (
+              {mediaItems.length > 1 && (
                 <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", borderRadius: 20, padding: "3px 9px", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: "white", pointerEvents: "none" }}>
-                  {photoIndex + 1}/{photos.length}
+                  {photoIndex + 1}/{mediaItems.length}
                 </div>
               )}
             </div>

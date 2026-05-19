@@ -18,6 +18,7 @@ create table public.profiles (
   last_name    text        not null,
   username     text        not null,
   avatar_url   text,
+  bio          text,
   account_type text        not null default 'public',
   created_at   timestamptz not null default now(),
   constraint profiles_username_unique  unique (username),
@@ -315,6 +316,7 @@ do $$ begin
 end $$;
 
 alter table public.profiles add column if not exists account_type text;
+alter table public.profiles add column if not exists bio text;
 update public.profiles
 set account_type = 'public'
 where account_type is null
@@ -600,12 +602,31 @@ create table if not exists public.review_photos (
   review_id    uuid        not null references public.reviews(id) on delete cascade,
   storage_path text        not null,
   public_url   text        not null,
+  media_type   text        not null default 'image',
   width        int,
   height       int,
   size_bytes   int,
   position     smallint    not null default 0,
-  created_at   timestamptz not null default now()
+  created_at   timestamptz not null default now(),
+  constraint review_photos_media_type_check check (media_type in ('image', 'video'))
 );
+alter table public.review_photos add column if not exists media_type text not null default 'image';
+update public.review_photos
+set media_type = 'image'
+where media_type is null
+   or media_type not in ('image', 'video');
+do $$ begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.review_photos'::regclass
+      and conname = 'review_photos_media_type_check'
+  ) then
+    alter table public.review_photos
+      add constraint review_photos_media_type_check
+      check (media_type in ('image', 'video'));
+  end if;
+end $$;
 
 create index if not exists review_photos_review_id_idx on public.review_photos(review_id);
 
@@ -625,8 +646,8 @@ values (
   'review-photos',
   'review-photos',
   true,
-  5242880,
-  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+  52428800,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime']
 )
 on conflict (id) do nothing;
 

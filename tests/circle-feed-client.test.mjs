@@ -16,9 +16,10 @@ test("circle feed trusts server-provided identity/circle snapshot before client 
 test("circle feed still fetches circle status when only local storage identity exists", () => {
   assert.match(source, /cachedCircleStatus\(name\)/);
   assert.match(source, /setCircle\(data\.members \?\? \[\]\)/);
-  assert.match(source, /setMutualCircle\(data\.mutualMembers \?\? \[\]\)/);
 });
 
-test("public feed bypasses browser session cache once on browser reload", () => {
-  assert.match(source, /cachedJson\(url,\s*PUBLIC_FEED_TTL_MS,\s*\{\s*bypassOnReload:\s*true\s*\}\)/);
+test("circle feed does not append public discovery posts", () => {
+  assert.doesNotMatch(source, /\/api\/feed\/public/);
+  assert.doesNotMatch(source, /Show public posts/);
+  assert.doesNotMatch(source, /Discover People/);
 });

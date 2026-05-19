@@ -11,6 +11,7 @@ export const REVIEW_SELECT = [
   "body",
   "photo_url",
   "photo_urls",
+  "review_photos(public_url, media_type, position)",
   "visibility",
   "deleted_at",
   "hidden_at",

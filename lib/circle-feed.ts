@@ -37,7 +37,7 @@ const REVIEW_SELECT = [
   "items",
   "body",
   "photo_url",
-  "review_photos(public_url, position)",
+  "review_photos(public_url, media_type, position)",
   "visibility",
   "created_at",
   "deleted_at",
@@ -210,7 +210,7 @@ async function loadCircleFeedPageForNames(
   const myName = candidateNames[0] ?? "";
   const joinedCircles = Array.from(joinedCircleSet);
   const mutualMembers = Array.from(mutualMemberSet);
-  const feedReviewerNames = Array.from(new Set([...joinedCircles, myName].filter(Boolean)));
+  const feedReviewerNames = Array.from(new Set(joinedCircles.filter(Boolean)));
 
   const visibleRows: Review[] = [];
   let scanCursor = cursor;

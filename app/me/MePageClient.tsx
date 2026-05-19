@@ -13,6 +13,12 @@ type MeApiResponse = {
   circleMembers: string[];
   myName: string;
   displayName: string;
+  bio?: string;
+  joinedAt?: string;
+  likeCountMap?: Record<string, number>;
+  commentMap?: Record<string, { count: number; top: import("@/lib/types").Comment }>;
+  likedByMeMap?: Record<string, boolean>;
+  bookmarkedPostMap?: Record<string, boolean>;
 };
 
 export function MeSkeleton() {
@@ -72,7 +78,13 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
       allReviews={data.reviews}
       initialMyName={data.myName}
       initialDisplayName={data.displayName}
+      initialBio={data.bio}
+      joinedAt={data.joinedAt}
       initialCircle={data.circleMembers}
+      likeCountMap={data.likeCountMap ?? {}}
+      commentMap={data.commentMap ?? {}}
+      likedByMeMap={data.likedByMeMap ?? {}}
+      bookmarkedPostMap={data.bookmarkedPostMap ?? {}}
     />
   );
 }

@@ -3,23 +3,73 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { getStoredActorName, setStoredActorName } from "@/lib/browser-actor";
+import { createClient } from "@/lib/supabase/client";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { getStoredDisplayName, setStoredDisplayName } from "@/lib/browser-actor";
+
+type ProfileRow = {
+  first_name: string | null;
+  last_name: string | null;
+  bio: string | null;
+};
 
 export default function EditProfilePage() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [bio, setBio] = useState("");
+  const [userId, setUserId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    setName(getStoredActorName());
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) {
+        setName(getStoredDisplayName());
+        return;
+      }
+      setUserId(user.id);
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("first_name, last_name, bio")
+        .eq("id", user.id)
+        .maybeSingle<ProfileRow>();
+      const profileName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
+      setName(
+        profileName ||
+        (user.user_metadata?.full_name as string) ||
+        (user.user_metadata?.name as string) ||
+        getStoredDisplayName()
+      );
+      setBio((profile?.bio as string | null) || (user.user_metadata?.bio as string) || "");
+    });
   }, []);
 
-  function save() {
+  async function save() {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    const trimmedBio = bio.trim();
+    if (!trimmed || !userId || saving) return;
     setSaving(true);
-    setStoredActorName(trimmed);
+    setError("");
+    const [firstName, ...lastParts] = trimmed.split(/\s+/);
+    const lastName = lastParts.join(" ");
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: profileError } = await (supabase as any)
+      .from("profiles")
+      .update({ first_name: firstName, last_name: lastName, bio: trimmedBio || null })
+      .eq("id", userId);
+    if (profileError) {
+      setError(profileError.message);
+      setSaving(false);
+      return;
+    }
+    await supabase.auth.updateUser({ data: { full_name: trimmed, bio: trimmedBio } });
+    setStoredDisplayName(trimmed);
+    invalidateCachedJson("/api/me");
+    invalidateCachedJson("/api/people");
     router.push("/me/settings");
+    router.refresh();
   }
 
   return (
@@ -42,12 +92,31 @@ export default function EditProfilePage() {
           placeholder="Your name"
           style={{ width: "100%", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px", color: "var(--cream)", fontSize: "14px", outline: "none", marginBottom: "16px", boxSizing: "border-box", fontFamily: "'DM Sans', sans-serif" }}
         />
+        <label style={{ fontSize: "10px", color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", display: "block", marginBottom: "8px", fontFamily: "'DM Sans', sans-serif" }}>
+          Bio
+        </label>
+        <textarea
+          value={bio}
+          onChange={e => setBio(e.target.value)}
+          placeholder="Tell people what you love to eat"
+          maxLength={160}
+          rows={4}
+          style={{ width: "100%", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px", color: "var(--cream)", fontSize: "14px", outline: "none", marginBottom: "8px", boxSizing: "border-box", fontFamily: "'DM Sans', sans-serif", resize: "vertical", lineHeight: 1.5 }}
+        />
+        <p style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "16px", textAlign: "right", fontFamily: "'DM Sans', sans-serif" }}>
+          {bio.length}/160
+        </p>
+        {error && (
+          <p style={{ fontSize: "12px", color: "#EF4444", marginBottom: "12px", fontFamily: "'DM Sans', sans-serif" }}>
+            {error}
+          </p>
+        )}
         <button
           onClick={save}
-          disabled={!name.trim() || saving}
-          style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "14px", color: "white", fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "14px", cursor: "pointer", opacity: !name.trim() ? 0.5 : 1 }}
+          disabled={!name.trim() || !userId || saving}
+          style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "14px", color: "white", fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "14px", cursor: "pointer", opacity: !name.trim() || !userId ? 0.5 : 1 }}
         >
-          Save
+          {saving ? "Saving..." : "Save"}
         </button>
       </div>
     </div>

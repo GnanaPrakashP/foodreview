@@ -16,6 +16,14 @@ function getMyName(user: { user_metadata?: Record<string, unknown>; email?: stri
   return (user.user_metadata?.username as string) || user.email?.split("@")[0] || "";
 }
 
+function displayNameFromProfile(
+  profile: { first_name?: string | null; last_name?: string | null } | null,
+  fallback: string
+) {
+  const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
+  return fullName || fallback;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const supabase = await createRouteSupabase();
@@ -23,10 +31,17 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const myName = getMyName(user);
-    const displayName =
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("first_name, last_name, bio")
+      .eq("id", user.id)
+      .maybeSingle();
+    const metadataDisplayName =
       (user.user_metadata?.full_name as string) ||
       (user.user_metadata?.name as string) ||
       myName;
+    const displayName = displayNameFromProfile(profile, metadataDisplayName);
+    const bio = (profile?.bio as string | null) || (user.user_metadata?.bio as string) || "";
 
     if (!myName) return NextResponse.json({ reviews: [], circleMembers: [], hasMore: false, nextCursor: null });
 
@@ -55,7 +70,7 @@ export async function GET(req: NextRequest) {
     }
 
     const data = await getMePageData(supabase, myName, { cursor, limit });
-    return NextResponse.json({ ...data, myName, displayName });
+    return NextResponse.json({ ...data, myName, displayName, bio });
   } catch (error) {
     console.error("[me] failed to load:", error);
     return NextResponse.json({ error: "Unable to load profile" }, { status: 500 });

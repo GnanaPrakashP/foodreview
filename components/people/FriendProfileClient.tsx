@@ -67,6 +67,7 @@ async function fetchCircleStatusPayload(personName: string): Promise<CircleStatu
 export default function FriendProfileClient({
   name,
   displayName,
+  bio = "",
   accountType,
   reviews,
   hasHiddenCirclePosts = false,
@@ -78,6 +79,7 @@ export default function FriendProfileClient({
 }: {
   name: string;
   displayName?: string;
+  bio?: string;
   accountType: AccountType;
   reviews: Review[];
   hasHiddenCirclePosts?: boolean;
@@ -356,6 +358,11 @@ export default function FriendProfileClient({
             </p>
           </div>
         </div>
+        {bio.trim() && (
+          <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "12px", lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.85 }}>
+            {bio.trim()}
+          </p>
+        )}
       </div>
 
       {/* ── Stats Row ── */}

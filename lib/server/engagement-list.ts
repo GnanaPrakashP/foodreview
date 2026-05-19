@@ -133,6 +133,15 @@ async function reviewsById(db: EngagementDb, postIds: string[], actorName: strin
   return new Map(visible.map((review) => [review.id, review]));
 }
 
+export async function engagementForPosts(db: EngagementDb, reviews: Review[], actorName: string) {
+  const postIds = reviews.map((r) => r.id);
+  const [maps, actorMaps] = await Promise.all([
+    engagementMaps(db, postIds),
+    actorStateMaps(db, reviews, actorName),
+  ]);
+  return { ...maps, ...actorMaps };
+}
+
 export async function likedPostsForActor(db: EngagementDb, actorName: string) {
   const { data } = await db
     .from("likes")

@@ -168,6 +168,7 @@ function loadRoute(code, { db, authName }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
+  media: [{ publicUrl: "https://example.test/photo.jpg", storagePath: "public/photo.jpg", mediaType: "image" }],
   visibility: "public",
 };
 

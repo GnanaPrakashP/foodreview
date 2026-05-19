@@ -2,57 +2,22 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import type { Review } from "@/lib/types";
+import type { Review, Comment } from "@/lib/types";
+import CircleFeedCard from "@/components/reviews/CircleFeedCard";
+
+type EngagementMaps = {
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
+};
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
-import { Settings, ChevronRight } from "lucide-react";
+import { restaurantLocationLabel } from "@/lib/location";
+import { Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
 
-/* ─── helpers ────────────────────────────────────── */
-
-const RANK_COLORS: Record<number, string> = {
-  1: "#E8A830",
-  2: "#9CA3AF",
-  3: "#CD7C2F",
-};
-
-interface RankedPlace {
-  name: string;
-  score10: number;
-  visitCount: number;
-  dishCount: number;
-  isRegular: boolean;
-}
-
-function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
-  const map = new Map<string, { totalRating: number; ratingCount: number; visitCount: number; dishes: Set<string> }>();
-  for (const r of reviews) {
-    const existing = map.get(r.restaurant_name);
-    const rated = r.items.filter(it => it.rating > 0);
-    const sum = rated.reduce((s, it) => s + it.rating, 0);
-    if (existing) {
-      existing.visitCount++;
-      existing.totalRating += sum;
-      existing.ratingCount += rated.length;
-      for (const it of r.items) if (it.name.trim()) existing.dishes.add(it.name.trim().toLowerCase());
-    } else {
-      const dishes = new Set<string>();
-      for (const it of r.items) if (it.name.trim()) dishes.add(it.name.trim().toLowerCase());
-      map.set(r.restaurant_name, { totalRating: sum, ratingCount: rated.length, visitCount: 1, dishes });
-    }
-  }
-  return [...map.entries()]
-    .map(([name, d]) => ({
-      name,
-      score10: d.ratingCount > 0 ? Math.round((d.totalRating / d.ratingCount) * 2 * 10) / 10 : 0,
-      visitCount: d.visitCount,
-      dishCount: d.dishes.size,
-      isRegular: d.visitCount >= 5,
-    }))
-    .sort((a, b) => b.score10 - a.score10);
-}
-
-/* ─── skeleton ────────────────────────────────────── */
+type MeTab = "timeline" | "reviews";
 
 function StatSkeleton() {
   return (
@@ -63,144 +28,224 @@ function StatSkeleton() {
   );
 }
 
-/* ─── circle bottom sheet ─────────────────────────── */
 
-function CircleSheet({ circle, allReviews, onClose }: {
-  circle: string[];
-  allReviews: Review[];
-  onClose: () => void;
-}) {
-  const members = useMemo(
-    () => circle.map(name => ({
-      name,
-      places: new Set(allReviews.filter(r => r.reviewer_name === name).map(r => r.restaurant_name)).size,
-    })),
-    [circle, allReviews]
-  );
+function uniqueDishesFor(reviews: Review[]): number {
+  const pairs = new Set<string>();
+  for (const review of reviews) {
+    for (const item of review.items) {
+      if (item.name.trim()) pairs.add(`${item.name.trim().toLowerCase()}\x00${review.restaurant_name.toLowerCase()}`);
+    }
+  }
+  return pairs.size;
+}
+
+function demoReview(
+  restaurantName: string,
+  area: string,
+  body: string,
+  itemName: string,
+  rating: number,
+  createdAt = "2024-05-19T12:00:00.000Z"
+): Review {
+  return {
+    id: `demo-${restaurantName}`,
+    reviewer_name: "demo",
+    restaurant_id: null,
+    restaurant_name: restaurantName,
+    area,
+    restaurant_address: null,
+    restaurant_lat: null,
+    restaurant_lng: null,
+    items: [{ name: itemName, rating }],
+    body,
+    photo_url: null,
+    photo_urls: [],
+    visibility: "public",
+    deleted_at: null,
+    hidden_at: null,
+    reported_at: null,
+    status: "active",
+    created_at: createdAt,
+  };
+}
+
+function timelineDateParts(value: string): { day: string; month: string } {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { day: "--", month: "" };
+  return {
+    day: new Intl.DateTimeFormat("en-US", { day: "2-digit" }).format(date),
+    month: new Intl.DateTimeFormat("en-US", { month: "short" }).format(date),
+  };
+}
+
+function timelineLocationLabel(review: Review): string {
+  const label = (restaurantLocationLabel(review) ?? "Location not added").replace(/\s+/g, " ").trim();
+  if (label.length <= 30) return label;
+
+  const firstPart = label.split(",")[0]?.trim();
+  if (firstPart && firstPart.length <= 30) return firstPart;
+
+  return `${label.slice(0, 28).trimEnd()}...`;
+}
+
+
+function MeTabs({ activeTab, onChange }: { activeTab: MeTab; onChange: (tab: MeTab) => void }) {
+  const tabs: Array<{ id: MeTab; label: string }> = [
+    { id: "reviews", label: "Posts" },
+    { id: "timeline", label: "Timeline" },
+  ];
 
   return (
-    <div
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "flex-end" }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div style={{ width: "100%", maxWidth: "512px", margin: "0 auto" }}>
-      <div style={{ background: "var(--surface)", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "70vh", display: "flex", flexDirection: "column", borderTop: "1px solid var(--border)" }}>
-        {/* Handle */}
-        <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
-          <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "var(--border)" }} />
-        </div>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 20px 14px" }}>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "16px", color: "var(--cream)" }}>
-            Your Circle · <span style={{ color: "var(--muted)" }}>{circle.length} people</span>
-          </p>
-          <button onClick={onClose} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px", padding: "6px 14px", fontSize: "13px", color: "var(--muted)", cursor: "pointer" }}>
-            Done
+    <div style={{ display: "flex", padding: "0 16px 16px" }}>
+      {tabs.map((tab) => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            style={{
+              flex: 1,
+              padding: "10px 0 9px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              color: active ? "var(--orange)" : "var(--muted)",
+              background: "none",
+              border: "none",
+              borderBottom: `2px solid ${active ? "var(--orange)" : "var(--border)"}`,
+              fontFamily: "'DM Sans', sans-serif",
+            }}
+          >
+            {tab.label}
           </button>
-        </div>
-        {/* List */}
-        <div style={{ overflowY: "auto", flex: 1, padding: "0 16px 32px" }}>
-          {members.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "32px 0", gap: "14px" }}>
-              <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>No one in your circle yet</p>
-              <Link href="/explore" onClick={onClose} style={{ textDecoration: "none" }}>
-                <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "12px", padding: "12px 24px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-                  Find friends
-                </button>
-              </Link>
-            </div>
-          ) : (
-            <>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {members.map(({ name, places }) => (
-                  <Link key={name} href={`/people/${encodeURIComponent(name)}`} onClick={onClose} style={{ textDecoration: "none" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 0", borderBottom: "1px solid var(--border)" }}>
-                      <div style={{ width: "40px", height: "40px", borderRadius: "12px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
-                        {avatarInitials(name)}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{name}</p>
-                        <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-                          {places} place{places !== 1 ? "s" : ""}
-                        </p>
-                      </div>
-                      <ChevronRight size={16} strokeWidth={2} color="var(--muted)" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-              <Link href="/explore" onClick={onClose} style={{ textDecoration: "none" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "18px 0 4px", gap: "6px", color: "var(--orange)", fontSize: "13px", fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
-                  + Add more friends
-                </div>
-              </Link>
-            </>
-          )}
-        </div>
-      </div>
-      </div>{/* end max-width wrapper */}
+        );
+      })}
     </div>
   );
 }
 
-/* ─── main component ──────────────────────────────── */
+function TimelineTab({ reviews }: { reviews: Review[] }) {
+  const entries = reviews.length > 0
+    ? [...reviews]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 12)
+    : [];
+  const demoEntries = entries.length > 0 ? entries : [
+    demoReview("Paradise", "Hyderabad", "The classic never disappoints.", "Chicken Biryani", 4.8, "2024-05-23T12:00:00.000Z"),
+    demoReview("Third Wave Coffee", "Gachibowli", "Perfect start to the day.", "Third Wave Coffee", 4.5, "2024-01-12T12:00:00.000Z"),
+    demoReview("Midnight Shawarma", "Madhapur", "Late night cravings hit different.", "Midnight Shawarma", 4.7, "2023-12-30T12:00:00.000Z"),
+  ];
+
+  return (
+    <div style={{ padding: "0 20px 110px" }}>
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12, paddingLeft: 8 }}>
+        <div style={{ position: "absolute", left: 10.5, top: 10, bottom: 10, width: 1, background: "linear-gradient(180deg, rgba(240,96,48,0.55), rgba(255,255,255,0.08))" }} />
+        {demoEntries.map((entry, index) => {
+          const date = timelineDateParts(entry.created_at);
+          const location = timelineLocationLabel(entry);
+          return (
+            <div key={`${entry.restaurant_name}-${entry.created_at}-${index}`} style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 6, height: 6, borderRadius: 999, background: "var(--orange)", boxShadow: "0 0 0 4px var(--bg)", flexShrink: 0, position: "relative", zIndex: 1 }} />
+              <div style={{ flex: 1, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "11px 13px", display: "grid", gridTemplateColumns: "38px 1px minmax(0, 1fr)", alignItems: "center", gap: 12 }}>
+                <div style={{ color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1, textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: 14 }}>{date.day}</span>
+                  <span style={{ display: "block", marginTop: 3, fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>{date.month}</span>
+                </div>
+                <div style={{ alignSelf: "stretch", background: "rgba(255,255,255,0.18)" }} />
+                <div style={{ minWidth: 0 }}>
+                  <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, color: "var(--cream)", margin: 0, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {entry.restaurant_name}
+                  </h3>
+                  <p style={{ color: "var(--muted)", fontSize: 12, margin: "4px 0 0", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {location}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ReviewsTab({ reviews, engagement, myName }: { reviews: Review[]; engagement: EngagementMaps; myName: string }) {
+  const sorted = [...reviews].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  if (sorted.length === 0) {
+    return (
+      <div style={{ padding: "60px 20px 110px", textAlign: "center" }}>
+        <p style={{ color: "var(--muted)", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>No reviews yet</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "0 16px 110px", display: "flex", flexDirection: "column", gap: 0 }}>
+      {sorted.map((review) => (
+        <CircleFeedCard
+          key={review.id}
+          review={review}
+          initialLikeCount={engagement.likeCountMap[review.id] ?? 0}
+          initialCommentCount={engagement.commentMap[review.id]?.count ?? 0}
+          initialLiked={engagement.likedByMeMap[review.id] ?? false}
+          initialBookmarked={engagement.bookmarkedPostMap[review.id] ?? false}
+          initialMyName={myName}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default function MeClient({
   allReviews,
   initialMyName = "",
   initialDisplayName = "",
+  initialBio = "",
+  joinedAt = "",
   initialCircle = [],
+  likeCountMap = {},
+  commentMap = {},
+  likedByMeMap = {},
+  bookmarkedPostMap = {},
 }: {
   allReviews: Review[];
   initialMyName?: string;
   initialDisplayName?: string;
+  initialBio?: string;
+  joinedAt?: string;
   initialCircle?: string[];
+  likeCountMap?: Record<string, number>;
+  commentMap?: Record<string, { count: number; top: Comment }>;
+  likedByMeMap?: Record<string, boolean>;
+  bookmarkedPostMap?: Record<string, boolean>;
 }) {
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
   const [displayName, setDisplayName] = useState(initialDisplayName || initialMyName);
+  const [bio, setBio] = useState(initialBio);
   const [circle, setCircle] = useState<string[]>(initialCircle);
+  const [activeTab, setActiveTab] = useState<MeTab>("reviews");
 
-  // All derived — unconditional
-  const myReviews = useMemo(
-    () => allReviews.filter(r => r.reviewer_name === myName),
-    [allReviews, myName]
-  );
-
-  const uniquePlaces = useMemo(
-    () => new Set(myReviews.map(r => r.restaurant_name)).size,
-    [myReviews]
-  );
-
-  const uniqueDishes = useMemo(() => {
-    const pairs = new Set<string>();
-    for (const r of myReviews)
-      for (const it of r.items)
-        if (it.name.trim())
-          pairs.add(`${it.name.trim().toLowerCase()}\x00${r.restaurant_name.toLowerCase()}`);
-    return pairs.size;
-  }, [myReviews]);
-
+  const myReviews = useMemo(() => allReviews.filter(r => r.reviewer_name === myName), [allReviews, myName]);
+  const uniquePlaces = useMemo(() => new Set(myReviews.map(r => r.restaurant_name)).size, [myReviews]);
+  const uniqueDishes = useMemo(() => uniqueDishesFor(myReviews), [myReviews]);
   const totalVisits = useMemo(() => myReviews.length, [myReviews]);
-
-  const rankedPlaces = useMemo(() => buildRankedPlaces(myReviews), [myReviews]);
 
   useEffect(() => {
     const name = resolveActorName(initialMyName);
     const dName = resolveDisplayName(initialDisplayName, name);
     setMyName(name);
     setDisplayName(dName || name);
+    setBio(initialBio.trim());
     setMounted(true);
     if (name) {
       cachedCircleStatus(name)
-        .then((data) => {
-          setCircle(data.displayMembers ?? data.members ?? []);
-        })
+        .then((data) => setCircle(data.displayMembers ?? data.members ?? []))
         .catch(() => {});
     }
-  }, [initialMyName, initialDisplayName]);
+  }, [initialMyName, initialDisplayName, initialBio]);
 
-  /* ── skeleton ── */
   if (!mounted) {
     return (
       <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
@@ -220,11 +265,13 @@ export default function MeClient({
     );
   }
 
+  const tabContent =
+    activeTab === "timeline" ? <TimelineTab reviews={myReviews} /> :
+    <ReviewsTab reviews={myReviews} engagement={{ likeCountMap, commentMap, likedByMeMap, bookmarkedPostMap }} myName={myName} />;
+
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
-
-      {/* ── Section 1: Header ── */}
-      <div style={{ padding: "20px", position: "relative" }}>
+      <div style={{ padding: "20px 20px 16px", position: "relative" }}>
         <div style={{ position: "absolute", top: "20px", right: "20px", display: "flex", gap: "8px" }}>
           <Link href="/me/settings" style={{ textDecoration: "none" }}>
             <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "10px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
@@ -233,25 +280,28 @@ export default function MeClient({
           </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
+          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
             {myName ? avatarInitials(displayName || myName) : "?"}
           </div>
           <div>
             <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)" }}>
               {displayName || myName || "Set your name"}
             </p>
-            <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-              @{myName || "you"}
-            </p>
-            <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-              {totalVisits} visit{totalVisits !== 1 ? "s" : ""}
-            </p>
+            <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "3px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.6 }}>@{myName || "you"}</p>
+            <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "3px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.6 }}>{totalVisits} visit{totalVisits !== 1 ? "s" : ""}</p>
           </div>
         </div>
+        <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "12px", lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.85 }}>
+          {bio || "Food explorer, sharing my culinary adventures one review at a time. Always on the hunt for the next delicious discovery!"}
+        </p>
+        {joinedAt && (
+          <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "12px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>
+            Joined {new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(joinedAt))}
+          </p>
+        )}
       </div>
 
-      {/* ── Section 2: Stats Row ── */}
-      <div style={{ padding: "0 20px 20px" }}>
+      <div style={{ padding: "0 20px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
           {/* Places */}
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
@@ -271,7 +321,7 @@ export default function MeClient({
               Dishes
             </div>
           </div>
-          {/* Circle — links to /me/circle */}
+          {/* Circle */}
           <Link href="/me/circle" style={{ textDecoration: "none" }}>
             <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center", cursor: "pointer" }}>
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
@@ -285,60 +335,8 @@ export default function MeClient({
         </div>
       </div>
 
-      {/* ── Your List ── */}
-      <div style={{ padding: "0 20px 8px" }}>
-        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1.5px", marginBottom: "12px" }}>Your List</p>
-        {rankedPlaces.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "48px 0", gap: "16px" }}>
-              <p style={{ fontSize: "15px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
-                You haven&apos;t logged any places yet
-              </p>
-              <Link href="/reviews/new" style={{ textDecoration: "none" }}>
-                <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "14px", padding: "13px 28px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-                  Share your first meal
-                </button>
-              </Link>
-            </div>
-          ) : (
-            <div>
-              {rankedPlaces.map((place, i) => (
-                <Link
-                  key={place.name}
-                  href={`/people/${encodeURIComponent(myName)}/${encodeURIComponent(place.name)}`}
-                  style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", padding: "13px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
-                >
-                  <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 700, color: RANK_COLORS[i + 1] ?? "var(--border)", width: "24px", textAlign: "center", flexShrink: 0 }}>
-                    {i + 1}
-                  </div>
-                  <div style={{ width: "44px", height: "44px", background: restaurantGradient(place.name), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
-                    {place.name[0]?.toUpperCase() ?? "?"}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{place.name}</p>
-                    <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-                      {place.visitCount} visit{place.visitCount !== 1 ? "s" : ""}
-                      {place.dishCount > 0 && ` · ${place.dishCount} dish${place.dishCount !== 1 ? "es" : ""}`}
-                      {place.isRegular && (
-                        <span style={{ marginLeft: "8px", background: "var(--orange-dim)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: "20px", padding: "1px 7px", fontSize: "9px", fontWeight: 700, color: "var(--orange)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                          Regular
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, marginLeft: "4px" }}>
-                    {place.score10 > 0 && (
-                      <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)" }}>
-                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{place.score10}</span>
-                        <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
-                      </div>
-                    )}
-                    <ChevronRight size={15} strokeWidth={2} color="var(--muted)" />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-      </div>
+      <MeTabs activeTab={activeTab} onChange={setActiveTab} />
+      {tabContent}
     </div>
   );
 }

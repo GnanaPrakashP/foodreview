@@ -67,10 +67,12 @@ function LocationPickerSheet({
   currentLocation,
   onClose,
   onSelect,
+  anchorBottom,
 }: {
   currentLocation: UserLocation | null;
   onClose: () => void;
   onSelect: (loc: UserLocation) => void;
+  anchorBottom?: number;
 }) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<AutocompleteItem[]>([]);
@@ -161,37 +163,27 @@ function LocationPickerSheet({
 
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 60 }} />
-      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: "var(--card)", borderRadius: "20px 20px 0 0", zIndex: 61, padding: "16px 20px 32px", boxShadow: "0 -4px 40px rgba(0,0,0,0.4)" }}>
-        <div style={{ width: 36, height: 4, borderRadius: 99, background: "var(--border)", margin: "0 auto 18px" }} />
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--cream)", margin: 0 }}>
-            Change location
-          </p>
-          <button aria-label="Close location picker" onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", cursor: "pointer" }}>
-            <X size={16} strokeWidth={2.2} />
-          </button>
-        </div>
-
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "fixed", top: anchorBottom ?? 60, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, zIndex: 61, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", boxSizing: "border-box" }}>
         <button
           onClick={useCurrentLocation}
           disabled={gpsLoading}
-          style={{ width: "100%", padding: "13px 16px", borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 14, display: "flex", alignItems: "center", gap: 10, cursor: gpsLoading ? "default" : "pointer", opacity: gpsLoading ? 0.7 : 1 }}
+          style={{ width: "100%", padding: "11px 14px", borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 13, display: "flex", alignItems: "center", gap: 10, cursor: gpsLoading ? "default" : "pointer", opacity: gpsLoading ? 0.7 : 1 }}
         >
-          <LocateFixed size={18} strokeWidth={2.2} color="var(--orange)" />
+          <LocateFixed size={16} strokeWidth={2.2} color="var(--orange)" />
           <span style={{ fontWeight: 700 }}>{gpsLoading ? "Getting location..." : "Use current location"}</span>
         </button>
 
         {gpsError && <p style={{ fontSize: 12, color: "#F87171", marginTop: 8, textAlign: "center" }}>{gpsError}</p>}
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0" }}>
           <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
           <span style={{ fontSize: 11, color: "var(--muted)" }}>or</span>
           <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
         </div>
 
-        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", display: "flex", gap: 9, alignItems: "center" }}>
-          <Search size={16} strokeWidth={2.2} color="var(--muted)" />
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 12px", display: "flex", gap: 9, alignItems: "center" }}>
+          <Search size={15} strokeWidth={2.2} color="var(--muted)" />
           <input
             autoFocus
             placeholder="Search area or city..."
@@ -208,7 +200,7 @@ function LocationPickerSheet({
               <button
                 key={suggestion.placeId}
                 onClick={() => selectSuggestion(suggestion)}
-                style={{ width: "100%", padding: "11px 14px", textAlign: "left", cursor: "pointer", background: "var(--surface)", border: "none", borderTop: index > 0 ? "1px solid var(--border)" : "none", display: "flex", flexDirection: "column", gap: 2 }}
+                style={{ width: "100%", padding: "10px 12px", textAlign: "left", cursor: "pointer", background: "var(--surface)", border: "none", borderTop: index > 0 ? "1px solid var(--border)" : "none", display: "flex", flexDirection: "column", gap: 2 }}
               >
                 <span style={{ fontSize: 13, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>{suggestion.mainText}</span>
                 {suggestion.secondaryText && <span style={{ fontSize: 11, color: "var(--muted)" }}>{suggestion.secondaryText}</span>}
@@ -236,6 +228,8 @@ export default function HungryPageClient() {
   const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [dropdownTop, setDropdownTop] = useState(0);
+  const locationWrapperRef = useRef<HTMLDivElement>(null);
 
   const loadPosts = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName) => {
     if (cursor ? loadingMore : loading) return;
@@ -338,21 +332,36 @@ export default function HungryPageClient() {
   return (
     <div style={{ position: "fixed", inset: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--bg)", overflow: "hidden", boxSizing: "border-box", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 0", flexShrink: 0 }}>
-        <button
-          onClick={() => setShowLocationPicker(true)}
-          style={{ maxWidth: "calc(100% - 56px)", background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", gap: 8, color: "var(--cream)", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
-        >
-          <span style={{ fontSize: 17, lineHeight: 1 }}>🧭</span>
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 800 }}>
-            {location ? shortLocationLabel(location.label) : "Set location"}
-          </span>
-          <ChevronDown size={14} strokeWidth={2.2} color="var(--muted)" style={{ flexShrink: 0 }} />
-        </button>
+        <div ref={locationWrapperRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          <button
+            onClick={() => {
+              if (!showLocationPicker && locationWrapperRef.current) {
+                setDropdownTop(locationWrapperRef.current.getBoundingClientRect().bottom + 8);
+              }
+              setShowLocationPicker(v => !v);
+            }}
+            style={{ width: "100%", background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", gap: 8, color: "var(--cream)", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
+          >
+            <span style={{ fontSize: 22, lineHeight: 1 }}>🧭</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 800 }}>
+              {location ? shortLocationLabel(location.label) : "Set location"}
+            </span>
+            <ChevronDown size={14} strokeWidth={2.2} color="var(--muted)" style={{ flexShrink: 0 }} />
+          </button>
+          {showLocationPicker && (
+            <LocationPickerSheet
+              currentLocation={location}
+              onClose={() => setShowLocationPicker(false)}
+              onSelect={handleLocationSelect}
+              anchorBottom={dropdownTop}
+            />
+          )}
+        </div>
         <div
           aria-label="Bucket"
           style={{ position: "relative", minWidth: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--cream)" }}
         >
-          <span style={{ fontSize: 23, lineHeight: 1 }}>🥡</span>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>🥡</span>
           {savedIds.size > 0 && (
             <span style={{ position: "absolute", top: -3, right: -5, minWidth: 17, height: 17, padding: "0 5px", borderRadius: 999, background: "var(--orange)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800, border: "2px solid var(--bg)" }}>
               {savedIds.size}
@@ -376,13 +385,6 @@ export default function HungryPageClient() {
         />
       </div>
 
-      {showLocationPicker && (
-        <LocationPickerSheet
-          currentLocation={location}
-          onClose={() => setShowLocationPicker(false)}
-          onSelect={handleLocationSelect}
-        />
-      )}
     </div>
   );
 }

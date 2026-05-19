@@ -10,7 +10,7 @@ const selects = readFileSync(new URL("../lib/selects.ts", import.meta.url), "utf
 test("review detail pages build a display-name profile map for reviewer, viewer, and commenters", () => {
   for (const source of [reviewPage, commentPage]) {
     assert.match(source, /buildProfileDisplayMap\(supabase, \[/);
-    assert.match(source, /review\.reviewer_name/);
+    assert.match(source, /(review|normalizedReview)\.reviewer_name/);
     assert.match(source, /myName/);
     assert.match(source, /\.\.\.\(comments \?\? \[\]\)\.map\(\(c: Comment\) => c\.user_name\)/);
     assert.match(source, /profileMap=\{profileMap\}/);

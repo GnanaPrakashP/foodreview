@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, ImageIcon, ImagePlus, X } from "lucide-react";
+import { Camera, ImageIcon, ImagePlus, Play, Video, X } from "lucide-react";
 
-const MAX_PHOTOS = 4;
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_MEDIA = 4;
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+export const MAX_VIDEO_DURATION_SECONDS = 10;
 const POST_ASPECT_RATIO = 4 / 5;
 const CROP_OUTPUT_WIDTH = 1080;
 const CROP_OUTPUT_HEIGHT = 1350;
-const ACCEPTED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const ACCEPTED_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const ACCEPTED_VIDEO_MIME = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const ACCEPTED_MIME = new Set([...ACCEPTED_IMAGE_MIME, ...ACCEPTED_VIDEO_MIME]);
 
 // Magic-byte signatures for accepted image types
 const MAGIC: [number[], string][] = [
@@ -39,6 +43,10 @@ type CropInteraction = {
   imageWidth: number;
   imageHeight: number;
   scale: number;
+};
+
+export type ReviewUploadFile = File & {
+  durationSeconds?: number;
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -80,16 +88,46 @@ async function passedMagicBytes(file: File): Promise<boolean> {
   return false;
 }
 
+async function passedVideoMagicBytes(file: File): Promise<boolean> {
+  const buf = await file.slice(0, 16).arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const text = String.fromCharCode(...bytes);
+  return text.includes("ftyp") || (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3);
+}
+
+function getVideoDurationSeconds(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      cleanup();
+      if (!Number.isFinite(duration) || duration <= 0) {
+        reject(new Error("invalid duration"));
+        return;
+      }
+      resolve(duration);
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("invalid video"));
+    };
+    video.src = objectUrl;
+  });
+}
+
 interface PhotoUploadProps {
-  files: File[];
-  onFilesChange: (files: File[]) => void;
+  files: ReviewUploadFile[];
+  onFilesChange: (files: ReviewUploadFile[]) => void;
   error?: string;
 }
 
 export default function PhotoUpload({ files, onFilesChange, error }: PhotoUploadProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
+  const videoCameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
-  const sourceMenuRef = useRef<HTMLDivElement>(null);
   const cropImageRef = useRef<HTMLImageElement>(null);
   const [showSourceMenu, setShowSourceMenu] = useState(false);
   const [cropQueue, setCropQueue] = useState<File[]>([]);
@@ -99,40 +137,77 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
   async function addFiles(incoming: FileList | null) {
     if (!incoming || incoming.length === 0) return;
 
-    const slots = MAX_PHOTOS - files.length - cropQueue.length - (cropSession ? 1 : 0);
+    const slots = MAX_MEDIA - files.length - cropQueue.length - (cropSession ? 1 : 0);
     if (slots <= 0) return;
 
-    const accepted: File[] = [];
+    const imagesForCrop: File[] = [];
+    const videos: ReviewUploadFile[] = [];
     const errors: string[] = [];
 
     for (const file of Array.from(incoming).slice(0, slots)) {
       if (!ACCEPTED_MIME.has(file.type)) {
-        errors.push(`${file.name}: not an image`);
+        errors.push(`${file.name}: choose an image or video`);
         continue;
       }
-      if (file.size > MAX_SIZE_BYTES) {
-        errors.push(`${file.name}: exceeds 5 MB`);
-        continue;
+      if (ACCEPTED_IMAGE_MIME.has(file.type)) {
+        if (file.size > MAX_IMAGE_SIZE_BYTES) {
+          errors.push(`${file.name}: image exceeds 5 MB`);
+          continue;
+        }
+        if (!(await passedMagicBytes(file))) {
+          errors.push(`${file.name}: invalid image`);
+          continue;
+        }
+        imagesForCrop.push(file);
+      } else if (ACCEPTED_VIDEO_MIME.has(file.type)) {
+        if (file.size > MAX_VIDEO_SIZE_BYTES) {
+          errors.push(`${file.name}: video exceeds 50 MB`);
+          continue;
+        }
+        if (!(await passedVideoMagicBytes(file))) {
+          errors.push(`${file.name}: invalid video`);
+          continue;
+        }
+        let durationSeconds = 0;
+        try {
+          durationSeconds = await getVideoDurationSeconds(file);
+        } catch {
+          errors.push(`${file.name}: could not read video duration`);
+          continue;
+        }
+        if (durationSeconds > MAX_VIDEO_DURATION_SECONDS) {
+          errors.push(`${file.name}: video must be 10 seconds or less`);
+          continue;
+        }
+        Object.defineProperty(file, "durationSeconds", {
+          value: durationSeconds,
+          enumerable: true,
+          configurable: true,
+        });
+        videos.push(file as ReviewUploadFile);
       }
-      if (!(await passedMagicBytes(file))) {
-        errors.push(`${file.name}: invalid image`);
-        continue;
-      }
-      accepted.push(file);
     }
 
     if (errors.length) {
       // Surface first error via native alert — keeps this component dependency-free
       alert(errors[0]);
     }
-    if (accepted.length) {
-      setCropQueue((current) => [...current, ...accepted]);
+    if (videos.length) {
+      onFilesChange([...files, ...videos].slice(0, MAX_MEDIA));
+    }
+    if (imagesForCrop.length) {
+      setCropQueue((current) => [...current, ...imagesForCrop]);
     }
   }
 
   function openCamera() {
     setShowSourceMenu(false);
     cameraRef.current?.click();
+  }
+
+  function openVideoCamera() {
+    setShowSourceMenu(false);
+    videoCameraRef.current?.click();
   }
 
   function openGallery() {
@@ -169,7 +244,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
 
   async function useCroppedPhoto() {
     const image = cropImageRef.current;
-    if (!image || !cropSession?.crop || files.length >= MAX_PHOTOS) return;
+    if (!image || !cropSession?.crop || files.length >= MAX_MEDIA) return;
 
     const canvas = document.createElement("canvas");
     canvas.width = CROP_OUTPUT_WIDTH;
@@ -204,7 +279,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
       lastModified: Date.now(),
     });
 
-    if (croppedFile.size > MAX_SIZE_BYTES) {
+    if (croppedFile.size > MAX_IMAGE_SIZE_BYTES) {
       alert("Cropped photo exceeds 5 MB");
       return;
     }
@@ -216,16 +291,11 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
 
   useEffect(() => {
     if (!showSourceMenu) return;
-
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target as Node | null;
-      if (target && sourceMenuRef.current && !sourceMenuRef.current.contains(target)) {
-        setShowSourceMenu(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [showSourceMenu]);
 
   useEffect(() => {
@@ -299,7 +369,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
     };
   }, [cropInteraction]);
 
-  const canAddMore = files.length < MAX_PHOTOS;
+  const canAddMore = files.length < MAX_MEDIA;
   const maxReached = !canAddMore;
   const cropImage = cropImageRef.current;
   const cropScale =
@@ -336,12 +406,29 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                 background: "var(--card)",
               }}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={URL.createObjectURL(file)}
-                alt={`Photo ${i + 1}`}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
+              {file.type.startsWith("video/") ? (
+                <>
+                  <video
+                    src={URL.createObjectURL(file)}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                    <span style={{ width: 34, height: 34, borderRadius: "50%", background: "rgba(0,0,0,0.58)", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>
+                      <Play size={16} fill="currentColor" strokeWidth={0} />
+                    </span>
+                  </div>
+                </>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={URL.createObjectURL(file)}
+                  alt={`Media ${i + 1}`}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              )}
               <button
                 type="button"
                 onClick={() => remove(i)}
@@ -361,7 +448,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                   cursor: "pointer",
                   padding: 0,
                 }}
-                aria-label="Remove photo"
+                aria-label="Remove media"
               >
                 <X size={12} strokeWidth={2.5} />
               </button>
@@ -371,11 +458,11 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
       )}
 
       {/* Add button */}
-      <div ref={sourceMenuRef} style={{ position: "relative" }}>
+      <div style={{ position: "relative" }}>
         <button
           type="button"
           aria-expanded={showSourceMenu}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           disabled={maxReached}
           onClick={() => {
             if (!canAddMore) return;
@@ -401,7 +488,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
         >
           <ImagePlus size={files.length > 0 ? 18 : 30} strokeWidth={1.6} />
           <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
-            <span>{files.length > 0 && !maxReached ? "Add more" : "Add photos"}</span>
+            <span>{files.length > 0 && !maxReached ? "Add more" : "Add media"}</span>
             {maxReached && (
               <span style={{ fontSize: "11px", color: "var(--muted)" }}>4 per post</span>
             )}
@@ -410,78 +497,138 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
 
         {canAddMore && showSourceMenu && (
           <div
-            role="menu"
-            aria-label="Photo options"
-            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add media"
+            onClick={() => setShowSourceMenu(false)}
             style={{
-              position: "absolute",
-              top: "50%",
-              right: "12px",
-              transform: "translateY(-50%)",
-              width: "min(calc(100% - 24px), 206px)",
-              minWidth: "168px",
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: "12px",
-              padding: "5px",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-              zIndex: 15,
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.62)",
+              zIndex: 70,
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+              padding: 0,
             }}
           >
-            <div style={{ display: "grid", gap: "6px" }}>
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "100%",
+                maxWidth: "32rem",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderBottom: "none",
+                borderRadius: "18px 18px 0 0",
+                padding: "8px 8px calc(8px + env(safe-area-inset-bottom))",
+                boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 6px 10px" }}>
+                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", margin: 0 }}>
+                  Add media
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowSourceMenu(false)}
+                  aria-label="Close media options"
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 9,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    color: "var(--muted)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  <X size={15} strokeWidth={2.2} />
+                </button>
+              </div>
+              <div style={{ display: "grid", gap: "7px" }}>
               <button
                 type="button"
-                role="menuitem"
                 onClick={openCamera}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: "9px",
                   width: "100%",
-                  background: "var(--card)",
+                  background: "var(--surface)",
                   border: "1px solid var(--border)",
-                  borderRadius: "9px",
+                  borderRadius: "12px",
                   color: "var(--cream)",
-                  padding: "8px",
+                  padding: "11px",
                   cursor: "pointer",
                   textAlign: "left",
                 }}
               >
-                <span style={{ width: "28px", height: "28px", borderRadius: "9px", background: "var(--orange-dim)", color: "var(--orange)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Camera size={15} strokeWidth={1.8} />
+                <span style={{ width: "34px", height: "34px", borderRadius: "10px", background: "var(--orange-dim)", color: "var(--orange)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Camera size={17} strokeWidth={1.8} />
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 700 }}>Camera</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", color: "var(--muted)" }}>Take a new photo</span>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Take photo</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>Open camera for a fresh shot</span>
                 </span>
               </button>
 
               <button
                 type="button"
-                role="menuitem"
-                onClick={openGallery}
+                onClick={openVideoCamera}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "9px",
+                  gap: "10px",
                   width: "100%",
-                  background: "var(--card)",
+                  background: "var(--surface)",
                   border: "1px solid var(--border)",
-                  borderRadius: "9px",
+                  borderRadius: "12px",
                   color: "var(--cream)",
-                  padding: "8px",
+                  padding: "11px",
                   cursor: "pointer",
                   textAlign: "left",
                 }}
               >
-                <span style={{ width: "28px", height: "28px", borderRadius: "9px", background: "rgba(232,168,48,0.12)", color: "var(--gold)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <ImageIcon size={15} strokeWidth={1.8} />
+                <span style={{ width: "34px", height: "34px", borderRadius: "10px", background: "rgba(61,214,140,0.12)", color: "#3DD68C", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Video size={17} strokeWidth={1.8} />
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 700 }}>Photo library</span>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", color: "var(--muted)" }}>Choose from gallery</span>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Record video</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>10 seconds max</span>
                 </span>
               </button>
+
+              <button
+                type="button"
+                onClick={openGallery}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  width: "100%",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "12px",
+                  color: "var(--cream)",
+                  padding: "11px",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ width: "34px", height: "34px", borderRadius: "10px", background: "rgba(232,168,48,0.12)", color: "var(--gold)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <ImageIcon size={17} strokeWidth={1.8} />
+                </span>
+                <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Choose from library</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>Photos and videos from your gallery</span>
+                </span>
+              </button>
+              </div>
             </div>
           </div>
         )}
@@ -698,9 +845,18 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
         onClick={(e) => { (e.target as HTMLInputElement).value = ""; }}
       />
       <input
+        ref={videoCameraRef}
+        type="file"
+        accept="video/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => addFiles(e.target.files)}
+        onClick={(e) => { (e.target as HTMLInputElement).value = ""; }}
+      />
+      <input
         ref={galleryRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         multiple
         style={{ display: "none" }}
         onChange={(e) => addFiles(e.target.files)}

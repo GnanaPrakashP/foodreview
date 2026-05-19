@@ -5,6 +5,7 @@ import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import type { Review, Comment } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { getCircleRelationshipsForName } from "@/lib/circle-db";
 
 const REVIEW_SELECT = [
   "id",
@@ -18,7 +19,7 @@ const REVIEW_SELECT = [
   "items",
   "body",
   "photo_url",
-  "review_photos(public_url, position)",
+  "review_photos(public_url, media_type, position)",
   "visibility",
   "created_at",
   "deleted_at",
@@ -33,6 +34,25 @@ function parseNumber(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseCoordinate(value: string | null, min: number, max: number): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < min || parsed > max) return null;
+  return parsed;
+}
+
+function nearbyBounds(lat: number, lng: number, radiusKm = 30) {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
+}
+
 export async function GET(req: NextRequest) {
   const limit = Math.min(
     CIRCLE_FEED_MAX_PAGE_SIZE,
@@ -44,17 +64,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
   }
 
-  // excludeNames: circle members + the viewer themselves — their posts already appear above the divider
+  // excludeNames: joined-circle owners + the viewer themselves - their posts belong in Circle, not Explore.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
-  const excludeNames = excludeParam
-    .split(",")
-    .map((n) => n.trim())
-    .filter(Boolean);
-
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
+  const lat = parseCoordinate(req.nextUrl.searchParams.get("lat"), -90, 90);
+  const lng = parseCoordinate(req.nextUrl.searchParams.get("lng"), -180, 180);
+  const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
 
   try {
     const db = createAdminClient();
+    const relationshipNames = myName
+      ? Array.from((await getCircleRelationshipsForName(db, myName)).joinedCircles)
+      : [];
+    const excludeNames = Array.from(new Set([
+      ...excludeParam
+        .split(",")
+        .map((n) => n.trim())
+        .filter(Boolean),
+      ...relationshipNames,
+      myName.trim(),
+    ].filter(Boolean)));
 
     let query = db
       .from("reviews")
@@ -66,6 +95,14 @@ export async function GET(req: NextRequest) {
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
+
+    if (bounds) {
+      query = query
+        .gte("restaurant_lat", bounds.minLat)
+        .lte("restaurant_lat", bounds.maxLat)
+        .gte("restaurant_lng", bounds.minLng)
+        .lte("restaurant_lng", bounds.maxLng);
+    }
 
     if (cursor) {
       query = query.or(

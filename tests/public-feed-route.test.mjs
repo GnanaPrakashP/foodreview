@@ -50,7 +50,7 @@ function mockDb(...responses) {
         then(res, rej) { return next().then(res, rej); },
         catch(rej) { return next().catch(rej); },
       };
-      for (const m of ["select", "eq", "is", "or", "limit", "order", "in"]) {
+      for (const m of ["select", "eq", "is", "or", "limit", "order", "in", "gte", "lte"]) {
         chain[m] = () => chain;
       }
       return chain;
@@ -72,7 +72,7 @@ function spyDb(...responses) {
         then(res, rej) { return next().then(res, rej); },
         catch(rej) { return next().catch(rej); },
       };
-      for (const m of ["select", "eq", "is", "or", "limit", "order", "in"]) {
+      for (const m of ["select", "eq", "is", "or", "limit", "order", "in", "gte", "lte"]) {
         chain[m] = (...args) => { entry.ops.push([m, ...args]); return chain; };
       }
       return chain;
@@ -93,7 +93,7 @@ function hasOp(entry, name) {
 // Small page size so hasMore tests are easy
 const PAGE_SIZE = 5;
 
-function loadRoute({ db }) {
+function loadRoute({ db, relationships = { joinedCircles: new Set() } }) {
   const mod = { exports: {} };
   vm.runInNewContext(routeSource, {
     module: mod,
@@ -137,6 +137,9 @@ function loadRoute({ db }) {
       }
       if (id === "@/lib/server/normalize-review") {
         return { normalizeReview: (review) => review };
+      }
+      if (id === "@/lib/circle-db") {
+        return { getCircleRelationshipsForName: async () => relationships };
       }
       throw new Error(`Unexpected require in public-feed tests: ${id}`);
     },
@@ -193,6 +196,20 @@ test("public feed: query uses eq('visibility', 'public')", async () => {
   assert.equal(eqFilters(reviewCall)["status"], "active");
 });
 
+test("public feed: location params constrain reviews to nearby restaurants", async () => {
+  const db = spyDb(
+    { data: [], error: null }, // reviews
+  );
+  const { GET } = loadRoute({ db });
+  await GET(makeReq("lat=17.4239&lng=78.4738"));
+  const reviewCall = db._calls.find((c) => c.table === "reviews");
+  assert.ok(reviewCall, "should query reviews table");
+  assert.ok(reviewCall.ops.some(([op, col]) => op === "gte" && col === "restaurant_lat"));
+  assert.ok(reviewCall.ops.some(([op, col]) => op === "lte" && col === "restaurant_lat"));
+  assert.ok(reviewCall.ops.some(([op, col]) => op === "gte" && col === "restaurant_lng"));
+  assert.ok(reviewCall.ops.some(([op, col]) => op === "lte" && col === "restaurant_lng"));
+});
+
 // ── exclude filter ────────────────────────────────────────────────────────────
 
 test("public feed: posts from excluded names are not returned", async () => {
@@ -222,7 +239,7 @@ test("public feed: empty exclude returns all rows", async () => {
   assert.equal(body(res).reviews.length, 2);
 });
 
-test("public feed: viewer's own posts are excluded when viewer is in exclude list", async () => {
+test("public feed: viewer's own posts are excluded automatically", async () => {
   const db = mockDb(
     { data: [review({ reviewer_name: "carol" }), review({ reviewer_name: "viewer" })], error: null },
     { data: [], error: null },
@@ -230,9 +247,25 @@ test("public feed: viewer's own posts are excluded when viewer is in exclude lis
     { data: [], error: null },
   );
   const { GET } = loadRoute({ db });
-  const res = await GET(makeReq("exclude=viewer&viewer=viewer"));
+  const res = await GET(makeReq("viewer=viewer"));
   assert.equal(status(res), 200);
   assert.ok(body(res).reviews.every((r) => r.reviewer_name !== "viewer"));
+});
+
+test("public feed: posts from joined circles are excluded automatically", async () => {
+  const db = mockDb(
+    { data: [review({ reviewer_name: "alice" }), review({ reviewer_name: "bob" }), review({ reviewer_name: "charlie" })], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+  );
+  const { GET } = loadRoute({
+    db,
+    relationships: { joinedCircles: new Set(["alice", "bob"]) },
+  });
+  const res = await GET(makeReq("viewer=viewer"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["charlie"]);
 });
 
 // ── pagination ────────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ test("home/circle feed filters server reviews before fetching engagement data", 
   const helper = source("lib/circle-feed.ts");
   assert.match(helper, /createAdminClient\(\)/);
   assert.match(helper, /getAuthenticatedCircleActor\(supabase\)/);
-  assert.match(helper, /const feedReviewerNames = Array\.from\(new Set\(\[\.\.\.joinedCircles, myName\]\.filter\(Boolean\)\)\)/);
+  assert.match(helper, /const feedReviewerNames = Array\.from\(new Set\(joinedCircles\.filter\(Boolean\)\)\)/);
   assert.match(helper, /const batch = \(\(rawBatch \?\? \[\]\) as unknown\[]\)\.map/);
   assert.match(helper, /normalizeReview\(r as Parameters<typeof normalizeReview>\[0\]\)/);
   assert.match(helper, /filterCircleTrendingReviews\(batch,/);
@@ -169,7 +169,8 @@ test("people restaurant detail filters profile reviews before selecting restaura
 
   assert.match(src, /const readDb = createAdminClient\(\)/);
   assert.match(src, /hasCircleAccess\(supabase, name, myName\)/);
-  assert.match(src, /const reviews = filterProfileReviews\(allReviews \?\? \[\], name,/);
+  assert.match(src, /const normalizedReviews = \(\(allReviews \?\? \[\]\) as unknown\[\]\)/);
+  assert.match(src, /const reviews = filterProfileReviews\(normalizedReviews, name,/);
   assert.match(src, /const posts = reviews\.filter/);
   assert.match(src, /const postIds = posts\.map/);
 });
@@ -179,10 +180,10 @@ test("review detail reads by service role then applies app visibility before ren
 
   assert.match(src, /const readDb = createAdminClient\(\)/);
   assert.match(src, /readDb[\s\S]*\.from\("reviews"\)[\s\S]*\.eq\("id", id\)/);
-  assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
+  assert.match(src, /canViewerSeeReview\(normalizedReview, \{ viewerName: myName, circleOwnerNames \}\)/);
   assert.match(src, /readDb\.from\("likes"\)/);
   assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
-  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", review\.id\)[\s\S]*\.eq\("user_name", myName\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", normalizedReview\.id\)[\s\S]*\.eq\("user_name", myName\)/);
   assert.match(src, /initialLiked=\{Boolean\(viewerLike\)\}/);
   assert.match(src, /initialBookmarked=\{Boolean\(viewerBookmark\)\}/);
   assert.match(src, /initialSnapshotAt=\{Date\.now\(\)\}/);
@@ -193,10 +194,10 @@ test("comment detail reads by service role then applies app visibility before re
 
   assert.match(src, /const readDb = createAdminClient\(\)/);
   assert.match(src, /readDb[\s\S]*\.from\("reviews"\)[\s\S]*\.eq\("id", id\)/);
-  assert.match(src, /canViewerSeeReview\(review, \{ viewerName: myName, circleOwnerNames \}\)/);
+  assert.match(src, /canViewerSeeReview\(normalizedReview, \{ viewerName: myName, circleOwnerNames \}\)/);
   assert.match(src, /readDb\.from\("likes"\)/);
   assert.match(src, /readDb[\s\S]*\.from\("comments"\)/);
-  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", review\.id\)[\s\S]*\.eq\("user_name", myName\)/);
+  assert.match(src, /readDb[\s\S]*\.from\("wishlist"\)[\s\S]*\.eq\("post_id", normalizedReview\.id\)[\s\S]*\.eq\("user_name", myName\)/);
   assert.match(src, /initialLiked=\{Boolean\(viewerLike\)\}/);
   assert.match(src, /initialBookmarked=\{Boolean\(viewerBookmark\)\}/);
   assert.match(src, /initialSnapshotAt=\{Date\.now\(\)\}/);

@@ -75,7 +75,7 @@ function capturingDb(resolveWith = { data: { id: "11111111-1111-4111-8111-111111
       const chain = {
         then(res, rej) { return Promise.resolve(resolveWith).then(res, rej); },
         catch(rej) { return Promise.resolve(resolveWith).catch(rej); },
-        insert(row) { insertedRow = row; return chain; },
+        insert(row) { if (insertedRow === undefined) insertedRow = row; return chain; },
       };
       for (const m of [
         "select", "eq", "limit", "single", "maybeSingle",
@@ -172,6 +172,7 @@ function loadRoute(code, { db, adminDb, authName }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
+  media: [{ publicUrl: "https://example.test/photo.jpg", storagePath: "public/photo.jpg", mediaType: "image" }],
   visibility: "public",
 };
 
@@ -221,17 +222,62 @@ test("POST /reviews: empty items array returns 400", async () => {
   assert.match(body(res).error, /dish/i);
 });
 
-test("POST /reviews: more than four photos returns 400", async () => {
+test("POST /reviews: more than four media items returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
-  const photos = Array.from({ length: 5 }, (_, i) => ({
-    publicUrl: `https://example.test/photo-${i}.jpg`,
-    storagePath: `public/photo-${i}.jpg`,
+  const media = Array.from({ length: 5 }, (_, i) => ({
+    publicUrl: `https://example.test/media-${i}.jpg`,
+    storagePath: `public/media-${i}.jpg`,
+    mediaType: "image",
   }));
 
-  const res = await POST(makeReq({ ...VALID_BODY, photos }));
+  const res = await POST(makeReq({ ...VALID_BODY, media }));
 
   assert.equal(status(res), 400);
-  assert.match(body(res).error, /Maximum 4 photos/i);
+  assert.match(body(res).error, /Maximum 4 media/i);
+});
+
+test("POST /reviews: videos longer than ten seconds return 400", async () => {
+  const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
+  const media = [{
+    publicUrl: "https://example.test/video.mp4",
+    storagePath: "public/video.mp4",
+    mediaType: "video",
+    durationSeconds: 10.1,
+  }];
+
+  const res = await POST(makeReq({ ...VALID_BODY, media }));
+
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /10 seconds/i);
+});
+
+test("POST /reviews: videos without duration return 400", async () => {
+  const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
+  const media = [{
+    publicUrl: "https://example.test/video.mp4",
+    storagePath: "public/video.mp4",
+    mediaType: "video",
+  }];
+
+  const res = await POST(makeReq({ ...VALID_BODY, media }));
+
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /10 seconds/i);
+});
+
+test("POST /reviews: videos of ten seconds are accepted", async () => {
+  const db = capturingDb();
+  const { POST } = loadRoute(src.create, { db, authName: "Alice" });
+  const media = [{
+    publicUrl: "https://example.test/video.mp4",
+    storagePath: "public/video.mp4",
+    mediaType: "video",
+    durationSeconds: 10,
+  }];
+
+  const res = await POST(makeReq({ ...VALID_BODY, media }));
+
+  assert.equal(status(res), 200);
 });
 
 test("POST /reviews: items with only whitespace names returns 400", async () => {

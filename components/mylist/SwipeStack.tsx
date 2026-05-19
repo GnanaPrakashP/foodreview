@@ -161,7 +161,7 @@ export default function SwipeStack({
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", boxSizing: "border-box" }}>
         <div style={{ textAlign: "center" }}>
-          <p style={{ fontSize: "40px", marginBottom: "10px" }}>🍽️</p>
+          <p style={{ fontSize: "40px", marginBottom: "10px" }}>🔍</p>
           <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", marginBottom: "6px" }}>
             {emptyCopy}
           </p>

@@ -7,6 +7,7 @@ import { normalizeAccountType } from "@/lib/circle";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
 import { REVIEW_SELECT } from "@/lib/selects";
+import { normalizeReview } from "@/lib/server/normalize-review";
 import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 import { computeCommonRestaurants } from "@/lib/common-restaurants";
 
@@ -21,6 +22,7 @@ type ProfileSummary = {
   last_name: string;
   username: string | null;
   account_type: string | null;
+  bio: string | null;
 };
 
 export default async function UserProfilePage({ params }: Props) {
@@ -34,7 +36,7 @@ export default async function UserProfilePage({ params }: Props) {
     supabase.auth.getUser(),
     supabase
       .from("profiles")
-      .select("first_name, last_name, username, account_type")
+      .select("first_name, last_name, username, account_type, bio")
       .eq("username", name)
       .limit(1)
       .returns<ProfileSummary[]>(),
@@ -88,7 +90,9 @@ export default async function UserProfilePage({ params }: Props) {
     ]);
 
     if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
-    initialCommonRestaurantCount = computeCommonRestaurants(commonReviewRows ?? [], myName, name, {
+    const commonReviews = ((commonReviewRows ?? []) as unknown[])
+      .map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]));
+    initialCommonRestaurantCount = computeCommonRestaurants(commonReviews, myName, name, {
       firstCanSeeSecondCircle: canSeeCirclePosts,
       secondCanSeeFirstCircle: targetCanSeeMyCircle,
     }).length;
@@ -103,9 +107,10 @@ export default async function UserProfilePage({ params }: Props) {
   }
 
   const accountType = normalizeAccountType(profile?.account_type);
-  const rawReviews = ownerAllReviews ?? [];
+  const rawReviews = ((ownerAllReviews ?? []) as unknown[])
+    .map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]));
   const isCircleMember = circleOwnerNames.has(name);
-  const hasAnyCirclePosts = (ownerAllReviews ?? []).some(
+  const hasAnyCirclePosts = rawReviews.some(
     (review) => !isReviewSuppressed(review) && normalizeVisibility(review.visibility) === "circle"
   );
   const hasHiddenCirclePosts =
@@ -123,6 +128,7 @@ export default async function UserProfilePage({ params }: Props) {
       key={name}
       name={name}
       displayName={displayName}
+      bio={profile?.bio ?? ""}
       accountType={accountType}
       reviews={visibleReviews}
       hasHiddenCirclePosts={hasHiddenCirclePosts}
