@@ -44,7 +44,6 @@ const {
   filterGlobalTrendingReviews,
   filterProfileReviews,
 } = loadTsModule("lib/visibility.ts");
-const { computeTrending } = loadTsModule("lib/trending.ts");
 
 let seq = 0;
 function review(owner, visibility, restaurant, extra = {}) {
@@ -69,7 +68,7 @@ function restaurants(entries) {
   return Array.from(entries, (entry) => entry.restaurant_name).sort();
 }
 
-test("global trending computes only from public, unsuppressed, unblocked posts", () => {
+test("public discovery includes only public, unsuppressed, unblocked posts", () => {
   const posts = [
     review("Alice", "public", "Public Spot"),
     review("Bob", "circle", "Circle Spot"),
@@ -81,13 +80,11 @@ test("global trending computes only from public, unsuppressed, unblocked posts",
   ];
 
   const publicPosts = filterGlobalTrendingReviews(posts, { blockedNames: ["Blocked User"] });
-  const result = computeTrending(publicPosts);
 
-  assert.deepEqual(restaurants(result.alltime), ["Public Spot"]);
-  assert.equal(result.peopleCounts.alltime, 1);
+  assert.deepEqual(restaurants(publicPosts), ["Public Spot"]);
 });
 
-test("circle trending computes from visible circle-owner posts only", () => {
+test("circle discovery includes visible circle-owner posts only", () => {
   const posts = [
     review("Alice", "public", "Alice Public"),
     review("Alice", "circle", "Alice Circle"),
@@ -105,9 +102,8 @@ test("circle trending computes from visible circle-owner posts only", () => {
     viewerName: "Viewer",
     circleOwnerNames: ["Alice", "Bob"],
   });
-  const result = computeTrending(circlePosts);
 
-  assert.deepEqual(restaurants(result.alltime), [
+  assert.deepEqual(restaurants(circlePosts), [
     "Alice Circle",
     "Alice Public",
     "Bob Circle",
@@ -115,10 +111,11 @@ test("circle trending computes from visible circle-owner posts only", () => {
     "Viewer Own",
     "Viewer Own Circle",
   ]);
-  assert.equal(restaurants(result.alltime).includes("Alice Only Me"), false);
-  assert.equal(restaurants(result.alltime).includes("Viewer Own Private"), false);
-  assert.equal(restaurants(result.alltime).includes("Carol Hidden"), false);
-  assert.equal(restaurants(result.alltime).includes("Suppressed Alice"), false);
+  const visibleRestaurants = restaurants(circlePosts);
+  assert.equal(visibleRestaurants.includes("Alice Only Me"), false);
+  assert.equal(visibleRestaurants.includes("Viewer Own Private"), false);
+  assert.equal(visibleRestaurants.includes("Carol Hidden"), false);
+  assert.equal(visibleRestaurants.includes("Suppressed Alice"), false);
 });
 
 test("logged-out and non-circle viewers cannot see circle posts", () => {
@@ -167,27 +164,27 @@ test("private-account public posts remain public because post visibility owns ac
   );
 });
 
-test("changing post visibility changes trending inclusion immediately", () => {
+test("changing post visibility changes discovery inclusion immediately", () => {
   const post = review("Alice", "public", "Mutable Spot");
 
-  assert.deepEqual(restaurants(computeTrending(filterGlobalTrendingReviews([post])).alltime), ["Mutable Spot"]);
+  assert.deepEqual(restaurants(filterGlobalTrendingReviews([post])), ["Mutable Spot"]);
 
   post.visibility = "circle";
-  assert.deepEqual(restaurants(computeTrending(filterGlobalTrendingReviews([post])).alltime), []);
+  assert.deepEqual(restaurants(filterGlobalTrendingReviews([post])), []);
   assert.deepEqual(
-    restaurants(computeTrending(filterCircleTrendingReviews([post], {
+    restaurants(filterCircleTrendingReviews([post], {
       viewerName: "Bob",
       circleOwnerNames: ["Alice"],
-    })).alltime),
+    })),
     ["Mutable Spot"]
   );
 
   post.visibility = "me";
   assert.deepEqual(
-    restaurants(computeTrending(filterCircleTrendingReviews([post], {
+    restaurants(filterCircleTrendingReviews([post], {
       viewerName: "Bob",
       circleOwnerNames: ["Alice"],
-    })).alltime),
+    })),
     []
   );
 });

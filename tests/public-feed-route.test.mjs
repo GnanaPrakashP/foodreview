@@ -3,7 +3,7 @@
  *
  * Key invariants:
  *   - Only public-visibility posts are returned
- *   - Posts from excludeNames are filtered out client-side
+ *   - Posts from explicit excludeNames are filtered out client-side
  *   - hasMore / nextCursor reflect whether more pages exist
  *   - likeCountMap, likedByMeMap, commentMap, bookmarkedPostMap, profileMap are built correctly
  */
@@ -93,7 +93,7 @@ function hasOp(entry, name) {
 // Small page size so hasMore tests are easy
 const PAGE_SIZE = 5;
 
-function loadRoute({ db, relationships = { joinedCircles: new Set() } }) {
+function loadRoute({ db }) {
   const mod = { exports: {} };
   vm.runInNewContext(routeSource, {
     module: mod,
@@ -137,9 +137,6 @@ function loadRoute({ db, relationships = { joinedCircles: new Set() } }) {
       }
       if (id === "@/lib/server/normalize-review") {
         return { normalizeReview: (review) => review };
-      }
-      if (id === "@/lib/circle-db") {
-        return { getCircleRelationshipsForName: async () => relationships };
       }
       throw new Error(`Unexpected require in public-feed tests: ${id}`);
     },
@@ -239,7 +236,7 @@ test("public feed: empty exclude returns all rows", async () => {
   assert.equal(body(res).reviews.length, 2);
 });
 
-test("public feed: viewer's own posts are excluded automatically", async () => {
+test("public feed: viewer's own posts are included in the public universe", async () => {
   const db = mockDb(
     { data: [review({ reviewer_name: "carol" }), review({ reviewer_name: "viewer" })], error: null },
     { data: [], error: null },
@@ -249,23 +246,20 @@ test("public feed: viewer's own posts are excluded automatically", async () => {
   const { GET } = loadRoute({ db });
   const res = await GET(makeReq("viewer=viewer"));
   assert.equal(status(res), 200);
-  assert.ok(body(res).reviews.every((r) => r.reviewer_name !== "viewer"));
+  assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["carol", "viewer"]);
 });
 
-test("public feed: posts from joined circles are excluded automatically", async () => {
+test("public feed: posts from joined circles are included in the public universe", async () => {
   const db = mockDb(
     { data: [review({ reviewer_name: "alice" }), review({ reviewer_name: "bob" }), review({ reviewer_name: "charlie" })], error: null },
     { data: [], error: null },
     { data: [], error: null },
     { data: [], error: null },
   );
-  const { GET } = loadRoute({
-    db,
-    relationships: { joinedCircles: new Set(["alice", "bob"]) },
-  });
+  const { GET } = loadRoute({ db });
   const res = await GET(makeReq("viewer=viewer"));
   assert.equal(status(res), 200);
-  assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["charlie"]);
+  assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["alice", "bob", "charlie"]);
 });
 
 // ── pagination ────────────────────────────────────────────────────────────────

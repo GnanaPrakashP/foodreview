@@ -79,7 +79,7 @@ export const manualQaTests: ManualQaTest[] = [
     title: "Edit and delete review",
     route: "/me",
     steps: ["Open your own review detail.", "Edit the review.", "Delete another test review."],
-    expected: "Edits persist, deleted review disappears from feed/profile/trending.",
+    expected: "Edits persist, deleted review disappears from feed/profile/explore surfaces.",
     automatedCoverage: "API ownership covered by node tests; browser edit/delete needs manual verification.",
   },
   {
@@ -91,7 +91,7 @@ export const manualQaTests: ManualQaTest[] = [
     steps: [
       "Attach a supported image from a logged-in production test account.",
       "Post the review.",
-      "Open the detail page, profile card, and feed/trending card where applicable.",
+      "Open the detail page, profile card, and feed/explore card where applicable.",
       "Hard refresh and confirm the image still loads.",
     ],
     expected: "Photo uploads to Supabase Storage, renders after refresh, and does not break layout on desktop or mobile.",
@@ -175,10 +175,10 @@ export const manualQaTests: ManualQaTest[] = [
     id: "QA-013",
     section: "Trending and restaurants",
     priority: "P0",
-    title: "Global trending privacy",
-    route: "/trending",
-    steps: ["Create public, circle, and only-me reviews.", "Open global trending as owner and outsider."],
-    expected: "Only public eligible content appears in global trending.",
+    title: "Explore public discovery privacy",
+    route: "/explore",
+    steps: ["Create public, circle, and only-me reviews.", "Open Explore as owner and outsider."],
+    expected: "Only public eligible content appears in Explore discovery.",
     automatedCoverage: "Covered by node privacy tests and E2E smoke.",
   },
   {
@@ -186,7 +186,7 @@ export const manualQaTests: ManualQaTest[] = [
     section: "Trending and restaurants",
     priority: "P1",
     title: "Restaurant detail visibility",
-    route: "/trending",
+    route: "/trending/[restaurant]",
     steps: [
       "Open restaurant detail pages as owner, circle member, and outsider.",
       "Compare visible posts for the same restaurant across all three accounts.",
@@ -313,7 +313,7 @@ export const manualQaTests: ManualQaTest[] = [
     route: "Vercel + production app",
     steps: [
       "Confirm Vercel has Supabase, service role, and Google Places environment variables set for Production.",
-      "Open /login, /auth/reset-password, /reviews/new, and /trending after deploy.",
+      "Open /login, /auth/reset-password, /reviews/new, and /explore after deploy.",
       "Check Vercel function logs while using Google Places and auth routes.",
     ],
     expected: "No prerender env errors, protected routes redirect correctly, and server routes do not log missing API key errors.",
@@ -386,14 +386,14 @@ export const manualQaTests: ManualQaTest[] = [
     section: "Visibility and privacy",
     priority: "P0",
     title: "Stats, places, and dishes visibility matrix",
-    route: "/people/[username], /trending, /dishes",
+    route: "/people/[username], /explore, /trending/[restaurant], /dishes",
     steps: [
       "Use seeded public, circle, and private reviews for a public account and a private account.",
       "Compare profile stats as owner, stranger, pending requester, and circle member.",
-      "Search the same seeded restaurants in /trending and dishes in /dishes.",
+      "Search the same seeded restaurants in /explore and dishes in /dishes.",
       "Accept a pending Circle request and repeat the profile, restaurant, and dish checks.",
     ],
-    expected: "Strangers and pending requesters see public-only stats. Circle members see public plus circle stats. Owners see public plus circle plus private stats. Global trending and /dishes expose public-only data.",
+    expected: "Strangers and pending requesters see public-only stats. Circle members see public plus circle stats. Owners see public plus circle plus private stats. Explore discovery and /dishes expose public-only data.",
     automatedCoverage: "Covered by stats visibility matrix tests, page wiring tests, RLS guards, and Playwright visibility/dish smoke.",
   },
 ];

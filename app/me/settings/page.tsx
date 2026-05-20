@@ -56,7 +56,7 @@ export default function SettingsPage() {
     // Clear browser sessionStorage caches
     invalidateCachedJson("/api/me");
     invalidateCachedJson("/api/people");
-    // Drop server-side getPrivateCached entries for this user (me-page, people-page, trending).
+    // Drop server-side getPrivateCached entries for this user (me-page, people-page).
     // Fire-and-forget: browser caches are already cleared above; the server cache TTL (5 min)
     // is the fallback if this call fails.
     void fetch("/api/me", { method: "POST" });

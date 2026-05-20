@@ -343,7 +343,7 @@ test("notification smoke: circle request creates a notification and accept updat
   await requesterContext.close();
 });
 
-test("trending and common badge smoke: public trends, private visibility does not leak", async ({ browser }) => {
+test("explore and common badge smoke: public discovery, private visibility does not leak", async ({ browser }) => {
   test.setTimeout(60_000);
   test.skip(SKIP_ABC, SKIP_MSG);
 
@@ -367,13 +367,13 @@ test("trending and common badge smoke: public trends, private visibility does no
   const viewerContext = await browser.newContext();
   const viewerPage = await viewerContext.newPage();
   await signIn(viewerPage, userB!);
-  await viewerPage.goto("/trending");
-  await viewerPage.getByPlaceholder(/search restaurant or dish/i).fill(publicRestaurant);
+  await viewerPage.goto("/explore");
+  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(publicRestaurant);
   await expect(viewerPage.getByText(publicRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
-  await viewerPage.getByPlaceholder(/search restaurant or dish/i).fill(circleRestaurant);
-  await expect(viewerPage.getByText("Nothing matches")).toBeVisible({ timeout: 10_000 });
-  await viewerPage.getByPlaceholder(/search restaurant or dish/i).fill(meRestaurant);
-  await expect(viewerPage.getByText("Nothing matches")).toBeVisible({ timeout: 10_000 });
+  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(circleRestaurant);
+  await expect(viewerPage.getByText(`No results for “${circleRestaurant}”`)).toBeVisible({ timeout: 10_000 });
+  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(meRestaurant);
+  await expect(viewerPage.getByText(`No results for “${meRestaurant}”`)).toBeVisible({ timeout: 10_000 });
 
   await viewerPage.goto("/dishes");
   await viewerPage.getByPlaceholder(/e\.g\./i).fill(publicDish);

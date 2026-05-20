@@ -1,4 +1,5 @@
 import type { FoodItem, Visibility } from "@/lib/types";
+import { normalizeDishName } from "@/lib/dish-normalizer";
 
 const VALID_VISIBILITIES = new Set<Visibility>(["public", "circle", "me"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -27,10 +28,13 @@ export function normalizeReviewItems(items: unknown): { items?: FoodItem[]; erro
     ) {
       return { error: "Invalid rating" };
     }
+    if (typeof item.rating !== "number" || item.rating <= 0) {
+      return { error: "Rate every dish you add" };
+    }
 
     normalized.push({
-      name,
-      rating: item.rating ?? 0,
+      name: normalizeDishName(name),
+      rating: item.rating,
     });
   }
 

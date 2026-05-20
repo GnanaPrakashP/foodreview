@@ -111,9 +111,6 @@ function loadRoute(code, { db, authName }) {
           invalidateSocialCachesForNames() {},
         };
       }
-      if (id === "@/lib/trending-page-data") {
-        return { invalidateTrendingPageCacheForNames() {} };
-      }
       if (id === "@/lib/server/route-supabase") {
         return {
           createRouteSupabase: async () => db,

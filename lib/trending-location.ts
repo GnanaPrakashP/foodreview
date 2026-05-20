@@ -51,23 +51,3 @@ export function normalizeLocationLabel(raw: string | null | undefined): string |
   if (!label) return null;
   return label.slice(0, MAX_LOCATION_LABEL_LENGTH);
 }
-
-export function trendingApiUrl(locationBucket = DEFAULT_TRENDING_LOCATION_BUCKET): string {
-  const bucket = normalizeLocationBucket(locationBucket);
-  if (bucket === DEFAULT_TRENDING_LOCATION_BUCKET) return "/api/trending?loc=global";
-  return `/api/trending?loc=${encodeURIComponent(bucket)}`;
-}
-
-export function readStoredTrendingLocationBucket(): string {
-  try {
-    const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
-    const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
-    return locationBucketFromCoords(lat, lng);
-  } catch {
-    return DEFAULT_TRENDING_LOCATION_BUCKET;
-  }
-}
-
-export function currentTrendingApiUrl(): string {
-  return trendingApiUrl(readStoredTrendingLocationBucket());
-}

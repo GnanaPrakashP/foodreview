@@ -5,7 +5,6 @@ import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import type { Review, Comment } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
-import { getCircleRelationshipsForName } from "@/lib/circle-db";
 
 const REVIEW_SELECT = [
   "id",
@@ -64,7 +63,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
   }
 
-  // excludeNames: joined-circle owners + the viewer themselves - their posts belong in Circle, not Explore.
+  // Explore top picks and public posts are based on the whole public user base.
+  // Keep an explicit exclude override for callers that need a narrower view.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
   const lat = parseCoordinate(req.nextUrl.searchParams.get("lat"), -90, 90);
@@ -73,16 +73,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const db = createAdminClient();
-    const relationshipNames = myName
-      ? Array.from((await getCircleRelationshipsForName(db, myName)).joinedCircles)
-      : [];
     const excludeNames = Array.from(new Set([
       ...excludeParam
         .split(",")
         .map((n) => n.trim())
         .filter(Boolean),
-      ...relationshipNames,
-      myName.trim(),
     ].filter(Boolean)));
 
     let query = db

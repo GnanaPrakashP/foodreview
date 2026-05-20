@@ -29,10 +29,13 @@ import {
   TRENDING_LOCATION_LNG_STORAGE_KEY,
 } from "@/lib/trending-location";
 import { reviewMediaItems } from "@/lib/review-media";
+import { CANONICAL_DISHES, dishSearchMatches, normalizeDishName } from "@/lib/dish-normalizer";
 
 const FEED_PAGE_SIZE = 24;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
+const TOP_PICK_DISPLAY_LIMIT = 10;
+const RESTAURANT_CARD_DISH_LIMIT = 3;
 
 /* ─── Categories ─────────────────────────────────── */
 
@@ -56,8 +59,8 @@ type CategoryId = typeof CATEGORIES[number]["id"];
 type ProfileSearchRow = { username: string; first_name: string; last_name: string };
 
 type PeopleResult   = { name: string; displayName: string; totalPlaces: number };
-type RestaurantResult = { name: string; reviewerCount: number };
-type DishResult     = { itemName: string; rating: number; restaurantName: string; reviewerName: string; reviewerDisplayName: string };
+type RestaurantResult = AutocompleteItem;
+type DishResult = { canonicalName: string; mentionCount: number };
 
 type ExploreTab = "posts" | "restaurants" | "dishes" | "people";
 type UserLocation = { lat: number; lng: number; label: string };
@@ -65,6 +68,7 @@ type AutocompleteItem = { placeId: string; text: string; mainText: string; secon
 
 type RestaurantSpotlight = {
   name: string;
+  reviewers: string[];
   reviewerCount: number;
   averageRating: number;
   topDish: string;
@@ -412,6 +416,7 @@ function topRestaurantsFromFeed(feed: Review[]): RestaurantSpotlight[] {
         : null;
       return {
         name,
+        reviewers: Array.from(data.reviewers),
         reviewerCount: data.reviewers.size,
         averageRating,
         topDish: data.topDish,
@@ -635,25 +640,42 @@ function ExploreTabs({ activeTab, onChange }: { activeTab: ExploreTab; onChange:
 function RestaurantList({
   restaurants,
   loading,
+  profileMap,
 }: {
   restaurants: RestaurantSpotlight[];
   loading: boolean;
+  profileMap: Record<string, string>;
 }) {
+  const visibleRestaurants = restaurants.slice(0, TOP_PICK_DISPLAY_LIMIT);
+
+  function displayPersonName(username: string): string {
+    const displayName = profileMap[username] || username;
+    return displayName.split(/\s+/).filter(Boolean)[0] || displayName;
+  }
+
+  function socialProof(reviewers: string[]): string {
+    if (reviewers.length === 0) return "";
+    const first = displayPersonName(reviewers[0]);
+    if (reviewers.length === 1) return `${first} has been here`;
+    const others = reviewers.length - 1;
+    return `${first} + ${others} other${others === 1 ? "" : "s"} have been here`;
+  }
+
   return (
     <div style={{ paddingBottom: "100px" }}>
-      <DiscoveryHeader title="Restaurants people love" subtitle="Ranked from real public reviews" Icon={Store} />
+      <DiscoveryHeader title="Top restaurants near you" Icon={Store} />
       <div style={{ padding: "0 16px" }}>
-        {loading && restaurants.length === 0 ? (
+        {loading && visibleRestaurants.length === 0 ? (
           [1, 2, 3, 4].map((i) => (
             <div key={i} className="animate-pulse" style={{ height: 118, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
           ))
-        ) : restaurants.length === 0 ? (
+        ) : visibleRestaurants.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
             <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No restaurants yet</p>
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts will shape this list.</p>
           </div>
         ) : (
-          restaurants.map((restaurant) => (
+          visibleRestaurants.map((restaurant) => (
             <Link key={restaurant.name} href={`/trending/${encodeURIComponent(restaurant.name)}`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
               <div
                 style={{
@@ -680,11 +702,19 @@ function RestaurantList({
 
                     {restaurant.topDishes.length > 0 && (
                       <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {restaurant.topDishes.map((dish) => (
+                        {restaurant.topDishes.slice(0, RESTAURANT_CARD_DISH_LIMIT).map((dish) => (
                           <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 7px" }}>
                             {dish}
                           </span>
                         ))}
+                      </div>
+                    )}
+
+                    {restaurant.reviewers.length > 0 && (
+                      <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid var(--border)" }}>
+                        <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
+                          {socialProof(restaurant.reviewers)}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -699,21 +729,23 @@ function RestaurantList({
 }
 
 function DishList({ dishes, loading }: { dishes: DishSpotlight[]; loading: boolean }) {
+  const visibleDishes = dishes.slice(0, TOP_PICK_DISPLAY_LIMIT);
+
   return (
     <div style={{ paddingBottom: "100px" }}>
-      <DiscoveryHeader title="Dishes people love" subtitle="Ranked from real public reviews" Icon={Utensils} />
+      <DiscoveryHeader title="Top dishes near you" Icon={Utensils} />
       <div style={{ padding: "0 16px" }}>
-        {loading && dishes.length === 0 ? (
+        {loading && visibleDishes.length === 0 ? (
           [1, 2, 3, 4].map((i) => (
             <div key={i} className="animate-pulse" style={{ height: 118, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
           ))
-        ) : dishes.length === 0 ? (
+        ) : visibleDishes.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
             <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No dishes yet</p>
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts with dish ratings will shape this list.</p>
           </div>
         ) : (
-          dishes.map((dish) => (
+          visibleDishes.map((dish) => (
             <Link key={dish.key} href={`/trending/${encodeURIComponent(dish.topRestaurantName)}`} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
               <div
                 style={{
@@ -734,31 +766,11 @@ function DishList({ dishes, loading }: { dishes: DishSpotlight[]; loading: boole
                   <RatingScore rating={dish.averageRating} />
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {dish.mentionCount} rating{dish.mentionCount !== 1 ? "s" : ""}
+                    {dish.mentionCount} mention{dish.mentionCount !== 1 ? "s" : ""}
                   </span>
-                  <span style={{ fontSize: 11, color: "var(--muted)" }}>·</span>
-                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {dish.reviewerCount} reviewer{dish.reviewerCount !== 1 ? "s" : ""}
-                  </span>
-                  {dish.bestRating > dish.averageRating && (
-                    <>
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>·</span>
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>best {formatRating(score10FromRating(dish.bestRating))}/10</span>
-                    </>
-                  )}
                 </div>
-
-                {dish.restaurants.length > 0 && (
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    {dish.restaurants.map((restaurant) => (
-                      <span key={restaurant} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 7px" }}>
-                        {restaurant}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
             </Link>
           ))
@@ -779,24 +791,28 @@ function PeopleStrip({
   onAdd: (name: string) => void;
   onInCircleClick: (name: string) => void;
 }) {
-  if (people.length === 0) return null;
-
   return (
     <section style={{ margin: "4px 0 18px" }}>
-      <DiscoveryHeader title="People to discover" subtitle="Find taste matches before you search" Icon={Users} />
-      <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-        {people.slice(0, 4).map((person) => (
-          <PersonCard
-            key={person.name}
-            name={person.name}
-            displayName={person.displayName}
-            sub={person.lastPlace ? `${person.totalPlaces} places · latest at ${person.lastPlace}` : `${person.totalPlaces} place${person.totalPlaces !== 1 ? "s" : ""}`}
-            status={statusFor(person.name)}
-            onInCircleClick={statusFor(person.name) === "one_way" ? () => onInCircleClick(person.name) : undefined}
-            onAdd={() => onAdd(person.name)}
-          />
-        ))}
-      </div>
+      <DiscoveryHeader title="People to discover" Icon={Users} />
+      {people.length === 0 ? (
+        <p style={{ fontSize: "13px", color: "var(--muted)", textAlign: "center", padding: "28px 24px", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>
+          No more people to discover right now.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+          {people.map((person) => (
+            <PersonCard
+              key={person.name}
+              name={person.name}
+              displayName={person.displayName}
+              sub={`${toHandle(person.name)} · ${person.totalPlaces} place${person.totalPlaces !== 1 ? "s" : ""}`}
+              status={statusFor(person.name)}
+              onInCircleClick={statusFor(person.name) === "one_way" ? () => onInCircleClick(person.name) : undefined}
+              onAdd={() => onAdd(person.name)}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1033,27 +1049,14 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     const supabase = createClient();
     const trimmed = q.trim();
     const bounds = location ? locationBounds(location) : null;
-    let restaurantQuery = supabase
-      .from("reviews")
-      .select("restaurant_name, reviewer_name")
-      .eq("visibility", "public")
-      .eq("status", "active")
-      .ilike("restaurant_name", `%${trimmed}%`)
-      .limit(30);
     let dishQuery = supabase
       .from("reviews")
-      .select("reviewer_name, restaurant_name, items")
+      .select("items, restaurant_lat, restaurant_lng")
       .eq("visibility", "public")
       .eq("status", "active")
-      .filter("items::text", "ilike", `%${trimmed}%`)
-      .limit(20);
+      .limit(500);
 
     if (bounds) {
-      restaurantQuery = restaurantQuery
-        .gte("restaurant_lat", bounds.minLat)
-        .lte("restaurant_lat", bounds.maxLat)
-        .gte("restaurant_lng", bounds.minLng)
-        .lte("restaurant_lng", bounds.maxLng);
       dishQuery = dishQuery
         .gte("restaurant_lat", bounds.minLat)
         .lte("restaurant_lat", bounds.maxLat)
@@ -1064,13 +1067,18 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     const [
       { data: reviewerData },
       { data: profileData },
-      { data: restaurantData },
       { data: dishData },
+      restaurantsResponse,
     ] = await Promise.all([
-      supabase.from("reviews").select("reviewer_name").eq("visibility", "public").ilike("reviewer_name", `%${trimmed}%`).returns<{ reviewer_name: string }[]>(),
+      supabase.from("reviews").select("reviewer_name, restaurant_name").eq("visibility", "public").ilike("reviewer_name", `%${trimmed}%`).returns<{ reviewer_name: string; restaurant_name: string }[]>(),
       supabase.from("profiles").select("username, first_name, last_name").or(`username.ilike.%${trimmed}%,first_name.ilike.%${trimmed}%,last_name.ilike.%${trimmed}%`).returns<ProfileSearchRow[]>(),
-      restaurantQuery.returns<{ restaurant_name: string; reviewer_name: string }[]>(),
-      dishQuery.returns<{ reviewer_name: string; restaurant_name: string; items: Array<{ name: string; rating: number }> }[]>(),
+      dishQuery.returns<{ items: Array<{ name: string; rating: number }> }[]>(),
+      fetch(`/api/places/autocomplete?${new URLSearchParams({
+        input: trimmed,
+        ...(location ? { lat: String(location.lat), lng: String(location.lng) } : {}),
+      }).toString()}`, { cache: "no-store" })
+        .then((res) => res.json() as Promise<{ suggestions?: RestaurantResult[] }>)
+        .catch(() => ({ suggestions: [] as RestaurantResult[] })),
     ]);
 
     // People
@@ -1080,7 +1088,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     }
     const peopleMap = new Map<string, number>();
     for (const r of reviewerData ?? []) {
-      if (r.reviewer_name) peopleMap.set(r.reviewer_name, (peopleMap.get(r.reviewer_name) ?? 0) + 1);
+      if (r.reviewer_name) peopleMap.set(r.reviewer_name, (peopleMap.get(r.reviewer_name) ?? 0) + (r.restaurant_name ? 1 : 0));
     }
     for (const p of profileData ?? []) {
       if (p.username && !peopleMap.has(p.username)) peopleMap.set(p.username, 0);
@@ -1092,38 +1100,28 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     );
 
     // Restaurants
-    const restaurantMap = new Map<string, Set<string>>();
-    for (const r of restaurantData ?? []) {
-      if (r.restaurant_name) {
-        if (!restaurantMap.has(r.restaurant_name)) restaurantMap.set(r.restaurant_name, new Set());
-        if (r.reviewer_name) restaurantMap.get(r.restaurant_name)!.add(r.reviewer_name);
-      }
-    }
-    setRestaurantResults(
-      Array.from(restaurantMap.entries()).map(([name, reviewers]) => ({ name, reviewerCount: reviewers.size }))
-    );
+    setRestaurantResults((restaurantsResponse.suggestions ?? []).slice(0, 5));
 
     // Dishes
-    const seen = new Set<string>();
-    const dishes: DishResult[] = [];
+    const canonicalByName = new Map(CANONICAL_DISHES.map((dish) => [dish.canonical, 0]));
+    const canonicalQuery = normalizeDishName(trimmed);
+    if (canonicalQuery && canonicalQuery !== trimmed) canonicalByName.set(canonicalQuery, 0);
+
     for (const r of dishData ?? []) {
       for (const item of (r.items as Array<{ name: string; rating: number }> ?? [])) {
-        if (item.name.toLowerCase().includes(trimmed.toLowerCase())) {
-          const key = `${item.name}|${r.restaurant_name}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            dishes.push({
-              itemName: item.name,
-              rating: item.rating,
-              restaurantName: r.restaurant_name,
-              reviewerName: r.reviewer_name,
-              reviewerDisplayName: displayNameByUsername.get(r.reviewer_name) || r.reviewer_name,
-            });
-          }
+        const canonical = normalizeDishName(item.name);
+        if (dishSearchMatches(canonical, trimmed) || canonical.toLowerCase().includes(trimmed.toLowerCase())) {
+          canonicalByName.set(canonical, (canonicalByName.get(canonical) ?? 0) + 1);
         }
       }
     }
-    setDishResults(dishes);
+    setDishResults(
+      Array.from(canonicalByName.entries())
+        .filter(([name, count]) => count > 0 || dishSearchMatches(name, trimmed) || name.toLowerCase().includes(trimmed.toLowerCase()))
+        .map(([canonicalName, mentionCount]) => ({ canonicalName, mentionCount }))
+        .sort((a, b) => b.mentionCount - a.mentionCount || a.canonicalName.localeCompare(b.canonicalName))
+        .slice(0, 5)
+    );
     setHasSearched(true);
     setSearching(false);
   }, [location, myName]);
@@ -1146,12 +1144,11 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const isSearching = searchQuery.trim() !== "";
   const topRestaurants = useMemo(() => topRestaurantsFromFeed(filteredFeed), [filteredFeed]);
   const bestDishes = useMemo(() => bestDishesFromFeed(filteredFeed), [filteredFeed]);
-  const suggestedPeople = useMemo(
+  const discoverablePeople = useMemo(
     () => initialCircle
       .filter((person) => person.name !== myName)
       .filter((person) => !circleMembers.has(person.name))
-      .filter((person) => !pendingIncoming.includes(person.name))
-      .slice(0, 6),
+      .filter((person) => !pendingIncoming.includes(person.name)),
     [circleMembers, initialCircle, myName, pendingIncoming]
   );
 
@@ -1166,6 +1163,24 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     saveLocation(nextLocation);
     setShowLocationPicker(false);
     loadFeedPage(null, myName, nextLocation);
+  }
+
+  function dishHref(dishName: string): string {
+    const params = new URLSearchParams();
+    if (location) {
+      params.set("lat", String(location.lat));
+      params.set("lng", String(location.lng));
+    }
+    const query = params.toString();
+    return `/dishes/${encodeURIComponent(dishName)}${query ? `?${query}` : ""}`;
+  }
+
+  function restaurantHref(restaurant: RestaurantResult): string {
+    const params = new URLSearchParams();
+    if (restaurant.mainText) params.set("name", restaurant.mainText);
+    if (restaurant.secondaryText) params.set("address", restaurant.secondaryText);
+    const query = params.toString();
+    return `/restaurants/${encodeURIComponent(restaurant.placeId)}${query ? `?${query}` : ""}`;
   }
 
   /* ── Render ── */
@@ -1274,20 +1289,22 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
                 <>
                   {peopleResults.length > 0 && <div style={{ height: "8px" }} />}
                   <SectionLabel>Restaurants</SectionLabel>
-                  {restaurantResults.map((r) => (
-                    <Link key={r.name} href={`/trending/${encodeURIComponent(r.name)}`} style={{ textDecoration: "none", display: "block", margin: "0 16px 10px" }}>
-                      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-                        <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>
-                          🍽️
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {r.name}
-                          </p>
-                          <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
-                            {r.reviewerCount} {r.reviewerCount === 1 ? "review" : "reviews"}
-                          </p>
-                        </div>
+	                  {restaurantResults.map((r) => (
+	                    <Link key={r.placeId} href={restaurantHref(r)} style={{ textDecoration: "none", display: "block", margin: "0 16px 10px" }}>
+	                      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
+	                        <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+	                          <Store size={19} strokeWidth={2.1} color="var(--orange)" />
+	                        </div>
+	                        <div style={{ flex: 1, minWidth: 0 }}>
+	                          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+	                            {r.mainText}
+	                          </p>
+	                          {r.secondaryText && (
+	                            <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+	                              {r.secondaryText}
+	                            </p>
+	                          )}
+	                        </div>
                       </div>
                     </Link>
                   ))}
@@ -1299,21 +1316,25 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
                 <>
                   {(peopleResults.length > 0 || restaurantResults.length > 0) && <div style={{ height: "8px" }} />}
                   <SectionLabel>Dishes</SectionLabel>
-                  {dishResults.map((d) => (
-                    <Link key={`${d.itemName}|${d.restaurantName}`} href={`/trending/${encodeURIComponent(d.restaurantName)}`} style={{ textDecoration: "none", display: "block", margin: "0 16px 10px" }}>
-                      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-                        <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>
-                          🍴
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {d.itemName}
-                          </p>
-                          <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {d.restaurantName} · by {d.reviewerDisplayName}
-                          </p>
-                        </div>
-                        <RatingScore rating={d.rating} />
+	                  {dishResults.map((d) => (
+	                    <Link key={d.canonicalName} href={dishHref(d.canonicalName)} style={{ textDecoration: "none", display: "block", margin: "0 16px 10px" }}>
+	                      <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
+	                        <div style={{ width: "44px", height: "44px", borderRadius: "14px", background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+	                          <Utensils size={19} strokeWidth={2.1} color="var(--green)" />
+	                        </div>
+	                        <div style={{ flex: 1, minWidth: 0 }}>
+	                          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+	                            {d.canonicalName}
+	                          </p>
+	                          <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+	                            Find top restaurants nearby
+	                          </p>
+	                        </div>
+	                        {d.mentionCount > 0 && (
+	                          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
+	                            {d.mentionCount}
+	                          </span>
+	                        )}
                       </div>
                     </Link>
                   ))}
@@ -1416,6 +1437,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
             <RestaurantList
               restaurants={topRestaurants}
               loading={feedLoading}
+              profileMap={feedProfileMap}
             />
           )}
 
@@ -1426,7 +1448,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
           {activeTab === "people" && (
             <>
               <PeopleStrip
-                people={suggestedPeople}
+                people={discoverablePeople}
                 statusFor={personStatus}
                 onAdd={handlePeopleAction}
                 onInCircleClick={setConfirmLeaveName}

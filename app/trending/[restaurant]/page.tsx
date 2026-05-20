@@ -146,7 +146,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
 
       {/* Header */}
       <div style={{ padding: "16px 20px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <Link href="/trending" style={{ textDecoration: "none", flexShrink: 0 }}>
+        <Link href="/explore" style={{ textDecoration: "none", flexShrink: 0 }}>
           <div style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
           </div>

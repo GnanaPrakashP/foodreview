@@ -1,4 +1,5 @@
 import type { Review } from "@/lib/types";
+import { dishSearchMatches, normalizeDishName } from "@/lib/dish-normalizer";
 
 export type SlimReview = Pick<
   Review,
@@ -26,24 +27,25 @@ type DishBucket = {
 };
 
 export function searchDishes(reviews: SlimReview[], query: string): DishResult[] {
-  const q = query.toLowerCase().trim();
+  const q = query.trim();
   if (!q) return [];
 
   const map = new Map<string, DishBucket>();
 
   for (const review of reviews) {
     for (const item of review.items) {
-      if (!item.name.toLowerCase().includes(q)) continue;
+      const dishName = normalizeDishName(item.name);
+      if (!dishSearchMatches(dishName, q)) continue;
 
       // Key: restaurant + canonical dish name (lowercase)
-      const key = `${review.restaurant_name}\x00${item.name.toLowerCase()}`;
+      const key = `${review.restaurant_name}\x00${dishName.toLowerCase()}`;
       const b = map.get(key) ?? {
         scores: [],
         raters: new Set<string>(),
         latest_take: null,
         latest_reviewer: null,
         latest_date: 0,
-        dish_name: item.name,
+        dish_name: dishName,
         total_logs: 0,
       };
 
@@ -89,12 +91,12 @@ export function getPopularDishes(reviews: SlimReview[]): string[] {
   const counts = new Map<string, number>();
   for (const r of reviews) {
     for (const item of r.items) {
-      const n = item.name.trim();
+      const n = normalizeDishName(item.name);
       if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
     }
   }
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
-    .map(([name]) => name.charAt(0).toUpperCase() + name.slice(1));
+    .map(([name]) => name);
 }

@@ -37,6 +37,11 @@ test("ReviewForm: selected restaurant details are saved into the review payload"
   assert.match(source, /fetch\("\/api\/reviews"/);
 });
 
+test("ReviewForm: every named dish must have a star rating", () => {
+  assert.match(source, /items\.some\(\(it\) => it\.name\.trim\(\) && \(!it\.rating \|\| it\.rating <= 0\)\)/);
+  assert.match(source, /Rate every dish you add\./);
+});
+
 test("ReviewForm: post button remains disabled while submit is in progress", () => {
   assert.match(source, /if \(submitting\) return/);
   assert.match(source, /setSubmitting\(true\)/);

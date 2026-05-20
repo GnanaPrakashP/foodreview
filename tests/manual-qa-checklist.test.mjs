@@ -122,7 +122,8 @@ test("manual QA checklist covers Circle feed migration safety and delete-last-po
   assert.ok(statsVisibilityCase, "QA-030 should verify stats/places/dishes visibility");
   assert.equal(statsVisibilityCase.priority, "P0");
   assert.match(statsVisibilityCase.route, /\/people\/\[username\]/);
-  assert.match(statsVisibilityCase.route, /\/trending/);
+  assert.match(statsVisibilityCase.route, /\/explore/);
+  assert.match(statsVisibilityCase.route, /\/trending\/\[restaurant\]/);
   assert.match(statsVisibilityCase.route, /\/dishes/);
   assert.match(statsVisibilityCase.steps.join(" "), /pending requester/i);
   assert.match(statsVisibilityCase.expected, /public plus circle plus private stats/i);

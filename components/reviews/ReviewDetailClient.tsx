@@ -11,7 +11,6 @@ import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
-import { currentTrendingApiUrl } from "@/lib/trending-location";
 import { reviewMediaItems } from "@/lib/review-media";
 import { patchPostEngagement, readPostEngagementEntry } from "@/lib/post-engagement-cache";
 
@@ -44,10 +43,6 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/me");
   invalidateCachedJson("/api/feed/circle");
   invalidateCachedJson("/api/feed/public");
-}
-
-function invalidateLocalTrendingCache() {
-  invalidateCachedJson(currentTrendingApiUrl());
 }
 
 export default function ReviewDetailClient({
@@ -121,7 +116,7 @@ export default function ReviewDetailClient({
     }
 
     invalidateEngagementCaches();
-    invalidateLocalTrendingCache();
+    invalidateCachedJson("/api/feed/public");
     router.replace("/me");
     router.refresh();
   }
@@ -171,7 +166,7 @@ export default function ReviewDetailClient({
         return;
       }
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,7 +187,7 @@ export default function ReviewDetailClient({
       return;
     }
     invalidateEngagementCaches();
-    invalidateLocalTrendingCache();
+    invalidateCachedJson("/api/feed/public");
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -219,7 +214,7 @@ export default function ReviewDetailClient({
         return;
       }
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
     } else {
       const response = await fetch("/api/wishlist", {
         method: "POST",
@@ -232,7 +227,7 @@ export default function ReviewDetailClient({
         return;
       }
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
     }
   }, [bookmarked, myName, review.restaurant_name, review.id]);
 
@@ -263,7 +258,7 @@ export default function ReviewDetailClient({
     if (data) {
       setComments((prev) => prev.map((comment) => comment.id === tempId ? data : comment));
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -285,7 +280,7 @@ export default function ReviewDetailClient({
       return;
     }
     invalidateEngagementCaches();
-    invalidateLocalTrendingCache();
+    invalidateCachedJson("/api/feed/public");
     await fetch("/api/notifications/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -6,12 +6,11 @@ import { createClient } from "@/lib/supabase/client";
 import PhotoUpload, { type ReviewUploadFile } from "@/components/reviews/PhotoUpload";
 import type { FoodItem } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
-import { UtensilsCrossed, Star, X, MapPin, Globe, Users, Lock } from "lucide-react";
+import { Utensils, Star, X, Store, MapPin, Globe, Users, Lock } from "lucide-react";
 import type { Visibility } from "@/lib/types";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { getStoredActorName } from "@/lib/browser-actor";
 import {
-  currentTrendingApiUrl,
   TRENDING_LOCATION_LABEL_STORAGE_KEY,
   TRENDING_LOCATION_LAT_STORAGE_KEY,
   TRENDING_LOCATION_LNG_STORAGE_KEY,
@@ -178,7 +177,7 @@ function DishRow({
           gap: "10px",
         }}
       >
-        <UtensilsCrossed size={16} strokeWidth={1.8} color="var(--muted)" style={{ flexShrink: 0 }} />
+        <Utensils size={16} strokeWidth={1.8} color="var(--green)" style={{ flexShrink: 0 }} />
         <input
           type="text"
           placeholder="e.g. Mutton Biryani"
@@ -262,7 +261,7 @@ export default function ReviewForm() {
     setPlacesSessionToken(crypto.randomUUID());
   }, []);
 
-  // Use location already set on the trending page — no new permission prompt.
+  // Use location already set in discovery views — no new permission prompt.
   useEffect(() => {
     try {
       const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
@@ -425,6 +424,7 @@ export default function ReviewForm() {
       e.restaurantName = "Select a restaurant from the dropdown list.";
     }
     if (items.filter((it) => it.name.trim()).length === 0) e.items = "Add at least one dish.";
+    else if (items.some((it) => it.name.trim() && (!it.rating || it.rating <= 0))) e.items = "Rate every dish you add.";
     if (photoFiles.length === 0) e.media = "Add at least one photo or video.";
     if (body.trim() && body.trim().length < 5) e.body = "One-liner must be at least 5 characters.";
     return e;
@@ -562,8 +562,8 @@ export default function ReviewForm() {
       }).catch(() => {});
 
       invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/feed/public");
       invalidateCachedJson("/api/me");
-      invalidateCachedJson(currentTrendingApiUrl());
       router.push(`/reviews/${review.id}`);
       router.refresh();
     } catch (err: unknown) {
@@ -611,10 +611,10 @@ export default function ReviewForm() {
               padding: "12px 14px",
             }}
           >
-            <MapPin
+            <Store
               size={16}
               strokeWidth={1.8}
-              color={locationStatus === "granted" ? "var(--orange)" : "var(--muted)"}
+              color="var(--orange)"
               style={{ flexShrink: 0 }}
             />
             <input
@@ -710,7 +710,7 @@ export default function ReviewForm() {
                         gap: "8px",
                       }}
                     >
-                      <MapPin size={13} strokeWidth={2} color="var(--muted)" style={{ marginTop: "2px", flexShrink: 0 }} />
+                      <Store size={13} strokeWidth={2} color="var(--orange)" style={{ marginTop: "2px", flexShrink: 0 }} />
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>
                           {s.mainText}

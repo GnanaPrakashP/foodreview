@@ -106,7 +106,6 @@ export function invalidateViewerCaches() {
     "/api/feed/",
     "/api/circle/",
     "/api/people",
-    "/api/trending",
     "/api/notifications",
   ]) {
     invalidateCachedJson(prefix);

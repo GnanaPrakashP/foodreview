@@ -158,9 +158,6 @@ function loadMeRoute({ db, authUser }) {
       if (id === "@/lib/people-page-data") {
         return { invalidatePeoplePageCacheForNames: () => {} };
       }
-      if (id === "@/lib/trending-page-data") {
-        return { invalidateTrendingPageCacheForNames: () => {} };
-      }
       throw new Error(`Unexpected require in me-route tests: ${id}`);
     },
   });

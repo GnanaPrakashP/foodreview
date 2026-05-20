@@ -292,17 +292,17 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
   await expect(badge).toBeVisible({ timeout: 10_000 });
 });
 
-// ── 10. Circle-only review absent from global trending ────────────────────────
+// ── 10. Circle-only review absent from Explore discovery ──────────────────────
 
-test("10 · circle-only review does NOT appear in global trending", async ({ page }) => {
+test("10 · circle-only review does NOT appear in Explore discovery", async ({ page }) => {
   test.skip(SKIP_AB, SKIP_MSG);
   // The seed inserts a circle-only review for A with body "E2E seed review (circle-only)".
-  // Global trending only surfaces "public" posts (canShowInGlobalTrending).
+  // Explore discovery only surfaces public posts.
   await signIn(page, userB!);
 
-  await page.goto("/trending");
-  await expect(page.locator("body")).toContainText(/trending/i);
+  await page.goto("/explore");
+  await expect(page.getByRole("heading", { name: /explore/i })).toBeVisible();
 
-  // The circle-only review body must not appear on trending
+  // The circle-only review body must not appear in public discovery.
   await expect(page.getByText("E2E seed review (circle-only)")).not.toBeVisible();
 });

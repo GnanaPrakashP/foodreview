@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMePageData, invalidateMePageCacheForNames, type MeCursor } from "@/lib/me-page-data";
 import { invalidatePeoplePageCacheForNames } from "@/lib/people-page-data";
-import { invalidateTrendingPageCacheForNames } from "@/lib/trending-page-data";
 import { createRouteSupabase } from "@/lib/server/route-supabase";
 
 const ME_PAGE_MIN_LIMIT = 1;
@@ -78,7 +77,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Called by the settings page after account-type changes to drop stale server-side
-// private-cache entries for this user (me-page, people-page, trending).
+// private-cache entries for this user (me-page, people-page).
 export async function POST(_req: NextRequest) {
   try {
     const supabase = await createRouteSupabase();
@@ -88,7 +87,6 @@ export async function POST(_req: NextRequest) {
     if (myName) {
       invalidateMePageCacheForNames([myName]);
       invalidatePeoplePageCacheForNames([myName]);
-      invalidateTrendingPageCacheForNames([myName]);
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

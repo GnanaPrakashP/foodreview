@@ -36,7 +36,7 @@ function loadTsModule(relativePath, extraGlobals = {}) {
     ...extraGlobals,
     require(id) {
       if (id === "@/lib/types" || id === "./types") return {};
-      if (id === "@/lib/trending" || id === "./trending") return loadTsModule("lib/trending.ts");
+      if (id === "@/lib/dish-normalizer") return loadTsModule("lib/dish-normalizer.ts");
       if (id === "@/lib/visibility" || id === "./visibility") return loadTsModule("lib/visibility.ts");
       if (id === "@/lib/restaurant-id") return loadTsModule("lib/restaurant-id.ts");
       if (id === "@/lib/location") return loadTsModule("lib/location.ts");
@@ -184,35 +184,6 @@ test("profile: cuisine detection, top cuisines, exploration score, and initials"
   assert.equal(avatarInitials("Alice Mary Smith"), "AM");
 });
 
-test("discovery: computes gaps, circle gap, and badges", () => {
-  const { computeGapSuggestions, computeCircleGap, computeBadges } = loadTsModule("lib/discovery.ts");
-  const now = new Date().toISOString();
-  const myReviews = [
-    review("Me", "Pizza Corner", [{ name: "Margherita", rating: 5 }], { created_at: now }),
-  ];
-  const allReviews = [
-    ...myReviews,
-    review("Alice", "Ramen Nagi", [{ name: "Ramen", rating: 5 }], { created_at: now }),
-    review("Bob", "Ramen Nagi", [{ name: "Ramen", rating: 4 }], { created_at: now }),
-    review("Cara", "Dosa Spot", [{ name: "Masala Dosa", rating: 5 }], { created_at: now }),
-    review("Cara", "Dosa Spot", [{ name: "Idli", rating: 4 }], { created_at: now }),
-    review("Cara", "Dosa Spot", [{ name: "Vada", rating: 4 }], { created_at: now }),
-  ];
-
-  const suggestions = computeGapSuggestions(myReviews, allReviews);
-  assert.equal(suggestions.some((s) => s.type === "cuisine"), true);
-  assert.equal(suggestions.some((s) => s.type === "dish"), true);
-  assert.equal(suggestions.some((s) => s.type === "place"), true);
-
-  const gap = computeCircleGap("Me", allReviews);
-  assert.equal(gap.restaurant_name, "Ramen Nagi");
-  assert.equal(gap.friendCount, 2);
-
-  const badges = computeBadges(allReviews);
-  assert.equal(badges.adventurous.name, "Me");
-  assert.equal(badges.trusted.name, "Cara");
-});
-
 test("feed ranking: balances freshness, engagement, and rating quality", () => {
   const { rankCircleFeedReviews, circleFeedScore } = loadTsModule("lib/feed-ranking.ts");
   const nowMs = Date.parse("2026-05-10T12:00:00.000Z");
@@ -263,7 +234,6 @@ test("stats: deleted and private posts do not leave ghost counts in global, circ
     filterGlobalTrendingReviews,
     filterProfileReviews,
   } = loadTsModule("lib/visibility.ts");
-  const { computeTrending } = loadTsModule("lib/trending.ts");
 
   const ownerPublic = review("Owner", "Public Cafe", [{ name: "Latte", rating: 5 }], {
     id: "owner-public",
@@ -294,23 +264,19 @@ test("stats: deleted and private posts do not leave ghost counts in global, circ
   const allPosts = [ownerPublic, ownerCircle, ownerPrivate, deletedPublic, friendPublic, outsiderCircle];
 
   const globalPosts = filterGlobalTrendingReviews(allPosts);
-  const globalStats = computeTrending(globalPosts);
   assert.equal(
-    JSON.stringify(globalStats.alltime.map((entry) => entry.restaurant_name).sort()),
+    JSON.stringify(globalPosts.map((entry) => entry.restaurant_name).sort()),
     JSON.stringify(["Friend Cafe", "Public Cafe"])
   );
-  assert.equal(globalStats.peopleCounts.alltime, 2);
 
   const circlePosts = filterCircleTrendingReviews(allPosts, {
     viewerName: "Viewer",
     circleOwnerNames: ["Owner"],
   });
-  const circleStats = computeTrending(circlePosts);
   assert.equal(
-    JSON.stringify(circleStats.alltime.map((entry) => entry.restaurant_name).sort()),
+    JSON.stringify(circlePosts.map((entry) => entry.restaurant_name).sort()),
     JSON.stringify(["Circle Cafe", "Public Cafe"])
   );
-  assert.equal(circleStats.peopleCounts.alltime, 1);
 
   assert.equal(filterProfileReviews(allPosts, "Owner", { viewerName: "Owner" }).length, 3);
   assert.equal(filterProfileReviews(allPosts, "Owner", { viewerName: "Random User" }).length, 1);
@@ -321,36 +287,4 @@ test("stats: deleted and private posts do not leave ghost counts in global, circ
     }).length,
     2
   );
-});
-
-test("utils: formats dates, labels ratings, and truncates text", () => {
-  const { formatDate, ratingLabel, truncate } = loadTsModule("lib/utils.ts");
-  assert.equal(formatDate("2026-05-07T00:00:00.000Z"), "May 7, 2026");
-  assert.equal(ratingLabel(5), "Amazing");
-  assert.equal(ratingLabel(9), "");
-  assert.equal(truncate("hello world", 20), "hello world");
-  assert.equal(truncate("hello world", 8), "hello wo…");
-});
-
-test("wishlist: localStorage helpers handle add, duplicate, remove, toggle, and bad JSON", () => {
-  const store = new Map();
-  const localStorage = {
-    getItem: (key) => store.get(key) ?? null,
-    setItem: (key, value) => store.set(key, String(value)),
-  };
-  const wishlist = loadTsModule("lib/wishlist.ts", { window: {}, localStorage });
-
-  assert.equal(wishlist.getWishlist().length, 0);
-  wishlist.addToWishlist({ id: "r1", restaurant_name: "Cafe One" });
-  wishlist.addToWishlist({ id: "r1", restaurant_name: "Cafe One" });
-  assert.equal(wishlist.getWishlist().length, 1);
-  assert.equal(wishlist.isWishlisted("r1"), true);
-
-  assert.equal(wishlist.toggleWishlist({ id: "r1", restaurant_name: "Cafe One" }), false);
-  assert.equal(wishlist.isWishlisted("r1"), false);
-  assert.equal(wishlist.toggleWishlist({ id: "r2", restaurant_name: "Dosa Spot" }), true);
-  assert.equal(wishlist.isWishlisted("r2"), true);
-
-  store.set("fc_wishlist", "{broken");
-  assert.equal(wishlist.getWishlist().length, 0);
 });

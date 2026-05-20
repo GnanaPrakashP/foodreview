@@ -212,20 +212,19 @@ test("mobile notification smoke: bell opens requests and action buttons fit", as
   await receiverContext.close();
 });
 
-test("mobile search, trending, and common badge smoke: cards fit without overflow", async ({ page }) => {
+test("mobile search, explore, and common badge smoke: cards fit without overflow", async ({ page }) => {
   test.skip(SKIP_AB, SKIP_MSG);
 
   await signIn(page, userB!);
 
   await page.goto("/explore");
-  await page.getByPlaceholder(/search by name or @username/i).fill(userA!.name);
+  await page.getByPlaceholder(/search people, dishes or restaurants/i).fill(userA!.name);
   await expect(page.getByRole("link", { name: new RegExp(userA!.name, "i") }).first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: /in circle|request|requested/i }).first()).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
-  await page.goto("/trending");
-  await expect(page.getByRole("heading", { name: /trending/i })).toBeVisible();
-  await page.getByPlaceholder(/search restaurant or dish/i).fill("E2E Kitchen");
+  await page.getByRole("button", { name: /clear search/i }).click();
+  await page.getByPlaceholder(/search people, dishes or restaurants/i).fill("E2E Kitchen");
   await expect(page.getByText("E2E Kitchen", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   await expectNoHorizontalOverflow(page);
 

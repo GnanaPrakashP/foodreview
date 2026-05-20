@@ -24,23 +24,11 @@ test("home/circle feed filters server reviews before fetching engagement data", 
   assert.match(helper, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
 });
 
-test("global trending computes rankings from public filtered reviews only", () => {
+test("legacy trending list redirects to explore discovery", () => {
   const page = source("app/trending/page.tsx");
-  const src = source("lib/trending-page-data.ts");
 
-  assert.match(page, /cookies\(\)/);
-  assert.match(page, /TRENDING_LOCATION_LABEL_COOKIE/);
-  assert.match(page, /const locationBucket = normalizeLocationBucket\(loc\)/);
-  assert.match(page, /initialLocationLabel=\{initialLocationLabel\}/);
-  assert.match(page, /getTrendingPageData\(supabase, myName, \{ locationBucket \}\)/);
-  assert.match(src, /import \{ REVIEW_SELECT \} from "@\/lib\/selects"/);
-  assert.match(src, /\.select\(REVIEW_SELECT\)/);
-  assert.match(src, /key: `trending-page-heavy:v2:\$\{cacheName\(myName\)\}:\$\{locationBucket\}`/);
-  assert.match(src, /const publicReviews = filterGlobalTrendingReviews\(allReviews\)/);
-  assert.match(src, /computeTrending\(publicReviews\)/);
-  assert.match(src, /type TrendingHeavyData/);
-  assert.match(src, /return mergeTrendingViewerState\(db, myName, heavy\)/);
-  assert.match(src, /filterPublicCircleTrendingReviews\(publicReviews,/);
+  assert.match(page, /import \{ redirect \} from "next\/navigation"/);
+  assert.match(page, /redirect\("\/explore"\)/);
 });
 
 test("normal social cache invalidation does not clear trending globally", () => {
@@ -51,7 +39,7 @@ test("normal social cache invalidation does not clear trending globally", () => 
   assert.doesNotMatch(social, /__foodReviewInvalidateTrendingPageCacheForNames\?\.\(cleanNames\)/);
   assert.match(reviewCreate, /invalidateSocialCachesForNames\(\[actor\.actorName\]\)/);
   assert.doesNotMatch(reviewCreate, /invalidateTrendingPageCacheForNames/);
-  assert.match(reviewUpdate, /invalidateTrendingPageCacheForNames\(\[actor\.actorName\]\)/);
+  assert.doesNotMatch(reviewUpdate, /invalidateTrendingPageCacheForNames/);
 });
 
 test("dishes page computes dish stats from public filtered reviews only", () => {
@@ -66,6 +54,42 @@ test("dishes page computes dish stats from public filtered reviews only", () => 
   assert.match(src, /filterGlobalTrendingReviews\(reviews \?\? \[\]\)\.map/);
   assert.match(src, /getPopularDishes\(slim\)/);
   assert.match(src, /<DishSearch reviews=\{slim\} popularDishes=\{popularDishes\}/);
+});
+
+test("dish detail page ranks nearby restaurants for a canonical dish", () => {
+  const src = source("app/dishes/[dish]/page.tsx");
+
+  assert.match(src, /normalizeDishName\(decodeURIComponent\(dish\)\)/);
+  assert.match(src, /\.eq\("visibility", "public"\)/);
+  assert.match(src, /\.is\("deleted_at", null\)/);
+  assert.match(src, /\.eq\("status", "active"\)/);
+  assert.match(src, /nearbyBounds\(lat, lng\)/);
+  assert.match(src, /normalizeDishName\(item\.name\) === dishName/);
+  assert.match(src, /DISH_RESTAURANT_LIMIT = 10/);
+});
+
+test("place restaurant page uses Google place id as the unique review key", () => {
+  const src = source("app/restaurants/[placeId]/page.tsx");
+
+  assert.match(src, /decodeURIComponent\(placeId\)/);
+  assert.match(src, /\.eq\("restaurant_id", decodedPlaceId\)/);
+  assert.match(src, /\.eq\("visibility", "public"\)/);
+  assert.match(src, /fallbackName = search\.name\?\.trim\(\) \|\| "Restaurant"/);
+  assert.match(src, /<RestaurantPostsClient/);
+});
+
+test("restaurant pages expose posts, dishes, and menu tabs", () => {
+  const client = source("components/trending/RestaurantPostsClient.tsx");
+  const placePage = source("app/restaurants/[placeId]/page.tsx");
+
+  assert.match(client, /type RestaurantTab = "posts" \| "dishes" \| "menu"/);
+  assert.match(client, /\{ id: "posts", label: "Posts" \}/);
+  assert.match(client, /\{ id: "dishes", label: "Dishes" \}/);
+  assert.match(client, /\{ id: "menu", label: "Menu" \}/);
+  assert.match(client, /topDishesForRestaurant\(shown\)/);
+  assert.match(client, /normalizeDishName\(item\.name\)/);
+  assert.match(client, /Menu coming soon/);
+  assert.doesNotMatch(placePage, /reviews\.length === 0 \? \(/);
 });
 
 test("common restaurants API selects only fields needed for comparison", () => {
@@ -91,6 +115,38 @@ test("Circle destructive actions use in-app confirmation modal before mutating s
   assert.match(people, /import ConfirmModal from "@\/components\/ui\/ConfirmModal"/);
   assert.match(people, /open=\{Boolean\(confirmCancelName\)\}/);
   assert.match(people, /open=\{Boolean\(confirmLeaveName\)\}/);
+});
+
+test("explore universal search produces typed people, dish, and restaurant destinations", () => {
+  const people = source("components/people/PeopleTab.tsx");
+
+  assert.match(people, /fetch\(`\/api\/places\/autocomplete\?\$\{new URLSearchParams/);
+  assert.match(people, /setRestaurantResults\(\(restaurantsResponse\.suggestions \?\? \[\]\)\.slice\(0, 5\)\)/);
+  assert.match(people, /normalizeDishName\(trimmed\)/);
+  assert.match(people, /dishSearchMatches\(canonical, trimmed\)/);
+  assert.match(people, /return `\/dishes\/\$\{encodeURIComponent\(dishName\)\}/);
+  assert.match(people, /return `\/restaurants\/\$\{encodeURIComponent\(restaurant\.placeId\)\}/);
+  assert.match(people, /href=\{`\/people\/\$\{encodeURIComponent\(name\)\}`\}/);
+});
+
+test("profile tabs include dishes between posts and timeline", () => {
+  const src = source("components/me/MeClient.tsx");
+
+  assert.match(src, /type MeTab = "reviews" \| "dishes" \| "timeline"/);
+  assert.match(src, /\{ id: "reviews", label: "Posts" \},\s*\{ id: "dishes", label: "Dishes" \},\s*\{ id: "timeline", label: "Timeline" \}/);
+  assert.match(src, /function DishesTab\(/);
+  assert.match(src, /buildDishComparisons\(myReviews, publicReviews\)/);
+  assert.match(src, /<PickLine label="Your best" pick=\{item\.yourBest\} \/>/);
+  assert.match(src, /<PickLine label="Near you" pick=\{item\.nearbyBest\} \/>/);
+});
+
+test("profile timeline groups entries by month and year", () => {
+  const src = source("components/me/MeClient.tsx");
+
+  assert.match(src, /function timelineMonthLabel\(value: string\): string/);
+  assert.match(src, /const groupedEntries = demoEntries\.reduce/);
+  assert.match(src, /new Intl\.DateTimeFormat\("en-US", \{ month: "long", year: "numeric" \}\)/);
+  assert.match(src, /\{group\.month\}/);
 });
 
 test("people profile shows incoming request card with name and accept/reject actions", () => {

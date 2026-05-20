@@ -11,7 +11,6 @@ import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
-import { currentTrendingApiUrl } from "@/lib/trending-location";
 import { patchPostEngagement, readPostEngagement } from "@/lib/post-engagement-cache";
 import { reviewMediaItems } from "@/lib/review-media";
 
@@ -81,10 +80,6 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/me");
   invalidateCachedJson("/api/feed/circle");
   invalidateCachedJson("/api/feed/public");
-}
-
-function invalidateLocalTrendingCache() {
-  invalidateCachedJson(currentTrendingApiUrl());
 }
 
 export default function CircleFeedCard({
@@ -168,7 +163,7 @@ export default function CircleFeedCard({
         return;
       }
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,7 +182,7 @@ export default function CircleFeedCard({
         return;
       }
       invalidateEngagementCaches();
-      invalidateLocalTrendingCache();
+      invalidateCachedJson("/api/feed/public");
       await fetch("/api/notifications/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -215,7 +210,7 @@ export default function CircleFeedCard({
       }
       else {
         invalidateEngagementCaches();
-        invalidateLocalTrendingCache();
+        invalidateCachedJson("/api/feed/public");
       }
     } else {
       const response = await fetch("/api/wishlist", {
@@ -229,7 +224,7 @@ export default function CircleFeedCard({
       }
       else {
         invalidateEngagementCaches();
-        invalidateLocalTrendingCache();
+        invalidateCachedJson("/api/feed/public");
       }
     }
   }, [myName, mounted, bookmarked, review]);
@@ -251,7 +246,7 @@ export default function CircleFeedCard({
     }
 
     invalidateEngagementCaches();
-    invalidateLocalTrendingCache();
+    invalidateCachedJson("/api/feed/public");
 
     if (onDeleted) {
       onDeleted(review);

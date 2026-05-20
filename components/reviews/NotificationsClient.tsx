@@ -68,7 +68,7 @@ function notificationHref(notification: Notification): string {
   }
   if (notification.entity_type === "RESTAURANT") {
     const restaurantName = typeof metadata.restaurantName === "string" ? metadata.restaurantName : notification.restaurant_name;
-    return restaurantName ? `/trending/${encodeURIComponent(restaurantName)}` : "/trending";
+    return restaurantName ? `/trending/${encodeURIComponent(restaurantName)}` : "/explore";
   }
   if (notification.actor_name) return `/people/${encodeURIComponent(notification.actor_name)}`;
   return "/notifications";

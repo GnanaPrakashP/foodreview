@@ -70,14 +70,27 @@ const circleDbExports = (() => {
   return mod.exports;
 })();
 
-// lib/dishes.ts has no external runtime imports.
+const dishNormalizerExports = (() => {
+  const mod = { exports: {} };
+  vm.runInNewContext(
+    transpile(readFileSync(new URL("../lib/dish-normalizer.ts", import.meta.url), "utf8")),
+    {
+      module: mod, exports: mod.exports,
+    }
+  );
+  return mod.exports;
+})();
+
 const dishesExports = (() => {
   const mod = { exports: {} };
   vm.runInNewContext(
     transpile(readFileSync(new URL("../lib/dishes.ts", import.meta.url), "utf8")),
     {
       module: mod, exports: mod.exports,
-      require() { throw new Error("dishes.ts should have no external runtime imports"); },
+      require(id) {
+        if (id === "@/lib/dish-normalizer") return dishNormalizerExports;
+        throw new Error(`Unexpected require loading dishes.ts: ${id}`);
+      },
     }
   );
   return mod.exports;
@@ -243,14 +256,14 @@ test("searchDishes: query with spaces matches dish names containing that substri
   const reviews = [makeReview("Alice", "Bawarchi", [{ name: "Mutton Biryani", rating: 5 }])];
   const results = searchDishes(reviews, "mutton biryani");
   assert.equal(results.length, 1);
-  assert.equal(results[0].dish_name, "Mutton Biryani");
+  assert.equal(results[0].dish_name, "Mutton Biriyani");
 });
 
 test("searchDishes: partial space query matches dish name substring", () => {
   const reviews = [makeReview("Alice", "Bawarchi", [{ name: "Mutton Biryani", rating: 4 }])];
   const results = searchDishes(reviews, "mutton");
   assert.equal(results.length, 1);
-  assert.equal(results[0].dish_name, "Mutton Biryani");
+  assert.equal(results[0].dish_name, "Mutton Biriyani");
 });
 
 test("searchDishes: apostrophe in dish name is matched correctly", () => {

@@ -30,6 +30,7 @@ function loadTsModule(relativePath) {
     Date,
     require(id) {
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/dish-normalizer") return loadTsModule("lib/dish-normalizer.ts");
       if (id === "@/lib/location") return loadTsModule("lib/location.ts");
       throw new Error(`Unexpected require in stats visibility tests: ${id}`);
     },
@@ -42,7 +43,6 @@ const {
   filterGlobalTrendingReviews,
   filterProfileReviews,
 } = loadTsModule("lib/visibility.ts");
-const { computeTrending } = loadTsModule("lib/trending.ts");
 const { searchDishes, getPopularDishes } = loadTsModule("lib/dishes.ts");
 
 let nextId = 0;
@@ -75,10 +75,6 @@ function profileStats(posts, owner, context) {
     dishCount: new Set(visible.flatMap((post) => post.items.map((item) => `${post.restaurant_name}\0${item.name}`))).size,
     restaurants: visible.map((post) => post.restaurant_name).sort(),
   };
-}
-
-function restaurantNames(entries) {
-  return entries.map((entry) => entry.restaurant_name).sort();
 }
 
 function matrixPosts(owner) {
@@ -127,7 +123,7 @@ for (const accountType of ["public", "private"]) {
   });
 }
 
-test("place stats: global, circle, and profile rankings never count unauthorized restaurants", () => {
+test("place stats: global, circle, and profile views never count unauthorized restaurants", () => {
   const publicOwner = "Public Owner";
   const privateOwner = "Private Owner";
   const posts = [
@@ -136,22 +132,20 @@ test("place stats: global, circle, and profile rankings never count unauthorized
     review("Deleted Owner", "public", "Deleted Public Place", "Deleted Dish", { deleted_at: "2026-05-10T01:00:00.000Z" }),
   ];
 
-  const globalStats = computeTrending(filterGlobalTrendingReviews(posts));
+  const globalPosts = filterGlobalTrendingReviews(posts);
   assert.equal(
-    JSON.stringify(restaurantNames(globalStats.alltime)),
+    JSON.stringify(globalPosts.map((post) => post.restaurant_name).sort()),
     JSON.stringify(["Private Owner Public Place", "Public Owner Public Place"])
   );
-  assert.equal(globalStats.peopleCounts.alltime, 2);
 
-  const circleStats = computeTrending(filterCircleTrendingReviews(posts, {
+  const circlePosts = filterCircleTrendingReviews(posts, {
     viewerName: "Circle Member",
     circleOwnerNames: [privateOwner],
-  }));
+  });
   assert.equal(
-    JSON.stringify(restaurantNames(circleStats.alltime)),
+    JSON.stringify(circlePosts.map((post) => post.restaurant_name).sort()),
     JSON.stringify(["Private Owner Circle Place", "Private Owner Public Place"])
   );
-  assert.equal(circleStats.peopleCounts.alltime, 1);
 
   assert.equal(
     profileStats(posts, privateOwner, { viewerName: "Pending Requester" }).restaurants.includes("Private Owner Circle Place"),
