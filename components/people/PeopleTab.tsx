@@ -421,15 +421,15 @@ function ImageCategoryGrid<T extends string>({
   selected,
   onChange,
   imagePathFor,
+  imageSize = "clamp(76px, 22vw, 88px)",
 }: {
   ariaLabel: string;
   categories: readonly ExploreCategory<T>[];
   selected: T;
   onChange: (category: T) => void;
   imagePathFor: (category: T) => string;
+  imageSize?: string;
 }) {
-  const imageSize = "clamp(76px, 22vw, 88px)";
-
   return (
     <div
       className="hide-scrollbar"
@@ -541,6 +541,7 @@ function DishCategoryGrid({
       selected={selected}
       onChange={onChange}
       imagePathFor={dishCategoryImagePath}
+      imageSize="clamp(72px, 20vw, 82px)"
     />
   );
 }
