@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
-import { normalizeDishName } from "@/lib/dish-normalizer";
+import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
 
 type RestaurantTab = "posts" | "dishes" | "menu";
 
@@ -165,7 +165,7 @@ function topDishesForRestaurant(reviews: Review[]): RestaurantDish[] {
   for (const review of reviews) {
     for (const item of review.items) {
       if (!item.name.trim()) continue;
-      const dishName = normalizeDishName(item.name);
+      const dishName = normalizeDishDisplayName(item.name);
       const existing = dishes.get(dishName) ?? { ratingTotal: 0, ratingCount: 0, mentions: 0 };
       existing.mentions += 1;
       if (item.rating > 0) {

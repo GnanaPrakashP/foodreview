@@ -27,6 +27,9 @@ export function uniqueE2eName(prefix: string): string {
   return `E2E ${prefix} ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const E2E_PHOTO_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
 function placeIdForName(name: string): string {
   return `e2e-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 }
@@ -84,6 +87,16 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   await page.evaluate((name) => localStorage.setItem("fc_my_name", name), user.username);
 }
 
+export async function addReviewPhoto(page: Page): Promise<void> {
+  await page.locator('input[accept="image/*,video/*"]').setInputFiles({
+    name: "e2e-review-photo.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(E2E_PHOTO_PNG_BASE64, "base64"),
+  });
+  await page.getByRole("dialog", { name: "Crop photo" }).getByRole("button", { name: "Use photo" }).click();
+  await expect(page.getByRole("button", { name: "Remove media" })).toBeVisible({ timeout: 10_000 });
+}
+
 export async function createReview(
   page: Page,
   options: {
@@ -103,6 +116,7 @@ export async function createReview(
   } = options;
 
   await page.goto("/reviews/new");
+  await addReviewPhoto(page);
   await mockRestaurantPlace(page, restaurantName);
   await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
   const restaurantSuggestion = page.getByRole("button", { name: escapedText(restaurantName) }).first();

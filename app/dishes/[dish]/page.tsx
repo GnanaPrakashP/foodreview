@@ -3,7 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_SELECT } from "@/lib/selects";
 import type { Review } from "@/lib/types";
-import { normalizeDishName } from "@/lib/dish-normalizer";
+import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { filterGlobalTrendingReviews } from "@/lib/visibility";
 import { restaurantGradient } from "@/lib/profile";
@@ -63,7 +63,7 @@ function restaurantHref(item: DishRestaurant): string {
 export default async function DishDetailPage({ params, searchParams }: Props) {
   const { dish } = await params;
   const search = await searchParams;
-  const dishName = normalizeDishName(decodeURIComponent(dish));
+  const dishName = normalizeDishDisplayName(decodeURIComponent(dish));
   const lat = parseCoordinate(search.lat, -90, 90);
   const lng = parseCoordinate(search.lng, -180, 180);
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
@@ -105,7 +105,7 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
   }>();
 
   for (const review of reviews) {
-    const matchingItems = review.items.filter((item) => normalizeDishName(item.name) === dishName);
+    const matchingItems = review.items.filter((item) => normalizeDishDisplayName(item.name) === dishName);
     if (matchingItems.length === 0) continue;
 
     const key = review.restaurant_id || review.restaurant_name.toLowerCase();

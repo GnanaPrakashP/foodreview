@@ -239,7 +239,7 @@ export default function HungryPageClient() {
     else setLoading(true);
 
     try {
-      const params = new URLSearchParams({ limit: String(SWIPE_PAGE_SIZE) });
+      const params = new URLSearchParams({ limit: String(SWIPE_PAGE_SIZE), excludeSynthetic: "1" });
       if (viewerName) params.set("viewer", viewerName);
       if (cursor) params.set("cursor", JSON.stringify(cursor));
       const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });

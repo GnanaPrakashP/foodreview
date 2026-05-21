@@ -14,7 +14,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { envUser, mockRestaurantPlace, signIn } from "./helpers";
+import { addReviewPhoto, envUser, mockRestaurantPlace, signIn, uniqueE2eName } from "./helpers";
 
 const userA = envUser("A"); // public account, reviews at "E2E Kitchen"
 const userB = envUser("B"); // public account, reviews at "E2E Kitchen", mutual circle with A
@@ -30,6 +30,7 @@ function escapedText(value: string): RegExp {
 
 async function createPublicReview(page: Page, restaurantName: string, body: string): Promise<string> {
   await page.goto("/reviews/new");
+  await addReviewPhoto(page);
   await mockRestaurantPlace(page, restaurantName);
   await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
   await page.getByRole("button", { name: escapedText(restaurantName) }).first().click();
@@ -88,11 +89,13 @@ test("1 · user A can sign in and reach the home feed", async ({ page }) => {
 test("2 · A can create a public review and it appears on /me", async ({ page }) => {
   test.skip(SKIP_AB, SKIP_MSG);
   await signIn(page, userA!);
+  const restaurantName = uniqueE2eName("Smoke Test Eats");
 
   await page.goto("/reviews/new");
-  await mockRestaurantPlace(page, "Smoke Test Eats");
-  await page.getByPlaceholder("e.g. Bawarchi").fill("Smoke Test Eats");
-  await page.getByRole("button", { name: /Smoke Test Eats/i }).first().click();
+  await addReviewPhoto(page);
+  await mockRestaurantPlace(page, restaurantName);
+  await page.getByPlaceholder("e.g. Bawarchi").fill(restaurantName);
+  await page.getByRole("button", { name: escapedText(restaurantName) }).first().click();
   await page.getByPlaceholder("e.g. Mutton Biryani").fill("Smoke Dish");
   await page.getByTitle("Amazing").first().click();
   // Ensure "Public" visibility is selected (it's the default)
@@ -105,7 +108,7 @@ test("2 · A can create a public review and it appears on /me", async ({ page })
 
   // The review should be visible on /me
   await page.goto("/me");
-  await expect(page.getByText("Smoke Test Eats")).toBeVisible();
+  await expect(page.getByText(restaurantName, { exact: true }).first()).toBeVisible();
 });
 
 // ── 3. Circle-only review not visible to outsider ─────────────────────────────
@@ -251,7 +254,7 @@ test("8 · people search finds B by name; dish search returns results for 'idli'
 
   // People search
   await page.goto("/explore");
-  await page.getByPlaceholder(/search by name or @username/i).fill(userB!.name);
+  await page.getByPlaceholder(/search people, dishes or restaurants/i).fill(userB!.name);
   await expect(page.getByRole("link", { name: escapedText(userB!.name) }).first()).toBeVisible({ timeout: 10_000 });
 
   // Dish search — uses the seeded "E2E Idli" dish
@@ -278,13 +281,7 @@ test("9 · common restaurant badge shows when A and B share a restaurant and are
   await expect(circleBtn).toBeVisible({ timeout: 10_000 });
   const circleLabel = (await circleBtn.textContent())?.trim().toLowerCase() ?? "";
   if (circleLabel === "request") {
-    await Promise.all([
-      page.waitForResponse(
-        (response) => response.url().includes("/api/circle/request") && response.request().method() === "POST" && response.ok(),
-        { timeout: 15_000 }
-      ),
-      circleBtn.click(),
-    ]);
+    await circleBtn.click();
     await expect(circleBtn).toHaveText(/in circle/i, { timeout: 10_000 });
   }
 

@@ -83,7 +83,7 @@ test("dishes: search is case-insensitive and aggregates per restaurant/dish", ()
   const results = searchDishes(reviews, "noodles");
   assert.equal(results.length, 1);
   assert.equal(results[0].restaurant_name, "Noodle House");
-  assert.equal(results[0].dish_name, "Chilli Noodles");
+  assert.equal(results[0].dish_name, "Noodles");
   assert.equal(results[0].avg_score, 9);
   assert.equal(results[0].unique_raters, 2);
   assert.equal(results[0].total_logs, 2);

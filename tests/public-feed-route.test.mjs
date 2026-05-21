@@ -223,6 +223,26 @@ test("public feed: posts from excluded names are not returned", async () => {
   assert.equal(body(res).reviews[0].reviewer_name, "charlie");
 });
 
+test("public feed: excludeSynthetic hides E2E fixture posts for discovery surfaces", async () => {
+  const db = mockDb(
+    {
+      data: [
+        review({ reviewer_name: "e2e_alice", restaurant_name: "Good Real Cafe" }),
+        review({ reviewer_name: "alice", restaurant_name: "E2E Smoke Test Eats" }),
+        review({ reviewer_name: "bob", restaurant_name: "Good Real Cafe" }),
+      ],
+      error: null,
+    },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+  );
+  const { GET } = loadRoute({ db });
+  const res = await GET(makeReq("excludeSynthetic=1"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["bob"]);
+});
+
 test("public feed: empty exclude returns all rows", async () => {
   const db = mockDb(
     { data: [review({ reviewer_name: "alice" }), review({ reviewer_name: "bob" })], error: null },

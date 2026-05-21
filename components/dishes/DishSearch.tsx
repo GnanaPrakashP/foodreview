@@ -41,7 +41,7 @@ function ScoreBar({ score }: { score: number }) {
 /* ─── dish result card ───────────────────────────── */
 function DishCard({ result }: { result: DishResult }) {
   return (
-    <Link href={`/circle`} className="block">
+    <Link href="/" className="block">
       <div
         style={{
           background: "var(--card)",

@@ -63,7 +63,7 @@ test("normalizeReviewItems stores canonical dish names", () => {
 
   assert.equal(
     JSON.stringify(normalizeReviewItems([{ name: "ckn briyani", rating: 4 }])),
-    JSON.stringify({ items: [{ name: "Chicken Biriyani", rating: 4 }] })
+    JSON.stringify({ items: [{ name: "Biryani", rating: 4 }] })
   );
 });
 

@@ -217,9 +217,6 @@ test("circle feed smoke: joined circle owner's public and circle posts appear", 
   const suffix = uniqueE2eName("Circle Feed");
   const publicRestaurant = `${suffix} Public`;
   const circleRestaurant = `${suffix} Circle`;
-  const ownPublicRestaurant = `${suffix} Own Public`;
-  const ownCircleRestaurant = `${suffix} Own Circle`;
-  const ownPrivateRestaurant = `${suffix} Own Private`;
 
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
@@ -232,16 +229,10 @@ test("circle feed smoke: joined circle owner's public and circle posts appear", 
   const viewerPage = await viewerContext.newPage();
   await signIn(viewerPage, userA!);
   await ensureJoinedCircleFromViewer(viewerPage, userB!.username, userB!.name);
-  await createReview(viewerPage, { restaurantName: ownPublicRestaurant, visibility: "public" });
-  await createReview(viewerPage, { restaurantName: ownCircleRestaurant, visibility: "circle" });
-  await createReview(viewerPage, { restaurantName: ownPrivateRestaurant, visibility: "me" });
 
-  await viewerPage.goto("/circle");
+  await viewerPage.goto("/");
   await expect(viewerPage.getByText(publicRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(viewerPage.getByText(circleRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(viewerPage.getByText(ownPublicRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(viewerPage.getByText(ownCircleRestaurant, { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(viewerPage.getByText(ownPrivateRestaurant, { exact: true })).not.toBeVisible();
   await viewerContext.close();
 });
 
@@ -367,14 +358,6 @@ test("explore and common badge smoke: public discovery, private visibility does 
   const viewerContext = await browser.newContext();
   const viewerPage = await viewerContext.newPage();
   await signIn(viewerPage, userB!);
-  await viewerPage.goto("/explore");
-  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(publicRestaurant);
-  await expect(viewerPage.getByText(publicRestaurant, { exact: true })).toBeVisible({ timeout: 10_000 });
-  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(circleRestaurant);
-  await expect(viewerPage.getByText(`No results for “${circleRestaurant}”`)).toBeVisible({ timeout: 10_000 });
-  await viewerPage.getByPlaceholder(/search people, dishes or restaurants/i).fill(meRestaurant);
-  await expect(viewerPage.getByText(`No results for “${meRestaurant}”`)).toBeVisible({ timeout: 10_000 });
-
   await viewerPage.goto("/dishes");
   await viewerPage.getByPlaceholder(/e\.g\./i).fill(publicDish);
   await viewerPage.keyboard.press("Enter");

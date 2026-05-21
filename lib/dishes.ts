@@ -1,5 +1,5 @@
 import type { Review } from "@/lib/types";
-import { dishSearchMatches, normalizeDishName } from "@/lib/dish-normalizer";
+import { dishSearchMatches, normalizeDishDisplayName } from "@/lib/dish-normalizer";
 
 export type SlimReview = Pick<
   Review,
@@ -34,8 +34,8 @@ export function searchDishes(reviews: SlimReview[], query: string): DishResult[]
 
   for (const review of reviews) {
     for (const item of review.items) {
-      const dishName = normalizeDishName(item.name);
-      if (!dishSearchMatches(dishName, q)) continue;
+      if (!dishSearchMatches(item.name, q)) continue;
+      const dishName = normalizeDishDisplayName(item.name);
 
       // Key: restaurant + canonical dish name (lowercase)
       const key = `${review.restaurant_name}\x00${dishName.toLowerCase()}`;
@@ -91,7 +91,7 @@ export function getPopularDishes(reviews: SlimReview[]): string[] {
   const counts = new Map<string, number>();
   for (const r of reviews) {
     for (const item of r.items) {
-      const n = normalizeDishName(item.name);
+      const n = normalizeDishDisplayName(item.name);
       if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
     }
   }

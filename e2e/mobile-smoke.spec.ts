@@ -10,7 +10,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
-import { createReview, envUser, signIn, uniqueE2eName } from "./helpers";
+import { createReview, envUser, mockRestaurantPlace, signIn, uniqueE2eName } from "./helpers";
 
 const userA = envUser("A"); // public account
 const userB = envUser("B"); // public account, seeded mutual circle with A
@@ -224,6 +224,7 @@ test("mobile search, explore, and common badge smoke: cards fit without overflow
   await expectNoHorizontalOverflow(page);
 
   await page.getByRole("button", { name: /clear search/i }).click();
+  await mockRestaurantPlace(page, "E2E Kitchen");
   await page.getByPlaceholder(/search people, dishes or restaurants/i).fill("E2E Kitchen");
   await expect(page.getByText("E2E Kitchen", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   await expectNoHorizontalOverflow(page);

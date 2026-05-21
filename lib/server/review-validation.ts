@@ -1,5 +1,5 @@
 import type { FoodItem, Visibility } from "@/lib/types";
-import { normalizeDishName } from "@/lib/dish-normalizer";
+import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
 
 const VALID_VISIBILITIES = new Set<Visibility>(["public", "circle", "me"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,7 +33,7 @@ export function normalizeReviewItems(items: unknown): { items?: FoodItem[]; erro
     }
 
     normalized.push({
-      name: normalizeDishName(name),
+      name: normalizeDishDisplayName(name),
       rating: item.rating,
     });
   }

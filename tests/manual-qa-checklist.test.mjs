@@ -104,7 +104,7 @@ test("manual QA checklist covers Circle feed migration safety and delete-last-po
 
   assert.ok(circleFeedCase, "QA-028 should verify Circle feed source-of-truth behavior");
   assert.equal(circleFeedCase.priority, "P0");
-  assert.equal(circleFeedCase.route, "/circle");
+  assert.equal(circleFeedCase.route, "/");
   assert.match(circleFeedCase.title, /source-of-truth|old membership/i);
   assert.match(circleFeedCase.steps.join(" "), /existing Circle relationships/i);
   assert.match(circleFeedCase.expected, /Old and new public\/circle posts/i);

@@ -46,7 +46,7 @@ export default function CircleLoadingClient() {
   const pathname = usePathname();
   const [data] = useState(() => readCachedJson<CircleFeedPage>(API_URL));
 
-  if (pathname !== "/" && pathname !== "/circle") return <GenericLoadingSkeleton />;
+  if (pathname !== "/") return <GenericLoadingSkeleton />;
   if (!data) return <CircleSkeleton />;
 
   return <CirclePageClient initialData={data} />;

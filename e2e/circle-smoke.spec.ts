@@ -114,7 +114,7 @@ test.describe("Circle E2E smoke", () => {
     test.skip(SKIP_AB, SKIP_MSG);
 
     await signIn(page, userA!);
-    await page.goto("/circle");
+    await page.goto("/");
     await expect(page.locator("body")).toContainText(/Your circle|eating/i);
     await page.goto("/me");
     await expect(page.locator("body")).toContainText(new RegExp(userA!.name, "i"));
@@ -238,10 +238,8 @@ test.describe("Circle E2E smoke", () => {
     if (await removeBtn.isVisible()) {
       await clickAndWaitForPost(page, /\/api\/circle\/remove/, async () => {
         await removeBtn.click();
-        const confirmBtn = page.getByRole("button", { name: /remove|confirm/i }).last();
-        if (await confirmBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          await confirmBtn.click();
-        }
+        await expect(page.getByRole("heading", { name: /remove from circle/i })).toBeVisible({ timeout: 5_000 });
+        await page.getByRole("button", { name: /^remove$/i }).last().click();
       });
     }
 

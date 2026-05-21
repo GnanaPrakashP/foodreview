@@ -7,11 +7,9 @@ function source(relativePath) {
 }
 
 test("home/circle feed filters server reviews before fetching engagement data", () => {
-  for (const file of ["app/page.tsx", "app/circle/page.tsx"]) {
-    const src = source(file);
-    assert.match(src, /getCircleFeedPage\(supabase\)/);
-    assert.match(src, /<CirclePageClient initialData=\{feed\}/);
-  }
+  const src = source("app/page.tsx");
+  assert.match(src, /getCircleFeedPage\(supabase\)/);
+  assert.match(src, /<CirclePageClient initialData=\{feed\}/);
 
   const helper = source("lib/circle-feed.ts");
   assert.match(helper, /createAdminClient\(\)/);
@@ -22,13 +20,6 @@ test("home/circle feed filters server reviews before fetching engagement data", 
   assert.match(helper, /filterCircleTrendingReviews\(batch,/);
   assert.match(helper, /const postIds = allReviews\.map/);
   assert.match(helper, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
-});
-
-test("legacy trending list redirects to explore discovery", () => {
-  const page = source("app/trending/page.tsx");
-
-  assert.match(page, /import \{ redirect \} from "next\/navigation"/);
-  assert.match(page, /redirect\("\/explore"\)/);
 });
 
 test("normal social cache invalidation does not clear trending globally", () => {
@@ -59,12 +50,12 @@ test("dishes page computes dish stats from public filtered reviews only", () => 
 test("dish detail page ranks nearby restaurants for a canonical dish", () => {
   const src = source("app/dishes/[dish]/page.tsx");
 
-  assert.match(src, /normalizeDishName\(decodeURIComponent\(dish\)\)/);
+  assert.match(src, /normalizeDishDisplayName\(decodeURIComponent\(dish\)\)/);
   assert.match(src, /\.eq\("visibility", "public"\)/);
   assert.match(src, /\.is\("deleted_at", null\)/);
   assert.match(src, /\.eq\("status", "active"\)/);
   assert.match(src, /nearbyBounds\(lat, lng\)/);
-  assert.match(src, /normalizeDishName\(item\.name\) === dishName/);
+  assert.match(src, /normalizeDishDisplayName\(item\.name\) === dishName/);
   assert.match(src, /DISH_RESTAURANT_LIMIT = 10/);
 });
 
@@ -87,7 +78,7 @@ test("restaurant pages expose posts, dishes, and menu tabs", () => {
   assert.match(client, /\{ id: "dishes", label: "Dishes" \}/);
   assert.match(client, /\{ id: "menu", label: "Menu" \}/);
   assert.match(client, /topDishesForRestaurant\(shown\)/);
-  assert.match(client, /normalizeDishName\(item\.name\)/);
+  assert.match(client, /normalizeDishDisplayName\(item\.name\)/);
   assert.match(client, /Menu coming soon/);
   assert.doesNotMatch(placePage, /reviews\.length === 0 \? \(/);
 });
@@ -122,7 +113,7 @@ test("explore universal search produces typed people, dish, and restaurant desti
 
   assert.match(people, /fetch\(`\/api\/places\/autocomplete\?\$\{new URLSearchParams/);
   assert.match(people, /setRestaurantResults\(\(restaurantsResponse\.suggestions \?\? \[\]\)\.slice\(0, 5\)\)/);
-  assert.match(people, /normalizeDishName\(trimmed\)/);
+  assert.match(people, /normalizeDishDisplayName\(trimmed\)/);
   assert.match(people, /dishSearchMatches\(canonical, trimmed\)/);
   assert.match(people, /return `\/dishes\/\$\{encodeURIComponent\(dishName\)\}/);
   assert.match(people, /return `\/restaurants\/\$\{encodeURIComponent\(restaurant\.placeId\)\}/);

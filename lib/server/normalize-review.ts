@@ -7,7 +7,7 @@ type RawReviewPhoto = {
 };
 
 // Raw shape returned by Supabase when review_photos is included via relational select.
-type RawReview = Omit<Review, "photo_urls"> & {
+type RawReview = Review & {
   review_photos?: RawReviewPhoto[] | null;
 };
 
@@ -26,6 +26,8 @@ export function normalizeReview(raw: RawReview): Review {
   const photo_urls =
     mediaItems.length > 0
       ? mediaItems.map((item) => item.public_url)
+      : raw.photo_urls?.length
+      ? raw.photo_urls
       : raw.photo_url
       ? [raw.photo_url]
       : [];

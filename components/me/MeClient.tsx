@@ -16,7 +16,7 @@ import { restaurantLocationLabel } from "@/lib/location";
 import { Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
-import { normalizeDishName } from "@/lib/dish-normalizer";
+import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
 import {
   TRENDING_LOCATION_LAT_STORAGE_KEY,
   TRENDING_LOCATION_LNG_STORAGE_KEY,
@@ -51,7 +51,7 @@ function uniqueDishesFor(reviews: Review[]): number {
   const pairs = new Set<string>();
   for (const review of reviews) {
     for (const item of review.items) {
-      const dishName = normalizeDishName(item.name);
+      const dishName = normalizeDishDisplayName(item.name);
       if (dishName) pairs.add(`${dishName.toLowerCase()}\x00${review.restaurant_name.toLowerCase()}`);
     }
   }
@@ -139,7 +139,7 @@ function bestDishPicks(reviews: Review[]): Map<string, DishRestaurantPick> {
     const latest = new Date(review.created_at).getTime();
     for (const item of review.items) {
       if (!item.name.trim() || item.rating <= 0) continue;
-      const dishName = normalizeDishName(item.name);
+      const dishName = normalizeDishDisplayName(item.name);
       const key = `${dishName.toLowerCase()}\x00${(review.restaurant_id || review.restaurant_name).toLowerCase()}`;
       const existing = grouped.get(key) ?? {
         dishName,

@@ -18,6 +18,7 @@ const REVIEW_SELECT = [
   "items",
   "body",
   "photo_url",
+  "photo_urls",
   "review_photos(public_url, media_type, position)",
   "visibility",
   "created_at",
@@ -67,6 +68,7 @@ export async function GET(req: NextRequest) {
   // Keep an explicit exclude override for callers that need a narrower view.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
+  const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
   const lat = parseCoordinate(req.nextUrl.searchParams.get("lat"), -90, 90);
   const lng = parseCoordinate(req.nextUrl.searchParams.get("lng"), -180, 180);
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
@@ -106,7 +108,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch extra rows so we can filter out excluded names and still fill the page
-    const fetchLimit = Math.min(200, (excludeNames.length + 1) * limit + limit);
+    const fetchLimit = Math.min(excludeSynthetic ? 500 : 200, (excludeNames.length + 1) * limit + limit + (excludeSynthetic ? 200 : 0));
     const { data: rawRows, error } = await query.limit(fetchLimit);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -115,7 +117,8 @@ export async function GET(req: NextRequest) {
     const excludeSet = new Set(excludeNames);
     const filtered = ((rawRows ?? []) as unknown[])
       .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]))
-      .filter((r) => !excludeSet.has(r.reviewer_name));
+      .filter((r) => !excludeSet.has(r.reviewer_name))
+      .filter((r) => !excludeSynthetic || !/^e2e_/i.test(r.reviewer_name) && !/^e2e\b/i.test(r.restaurant_name));
 
     const hasMore = filtered.length > limit;
     const reviews = filtered.slice(0, limit);
