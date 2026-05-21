@@ -19,18 +19,17 @@ export type PlaceCategoryId =
 export type DishClusterId =
   | "all"
   | "biryani"
-  | "burger"
-  | "pizza"
-  | "desserts"
-  | "shawarma"
-  | "momos"
-  | "fries"
   | "chicken"
-  | "coffee"
-  | "milkshakes"
+  | "pizza"
+  | "burger"
+  | "shawarma"
+  | "mandi"
   | "ice_cream"
-  | "healthy"
-  | "breakfast";
+  | "milkshake"
+  | "paneer"
+  | "desserts"
+  | "sweets"
+  | "other";
 
 export const PLACE_CATEGORIES: readonly ExploreCategory<PlaceCategoryId>[] = [
   { id: "all", label: "All", imagePath: "/categories/places/all.png", description: "Show all places." },
@@ -43,20 +42,19 @@ export const PLACE_CATEGORIES: readonly ExploreCategory<PlaceCategoryId>[] = [
 ] as const;
 
 export const DISH_CATEGORIES: readonly ExploreCategory<DishClusterId>[] = [
-  { id: "all", label: "All" },
-  { id: "biryani", label: "Biryani" },
-  { id: "burger", label: "Burger" },
-  { id: "pizza", label: "Pizza" },
-  { id: "desserts", label: "Desserts" },
-  { id: "shawarma", label: "Shawarma" },
-  { id: "momos", label: "Momos" },
-  { id: "fries", label: "Fries" },
-  { id: "chicken", label: "Chicken" },
-  { id: "coffee", label: "Coffee" },
-  { id: "milkshakes", label: "Milkshakes" },
-  { id: "ice_cream", label: "Ice Cream" },
-  { id: "healthy", label: "Healthy" },
-  { id: "breakfast", label: "Breakfast" },
+  { id: "all", label: "All", imagePath: "/categories/dishes/all.png" },
+  { id: "biryani", label: "Biryani", imagePath: "/categories/dishes/biryani.png" },
+  { id: "chicken", label: "Chicken", imagePath: "/categories/dishes/chicken.png" },
+  { id: "pizza", label: "Pizza", imagePath: "/categories/dishes/pizza.png" },
+  { id: "burger", label: "Burger", imagePath: "/categories/dishes/burger.png" },
+  { id: "shawarma", label: "Shawarma", imagePath: "/categories/dishes/shawarma.png" },
+  { id: "mandi", label: "Mandi", imagePath: "/categories/dishes/mandi.png" },
+  { id: "ice_cream", label: "Ice Cream", imagePath: "/categories/dishes/ice-cream.png" },
+  { id: "milkshake", label: "Milkshake", imagePath: "/categories/dishes/milkshake.png" },
+  { id: "paneer", label: "Paneer", imagePath: "/categories/dishes/paneer.png" },
+  { id: "desserts", label: "Desserts", imagePath: "/categories/dishes/desserts.png" },
+  { id: "sweets", label: "Sweets", imagePath: "/categories/dishes/sweets.png" },
+  { id: "other", label: "Other", imagePath: "/categories/dishes/other.png" },
 ] as const;
 
 type PlaceCategoryInput = {
@@ -79,20 +77,18 @@ const PLACE_ALIASES: Array<[PlaceCategoryId, RegExp[]]> = [
   ["restaurant", [/\brestaurant\b/, /\bdiner\b/, /\bplace\b/, /\bkitchen\b/, /\bhouse\b/, /\bhotel\b/, /\bbiryani\b/, /\bthali\b/, /\bmulti\s*cuisine\b/, /\bfamily\b/, /\bcasual\b/]],
 ];
 
-const DISH_CLUSTER_KEYWORDS: Record<Exclude<DishClusterId, "all">, string[]> = {
+const DISH_CLUSTER_KEYWORDS: Record<Exclude<DishClusterId, "all" | "other">, string[]> = {
   biryani: ["biryani", "biriyani", "briyani"],
-  burger: ["burger", "cheeseburger"],
-  pizza: ["pizza", "margherita", "pepperoni"],
-  desserts: ["dessert", "cake", "brownie", "waffle", "pastry", "cookie", "sweet"],
-  shawarma: ["shawarma", "shawerma", "shwarma"],
-  momos: ["momo", "momos", "dumpling"],
-  fries: ["fries", "french fries", "peri peri fries"],
   chicken: ["chicken", "ckn", "tandoori", "kebab", "wings"],
-  coffee: ["coffee", "latte", "cappuccino", "americano", "espresso", "cold coffee"],
-  milkshakes: ["milkshake", "shake", "thick shake"],
+  pizza: ["pizza", "margherita", "pepperoni"],
+  burger: ["burger", "cheeseburger"],
+  shawarma: ["shawarma", "shawerma", "shwarma"],
+  mandi: ["mandi", "mady", "madhbi", "kabsa", "faham"],
   ice_cream: ["ice cream", "gelato", "sundae"],
-  healthy: ["healthy", "salad", "bowl", "smoothie", "oats", "millet", "protein", "vegan"],
-  breakfast: ["breakfast", "idli", "dosa", "vada", "omelette", "toast", "pancake", "poha", "upma"],
+  milkshake: ["milkshake", "milk shake", "shake", "thick shake"],
+  paneer: ["paneer", "cottage cheese", "paneer tikka", "butter paneer", "palak paneer"],
+  desserts: ["dessert", "cake", "brownie", "waffle", "pastry", "cookie"],
+  sweets: ["sweet", "sweets", "mithai", "gulab jamun", "jamun", "ladoo", "laddu", "jalebi", "kaju katli", "rasmalai", "barfi"],
 };
 
 function clean(value: string): string {
@@ -121,6 +117,10 @@ export function dishCategoryLabel(id: DishClusterId): string {
   return labelFor(DISH_CATEGORIES, id);
 }
 
+export function dishCategoryImagePath(id: DishClusterId): string {
+  return DISH_CATEGORIES.find((category) => category.id === id)?.imagePath ?? "/categories/dishes/all.png";
+}
+
 export function parsePlaceCategory(value: string | null | undefined): PlaceCategoryId {
   const normalized = clean(value ?? "").replace(/\s+/g, "_");
   const legacy: Record<string, PlaceCategoryId> = {
@@ -140,8 +140,14 @@ export function parsePlaceCategory(value: string | null | undefined): PlaceCateg
 
 export function parseDishCategory(value: string | null | undefined): DishClusterId {
   const normalized = clean(value ?? "").replace(/\s+/g, "_");
-  return DISH_CATEGORIES.some((category) => category.id === normalized)
-    ? (normalized as DishClusterId)
+  const legacy: Record<string, DishClusterId> = {
+    milkshakes: "milkshake",
+    icecream: "ice_cream",
+    ice_creams: "ice_cream",
+  };
+  const next = legacy[normalized] ?? normalized;
+  return DISH_CATEGORIES.some((category) => category.id === next)
+    ? (next as DishClusterId)
     : "all";
 }
 
@@ -183,7 +189,7 @@ export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
   const text = clean([dish.name, canonical?.displayName ?? "", ...(dish.tags ?? [])].join(" "));
   const tokens = new Set(normalizeDishTokens(text));
 
-  for (const [cluster, keywords] of Object.entries(DISH_CLUSTER_KEYWORDS) as Array<[Exclude<DishClusterId, "all">, string[]]>) {
+  for (const [cluster, keywords] of Object.entries(DISH_CLUSTER_KEYWORDS) as Array<[Exclude<DishClusterId, "all" | "other">, string[]]>) {
     if (keywords.some((keyword) => text.includes(clean(keyword)))) found.add(cluster);
   }
 
@@ -191,10 +197,8 @@ export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
   if (canonical?.id === "burger") found.add("burger");
   if (canonical?.id === "pizza") found.add("pizza");
   if (canonical?.id === "shawarma") found.add("shawarma");
-  if (canonical?.id === "coffee") found.add("coffee");
-  if (canonical?.id === "milkshake") found.add("milkshakes");
+  if (canonical?.id === "milkshake") found.add("milkshake");
   if (canonical?.category === "dessert") found.add("desserts");
-  if (canonical?.category === "breakfast") found.add("breakfast");
   if (tokens.has("chicken")) found.add("chicken");
 
   return Array.from(found);
@@ -202,5 +206,7 @@ export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
 
 export function dishMatchesCategory(dish: DishCategoryInput, category: DishClusterId): boolean {
   if (category === "all") return true;
-  return inferDishClusters(dish).includes(category);
+  const clusters = inferDishClusters(dish);
+  if (category === "other") return clusters.length === 0;
+  return clusters.includes(category);
 }

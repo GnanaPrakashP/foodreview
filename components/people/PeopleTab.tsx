@@ -42,10 +42,10 @@ import {
 } from "@/lib/trending-location";
 import { reviewMediaItems } from "@/lib/review-media";
 import { CANONICAL_DISHES, dishSearchMatches, normalizeDishDisplayName } from "@/lib/dish-normalizer";
-import CategoryChips from "@/components/ui/CategoryChips";
 import {
   DISH_CATEGORIES,
   PLACE_CATEGORIES,
+  dishCategoryImagePath,
   dishCategoryLabel,
   dishMatchesCategory,
   inferDishClusters,
@@ -56,6 +56,7 @@ import {
   placeCategoryLabel,
   placeMatchesCategory,
   type DishClusterId,
+  type ExploreCategory,
   type PlaceCategoryId,
 } from "@/lib/explore-categories";
 
@@ -414,19 +415,25 @@ function PlaceCategoryImage({ category, size = 24 }: { category: PlaceCategoryId
   );
 }
 
-function PlaceCategoryGrid({
+function ImageCategoryGrid<T extends string>({
+  ariaLabel,
+  categories,
   selected,
   onChange,
+  imagePathFor,
 }: {
-  selected: PlaceCategoryId;
-  onChange: (category: PlaceCategoryId) => void;
+  ariaLabel: string;
+  categories: readonly ExploreCategory<T>[];
+  selected: T;
+  onChange: (category: T) => void;
+  imagePathFor: (category: T) => string;
 }) {
   const imageSize = "clamp(76px, 22vw, 88px)";
 
   return (
     <div
       className="hide-scrollbar"
-      aria-label="places categories"
+      aria-label={ariaLabel}
       style={{
         overflowX: "auto",
         overscrollBehaviorX: "contain",
@@ -443,7 +450,7 @@ function PlaceCategoryGrid({
           gap: "16px 8px",
         }}
       >
-        {PLACE_CATEGORIES.map((category) => {
+        {categories.map((category) => {
           const active = category.id === selected;
           return (
             <button
@@ -466,7 +473,7 @@ function PlaceCategoryGrid({
               }}
             >
               <Image
-                src={placeCategoryImagePath(category.id)}
+                src={category.imagePath ?? imagePathFor(category.id)}
                 alt=""
                 width={88}
                 height={88}
@@ -499,6 +506,42 @@ function PlaceCategoryGrid({
         })}
       </div>
     </div>
+  );
+}
+
+function PlaceCategoryGrid({
+  selected,
+  onChange,
+}: {
+  selected: PlaceCategoryId;
+  onChange: (category: PlaceCategoryId) => void;
+}) {
+  return (
+    <ImageCategoryGrid
+      ariaLabel="places categories"
+      categories={PLACE_CATEGORIES}
+      selected={selected}
+      onChange={onChange}
+      imagePathFor={placeCategoryImagePath}
+    />
+  );
+}
+
+function DishCategoryGrid({
+  selected,
+  onChange,
+}: {
+  selected: DishClusterId;
+  onChange: (category: DishClusterId) => void;
+}) {
+  return (
+    <ImageCategoryGrid
+      ariaLabel="dish categories"
+      categories={DISH_CATEGORIES}
+      selected={selected}
+      onChange={onChange}
+      imagePathFor={dishCategoryImagePath}
+    />
   );
 }
 
@@ -1769,12 +1812,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
               <PlaceCategoryGrid selected={placeCategory} onChange={setPlaceCategory} />
             )}
             {activeTab === "dishes" && (
-              <CategoryChips
-                categories={DISH_CATEGORIES}
-                selected={dishCategory}
-                onChange={setDishCategory}
-                variant="dishes"
-              />
+              <DishCategoryGrid selected={dishCategory} onChange={setDishCategory} />
             )}
             {(activeTab === "restaurants" || activeTab === "dishes") && (
               <div style={{ height: 1, background: "var(--border)", margin: "0 16px" }} />

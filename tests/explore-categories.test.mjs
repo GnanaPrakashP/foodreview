@@ -42,6 +42,31 @@ test("place categories use the current main category set and image assets", () =
   assert.equal(PLACE_CATEGORIES.find((category) => category.id === "nightlife")?.label, "Nightlife");
 });
 
+test("dish categories use image assets and the current explore set", () => {
+  const { DISH_CATEGORIES, parseDishCategory } = loadExploreCategoriesModule();
+  const ids = Array.from(DISH_CATEGORIES, (category) => category.id);
+
+  assert.deepEqual(ids, [
+    "all",
+    "biryani",
+    "chicken",
+    "pizza",
+    "burger",
+    "shawarma",
+    "mandi",
+    "ice_cream",
+    "milkshake",
+    "paneer",
+    "desserts",
+    "sweets",
+    "other",
+  ]);
+  assert.ok(DISH_CATEGORIES.every((category) => category.imagePath?.startsWith("/categories/dishes/")));
+  assert.equal(parseDishCategory("healthy"), "all");
+  assert.equal(parseDishCategory("breakfast"), "all");
+  assert.equal(parseDishCategory("milkshakes"), "milkshake");
+});
+
 test("legacy place category params map to current categories", () => {
   const { parsePlaceCategory } = loadExploreCategoriesModule();
 
@@ -59,4 +84,13 @@ test("place matching maps quick bites and nightlife signals", () => {
   assert.ok(inferPlaceCategories({ name: "Burger Counter", topDishes: ["Fries", "Shawarma"] }).includes("quick_bites"));
   assert.equal(placeMatchesCategory({ name: "Terrace Bar", topDishes: [] }, "nightlife"), true);
   assert.equal(placeMatchesCategory({ name: "Family Biryani House", topDishes: ["Chicken Biryani"] }, "restaurant"), true);
+});
+
+test("dish matching maps new image categories", () => {
+  const { dishMatchesCategory } = loadExploreCategoriesModule();
+
+  assert.equal(dishMatchesCategory({ name: "Chicken Mandi" }, "mandi"), true);
+  assert.equal(dishMatchesCategory({ name: "Paneer Tikka" }, "paneer"), true);
+  assert.equal(dishMatchesCategory({ name: "Gulab Jamun" }, "sweets"), true);
+  assert.equal(dishMatchesCategory({ name: "Mystery Special" }, "other"), true);
 });
