@@ -25,6 +25,7 @@ const REVIEW_SELECT = [
   "restaurant_lng",
   "items",
   "body",
+  "tags",
   "photo_url",
   "photo_urls",
   "review_photos(public_url, media_type, position)",

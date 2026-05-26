@@ -38,5 +38,5 @@ export function normalizeReview(raw: RawReview): Review {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { review_photos: _dropped, ...rest } = raw as RawReview & { review_photos?: unknown };
-  return { ...rest, photo_urls, media_items: normalizedMediaItems } as Review;
+  return { ...rest, tags: Array.isArray(rest.tags) ? rest.tags : [], photo_urls, media_items: normalizedMediaItems } as Review;
 }

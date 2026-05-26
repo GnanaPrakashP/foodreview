@@ -33,6 +33,7 @@ function loadCircleFeedModule() {
         if (id === "@/lib/private-cache") return { getPrivateCached: async ({ load }) => (await load()).value, invalidatePrivateCacheByTags() {} };
         if (id === "@/lib/profile-display") return { buildProfileDisplayMap: async () => ({}) };
         if (id === "@/lib/server/normalize-review") return { normalizeReview: (review) => review };
+        if (id === "@/lib/server/taste-trust") return { getPostTasteTrustSummaryMap: async () => ({}) };
         throw new Error(`Unexpected require in circle-feed pagination tests: ${id}`);
       },
     }

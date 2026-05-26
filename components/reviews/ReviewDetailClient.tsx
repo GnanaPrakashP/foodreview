@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bookmark, Heart, MessageCircle, MoreHorizontal, Send, Star } from "lucide-react";
+import { Bookmark, Heart, MapPin, MessageCircle, MoreVertical, Send, Star, Utensils } from "lucide-react";
 import PostShareButton from "@/components/posts/PostShareButton";
 import type { Comment, Review } from "@/lib/types";
+import RecommendationFeedback from "@/components/taste-trust/RecommendationFeedback";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
@@ -13,6 +14,7 @@ import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { reviewMediaItems } from "@/lib/review-media";
 import { patchPostEngagement, readPostEngagementEntry } from "@/lib/post-engagement-cache";
+import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 
 type Props = {
   review: Review;
@@ -23,8 +25,8 @@ type Props = {
   initialBookmarked?: boolean;
   initialSnapshotAt?: number;
   profileMap?: Record<string, string>;
+  initialTasteTrustSummary?: PostTasteTrustSummary;
   autoFocusComment?: boolean;
-  backHref?: string;
 };
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -54,8 +56,8 @@ export default function ReviewDetailClient({
   initialBookmarked = false,
   initialSnapshotAt = Date.now(),
   profileMap = {},
+  initialTasteTrustSummary,
   autoFocusComment = false,
-  backHref = "/",
 }: Props) {
   const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
@@ -73,6 +75,7 @@ export default function ReviewDetailClient({
   const [deleteReviewError, setDeleteReviewError] = useState("");
   const [showPostActions, setShowPostActions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [tasteTrustSummary, setTasteTrustSummary] = useState<PostTasteTrustSummary | null>(initialTasteTrustSummary ?? null);
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +86,7 @@ export default function ReviewDetailClient({
   const reviewerDisplayName = profileMap[review.reviewer_name] || review.reviewer_name;
   const initials = avatarInitials(reviewerDisplayName);
   const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
+  const triedCount = tasteTrustSummary?.tried_count ?? 0;
 
   useEffect(() => {
     const name = resolveActorName(initialMyName);
@@ -302,33 +306,9 @@ export default function ReviewDetailClient({
     window.setTimeout(() => inputRef.current?.focus(), 80);
   }
 
-  function handleBack() {
-    try {
-      const referrer = document.referrer;
-      if (referrer) {
-        const referrerUrl = new URL(referrer);
-        if (referrerUrl.origin === window.location.origin) {
-          router.back();
-          return;
-        }
-      }
-    } catch {
-      // Ignore malformed referrer URLs and use fallback below.
-    }
-    router.push(backHref);
-  }
-
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", paddingBottom: "92px" }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, background: "var(--bg)", borderBottom: "1px solid var(--border)", padding: "12px 16px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <button
-          type="button"
-          onClick={handleBack}
-          aria-label="Go back"
-          style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0, cursor: "pointer" }}
-        >
-          <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
-        </button>
         <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", flex: 1 }}>Post</p>
       </div>
       {deleteReviewError && (
@@ -337,11 +317,11 @@ export default function ReviewDetailClient({
         </p>
       )}
 
-      <div style={{ padding: "14px 16px 0" }}>
-        <article style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "22px", overflow: "hidden" }}>
-          <div style={{ padding: "13px 14px 11px", display: "flex", alignItems: "center", gap: "10px" }}>
+      <div style={{ padding: 0 }}>
+        <article style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 4px 10px 12px", display: "flex", alignItems: "center", gap: "10px" }}>
             <Link href={`/people/${encodeURIComponent(review.reviewer_name)}`} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
-              <div style={{ width: "36px", height: "36px", borderRadius: "12px", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+              <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
                 {initials || "?"}
               </div>
               <div style={{ minWidth: 0 }}>
@@ -351,9 +331,6 @@ export default function ReviewDetailClient({
                 </p>
               </div>
             </Link>
-            <span suppressHydrationWarning style={{ fontSize: "11px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
-              {timeAgo(review.created_at)}
-            </span>
             <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
               <button
                 onClick={() => setShowPostActions((open) => !open)}
@@ -362,9 +339,9 @@ export default function ReviewDetailClient({
                 style={{
                   width: 30,
                   height: 30,
-                  border: "1px solid var(--border)",
-                  background: "var(--surface)",
-                  borderRadius: "9px",
+                  border: "none",
+                  background: "transparent",
+                  borderRadius: "50%",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -372,7 +349,7 @@ export default function ReviewDetailClient({
                   opacity: deletingReview ? 0.7 : 1,
                 }}
               >
-                <MoreHorizontal size={15} strokeWidth={2} color="var(--muted)" />
+                <MoreVertical size={18} strokeWidth={2} color="var(--cream)" />
               </button>
               {showPostActions && (
                 <div
@@ -381,14 +358,13 @@ export default function ReviewDetailClient({
                     top: "calc(100% + 6px)",
                     right: 0,
                     minWidth: "152px",
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "12px",
-                    padding: "6px",
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                    zIndex: 15,
-                  }}
-                >
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "12px",
+                  padding: "6px",
+                  zIndex: 15,
+                }}
+              >
                   {canDeleteReview ? (
                     <button
                       onClick={requestDeleteReview}
@@ -407,6 +383,23 @@ export default function ReviewDetailClient({
             </div>
           </div>
 
+          <div style={{ padding: "0 12px 10px" }}>
+            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
+              {review.restaurant_name}
+            </h1>
+            {locationLabel && (
+              <a
+                href={mapsUrl ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", textDecoration: "none" }}
+              >
+                <MapPin size={12} strokeWidth={2} />
+                <span>{locationLabel}</span>
+              </a>
+            )}
+          </div>
+
           {mediaItems.length > 0 && (
             <div style={{ position: "relative" }}>
               <div
@@ -416,7 +409,7 @@ export default function ReviewDetailClient({
                   const idx = Math.round(el.scrollLeft / el.clientWidth);
                   setPhotoIndex(idx);
                 }}
-                style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", aspectRatio: "4/5" }}
+                style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", aspectRatio: "4/5", background: "var(--surface)" }}
                 className="hide-scrollbar"
               >
                 {mediaItems.map((item, index) => (
@@ -439,26 +432,60 @@ export default function ReviewDetailClient({
             </div>
           )}
 
-          <div style={{ padding: "12px 14px 0" }}>
-            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "1px" : "6px" }}>
-              {review.restaurant_name}
-            </h1>
-            {locationLabel && (
-              <a
-                href={mapsUrl ?? undefined}
-                target="_blank"
-                rel="noreferrer"
-                style={{ display: "inline-block", fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: 1.2, color: "var(--muted)", marginTop: 0, marginBottom: "8px", textDecoration: "none" }}
+          <div style={{ padding: "8px 12px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "2px 0 10px" }}>
+              <button
+                onClick={toggleLike}
+                disabled={!myName}
+                aria-label={liked ? "Unlike post" : "Like post"}
+                style={{ background: "none", border: "none", cursor: myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
               >
-                📍 {locationLabel}
-              </a>
-            )}
+                <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
+              </button>
+              <button onClick={focusCommentInput} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}>
+                <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
+                  {comments.length}
+                </span>
+              </button>
+              <span
+                aria-label={triedCount > 0 ? `${triedCount} tried this` : "No tries yet"}
+                style={{ display: "flex", alignItems: "center", gap: "5px" }}
+              >
+                <Utensils size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
+                  {triedCount}
+                </span>
+              </span>
+              <button
+                key={`bm-${bookmarkBounceKey}`}
+                onClick={toggleBookmark}
+                className={bookmarkBounceKey > 0 ? "like-pop" : ""}
+                style={{ background: "none", border: "none", cursor: myName ? "pointer" : "default", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
+                aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
+              >
+                <Bookmark size={18} strokeWidth={2} fill={bookmarked ? "currentColor" : "none"} />
+              </button>
+              <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
+            </div>
 
             {review.body && (
-              <div style={{ padding: "8px 10px", background: "var(--orange-dim)", borderLeft: "3px solid var(--orange)", borderRadius: "0 8px 8px 0", marginBottom: "10px" }}>
+              <div style={{ marginBottom: "10px" }}>
                 <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.5 }}>
+                  <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>{" "}
                   {review.body}
                 </p>
+              </div>
+            )}
+
+            {review.tags.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+                {review.tags.map((tag) => (
+                  <span key={tag} style={{ display: "inline-flex", alignItems: "center", background: "rgba(240,96,48,0.1)", border: "1px solid rgba(240,96,48,0.22)", borderRadius: "999px", padding: "4px 8px", fontSize: "10px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1 }}>
+                    {tag}
+                  </span>
+                ))}
               </div>
             )}
 
@@ -478,39 +505,23 @@ export default function ReviewDetailClient({
               </div>
             )}
 
-            <div style={{ display: "flex", alignItems: "center", gap: "14px", paddingTop: "8px", borderTop: "1px solid var(--border)", marginBottom: "8px" }}>
-              <button
-                onClick={toggleLike}
-                disabled={!myName}
-                aria-label={liked ? "Unlike post" : "Like post"}
-                style={{ background: "none", border: "none", cursor: myName ? "pointer" : "default", display: "flex", alignItems: "center", gap: "5px", padding: 0 }}
-              >
-                <Heart size={15} strokeWidth={2} fill={liked ? "#E84040" : "none"} color={liked ? "#E84040" : "var(--muted)"} style={{ transition: "color 0.15s", flexShrink: 0 }} />
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>{likeCount}</span>
-              </button>
-              <button onClick={focusCommentInput} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "5px" }}>
-                <MessageCircle size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
-                  {comments.length} comment{comments.length !== 1 ? "s" : ""}
-                </span>
-              </button>
-              <button
-                key={`bm-${bookmarkBounceKey}`}
-                onClick={toggleBookmark}
-                className={bookmarkBounceKey > 0 ? "like-pop" : ""}
-                style={{ background: "none", border: "none", cursor: myName ? "pointer" : "default", padding: 0, color: bookmarked ? "var(--orange)" : "var(--muted)", lineHeight: 0, transition: "color 0.15s", marginLeft: "auto" }}
-                aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
-              >
-                <Bookmark size={18} strokeWidth={2} fill={bookmarked ? "currentColor" : "none"} />
-              </button>
-              <PostShareButton review={review} reviewerDisplayName={reviewerDisplayName} />
-            </div>
-            <div style={{ height: "8px" }} />
+            <p suppressHydrationWarning style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", margin: 0 }}>
+              {timeAgo(review.created_at)}
+            </p>
+            <RecommendationFeedback
+              postId={review.id}
+              reviewerName={review.reviewer_name}
+              postVisibility={review.visibility}
+              myName={myName}
+              initialSummary={tasteTrustSummary}
+              onSummaryChange={setTasteTrustSummary}
+            />
+            <div style={{ height: "12px" }} />
           </div>
         </article>
       </div>
 
-      <section style={{ padding: "18px 16px 0" }}>
+      <section style={{ padding: "12px 16px 0" }}>
         <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", marginBottom: "10px" }}>
           Comments
         </h2>

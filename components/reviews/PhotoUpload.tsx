@@ -522,7 +522,6 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                 borderBottom: "none",
                 borderRadius: "18px 18px 0 0",
                 padding: "8px 8px calc(8px + env(safe-area-inset-bottom))",
-                boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 6px 10px" }}>
@@ -736,7 +735,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                       position: "absolute",
                       ...cropStyle,
                       border: "2px solid var(--orange)",
-                      boxShadow: "0 0 0 9999px rgba(0,0,0,0.48)",
+                      outline: "9999px solid rgba(0,0,0,0.48)",
                       cursor: "move",
                       touchAction: "none",
                     }}

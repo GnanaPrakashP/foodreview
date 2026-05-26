@@ -241,7 +241,6 @@ export default function OnboardingPage() {
               fontWeight: 700,
               cursor: canSubmit ? "pointer" : "default",
               transition: "all 0.15s",
-              boxShadow: canSubmit ? "0 4px 16px rgba(240,96,48,0.3)" : "none",
             }}
           >
             {submitting ? "Saving…" : "Let's go →"}

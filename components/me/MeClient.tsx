@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
+import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
 
 type EngagementMaps = {
   likeCountMap: Record<string, number>;
@@ -11,9 +12,9 @@ type EngagementMaps = {
   likedByMeMap: Record<string, boolean>;
   bookmarkedPostMap: Record<string, boolean>;
 };
-import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
+import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { restaurantLocationLabel } from "@/lib/location";
-import { Settings } from "lucide-react";
+import { CalendarDays, Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
 import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
@@ -39,7 +40,7 @@ type DishComparison = {
 
 function StatSkeleton() {
   return (
-    <div className="animate-pulse" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
+    <div className="animate-pulse" style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center" }}>
       <div style={{ height: "28px", background: "var(--surface)", borderRadius: "6px", width: "36px", margin: "0 auto 8px" }} />
       <div style={{ height: "11px", background: "var(--surface)", borderRadius: "4px", width: "48px", margin: "0 auto" }} />
     </div>
@@ -56,36 +57,6 @@ function uniqueDishesFor(reviews: Review[]): number {
     }
   }
   return pairs.size;
-}
-
-function demoReview(
-  restaurantName: string,
-  area: string,
-  body: string,
-  itemName: string,
-  rating: number,
-  createdAt = "2024-05-19T12:00:00.000Z"
-): Review {
-  return {
-    id: `demo-${restaurantName}`,
-    reviewer_name: "demo",
-    restaurant_id: null,
-    restaurant_name: restaurantName,
-    area,
-    restaurant_address: null,
-    restaurant_lat: null,
-    restaurant_lng: null,
-    items: [{ name: itemName, rating }],
-    body,
-    photo_url: null,
-    photo_urls: [],
-    visibility: "public",
-    deleted_at: null,
-    hidden_at: null,
-    reported_at: null,
-    status: "active",
-    created_at: createdAt,
-  };
 }
 
 function timelineDateParts(value: string): { day: string; month: string } {
@@ -247,12 +218,16 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 12)
     : [];
-  const demoEntries = entries.length > 0 ? entries : [
-    demoReview("Paradise", "Hyderabad", "The classic never disappoints.", "Chicken Biryani", 4.8, "2024-05-23T12:00:00.000Z"),
-    demoReview("Third Wave Coffee", "Gachibowli", "Perfect start to the day.", "Third Wave Coffee", 4.5, "2024-01-12T12:00:00.000Z"),
-    demoReview("Midnight Shawarma", "Madhapur", "Late night cravings hit different.", "Midnight Shawarma", 4.7, "2023-12-30T12:00:00.000Z"),
-  ];
-  const groupedEntries = demoEntries.reduce<Array<{ month: string; entries: Review[] }>>((groups, entry) => {
+
+  if (entries.length === 0) {
+    return (
+      <div style={{ padding: "60px 20px 110px", textAlign: "center" }}>
+        <p style={{ color: "var(--muted)", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>No timeline yet</p>
+      </div>
+    );
+  }
+
+  const groupedEntries = entries.reduce<Array<{ month: string; entries: Review[] }>>((groups, entry) => {
     const month = timelineMonthLabel(entry.created_at);
     const lastGroup = groups[groups.length - 1];
     if (lastGroup?.month === month) {
@@ -278,7 +253,7 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
                 const location = timelineLocationLabel(entry);
                 return (
                   <div key={`${entry.restaurant_name}-${entry.created_at}-${index}`} style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: 999, background: "var(--orange)", boxShadow: "0 0 0 4px var(--bg)", flexShrink: 0, position: "relative", zIndex: 1 }} />
+                    <div style={{ width: 6, height: 6, borderRadius: 999, background: "var(--orange)", border: "4px solid var(--bg)", flexShrink: 0, position: "relative", zIndex: 1, boxSizing: "content-box" }} />
                     <div style={{ flex: 1, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "11px 13px", display: "grid", gridTemplateColumns: "38px 1px minmax(0, 1fr)", alignItems: "center", gap: 12 }}>
                       <div style={{ color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1, textAlign: "center" }}>
                         <span style={{ display: "block", fontSize: 14 }}>{date.day}</span>
@@ -398,6 +373,7 @@ export default function MeClient({
   commentMap = {},
   likedByMeMap = {},
   bookmarkedPostMap = {},
+  tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
 }: {
   allReviews: Review[];
   initialMyName?: string;
@@ -409,6 +385,7 @@ export default function MeClient({
   commentMap?: Record<string, { count: number; top: Comment }>;
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
+  tasteTrust?: TasteTrustSummary;
 }) {
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
@@ -484,8 +461,8 @@ export default function MeClient({
           </div>
         </div>
         <div className="px-5 pb-5">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
-            <StatSkeleton /><StatSkeleton /><StatSkeleton />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+            <StatSkeleton /><StatSkeleton /><StatSkeleton /><StatSkeleton />
           </div>
         </div>
       </div>
@@ -519,43 +496,55 @@ export default function MeClient({
             <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "3px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.6 }}>{totalVisits} visit{totalVisits !== 1 ? "s" : ""}</p>
           </div>
         </div>
-        <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "12px", lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.85 }}>
-          {bio || "Food explorer, sharing my culinary adventures one review at a time. Always on the hunt for the next delicious discovery!"}
-        </p>
+        {bio?.trim() && (
+          <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "12px", lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.85 }}>
+            {bio.trim()}
+          </p>
+        )}
         {joinedAt && (
-          <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "12px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>
-            Joined {new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(joinedAt))}
+          <p style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: "var(--muted)", marginTop: "12px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>
+            <CalendarDays size={13} strokeWidth={2} />
+            <span>Joined {new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(joinedAt))}</span>
           </p>
         )}
       </div>
 
       <div style={{ padding: "0 20px 16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", alignItems: "start" }}>
+          {/* Taste Trust */}
+          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+              {Math.round(tasteTrust.trust_score)}
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, lineHeight: 1.1 }}>
+              Trust
+            </div>
+          </div>
           {/* Places */}
-          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
+          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
               {uniquePlaces}
             </div>
-            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>
+            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>
               Places
             </div>
           </div>
           {/* Dishes */}
-          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
+          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
               {uniqueDishes}
             </div>
-            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>
+            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>
               Dishes
             </div>
           </div>
           {/* Circle */}
-          <Link href="/me/circle" style={{ textDecoration: "none" }}>
-            <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center", cursor: "pointer" }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
+          <Link href="/me/circle" style={{ textDecoration: "none", display: "block" }}>
+            <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", cursor: "pointer", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
                 {circle.length}
               </div>
-              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>
+              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>
                 Circle
               </div>
             </div>

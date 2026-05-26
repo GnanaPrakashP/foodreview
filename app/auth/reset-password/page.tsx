@@ -114,7 +114,6 @@ export default function ResetPasswordPage() {
               fontWeight: 700,
               cursor: status === "loading" || !password || !confirmPassword ? "default" : "pointer",
               transition: "all 0.15s",
-              boxShadow: password && confirmPassword ? "0 4px 16px rgba(240,96,48,0.3)" : "none",
             }}
           >
             {status === "loading" ? "Saving…" : "Update password →"}

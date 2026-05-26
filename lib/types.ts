@@ -16,6 +16,13 @@ export type Visibility = "public" | "circle" | "me";
 export type StoryVisibility = "public" | "circle";
 export type ReviewMediaType = "image" | "video";
 export type CircleRelationshipState = "NONE" | "PENDING" | "CIRCLE_ONE_WAY" | "CIRCLE_MUTUAL";
+export type TasteTrustLevel =
+  | "New Reviewer"
+  | "Low Trust"
+  | "Mixed Trust"
+  | "Growing Trust"
+  | "Trusted"
+  | "Highly Trusted";
 
 export type ReviewMedia = {
   public_url: string;
@@ -39,6 +46,12 @@ export interface Database {
           avatar_url: string | null;
           bio: string | null;
           account_type: AccountType;
+          trust_score: number;
+          trust_level: TasteTrustLevel;
+          confirmed_recommendations_count: number;
+          positive_confirmations_count: number;
+          negative_confirmations_count: number;
+          total_feedback_points: number;
           created_at: string;
         };
         Insert: {
@@ -49,6 +62,12 @@ export interface Database {
           avatar_url?: string | null;
           bio?: string | null;
           account_type?: AccountType;
+          trust_score?: number;
+          trust_level?: TasteTrustLevel;
+          confirmed_recommendations_count?: number;
+          positive_confirmations_count?: number;
+          negative_confirmations_count?: number;
+          total_feedback_points?: number;
           created_at?: string;
         };
         Update: {
@@ -59,6 +78,12 @@ export interface Database {
           avatar_url?: string | null;
           bio?: string | null;
           account_type?: AccountType;
+          trust_score?: number;
+          trust_level?: TasteTrustLevel;
+          confirmed_recommendations_count?: number;
+          positive_confirmations_count?: number;
+          negative_confirmations_count?: number;
+          total_feedback_points?: number;
           created_at?: string;
         };
         Relationships: [];
@@ -75,6 +100,7 @@ export interface Database {
           restaurant_lng: number | null;
           items: FoodItem[];
           body: string | null;
+          tags: string[];
           photo_url: string | null;
           photo_urls: string[];
           visibility: Visibility;
@@ -95,6 +121,7 @@ export interface Database {
           restaurant_lng?: number | null;
           items: FoodItem[];
           body?: string | null;
+          tags?: string[];
           photo_url?: string | null;
           photo_urls?: string[];
           visibility?: Visibility;
@@ -115,6 +142,7 @@ export interface Database {
           restaurant_lng?: number | null;
           items?: FoodItem[];
           body?: string | null;
+          tags?: string[];
           photo_url?: string | null;
           photo_urls?: string[];
           visibility?: Visibility;
@@ -247,6 +275,87 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Comment>;
+        Relationships: [];
+      };
+      recommendation_feedback: {
+        Row: {
+          id: string;
+          post_id: string;
+          reviewer_user_id: string;
+          feedback_user_id: string;
+          place_id: string | null;
+          dish_id: string | null;
+          feedback_label: string;
+          feedback_value: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          post_id: string;
+          reviewer_user_id: string;
+          feedback_user_id: string;
+          place_id?: string | null;
+          dish_id?: string | null;
+          feedback_label: string;
+          feedback_value: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          post_id?: string;
+          reviewer_user_id?: string;
+          feedback_user_id?: string;
+          place_id?: string | null;
+          dish_id?: string | null;
+          feedback_label?: string;
+          feedback_value?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      user_tried_items: {
+        Row: {
+          id: string;
+          user_id: string;
+          place_id: string | null;
+          dish_id: string | null;
+          source_post_id: string | null;
+          source_user_id: string | null;
+          feedback_id: string | null;
+          tried_status: "tried";
+          visibility: "private" | "circle" | "public";
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          place_id?: string | null;
+          dish_id?: string | null;
+          source_post_id?: string | null;
+          source_user_id?: string | null;
+          feedback_id?: string | null;
+          tried_status?: "tried";
+          visibility?: "private" | "circle" | "public";
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          place_id?: string | null;
+          dish_id?: string | null;
+          source_post_id?: string | null;
+          source_user_id?: string | null;
+          feedback_id?: string | null;
+          tried_status?: "tried";
+          visibility?: "private" | "circle" | "public";
+          created_at?: string;
+          updated_at?: string;
+        };
         Relationships: [];
       };
       wishlist: {

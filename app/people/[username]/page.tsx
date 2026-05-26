@@ -8,6 +8,7 @@ import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
 import { REVIEW_SELECT } from "@/lib/selects";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
 import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 import { computeCommonRestaurants } from "@/lib/common-restaurants";
 
@@ -23,6 +24,12 @@ type ProfileSummary = {
   username: string | null;
   account_type: string | null;
   bio: string | null;
+  trust_score: number | null;
+  trust_level: string | null;
+  confirmed_recommendations_count: number | null;
+  positive_confirmations_count: number | null;
+  negative_confirmations_count: number | null;
+  total_feedback_points: number | null;
 };
 
 export default async function UserProfilePage({ params }: Props) {
@@ -36,7 +43,7 @@ export default async function UserProfilePage({ params }: Props) {
     supabase.auth.getUser(),
     supabase
       .from("profiles")
-      .select("first_name, last_name, username, account_type, bio")
+      .select("first_name, last_name, username, account_type, bio, trust_score, trust_level, confirmed_recommendations_count, positive_confirmations_count, negative_confirmations_count, total_feedback_points")
       .eq("username", name)
       .limit(1)
       .returns<ProfileSummary[]>(),
@@ -137,6 +144,7 @@ export default async function UserProfilePage({ params }: Props) {
       initialTheirCircleCount={initialTheirCircleCount}
       initialCommonRestaurantCount={initialCommonRestaurantCount}
       initialHasIncomingRequest={initialHasIncomingRequest}
+      tasteTrust={tasteTrustSummaryFromProfile(profile)}
     />
   );
 }

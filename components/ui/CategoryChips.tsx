@@ -62,7 +62,6 @@ export default function CategoryChips<T extends string>({
               whiteSpace: "nowrap",
               transition: "background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease",
               transform: active ? "translateY(-1px)" : "translateY(0)",
-              boxShadow: active ? "0 8px 22px rgba(0,0,0,0.18)" : "none",
             }}
           >
             {renderMedia?.(category, active)}

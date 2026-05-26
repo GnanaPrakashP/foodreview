@@ -6,6 +6,25 @@ import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/l
 
 const MAX_REVIEW_MEDIA = 4;
 const MAX_REVIEW_VIDEO_DURATION_SECONDS = 10;
+const MAX_REVIEW_TAGS = 5;
+const MAX_REVIEW_TAG_LENGTH = 28;
+
+function normalizeReviewTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const tag = item.trim().replace(/^#/, "").replace(/\s+/g, " ");
+    if (!tag || tag.length > MAX_REVIEW_TAG_LENGTH) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push(tag);
+    if (tags.length >= MAX_REVIEW_TAGS) break;
+  }
+  return tags;
+}
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor();
@@ -27,6 +46,7 @@ export async function POST(req: NextRequest) {
     restaurantAddress,
     restaurantLat,
     restaurantLng,
+    tags,
   } = body;
 
   // media is an array of uploaded image/video objects from the client.
@@ -73,6 +93,7 @@ export async function POST(req: NextRequest) {
   if (normalizedBody.error) {
     return NextResponse.json({ error: normalizedBody.error }, { status: 400 });
   }
+  const normalizedTags = normalizeReviewTags(tags);
 
   if (validatedMedia.length === 0) {
     return NextResponse.json({ error: "Add at least one photo or video" }, { status: 400 });
@@ -99,6 +120,7 @@ export async function POST(req: NextRequest) {
       restaurant_name: restaurantName.trim(),
       items: normalizedItems.items,
       body: normalizedBody.body ?? null,
+      tags: normalizedTags,
       visibility,
       photo_url: typeof photoUrl === "string" && photoUrl.trim() ? photoUrl : validatedMedia[0].publicUrl,
       photo_urls: validatedMedia.map((item) => item.publicUrl as string),

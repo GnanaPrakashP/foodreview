@@ -277,7 +277,6 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
       padding: "28px 24px",
       backdropFilter: "blur(24px)",
       WebkitBackdropFilter: "blur(24px)",
-      boxShadow: "var(--auth-shadow)",
       ...style,
     }}>
       {children}
@@ -335,7 +334,6 @@ function GoogleBtn({ onClick, loading }: { onClick: () => void; loading: boolean
       opacity: loading ? 0.75 : 1,
       fontFamily: "'DM Sans', sans-serif",
       transition: "opacity 0.15s",
-      boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
       marginBottom: 16,
       letterSpacing: "0.1px",
     }}>
@@ -359,7 +357,6 @@ function OrangeBtn({ children, disabled, ...rest }: React.ButtonHTMLAttributes<H
       fontWeight: 700,
       cursor: disabled ? "default" : "pointer",
       transition: "all 0.15s",
-      boxShadow: disabled ? "none" : "0 6px 20px rgba(240,96,48,0.35)",
       letterSpacing: "0.2px",
       marginTop: 4,
     }} {...rest}>

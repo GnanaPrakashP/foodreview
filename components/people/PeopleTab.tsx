@@ -17,7 +17,6 @@ import {
 } from "@/lib/people-circle-state";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import {
-  Bookmark,
   Check,
   ChevronDown,
   LocateFixed,
@@ -63,7 +62,6 @@ import {
 const FEED_PAGE_SIZE = 24;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
-const TOP_PICK_DISPLAY_LIMIT = 10;
 const RESTAURANT_CARD_DISH_LIMIT = 3;
 
 /* ─── Types ─────────────────────────────────────── */
@@ -301,7 +299,7 @@ function LocationPickerSheet({
   return (
     <>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.6)" }} />
-      <div style={{ position: "fixed", top: anchorBottom ?? 72, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, zIndex: 61, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", boxSizing: "border-box" }}>
+      <div style={{ position: "fixed", top: anchorBottom ?? 72, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, zIndex: 61, padding: "14px 16px", boxSizing: "border-box" }}>
         <button
           onClick={useCurrentLocation}
           disabled={gpsLoading}
@@ -362,7 +360,7 @@ function RatingScore({ rating }: { rating: number }) {
   if (rating <= 0) return null;
 
   return (
-    <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)", flexShrink: 0 }}>
+    <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>
       <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatRating(score10FromRating(rating))}</span>
       <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
     </div>
@@ -396,6 +394,7 @@ function tagsFromIds<T extends string>(ids: T[], labelFor: (id: T) => string, li
     .map(labelFor);
 }
 
+
 function PlaceCategoryImage({ category, size = 24 }: { category: PlaceCategoryId; size?: number }) {
   return (
     <span
@@ -407,6 +406,7 @@ function PlaceCategoryImage({ category, size = 24 }: { category: PlaceCategoryId
         overflow: "hidden",
         flexShrink: 0,
         display: "inline-flex",
+        background: "rgba(255,255,255,0.12)",
         backgroundImage: `url(${placeCategoryImagePath(category)})`,
         backgroundPosition: "center",
         backgroundSize: "cover",
@@ -488,7 +488,7 @@ function ImageCategoryGrid<T extends string>({
                   transform: active ? "translateY(-2px)" : "translateY(0)",
                   transition: "transform 160ms ease, filter 160ms ease",
                   filter: active
-                    ? "drop-shadow(0 0 1px rgba(240,96,48,0.95)) drop-shadow(0 0 10px rgba(240,96,48,0.55)) saturate(1.12) brightness(1.05)"
+                    ? "saturate(1.12) brightness(1.05)"
                     : "saturate(0.96) brightness(0.96)",
                 }}
               />
@@ -566,7 +566,6 @@ function PlaceTagBadge({ category, featured }: { category: PlaceCategoryId; feat
         fontSize: 10,
         fontWeight: 850,
         lineHeight: 1,
-        boxShadow: featured ? "0 9px 20px rgba(240,96,48,0.18)" : "none",
         whiteSpace: "nowrap",
       }}
     >
@@ -892,17 +891,15 @@ function RestaurantList({
   loading,
   profileMap,
   selectedCategory,
-  savedPlaces,
-  onToggleSave,
+  circleMembers,
 }: {
   restaurants: RestaurantSpotlight[];
   loading: boolean;
   profileMap: Record<string, string>;
   selectedCategory: PlaceCategoryId;
-  savedPlaces: Set<string>;
-  onToggleSave: (name: string) => void;
+  circleMembers: Set<string>;
 }) {
-  const visibleRestaurants = restaurants.slice(0, TOP_PICK_DISPLAY_LIMIT);
+  const visibleRestaurants = restaurants;
   const emptyLabel = placeCategoryLabel(selectedCategory).toLowerCase();
 
   function displayPersonName(username: string): string {
@@ -912,9 +909,12 @@ function RestaurantList({
 
   function socialProof(reviewers: string[]): string {
     if (reviewers.length === 0) return "";
-    const first = displayPersonName(reviewers[0]);
-    if (reviewers.length === 1) return `${first} has been here`;
-    const others = reviewers.length - 1;
+    const sorted = [...reviewers].sort((a, b) =>
+      (circleMembers.has(b) ? 1 : 0) - (circleMembers.has(a) ? 1 : 0)
+    );
+    const first = displayPersonName(sorted[0]);
+    if (sorted.length === 1) return `${first} has been here`;
+    const others = sorted.length - 1;
     return `${first} + ${others} other${others === 1 ? "" : "s"} have been here`;
   }
 
@@ -934,13 +934,16 @@ function RestaurantList({
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts will shape this list.</p>
           </div>
         ) : (
-          visibleRestaurants.map((restaurant) => {
-            const saved = savedPlaces.has(restaurant.name);
-            return (
-              <div
+          visibleRestaurants.map((restaurant) => (
+              <Link
                 key={restaurant.name}
+                href={`/trending/${encodeURIComponent(restaurant.name)}`}
                 style={{
-                  position: "relative",
+                  textDecoration: "none",
+                  display: "grid",
+                  gridTemplateColumns: "88px 1fr",
+                  minHeight: 146,
+                  color: "inherit",
                   background: "var(--card)",
                   border: "1px solid var(--border)",
                   borderRadius: 14,
@@ -948,101 +951,63 @@ function RestaurantList({
                   marginBottom: 10,
                 }}
               >
-                <Link
-                  href={`/trending/${encodeURIComponent(restaurant.name)}`}
+                <div
                   style={{
-                    textDecoration: "none",
-                    display: "grid",
-                    gridTemplateColumns: "88px 1fr",
+                    background: restaurant.photo ? undefined : "linear-gradient(135deg, rgba(240,96,48,0.18), rgba(232,168,48,0.10))",
+                    backgroundImage: restaurant.photo ? `url(${restaurant.photo})` : undefined,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
                     minHeight: 146,
-                    color: "inherit",
-                  }}
-                >
-                  <div
-                    style={{
-                      background: restaurant.photo ? undefined : "linear-gradient(135deg, rgba(240,96,48,0.18), rgba(232,168,48,0.10))",
-                      backgroundImage: restaurant.photo ? `url(${restaurant.photo})` : undefined,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                      minHeight: 146,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {!restaurant.photo && <Store size={24} strokeWidth={2.1} color="var(--orange)" />}
-                  </div>
-                  <div
-                    style={{
-                      padding: 14,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, paddingRight: 34 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                          {formatDistance(restaurant.distanceKm, restaurant.area)}
-                        </div>
-                      </div>
-                      <RatingScore rating={restaurant.averageRating} />
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>{restaurant.reviewerCount} visit{restaurant.reviewerCount !== 1 ? "s" : ""}</span>
-                    </div>
-
-                    {restaurant.topDishes.length > 0 && (
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: restaurant.tags.length ? 8 : 0 }}>
-                        {restaurant.topDishes.slice(0, RESTAURANT_CARD_DISH_LIMIT).map((dish) => (
-                          <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: "3px 8px" }}>
-                            {dish}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {restaurant.tags.length > 0 && (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        {restaurant.tags.map((tag, index) => (
-                          <PlaceTagBadge key={tag} category={tag} featured={index === 0} />
-                        ))}
-                      </div>
-                    )}
-
-                    {restaurant.reviewers.length > 0 && (
-                      <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid var(--border)" }}>
-                        <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
-                          {socialProof(restaurant.reviewers)}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </Link>
-                <button
-                  type="button"
-                  aria-label={saved ? "Unsave place" : "Save place"}
-                  onClick={() => onToggleSave(restaurant.name)}
-                  style={{
-                    position: "absolute",
-                    top: 10,
-                    right: 10,
-                    width: 34,
-                    height: 34,
-                    borderRadius: 999,
-                    border: "1px solid var(--border)",
-                    background: saved ? "var(--orange)" : "rgba(14,11,8,0.62)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                  cursor: "pointer",
-                }}
-              >
-                  <Bookmark size={16} strokeWidth={2.2} color={saved ? "white" : "var(--cream)"} fill={saved ? "white" : "none"} />
-                </button>
-              </div>
-            );
-          })
+                  }}
+                >
+                  {!restaurant.photo && <Store size={24} strokeWidth={2.1} color="var(--orange)" />}
+                </div>
+                <div style={{ padding: 14, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                        {formatDistance(restaurant.distanceKm, restaurant.area)}
+                      </div>
+                    </div>
+                    <RatingScore rating={restaurant.averageRating} />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>{restaurant.reviewerCount} visit{restaurant.reviewerCount !== 1 ? "s" : ""}</span>
+                  </div>
+
+                  {restaurant.topDishes.length > 0 && (
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: restaurant.tags.length ? 8 : 0 }}>
+                      {restaurant.topDishes.slice(0, RESTAURANT_CARD_DISH_LIMIT).map((dish) => (
+                        <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: "3px 8px" }}>
+                          {dish}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {restaurant.tags.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      {restaurant.tags.map((tag) => (
+                        <PlaceTagBadge key={tag} category={tag} featured />
+                      ))}
+                    </div>
+                  )}
+
+                  {restaurant.reviewers.length > 0 && (
+                    <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid var(--border)" }}>
+                      <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
+                        {socialProof(restaurant.reviewers)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Link>
+          ))
         )}
       </div>
     </div>
@@ -1053,16 +1018,12 @@ function DishList({
   dishes,
   loading,
   selectedCategory,
-  savedDishes,
-  onToggleSave,
 }: {
   dishes: DishSpotlight[];
   loading: boolean;
   selectedCategory: DishClusterId;
-  savedDishes: Set<string>;
-  onToggleSave: (key: string) => void;
 }) {
-  const visibleDishes = dishes.slice(0, TOP_PICK_DISPLAY_LIMIT);
+  const visibleDishes = dishes;
   const emptyLabel = dishCategoryLabel(selectedCategory).toLowerCase();
 
   return (
@@ -1081,13 +1042,16 @@ function DishList({
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts with dish ratings will shape this list.</p>
           </div>
         ) : (
-          visibleDishes.map((dish) => {
-            const saved = savedDishes.has(dish.key);
-            return (
-              <div
+          visibleDishes.map((dish) => (
+              <Link
                 key={dish.key}
+                href={`/trending/${encodeURIComponent(dish.topRestaurantName)}`}
                 style={{
-                  position: "relative",
+                  textDecoration: "none",
+                  display: "grid",
+                  gridTemplateColumns: "88px 1fr",
+                  minHeight: 146,
+                  color: "inherit",
                   background: "var(--card)",
                   border: "1px solid var(--border)",
                   borderRadius: 14,
@@ -1095,88 +1059,55 @@ function DishList({
                   marginBottom: 10,
                 }}
               >
-                <Link
-                  href={`/trending/${encodeURIComponent(dish.topRestaurantName)}`}
+                <div
                   style={{
-                    textDecoration: "none",
-                    display: "grid",
-                    gridTemplateColumns: "88px 1fr",
+                    background: dish.photo ? undefined : "linear-gradient(135deg, rgba(61,214,140,0.18), rgba(232,168,48,0.10))",
+                    backgroundImage: dish.photo ? `url(${dish.photo})` : undefined,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
                     minHeight: 146,
-                    color: "inherit",
-                  }}
-                >
-                  <div
-                    style={{
-                      background: dish.photo ? undefined : "linear-gradient(135deg, rgba(61,214,140,0.18), rgba(232,168,48,0.10))",
-                      backgroundImage: dish.photo ? `url(${dish.photo})` : undefined,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                      minHeight: 146,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {!dish.photo && <Utensils size={24} strokeWidth={2.1} color="var(--green)" />}
-                  </div>
-                  <div style={{ padding: 14, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, paddingRight: 34 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{dish.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                          {dish.topRestaurantName} · {formatDistance(dish.distanceKm, null)}
-                        </div>
-                      </div>
-                      <RatingScore rating={dish.averageRating} />
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                        {dish.mentionCount} review{dish.mentionCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-
-                    {dish.tags.length > 0 && (
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: dish.topReviewSnippet ? 9 : 0 }}>
-                        {dish.tags.map((tag) => (
-                          <span key={tag} style={{ fontSize: 10, color: "var(--green)", background: "rgba(61,214,140,0.11)", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {dish.topReviewSnippet && (
-                      <p style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.45, margin: 0 }}>
-                        {dish.topReviewSnippet.length > 92 ? `${dish.topReviewSnippet.slice(0, 89)}...` : dish.topReviewSnippet}
-                      </p>
-                    )}
-                  </div>
-                </Link>
-                <button
-                  type="button"
-                  aria-label={saved ? "Unsave dish" : "Save dish"}
-                  onClick={() => onToggleSave(dish.key)}
-                  style={{
-                    position: "absolute",
-                    top: 10,
-                    right: 10,
-                    width: 34,
-                    height: 34,
-                    borderRadius: 999,
-                    border: "1px solid var(--border)",
-                    background: saved ? "var(--green)" : "rgba(14,11,8,0.62)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                  cursor: "pointer",
-                }}
-              >
-                  <Bookmark size={16} strokeWidth={2.2} color={saved ? "var(--on-green)" : "var(--cream)"} fill={saved ? "var(--on-green)" : "none"} />
-                </button>
-              </div>
-            );
-          })
+                  }}
+                >
+                  {!dish.photo && <Utensils size={24} strokeWidth={2.1} color="var(--green)" />}
+                </div>
+                <div style={{ padding: 14, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{dish.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                        {dish.topRestaurantName} · {formatDistance(dish.distanceKm, null)}
+                      </div>
+                    </div>
+                    <RatingScore rating={dish.averageRating} />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                      {dish.mentionCount} review{dish.mentionCount !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+
+                  {dish.tags.length > 0 && (
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: dish.topReviewSnippet ? 9 : 0 }}>
+                      {dish.tags.map((tag) => (
+                        <span key={tag} style={{ fontSize: 10, color: "var(--green)", background: "rgba(61,214,140,0.11)", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {dish.topReviewSnippet && (
+                    <p style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.45, margin: 0 }}>
+                      {dish.topReviewSnippet.length > 92 ? `${dish.topReviewSnippet.slice(0, 89)}...` : dish.topReviewSnippet}
+                    </p>
+                  )}
+                </div>
+              </Link>
+          ))
         )}
       </div>
     </div>
@@ -1233,8 +1164,6 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [activeTab, setActiveTab] = useState<ExploreTab>("posts");
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
   const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
-  const [savedPlaces, setSavedPlaces] = useState<Set<string>>(new Set());
-  const [savedDishes, setSavedDishes] = useState<Set<string>>(new Set());
   const [feed, setFeed] = useState<Review[]>([]);
   const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>({});
   const [feedCommentMap, setFeedCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
@@ -1247,6 +1176,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [feedNextCursor, setFeedNextCursor] = useState<CircleFeedCursor | null>(null);
   const [feedError, setFeedError] = useState("");
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const feedLocationRef = useRef<UserLocation | null>(null);
 
   const [myName, setMyName] = useState("");
   const [location, setLocation] = useState<UserLocation | null>(null);
@@ -1334,23 +1264,35 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
 
   /* ── Load discovery feed ── */
 
-  const loadFeedPage = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName, loc = location) => {
+  const loadFeedPage = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName, loc?: UserLocation | null) => {
+    const requestedLocation = loc === undefined ? (cursor ? feedLocationRef.current : location) : loc;
     if (!cursor) {
       setFeedLoading(true);
       setFeedError("");
     }
     else setFeedLoadingMore(true);
     try {
-      const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
-      if (viewerName) params.set("viewer", viewerName);
-      if (loc) {
-        params.set("lat", String(loc.lat));
-        params.set("lng", String(loc.lng));
+      const fetchPage = async (feedLocation: UserLocation | null) => {
+        const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
+        if (viewerName) params.set("viewer", viewerName);
+        if (feedLocation) {
+          params.set("lat", String(feedLocation.lat));
+          params.set("lng", String(feedLocation.lng));
+        }
+        if (cursor) params.set("cursor", JSON.stringify(cursor));
+        const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });
+        const data = await response.json() as PublicFeedResponse & { error?: string };
+        if (!response.ok || data.error) throw new Error(data.error || "Unable to load public posts");
+        return data;
+      };
+
+      let data = await fetchPage(requestedLocation ?? null);
+      let feedLocation = requestedLocation ?? null;
+      if (!cursor && requestedLocation && (data.reviews ?? []).length === 0) {
+        data = await fetchPage(null);
+        feedLocation = null;
       }
-      if (cursor) params.set("cursor", JSON.stringify(cursor));
-      const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });
-      const data = await response.json() as PublicFeedResponse & { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error || "Unable to load public posts");
+      if (!cursor) feedLocationRef.current = feedLocation;
 
       const rows = data.reviews ?? [];
       setFeed((current) => {
@@ -1809,16 +1751,17 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
             }}
           >
             <ExploreTabs activeTab={activeTab} onChange={setActiveTab} />
-            {activeTab === "restaurants" && (
-              <PlaceCategoryGrid selected={placeCategory} onChange={setPlaceCategory} />
-            )}
-            {activeTab === "dishes" && (
-              <DishCategoryGrid selected={dishCategory} onChange={setDishCategory} />
-            )}
-            {(activeTab === "restaurants" || activeTab === "dishes") && (
-              <div style={{ height: 1, background: "var(--border)", margin: "0 16px" }} />
-            )}
           </div>
+
+          {activeTab === "restaurants" && (
+            <PlaceCategoryGrid selected={placeCategory} onChange={setPlaceCategory} />
+          )}
+          {activeTab === "dishes" && (
+            <DishCategoryGrid selected={dishCategory} onChange={setDishCategory} />
+          )}
+          {(activeTab === "restaurants" || activeTab === "dishes") && (
+            <div style={{ height: 1, background: "var(--border)", margin: "0 16px" }} />
+          )}
 
           {/* Circle requests */}
           {activeTab === "people" && pendingIncoming.length > 0 && (
@@ -1902,15 +1845,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
               loading={feedLoading}
               profileMap={feedProfileMap}
               selectedCategory={placeCategory}
-              savedPlaces={savedPlaces}
-              onToggleSave={(name) => {
-                setSavedPlaces((current) => {
-                  const next = new Set(current);
-                  if (next.has(name)) next.delete(name);
-                  else next.add(name);
-                  return next;
-                });
-              }}
+              circleMembers={circleMembers}
             />
           )}
 
@@ -1919,15 +1854,6 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
               dishes={filteredDishes}
               loading={feedLoading}
               selectedCategory={dishCategory}
-              savedDishes={savedDishes}
-              onToggleSave={(key) => {
-                setSavedDishes((current) => {
-                  const next = new Set(current);
-                  if (next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                });
-              }}
             />
           )}
 

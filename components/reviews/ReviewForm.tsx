@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import PhotoUpload, { type ReviewUploadFile } from "@/components/reviews/PhotoUpload";
 import type { FoodItem } from "@/lib/types";
 import { getVisitPrompt } from "@/lib/visits";
-import { Utensils, Star, X, Store, MapPin, Globe, Users, Lock } from "lucide-react";
+import { Utensils, Star, X, Store, MapPin, Globe, Users, Lock, Tag } from "lucide-react";
 import type { Visibility } from "@/lib/types";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { getStoredActorName } from "@/lib/browser-actor";
@@ -69,6 +69,7 @@ type ReviewInsertPayload = {
   photos?: ModeratedPhoto[];
   media?: ModeratedMedia[];
   visibility: Visibility;
+  tags?: string[];
 };
 
 type PlaceDetails = {
@@ -79,6 +80,18 @@ type PlaceDetails = {
   latitude: number | null;
   longitude: number | null;
 };
+
+const REVIEW_TAG_OPTIONS = [
+  "Hidden gem",
+  "Worth the hype",
+  "Comfort food",
+  "Budget friendly",
+  "Date night",
+  "Spicy",
+  "Sweet tooth",
+  "Big portions",
+  "Must try",
+];
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -93,7 +106,7 @@ function isMissingOptionalReviewColumn(error: unknown): boolean {
   const message = errorMessage(error);
   return (
     /schema cache|column/i.test(message)
-    && /\b(restaurant_id|area|restaurant_address|restaurant_lat|restaurant_lng)\b/i.test(message)
+    && /\b(restaurant_id|area|restaurant_address|restaurant_lat|restaurant_lng|tags)\b/i.test(message)
   );
 }
 
@@ -105,6 +118,7 @@ function withoutRichPlaceDetails(payload: ReviewInsertPayload): ReviewInsertPayl
     restaurant_address: _restaurantAddress,
     restaurant_lat: _restaurantLat,
     restaurant_lng: _restaurantLng,
+    tags: _tags,
     ...nextPayload
   } = payload;
   return nextPayload;
@@ -247,6 +261,8 @@ export default function ReviewForm() {
   const [items, setItems] = useState<FoodItem[]>([emptyItem()]);
 
   const [body, setBody] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("public");
   const [photoFiles, setPhotoFiles] = useState<ReviewUploadFile[]>([]);
   const [photoError, setPhotoError] = useState("");
@@ -350,6 +366,17 @@ export default function ReviewForm() {
 
   function removeItem(index: number) {
     setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addTag(raw: string) {
+    const tag = raw.trim();
+    if (!tag || selectedTags.includes(tag) || selectedTags.length >= 5) return;
+    setSelectedTags((prev) => [...prev, tag]);
+    setTagInput("");
+  }
+
+  function removeTag(tag: string) {
+    setSelectedTags((prev) => prev.filter((t) => t !== tag));
   }
 
   async function pickRestaurant(suggestion: RestaurantSuggestion) {
@@ -515,6 +542,7 @@ export default function ReviewForm() {
         restaurantName: restaurantName.trim(),
         items: allItems,
         body: body.trim() || null,
+        tags: selectedTags,
         photoUrl,
         photos: media.filter((item): item is ModeratedPhoto & { mediaType: "image" } => item.mediaType !== "video"),
         media,
@@ -856,6 +884,135 @@ export default function ReviewForm() {
               {errors.body && (
                 <p style={{ fontSize: "11px", color: "#EF4444", marginTop: "2px" }}>{errors.body}</p>
               )}
+              <div style={{ marginTop: "12px" }}>
+                <FieldLabel optional>Tags</FieldLabel>
+
+                {/* Freeform tag input */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "14px",
+                    padding: "10px 14px",
+                    marginBottom: "10px",
+                  }}
+                >
+                  <Tag size={14} strokeWidth={2} color="var(--orange)" style={{ flexShrink: 0 }} />
+                  <input
+                    type="text"
+                    placeholder={selectedTags.length >= 5 ? "Max 5 tags reached" : "Type a tag and press Enter…"}
+                    value={tagInput}
+                    disabled={selectedTags.length >= 5}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addTag(tagInput);
+                      } else if (e.key === "," ) {
+                        e.preventDefault();
+                        addTag(tagInput);
+                      } else if (e.key === "Backspace" && tagInput === "" && selectedTags.length > 0) {
+                        removeTag(selectedTags[selectedTags.length - 1]);
+                      }
+                    }}
+                    autoComplete="off"
+                    style={{
+                      flex: 1,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      color: "var(--cream)",
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: "13px",
+                    }}
+                  />
+                  {selectedTags.length > 0 && (
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", color: "var(--muted)", flexShrink: 0 }}>
+                      {selectedTags.length}/5
+                    </span>
+                  )}
+                </div>
+
+                {/* Selected tags as dismissible pills */}
+                {selectedTags.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginBottom: "10px" }}>
+                    {selectedTags.map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          background: "rgba(240,96,48,0.16)",
+                          border: "1px solid rgba(240,96,48,0.45)",
+                          borderRadius: "999px",
+                          color: "var(--orange)",
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: "11px",
+                          fontWeight: 800,
+                          lineHeight: 1,
+                          padding: "7px 10px",
+                        }}
+                      >
+                        <Tag size={10} strokeWidth={2.2} />
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => removeTag(tag)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                            color: "var(--orange)",
+                            display: "flex",
+                            alignItems: "center",
+                            marginLeft: "2px",
+                            opacity: 0.7,
+                          }}
+                        >
+                          <X size={11} strokeWidth={2.5} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Preset suggestions */}
+                {selectedTags.length < 5 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+                    {REVIEW_TAG_OPTIONS.filter((tag) => !selectedTags.includes(tag)).map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => addTag(tag)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          background: "var(--card)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "999px",
+                          color: "var(--cream)",
+                          cursor: "pointer",
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: "11px",
+                          fontWeight: 800,
+                          lineHeight: 1,
+                          padding: "8px 10px",
+                          opacity: 0.85,
+                        }}
+                      >
+                        <Tag size={10} strokeWidth={2.2} color="var(--muted)" />
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           );
         })()}

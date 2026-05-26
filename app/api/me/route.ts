@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMePageData, invalidateMePageCacheForNames, type MeCursor } from "@/lib/me-page-data";
 import { invalidatePeoplePageCacheForNames } from "@/lib/people-page-data";
 import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
 
 const ME_PAGE_MIN_LIMIT = 1;
 const ME_PAGE_MAX_LIMIT = 100;
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     const myName = getMyName(user);
     const { data: profile } = await supabase
       .from("profiles")
-      .select("first_name, last_name, bio")
+      .select("first_name, last_name, bio, trust_score, trust_level, confirmed_recommendations_count, positive_confirmations_count, negative_confirmations_count, total_feedback_points")
       .eq("id", user.id)
       .maybeSingle();
     const metadataDisplayName =
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     }
 
     const data = await getMePageData(supabase, myName, { cursor, limit });
-    return NextResponse.json({ ...data, myName, displayName, bio });
+    return NextResponse.json({ ...data, myName, displayName, bio, tasteTrust: tasteTrustSummaryFromProfile(profile) });
   } catch (error) {
     console.error("[me] failed to load:", error);
     return NextResponse.json({ error: "Unable to load profile" }, { status: 500 });

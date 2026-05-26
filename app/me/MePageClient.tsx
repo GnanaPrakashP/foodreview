@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import MeClient from "@/components/me/MeClient";
 import type { Review } from "@/lib/types";
+import type { TasteTrustSummary } from "@/lib/taste-trust";
 
 const ME_TTL_MS = 3 * 60 * 1000;
 const API_URL = "/api/me";
@@ -19,6 +20,7 @@ type MeApiResponse = {
   commentMap?: Record<string, { count: number; top: import("@/lib/types").Comment }>;
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
+  tasteTrust?: TasteTrustSummary;
 };
 
 export function MeSkeleton() {
@@ -85,6 +87,7 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
       commentMap={data.commentMap ?? {}}
       likedByMeMap={data.likedByMeMap ?? {}}
       bookmarkedPostMap={data.bookmarkedPostMap ?? {}}
+      tasteTrust={data.tasteTrust}
     />
   );
 }

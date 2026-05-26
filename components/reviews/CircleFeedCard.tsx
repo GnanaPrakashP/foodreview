@@ -4,7 +4,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Heart, MapPin, MessageCircle, MoreVertical, Star } from "lucide-react";
+import { Heart, MapPin, MessageCircle, MoreVertical, Star, Utensils } from "lucide-react";
 import type { Review } from "@/lib/types";
 import PostShareButton from "@/components/posts/PostShareButton";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
@@ -13,6 +13,7 @@ import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { patchPostEngagement, readPostEngagement } from "@/lib/post-engagement-cache";
 import { reviewMediaItems } from "@/lib/review-media";
+import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 
 interface Props {
   review: Review;
@@ -26,6 +27,7 @@ interface Props {
   onDeleted?: (review: Review) => void;
   requestStatus?: "idle" | "loading" | "pending" | "joined";
   onRequestClick?: () => void;
+  tasteTrustSummary?: PostTasteTrustSummary | null;
   noBorder?: boolean;
 }
 
@@ -94,6 +96,7 @@ export default function CircleFeedCard({
   onDeleted,
   requestStatus,
   onRequestClick,
+  tasteTrustSummary = null,
   noBorder = false,
 }: Props) {
   const router = useRouter();
@@ -111,6 +114,7 @@ export default function CircleFeedCard({
   const [deleteReviewError, setDeleteReviewError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const commentCount = initialCommentCount;
+  const triedCount = tasteTrustSummary?.tried_count ?? 0;
   const [photoIndex, setPhotoIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const postMenuRef = useRef<HTMLDivElement>(null);
@@ -301,6 +305,18 @@ export default function CircleFeedCard({
           {commentCount}
         </span>
       </Link>
+      <Link
+        href={`/reviews/${encodeURIComponent(review.id)}`}
+        prefetch={false}
+        onClick={(event) => event.stopPropagation()}
+        aria-label={triedCount > 0 ? `${triedCount} tried this` : "Mark this recommendation as tried"}
+        style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "5px" }}
+      >
+        <Utensils size={15} strokeWidth={2} color="var(--muted)" style={{ flexShrink: 0 }} />
+        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)" }}>
+          {triedCount}
+        </span>
+      </Link>
       <button
         key={`bm-${bookmarkBounceKey}`}
         onClick={(event) => {
@@ -415,7 +431,6 @@ export default function CircleFeedCard({
                   border: "1px solid var(--border)",
                   borderRadius: "12px",
                   padding: "6px",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
                   zIndex: 15,
                 }}
               >
@@ -526,6 +541,16 @@ export default function CircleFeedCard({
                 <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>{" "}
                 {review.body}
               </p>
+            </div>
+          )}
+
+          {review.tags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+              {review.tags.map((tag) => (
+                <span key={tag} style={{ display: "inline-flex", alignItems: "center", background: "rgba(240,96,48,0.1)", border: "1px solid rgba(240,96,48,0.22)", borderRadius: "999px", padding: "4px 8px", fontSize: "10px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1 }}>
+                  {tag}
+                </span>
+              ))}
             </div>
           )}
 

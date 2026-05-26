@@ -839,7 +839,6 @@ export default function ManualQaClient() {
               alignItems: "center",
               gap: "7px",
               cursor: "pointer",
-              boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
               backdropFilter: "blur(10px)",
             }}
           >

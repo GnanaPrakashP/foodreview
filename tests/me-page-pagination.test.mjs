@@ -158,6 +158,9 @@ function loadMeRoute({ db, authUser }) {
       if (id === "@/lib/people-page-data") {
         return { invalidatePeoplePageCacheForNames: () => {} };
       }
+      if (id === "@/lib/taste-trust") {
+        return { tasteTrustSummaryFromProfile: () => ({ trust_score: 50, trust_level: "New Reviewer", confirmed_recommendations_count: 0 }) };
+      }
       throw new Error(`Unexpected require in me-route tests: ${id}`);
     },
   });

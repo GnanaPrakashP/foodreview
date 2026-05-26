@@ -98,6 +98,7 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
         initialMutualCircle={data.mutualMembers}
         initialLikedMap={data.likedByMeMap}
         initialBookmarkedPostMap={data.bookmarkedPostMap}
+        initialTasteTrustSummaryMap={data.tasteTrustSummaryMap}
         initialHasMore={data.hasMore}
         initialNextCursor={data.nextCursor}
       />

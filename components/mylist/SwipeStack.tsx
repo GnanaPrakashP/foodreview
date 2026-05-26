@@ -35,7 +35,6 @@ function BoxedPostCard({
         borderRadius: 22,
         background: "var(--bg)",
         border: "1px solid var(--border)",
-        boxShadow: "0 18px 40px rgba(0,0,0,0.24)",
         scrollbarWidth: "none",
         touchAction: "pan-y",
       }}

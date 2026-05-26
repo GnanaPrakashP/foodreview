@@ -75,8 +75,6 @@ export default function BottomNav() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    boxShadow:
-                      "0 8px 24px rgba(240,96,48,0.40), 0 2px 8px rgba(0,0,0,0.35)",
                   }}
                 >
                   {tab.Icon && <tab.Icon size={22} strokeWidth={2.2} color="white" />}

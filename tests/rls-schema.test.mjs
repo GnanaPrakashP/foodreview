@@ -253,3 +253,32 @@ test("schema: wishlist uniqueness is post-level, with legacy place saves separat
     "restaurant-level uniqueness must not make every post for the same place look saved"
   );
 });
+
+// ── TASTE TRUST ───────────────────────────────────────────────────────────────
+
+test("schema: recommendation feedback is limited to visible public or circle posts", () => {
+  const insertBlocks = policiesFor("recommendation_feedback", "insert");
+  const updateBlocks = policiesFor("recommendation_feedback", "update");
+  assert.ok(insertBlocks.length > 0, "No recommendation feedback INSERT policy found");
+  assert.ok(updateBlocks.length > 0, "No recommendation feedback UPDATE policy found");
+  assert.ok(insertBlocks.some((b) => /feedback_user_id\s*=\s*auth\.uid\(\)/.test(b)));
+  assert.ok(updateBlocks.some((b) => /feedback_user_id\s*=\s*auth\.uid\(\)/.test(b)));
+  assert.ok(insertBlocks.some((b) => /r\.visibility in \('public', 'circle'\)/i.test(b)));
+  assert.ok(updateBlocks.some((b) => /r\.visibility in \('public', 'circle'\)/i.test(b)));
+  assert.ok(schema.includes("recommendation_feedback_not_self"));
+});
+
+test("schema: user tried items are private-capable owner records with source-post uniqueness", () => {
+  assert.match(schema, /create table if not exists public\.user_tried_items/i);
+  assert.match(schema, /visibility\s+text\s+not null default 'private'/i);
+  assert.match(schema, /user_tried_items_user_source_post_unique/i);
+  assert.match(schema, /where source_post_id is not null/i);
+  assert.match(schema, /user_tried_items_not_self/i);
+
+  const selectBlocks = policiesFor("user_tried_items", "select");
+  const insertBlocks = policiesFor("user_tried_items", "insert");
+  const updateBlocks = policiesFor("user_tried_items", "update");
+  assert.ok(selectBlocks.some((b) => /user_id\s*=\s*auth\.uid\(\)/.test(b)));
+  assert.ok(insertBlocks.some((b) => /user_id\s*=\s*auth\.uid\(\)/.test(b)));
+  assert.ok(updateBlocks.some((b) => /user_id\s*=\s*auth\.uid\(\)/.test(b)));
+});

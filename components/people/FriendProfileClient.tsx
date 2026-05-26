@@ -11,6 +11,7 @@ import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
+import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -76,6 +77,7 @@ export default function FriendProfileClient({
   initialTheirCircleCount = 0,
   initialCommonRestaurantCount = null,
   initialHasIncomingRequest = false,
+  tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
 }: {
   name: string;
   displayName?: string;
@@ -88,6 +90,7 @@ export default function FriendProfileClient({
   initialTheirCircleCount?: number;
   initialCommonRestaurantCount?: number | null;
   initialHasIncomingRequest?: boolean;
+  tasteTrust?: TasteTrustSummary;
 }) {
   const router = useRouter();
   const hasVisibleCirclePosts = useMemo(
@@ -367,28 +370,32 @@ export default function FriendProfileClient({
 
       {/* ── Stats Row ── */}
       <div style={{ padding: "0 20px 20px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "8px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", alignItems: "start" }}>
+          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{Math.round(tasteTrust.trust_score)}</div>
+            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, lineHeight: 1.1 }}>Trust</div>
+          </div>
           {[
             { val: uniquePlaces, label: "Places" },
             { val: uniqueDishes, label: "Dishes" },
           ].map(({ val, label }) => (
-            <div key={label} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "24px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>{val}</div>
-              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+            <div key={label} style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{val}</div>
+              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>{label}</div>
             </div>
           ))}
           {isPrivateLocked ? (
-            <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center" }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "24px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>{theirCircleCount}</div>
-              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>Circle</div>
+            <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{theirCircleCount}</div>
+              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Circle</div>
             </div>
           ) : (
-            <Link href={`/people/${encodeURIComponent(name)}/circle`} style={{ textDecoration: "none" }}>
-              <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "14px 10px", textAlign: "center", cursor: "pointer" }}>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "24px", fontWeight: 700, color: "var(--cream)", lineHeight: 1 }}>
+            <Link href={`/people/${encodeURIComponent(name)}/circle`} style={{ textDecoration: "none", display: "block" }}>
+              <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", cursor: "pointer", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
                   {relationshipReady ? theirCircleCount : "—"}
                 </div>
-                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "5px", fontFamily: "'DM Sans', sans-serif" }}>Circle</div>
+                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Circle</div>
               </div>
             </Link>
           )}

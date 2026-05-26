@@ -82,7 +82,6 @@ export default async function JoinPage({
           fontWeight: 800,
           color: "white",
           marginBottom: "20px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         }}
       >
         {initials || "?"}
@@ -159,7 +158,6 @@ export default async function JoinPage({
             fontSize: "16px",
             fontWeight: 700,
             cursor: "pointer",
-            boxShadow: "0 8px 24px rgba(240,96,48,0.35)",
           }}
         >
           Join CircleBites →

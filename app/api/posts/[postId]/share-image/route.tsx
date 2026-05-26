@@ -234,11 +234,6 @@ export async function GET(
               borderRadius: "22px",
               overflow: "hidden",
               padding: "18px 20px",
-              boxShadow: `
-                0 18px 46px rgba(0,0,0,0.36),
-                inset 0 1px 0 rgba(255,255,255,0.10),
-                inset 0 -1px 0 rgba(0,0,0,0.22)
-              `,
             }}
           >
 
@@ -258,7 +253,6 @@ export async function GET(
                 color: "white",
                 flexShrink: 0,
                 fontFamily: dmSansFamily,
-                boxShadow: "0 8px 18px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.18)",
               }}
             >
               {initials}
@@ -386,7 +380,6 @@ export async function GET(
                 background: "rgba(240,96,48,0.13)",
                 border: "1px solid rgba(240,96,48,0.26)",
                 borderRadius: "999px",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
                 fontSize: "12px",
                 fontWeight: 700,
                 color: C.orange,

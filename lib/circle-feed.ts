@@ -8,6 +8,8 @@ import { CIRCLE_FEED_MAX_PAGE_SIZE, CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-con
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { getPostTasteTrustSummaryMap } from "@/lib/server/taste-trust";
+import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 
 type FeedDb = {
   auth: {
@@ -36,6 +38,7 @@ const REVIEW_SELECT = [
   "restaurant_lng",
   "items",
   "body",
+  "tags",
   "photo_url",
   "review_photos(public_url, media_type, position)",
   "visibility",
@@ -143,6 +146,7 @@ export type CircleFeedPage = {
   rankMap: Record<string, { rank: number; total: number; visitCount: number }>;
   likedByMeMap: Record<string, boolean>;
   bookmarkedPostMap: Record<string, boolean>;
+  tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
   profileMap: Record<string, string>;
   myName: string;
   joinedCircles: string[];
@@ -262,7 +266,7 @@ async function loadCircleFeedPageForNames(
     : null;
   const postIds = allReviews.map((review) => review.id);
 
-  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = postIds.length > 0
+  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, tasteTrustSummaryMap, profileMap] = postIds.length > 0
     ? await Promise.all([
         readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
         readDb
@@ -277,9 +281,10 @@ async function loadCircleFeedPageForNames(
               .eq("user_name", myName)
               .in("post_id", postIds)
           : Promise.resolve({ data: [] }),
+        getPostTasteTrustSummaryMap(readDb, postIds),
         Promise.resolve().then(() => buildProfileDisplayMap(readDb, allReviews.map((r) => r.reviewer_name))),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, {}];
+    : [{ data: [] }, { data: [] }, { data: [] }, {}, {}];
 
   const likeCountMap: Record<string, number> = {};
   const likedByMeMap: Record<string, boolean> = {};
@@ -340,6 +345,7 @@ async function loadCircleFeedPageForNames(
     rankMap,
     likedByMeMap,
     bookmarkedPostMap,
+    tasteTrustSummaryMap,
     profileMap,
     myName,
     joinedCircles,

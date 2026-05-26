@@ -82,7 +82,6 @@ export default async function CommentPostPage({ params }: Props) {
       initialSnapshotAt={Date.now()}
       profileMap={profileMap}
       autoFocusComment
-      backHref="/"
     />
   );
 }

@@ -64,16 +64,105 @@ const USERS = [
 const PASSWORD = "Test@1234";
 
 /* ── Reviews ── */
-const RESTAURANT_AREA = {
-  "Murugan Idli Shop":      "T. Nagar",
-  "Dindigul Thalappakatti": "T. Nagar",
-  "Chettinad Kitchen":      "Nungambakkam",
-  "Pizza Roma":             "Nungambakkam",
-  "Nagi Ramen":             "Anna Nagar",
-  "Burma Burma":            "Nungambakkam",
-  "Madurai Mess":           "Mylapore",
-  "Burger Lab":             "OMR",
-  "Shawarma Bros":          "Velachery",
+const RESTAURANT_META = {
+  "Murugan Idli Shop": {
+    id: "murugan-idli-shop-t-nagar",
+    area: "T. Nagar",
+    address: "T. Nagar, Chennai",
+    lat: 13.0418,
+    lng: 80.2341,
+  },
+  "Dindigul Thalappakatti": {
+    id: "dindigul-thalappakatti-t-nagar",
+    area: "T. Nagar",
+    address: "T. Nagar, Chennai",
+    lat: 13.0412,
+    lng: 80.2337,
+  },
+  "Chettinad Kitchen": {
+    id: "chettinad-kitchen-nungambakkam",
+    area: "Nungambakkam",
+    address: "Nungambakkam, Chennai",
+    lat: 13.0604,
+    lng: 80.2483,
+  },
+  "Pizza Roma": {
+    id: "pizza-roma-nungambakkam",
+    area: "Nungambakkam",
+    address: "Nungambakkam, Chennai",
+    lat: 13.0612,
+    lng: 80.249,
+  },
+  "Nagi Ramen": {
+    id: "nagi-ramen-anna-nagar",
+    area: "Anna Nagar",
+    address: "Anna Nagar, Chennai",
+    lat: 13.085,
+    lng: 80.2101,
+  },
+  "Burma Burma": {
+    id: "burma-burma-nungambakkam",
+    area: "Nungambakkam",
+    address: "Nungambakkam, Chennai",
+    lat: 13.0608,
+    lng: 80.2495,
+  },
+  "Madurai Mess": {
+    id: "madurai-mess-mylapore",
+    area: "Mylapore",
+    address: "Mylapore, Chennai",
+    lat: 13.0337,
+    lng: 80.2682,
+  },
+  "Burger Lab": {
+    id: "burger-lab-omr",
+    area: "OMR",
+    address: "Old Mahabalipuram Road, Chennai",
+    lat: 12.9725,
+    lng: 80.2497,
+  },
+  "Shawarma Bros": {
+    id: "shawarma-bros-velachery",
+    area: "Velachery",
+    address: "Velachery, Chennai",
+    lat: 12.9755,
+    lng: 80.2209,
+  },
+  "Bombay Brasserie": {
+    id: "bombay-brasserie-adyar",
+    area: "Adyar",
+    address: "Adyar, Chennai",
+    lat: 13.0067,
+    lng: 80.2576,
+  },
+  "Sandy's Chocolate Laboratory": {
+    id: "sandys-chocolate-laboratory-nungambakkam",
+    area: "Nungambakkam",
+    address: "Nungambakkam, Chennai",
+    lat: 13.0627,
+    lng: 80.2476,
+  },
+  "Buhari": {
+    id: "buhari-anna-salai",
+    area: "Anna Salai",
+    address: "Anna Salai, Chennai",
+    lat: 13.0648,
+    lng: 80.2652,
+  },
+  "Ajnabi Mithai Ghar": {
+    id: "ajnabi-mithai-ghar-sowcarpet",
+    area: "Sowcarpet",
+    address: "Sowcarpet, Chennai",
+    lat: 13.0926,
+    lng: 80.2784,
+  },
+  "Writer's Cafe": {
+    id: "writers-cafe-gopalapuram",
+    area: "Gopalapuram",
+    address: "Gopalapuram, Chennai",
+    lat: 13.0485,
+    lng: 80.2576,
+  },
 };
 
 function reviewsFor(fullName) {
@@ -110,6 +199,14 @@ function reviewsFor(fullName) {
       { restaurant_name: "Burger Lab",              items: [{ name: "Spicy Chicken Burger",rating: 4 }, { name: "Milkshake",         rating: 5 }], body: "The milkshake carried hard. Burger was solid.",                             created_at: daysAgo(6)  },
       { restaurant_name: "Madurai Mess",            items: [{ name: "Chicken Kuzhambu",    rating: 4 }, { name: "Rice",              rating: 3 }], body: "Solid comfort food. Nothing fancy but deeply satisfying.",                  created_at: daysAgo(13) },
       { restaurant_name: "Burma Burma",             items: [{ name: "Shan Noodles",        rating: 4 }, { name: "Laphet Thoke",      rating: 5 }], body: "Tea leaf salad is a revelation. Cannot believe I slept on it so long.",    created_at: daysAgo(21) },
+      { restaurant_name: "Bombay Brasserie",         items: [{ name: "Paneer Tikka",        rating: 5 }, { name: "Roomali Roti",      rating: 4 }], body: "Paneer was smoky, soft, and properly charred at the edges.",                 created_at: daysAgo(2)  },
+      { restaurant_name: "Sandy's Chocolate Laboratory", items: [{ name: "Chocolate Cake",  rating: 5 }, { name: "Cold Coffee",       rating: 4 }], body: "The chocolate cake is dangerous in the best possible way.",                  created_at: daysAgo(3)  },
+      { restaurant_name: "Buhari",                   items: [{ name: "Chicken 65",          rating: 5 }, { name: "Mutton Biryani",    rating: 4 }], body: "Chicken 65 still tastes like Chennai food history.",                        created_at: daysAgo(4)  },
+      { restaurant_name: "Ajnabi Mithai Ghar",       items: [{ name: "Jalebi",              rating: 5 }, { name: "Kachori",           rating: 4 }], body: "Hot jalebi and kachori is a perfect Sowcarpet detour.",                     created_at: daysAgo(8)  },
+      { restaurant_name: "Writer's Cafe",            items: [{ name: "Pancakes",            rating: 4 }, { name: "Filter Coffee",     rating: 5 }], body: "Quiet table, crisp pancakes, strong coffee. Good morning fuel.",             created_at: daysAgo(10) },
+      { restaurant_name: "Dindigul Thalappakatti",   items: [{ name: "Mutton Biryani",      rating: 5 }, { name: "Chicken Chukka",    rating: 5 }], body: "This is the biryani plate I would bring a friend to Chennai for.",           created_at: daysAgo(12) },
+      { restaurant_name: "Shawarma Bros",            items: [{ name: "Chicken Shawarma",    rating: 4 }, { name: "Peri Peri Fries",   rating: 4 }], body: "Late evening shawarma that understands the assignment.",                    created_at: daysAgo(15) },
+      { restaurant_name: "Murugan Idli Shop",        items: [{ name: "Ghee Podi Idli",      rating: 5 }, { name: "Filter Coffee",     rating: 4 }], body: "Ghee podi idli is simple, rich, and exactly what I wanted.",                 created_at: daysAgo(18) },
     ],
     "Ananya Krishnan": [
       { restaurant_name: "Chettinad Kitchen",       items: [{ name: "Pepper Chicken",      rating: 5 }, { name: "Idiyappam",         rating: 4 }], body: "Pepper chicken with idiyappam — this combo doesn't miss.",                 created_at: daysAgo(4)  },
@@ -146,8 +243,129 @@ function reviewsFor(fullName) {
   return (all[fullName] ?? []).map((r) => ({
     ...r,
     reviewer_name: fullName,
-    area: RESTAURANT_AREA[r.restaurant_name] ?? null,
+    restaurant_id: RESTAURANT_META[r.restaurant_name]?.id ?? null,
+    area: RESTAURANT_META[r.restaurant_name]?.area ?? null,
+    restaurant_address: RESTAURANT_META[r.restaurant_name]?.address ?? null,
+    restaurant_lat: RESTAURANT_META[r.restaurant_name]?.lat ?? null,
+    restaurant_lng: RESTAURANT_META[r.restaurant_name]?.lng ?? null,
+    visibility: "public",
   }));
+}
+
+async function findAuthUserByEmail(email) {
+  let page = 1;
+  const perPage = 100;
+  while (true) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const found = data.users.find((user) => user.email?.toLowerCase() === email.toLowerCase());
+    if (found) return found;
+    if (data.users.length < perPage) return null;
+    page++;
+  }
+}
+
+async function authUserForSeedUser(u, fullName) {
+  const { data: authData, error: authErr } = await admin.auth.admin.createUser({
+    email: u.email,
+    password: PASSWORD,
+    email_confirm: true,
+    user_metadata: {
+      full_name: fullName,
+      username: u.username,
+      onboarding_complete: true,
+    },
+  });
+
+  if (!authErr) return { user: authData.user, created: true };
+
+  if (!authErr.message.includes("already been registered")) {
+    throw authErr;
+  }
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("username", u.username)
+    .maybeSingle();
+
+  if (profile?.id) return { user: { id: profile.id }, created: false };
+
+  const existing = await findAuthUserByEmail(u.email);
+  if (existing) return { user: existing, created: false };
+
+  throw new Error(`Auth user exists for ${u.email}, but could not find its id`);
+}
+
+async function insertMissingReviews(fullName, reviews) {
+  if (!reviews.length) return 0;
+
+  const { data: existing, error: existingErr } = await admin
+    .from("reviews")
+    .select("restaurant_name, body")
+    .eq("reviewer_name", fullName)
+    .in("restaurant_name", [...new Set(reviews.map((r) => r.restaurant_name))]);
+
+  if (existingErr) throw existingErr;
+
+  const existingKeys = new Set((existing ?? []).map((r) => `${r.restaurant_name}\x00${r.body ?? ""}`));
+  const missing = reviews.filter((r) => !existingKeys.has(`${r.restaurant_name}\x00${r.body ?? ""}`));
+  if (!missing.length) return 0;
+
+  const { error } = await admin.from("reviews").insert(missing);
+  if (error) throw error;
+  return missing.length;
+}
+
+async function seedRahulWishlist() {
+  const { data: posts, error: postsErr } = await admin
+    .from("reviews")
+    .select("id, restaurant_name")
+    .eq("visibility", "public")
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .neq("reviewer_name", "Rahul Gupta")
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  if (postsErr) {
+    console.log(`  ⚠️  Rahul wishlist posts: ${postsErr.message}`);
+    return;
+  }
+
+  const rows = (posts ?? []).map((post) => ({
+    user_name: "Rahul Gupta",
+    restaurant_name: post.restaurant_name,
+    post_id: post.id,
+  }));
+
+  if (!rows.length) return;
+
+  const { data: existing, error: existingErr } = await admin
+    .from("wishlist")
+    .select("post_id")
+    .eq("user_name", "Rahul Gupta")
+    .in("post_id", rows.map((row) => row.post_id));
+
+  if (existingErr) {
+    console.log(`  ⚠️  Rahul wishlist existing check: ${existingErr.message}`);
+    return;
+  }
+
+  const existingIds = new Set((existing ?? []).map((row) => row.post_id));
+  const missingRows = rows.filter((row) => !existingIds.has(row.post_id));
+  if (!missingRows.length) {
+    console.log(`  ✓  Rahul hungry/saved picks already seeded`);
+    return;
+  }
+
+  const { error } = await admin.from("wishlist").insert(missingRows);
+
+  if (error) {
+    console.log(`  ⚠️  Rahul wishlist: ${error.message}`);
+  } else {
+    console.log(`  ✓  Rahul hungry/saved picks: ${missingRows.length} new (${rows.length} seeded total)`);
+  }
 }
 
 /* ── Seed ── */
@@ -158,30 +376,19 @@ async function seed() {
     const fullName = `${u.firstName} ${u.lastName}`;
     process.stdout.write(`  Creating ${fullName} (${u.email})… `);
 
-    // 1. Create auth user
-    const { data: authData, error: authErr } = await admin.auth.admin.createUser({
-      email: u.email,
-      password: PASSWORD,
-      email_confirm: true,
-      user_metadata: {
-        full_name: fullName,
-        username: u.username,
-        onboarding_complete: true,
-      },
-    });
-
-    if (authErr) {
-      if (authErr.message.includes("already been registered")) {
-        console.log("⚠️  already exists, skipping auth");
-      } else {
-        console.log(`❌  auth error: ${authErr.message}`);
-      }
+    let authUser;
+    let createdAuth = false;
+    try {
+      const result = await authUserForSeedUser(u, fullName);
+      authUser = result.user;
+      createdAuth = result.created;
+    } catch (authErr) {
+      console.log(`❌  auth error: ${authErr.message}`);
       continue;
     }
 
-    const userId = authData.user.id;
+    const userId = authUser.id;
 
-    // 2. Insert profile
     const { error: profileErr } = await admin.from("profiles").upsert({
       id:         userId,
       first_name: u.firstName,
@@ -193,16 +400,17 @@ async function seed() {
       console.log(`⚠️  profile: ${profileErr.message}`);
     }
 
-    // 3. Insert reviews
     const reviews = reviewsFor(fullName);
-    const { error: reviewErr } = await admin.from("reviews").insert(reviews);
-
-    if (reviewErr) {
+    try {
+      const inserted = await insertMissingReviews(fullName, reviews);
+      const authLabel = createdAuth ? "auth created" : "auth exists";
+      console.log(`✓  ${authLabel}, ${inserted} new reviews (${reviews.length} seeded total)`);
+    } catch (reviewErr) {
       console.log(`⚠️  reviews: ${reviewErr.message}`);
-    } else {
-      console.log(`✓  ${reviews.length} reviews`);
     }
   }
+
+  await seedRahulWishlist();
 
   console.log("\n✅  Seed complete!\n");
   console.log("Login with any of these accounts:");

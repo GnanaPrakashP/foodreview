@@ -5,6 +5,7 @@ import Link from "next/link";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Review, Comment } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
+import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import { Users } from "lucide-react";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
@@ -22,6 +23,7 @@ interface Props {
   initialMutualCircle?: string[];
   initialLikedMap?: Record<string, boolean>;
   initialBookmarkedPostMap?: Record<string, boolean>;
+  initialTasteTrustSummaryMap?: Record<string, PostTasteTrustSummary>;
   initialHasMore?: boolean;
   initialNextCursor?: CircleFeedCursor | null;
 }
@@ -37,6 +39,7 @@ export default function CircleFeedClient({
   initialMutualCircle = [],
   initialLikedMap = {},
   initialBookmarkedPostMap = {},
+  initialTasteTrustSummaryMap = {},
   initialHasMore = false,
   initialNextCursor = null,
 }: Props) {
@@ -50,6 +53,7 @@ export default function CircleFeedClient({
   const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(initialProfileMap);
   const [feedLikedMap, setFeedLikedMap] = useState(initialLikedMap);
   const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(initialBookmarkedPostMap);
+  const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(initialTasteTrustSummaryMap);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -62,6 +66,7 @@ export default function CircleFeedClient({
     setFeedProfileMap(initialProfileMap);
     setFeedLikedMap(initialLikedMap);
     setFeedBookmarkedPostMap(initialBookmarkedPostMap);
+    setFeedTasteTrustSummaryMap(initialTasteTrustSummaryMap);
     setHasMore(initialHasMore);
     setNextCursor(initialNextCursor);
 
@@ -73,6 +78,7 @@ export default function CircleFeedClient({
       profileMap: initialProfileMap,
       likedByMeMap: initialLikedMap,
       bookmarkedPostMap: initialBookmarkedPostMap,
+      tasteTrustSummaryMap: initialTasteTrustSummaryMap,
       myName: initialMyName,
       joinedCircles: initialCircle,
       mutualMembers: initialMutualCircle,
@@ -103,6 +109,7 @@ export default function CircleFeedClient({
     initialProfileMap,
     initialLikedMap,
     initialBookmarkedPostMap,
+    initialTasteTrustSummaryMap,
     initialMyName,
     initialCircle,
     initialMutualCircle,
@@ -137,6 +144,7 @@ export default function CircleFeedClient({
       setFeedProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
       setFeedLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
       setFeedBookmarkedPostMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
+      setFeedTasteTrustSummaryMap((current) => ({ ...current, ...(data.tasteTrustSummaryMap ?? {}) }));
       setHasMore(Boolean(data.hasMore));
       setNextCursor(data.nextCursor ?? null);
     } catch {
@@ -211,6 +219,7 @@ export default function CircleFeedClient({
               initialCommentCount={eng?.count ?? 0}
               initialLiked={feedLikedMap[review.id] ?? false}
               initialBookmarked={feedBookmarkedPostMap[review.id] ?? false}
+              tasteTrustSummary={feedTasteTrustSummaryMap[review.id] ?? null}
               initialMyName={myName}
               profileMap={feedProfileMap}
               priorityImage={index === 0}

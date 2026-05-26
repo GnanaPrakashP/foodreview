@@ -9,6 +9,7 @@ import { notificationProfileName } from "@/lib/notifications";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { getPostTasteTrustSummary } from "@/lib/server/taste-trust";
 import type { Metadata } from "next";
 
 interface Props {
@@ -93,7 +94,7 @@ export default async function ReviewDetailPage({ params }: Props) {
 
   if (!canViewerSeeReview(normalizedReview, { viewerName: myName, circleOwnerNames })) notFound();
 
-  const [{ data: likeRows }, { data: comments }, { data: viewerLike }, { data: viewerBookmark }] = await Promise.all([
+  const [{ data: likeRows }, { data: comments }, { data: viewerLike }, { data: viewerBookmark }, postTasteTrustSummary] = await Promise.all([
     readDb.from("likes").select("post_id, user_name").eq("post_id", normalizedReview.id),
     readDb
       .from("comments")
@@ -107,6 +108,7 @@ export default async function ReviewDetailPage({ params }: Props) {
     myName
       ? readDb.from("wishlist").select("post_id").eq("post_id", normalizedReview.id).eq("user_name", myName).maybeSingle()
       : Promise.resolve({ data: null }),
+    getPostTasteTrustSummary(readDb, normalizedReview.id),
   ]);
 
   const profileMap = await buildProfileDisplayMap(supabase, [
@@ -125,6 +127,7 @@ export default async function ReviewDetailPage({ params }: Props) {
       initialBookmarked={Boolean(viewerBookmark)}
       initialSnapshotAt={Date.now()}
       profileMap={profileMap}
+      initialTasteTrustSummary={postTasteTrustSummary}
     />
   );
 }
