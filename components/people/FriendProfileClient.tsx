@@ -7,11 +7,13 @@ import type { AccountType, Review } from "@/lib/types";
 import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
 import { normalizeVisibility } from "@/lib/visibility";
 import ConfirmModal from "@/components/ui/ConfirmModal";
+import ProfileDishesList from "@/components/profile/ProfileDishesList";
 import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
+import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -54,6 +56,8 @@ function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
 }
 
 type CircleStatus = "one_way" | "sent" | "none";
+type ProfileTab = "places" | "dishes";
+type ProfileCursor = { createdAt: string; id: string };
 
 async function fetchCircleStatusPayload(personName: string): Promise<CircleStatusPayload> {
   try {
@@ -61,6 +65,41 @@ async function fetchCircleStatusPayload(personName: string): Promise<CircleStatu
   } catch {
     return {};
   }
+}
+
+function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
+  const tabs: Array<{ id: ProfileTab; label: string }> = [
+    { id: "places", label: "Places" },
+    { id: "dishes", label: "Dishes" },
+  ];
+
+  return (
+    <div style={{ display: "flex", padding: "0 20px 16px" }}>
+      {tabs.map((tab) => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            style={{
+              flex: 1,
+              padding: "10px 0 9px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              color: active ? "var(--orange)" : "var(--muted)",
+              background: "none",
+              border: "none",
+              borderBottom: `2px solid ${active ? "var(--orange)" : "var(--border)"}`,
+              fontFamily: "'DM Sans', sans-serif",
+            }}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 /* ─── main component ──────────────────────────────── */
@@ -71,6 +110,7 @@ export default function FriendProfileClient({
   bio = "",
   accountType,
   reviews,
+  publicBestReviews = [],
   hasHiddenCirclePosts = false,
   initialMyName = "",
   initialCircleStatus = "none",
@@ -78,12 +118,15 @@ export default function FriendProfileClient({
   initialCommonRestaurantCount = null,
   initialHasIncomingRequest = false,
   tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
+  initialHasMore = false,
+  initialNextCursor = null,
 }: {
   name: string;
   displayName?: string;
   bio?: string;
   accountType: AccountType;
   reviews: Review[];
+  publicBestReviews?: Review[];
   hasHiddenCirclePosts?: boolean;
   initialMyName?: string;
   initialCircleStatus?: "one_way" | "sent" | "none";
@@ -91,6 +134,8 @@ export default function FriendProfileClient({
   initialCommonRestaurantCount?: number | null;
   initialHasIncomingRequest?: boolean;
   tasteTrust?: TasteTrustSummary;
+  initialHasMore?: boolean;
+  initialNextCursor?: ProfileCursor | null;
 }) {
   const router = useRouter();
   const hasVisibleCirclePosts = useMemo(
@@ -107,6 +152,12 @@ export default function FriendProfileClient({
   const [confirmAction, setConfirmAction] = useState<"cancel_request" | "leave_circle" | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [respondBusy, setRespondBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<ProfileTab>("places");
+  const [profileReviews, setProfileReviews] = useState(reviews);
+  const [hasMoreReviews, setHasMoreReviews] = useState(initialHasMore);
+  const [nextReviewsCursor, setNextReviewsCursor] = useState<ProfileCursor | null>(initialNextCursor);
+  const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
+  const [loadMoreReviewsError, setLoadMoreReviewsError] = useState("");
   // If the server already supplied relationship data we can show the button immediately.
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const loadSeqRef = useRef(0);
@@ -117,21 +168,22 @@ export default function FriendProfileClient({
   const isCheckingPrivateAccess = false;
 
   const visibleReviews = useMemo(() => {
-    return reviews;
-  }, [reviews]);
+    return profileReviews;
+  }, [profileReviews]);
 
-  const uniquePlaces = useMemo(() => new Set(reviews.map((r) => r.restaurant_name)).size, [reviews]);
+  useEffect(() => {
+    setProfileReviews(reviews);
+    setHasMoreReviews(initialHasMore);
+    setNextReviewsCursor(initialNextCursor);
+  }, [reviews, initialHasMore, initialNextCursor]);
+
+  const uniquePlaces = useMemo(() => new Set(profileReviews.map((r) => r.restaurant_name)).size, [profileReviews]);
 
   const uniqueDishes = useMemo(() => {
-    const pairs = new Set<string>();
-    for (const r of reviews)
-      for (const it of r.items)
-        if (it.name.trim())
-          pairs.add(`${it.name.trim().toLowerCase()}\x00${r.restaurant_name.toLowerCase()}`);
-    return pairs.size;
-  }, [reviews]);
+    return uniqueDishRestaurantPairs(profileReviews);
+  }, [profileReviews]);
 
-  const totalVisits = useMemo(() => reviews.length, [reviews]);
+  const totalVisits = useMemo(() => profileReviews.length, [profileReviews]);
   const rankedPlaces = useMemo(() => buildRankedPlaces(visibleReviews), [visibleReviews]);
 
   const loadCircleStatus = useCallback((me: string) => {
@@ -318,6 +370,32 @@ export default function FriendProfileClient({
     }
   }
 
+  async function loadMoreReviews() {
+    if (loadingMoreReviews || !hasMoreReviews || !nextReviewsCursor) return;
+    setLoadingMoreReviews(true);
+    setLoadMoreReviewsError("");
+    try {
+      const params = new URLSearchParams({
+        limit: "24",
+        cursor: JSON.stringify(nextReviewsCursor),
+      });
+      const response = await fetch(`/api/users/${encodeURIComponent(name)}/reviews?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "Unable to load more reviews");
+      setProfileReviews((current) => {
+        const seen = new Set(current.map((review) => review.id));
+        const fresh = ((payload.reviews ?? []) as Review[]).filter((review) => !seen.has(review.id));
+        return [...current, ...fresh];
+      });
+      setHasMoreReviews(Boolean(payload.hasMore));
+      setNextReviewsCursor(payload.nextCursor ?? null);
+    } catch {
+      setLoadMoreReviewsError("Could not load more places. Please try again.");
+    } finally {
+      setLoadingMoreReviews(false);
+    }
+  }
+
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
 
@@ -490,10 +568,12 @@ export default function FriendProfileClient({
         }}
       />
 
-      {/* ── Ranked List ── */}
+      {!isPrivateLocked && <ProfileTabs activeTab={activeTab} onChange={setActiveTab} />}
+
+      {/* ── Profile Lists ── */}
       <div style={{ padding: "0 20px" }}>
         <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
-          {(displayName || name).split(" ")[0]}&apos;s List
+          {(displayName || name).split(" ")[0]}&apos;s {activeTab === "dishes" ? "Dishes" : "Places"}
         </p>
 
         {isPrivateLocked ? (
@@ -515,12 +595,23 @@ export default function FriendProfileClient({
               />
             ))}
           </div>
+        ) : activeTab === "dishes" ? (
+          <div style={{ margin: "0 -20px" }}>
+            <ProfileDishesList
+              triedReviews={visibleReviews}
+              publicReviews={publicBestReviews}
+              triedLabel={`${(displayName || name).split(" ")[0]}'s best`}
+              emptyText="No dishes logged yet"
+              bottomPadding={110}
+            />
+          </div>
         ) : rankedPlaces.length === 0 ? (
           <p style={{ textAlign: "center", padding: "48px 0", fontSize: "15px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
             No places logged yet
           </p>
         ) : (
-          rankedPlaces.map((place, i) => (
+          <>
+          {rankedPlaces.map((place, i) => (
             <Link
               key={place.name}
               href={`/people/${encodeURIComponent(name)}/${encodeURIComponent(place.name)}`}
@@ -553,7 +644,34 @@ export default function FriendProfileClient({
                 </div>
               )}
             </Link>
-          ))
+          ))}
+          {loadMoreReviewsError && (
+            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 0 0" }}>
+              {loadMoreReviewsError}
+            </p>
+          )}
+          {hasMoreReviews && (
+            <button
+              onClick={loadMoreReviews}
+              disabled={loadingMoreReviews}
+              style={{
+                background: loadingMoreReviews ? "var(--surface)" : "var(--orange)",
+                color: loadingMoreReviews ? "var(--muted)" : "white",
+                border: "none",
+                borderRadius: "14px",
+                padding: "13px",
+                margin: "16px 0 110px",
+                width: "100%",
+                fontFamily: "'Syne', sans-serif",
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor: loadingMoreReviews ? "default" : "pointer",
+              }}
+            >
+              {loadingMoreReviews ? "Loading..." : "Load more"}
+            </button>
+          )}
+          </>
         )}
       </div>
     </div>

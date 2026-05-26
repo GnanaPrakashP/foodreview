@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CIRCLE_FEED_PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
 import { parseCircleFeedCursor } from "@/lib/circle-feed";
-import type { Review, Comment } from "@/lib/types";
+import type { Comment } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
 
@@ -70,6 +70,8 @@ export async function GET(req: NextRequest) {
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
   const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
+  const placeId = req.nextUrl.searchParams.get("placeId")?.trim() || "";
+  const restaurantName = req.nextUrl.searchParams.get("restaurantName")?.trim() || "";
   const lat = parseCoordinate(req.nextUrl.searchParams.get("lat"), -90, 90);
   const lng = parseCoordinate(req.nextUrl.searchParams.get("lng"), -180, 180);
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
@@ -101,6 +103,9 @@ export async function GET(req: NextRequest) {
         .gte("restaurant_lng", bounds.minLng)
         .lte("restaurant_lng", bounds.maxLng);
     }
+
+    if (placeId) query = query.eq("restaurant_id", placeId);
+    else if (restaurantName) query = query.eq("restaurant_name", restaurantName);
 
     if (cursor) {
       query = query.or(

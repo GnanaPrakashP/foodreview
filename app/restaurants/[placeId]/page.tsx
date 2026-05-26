@@ -12,6 +12,7 @@ import { restaurantLocationLabel } from "@/lib/location";
 import RestaurantPostsClient from "@/components/trending/RestaurantPostsClient";
 
 export const dynamic = "force-dynamic";
+const RESTAURANT_PAGE_SIZE = 24;
 
 type Props = {
   params: Promise<{ placeId: string }>;
@@ -49,12 +50,19 @@ export default async function RestaurantPlacePage({ params, searchParams }: Prop
       .is("reported_at", null)
       .eq("status", "active")
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(RESTAURANT_PAGE_SIZE + 1)
       .returns<Review[]>(),
   ]);
 
-  const reviews = filterGlobalTrendingReviews(
+  const fetchedReviews = filterGlobalTrendingReviews(
     ((rawReviews ?? []) as unknown[]).map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]))
   );
+  const hasMore = fetchedReviews.length > RESTAURANT_PAGE_SIZE;
+  const reviews = fetchedReviews.slice(0, RESTAURANT_PAGE_SIZE);
+  const nextCursor = hasMore && reviews.length > 0
+    ? { createdAt: reviews[reviews.length - 1].created_at, id: reviews[reviews.length - 1].id }
+    : null;
   const restaurantName = reviews[0]?.restaurant_name || fallbackName;
   const area = reviews.map((review) => restaurantLocationLabel(review)).find(Boolean) || fallbackAddress;
   const myName = (user?.user_metadata?.username as string) ?? "";
@@ -132,6 +140,9 @@ export default async function RestaurantPlacePage({ params, searchParams }: Prop
         likedByMeMap={likedByMeMap}
         bookmarkedPostMap={bookmarkedPostMap}
         myName={myName}
+        hasMore={hasMore}
+        nextCursor={nextCursor}
+        loadMoreUrl={`/api/feed/public?limit=${RESTAURANT_PAGE_SIZE}&placeId=${encodeURIComponent(decodedPlaceId)}${myName ? `&viewer=${encodeURIComponent(myName)}` : ""}`}
       />
     </div>
   );

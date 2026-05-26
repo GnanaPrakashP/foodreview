@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useEffect, useState } from "react";
-import { ChevronDown, LocateFixed, Search, X } from "lucide-react";
+import { ChevronDown, LocateFixed, Search } from "lucide-react";
 import type { Comment, Review } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { getStoredActorName } from "@/lib/browser-actor";
+import { readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import {
   TRENDING_LOCATION_LABEL_COOKIE,
   TRENDING_LOCATION_LABEL_STORAGE_KEY,
@@ -15,6 +16,7 @@ import {
 import SwipeStack from "./SwipeStack";
 
 const SWIPE_PAGE_SIZE = 40;
+const SWIPE_TTL_MS = 2 * 60 * 1000;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 
 type UserLocation = { lat: number; lng: number; label: string };
@@ -242,29 +244,44 @@ export default function HungryPageClient() {
       const params = new URLSearchParams({ limit: String(SWIPE_PAGE_SIZE), excludeSynthetic: "1" });
       if (viewerName) params.set("viewer", viewerName);
       if (cursor) params.set("cursor", JSON.stringify(cursor));
-      const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });
-      const data = await response.json() as PublicFeedResponse;
-      if (!response.ok || data.error) throw new Error(data.error || "Unable to load hungry picks");
+      const url = `/api/feed/public?${params}`;
+      const applyData = (data: PublicFeedResponse) => {
+        setPosts((current) => {
+          if (!cursor) return data.reviews ?? [];
+          const seen = new Set(current.map((post) => post.id));
+          return [...current, ...(data.reviews ?? []).filter((post) => !seen.has(post.id))];
+        });
+        setLikeCountMap((current) => cursor ? { ...current, ...(data.likeCountMap ?? {}) } : (data.likeCountMap ?? {}));
+        setCommentMap((current) => cursor ? { ...current, ...(data.commentMap ?? {}) } : (data.commentMap ?? {}));
+        setLikedMap((current) => cursor ? { ...current, ...(data.likedByMeMap ?? {}) } : (data.likedByMeMap ?? {}));
+        setBookmarkedMap((current) => cursor ? { ...current, ...(data.bookmarkedPostMap ?? {}) } : (data.bookmarkedPostMap ?? {}));
+        setProfileMap((current) => cursor ? { ...current, ...(data.profileMap ?? {}) } : (data.profileMap ?? {}));
+        setHasMore(Boolean(data.hasMore));
+        setNextCursor(data.nextCursor ?? null);
+      };
 
-      setPosts((current) => {
-        if (!cursor) return data.reviews ?? [];
-        const seen = new Set(current.map((post) => post.id));
-        return [...current, ...(data.reviews ?? []).filter((post) => !seen.has(post.id))];
-      });
-      setLikeCountMap((current) => cursor ? { ...current, ...(data.likeCountMap ?? {}) } : (data.likeCountMap ?? {}));
-      setCommentMap((current) => cursor ? { ...current, ...(data.commentMap ?? {}) } : (data.commentMap ?? {}));
-      setLikedMap((current) => cursor ? { ...current, ...(data.likedByMeMap ?? {}) } : (data.likedByMeMap ?? {}));
-      setBookmarkedMap((current) => cursor ? { ...current, ...(data.bookmarkedPostMap ?? {}) } : (data.bookmarkedPostMap ?? {}));
-      setProfileMap((current) => cursor ? { ...current, ...(data.profileMap ?? {}) } : (data.profileMap ?? {}));
-      setHasMore(Boolean(data.hasMore));
-      setNextCursor(data.nextCursor ?? null);
+      if (!cursor) {
+        const cached = readCachedJson<PublicFeedResponse>(url, { allowStale: true });
+        if (cached) {
+          applyData(cached);
+          setLoading(false);
+        }
+        const data = await refreshCachedJson<PublicFeedResponse>(url, SWIPE_TTL_MS);
+        if (data.error) throw new Error(data.error);
+        applyData(data);
+      } else {
+        const response = await fetch(url, { cache: "no-store" });
+        const data = await response.json() as PublicFeedResponse;
+        if (!response.ok || data.error) throw new Error(data.error || "Unable to load hungry picks");
+        applyData(data);
+      }
     } catch {
-      if (!cursor) setPosts([]);
+      if (!cursor && posts.length === 0) setPosts([]);
     } finally {
       if (cursor) setLoadingMore(false);
       else setLoading(false);
     }
-  }, [hasMore, loading, loadingMore, myName]);
+  }, [hasMore, loading, loadingMore, myName, posts.length]);
 
   useEffect(() => {
     const actor = getStoredActorName();

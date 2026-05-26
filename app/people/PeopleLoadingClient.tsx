@@ -12,7 +12,7 @@ type PeopleApiResponse = {
 };
 
 export default function PeopleLoadingClient() {
-  const [data] = useState(() => readCachedJson<PeopleApiResponse>(API_URL));
+  const [data] = useState(() => readCachedJson<PeopleApiResponse>(API_URL, { allowStale: true }));
 
   if (!data) return <PeopleSkeleton />;
 

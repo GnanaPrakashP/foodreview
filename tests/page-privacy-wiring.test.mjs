@@ -122,20 +122,36 @@ test("explore universal search produces typed people, dish, and restaurant desti
 
 test("profile tabs include dishes between posts and timeline", () => {
   const src = source("components/me/MeClient.tsx");
+  const dishes = source("components/profile/ProfileDishesList.tsx");
 
   assert.match(src, /type MeTab = "reviews" \| "dishes" \| "timeline"/);
   assert.match(src, /\{ id: "reviews", label: "Posts" \},\s*\{ id: "dishes", label: "Dishes" \},\s*\{ id: "timeline", label: "Timeline" \}/);
-  assert.match(src, /function DishesTab\(/);
-  assert.match(src, /buildDishComparisons\(myReviews, publicReviews\)/);
-  assert.match(src, /<PickLine label="Your best" pick=\{item\.yourBest\} \/>/);
-  assert.match(src, /<PickLine label="Near you" pick=\{item\.nearbyBest\} \/>/);
+  assert.match(src, /<ProfileDishesList/);
+  assert.match(dishes, /buildDishComparisons\(triedReviews, publicReviews\)/);
+  assert.doesNotMatch(dishes, /Your Dishes|See how your favorites stack up|About|All \(|Top rated|Need more public data/);
+  assert.doesNotMatch(dishes, /Chevron|ArrowRight|→/);
+});
+
+test("people profile exposes dishes tried with current public best picks", () => {
+  const page = source("app/people/[username]/page.tsx");
+  const client = source("components/people/FriendProfileClient.tsx");
+  const dishes = source("components/profile/ProfileDishesList.tsx");
+
+  assert.match(page, /filterGlobalTrendingReviews/);
+  assert.match(page, /const publicBestReviews = filterGlobalTrendingReviews\(/);
+  assert.match(page, /publicBestReviews=\{publicBestReviews\}/);
+  assert.match(client, /type ProfileTab = "places" \| "dishes"/);
+  assert.match(client, /<ProfileDishesList/);
+  assert.match(client, /triedReviews=\{visibleReviews\}/);
+  assert.match(client, /publicReviews=\{publicBestReviews\}/);
+  assert.match(dishes, /Best now \(public\)/);
 });
 
 test("profile timeline groups entries by month and year", () => {
   const src = source("components/me/MeClient.tsx");
 
   assert.match(src, /function timelineMonthLabel\(value: string\): string/);
-  assert.match(src, /const groupedEntries = demoEntries\.reduce/);
+  assert.match(src, /const groupedEntries = entries\.reduce/);
   assert.match(src, /new Intl\.DateTimeFormat\("en-US", \{ month: "long", year: "numeric" \}\)/);
   assert.match(src, /\{group\.month\}/);
 });

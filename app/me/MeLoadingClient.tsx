@@ -12,10 +12,12 @@ type MeApiResponse = {
   circleMembers: string[];
   myName: string;
   displayName: string;
+  hasMore?: boolean;
+  nextCursor?: { id: string; createdAt: string } | null;
 };
 
 export default function MeLoadingClient() {
-  const [data] = useState(() => readCachedJson<MeApiResponse>(API_URL));
+  const [data] = useState(() => readCachedJson<MeApiResponse>(API_URL, { allowStale: true }));
 
   if (!data) return <MeSkeleton />;
 

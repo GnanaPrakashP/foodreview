@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
+import ProfileDishesList from "@/components/profile/ProfileDishesList";
 import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
 
 type EngagementMaps = {
@@ -17,26 +18,12 @@ import { restaurantLocationLabel } from "@/lib/location";
 import { CalendarDays, Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
-import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
-import {
-  TRENDING_LOCATION_LAT_STORAGE_KEY,
-  TRENDING_LOCATION_LNG_STORAGE_KEY,
-} from "@/lib/trending-location";
+import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
 
 type MeTab = "reviews" | "dishes" | "timeline";
+type MeCursor = { id: string; createdAt: string };
 
-type DishRestaurantPick = {
-  restaurantName: string;
-  restaurantId: string | null;
-  rating: number;
-  mentions: number;
-};
-
-type DishComparison = {
-  dishName: string;
-  yourBest: DishRestaurantPick;
-  nearbyBest: DishRestaurantPick | null;
-};
+const ME_POST_PAGE_SIZE = 24;
 
 function StatSkeleton() {
   return (
@@ -47,17 +34,6 @@ function StatSkeleton() {
   );
 }
 
-
-function uniqueDishesFor(reviews: Review[]): number {
-  const pairs = new Set<string>();
-  for (const review of reviews) {
-    for (const item of review.items) {
-      const dishName = normalizeDishDisplayName(item.name);
-      if (dishName) pairs.add(`${dishName.toLowerCase()}\x00${review.restaurant_name.toLowerCase()}`);
-    }
-  }
-  return pairs.size;
-}
 
 function timelineDateParts(value: string): { day: string; month: string } {
   const date = new Date(value);
@@ -83,98 +59,6 @@ function timelineLocationLabel(review: Review): string {
 
   return `${label.slice(0, 28).trimEnd()}...`;
 }
-
-function formatScore(value: number): string {
-  const score = Math.round(value * 2 * 10) / 10;
-  return Number.isInteger(score) ? String(score) : score.toFixed(1);
-}
-
-function restaurantHref(name: string, id: string | null): string {
-  if (!id) return `/trending/${encodeURIComponent(name)}`;
-  const params = new URLSearchParams({ name });
-  return `/restaurants/${encodeURIComponent(id)}?${params.toString()}`;
-}
-
-function bestDishPicks(reviews: Review[]): Map<string, DishRestaurantPick> {
-  const grouped = new Map<string, {
-    dishName: string;
-    restaurantName: string;
-    restaurantId: string | null;
-    ratingTotal: number;
-    ratingCount: number;
-    mentions: number;
-    latest: number;
-  }>();
-
-  for (const review of reviews) {
-    const latest = new Date(review.created_at).getTime();
-    for (const item of review.items) {
-      if (!item.name.trim() || item.rating <= 0) continue;
-      const dishName = normalizeDishDisplayName(item.name);
-      const key = `${dishName.toLowerCase()}\x00${(review.restaurant_id || review.restaurant_name).toLowerCase()}`;
-      const existing = grouped.get(key) ?? {
-        dishName,
-        restaurantName: review.restaurant_name,
-        restaurantId: review.restaurant_id,
-        ratingTotal: 0,
-        ratingCount: 0,
-        mentions: 0,
-        latest: 0,
-      };
-      existing.ratingTotal += item.rating;
-      existing.ratingCount += 1;
-      existing.mentions += 1;
-      existing.latest = Math.max(existing.latest, latest);
-      grouped.set(key, existing);
-    }
-  }
-
-  const bestByDish = new Map<string, DishRestaurantPick & { latest: number }>();
-  for (const item of grouped.values()) {
-    const rating = item.ratingCount > 0 ? item.ratingTotal / item.ratingCount : 0;
-    const current = bestByDish.get(item.dishName);
-    if (
-      !current ||
-      rating > current.rating ||
-      (rating === current.rating && item.mentions > current.mentions) ||
-      (rating === current.rating && item.mentions === current.mentions && item.latest > current.latest)
-    ) {
-      bestByDish.set(item.dishName, {
-        restaurantName: item.restaurantName,
-        restaurantId: item.restaurantId,
-        rating,
-        mentions: item.mentions,
-        latest: item.latest,
-      });
-    }
-  }
-
-  return new Map(
-    Array.from(bestByDish.entries()).map(([dishName, pick]) => [
-      dishName,
-      {
-        restaurantName: pick.restaurantName,
-        restaurantId: pick.restaurantId,
-        rating: pick.rating,
-        mentions: pick.mentions,
-      },
-    ])
-  );
-}
-
-function buildDishComparisons(myReviews: Review[], publicReviews: Review[]): DishComparison[] {
-  const yourBest = bestDishPicks(myReviews);
-  const nearbyBest = bestDishPicks(publicReviews);
-
-  return Array.from(yourBest.entries())
-    .map(([dishName, pick]) => ({
-      dishName,
-      yourBest: pick,
-      nearbyBest: nearbyBest.get(dishName) ?? null,
-    }))
-    .sort((a, b) => b.yourBest.rating - a.yourBest.rating || a.dishName.localeCompare(b.dishName));
-}
-
 
 function MeTabs({ activeTab, onChange }: { activeTab: MeTab; onChange: (tab: MeTab) => void }) {
   const tabs: Array<{ id: MeTab; label: string }> = [
@@ -246,14 +130,14 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
             <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, color: "var(--cream)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.2 }}>
               {group.month}
             </h2>
-            <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12, paddingLeft: 8 }}>
-              <div style={{ position: "absolute", left: 10.5, top: 10, bottom: 10, width: 1, background: "linear-gradient(180deg, rgba(240,96,48,0.55), rgba(255,255,255,0.08))" }} />
+            <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ position: "absolute", left: 6.5, top: 10, bottom: 10, width: 1, background: "linear-gradient(180deg, rgba(240,96,48,0.55), rgba(255,255,255,0.08))" }} />
               {group.entries.map((entry, index) => {
                 const date = timelineDateParts(entry.created_at);
                 const location = timelineLocationLabel(entry);
                 return (
-                  <div key={`${entry.restaurant_name}-${entry.created_at}-${index}`} style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: 999, background: "var(--orange)", border: "4px solid var(--bg)", flexShrink: 0, position: "relative", zIndex: 1, boxSizing: "content-box" }} />
+                  <div key={`${entry.restaurant_name}-${entry.created_at}-${index}`} style={{ display: "grid", gridTemplateColumns: "14px minmax(0, 1fr)", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 14, height: 14, borderRadius: 999, background: "var(--orange)", border: "4px solid var(--bg)", flexShrink: 0, position: "relative", zIndex: 1, boxSizing: "border-box" }} />
                     <div style={{ flex: 1, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "11px 13px", display: "grid", gridTemplateColumns: "38px 1px minmax(0, 1fr)", alignItems: "center", gap: 12 }}>
                       <div style={{ color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1, textAlign: "center" }}>
                         <span style={{ display: "block", fontSize: 14 }}>{date.day}</span>
@@ -280,7 +164,23 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
   );
 }
 
-function ReviewsTab({ reviews, engagement, myName }: { reviews: Review[]; engagement: EngagementMaps; myName: string }) {
+function ReviewsTab({
+  reviews,
+  engagement,
+  myName,
+  hasMore,
+  loadingMore,
+  loadMoreError,
+  onLoadMore,
+}: {
+  reviews: Review[];
+  engagement: EngagementMaps;
+  myName: string;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMoreError: string;
+  onLoadMore: () => void;
+}) {
   const sorted = [...reviews].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   if (sorted.length === 0) {
@@ -304,59 +204,31 @@ function ReviewsTab({ reviews, engagement, myName }: { reviews: Review[]; engage
           initialMyName={myName}
         />
       ))}
-    </div>
-  );
-}
-
-function PickLine({ label, pick }: { label: string; pick: DishRestaurantPick | null }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "76px minmax(0, 1fr)", gap: 10, alignItems: "baseline" }}>
-      <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>
-        {label}
-      </span>
-      {pick ? (
-        <Link href={restaurantHref(pick.restaurantName, pick.restaurantId)} style={{ minWidth: 0, textDecoration: "none" }}>
-          <span style={{ fontSize: 13, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
-            {pick.restaurantName} · {formatScore(pick.rating)}/10
-          </span>
-        </Link>
-      ) : (
-        <span style={{ fontSize: 13, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
-          Not enough nearby posts yet
-        </span>
-      )}
-    </div>
-  );
-}
-
-function DishesTab({ myReviews, publicReviews, loadingNearby }: { myReviews: Review[]; publicReviews: Review[]; loadingNearby: boolean }) {
-  const comparisons = useMemo(() => buildDishComparisons(myReviews, publicReviews), [myReviews, publicReviews]);
-
-  if (myReviews.length === 0) {
-    return (
-      <div style={{ padding: "60px 20px 110px", textAlign: "center" }}>
-        <p style={{ color: "var(--muted)", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>No dishes yet</p>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ padding: "0 16px 110px", display: "flex", flexDirection: "column", gap: 10 }}>
-      {comparisons.map((item) => (
-        <div key={item.dishName} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: "14px 15px" }}>
-          <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, color: "var(--cream)", fontWeight: 800, marginBottom: 11, lineHeight: 1.2 }}>
-            {item.dishName}
-          </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <PickLine label="Your best" pick={item.yourBest} />
-            <PickLine label="Near you" pick={item.nearbyBest} />
-          </div>
-        </div>
-      ))}
-      {loadingNearby && (
-        <p style={{ textAlign: "center", color: "var(--muted)", fontSize: 11, fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>
-          Checking nearby public picks...
+      {loadMoreError && (
+        <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 0 0" }}>
+          {loadMoreError}
         </p>
+      )}
+      {hasMore && (
+        <button
+          onClick={onLoadMore}
+          disabled={loadingMore}
+          style={{
+            background: loadingMore ? "var(--surface)" : "var(--orange)",
+            color: loadingMore ? "var(--muted)" : "white",
+            border: "none",
+            borderRadius: "14px",
+            padding: "13px",
+            margin: "16px 0 0",
+            width: "100%",
+            fontFamily: "'Syne', sans-serif",
+            fontSize: "13px",
+            fontWeight: 700,
+            cursor: loadingMore ? "default" : "pointer",
+          }}
+        >
+          {loadingMore ? "Loading..." : "Load more"}
+        </button>
       )}
     </div>
   );
@@ -364,6 +236,7 @@ function DishesTab({ myReviews, publicReviews, loadingNearby }: { myReviews: Rev
 
 export default function MeClient({
   allReviews,
+  publicBestReviews = [],
   initialMyName = "",
   initialDisplayName = "",
   initialBio = "",
@@ -374,8 +247,12 @@ export default function MeClient({
   likedByMeMap = {},
   bookmarkedPostMap = {},
   tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
+  initialHasMore = false,
+  initialNextCursor = null,
+  stats,
 }: {
   allReviews: Review[];
+  publicBestReviews?: Review[];
   initialMyName?: string;
   initialDisplayName?: string;
   initialBio?: string;
@@ -386,6 +263,13 @@ export default function MeClient({
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
   tasteTrust?: TasteTrustSummary;
+  initialHasMore?: boolean;
+  initialNextCursor?: MeCursor | null;
+  stats?: {
+    totalVisits: number;
+    uniquePlaces: number;
+    uniqueDishes: number;
+  };
 }) {
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
@@ -395,11 +279,38 @@ export default function MeClient({
   const [activeTab, setActiveTab] = useState<MeTab>("reviews");
   const [nearbyPublicReviews, setNearbyPublicReviews] = useState<Review[]>([]);
   const [loadingNearbyDishes, setLoadingNearbyDishes] = useState(false);
+  const [reviews, setReviews] = useState<Review[]>(allReviews);
+  const [reviewLikeCountMap, setReviewLikeCountMap] = useState(likeCountMap);
+  const [reviewCommentMap, setReviewCommentMap] = useState(commentMap);
+  const [reviewLikedByMeMap, setReviewLikedByMeMap] = useState(likedByMeMap);
+  const [reviewBookmarkedPostMap, setReviewBookmarkedPostMap] = useState(bookmarkedPostMap);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [nextCursor, setNextCursor] = useState<MeCursor | null>(initialNextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
 
-  const myReviews = useMemo(() => allReviews.filter(r => r.reviewer_name === myName), [allReviews, myName]);
-  const uniquePlaces = useMemo(() => new Set(myReviews.map(r => r.restaurant_name)).size, [myReviews]);
-  const uniqueDishes = useMemo(() => uniqueDishesFor(myReviews), [myReviews]);
-  const totalVisits = useMemo(() => myReviews.length, [myReviews]);
+  useEffect(() => {
+    setReviews(allReviews);
+    setReviewLikeCountMap(likeCountMap);
+    setReviewCommentMap(commentMap);
+    setReviewLikedByMeMap(likedByMeMap);
+    setReviewBookmarkedPostMap(bookmarkedPostMap);
+    setHasMore(initialHasMore);
+    setNextCursor(initialNextCursor);
+  }, [
+    allReviews,
+    likeCountMap,
+    commentMap,
+    likedByMeMap,
+    bookmarkedPostMap,
+    initialHasMore,
+    initialNextCursor,
+  ]);
+
+  const myReviews = useMemo(() => reviews.filter(r => r.reviewer_name === myName), [reviews, myName]);
+  const uniquePlaces = stats?.uniquePlaces ?? new Set(myReviews.map(r => r.restaurant_name)).size;
+  const uniqueDishes = stats?.uniqueDishes ?? uniqueDishRestaurantPairs(myReviews);
+  const totalVisits = stats?.totalVisits ?? myReviews.length;
 
   useEffect(() => {
     const name = resolveActorName(initialMyName);
@@ -416,24 +327,13 @@ export default function MeClient({
   }, [initialMyName, initialDisplayName, initialBio]);
 
   useEffect(() => {
-    if (!myName) return;
+    if (!myName || publicBestReviews.length > 0) return;
 
     let cancelled = false;
     async function loadNearbyPublicReviews() {
       setLoadingNearbyDishes(true);
       try {
         const params = new URLSearchParams({ limit: "40" });
-        try {
-          const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
-          const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
-          if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            params.set("lat", String(lat));
-            params.set("lng", String(lng));
-          }
-        } catch {
-          // Local storage can be unavailable; global public picks are still useful.
-        }
-
         const response = await fetch(`/api/feed/public?${params.toString()}`, { cache: "no-store" });
         const payload = await response.json().catch(() => ({})) as { reviews?: Review[] };
         if (!cancelled) setNearbyPublicReviews(payload.reviews ?? []);
@@ -448,7 +348,38 @@ export default function MeClient({
     return () => {
       cancelled = true;
     };
-  }, [myName]);
+  }, [myName, publicBestReviews.length]);
+
+  async function loadMoreReviews() {
+    if (loadingMore || !hasMore || !nextCursor) return;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const params = new URLSearchParams({
+        limit: String(ME_POST_PAGE_SIZE),
+        cursor: JSON.stringify(nextCursor),
+      });
+      const response = await fetch(`/api/me?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "Unable to load more posts");
+
+      setReviews((current) => {
+        const seen = new Set(current.map((review) => review.id));
+        const fresh = ((payload.reviews ?? []) as Review[]).filter((review) => !seen.has(review.id));
+        return [...current, ...fresh];
+      });
+      setReviewLikeCountMap((current) => ({ ...current, ...(payload.likeCountMap ?? {}) }));
+      setReviewCommentMap((current) => ({ ...current, ...(payload.commentMap ?? {}) }));
+      setReviewLikedByMeMap((current) => ({ ...current, ...(payload.likedByMeMap ?? {}) }));
+      setReviewBookmarkedPostMap((current) => ({ ...current, ...(payload.bookmarkedPostMap ?? {}) }));
+      setHasMore(Boolean(payload.hasMore));
+      setNextCursor(payload.nextCursor ?? null);
+    } catch {
+      setLoadMoreError("Could not load more posts. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (!mounted) {
     return (
@@ -471,8 +402,28 @@ export default function MeClient({
 
   const tabContent =
     activeTab === "timeline" ? <TimelineTab reviews={myReviews} /> :
-    activeTab === "dishes" ? <DishesTab myReviews={myReviews} publicReviews={nearbyPublicReviews} loadingNearby={loadingNearbyDishes} /> :
-    <ReviewsTab reviews={myReviews} engagement={{ likeCountMap, commentMap, likedByMeMap, bookmarkedPostMap }} myName={myName} />;
+    activeTab === "dishes" ? (
+      <ProfileDishesList
+        triedReviews={myReviews}
+        publicReviews={publicBestReviews.length ? publicBestReviews : nearbyPublicReviews}
+        triedLabel="Your best"
+        emptyText={loadingNearbyDishes && !publicBestReviews.length ? "Checking public picks..." : "No dishes yet"}
+      />
+    ) :
+    <ReviewsTab
+      reviews={myReviews}
+      engagement={{
+        likeCountMap: reviewLikeCountMap,
+        commentMap: reviewCommentMap,
+        likedByMeMap: reviewLikedByMeMap,
+        bookmarkedPostMap: reviewBookmarkedPostMap,
+      }}
+      myName={myName}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      loadMoreError={loadMoreError}
+      onLoadMore={loadMoreReviews}
+    />;
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>

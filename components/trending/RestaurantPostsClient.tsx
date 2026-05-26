@@ -23,22 +23,69 @@ interface Props {
   bookmarkedPostMap?: Record<string, boolean>;
   myName?: string;
   circleOnly?: boolean;
+  hasMore?: boolean;
+  nextCursor?: { createdAt: string; id: string } | null;
+  loadMoreUrl?: string;
 }
 
 export default function RestaurantPostsClient({
   restaurantReviews,
   circleRestaurantReviews,
-  likeCountMap,
-  commentMap,
-  profileMap = {},
-  likedByMeMap = {},
-  bookmarkedPostMap = {},
+  likeCountMap: initialLikeCountMap,
+  commentMap: initialCommentMap,
+  profileMap: initialProfileMap = {},
+  likedByMeMap: initialLikedByMeMap = {},
+  bookmarkedPostMap: initialBookmarkedPostMap = {},
   myName = "",
   circleOnly = false,
+  hasMore: initialHasMore = false,
+  nextCursor: initialNextCursor = null,
+  loadMoreUrl = "",
 }: Props) {
   const [activeTab, setActiveTab] = useState<RestaurantTab>("posts");
-  const shown = circleOnly ? circleRestaurantReviews : restaurantReviews;
+  const [publicReviews, setPublicReviews] = useState(restaurantReviews);
+  const [circleReviews, setCircleReviews] = useState(circleRestaurantReviews);
+  const [likeCountMap, setLikeCountMap] = useState(initialLikeCountMap);
+  const [commentMap, setCommentMap] = useState(initialCommentMap);
+  const [likedByMeMap, setLikedByMeMap] = useState(initialLikedByMeMap);
+  const [bookmarkedPostMap, setBookmarkedPostMap] = useState(initialBookmarkedPostMap);
+  const [profileMap, setProfileMap] = useState(initialProfileMap);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [nextCursor, setNextCursor] = useState(initialNextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
+  const shown = circleOnly ? circleReviews : publicReviews;
   const dishes = useMemo(() => topDishesForRestaurant(shown), [shown]);
+
+  async function loadMorePosts() {
+    if (loadingMore || !hasMore || !nextCursor || !loadMoreUrl) return;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const separator = loadMoreUrl.includes("?") ? "&" : "?";
+      const response = await fetch(`${loadMoreUrl}${separator}cursor=${encodeURIComponent(JSON.stringify(nextCursor))}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "Unable to load more posts");
+      const append = (current: Review[]) => {
+        const seen = new Set(current.map((review) => review.id));
+        const fresh = ((payload.reviews ?? []) as Review[]).filter((review) => !seen.has(review.id));
+        return [...current, ...fresh];
+      };
+      if (circleOnly) setCircleReviews(append);
+      else setPublicReviews(append);
+      setLikeCountMap((current) => ({ ...current, ...(payload.likeCountMap ?? {}) }));
+      setCommentMap((current) => ({ ...current, ...(payload.commentMap ?? {}) }));
+      setLikedByMeMap((current) => ({ ...current, ...(payload.likedByMeMap ?? {}) }));
+      setBookmarkedPostMap((current) => ({ ...current, ...(payload.bookmarkedPostMap ?? {}) }));
+      setProfileMap((current) => ({ ...current, ...(payload.profileMap ?? {}) }));
+      setHasMore(Boolean(payload.hasMore));
+      setNextCursor(payload.nextCursor ?? null);
+    } catch {
+      setLoadMoreError("Could not load more posts. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <div>
@@ -71,6 +118,20 @@ export default function RestaurantPostsClient({
                 />
               );
             })
+          )}
+          {loadMoreError && (
+            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "0 0 4px" }}>
+              {loadMoreError}
+            </p>
+          )}
+          {shown.length > 0 && hasMore && (
+            <button
+              onClick={loadMorePosts}
+              disabled={loadingMore}
+              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
+            >
+              {loadingMore ? "Loading..." : "Load more"}
+            </button>
           )}
         </div>
       )}

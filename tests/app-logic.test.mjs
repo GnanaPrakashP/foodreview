@@ -37,6 +37,7 @@ function loadTsModule(relativePath, extraGlobals = {}) {
     require(id) {
       if (id === "@/lib/types" || id === "./types") return {};
       if (id === "@/lib/dish-normalizer") return loadTsModule("lib/dish-normalizer.ts");
+      if (id === "@/lib/profile-dishes") return loadTsModule("lib/profile-dishes.ts");
       if (id === "@/lib/visibility" || id === "./visibility") return loadTsModule("lib/visibility.ts");
       if (id === "@/lib/restaurant-id") return loadTsModule("lib/restaurant-id.ts");
       if (id === "@/lib/location") return loadTsModule("lib/location.ts");
@@ -100,6 +101,34 @@ test("dishes: popular dishes are sorted by frequency and capped", () => {
   ];
 
   assert.equal(JSON.stringify(getPopularDishes(reviews).slice(0, 3)), JSON.stringify(["Idli", "Dosa", "Vada"]));
+});
+
+test("profile dishes: compares a user's best tried restaurant with the current public best", () => {
+  const { buildDishComparisons, uniqueDishRestaurantPairs, formatDishScore } = loadTsModule("lib/profile-dishes.ts");
+  const mine = [
+    review("Alice", "Cafe One", [{ name: "Paneer Butter Masala", rating: 4 }], {
+      created_at: "2026-05-01T00:00:00.000Z",
+    }),
+    review("Alice", "Cafe Two", [{ name: "Paneer Butter Masala", rating: 5 }], {
+      created_at: "2026-05-02T00:00:00.000Z",
+    }),
+    review("Alice", "Cafe Two", [{ name: "Cold Coffee", rating: 3 }]),
+  ];
+  const publicReviews = [
+    ...mine,
+    review("Bob", "North Kitchen", [{ name: "Paneer Butter Masala", rating: 5 }], {
+      restaurant_id: "place-1",
+      created_at: "2026-05-03T00:00:00.000Z",
+    }),
+  ];
+
+  const comparisons = buildDishComparisons(mine, publicReviews);
+  const paneer = comparisons.find((item) => item.dishName === "Paneer Butter Masala");
+  assert.equal(uniqueDishRestaurantPairs(mine), 3);
+  assert.equal(paneer.triedBest.restaurantName, "Cafe Two");
+  assert.equal(paneer.bestNow.restaurantName, "North Kitchen");
+  assert.equal(paneer.bestNow.restaurantId, "place-1");
+  assert.equal(formatDishScore(paneer.bestNow.rating), "10");
 });
 
 test("visits: prompt thresholds distinguish first visits and regulars", () => {

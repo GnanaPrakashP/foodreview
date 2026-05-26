@@ -14,6 +14,7 @@ interface Props {
 }
 
 export const dynamic = "force-dynamic";
+const RESTAURANT_PROFILE_PAGE_SIZE = 24;
 
 function avgRating(review: Review): number {
   const rated = review.items.filter((it) => it.rating > 0);
@@ -43,6 +44,8 @@ export default async function RestaurantDetailPage({ params }: Props) {
     .select(REVIEW_SELECT)
     .eq("reviewer_name", name)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(RESTAURANT_PROFILE_PAGE_SIZE + 1)
     .returns<Review[]>();
 
   const normalizedReviews = ((allReviews ?? []) as unknown[])
@@ -51,7 +54,11 @@ export default async function RestaurantDetailPage({ params }: Props) {
     viewerName: myName,
     circleOwnerNames,
   });
-  const posts = reviews.filter((r) => r.restaurant_name === restaurantName);
+  const posts = reviews.filter((r) => r.restaurant_name === restaurantName).slice(0, RESTAURANT_PROFILE_PAGE_SIZE);
+  const hasMore = reviews.filter((r) => r.restaurant_name === restaurantName).length > RESTAURANT_PROFILE_PAGE_SIZE;
+  const nextCursor = hasMore && posts.length > 0
+    ? { createdAt: posts[posts.length - 1].created_at, id: posts[posts.length - 1].id }
+    : null;
 
   if (posts.length === 0) notFound();
 
@@ -121,6 +128,8 @@ export default async function RestaurantDetailPage({ params }: Props) {
       bookmarkedPostMap={bookmarkedPostMap}
       profileMap={profileMap}
       initialMyName={myName}
+      initialHasMore={hasMore}
+      initialNextCursor={nextCursor}
     />
   );
 }

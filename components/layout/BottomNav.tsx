@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Users, Search, Plus, Flame, User } from "lucide-react";
+import { getStoredActorName } from "@/lib/browser-actor";
+import { prefetchCachedJson } from "@/lib/browser-api-cache";
 
 const TABS = [
   { href: "/", label: "Circle", Icon: Users, center: false },
@@ -15,10 +17,42 @@ const TABS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   useEffect(() => {
     setPendingHref(null);
+  }, [pathname]);
+
+  const prefetchTab = (href: string) => {
+    if (href === "/reviews/new") return;
+    router.prefetch(href);
+
+    const actor = getStoredActorName();
+    if (href === "/") {
+      if (actor) void prefetchCachedJson("/api/feed/circle", 60 * 1000);
+    } else if (href === "/explore") {
+      void prefetchCachedJson("/api/people", 2 * 60 * 1000);
+      const params = new URLSearchParams({ limit: "24", excludeSynthetic: "1" });
+      if (actor) params.set("viewer", actor);
+      void prefetchCachedJson(`/api/feed/public?${params.toString()}`, 2 * 60 * 1000);
+    } else if (href === "/hungry") {
+      const params = new URLSearchParams({ limit: "40", excludeSynthetic: "1" });
+      if (actor) params.set("viewer", actor);
+      void prefetchCachedJson(`/api/feed/public?${params.toString()}`, 2 * 60 * 1000);
+    } else if (href === "/me" && actor) {
+      void prefetchCachedJson("/api/me", 2 * 60 * 1000);
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const href of ["/", "/explore", "/hungry", "/me"]) {
+        if (href !== pathname) prefetchTab(href);
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
   if (
@@ -89,8 +123,10 @@ export default function BottomNav() {
             <Link
               key={tab.href}
               href={href}
-              prefetch={false}
+              prefetch
               onClick={beginNavigation}
+              onPointerEnter={() => prefetchTab(href)}
+              onFocus={() => prefetchTab(href)}
               className="flex flex-col items-center gap-1 px-2 py-1"
               aria-current={active ? "page" : undefined}
               style={{ transform: active ? "translateY(-1px)" : "none", transition: "transform 120ms ease" }}

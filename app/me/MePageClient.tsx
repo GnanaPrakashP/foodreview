@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import MeClient from "@/components/me/MeClient";
 import type { Review } from "@/lib/types";
 import type { TasteTrustSummary } from "@/lib/taste-trust";
@@ -11,6 +11,7 @@ const API_URL = "/api/me";
 
 type MeApiResponse = {
   reviews: Review[];
+  publicBestReviews?: Review[];
   circleMembers: string[];
   myName: string;
   displayName: string;
@@ -21,6 +22,13 @@ type MeApiResponse = {
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
   tasteTrust?: TasteTrustSummary;
+  hasMore?: boolean;
+  nextCursor?: { id: string; createdAt: string } | null;
+  stats?: {
+    totalVisits: number;
+    uniquePlaces: number;
+    uniqueDishes: number;
+  };
 };
 
 export function MeSkeleton() {
@@ -49,18 +57,38 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     if (initialData) {
-      const cachedData = readCachedJson<MeApiResponse>(API_URL);
+      const cachedData = readCachedJson<MeApiResponse>(API_URL, { allowStale: true });
       if (cachedData) {
         setData(cachedData);
       } else {
         primeCachedJson(API_URL, initialData, ME_TTL_MS);
       }
-      return;
+      refreshCachedJson<MeApiResponse>(API_URL, ME_TTL_MS)
+        .then((fresh) => {
+          if (!cancelled) setData(fresh);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
     }
-    cachedJson<MeApiResponse>(API_URL, ME_TTL_MS)
-      .then(setData)
-      .catch(() => setError(true));
+    const cachedData = readCachedJson<MeApiResponse>(API_URL, { allowStale: true });
+    if (cachedData) setData(cachedData);
+    const load = cachedData
+      ? refreshCachedJson<MeApiResponse>(API_URL, ME_TTL_MS)
+      : cachedJson<MeApiResponse>(API_URL, ME_TTL_MS);
+    load
+      .then((fresh) => {
+        if (!cancelled) setData(fresh);
+      })
+      .catch(() => {
+        if (!cachedData && !cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [initialData]);
 
   if (error) {
@@ -78,6 +106,7 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
   return (
     <MeClient
       allReviews={data.reviews}
+      publicBestReviews={data.publicBestReviews ?? []}
       initialMyName={data.myName}
       initialDisplayName={data.displayName}
       initialBio={data.bio}
@@ -88,6 +117,9 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
       likedByMeMap={data.likedByMeMap ?? {}}
       bookmarkedPostMap={data.bookmarkedPostMap ?? {}}
       tasteTrust={data.tasteTrust}
+      initialHasMore={data.hasMore ?? false}
+      initialNextCursor={data.nextCursor ?? null}
+      stats={data.stats}
     />
   );
 }

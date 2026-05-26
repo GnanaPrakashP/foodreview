@@ -157,6 +157,19 @@ export default function SwipeStack({
   }, [loading]);
 
   if (!current) {
+    if (loading) {
+      return (
+        <div style={{ height: "100%", padding: "16px", boxSizing: "border-box" }}>
+          <div className="animate-pulse" style={{ height: "100%", borderRadius: 22, background: "var(--card)", border: "1px solid var(--border)", overflow: "hidden" }}>
+            <div style={{ aspectRatio: "4/5", background: "var(--surface)" }} />
+            <div style={{ padding: 16 }}>
+              <div style={{ height: 18, width: "58%", borderRadius: 6, background: "var(--surface)", marginBottom: 10 }} />
+              <div style={{ height: 12, width: "36%", borderRadius: 6, background: "var(--surface)" }} />
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", boxSizing: "border-box" }}>
         <div style={{ textAlign: "center" }}>

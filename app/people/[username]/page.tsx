@@ -9,7 +9,7 @@ import { profileDisplayName } from "@/lib/profile-names";
 import { REVIEW_SELECT } from "@/lib/selects";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
-import { filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
+import { filterGlobalTrendingReviews, filterProfileReviews, isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
 import { computeCommonRestaurants } from "@/lib/common-restaurants";
 
 interface Props {
@@ -17,6 +17,7 @@ interface Props {
 }
 
 export const dynamic = "force-dynamic";
+const PROFILE_REVIEWS_PAGE_SIZE = 24;
 
 type ProfileSummary = {
   first_name: string;
@@ -39,7 +40,7 @@ export default async function UserProfilePage({ params }: Props) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const [{ data: { user } }, { data: profiles }, { data: ownerAllReviews }, { data: theirMemberRows }] = await Promise.all([
+  const [{ data: { user } }, { data: profiles }, { data: ownerAllReviews }, { data: theirMemberRows }, { data: publicBestReviewRows }] = await Promise.all([
     supabase.auth.getUser(),
     supabase
       .from("profiles")
@@ -52,12 +53,25 @@ export default async function UserProfilePage({ params }: Props) {
       .select(REVIEW_SELECT)
       .eq("reviewer_name", name)
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(PROFILE_REVIEWS_PAGE_SIZE + 1)
       .returns<Review[]>(),
     // Fetch circle member list for the profile owner to show their circle count immediately
     admin
       .from("circle_memberships")
       .select("member_name")
       .eq("user_name", name),
+    admin
+      .from("reviews")
+      .select(REVIEW_SELECT)
+      .eq("visibility", "public")
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(500)
+      .returns<Review[]>(),
   ]);
 
   const profile = (profiles ?? [])[0] ?? null;
@@ -128,7 +142,18 @@ export default async function UserProfilePage({ params }: Props) {
   const visibleReviews = filterProfileReviews(rawReviews, name, {
     viewerName: myName,
     circleOwnerNames,
-  });
+  }).slice(0, PROFILE_REVIEWS_PAGE_SIZE);
+  const initialHasMoreReviews = rawReviews.length > PROFILE_REVIEWS_PAGE_SIZE;
+  const initialNextReviewsCursor = initialHasMoreReviews && visibleReviews.length > 0
+    ? {
+        createdAt: visibleReviews[visibleReviews.length - 1].created_at,
+        id: visibleReviews[visibleReviews.length - 1].id,
+      }
+    : null;
+  const publicBestReviews = filterGlobalTrendingReviews(
+    ((publicBestReviewRows ?? []) as unknown[])
+      .map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]))
+  );
 
   return (
     <FriendProfileClient
@@ -138,6 +163,7 @@ export default async function UserProfilePage({ params }: Props) {
       bio={profile?.bio ?? ""}
       accountType={accountType}
       reviews={visibleReviews}
+      publicBestReviews={publicBestReviews}
       hasHiddenCirclePosts={hasHiddenCirclePosts}
       initialMyName={myName}
       initialCircleStatus={initialCircleStatus}
@@ -145,6 +171,8 @@ export default async function UserProfilePage({ params }: Props) {
       initialCommonRestaurantCount={initialCommonRestaurantCount}
       initialHasIncomingRequest={initialHasIncomingRequest}
       tasteTrust={tasteTrustSummaryFromProfile(profile)}
+      initialHasMore={initialHasMoreReviews}
+      initialNextCursor={initialNextReviewsCursor}
     />
   );
 }

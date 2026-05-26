@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import PeopleTab from "@/components/people/PeopleTab";
 import type { CircleMember } from "@/lib/people-page-data";
 
@@ -40,18 +40,38 @@ export default function PeoplePageClient({ initialData = null }: { initialData?:
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     if (initialData) {
-      const cachedData = readCachedJson<PeopleApiResponse>(API_URL);
+      const cachedData = readCachedJson<PeopleApiResponse>(API_URL, { allowStale: true });
       if (cachedData) {
         setData(cachedData);
       } else {
         primeCachedJson(API_URL, initialData, PEOPLE_TTL_MS);
       }
-      return;
+      refreshCachedJson<PeopleApiResponse>(API_URL, PEOPLE_TTL_MS)
+        .then((fresh) => {
+          if (!cancelled) setData(fresh);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
     }
-    cachedJson<PeopleApiResponse>(API_URL, PEOPLE_TTL_MS)
-      .then(setData)
-      .catch(() => setError(true));
+    const cachedData = readCachedJson<PeopleApiResponse>(API_URL, { allowStale: true });
+    if (cachedData) setData(cachedData);
+    const load = cachedData
+      ? refreshCachedJson<PeopleApiResponse>(API_URL, PEOPLE_TTL_MS)
+      : cachedJson<PeopleApiResponse>(API_URL, PEOPLE_TTL_MS);
+    load
+      .then((fresh) => {
+        if (!cancelled) setData(fresh);
+      })
+      .catch(() => {
+        if (!cachedData && !cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [initialData]);
 
   if (error) {

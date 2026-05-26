@@ -44,7 +44,7 @@ function GenericLoadingSkeleton() {
 
 export default function CircleLoadingClient() {
   const pathname = usePathname();
-  const [data] = useState(() => readCachedJson<CircleFeedPage>(API_URL));
+  const [data] = useState(() => readCachedJson<CircleFeedPage>(API_URL, { allowStale: true }));
 
   if (pathname !== "/") return <GenericLoadingSkeleton />;
   if (!data) return <CircleSkeleton />;

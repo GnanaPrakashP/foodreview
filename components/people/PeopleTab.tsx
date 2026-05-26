@@ -28,7 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
-import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import { profileDisplayName } from "@/lib/profile-names";
 import { getStoredActorName } from "@/lib/browser-actor";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
@@ -60,6 +60,7 @@ import {
 } from "@/lib/explore-categories";
 
 const FEED_PAGE_SIZE = 24;
+const FEED_TTL_MS = 2 * 60 * 1000;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
 const RESTAURANT_CARD_DISH_LIMIT = 3;
@@ -113,6 +114,7 @@ type PublicFeedResponse = {
   profileMap: Record<string, string>;
   hasMore: boolean;
   nextCursor: CircleFeedCursor | null;
+  error?: string;
 };
 
 /* ─── Helpers ────────────────────────────────────── */
@@ -1272,6 +1274,22 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     }
     else setFeedLoadingMore(true);
     try {
+      const applyFeedData = (data: PublicFeedResponse, pageCursor: CircleFeedCursor | null) => {
+        const rows = data.reviews ?? [];
+        setFeed((current) => {
+          if (!pageCursor) return rows;
+          const seen = new Set(current.map((item) => item.id));
+          return [...current, ...rows.filter((item) => !seen.has(item.id))];
+        });
+        setFeedLikeCountMap((current) => pageCursor ? { ...current, ...(data.likeCountMap ?? {}) } : (data.likeCountMap ?? {}));
+        setFeedCommentMap((current) => pageCursor ? { ...current, ...(data.commentMap ?? {}) } : (data.commentMap ?? {}));
+        setFeedLikedMap((current) => pageCursor ? { ...current, ...(data.likedByMeMap ?? {}) } : (data.likedByMeMap ?? {}));
+        setFeedBookmarkedMap((current) => pageCursor ? { ...current, ...(data.bookmarkedPostMap ?? {}) } : (data.bookmarkedPostMap ?? {}));
+        setFeedProfileMap((current) => pageCursor ? { ...current, ...(data.profileMap ?? {}) } : (data.profileMap ?? {}));
+        setFeedHasMore(Boolean(data.hasMore));
+        setFeedNextCursor(data.nextCursor ?? null);
+      };
+
       const fetchPage = async (feedLocation: UserLocation | null) => {
         const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
         if (viewerName) params.set("viewer", viewerName);
@@ -1280,7 +1298,18 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
           params.set("lng", String(feedLocation.lng));
         }
         if (cursor) params.set("cursor", JSON.stringify(cursor));
-        const response = await fetch(`/api/feed/public?${params}`, { cache: "no-store" });
+        const url = `/api/feed/public?${params}`;
+        if (!cursor) {
+          const cached = readCachedJson<PublicFeedResponse>(url, { allowStale: true });
+          if (cached) {
+            applyFeedData(cached, null);
+            setFeedLoading(false);
+          }
+          const data = await refreshCachedJson<PublicFeedResponse>(url, FEED_TTL_MS);
+          if (data.error) throw new Error(data.error);
+          return data;
+        }
+        const response = await fetch(url, { cache: "no-store" });
         const data = await response.json() as PublicFeedResponse & { error?: string };
         if (!response.ok || data.error) throw new Error(data.error || "Unable to load public posts");
         return data;
@@ -1293,20 +1322,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
         feedLocation = null;
       }
       if (!cursor) feedLocationRef.current = feedLocation;
-
-      const rows = data.reviews ?? [];
-      setFeed((current) => {
-        if (!cursor) return rows;
-        const seen = new Set(current.map((item) => item.id));
-        return [...current, ...rows.filter((item) => !seen.has(item.id))];
-      });
-      setFeedLikeCountMap((current) => cursor ? { ...current, ...(data.likeCountMap ?? {}) } : (data.likeCountMap ?? {}));
-      setFeedCommentMap((current) => cursor ? { ...current, ...(data.commentMap ?? {}) } : (data.commentMap ?? {}));
-      setFeedLikedMap((current) => cursor ? { ...current, ...(data.likedByMeMap ?? {}) } : (data.likedByMeMap ?? {}));
-      setFeedBookmarkedMap((current) => cursor ? { ...current, ...(data.bookmarkedPostMap ?? {}) } : (data.bookmarkedPostMap ?? {}));
-      setFeedProfileMap((current) => cursor ? { ...current, ...(data.profileMap ?? {}) } : (data.profileMap ?? {}));
-      setFeedHasMore(Boolean(data.hasMore));
-      setFeedNextCursor(data.nextCursor ?? null);
+      applyFeedData(data, cursor);
     } catch {
       setFeedError("Could not load public posts. Please try again.");
     } finally {

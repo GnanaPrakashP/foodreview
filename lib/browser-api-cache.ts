@@ -2,6 +2,7 @@
 
 type CacheEntry<T> = {
   expiresAt: number;
+  savedAt?: number;
   value: T;
 };
 
@@ -11,6 +12,10 @@ const reloadBypassKeys = new Set<string>();
 
 type CachedJsonOptions = {
   bypassOnReload?: boolean;
+};
+
+type ReadCachedJsonOptions = {
+  allowStale?: boolean;
 };
 
 function storageKey(key: string) {
@@ -37,13 +42,13 @@ function writeSession<T>(key: string, entry: CacheEntry<T>) {
   }
 }
 
-export function readCachedJson<T>(url: string): T | null {
+export function readCachedJson<T>(url: string, options: ReadCachedJsonOptions = {}): T | null {
   const now = Date.now();
   const memory = memoryCache.get(url) as CacheEntry<T> | undefined;
-  if (memory && memory.expiresAt > now) return memory.value;
+  if (memory && (options.allowStale || memory.expiresAt > now)) return memory.value;
 
   const session = readSession<T>(url);
-  if (session && session.expiresAt > now) {
+  if (session && (options.allowStale || session.expiresAt > now)) {
     memoryCache.set(url, session);
     return session.value;
   }
@@ -80,7 +85,7 @@ export async function cachedJson<T>(url: string, ttlMs: number, options?: Cached
   const request = fetch(url, { cache: "no-store" }).then(async (response) => {
     if (!response.ok) throw new Error(`Request failed: ${response.status}`);
     const value = await response.json() as T;
-    const entry = { value, expiresAt: Date.now() + ttlMs };
+    const entry = { value, expiresAt: Date.now() + ttlMs, savedAt: Date.now() };
     memoryCache.set(url, entry);
     writeSession(url, entry);
     return value;
@@ -93,9 +98,35 @@ export async function cachedJson<T>(url: string, ttlMs: number, options?: Cached
 }
 
 export function primeCachedJson<T>(url: string, value: T, ttlMs: number) {
-  const entry = { value, expiresAt: Date.now() + ttlMs };
+  const entry = { value, expiresAt: Date.now() + ttlMs, savedAt: Date.now() };
   memoryCache.set(url, entry);
   writeSession(url, entry);
+}
+
+export async function refreshCachedJson<T>(url: string, ttlMs: number): Promise<T> {
+  const pending = pendingRequests.get(url) as Promise<T> | undefined;
+  if (pending) return pending;
+
+  const request = fetch(url, { cache: "no-store" }).then(async (response) => {
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    const value = await response.json() as T;
+    primeCachedJson(url, value, ttlMs);
+    return value;
+  }).finally(() => {
+    pendingRequests.delete(url);
+  });
+
+  pendingRequests.set(url, request);
+  return request;
+}
+
+export function prefetchCachedJson<T>(url: string, ttlMs: number): Promise<T | null> | null {
+  const cached = readCachedJson<T>(url);
+  if (cached !== null) return null;
+  return refreshCachedJson<T>(url, ttlMs).catch((error) => {
+    console.warn("[browser-api-cache] prefetch failed", url, error);
+    return readCachedJson<T>(url, { allowStale: true });
+  });
 }
 
 // Clears all viewer-specific API response caches. Call on logout or account deletion to

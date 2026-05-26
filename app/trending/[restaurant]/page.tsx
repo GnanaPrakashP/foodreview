@@ -13,6 +13,7 @@ import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "
 import { normalizeReview } from "@/lib/server/normalize-review";
 
 export const dynamic = "force-dynamic";
+const TRENDING_RESTAURANT_PAGE_SIZE = 24;
 
 const REVIEW_SELECT = [
   "id",
@@ -66,6 +67,8 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
       .is("reported_at", null)
       .eq("status", "active")
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(TRENDING_RESTAURANT_PAGE_SIZE + 1)
       .returns<Review[]>(),
   ]);
 
@@ -87,6 +90,14 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
     circleOwnerNames: joinedCircles,
   });
   const displayRestaurantReviews = circleOnly ? circleRestaurantReviews : restaurantReviews;
+  const pagedDisplayRestaurantReviews = displayRestaurantReviews.slice(0, TRENDING_RESTAURANT_PAGE_SIZE);
+  const hasMore = displayRestaurantReviews.length > TRENDING_RESTAURANT_PAGE_SIZE;
+  const nextCursor = hasMore && pagedDisplayRestaurantReviews.length > 0
+    ? {
+        createdAt: pagedDisplayRestaurantReviews[pagedDisplayRestaurantReviews.length - 1].created_at,
+        id: pagedDisplayRestaurantReviews[pagedDisplayRestaurantReviews.length - 1].id,
+      }
+    : null;
 
   if (displayRestaurantReviews.length === 0) notFound();
 
@@ -135,12 +146,12 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
   }
 
   // Avg score for the header
-  const allRated = displayRestaurantReviews.flatMap((r) => r.items.filter((it) => it.rating > 0));
+  const allRated = pagedDisplayRestaurantReviews.flatMap((r) => r.items.filter((it) => it.rating > 0));
   const avgScore = allRated.length > 0
     ? allRated.reduce((s, it) => s + it.rating, 0) / allRated.length * 2
     : 0;
 
-  const area = displayRestaurantReviews.map((r) => restaurantLocationLabel(r)).find(Boolean) ?? null;
+  const area = pagedDisplayRestaurantReviews.map((r) => restaurantLocationLabel(r)).find(Boolean) ?? null;
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
@@ -161,7 +172,7 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
               {restaurantName}
             </h1>
             <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "1px" }}>
-              {area && `${area} · `}{displayRestaurantReviews.length} post{displayRestaurantReviews.length !== 1 ? "s" : ""}
+              {area && `${area} · `}{pagedDisplayRestaurantReviews.length} post{pagedDisplayRestaurantReviews.length !== 1 ? "s" : ""}
               {avgScore > 0 ? ` · ${avgScore.toFixed(1)}/10 avg` : ""}
             </p>
           </div>
@@ -169,8 +180,8 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
       </div>
 
       <RestaurantPostsClient
-        restaurantReviews={restaurantReviews}
-        circleRestaurantReviews={circleRestaurantReviews}
+        restaurantReviews={circleOnly ? restaurantReviews : pagedDisplayRestaurantReviews}
+        circleRestaurantReviews={circleOnly ? pagedDisplayRestaurantReviews : circleRestaurantReviews}
         likeCountMap={likeCountMap}
         commentMap={commentMap}
         profileMap={profileMap}
@@ -178,6 +189,9 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
         bookmarkedPostMap={bookmarkedPostMap}
         myName={myName}
         circleOnly={circleOnly}
+        hasMore={circleOnly ? false : hasMore}
+        nextCursor={nextCursor}
+        loadMoreUrl={`/api/feed/public?limit=${TRENDING_RESTAURANT_PAGE_SIZE}&restaurantName=${encodeURIComponent(restaurantName)}${myName ? `&viewer=${encodeURIComponent(myName)}` : ""}`}
       />
 
     </div>

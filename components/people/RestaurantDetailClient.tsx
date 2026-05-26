@@ -57,6 +57,8 @@ interface Props {
   bookmarkedPostMap?: Record<string, boolean>;
   profileMap?: Record<string, string>;
   initialMyName?: string;
+  initialHasMore?: boolean;
+  initialNextCursor?: { createdAt: string; id: string } | null;
 }
 
 export default function RestaurantDetailClient({
@@ -65,15 +67,24 @@ export default function RestaurantDetailClient({
   posts,
   likeCountMap,
   commentMap,
-  rankMap,
   likedByMeMap = {},
   bookmarkedPostMap = {},
   profileMap,
   initialMyName = "",
+  initialHasMore = false,
+  initialNextCursor = null,
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"posts" | "dishes">("posts");
   const [visiblePosts, setVisiblePosts] = useState(posts);
+  const [postLikeCountMap, setPostLikeCountMap] = useState(likeCountMap);
+  const [postCommentMap, setPostCommentMap] = useState(commentMap);
+  const [postLikedByMeMap, setPostLikedByMeMap] = useState(likedByMeMap);
+  const [postBookmarkedMap, setPostBookmarkedMap] = useState(bookmarkedPostMap);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [nextCursor, setNextCursor] = useState(initialNextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
   const [shouldRedirectToProfile, setShouldRedirectToProfile] = useState(false);
   const profileHref = `/people/${encodeURIComponent(username)}`;
 
@@ -89,6 +100,37 @@ export default function RestaurantDetailClient({
     const nextPosts = visiblePosts.filter((post) => post.id !== deletedPost.id);
     setVisiblePosts(nextPosts);
     if (nextPosts.length === 0) setShouldRedirectToProfile(true);
+  }
+
+  async function loadMorePosts() {
+    if (loadingMore || !hasMore || !nextCursor) return;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const params = new URLSearchParams({
+        limit: "24",
+        cursor: JSON.stringify(nextCursor),
+        restaurantName,
+      });
+      const response = await fetch(`/api/users/${encodeURIComponent(username)}/reviews?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || payload.error) throw new Error(payload.error || "Unable to load more posts");
+      setVisiblePosts((current) => {
+        const seen = new Set(current.map((post) => post.id));
+        const fresh = ((payload.reviews ?? []) as Review[]).filter((post) => !seen.has(post.id));
+        return [...current, ...fresh];
+      });
+      setPostLikeCountMap((current) => ({ ...current, ...(payload.likeCountMap ?? {}) }));
+      setPostCommentMap((current) => ({ ...current, ...(payload.commentMap ?? {}) }));
+      setPostLikedByMeMap((current) => ({ ...current, ...(payload.likedByMeMap ?? {}) }));
+      setPostBookmarkedMap((current) => ({ ...current, ...(payload.bookmarkedPostMap ?? {}) }));
+      setHasMore(Boolean(payload.hasMore));
+      setNextCursor(payload.nextCursor ?? null);
+    } catch {
+      setLoadMoreError("Could not load more posts. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   return (
@@ -140,22 +182,35 @@ export default function RestaurantDetailClient({
       {activeTab === "posts" && (
         <div style={{ padding: "16px 16px 0", display: "flex", flexDirection: "column", gap: "16px" }}>
           {visiblePosts.map((post) => {
-            const info = rankMap[post.id];
-            const eng = commentMap[post.id];
+            const eng = postCommentMap[post.id];
             return (
               <CircleFeedCard
                 key={post.id}
                 review={post}
-                initialLikeCount={likeCountMap[post.id] ?? 0}
+                initialLikeCount={postLikeCountMap[post.id] ?? 0}
                 initialCommentCount={eng?.count ?? 0}
-                initialLiked={likedByMeMap[post.id] ?? false}
-                initialBookmarked={bookmarkedPostMap[post.id] ?? false}
+                initialLiked={postLikedByMeMap[post.id] ?? false}
+                initialBookmarked={postBookmarkedMap[post.id] ?? false}
                 initialMyName={initialMyName}
                 profileMap={profileMap}
                 onDeleted={handlePostDeleted}
               />
             );
           })}
+          {loadMoreError && (
+            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 0 0" }}>
+              {loadMoreError}
+            </p>
+          )}
+          {hasMore && (
+            <button
+              onClick={loadMorePosts}
+              disabled={loadingMore}
+              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
+            >
+              {loadingMore ? "Loading..." : "Load more"}
+            </button>
+          )}
         </div>
       )}
 

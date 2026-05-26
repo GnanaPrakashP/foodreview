@@ -509,6 +509,7 @@ export default function CircleFeedCard({
                         sizes="(max-width: 512px) 100vw, 512px"
                         priority={priorityImage && i === 0}
                         loading={priorityImage && i === 0 ? undefined : "lazy"}
+                        className="image-fade-in"
                         style={{ objectFit: "cover" }}
                       />
                     )}

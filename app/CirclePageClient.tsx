@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
 import StoriesTray from "@/components/stories/StoriesTray";
@@ -45,18 +45,38 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     if (initialData) {
-      const cachedData = readCachedJson<CircleFeedPage>(API_URL);
+      const cachedData = readCachedJson<CircleFeedPage>(API_URL, { allowStale: true });
       if (cachedData) {
         setData(cachedData);
       } else {
         primeCachedJson(API_URL, initialData, CIRCLE_TTL_MS);
       }
-      return;
+      refreshCachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
+        .then((fresh) => {
+          if (!cancelled) setData(fresh);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
     }
-    cachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
-      .then(setData)
-      .catch(() => setError(true));
+    const cachedData = readCachedJson<CircleFeedPage>(API_URL, { allowStale: true });
+    if (cachedData) setData(cachedData);
+    const load = cachedData
+      ? refreshCachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
+      : cachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS);
+    load
+      .then((fresh) => {
+        if (!cancelled) setData(fresh);
+      })
+      .catch(() => {
+        if (!cachedData && !cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [initialData]);
 
   if (error) {
