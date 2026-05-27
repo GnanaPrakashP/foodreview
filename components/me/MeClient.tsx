@@ -5,7 +5,9 @@ import Link from "next/link";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import ProfileDishesList from "@/components/profile/ProfileDishesList";
+import ProfileReputationSection from "@/components/reputation/ProfileReputationSection";
 import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
+import { EMPTY_REPUTATION, type UserProfileReputation } from "@/lib/reputation";
 
 type EngagementMaps = {
   likeCountMap: Record<string, number>;
@@ -19,11 +21,29 @@ import { CalendarDays, Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
 import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
+import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
 
 type MeTab = "reviews" | "dishes" | "timeline";
 type MeCursor = { id: string; createdAt: string };
 
 const ME_POST_PAGE_SIZE = 24;
+const ME_FEED_STATE_TTL_MS = 30 * 60 * 1000;
+const MAX_PERSISTED_REVIEWS = 120;
+
+type MeFeedSnapshot = {
+  reviews: Review[];
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
+  hasMore: boolean;
+  nextCursor: MeCursor | null;
+  activeTab: MeTab;
+};
+
+function meFeedStateKey(viewerName: string) {
+  return `/api/me?viewer=${encodeURIComponent(viewerName || "anonymous")}`;
+}
 
 function StatSkeleton() {
   return (
@@ -247,6 +267,7 @@ export default function MeClient({
   likedByMeMap = {},
   bookmarkedPostMap = {},
   tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
+  reputation = EMPTY_REPUTATION,
   initialHasMore = false,
   initialNextCursor = null,
   stats,
@@ -263,6 +284,7 @@ export default function MeClient({
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
   tasteTrust?: TasteTrustSummary;
+  reputation?: UserProfileReputation;
   initialHasMore?: boolean;
   initialNextCursor?: MeCursor | null;
   stats?: {
@@ -271,32 +293,46 @@ export default function MeClient({
     uniqueDishes: number;
   };
 }) {
+  const feedStateKey = meFeedStateKey(initialMyName);
+  const [persistedSnapshot] = useState(() => readFeedState<MeFeedSnapshot>(feedStateKey));
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
   const [displayName, setDisplayName] = useState(initialDisplayName || initialMyName);
   const [bio, setBio] = useState(initialBio);
   const [circle, setCircle] = useState<string[]>(initialCircle);
-  const [activeTab, setActiveTab] = useState<MeTab>("reviews");
+  const [activeTab, setActiveTab] = useState<MeTab>(persistedSnapshot?.activeTab ?? "reviews");
   const [nearbyPublicReviews, setNearbyPublicReviews] = useState<Review[]>([]);
   const [loadingNearbyDishes, setLoadingNearbyDishes] = useState(false);
-  const [reviews, setReviews] = useState<Review[]>(allReviews);
-  const [reviewLikeCountMap, setReviewLikeCountMap] = useState(likeCountMap);
-  const [reviewCommentMap, setReviewCommentMap] = useState(commentMap);
-  const [reviewLikedByMeMap, setReviewLikedByMeMap] = useState(likedByMeMap);
-  const [reviewBookmarkedPostMap, setReviewBookmarkedPostMap] = useState(bookmarkedPostMap);
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [nextCursor, setNextCursor] = useState<MeCursor | null>(initialNextCursor);
+  const [reviews, setReviews] = useState<Review[]>(persistedSnapshot?.reviews ?? allReviews);
+  const [reviewLikeCountMap, setReviewLikeCountMap] = useState(persistedSnapshot?.likeCountMap ?? likeCountMap);
+  const [reviewCommentMap, setReviewCommentMap] = useState(persistedSnapshot?.commentMap ?? commentMap);
+  const [reviewLikedByMeMap, setReviewLikedByMeMap] = useState(persistedSnapshot?.likedByMeMap ?? likedByMeMap);
+  const [reviewBookmarkedPostMap, setReviewBookmarkedPostMap] = useState(persistedSnapshot?.bookmarkedPostMap ?? bookmarkedPostMap);
+  const [hasMore, setHasMore] = useState(persistedSnapshot?.hasMore ?? initialHasMore);
+  const [nextCursor, setNextCursor] = useState<MeCursor | null>(persistedSnapshot?.nextCursor ?? initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
 
   useEffect(() => {
-    setReviews(allReviews);
-    setReviewLikeCountMap(likeCountMap);
-    setReviewCommentMap(commentMap);
-    setReviewLikedByMeMap(likedByMeMap);
-    setReviewBookmarkedPostMap(bookmarkedPostMap);
-    setHasMore(initialHasMore);
-    setNextCursor(initialNextCursor);
+    const snapshot = readFeedState<MeFeedSnapshot>(feedStateKey);
+    if (snapshot && snapshot.reviews.length > allReviews.length) {
+      setReviews(snapshot.reviews);
+      setReviewLikeCountMap(snapshot.likeCountMap);
+      setReviewCommentMap(snapshot.commentMap);
+      setReviewLikedByMeMap(snapshot.likedByMeMap);
+      setReviewBookmarkedPostMap(snapshot.bookmarkedPostMap);
+      setHasMore(snapshot.hasMore);
+      setNextCursor(snapshot.nextCursor);
+      setActiveTab(snapshot.activeTab);
+    } else {
+      setReviews(allReviews);
+      setReviewLikeCountMap(likeCountMap);
+      setReviewCommentMap(commentMap);
+      setReviewLikedByMeMap(likedByMeMap);
+      setReviewBookmarkedPostMap(bookmarkedPostMap);
+      setHasMore(initialHasMore);
+      setNextCursor(initialNextCursor);
+    }
   }, [
     allReviews,
     likeCountMap,
@@ -305,6 +341,30 @@ export default function MeClient({
     bookmarkedPostMap,
     initialHasMore,
     initialNextCursor,
+    feedStateKey,
+  ]);
+
+  useEffect(() => {
+    writeFeedState<MeFeedSnapshot>(feedStateKey, {
+      reviews: reviews.slice(0, MAX_PERSISTED_REVIEWS),
+      likeCountMap: reviewLikeCountMap,
+      commentMap: reviewCommentMap,
+      likedByMeMap: reviewLikedByMeMap,
+      bookmarkedPostMap: reviewBookmarkedPostMap,
+      hasMore,
+      nextCursor,
+      activeTab,
+    }, ME_FEED_STATE_TTL_MS);
+  }, [
+    activeTab,
+    hasMore,
+    nextCursor,
+    reviewBookmarkedPostMap,
+    reviewCommentMap,
+    reviewLikedByMeMap,
+    reviewLikeCountMap,
+    reviews,
+    feedStateKey,
   ]);
 
   const myReviews = useMemo(() => reviews.filter(r => r.reviewer_name === myName), [reviews, myName]);
@@ -502,6 +562,8 @@ export default function MeClient({
           </Link>
         </div>
       </div>
+
+      <ProfileReputationSection reputation={reputation} />
 
       <MeTabs activeTab={activeTab} onChange={setActiveTab} />
       {tabContent}

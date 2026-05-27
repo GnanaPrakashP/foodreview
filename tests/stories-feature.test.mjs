@@ -23,6 +23,10 @@ test("stories feature has API, create page, and circle tray wiring", () => {
   assert.match(tray, /\/api\/stories/);
   assert.match(tray, /href="\/stories\/new"/);
   assert.match(tray, /role="dialog"/);
+  assert.match(tray, /STORY_AVATAR_SIZE = 62/);
+  assert.match(tray, /STORY_TRAY_HEIGHT/);
+  assert.match(tray, /readCachedJson<StoriesPage>/);
+  assert.match(tray, /refreshCachedJson<StoriesPage>/);
 
   assert.match(newStoryPage, /<StoryForm \/>/);
   assert.match(form, /\/api\/photos\/moderate/);

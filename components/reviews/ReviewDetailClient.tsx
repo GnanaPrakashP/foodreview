@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bookmark, Heart, MapPin, MessageCircle, MoreVertical, Send, Star, Utensils } from "lucide-react";
@@ -10,7 +11,7 @@ import RecommendationFeedback from "@/components/taste-trust/RecommendationFeedb
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
-import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, invalidatePostDeletionCaches } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { reviewMediaItems } from "@/lib/review-media";
 import { patchPostEngagement, readPostEngagementEntry } from "@/lib/post-engagement-cache";
@@ -45,6 +46,27 @@ function invalidateEngagementCaches() {
   invalidateCachedJson("/api/me");
   invalidateCachedJson("/api/feed/circle");
   invalidateCachedJson("/api/feed/public");
+}
+
+function detailImageUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.hostname.endsWith(".supabase.co") &&
+      parsed.pathname.startsWith("/storage/v1/object/public/")
+    ) {
+      const objectPath = parsed.pathname.replace("/storage/v1/object/public/", "");
+      parsed.pathname = `/storage/v1/render/image/public/${objectPath}`;
+      parsed.searchParams.set("width", "1080");
+      parsed.searchParams.set("height", "1350");
+      parsed.searchParams.set("resize", "cover");
+      parsed.searchParams.set("quality", "82");
+      return parsed.toString();
+    }
+  } catch {
+    return url;
+  }
+  return url;
 }
 
 export default function ReviewDetailClient({
@@ -119,8 +141,7 @@ export default function ReviewDetailClient({
       return;
     }
 
-    invalidateEngagementCaches();
-    invalidateCachedJson("/api/feed/public");
+    invalidatePostDeletionCaches(review.id);
     router.replace("/me");
     router.refresh();
   }
@@ -413,12 +434,18 @@ export default function ReviewDetailClient({
                 className="hide-scrollbar"
               >
                 {mediaItems.map((item, index) => (
-                  <div key={`${item.public_url}-${index}`} style={{ position: "relative", flexShrink: 0, width: "100%", scrollSnapAlign: "start" }}>
+                  <div key={`${item.public_url}-${index}`} style={{ position: "relative", flexShrink: 0, width: "100%", height: "100%", scrollSnapAlign: "start" }}>
                     {item.media_type === "video" ? (
                       <video src={item.public_url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.public_url} alt={review.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      <Image
+                        src={detailImageUrl(item.public_url)}
+                        alt={review.restaurant_name}
+                        fill
+                        sizes="(max-width: 512px) 100vw, 512px"
+                        priority={index === 0}
+                        style={{ objectFit: "cover" }}
+                      />
                     )}
                     <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)", pointerEvents: "none" }} />
                   </div>

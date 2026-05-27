@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { REVIEW_SELECT } from "@/lib/selects";
 import type { Review } from "@/lib/types";
 import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
 import { normalizeReview } from "@/lib/server/normalize-review";
@@ -13,6 +12,26 @@ export const dynamic = "force-dynamic";
 
 const DISH_RESTAURANT_LIMIT = 10;
 const NEARBY_RADIUS_KM = 30;
+const EXACT_DISH_SCAN_LIMIT = 250;
+const FALLBACK_DISH_SCAN_LIMIT = 700;
+
+const DISH_DETAIL_REVIEW_SELECT = [
+  "id",
+  "reviewer_name",
+  "restaurant_id",
+  "restaurant_name",
+  "area",
+  "restaurant_address",
+  "restaurant_lat",
+  "restaurant_lng",
+  "items",
+  "visibility",
+  "deleted_at",
+  "hidden_at",
+  "reported_at",
+  "status",
+  "created_at",
+].join(", ");
 
 type Props = {
   params: Promise<{ dish: string }>;
@@ -69,31 +88,29 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
 
   const db = createAdminClient();
-  let query = db
+  function baseQuery(limit: number) {
+    let query = db
     .from("reviews")
-    .select(REVIEW_SELECT)
+    .select(DISH_DETAIL_REVIEW_SELECT)
     .eq("visibility", "public")
     .is("deleted_at", null)
     .is("hidden_at", null)
     .is("reported_at", null)
     .eq("status", "active")
     .order("created_at", { ascending: false })
-    .limit(1000);
+      .limit(limit);
 
-  if (bounds) {
-    query = query
-      .gte("restaurant_lat", bounds.minLat)
-      .lte("restaurant_lat", bounds.maxLat)
-      .gte("restaurant_lng", bounds.minLng)
-      .lte("restaurant_lng", bounds.maxLng);
+    if (bounds) {
+      query = query
+        .gte("restaurant_lat", bounds.minLat)
+        .lte("restaurant_lat", bounds.maxLat)
+        .gte("restaurant_lng", bounds.minLng)
+        .lte("restaurant_lng", bounds.maxLng);
+    }
+    return query;
   }
 
-  const { data } = await query.returns<Review[]>();
-  const reviews = filterGlobalTrendingReviews(
-    ((data ?? []) as unknown[]).map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]))
-  );
-
-  const restaurants = new Map<string, {
+  type RestaurantAccumulator = {
     name: string;
     placeId: string | null;
     area: string | null;
@@ -102,55 +119,75 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
     ratingCount: number;
     reviewers: Set<string>;
     latest: number;
-  }>();
+  };
 
-  for (const review of reviews) {
-    const matchingItems = review.items.filter((item) => normalizeDishDisplayName(item.name) === dishName);
-    if (matchingItems.length === 0) continue;
+  function rankRestaurants(rows: Review[]) {
+    const restaurants = new Map<string, RestaurantAccumulator>();
 
-    const key = review.restaurant_id || review.restaurant_name.toLowerCase();
-    const existing = restaurants.get(key) ?? {
-      name: review.restaurant_name,
-      placeId: review.restaurant_id,
-      area: restaurantLocationLabel(review),
-      mentions: 0,
-      ratingTotal: 0,
-      ratingCount: 0,
-      reviewers: new Set<string>(),
-      latest: 0,
-    };
+    for (const review of rows) {
+      const matchingItems = review.items.filter((item) => normalizeDishDisplayName(item.name) === dishName);
+      if (matchingItems.length === 0) continue;
 
-    existing.mentions += matchingItems.length;
-    existing.reviewers.add(review.reviewer_name);
-    existing.latest = Math.max(existing.latest, new Date(review.created_at).getTime());
-    if (!existing.area) existing.area = restaurantLocationLabel(review);
-    for (const item of matchingItems) {
-      if (item.rating > 0) {
-        existing.ratingTotal += item.rating;
-        existing.ratingCount += 1;
+      const key = review.restaurant_id || review.restaurant_name.toLowerCase();
+      const existing = restaurants.get(key) ?? {
+        name: review.restaurant_name,
+        placeId: review.restaurant_id,
+        area: restaurantLocationLabel(review),
+        mentions: 0,
+        ratingTotal: 0,
+        ratingCount: 0,
+        reviewers: new Set<string>(),
+        latest: 0,
+      };
+
+      existing.mentions += matchingItems.length;
+      existing.reviewers.add(review.reviewer_name);
+      existing.latest = Math.max(existing.latest, new Date(review.created_at).getTime());
+      if (!existing.area) existing.area = restaurantLocationLabel(review);
+      for (const item of matchingItems) {
+        if (item.rating > 0) {
+          existing.ratingTotal += item.rating;
+          existing.ratingCount += 1;
+        }
       }
+      restaurants.set(key, existing);
     }
-    restaurants.set(key, existing);
+
+    return Array.from(restaurants.entries())
+      .map(([key, item]) => ({
+        key,
+        name: item.name,
+        placeId: item.placeId,
+        area: item.area,
+        mentions: item.mentions,
+        averageRating: item.ratingCount > 0 ? item.ratingTotal / item.ratingCount : 0,
+        reviewerCount: item.reviewers.size,
+        latest: item.latest,
+      }))
+      .sort((a, b) =>
+        b.mentions - a.mentions ||
+        b.averageRating - a.averageRating ||
+        b.reviewerCount - a.reviewerCount ||
+        b.latest - a.latest
+      )
+      .slice(0, DISH_RESTAURANT_LIMIT);
   }
 
-  const ranked: DishRestaurant[] = Array.from(restaurants.entries())
-    .map(([key, item]) => ({
-      key,
-      name: item.name,
-      placeId: item.placeId,
-      area: item.area,
-      mentions: item.mentions,
-      averageRating: item.ratingCount > 0 ? item.ratingTotal / item.ratingCount : 0,
-      reviewerCount: item.reviewers.size,
-      latest: item.latest,
-    }))
-    .sort((a, b) =>
-      b.mentions - a.mentions ||
-      b.averageRating - a.averageRating ||
-      b.reviewerCount - a.reviewerCount ||
-      b.latest - a.latest
-    )
-    .slice(0, DISH_RESTAURANT_LIMIT);
+  const exactResult = await baseQuery(EXACT_DISH_SCAN_LIMIT)
+    .contains("items", [{ name: dishName }])
+    .returns<Review[]>();
+  const exactReviews = filterGlobalTrendingReviews(
+    ((exactResult.data ?? []) as unknown[]).map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]))
+  );
+  let ranked = rankRestaurants(exactReviews);
+
+  if (ranked.length === 0) {
+    const { data } = await baseQuery(FALLBACK_DISH_SCAN_LIMIT).returns<Review[]>();
+    const reviews = filterGlobalTrendingReviews(
+      ((data ?? []) as unknown[]).map((review) => normalizeReview(review as Parameters<typeof normalizeReview>[0]))
+    );
+    ranked = rankRestaurants(reviews);
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>

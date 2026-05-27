@@ -358,6 +358,111 @@ export interface Database {
         };
         Relationships: [];
       };
+      user_reputation: {
+        Row: {
+          user_id: string;
+          profile_score: number;
+          tier_display_name: string;
+          current_weekly_streak: number;
+          best_weekly_streak: number;
+          current_monthly_streak: number;
+          best_monthly_streak: number;
+          last_weekly_active_period: string | null;
+          last_monthly_active_period: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          profile_score?: number;
+          tier_display_name?: string;
+          current_weekly_streak?: number;
+          best_weekly_streak?: number;
+          current_monthly_streak?: number;
+          best_monthly_streak?: number;
+          last_weekly_active_period?: string | null;
+          last_monthly_active_period?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          profile_score?: number;
+          tier_display_name?: string;
+          current_weekly_streak?: number;
+          best_weekly_streak?: number;
+          current_monthly_streak?: number;
+          best_monthly_streak?: number;
+          last_weekly_active_period?: string | null;
+          last_monthly_active_period?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      user_badges: {
+        Row: {
+          id: string;
+          user_id: string;
+          badge_id: string;
+          badge_type: string;
+          badge_name: string;
+          badge_description: string | null;
+          badge_icon: string | null;
+          badge_category: string | null;
+          earned_at: string;
+          metadata: Json;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          badge_id: string;
+          badge_type: string;
+          badge_name: string;
+          badge_description?: string | null;
+          badge_icon?: string | null;
+          badge_category?: string | null;
+          earned_at?: string;
+          metadata?: Json;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          badge_id?: string;
+          badge_type?: string;
+          badge_name?: string;
+          badge_description?: string | null;
+          badge_icon?: string | null;
+          badge_category?: string | null;
+          earned_at?: string;
+          metadata?: Json;
+        };
+        Relationships: [];
+      };
+      post_visit_attributions: {
+        Row: {
+          id: string;
+          post_id: string;
+          source_user_id: string;
+          visitor_user_id: string;
+          restaurant_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          post_id: string;
+          source_user_id: string;
+          visitor_user_id: string;
+          restaurant_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          post_id?: string;
+          source_user_id?: string;
+          visitor_user_id?: string;
+          restaurant_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       wishlist: {
         Row: {
           id: string;

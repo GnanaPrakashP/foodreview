@@ -1,5 +1,7 @@
 "use client";
 
+import { clearFeedState, removePostFromPersistedFeedSnapshots } from "@/lib/browser-feed-state";
+
 type CacheEntry<T> = {
   expiresAt: number;
   savedAt?: number;
@@ -143,10 +145,12 @@ export function invalidateViewerCaches() {
   }
 }
 
-export function invalidateCachedJson(prefix: string) {
+export function invalidateCachedJson(prefix: string, options: { clearFeedSnapshots?: boolean } = {}) {
+  const { clearFeedSnapshots = true } = options;
   for (const key of memoryCache.keys()) {
     if (key.startsWith(prefix)) memoryCache.delete(key);
   }
+  if (clearFeedSnapshots) clearFeedState(prefix);
 
   try {
     for (let index = sessionStorage.length - 1; index >= 0; index--) {
@@ -155,5 +159,12 @@ export function invalidateCachedJson(prefix: string) {
     }
   } catch {
     // Ignore storage access failures.
+  }
+}
+
+export function invalidatePostDeletionCaches(postId: string) {
+  removePostFromPersistedFeedSnapshots(postId);
+  for (const prefix of ["/api/me", "/api/feed/circle", "/api/feed/public", "/api/people"]) {
+    invalidateCachedJson(prefix, { clearFeedSnapshots: false });
   }
 }

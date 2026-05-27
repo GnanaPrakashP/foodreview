@@ -1,13 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
-import type { Review, Comment } from "@/lib/types";
+import type { Review } from "@/lib/types";
 import RestaurantDetailClient from "@/components/people/RestaurantDetailClient";
 import { hasCircleAccess } from "@/lib/circle-db";
-import { COMMENT_SELECT, REVIEW_SELECT } from "@/lib/selects";
+import { REVIEW_SELECT } from "@/lib/selects";
 import { filterProfileReviews } from "@/lib/visibility";
-import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { loadProfileReviewsPage } from "@/lib/profile-reviews";
 
 interface Props {
   params: Promise<{ username: string; restaurant: string }>;
@@ -38,7 +38,12 @@ export default async function RestaurantDetailPage({ params }: Props) {
     if (canSeeCirclePosts) circleOwnerNames = new Set([name]);
   }
 
-  // All reviews by this person (for visible rank context) + filter to this restaurant.
+  const postsPage = await loadProfileReviewsPage(readDb, name, myName, {
+    restaurantName,
+    limit: RESTAURANT_PROFILE_PAGE_SIZE,
+  });
+
+  // Fetch this user's recent visible reviews only for lightweight place-rank context.
   const { data: allReviews } = await readDb
     .from("reviews")
     .select(REVIEW_SELECT)
@@ -54,52 +59,9 @@ export default async function RestaurantDetailPage({ params }: Props) {
     viewerName: myName,
     circleOwnerNames,
   });
-  const posts = reviews.filter((r) => r.restaurant_name === restaurantName).slice(0, RESTAURANT_PROFILE_PAGE_SIZE);
-  const hasMore = reviews.filter((r) => r.restaurant_name === restaurantName).length > RESTAURANT_PROFILE_PAGE_SIZE;
-  const nextCursor = hasMore && posts.length > 0
-    ? { createdAt: posts[posts.length - 1].created_at, id: posts[posts.length - 1].id }
-    : null;
+  const posts = postsPage.reviews;
 
   if (posts.length === 0) notFound();
-
-  const postIds = posts.map((r) => r.id);
-
-  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = await Promise.all([
-    readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
-    readDb
-      .from("comments")
-      .select(COMMENT_SELECT)
-      .in("post_id", postIds)
-      .order("created_at", { ascending: false })
-      .returns<Comment[]>(),
-    myName
-      ? readDb
-          .from("wishlist")
-          .select("post_id")
-          .eq("user_name", myName)
-          .in("post_id", postIds)
-      : Promise.resolve({ data: [] }),
-    buildProfileDisplayMap(readDb, [name]),
-  ]);
-
-  const likeCountMap: Record<string, number> = {};
-  const likedByMeMap: Record<string, boolean> = {};
-  for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
-    likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
-    if (myName && like.user_name === myName) likedByMeMap[like.post_id] = true;
-  }
-
-  const bookmarkedPostMap: Record<string, boolean> = {};
-  for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
-    if (item.post_id) bookmarkedPostMap[item.post_id] = true;
-  }
-
-  const commentMap: Record<string, { count: number; top: Comment }> = {};
-  for (const c of rawComments ?? []) {
-    const ex = commentMap[c.post_id];
-    if (!ex) commentMap[c.post_id] = { count: 1, top: c };
-    else ex.count++;
-  }
 
   // Rank each post within this user's full review history
   const visitCounts = new Map<string, number>();
@@ -121,15 +83,15 @@ export default async function RestaurantDetailPage({ params }: Props) {
       username={name}
       restaurantName={restaurantName}
       posts={posts}
-      likeCountMap={likeCountMap}
-      commentMap={commentMap}
+      likeCountMap={postsPage.likeCountMap}
+      commentMap={postsPage.commentMap}
       rankMap={rankMap}
-      likedByMeMap={likedByMeMap}
-      bookmarkedPostMap={bookmarkedPostMap}
-      profileMap={profileMap}
+      likedByMeMap={postsPage.likedByMeMap}
+      bookmarkedPostMap={postsPage.bookmarkedPostMap}
+      profileMap={postsPage.profileMap}
       initialMyName={myName}
-      initialHasMore={hasMore}
-      initialNextCursor={nextCursor}
+      initialHasMore={postsPage.hasMore}
+      initialNextCursor={postsPage.nextCursor}
     />
   );
 }

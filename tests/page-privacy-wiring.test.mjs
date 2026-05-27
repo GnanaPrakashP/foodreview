@@ -220,9 +220,12 @@ test("people profile page filters owner reviews before passing them to the clien
   const src = source("app/people/[username]/page.tsx");
 
   assert.match(src, /hasCircleAccess\(supabase, name, myName\)/);
-  assert.match(src, /const visibleReviews = filterProfileReviews\(rawReviews, name,/);
+  assert.match(src, /loadProfileReviewsPage\(admin, name, myName, \{ limit: PROFILE_REVIEWS_PAGE_SIZE \}\)/);
+  assert.match(src, /const visibleReviews = profileReviewsPage\.reviews/);
   assert.match(src, /reviews=\{visibleReviews\}/);
-  assert.match(src, /const hasAnyCirclePosts =[\s\S]*normalizeVisibility\(review\.visibility\) === "circle"/);
+  assert.match(src, /\.select\("id", \{ count: "exact", head: true \}\)/);
+  assert.match(src, /\.eq\("visibility", "circle"\)/);
+  assert.match(src, /const hasAnyCirclePosts = \(hiddenCircleCountResult\.count \?\? 0\) > 0/);
   assert.match(src, /const hasHiddenCirclePosts =[\s\S]*myName !== name[\s\S]*!isCircleMember[\s\S]*hasAnyCirclePosts/);
   assert.doesNotMatch(src, /accountType === "private"\s*&&[\s\S]*hasHiddenCirclePosts/);
 });
@@ -232,10 +235,12 @@ test("people restaurant detail filters profile reviews before selecting restaura
 
   assert.match(src, /const readDb = createAdminClient\(\)/);
   assert.match(src, /hasCircleAccess\(supabase, name, myName\)/);
+  assert.match(src, /loadProfileReviewsPage\(readDb, name, myName, \{[\s\S]*restaurantName,/);
+  assert.match(src, /const posts = postsPage\.reviews/);
   assert.match(src, /const normalizedReviews = \(\(allReviews \?\? \[\]\) as unknown\[\]\)/);
   assert.match(src, /const reviews = filterProfileReviews\(normalizedReviews, name,/);
-  assert.match(src, /const posts = reviews\.filter/);
-  assert.match(src, /const postIds = posts\.map/);
+  assert.match(src, /likeCountMap=\{postsPage\.likeCountMap\}/);
+  assert.match(src, /initialHasMore=\{postsPage\.hasMore\}/);
 });
 
 test("review detail reads by service role then applies app visibility before rendering", () => {

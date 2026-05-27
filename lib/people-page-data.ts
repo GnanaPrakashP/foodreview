@@ -5,6 +5,9 @@ import { filterGlobalTrendingReviews } from "@/lib/visibility";
 import { profileDisplayName } from "@/lib/profile-names";
 
 const PEOPLE_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const PEOPLE_PAGE_DEFAULT_LIMIT = 48;
+const PEOPLE_PAGE_MAX_LIMIT = 100;
+const PEOPLE_REVIEWS_SCAN_LIMIT = 600;
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -27,6 +30,10 @@ export interface CircleMember {
   suggestionRank: number;
 }
 
+type PeoplePageOptions = {
+  limit?: number;
+};
+
 function normalizeName(name: string) {
   return name.trim().toLowerCase();
 }
@@ -46,23 +53,29 @@ const globalForPeopleCache = globalThis as typeof globalThis & {
 
 globalForPeopleCache.__foodReviewInvalidatePeoplePageCacheForNames = invalidatePeoplePageCacheForNames;
 
-export async function getPeoplePageData(supabase: SupabaseLike, myName: string) {
+function clampLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) return PEOPLE_PAGE_DEFAULT_LIMIT;
+  return Math.min(PEOPLE_PAGE_MAX_LIMIT, Math.max(1, Math.floor(limit as number)));
+}
+
+export async function getPeoplePageData(supabase: SupabaseLike, myName: string, options: PeoplePageOptions = {}) {
   const viewer = normalizeName(myName) || "anonymous";
+  const limit = clampLimit(options.limit);
   return getPrivateCached({
-    key: `people-page:v1:${viewer}`,
+    key: `people-page:v2:${viewer}:${limit}`,
     ttlMs: PEOPLE_PAGE_CACHE_TTL_MS,
     load: async () => ({
-      value: await loadPeoplePageData(supabase, myName),
+      value: await loadPeoplePageData(supabase, myName, limit),
       tags: [`people-page:${viewer}`, "people-page:all"],
     }),
   });
 }
 
-async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promise<{ circleMembers: CircleMember[] }> {
-  const [{ data: reviews }, { data: profiles }] = await Promise.all([
+async function loadPeoplePageData(supabase: SupabaseLike, myName: string, limit: number): Promise<{ circleMembers: CircleMember[]; hasMore: boolean }> {
+  const { data: reviews } =
     // Only public, non-suppressed reviews. Keeps the working set manageable and prevents
     // private/circle posts from leaking into the people suggestion ranking.
-    supabase
+    await supabase
       .from("reviews")
       .select("reviewer_name, restaurant_name, visibility, created_at")
       .eq("visibility", "public")
@@ -71,16 +84,34 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promi
       .is("reported_at", null)
       .eq("status", "active")
       .order("created_at", { ascending: false })
-      .limit(2000),
+      .limit(PEOPLE_REVIEWS_SCAN_LIMIT);
+
+  const allReviews = (reviews ?? []) as Pick<Review, "reviewer_name" | "restaurant_name" | "visibility" | "created_at">[] as Review[];
+  const publicReviews = filterGlobalTrendingReviews(allReviews);
+  const reviewerNames = Array.from(new Set(publicReviews.map((review) => review.reviewer_name).filter(Boolean)));
+
+  const [{ data: reviewerProfiles }, { data: starterProfiles }] = await Promise.all([
+    reviewerNames.length > 0
+      ? supabase
+          .from("profiles")
+          .select("username, account_type, first_name, last_name")
+          .in("username", reviewerNames)
+      : Promise.resolve({ data: [] }),
     supabase
       .from("profiles")
       .select("username, account_type, first_name, last_name")
-      .not("username", "is", null),
+      .not("username", "is", null)
+      .order("username", { ascending: true })
+      .limit(limit + 1),
   ]);
 
-  const allReviews = (reviews ?? []) as Pick<Review, "reviewer_name" | "restaurant_name" | "visibility" | "created_at">[] as Review[];
-  const profileRows = (profiles ?? []) as ProfileSummary[];
-  const publicReviews = filterGlobalTrendingReviews(allReviews);
+  const profileRows = Array.from(
+    new Map(
+      ([...(reviewerProfiles ?? []), ...(starterProfiles ?? [])] as ProfileSummary[])
+        .filter((profile) => profile.username)
+        .map((profile) => [profile.username, profile])
+    ).values()
+  );
   const myRestaurants = new Set(
     allReviews
       .filter((review) => review.reviewer_name === myName)
@@ -128,7 +159,7 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promi
     }
   }
 
-  const circleMembers: CircleMember[] = Array.from(memberMap.entries())
+  const sortedMembers: CircleMember[] = Array.from(memberMap.entries())
     .map(([name, data]) => {
       const commonRestaurantCount = Array.from(data.restaurants).filter((restaurant) => myRestaurants.has(restaurant)).length;
       return {
@@ -143,5 +174,8 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string): Promi
     })
     .sort((a, b) => b.suggestionRank - a.suggestionRank || b.totalPlaces - a.totalPlaces || a.name.localeCompare(b.name));
 
-  return { circleMembers };
+  return {
+    circleMembers: sortedMembers.slice(0, limit),
+    hasMore: sortedMembers.length > limit || (starterProfiles ?? []).length > limit,
+  };
 }

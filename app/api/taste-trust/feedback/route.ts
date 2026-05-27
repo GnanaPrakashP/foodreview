@@ -6,6 +6,7 @@ import { getPostTasteTrustSummary, recalculateTasteTrust } from "@/lib/server/ta
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { feedbackValueForLabel } from "@/lib/taste-trust";
+import { refreshUserReputationFoundation, updateUserStreaks } from "@/lib/server/reputation";
 
 type ReviewFeedbackRow = {
   id: string;
@@ -280,6 +281,14 @@ export async function POST(req: NextRequest) {
       recalculateTasteTrust(db, reviewerProfile.id),
       getPostTasteTrustSummary(db, postId),
     ]);
+    try {
+      await Promise.all([
+        refreshUserReputationFoundation(db, reviewerProfile.id),
+        updateUserStreaks(db, actor.userId),
+      ]);
+    } catch (error) {
+      console.error("[taste-trust/feedback] failed to refresh reputation:", error);
+    }
     invalidateSocialCachesForNames([review.reviewer_name, actor.actorName]);
     return NextResponse.json({
       ok: true,
@@ -366,6 +375,11 @@ export async function DELETE(req: NextRequest) {
       recalculateTasteTrust(db, reviewerUserId),
       getPostTasteTrustSummary(db, postId),
     ]);
+    try {
+      await refreshUserReputationFoundation(db, reviewerUserId);
+    } catch (error) {
+      console.error("[taste-trust/feedback] failed to refresh reputation:", error);
+    }
     invalidateSocialCachesForNames([review.reviewer_name, actor.actorName]);
 
     return NextResponse.json({

@@ -161,6 +161,12 @@ function loadMeRoute({ db, authUser }) {
       if (id === "@/lib/taste-trust") {
         return { tasteTrustSummaryFromProfile: () => ({ trust_score: 50, trust_level: "New Reviewer", confirmed_recommendations_count: 0 }) };
       }
+      if (id === "@/lib/supabase/admin") {
+        return { createAdminClient: () => db };
+      }
+      if (id === "@/lib/server/reputation") {
+        return { getUserProfileReputation: async () => ({ tier: { displayName: "New Taster", progressPercent: 0 }, permanentBadges: [], temporaryBadges: [], badgeProgress: [], streaks: {} }) };
+      }
       throw new Error(`Unexpected require in me-route tests: ${id}`);
     },
   });

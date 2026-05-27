@@ -89,11 +89,34 @@ export default function SwipeStack({
 
   useEffect(() => {
     setStack((current) => {
-      const currentIds = new Set(current.map((post) => post.id));
+      const availablePosts = new Map(posts.map((post) => [post.id, post]));
+      let changed = false;
+
+      const reconciled = current.reduce<Review[]>((next, post, index) => {
+        const freshVersion = availablePosts.get(post.id);
+        if (freshVersion) {
+          next.push(freshVersion);
+          if (freshVersion !== post) changed = true;
+          return next;
+        }
+
+        // Preserve the active card during an in-flight gesture so a background
+        // refresh cannot yank it out from under the user's finger.
+        if (index === 0 && (isDragging || dismissDir)) {
+          next.push(post);
+          return next;
+        }
+
+        changed = true;
+        return next;
+      }, []);
+
+      const currentIds = new Set(reconciled.map((post) => post.id));
       const fresh = posts.filter((post) => !currentIds.has(post.id) && !seenIds.has(post.id));
-      return fresh.length ? [...current, ...fresh] : current;
+      if (fresh.length) changed = true;
+      return changed ? [...reconciled, ...fresh] : current;
     });
-  }, [posts, seenIds]);
+  }, [dismissDir, isDragging, posts, seenIds]);
 
   useEffect(() => {
     if (stack.length <= 3) onNeedMore?.();

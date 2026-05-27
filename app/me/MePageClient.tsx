@@ -5,6 +5,7 @@ import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "
 import MeClient from "@/components/me/MeClient";
 import type { Review } from "@/lib/types";
 import type { TasteTrustSummary } from "@/lib/taste-trust";
+import type { UserProfileReputation } from "@/lib/reputation";
 
 const ME_TTL_MS = 3 * 60 * 1000;
 const API_URL = "/api/me";
@@ -22,6 +23,7 @@ type MeApiResponse = {
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
   tasteTrust?: TasteTrustSummary;
+  reputation?: UserProfileReputation;
   hasMore?: boolean;
   nextCursor?: { id: string; createdAt: string } | null;
   stats?: {
@@ -117,6 +119,7 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
       likedByMeMap={data.likedByMeMap ?? {}}
       bookmarkedPostMap={data.bookmarkedPostMap ?? {}}
       tasteTrust={data.tasteTrust}
+      reputation={data.reputation}
       initialHasMore={data.hasMore ?? false}
       initialNextCursor={data.nextCursor ?? null}
       stats={data.stats}

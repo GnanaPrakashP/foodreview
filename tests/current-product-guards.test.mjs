@@ -32,6 +32,16 @@ test("bottom nav exposes only current primary product tabs", () => {
   }
 });
 
+test("circle tab navigation keeps the circle loading shell during transition", () => {
+  const nav = source("components/layout/BottomNav.tsx");
+  const loading = source("app/CircleLoadingClient.tsx");
+
+  assert.match(nav, /writePendingRoute\(href\)/);
+  assert.match(nav, /clearPendingRoute\(\)/);
+  assert.match(loading, /readPendingRoute\(\)/);
+  assert.match(loading, /pathname !== "\/" && pendingPathname !== "\/"/);
+});
+
 test("Playwright E2E stays serial because seeded accounts are shared state", () => {
   const config = source("playwright.config.ts");
 

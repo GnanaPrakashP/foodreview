@@ -3,6 +3,8 @@ import { getMePageData, invalidateMePageCacheForNames, type MeCursor } from "@/l
 import { invalidatePeoplePageCacheForNames } from "@/lib/people-page-data";
 import { createRouteSupabase } from "@/lib/server/route-supabase";
 import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getUserProfileReputation } from "@/lib/server/reputation";
 
 const ME_PAGE_MIN_LIMIT = 1;
 const ME_PAGE_MAX_LIMIT = 100;
@@ -69,8 +71,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const data = await getMePageData(supabase, myName, { cursor, limit });
-    return NextResponse.json({ ...data, myName, displayName, bio, tasteTrust: tasteTrustSummaryFromProfile(profile) });
+    const [data, reputation] = await Promise.all([
+      getMePageData(supabase, myName, { cursor, limit }),
+      getUserProfileReputation(createAdminClient(), user.id),
+    ]);
+    return NextResponse.json({ ...data, myName, displayName, bio, tasteTrust: tasteTrustSummaryFromProfile(profile), reputation });
   } catch (error) {
     console.error("[me] failed to load:", error);
     return NextResponse.json({ error: "Unable to load profile" }, { status: 500 });

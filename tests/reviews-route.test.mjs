@@ -151,6 +151,9 @@ function loadRoute(code, { db, adminDb, authName }) {
         };
         return { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody };
       }
+      if (id === "@/lib/server/reputation") {
+        return { refreshUserReputationFoundation: async () => {} };
+      }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminDb ?? db };
       if (id === "@/lib/circle-auth") {
         return {

@@ -6,6 +6,7 @@ import type { Comment, Review } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { getStoredActorName } from "@/lib/browser-actor";
 import { readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
 import {
   TRENDING_LOCATION_LABEL_COOKIE,
   TRENDING_LOCATION_LABEL_STORAGE_KEY,
@@ -17,6 +18,8 @@ import SwipeStack from "./SwipeStack";
 
 const SWIPE_PAGE_SIZE = 40;
 const SWIPE_TTL_MS = 2 * 60 * 1000;
+const SWIPE_STATE_TTL_MS = 30 * 60 * 1000;
+const MAX_PERSISTED_POSTS = 120;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 
 type UserLocation = { lat: number; lng: number; label: string };
@@ -32,6 +35,10 @@ type PublicFeedResponse = {
   hasMore: boolean;
   nextCursor: CircleFeedCursor | null;
   error?: string;
+};
+
+type HungryFeedSnapshot = PublicFeedResponse & {
+  locationLabel: string | null;
 };
 
 function shortLocationLabel(label: string): string {
@@ -63,6 +70,17 @@ function saveLocation(loc: UserLocation) {
   } catch {
     // Storage can be blocked; the in-memory label still updates for this view.
   }
+}
+
+function swipeFeedUrl(viewerName: string, loc: UserLocation | null, cursor: CircleFeedCursor | null = null) {
+  const params = new URLSearchParams({ limit: String(SWIPE_PAGE_SIZE), excludeSynthetic: "1" });
+  if (viewerName) params.set("viewer", viewerName);
+  if (loc) {
+    params.set("lat", String(loc.lat));
+    params.set("lng", String(loc.lng));
+  }
+  if (cursor) params.set("cursor", JSON.stringify(cursor));
+  return `/api/feed/public?${params.toString()}`;
 }
 
 function LocationPickerSheet({
@@ -216,35 +234,39 @@ function LocationPickerSheet({
 }
 
 export default function HungryPageClient() {
-  const [posts, setPosts] = useState<Review[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [initialFeedKey] = useState(() => swipeFeedUrl(getStoredActorName(), loadSavedLocation()));
+  const [persistedFeed] = useState(() => readFeedState<HungryFeedSnapshot>(initialFeedKey));
+  const [posts, setPosts] = useState<Review[]>(persistedFeed?.reviews ?? []);
+  const [loading, setLoading] = useState(!persistedFeed);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(null);
+  const [hasMore, setHasMore] = useState(persistedFeed?.hasMore ?? true);
+  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedFeed?.nextCursor ?? null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [myName, setMyName] = useState("");
-  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
-  const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
-  const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
-  const [bookmarkedMap, setBookmarkedMap] = useState<Record<string, boolean>>({});
-  const [profileMap, setProfileMap] = useState<Record<string, string>>({});
+  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>(persistedFeed?.likeCountMap ?? {});
+  const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>(persistedFeed?.commentMap ?? {});
+  const [likedMap, setLikedMap] = useState<Record<string, boolean>>(persistedFeed?.likedByMeMap ?? {});
+  const [bookmarkedMap, setBookmarkedMap] = useState<Record<string, boolean>>(persistedFeed?.bookmarkedPostMap ?? {});
+  const [profileMap, setProfileMap] = useState<Record<string, string>>(persistedFeed?.profileMap ?? {});
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [dropdownTop, setDropdownTop] = useState(0);
   const locationWrapperRef = useRef<HTMLDivElement>(null);
+  const firstPageLoadingRef = useRef(false);
+  const [feedStateKey, setFeedStateKey] = useState(initialFeedKey);
 
-  const loadPosts = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName) => {
-    if (cursor ? loadingMore : loading) return;
+  const loadPosts = useCallback(async (cursor: CircleFeedCursor | null = null, viewerName = myName, feedLocation = location) => {
+    if (cursor ? loadingMore : firstPageLoadingRef.current) return;
     if (cursor && !hasMore) return;
 
     if (cursor) setLoadingMore(true);
-    else setLoading(true);
+    else {
+      firstPageLoadingRef.current = true;
+      setLoading(true);
+    }
 
     try {
-      const params = new URLSearchParams({ limit: String(SWIPE_PAGE_SIZE), excludeSynthetic: "1" });
-      if (viewerName) params.set("viewer", viewerName);
-      if (cursor) params.set("cursor", JSON.stringify(cursor));
-      const url = `/api/feed/public?${params}`;
+      const url = swipeFeedUrl(viewerName, feedLocation, cursor);
       const applyData = (data: PublicFeedResponse) => {
         setPosts((current) => {
           if (!cursor) return data.reviews ?? [];
@@ -261,6 +283,7 @@ export default function HungryPageClient() {
       };
 
       if (!cursor) {
+        setFeedStateKey(swipeFeedUrl(viewerName, feedLocation));
         const cached = readCachedJson<PublicFeedResponse>(url, { allowStale: true });
         if (cached) {
           applyData(cached);
@@ -279,18 +302,49 @@ export default function HungryPageClient() {
       if (!cursor && posts.length === 0) setPosts([]);
     } finally {
       if (cursor) setLoadingMore(false);
-      else setLoading(false);
+      else {
+        firstPageLoadingRef.current = false;
+        setLoading(false);
+      }
     }
-  }, [hasMore, loading, loadingMore, myName, posts.length]);
+  }, [hasMore, loadingMore, location, myName, posts.length]);
 
   useEffect(() => {
     const actor = getStoredActorName();
+    const savedLocation = loadSavedLocation();
     setMyName(actor);
-    setLocation(loadSavedLocation());
-    loadPosts(null, actor);
+    setLocation(savedLocation);
+    loadPosts(null, actor, savedLocation);
     // Initial fetch only; subsequent pages are pulled by the swipe stack.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (loading && posts.length === 0) return;
+    writeFeedState<HungryFeedSnapshot>(feedStateKey, {
+      reviews: posts.slice(0, MAX_PERSISTED_POSTS),
+      likeCountMap,
+      commentMap,
+      likedByMeMap: likedMap,
+      bookmarkedPostMap: bookmarkedMap,
+      profileMap,
+      hasMore,
+      nextCursor,
+      locationLabel: location?.label ?? null,
+    }, SWIPE_STATE_TTL_MS);
+  }, [
+    bookmarkedMap,
+    commentMap,
+    feedStateKey,
+    hasMore,
+    likedMap,
+    likeCountMap,
+    loading,
+    location,
+    nextCursor,
+    posts,
+    profileMap,
+  ]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -315,6 +369,7 @@ export default function HungryPageClient() {
     setLocation(nextLocation);
     saveLocation(nextLocation);
     setShowLocationPicker(false);
+    loadPosts(null, myName, nextLocation);
   }
 
   const loadMoreIfNeeded = useCallback(() => {

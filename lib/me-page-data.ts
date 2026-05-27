@@ -33,7 +33,6 @@ globalForMeCache.__foodReviewInvalidateMePageCacheForNames = invalidateMePageCac
 export type MeCursor = { id: string; createdAt: string };
 
 export const ME_PAGE_REVIEWS_DEFAULT_LIMIT = 24;
-const PUBLIC_BEST_REVIEWS_LIMIT = 500;
 
 type MeStats = {
   totalVisits: number;
@@ -108,17 +107,6 @@ async function loadMePageData(
     );
   }
 
-  const publicBestReviewsQuery = supabase
-    .from("reviews")
-    .select(REVIEW_SELECT)
-    .eq("visibility", "public")
-    .is("deleted_at", null)
-    .is("hidden_at", null)
-    .is("reported_at", null)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(PUBLIC_BEST_REVIEWS_LIMIT);
-
   const statsQuery = supabase
     .from("reviews")
     .select("restaurant_name, items")
@@ -128,10 +116,9 @@ async function loadMePageData(
     .is("reported_at", null)
     .eq("status", "active");
 
-  const [relationships, { data: rawReviews }, { data: rawPublicBestReviews }, { data: rawStatsReviews }] = await Promise.all([
+  const [relationships, { data: rawReviews }, { data: rawStatsReviews }] = await Promise.all([
     getCircleRelationshipsForName(supabase, myName),
     reviewsQuery.limit(limit + 1),
-    cursor ? Promise.resolve({ data: [] }) : publicBestReviewsQuery,
     cursor ? Promise.resolve({ data: [] }) : statsQuery,
   ]);
 
@@ -145,14 +132,12 @@ async function loadMePageData(
       : null;
 
   const engagement = await engagementForPosts(supabase, reviews, myName);
-  const publicBestReviews = ((rawPublicBestReviews ?? []) as unknown[])
-    .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]));
   const statsRows = ((rawStatsReviews ?? []) as Pick<Review, "restaurant_name" | "items">[]);
   const stats = cursor ? undefined : statsFromReviews(statsRows);
 
   return {
     reviews,
-    publicBestReviews,
+    publicBestReviews: [],
     circleMembers: [...relationships.circleMembers],
     hasMore,
     nextCursor,

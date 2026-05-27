@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getMePageData } from "@/lib/me-page-data";
 import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
+import { getUserProfileReputation } from "@/lib/server/reputation";
 
 export const dynamic = "force-dynamic";
 
@@ -40,9 +41,13 @@ export default async function MePage() {
   const displayName = profileDisplayName || metadataDisplayName;
   const bio = (profile?.bio as string | null) || (user?.user_metadata?.bio as string) || "";
 
-  const data = myName
-    ? await getMePageData(createAdminClient(), myName)
-    : { reviews: [], circleMembers: [] };
+  const admin = createAdminClient();
+  const [data, reputation] = myName
+    ? await Promise.all([
+        getMePageData(admin, myName),
+        user?.id ? getUserProfileReputation(admin, user.id) : Promise.resolve(undefined),
+      ])
+    : [{ reviews: [], circleMembers: [] }, undefined];
 
-  return <MePageClient initialData={{ ...data, myName, displayName, bio, joinedAt: user?.created_at ?? "", tasteTrust: tasteTrustSummaryFromProfile(profile) }} />;
+  return <MePageClient initialData={{ ...data, myName, displayName, bio, joinedAt: user?.created_at ?? "", tasteTrust: tasteTrustSummaryFromProfile(profile), reputation }} />;
 }

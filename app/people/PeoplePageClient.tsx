@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
-import PeopleTab from "@/components/people/PeopleTab";
 import type { CircleMember } from "@/lib/people-page-data";
 
 const PEOPLE_TTL_MS = 5 * 60 * 1000;
 const API_URL = "/api/people";
+
+const PeopleTab = dynamic(() => import("@/components/people/PeopleTab"), {
+  ssr: false,
+  loading: () => <PeopleSkeleton />,
+});
 
 type PeopleApiResponse = {
   circleMembers: CircleMember[];

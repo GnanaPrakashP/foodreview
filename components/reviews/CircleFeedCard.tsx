@@ -9,7 +9,7 @@ import type { Review } from "@/lib/types";
 import PostShareButton from "@/components/posts/PostShareButton";
 import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import ConfirmModal from "@/components/ui/ConfirmModal";
-import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, invalidatePostDeletionCaches } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { patchPostEngagement, readPostEngagement } from "@/lib/post-engagement-cache";
 import { reviewMediaItems } from "@/lib/review-media";
@@ -76,6 +76,44 @@ function feedImageUrl(url: string): string {
     return url;
   }
   return url;
+}
+
+const revealedFeedImages = new Set<string>();
+
+function FeedReviewImage({
+  src,
+  alt,
+  priority,
+}: {
+  src: string;
+  alt: string;
+  priority: boolean;
+}) {
+  const [revealed, setRevealed] = useState(() => revealedFeedImages.has(src));
+  const [shouldFade, setShouldFade] = useState(() => !revealedFeedImages.has(src));
+
+  useEffect(() => {
+    const alreadyRevealed = revealedFeedImages.has(src);
+    setRevealed(alreadyRevealed);
+    setShouldFade(!alreadyRevealed);
+  }, [src]);
+
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      fill
+      sizes="(max-width: 512px) 100vw, 512px"
+      priority={priority}
+      loading={priority ? undefined : "lazy"}
+      onLoad={() => {
+        revealedFeedImages.add(src);
+        setRevealed(true);
+      }}
+      className={!revealed ? "image-before-reveal" : shouldFade ? "image-fade-in" : undefined}
+      style={{ objectFit: "cover" }}
+    />
+  );
 }
 
 function invalidateEngagementCaches() {
@@ -249,8 +287,7 @@ export default function CircleFeedCard({
       return;
     }
 
-    invalidateEngagementCaches();
-    invalidateCachedJson("/api/feed/public");
+    invalidatePostDeletionCaches(review.id);
 
     if (onDeleted) {
       onDeleted(review);
@@ -502,15 +539,10 @@ export default function CircleFeedCard({
                         style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                       />
                     ) : (
-                      <Image
+                      <FeedReviewImage
                         src={feedImageUrl(item.public_url)}
                         alt={review.restaurant_name}
-                        fill
-                        sizes="(max-width: 512px) 100vw, 512px"
                         priority={priorityImage && i === 0}
-                        loading={priorityImage && i === 0 ? undefined : "lazy"}
-                        className="image-fade-in"
-                        style={{ objectFit: "cover" }}
                       />
                     )}
                     <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 50%)", pointerEvents: "none" }} />

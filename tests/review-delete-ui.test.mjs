@@ -24,11 +24,13 @@ test("review delete UI sends owner delete through DELETE /api/reviews/:id", () =
   assert.match(detailCard, /fetch\(`\/api\/reviews\/\$\{encodeURIComponent\(review\.id\)\}`,\s*\{\s*method:\s*"DELETE"/s);
 });
 
-test("review delete UI clears all browser feed caches that can contain the post", () => {
-  assert.match(feedCard, /invalidateCachedJson\("\/api\/feed\/circle"\)/);
-  assert.match(feedCard, /invalidateCachedJson\("\/api\/feed\/public"\)/);
-  assert.match(detailCard, /invalidateCachedJson\("\/api\/feed\/circle"\)/);
-  assert.match(detailCard, /invalidateCachedJson\("\/api\/feed\/public"\)/);
+test("review delete UI removes the deleted post from browser feed snapshots and clears related API caches", () => {
+  const cache = src("lib/browser-api-cache.ts");
+  assert.match(feedCard, /invalidatePostDeletionCaches\(review\.id\)/);
+  assert.match(detailCard, /invalidatePostDeletionCaches\(review\.id\)/);
+  assert.match(cache, /removePostFromPersistedFeedSnapshots\(postId\)/);
+  assert.match(cache, /"\/api\/me",\s*"\/api\/feed\/circle",\s*"\/api\/feed\/public",\s*"\/api\/people"/);
+  assert.match(cache, /clearFeedSnapshots: false/);
 });
 
 test("review delete UI keeps delete action owner-only inside post actions menu", () => {

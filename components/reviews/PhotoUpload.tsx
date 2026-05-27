@@ -521,6 +521,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                 border: "1px solid var(--border)",
                 borderBottom: "none",
                 borderRadius: "18px 18px 0 0",
+                boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
                 padding: "8px 8px calc(8px + env(safe-area-inset-bottom))",
               }}
             >

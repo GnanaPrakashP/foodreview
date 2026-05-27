@@ -1,13 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, X } from "lucide-react";
 import type { Json, Notification } from "@/lib/types";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
-import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import { getStoredActorName } from "@/lib/browser-actor";
+import { invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+
+const NOTIFICATIONS_API_URL = "/api/notifications";
+const NOTIFICATIONS_TTL_MS = 60 * 1000;
+
+type NotificationsPayload = {
+  notifications?: Notification[];
+  profileMap?: Record<string, string>;
+};
 
 function effectiveDate(notification: Notification): string {
   return notification.updated_at || notification.created_at;
@@ -86,45 +95,79 @@ export default function NotificationsClient() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const mountedRef = useRef(false);
+  const toastTimerRef = useRef<number | null>(null);
+
+  function cacheNotifications(nextNotifications: Notification[], nextProfileMap = profileMap) {
+    primeCachedJson<NotificationsPayload>(NOTIFICATIONS_API_URL, {
+      notifications: nextNotifications,
+      profileMap: nextProfileMap,
+    }, NOTIFICATIONS_TTL_MS);
+  }
 
   useEffect(() => {
+    mountedRef.current = true;
     setMyName(getStoredActorName());
     loadNotifications();
 
     const onFocus = () => loadNotifications();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    return () => {
+      mountedRef.current = false;
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   async function loadNotifications() {
-    setLoading(true);
+    const cached = readCachedJson<NotificationsPayload>(NOTIFICATIONS_API_URL, { allowStale: true });
+    if (cached) {
+      if (!mountedRef.current) return;
+      setNotifications(cached.notifications ?? []);
+      setProfileMap(cached.profileMap ?? {});
+      setLoading(false);
+    } else {
+      if (!mountedRef.current) return;
+      setLoading(true);
+    }
     try {
-      const res = await fetch("/api/notifications", { cache: "no-store" });
-      const data = await res.json();
-      if (res.ok) {
+      const data = await refreshCachedJson<NotificationsPayload>(NOTIFICATIONS_API_URL, NOTIFICATIONS_TTL_MS);
+      if (data && mountedRef.current) {
         setNotifications(data.notifications ?? []);
         setProfileMap(data.profileMap ?? {});
       }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
   async function markRead(id: string) {
-    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true, read: true } : n));
+    setNotifications((prev) => {
+      const next = prev.map((n) => n.id === id ? { ...n, is_read: true, read: true } : n);
+      cacheNotifications(next);
+      return next;
+    });
     await fetch(`/api/notifications/${id}/read`, { method: "PATCH" }).catch(() => {});
     invalidateCachedJson("/api/notifications/unread-count");
   }
 
   async function markAllRead() {
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true, read: true })));
+    setNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, is_read: true, read: true }));
+      cacheNotifications(next);
+      return next;
+    });
     await fetch("/api/notifications/read-all", { method: "PATCH" }).catch(() => {});
     invalidateCachedJson("/api/notifications/unread-count");
   }
 
   function showToast(msg: string) {
+    if (!mountedRef.current) return;
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      if (mountedRef.current) setToast(null);
+    }, 3000);
   }
 
   async function respondToCircle(notification: Notification, action: "accept" | "reject") {
@@ -140,18 +183,27 @@ export default function NotificationsClient() {
         });
 
     if (res.ok) {
-      setNotifications((prev) => prev.map((n) => n.id === notification.id ? {
-        ...n,
-        is_read: true,
-        read: true,
-        metadata: { ...metadataOf(n), status: action === "accept" ? "accepted" : "rejected" },
-      } : n));
+      invalidateCircleStatusCache(myName);
+      invalidateCircleStatusCache(notification.actor_name);
+      invalidateCachedJson("/api/feed/circle");
+      invalidateCachedJson("/api/people");
+      invalidateCachedJson("/api/notifications/unread-count");
+      if (mountedRef.current) setNotifications((prev) => {
+        const next = prev.map((n) => n.id === notification.id ? {
+          ...n,
+          is_read: true,
+          read: true,
+          metadata: { ...metadataOf(n), status: action === "accept" ? "accepted" : "rejected" },
+        } : n);
+        cacheNotifications(next);
+        return next;
+      });
     } else if (res.status === 404 || res.status === 409) {
       // Request was cancelled or already acted on — reload to get fresh state
       showToast("This request is no longer available");
       await loadNotifications();
     }
-    setBusyId(null);
+    if (mountedRef.current) setBusyId(null);
   }
 
   async function openNotification(notification: Notification) {

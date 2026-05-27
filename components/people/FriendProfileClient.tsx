@@ -8,12 +8,14 @@ import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profil
 import { normalizeVisibility } from "@/lib/visibility";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import ProfileDishesList from "@/components/profile/ProfileDishesList";
+import ProfileReputationSection from "@/components/reputation/ProfileReputationSection";
 import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
 import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
+import { EMPTY_REPUTATION, type UserProfileReputation } from "@/lib/reputation";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -118,6 +120,7 @@ export default function FriendProfileClient({
   initialCommonRestaurantCount = null,
   initialHasIncomingRequest = false,
   tasteTrust = DEFAULT_TASTE_TRUST_SUMMARY,
+  reputation = EMPTY_REPUTATION,
   initialHasMore = false,
   initialNextCursor = null,
 }: {
@@ -134,6 +137,7 @@ export default function FriendProfileClient({
   initialCommonRestaurantCount?: number | null;
   initialHasIncomingRequest?: boolean;
   tasteTrust?: TasteTrustSummary;
+  reputation?: UserProfileReputation;
   initialHasMore?: boolean;
   initialNextCursor?: ProfileCursor | null;
 }) {
@@ -479,6 +483,8 @@ export default function FriendProfileClient({
           )}
         </div>
       </div>
+
+      <ProfileReputationSection reputation={reputation} />
 
       {/* ── Circle action button ── */}
       {!isOwnProfile && (

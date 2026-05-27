@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Users, Search, Plus, Flame, User } from "lucide-react";
 import { getStoredActorName } from "@/lib/browser-actor";
 import { prefetchCachedJson } from "@/lib/browser-api-cache";
+import { clearPendingRoute, writePendingRoute } from "@/lib/browser-navigation-intent";
 
 const TABS = [
   { href: "/", label: "Circle", Icon: Users, center: false },
@@ -22,6 +23,7 @@ export default function BottomNav() {
 
   useEffect(() => {
     setPendingHref(null);
+    clearPendingRoute();
   }, [pathname]);
 
   const prefetchTab = (href: string) => {
@@ -50,7 +52,7 @@ export default function BottomNav() {
       for (const href of ["/", "/explore", "/hungry", "/me"]) {
         if (href !== pathname) prefetchTab(href);
       }
-    }, 900);
+    }, 150);
     return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
@@ -79,14 +81,17 @@ export default function BottomNav() {
       <div className="max-w-lg mx-auto flex items-center justify-around h-16">
         {TABS.map((tab) => {
           const href = tab.href;
-          const active =
-            pendingHref === href ||
-            (tab.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(tab.href));
+          const active = pendingHref
+            ? pendingHref === href
+            : (tab.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(tab.href));
 
           const beginNavigation = () => {
-            if (tab.href !== pathname) setPendingHref(href);
+            if (tab.href !== pathname) {
+              setPendingHref(href);
+              writePendingRoute(href);
+            }
           };
 
           /* ── Center elevated Share button ── */

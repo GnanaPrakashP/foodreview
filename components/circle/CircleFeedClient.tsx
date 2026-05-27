@@ -11,6 +11,7 @@ import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
+import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
 
 interface Props {
   allReviews: Review[];
@@ -28,6 +29,25 @@ interface Props {
   initialNextCursor?: CircleFeedCursor | null;
 }
 
+const FEED_STATE_TTL_MS = 30 * 60 * 1000;
+const MAX_PERSISTED_REVIEWS = 120;
+
+type CircleFeedSnapshot = {
+  reviews: Review[];
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  profileMap: Record<string, string>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
+  tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
+  hasMore: boolean;
+  nextCursor: CircleFeedCursor | null;
+};
+
+function circleFeedStateKey(viewerName: string) {
+  return `/api/feed/circle?viewer=${encodeURIComponent(viewerName || "anonymous")}`;
+}
+
 export default function CircleFeedClient({
   allReviews,
   likeCountMap,
@@ -43,32 +63,47 @@ export default function CircleFeedClient({
   initialHasMore = false,
   initialNextCursor = null,
 }: Props) {
+  const stateKey = circleFeedStateKey(initialMyName);
+  const [persistedSnapshot] = useState(() => readFeedState<CircleFeedSnapshot>(stateKey));
   const hasInitialIdentity = initialMyName.length > 0;
   const [circle, setCircle] = useState<string[]>(initialCircle);
   const [myName, setMyName] = useState(initialMyName);
   const [mounted, setMounted] = useState(hasInitialIdentity);
-  const [feedReviews, setFeedReviews] = useState<Review[]>(allReviews);
-  const [feedLikeCountMap, setFeedLikeCountMap] = useState(likeCountMap);
-  const [feedCommentMap, setFeedCommentMap] = useState(commentMap);
-  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(initialProfileMap);
-  const [feedLikedMap, setFeedLikedMap] = useState(initialLikedMap);
-  const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(initialBookmarkedPostMap);
-  const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(initialTasteTrustSummaryMap);
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
+  const [feedReviews, setFeedReviews] = useState<Review[]>(persistedSnapshot?.reviews ?? allReviews);
+  const [feedLikeCountMap, setFeedLikeCountMap] = useState(persistedSnapshot?.likeCountMap ?? likeCountMap);
+  const [feedCommentMap, setFeedCommentMap] = useState(persistedSnapshot?.commentMap ?? commentMap);
+  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(persistedSnapshot?.profileMap ?? initialProfileMap);
+  const [feedLikedMap, setFeedLikedMap] = useState(persistedSnapshot?.likedByMeMap ?? initialLikedMap);
+  const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(persistedSnapshot?.bookmarkedPostMap ?? initialBookmarkedPostMap);
+  const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(persistedSnapshot?.tasteTrustSummaryMap ?? initialTasteTrustSummaryMap);
+  const [hasMore, setHasMore] = useState(persistedSnapshot?.hasMore ?? initialHasMore);
+  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedSnapshot?.nextCursor ?? initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
 
   useEffect(() => {
-    setFeedReviews(allReviews);
-    setFeedLikeCountMap(likeCountMap);
-    setFeedCommentMap(commentMap);
-    setFeedProfileMap(initialProfileMap);
-    setFeedLikedMap(initialLikedMap);
-    setFeedBookmarkedPostMap(initialBookmarkedPostMap);
-    setFeedTasteTrustSummaryMap(initialTasteTrustSummaryMap);
-    setHasMore(initialHasMore);
-    setNextCursor(initialNextCursor);
+    const snapshot = readFeedState<CircleFeedSnapshot>(stateKey);
+    if (snapshot && snapshot.reviews.length > allReviews.length) {
+      setFeedReviews(snapshot.reviews);
+      setFeedLikeCountMap(snapshot.likeCountMap);
+      setFeedCommentMap(snapshot.commentMap);
+      setFeedProfileMap(snapshot.profileMap);
+      setFeedLikedMap(snapshot.likedByMeMap);
+      setFeedBookmarkedPostMap(snapshot.bookmarkedPostMap);
+      setFeedTasteTrustSummaryMap(snapshot.tasteTrustSummaryMap);
+      setHasMore(snapshot.hasMore);
+      setNextCursor(snapshot.nextCursor);
+    } else {
+      setFeedReviews(allReviews);
+      setFeedLikeCountMap(likeCountMap);
+      setFeedCommentMap(commentMap);
+      setFeedProfileMap(initialProfileMap);
+      setFeedLikedMap(initialLikedMap);
+      setFeedBookmarkedPostMap(initialBookmarkedPostMap);
+      setFeedTasteTrustSummaryMap(initialTasteTrustSummaryMap);
+      setHasMore(initialHasMore);
+      setNextCursor(initialNextCursor);
+    }
 
     primeCachedJson("/api/feed/circle", {
       reviews: allReviews,
@@ -115,6 +150,32 @@ export default function CircleFeedClient({
     initialMutualCircle,
     initialHasMore,
     initialNextCursor,
+    stateKey,
+  ]);
+
+  useEffect(() => {
+    writeFeedState<CircleFeedSnapshot>(stateKey, {
+      reviews: feedReviews.slice(0, MAX_PERSISTED_REVIEWS),
+      likeCountMap: feedLikeCountMap,
+      commentMap: feedCommentMap,
+      profileMap: feedProfileMap,
+      likedByMeMap: feedLikedMap,
+      bookmarkedPostMap: feedBookmarkedPostMap,
+      tasteTrustSummaryMap: feedTasteTrustSummaryMap,
+      hasMore,
+      nextCursor,
+    }, FEED_STATE_TTL_MS);
+  }, [
+    feedBookmarkedPostMap,
+    feedCommentMap,
+    feedLikedMap,
+    feedLikeCountMap,
+    feedProfileMap,
+    feedReviews,
+    feedTasteTrustSummaryMap,
+    hasMore,
+    nextCursor,
+    stateKey,
   ]);
 
   // `allReviews` is already filtered server-side for this viewer and circle graph.

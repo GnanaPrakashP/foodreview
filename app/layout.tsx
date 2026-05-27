@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import BottomNav from "@/components/layout/BottomNav";
 import AuthSync from "@/components/auth/AuthSync";
+import ScrollRestoration from "@/components/navigation/ScrollRestoration";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://circlebites.in"),
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <AuthSync />
+        <ScrollRestoration />
         <main className="max-w-lg mx-auto page-content">
           {children}
         </main>

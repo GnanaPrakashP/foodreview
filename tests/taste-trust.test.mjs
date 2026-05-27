@@ -131,6 +131,10 @@ function loadFeedbackRoute({ db, authName = "Alice", userId = "alice-id", recalc
         return { trust_score: 85, trust_level: "Trusted", confirmed_recommendations_count: 5 };
       },
     },
+    "@/lib/server/reputation": {
+      refreshUserReputationFoundation: async () => {},
+      updateUserStreaks: async () => {},
+    },
     "@/lib/server/route-supabase": {
       getRouteActor: async () => authName
         ? { actor: { userId, actorName: authName, displayName: authName } }

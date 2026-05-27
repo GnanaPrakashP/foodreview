@@ -3,6 +3,31 @@ import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation"
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { canActorReadPost } from "@/lib/server/review-access";
+import { recalculateUserReputation } from "@/lib/server/reputation";
+
+async function refreshPostAuthorReputation(db: { from: (table: string) => any }, postId: unknown) {
+  if (typeof postId !== "string" || !postId.trim()) return;
+  const { data: review } = await db
+    .from("reviews")
+    .select("reviewer_name")
+    .eq("id", postId.trim())
+    .maybeSingle();
+  const reviewerName = typeof review?.reviewer_name === "string" ? review.reviewer_name : "";
+  if (!reviewerName) return;
+
+  const { data: profile } = await db
+    .from("profiles")
+    .select("id")
+    .eq("username", reviewerName)
+    .maybeSingle();
+  if (typeof profile?.id !== "string") return;
+
+  try {
+    await recalculateUserReputation(db, profile.id);
+  } catch (error) {
+    console.error("[wishlist] Failed to refresh author reputation:", error);
+  }
+}
 
 export async function POST(req: NextRequest) {
   const { restaurantName, postId } = await req.json();
@@ -36,6 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
+  await refreshPostAuthorReputation(writeDb, postId);
   return NextResponse.json({ ok: true });
 }
 
@@ -70,5 +96,6 @@ export async function DELETE(req: NextRequest) {
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
+  await refreshPostAuthorReputation(writeDb, postId);
   return NextResponse.json({ ok: true });
 }

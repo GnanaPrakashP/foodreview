@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { TASTE_TRUST_FEEDBACK_OPTIONS, type PostTasteTrustSummary } from "@/lib/taste-trust";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 type Props = {
   postId: string;
@@ -37,6 +38,12 @@ const FEEDBACK_EMOJIS: Record<string, string> = {
   "Not really": "🙁",
   "Not worth it": "😖",
 };
+
+function invalidateTasteTrustCaches() {
+  invalidateCachedJson("/api/feed/circle");
+  invalidateCachedJson("/api/feed/public");
+  invalidateCachedJson("/api/me");
+}
 
 const FEEDBACK_LABELS: Record<string, string> = {
   "Totally worth it": "Worth",
@@ -110,6 +117,7 @@ export default function RecommendationFeedback({
       setSummary(payload.postSummary);
       onSummaryChange?.(payload.postSummary);
     }
+    invalidateTasteTrustCaches();
     setStatusText(payload.error || "");
     setSubmittingLabel(null);
   }
@@ -134,6 +142,7 @@ export default function RecommendationFeedback({
       setSummary(payload.postSummary);
       onSummaryChange?.(payload.postSummary);
     }
+    invalidateTasteTrustCaches();
     setRemoving(false);
   }
 

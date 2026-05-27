@@ -148,6 +148,9 @@ function loadRoute(code, { db, authName }) {
         };
         return { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody };
       }
+      if (id === "@/lib/server/reputation") {
+        return { refreshUserReputationFoundation: async () => {} };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>

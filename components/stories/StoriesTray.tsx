@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Plus, X, ChevronLeft, ChevronRight } from "lucide-react";
-import { cachedJson, invalidateCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import type { Story } from "@/lib/types";
 import type { StoriesPage, StoryGroup } from "@/lib/stories";
 
 const API_URL = "/api/stories";
 const STORIES_TTL_MS = 60 * 1000;
+const STORY_ITEM_WIDTH = 68;
+const STORY_AVATAR_SIZE = 62;
+const STORY_LABEL_HEIGHT = 14;
+const STORY_ITEM_GAP = 7;
+const STORY_TRAY_HEIGHT = 2 + STORY_AVATAR_SIZE + STORY_ITEM_GAP + STORY_LABEL_HEIGHT;
 
 function timeLeftLabel(expiresAt: string) {
   const ms = new Date(expiresAt).getTime() - Date.now();
@@ -25,13 +30,20 @@ function currentStory(groups: StoryGroup[], groupIndex: number, storyIndex: numb
 }
 
 export default function StoriesTray() {
-  const [data, setData] = useState<StoriesPage | null>(null);
+  const [data, setData] = useState<StoriesPage | null>(() => readCachedJson<StoriesPage>(API_URL, { allowStale: true }));
   const [error, setError] = useState(false);
   const [activeGroupIndex, setActiveGroupIndex] = useState<number | null>(null);
   const [activeStoryIndex, setActiveStoryIndex] = useState(0);
 
   useEffect(() => {
-    cachedJson<StoriesPage>(API_URL, STORIES_TTL_MS, { bypassOnReload: true })
+    const cached = readCachedJson<StoriesPage>(API_URL, { allowStale: true });
+    if (cached) setData(cached);
+
+    const load = cached
+      ? refreshCachedJson<StoriesPage>(API_URL, STORIES_TTL_MS)
+      : cachedJson<StoriesPage>(API_URL, STORIES_TTL_MS, { bypassOnReload: true });
+
+    load
       .then(setData)
       .catch(() => setError(true));
   }, []);
@@ -83,7 +95,7 @@ export default function StoriesTray() {
 
   return (
     <>
-      <div>
+      <div style={{ minHeight: STORY_TRAY_HEIGHT }}>
         <div
           style={{
             display: "flex",
@@ -91,6 +103,7 @@ export default function StoriesTray() {
             overflowX: "auto",
             padding: "2px 12px 0",
             scrollbarWidth: "none",
+            minHeight: STORY_TRAY_HEIGHT,
           }}
         >
           <Link
@@ -99,18 +112,18 @@ export default function StoriesTray() {
             aria-label="Add story"
             style={{
               flex: "0 0 auto",
-              width: "68px",
+              width: STORY_ITEM_WIDTH,
               textDecoration: "none",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: "7px",
+              gap: STORY_ITEM_GAP,
             }}
           >
             <span
               style={{
-                width: "58px",
-                height: "58px",
+                width: STORY_AVATAR_SIZE,
+                height: STORY_AVATAR_SIZE,
                 borderRadius: "50%",
                 border: "1.5px dashed var(--border)",
                 background: "var(--card)",
@@ -122,7 +135,7 @@ export default function StoriesTray() {
             >
               <Plus size={22} strokeWidth={2.2} />
             </span>
-            <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", maxWidth: "68px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: `${STORY_LABEL_HEIGHT}px`, height: STORY_LABEL_HEIGHT, color: "var(--muted)", maxWidth: STORY_ITEM_WIDTH, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               Your story
             </span>
           </Link>
@@ -136,21 +149,21 @@ export default function StoriesTray() {
                 onClick={() => openGroup(index)}
                 style={{
                   flex: "0 0 auto",
-                  width: "68px",
+                  width: STORY_ITEM_WIDTH,
                   border: "none",
                   background: "transparent",
                   padding: 0,
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
-                  gap: "7px",
+                  gap: STORY_ITEM_GAP,
                   cursor: "pointer",
                 }}
               >
                 <span
                   style={{
-                    width: "62px",
-                    height: "62px",
+                    width: STORY_AVATAR_SIZE,
+                    height: STORY_AVATAR_SIZE,
                     borderRadius: "50%",
                     padding: "2px",
                     background: "linear-gradient(135deg, var(--orange), var(--gold))",
@@ -176,13 +189,13 @@ export default function StoriesTray() {
                   >
                     {latest?.media_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={latest.media_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <img src={latest.media_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     ) : (
                       avatarInitial(storyGroup.displayName)
                     )}
                   </span>
                 </span>
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)", maxWidth: "68px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", lineHeight: `${STORY_LABEL_HEIGHT}px`, height: STORY_LABEL_HEIGHT, color: "var(--muted)", maxWidth: STORY_ITEM_WIDTH, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {storyGroup.authorName === data?.myName ? "You" : storyGroup.displayName}
                 </span>
               </button>

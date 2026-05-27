@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import { invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
 import { profileDisplayName } from "@/lib/profile-names";
 import { getStoredActorName } from "@/lib/browser-actor";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
@@ -61,6 +62,8 @@ import {
 
 const FEED_PAGE_SIZE = 24;
 const FEED_TTL_MS = 2 * 60 * 1000;
+const FEED_STATE_TTL_MS = 30 * 60 * 1000;
+const MAX_PERSISTED_FEED_POSTS = 120;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
 const RESTAURANT_CARD_DISH_LIMIT = 3;
@@ -115,6 +118,11 @@ type PublicFeedResponse = {
   hasMore: boolean;
   nextCursor: CircleFeedCursor | null;
   error?: string;
+};
+
+type ExploreFeedSnapshot = PublicFeedResponse & {
+  activeTab: ExploreTab;
+  locationLabel: string | null;
 };
 
 /* ─── Helpers ────────────────────────────────────── */
@@ -176,6 +184,17 @@ function saveLocation(loc: UserLocation) {
   } catch {
     // Storage may be blocked; the in-memory Explore state still updates.
   }
+}
+
+function publicFeedUrl(viewerName: string, loc: UserLocation | null, cursor: CircleFeedCursor | null = null) {
+  const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
+  if (viewerName) params.set("viewer", viewerName);
+  if (loc) {
+    params.set("lat", String(loc.lat));
+    params.set("lng", String(loc.lng));
+  }
+  if (cursor) params.set("cursor", JSON.stringify(cursor));
+  return `/api/feed/public?${params.toString()}`;
 }
 
 function locationBounds(loc: UserLocation, radiusKm = EXPLORE_NEARBY_RADIUS_KM) {
@@ -1156,6 +1175,8 @@ function PeopleStrip({
 /* ─── Main Component ─────────────────────────────── */
 
 export default function PeopleTab({ initialCircle }: { initialCircle: CircleMember[] }) {
+  const [initialFeedKey] = useState(() => publicFeedUrl(getStoredActorName(), loadSavedLocation()));
+  const [persistedFeed] = useState(() => readFeedState<ExploreFeedSnapshot>(initialFeedKey));
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [peopleResults, setPeopleResults] = useState<PeopleResult[]>([]);
@@ -1163,20 +1184,21 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [dishResults, setDishResults] = useState<DishResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<ExploreTab>("posts");
+  const [activeTab, setActiveTab] = useState<ExploreTab>(persistedFeed?.activeTab ?? "posts");
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
   const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
-  const [feed, setFeed] = useState<Review[]>([]);
-  const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>({});
-  const [feedCommentMap, setFeedCommentMap] = useState<Record<string, { count: number; top: Comment }>>({});
-  const [feedLikedMap, setFeedLikedMap] = useState<Record<string, boolean>>({});
-  const [feedBookmarkedMap, setFeedBookmarkedMap] = useState<Record<string, boolean>>({});
-  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>({});
-  const [feedLoading, setFeedLoading] = useState(true);
+  const [feed, setFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);
+  const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>(persistedFeed?.likeCountMap ?? {});
+  const [feedCommentMap, setFeedCommentMap] = useState<Record<string, { count: number; top: Comment }>>(persistedFeed?.commentMap ?? {});
+  const [feedLikedMap, setFeedLikedMap] = useState<Record<string, boolean>>(persistedFeed?.likedByMeMap ?? {});
+  const [feedBookmarkedMap, setFeedBookmarkedMap] = useState<Record<string, boolean>>(persistedFeed?.bookmarkedPostMap ?? {});
+  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(persistedFeed?.profileMap ?? {});
+  const [feedLoading, setFeedLoading] = useState(!persistedFeed);
   const [feedLoadingMore, setFeedLoadingMore] = useState(false);
-  const [feedHasMore, setFeedHasMore] = useState(true);
-  const [feedNextCursor, setFeedNextCursor] = useState<CircleFeedCursor | null>(null);
+  const [feedHasMore, setFeedHasMore] = useState(persistedFeed?.hasMore ?? true);
+  const [feedNextCursor, setFeedNextCursor] = useState<CircleFeedCursor | null>(persistedFeed?.nextCursor ?? null);
   const [feedError, setFeedError] = useState("");
+  const [feedStateKey, setFeedStateKey] = useState(initialFeedKey);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const feedLocationRef = useRef<UserLocation | null>(null);
 
@@ -1291,14 +1313,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
       };
 
       const fetchPage = async (feedLocation: UserLocation | null) => {
-        const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
-        if (viewerName) params.set("viewer", viewerName);
-        if (feedLocation) {
-          params.set("lat", String(feedLocation.lat));
-          params.set("lng", String(feedLocation.lng));
-        }
-        if (cursor) params.set("cursor", JSON.stringify(cursor));
-        const url = `/api/feed/public?${params}`;
+        const url = publicFeedUrl(viewerName, feedLocation, cursor);
         if (!cursor) {
           const cached = readCachedJson<PublicFeedResponse>(url, { allowStale: true });
           if (cached) {
@@ -1322,6 +1337,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
         feedLocation = null;
       }
       if (!cursor) feedLocationRef.current = feedLocation;
+      if (!cursor) setFeedStateKey(publicFeedUrl(viewerName, feedLocation));
       applyFeedData(data, cursor);
     } catch {
       setFeedError("Could not load public posts. Please try again.");
@@ -1330,6 +1346,34 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
       else setFeedLoadingMore(false);
     }
   }, [location, myName]);
+
+  useEffect(() => {
+    if (feedLoading && feed.length === 0) return;
+    writeFeedState<ExploreFeedSnapshot>(feedStateKey, {
+      reviews: feed.slice(0, MAX_PERSISTED_FEED_POSTS),
+      likeCountMap: feedLikeCountMap,
+      commentMap: feedCommentMap,
+      likedByMeMap: feedLikedMap,
+      bookmarkedPostMap: feedBookmarkedMap,
+      profileMap: feedProfileMap,
+      hasMore: feedHasMore,
+      nextCursor: feedNextCursor,
+      activeTab,
+      locationLabel: feedLocationRef.current?.label ?? null,
+    }, FEED_STATE_TTL_MS);
+  }, [
+    activeTab,
+    feed,
+    feedBookmarkedMap,
+    feedCommentMap,
+    feedHasMore,
+    feedLikedMap,
+    feedLoading,
+    feedLikeCountMap,
+    feedNextCursor,
+    feedProfileMap,
+    feedStateKey,
+  ]);
 
   useEffect(() => {
     const me = getStoredActorName();

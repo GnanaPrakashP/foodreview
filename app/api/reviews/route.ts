@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
+import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 
 const MAX_REVIEW_MEDIA = 4;
 const MAX_REVIEW_VIDEO_DURATION_SECONDS = 10;
@@ -162,5 +163,10 @@ export async function POST(req: NextRequest) {
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
+  try {
+    await refreshUserReputationFoundation(writeDb, actor.userId);
+  } catch (error) {
+    console.error("[reviews] Failed to refresh reputation:", error);
+  }
   return NextResponse.json({ id: data.id });
 }
