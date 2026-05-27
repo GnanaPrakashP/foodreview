@@ -37,7 +37,7 @@ function PickColumn({
   if (!pick) {
     return (
       <div style={{ minWidth: 0 }}>
-        <p style={{ color: "var(--muted)", fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, margin: 0, lineHeight: 1.15 }}>
+        <p style={{ color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 18, fontWeight: 800, margin: 0, lineHeight: 1.15 }}>
           -
         </p>
         <p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 13, lineHeight: 1.35, fontFamily: "'DM Sans', sans-serif" }}>
@@ -51,7 +51,7 @@ function PickColumn({
 
   return (
     <div style={{ minWidth: 0 }}>
-      <p style={{ margin: 0, color: scoreColor(pick.rating), fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, lineHeight: 1.1 }}>
+      <p style={{ margin: 0, color: scoreColor(pick.rating), fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800, lineHeight: 1.1 }}>
         {formatDishScore(pick.rating)}
         <span style={{ color: "var(--cream)", fontSize: 13, fontWeight: 700 }}>/10</span>
       </p>
@@ -77,7 +77,7 @@ function DishCard({ item }: { item: DishComparison }) {
         padding: "16px 18px",
       }}
     >
-      <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, color: "var(--cream)", fontWeight: 800, margin: 0, lineHeight: 1.15 }}>
+      <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 18, color: "var(--cream)", fontWeight: 800, margin: 0, lineHeight: 1.15 }}>
         {item.dishName}
       </h3>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 1px minmax(0, 1fr)", gap: 16, alignItems: "center", marginTop: 14 }}>

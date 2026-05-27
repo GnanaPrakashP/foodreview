@@ -26,12 +26,12 @@ export default function ConfirmModal({
   if (!open) return null;
 
   const confirmBackground = confirmVariant === "danger" ? "#EF4444" : "var(--orange)";
-  const confirmFont = confirmVariant === "danger" ? "'DM Sans', sans-serif" : "'Syne', sans-serif";
+  const confirmFont = confirmVariant === "danger" ? "'DM Sans', sans-serif" : "'DM Sans', sans-serif";
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
       <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
-        <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>
+        <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>
           {title}
         </h2>
         <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>

@@ -657,7 +657,7 @@ export default function ReviewForm() {
               }}
               onBlur={() => setRestaurantInputFocused(false)}
               autoComplete="off"
-              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'Syne', sans-serif", fontWeight: 700 }}
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--cream)", fontSize: "14px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}
             />
           </div>
 
@@ -740,7 +740,7 @@ export default function ReviewForm() {
                     >
                       <Store size={13} strokeWidth={2} color="var(--orange)" style={{ marginTop: "2px", flexShrink: 0 }} />
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.25 }}>
                           {s.mainText}
                         </p>
                         {s.secondaryText && (
@@ -1048,7 +1048,7 @@ export default function ReviewForm() {
                 }}
               >
                 {icon}
-                <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "12px", color: active ? "var(--orange)" : "var(--cream)" }}>{label}</span>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "12px", color: active ? "var(--orange)" : "var(--cream)" }}>{label}</span>
                 <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "10px", color: "var(--muted)" }}>{sub}</span>
               </button>
             );
@@ -1069,7 +1069,7 @@ export default function ReviewForm() {
         <button
           type="submit"
           disabled={submitting}
-          style={{ width: "100%", background: submitting ? "var(--muted)" : "var(--orange)", color: "white", border: "none", borderRadius: "16px", padding: "16px", fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", letterSpacing: "0.3px", lineHeight: 1 }}
+          style={{ width: "100%", background: submitting ? "var(--muted)" : "var(--orange)", color: "white", border: "none", borderRadius: "16px", padding: "16px", fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", letterSpacing: "0.3px", lineHeight: 1 }}
         >
           <span style={{ display: "block", lineHeight: 1 }}>
             {submitStep === "uploading"

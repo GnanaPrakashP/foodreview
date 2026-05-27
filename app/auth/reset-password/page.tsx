@@ -55,7 +55,7 @@ export default function ResetPasswordPage() {
   return (
     <Page>
       <div style={{ textAlign: "center", marginBottom: "28px" }}>
-        <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
           CircleBites
         </p>
       </div>
@@ -109,7 +109,7 @@ export default function ResetPasswordPage() {
               border: "none",
               borderRadius: "14px",
               padding: "14px",
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontSize: "15px",
               fontWeight: 700,
               cursor: status === "loading" || !password || !confirmPassword ? "default" : "pointer",
@@ -186,7 +186,7 @@ function PasswordField({ value, onChange, show, onToggle, placeholder, hasError,
 }
 
 const headingStyle: React.CSSProperties = {
-  fontFamily: "'Syne', sans-serif",
+  fontFamily: "'DM Sans', sans-serif",
   fontWeight: 800,
   fontSize: "20px",
   color: "var(--cream)",

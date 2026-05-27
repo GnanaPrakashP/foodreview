@@ -147,7 +147,7 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         {groupedEntries.map((group) => (
           <section key={group.month}>
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, color: "var(--cream)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.2 }}>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: "var(--cream)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.2 }}>
               {group.month}
             </h2>
             <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -165,7 +165,7 @@ function TimelineTab({ reviews }: { reviews: Review[] }) {
                       </div>
                       <div style={{ alignSelf: "stretch", background: "rgba(255,255,255,0.18)" }} />
                       <div style={{ minWidth: 0 }}>
-                        <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, color: "var(--cream)", margin: 0, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: "var(--cream)", margin: 0, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {entry.restaurant_name}
                         </h3>
                         <p style={{ color: "var(--muted)", fontSize: 12, margin: "4px 0 0", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -212,7 +212,7 @@ function ReviewsTab({
   }
 
   return (
-    <div style={{ padding: "0 16px 110px", display: "flex", flexDirection: "column", gap: 0 }}>
+    <div style={{ padding: "0 0 110px", display: "flex", flexDirection: "column", gap: 0 }}>
       {sorted.map((review) => (
         <CircleFeedCard
           key={review.id}
@@ -241,7 +241,7 @@ function ReviewsTab({
             padding: "13px",
             margin: "16px 0 0",
             width: "100%",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: "13px",
             fontWeight: 700,
             cursor: loadingMore ? "default" : "pointer",
@@ -496,11 +496,11 @@ export default function MeClient({
           </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
             {myName ? avatarInitials(displayName || myName) : "?"}
           </div>
           <div>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)" }}>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)" }}>
               {displayName || myName || "Set your name"}
             </p>
             <p style={{ fontSize: "13px", color: "var(--cream)", marginTop: "3px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500, opacity: 0.6 }}>@{myName || "you"}</p>

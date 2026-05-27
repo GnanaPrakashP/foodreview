@@ -88,7 +88,7 @@ export default function TierProgressCard({
               style={{
                 margin: 0,
                 color: "var(--cream)",
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontSize: 17,
                 fontWeight: 800,
               }}

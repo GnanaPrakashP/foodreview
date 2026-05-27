@@ -240,7 +240,7 @@ function Hero() {
 
       {/* Wordmark */}
       <h1 style={{
-        fontFamily: "'Syne', sans-serif",
+        fontFamily: "'DM Sans', sans-serif",
         fontWeight: 800,
         fontSize: 34,
         color: "var(--cream)",
@@ -253,7 +253,7 @@ function Hero() {
 
       {/* Tagline */}
       <p style={{
-        fontFamily: "'Syne', sans-serif",
+        fontFamily: "'DM Sans', sans-serif",
         fontStyle: "italic",
         fontSize: 18,
         color: "var(--orange)",
@@ -352,7 +352,7 @@ function OrangeBtn({ children, disabled, ...rest }: React.ButtonHTMLAttributes<H
       border: disabled ? "1px solid var(--border)" : "none",
       borderRadius: 14,
       padding: "14px 16px",
-      fontFamily: "'Syne', sans-serif",
+      fontFamily: "'DM Sans', sans-serif",
       fontSize: 15,
       fontWeight: 700,
       cursor: disabled ? "default" : "pointer",
@@ -461,7 +461,7 @@ function GoogleLogo() {
 /* ─────────────────────────────────────────────────── */
 
 const h2: React.CSSProperties = {
-  fontFamily: "'Syne', sans-serif",
+  fontFamily: "'DM Sans', sans-serif",
   fontWeight: 800,
   fontSize: 20,
   color: "var(--cream)",

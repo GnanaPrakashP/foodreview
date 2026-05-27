@@ -144,11 +144,11 @@ export default function RestaurantDetailClient({
           </div>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
-          <div style={{ width: 40, height: 40, background: restaurantGradient(restaurantName), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+          <div style={{ width: 40, height: 40, background: restaurantGradient(restaurantName), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
             {restaurantName[0]?.toUpperCase() ?? "?"}
           </div>
           <div style={{ minWidth: 0 }}>
-            <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "16px", color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "16px", color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {restaurantName}
             </h1>
             <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "1px" }}>
@@ -167,7 +167,7 @@ export default function RestaurantDetailClient({
             style={{
               flex: 1, background: "none", border: "none", cursor: "pointer",
               padding: "11px 0",
-              fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, letterSpacing: "0.3px",
+              fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, letterSpacing: "0.3px",
               color: activeTab === t ? "var(--orange)" : "var(--muted)",
               borderBottom: `2px solid ${activeTab === t ? "var(--orange)" : "transparent"}`,
               marginBottom: "-1px", textTransform: "capitalize",
@@ -206,7 +206,7 @@ export default function RestaurantDetailClient({
             <button
               onClick={loadMorePosts}
               disabled={loadingMore}
-              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
+              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
             >
               {loadingMore ? "Loading..." : "Load more"}
             </button>
@@ -229,7 +229,7 @@ export default function RestaurantDetailClient({
                   style={{ display: "flex", alignItems: "center", gap: "12px", padding: "13px 14px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px" }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {d.name.charAt(0).toUpperCase() + d.name.slice(1)}
                     </p>
                     <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>

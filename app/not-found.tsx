@@ -9,7 +9,7 @@ export default function NotFound() {
       <span style={{ fontSize: "56px" }}>🍕</span>
       <h2
         style={{
-          fontFamily: "'Syne', sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
           fontSize: "20px",
           fontWeight: 800,
           color: "var(--cream)",
@@ -28,7 +28,7 @@ export default function NotFound() {
             border: "none",
             borderRadius: "14px",
             padding: "12px 24px",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: "14px",
             fontWeight: 700,
             cursor: "pointer",

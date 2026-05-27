@@ -23,9 +23,7 @@ const config: Config = {
         },
       },
       fontFamily: {
-        syne:  ["Syne", "sans-serif"],
-        serif: ["Instrument Serif", "serif"],
-        sans:  ["DM Sans", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+        sans: ["DM Sans", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
       },
     },
   },

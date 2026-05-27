@@ -103,7 +103,7 @@ export default function MyCirclePage() {
           </div>
         </Link>
         <div>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "17px", color: "var(--cream)", margin: 0 }}>
+          <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "17px", color: "var(--cream)", margin: 0 }}>
             My Circle
           </h1>
           {mounted && (
@@ -129,14 +129,14 @@ export default function MyCirclePage() {
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Users size={24} strokeWidth={1.8} color="var(--orange)" />
           </div>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
             Your circle is empty
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
             {accountType === "public" ? "No one has joined your circle yet" : "Add friends to build your circle"}
           </p>
           <Link href="/explore" style={{ textDecoration: "none" }}>
-            <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "14px", padding: "13px 28px", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
+            <button style={{ background: "var(--orange)", color: "white", border: "none", borderRadius: "14px", padding: "13px 28px", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
               Find friends
             </button>
           </Link>
@@ -152,11 +152,11 @@ export default function MyCirclePage() {
                   href={`/people/${encodeURIComponent(name)}`}
                   style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}
                 >
-                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(displayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
+                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(displayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
                     {avatarInitials(displayName)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {displayName}
                     </p>
                     <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "2px" }}>
@@ -194,7 +194,7 @@ export default function MyCirclePage() {
       {confirmRemoveName && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
           <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>
               Remove from circle?
             </h2>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>

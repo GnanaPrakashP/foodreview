@@ -17,7 +17,8 @@ type Detail =
   | { kind: "tier" }
   | { kind: "permanent"; item: PermanentBadge }
   | { kind: "temporary"; item: TemporaryBadge }
-  | { kind: "progress"; item: BadgeProgress };
+  | { kind: "progress"; item: BadgeProgress }
+  | { kind: "locked-streak"; badgeId: string; label: string; hint: string };
 
 type LockedAchievement = {
   badgeId: string;
@@ -87,6 +88,71 @@ const LOCKED_ACHIEVEMENT_CATALOG: LockedAchievement[] = [
     badgeDescription: "Drive 25 unique visits through your posts.",
     badgeIcon: "route",
   },
+  // Volume milestones
+  {
+    badgeId: "dozen_reviews",
+    badgeName: "Hungry Dozen",
+    badgeDescription: "Post ten food reviews.",
+    badgeIcon: "layers",
+  },
+  {
+    badgeId: "twenty_five_reviews",
+    badgeName: "Quarter Century",
+    badgeDescription: "Post twenty-five reviews.",
+    badgeIcon: "trophy",
+  },
+  {
+    badgeId: "hundred_reviews",
+    badgeName: "Centurion",
+    badgeDescription: "Post one hundred reviews.",
+    badgeIcon: "crown",
+  },
+  // Quality
+  {
+    badgeId: "multi_photo",
+    badgeName: "Show & Tell",
+    badgeDescription: "Add three or more photos to a single review.",
+    badgeIcon: "film",
+  },
+  {
+    badgeId: "detail_master",
+    badgeName: "Deep Dive",
+    badgeDescription: "List five or more food items in a single review.",
+    badgeIcon: "clipboard-list",
+  },
+  // Saves & influence
+  {
+    badgeId: "save_magnet",
+    badgeName: "Save Magnet",
+    badgeDescription: "Collect 25 saves across all posts.",
+    badgeIcon: "bookmark",
+  },
+  {
+    badgeId: "must_try",
+    badgeName: "Must Try",
+    badgeDescription: "Get a single post saved ten times.",
+    badgeIcon: "star",
+  },
+  // Discovery & loyalty
+  {
+    badgeId: "taste_pioneer",
+    badgeName: "Taste Pioneer",
+    badgeDescription: "Review a restaurant among its first three posts.",
+    badgeIcon: "flag",
+  },
+  {
+    badgeId: "regular",
+    badgeName: "Regular",
+    badgeDescription: "Review the same restaurant three or more times.",
+    badgeIcon: "coffee",
+  },
+  // Diversity
+  {
+    badgeId: "neighborhood_guide",
+    badgeName: "Neighborhood Guide",
+    badgeDescription: "Post reviews across five different areas.",
+    badgeIcon: "map",
+  },
 ];
 
 /* ─── Shared helpers ─────────────────────────────────────────────────────── */
@@ -128,6 +194,19 @@ function motivationalText(tier: UserTier): string {
   return "Keep sharing great food and level up!";
 }
 
+function formatWeeklyPeriod(period: string) {
+  const match = period.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return period;
+  return `Week ${Number(match[2])}, ${match[1]}`;
+}
+
+function formatMonthlyPeriod(period: string) {
+  const match = period.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return period;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+}
+
 const TIER_BADGE_SRC_BY_MIN_SCORE: Record<number, string> = {
   0: "/badges/tiers-transparent-ui/tier-01-new-taster.png",
   11: "/badges/tiers-transparent-ui/tier-02-rising-taster.png",
@@ -142,8 +221,26 @@ const TIER_BADGE_SRC_BY_MIN_SCORE: Record<number, string> = {
   1501: "/badges/tiers-transparent-ui/tier-11-culinary-legend.png",
 };
 
+const TIER_ROADMAP = [
+  { name: "New Taster", minScore: 0, maxScore: 10 },
+  { name: "Rising Taster", minScore: 11, maxScore: 20 },
+  { name: "Food Regular", minScore: 21, maxScore: 40 },
+  { name: "Known Regular", minScore: 41, maxScore: 75 },
+  { name: "Trusted Palate", minScore: 76, maxScore: 125 },
+  { name: "Sharp Palate", minScore: 126, maxScore: 200 },
+  { name: "Tastemaker", minScore: 201, maxScore: 350 },
+  { name: "Local Tastemaker", minScore: 351, maxScore: 600 },
+  { name: "Food Authority", minScore: 601, maxScore: 1000 },
+  { name: "Top Food Authority", minScore: 1001, maxScore: 1500 },
+  { name: "Culinary Legend", minScore: 1501, maxScore: null },
+];
+
 function tierBadgeSrc(tier: UserTier) {
   return TIER_BADGE_SRC_BY_MIN_SCORE[tier.minScore] ?? TIER_BADGE_SRC_BY_MIN_SCORE[0];
+}
+
+function tierBadgeSrcForMinScore(minScore: number) {
+  return TIER_BADGE_SRC_BY_MIN_SCORE[minScore] ?? TIER_BADGE_SRC_BY_MIN_SCORE[0];
 }
 
 function TierBadgeArtwork({
@@ -173,6 +270,38 @@ function TierBadgeArtwork({
   );
 }
 
+function TierRoadmapArtwork({
+  minScore,
+  size,
+  muted = false,
+}: {
+  minScore: number;
+  size: number;
+  muted?: boolean;
+}) {
+  return (
+    <Image
+      src={tierBadgeSrcForMinScore(minScore)}
+      alt=""
+      aria-hidden="true"
+      width={size}
+      height={size}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.22),
+        objectFit: "cover",
+        display: "block",
+        flexShrink: 0,
+        opacity: muted ? 0.34 : 1,
+        filter: muted
+          ? "grayscale(0.75) drop-shadow(0 5px 10px rgba(0,0,0,0.18))"
+          : "drop-shadow(0 8px 16px rgba(0,0,0,0.26))",
+      }}
+    />
+  );
+}
+
 /* ─── Tier achievement pill ──────────────────────────────────────────────── */
 
 function TierAchievementPill({
@@ -192,6 +321,7 @@ function TierAchievementPill({
         alignItems: "center",
         gap: 6,
         width: 88,
+        height: 116,
         flexShrink: 0,
         padding: "12px 8px 10px",
         borderRadius: 16,
@@ -211,6 +341,10 @@ function TierAchievementPill({
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1.25,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}
       >
         {tier.displayName}
@@ -247,7 +381,6 @@ function StreakAchievementPill({
     <button
       type="button"
       onClick={onClick}
-      disabled={!active}
       aria-label={badge ? `${badge.badgeName}, ${badge.streakLabel}` : `${label}, ${hint}`}
       style={{
         display: "flex",
@@ -255,12 +388,13 @@ function StreakAchievementPill({
         alignItems: "center",
         gap: 6,
         width: 88,
+        height: 116,
         flexShrink: 0,
         padding: "12px 8px 10px",
         borderRadius: 16,
         border: `1.5px ${active ? "solid" : "dashed"} ${border}`,
         background,
-        cursor: active ? "pointer" : "default",
+        cursor: "pointer",
         textAlign: "center",
       }}
     >
@@ -289,6 +423,10 @@ function StreakAchievementPill({
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1.2,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}
       >
         {badge?.badgeName ?? label}
@@ -308,7 +446,7 @@ function LockedAchievementPill({ item }: { item: LockedAchievement }) {
         alignItems: "center",
         gap: 6,
         width: 88,
-        minHeight: 106,
+        height: 116,
         padding: "12px 8px 10px",
         borderRadius: 16,
         border: "1px dashed rgba(255,255,255,0.14)",
@@ -326,6 +464,10 @@ function LockedAchievementPill({ item }: { item: LockedAchievement }) {
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1.25,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}
       >
         {item.badgeName}
@@ -353,6 +495,7 @@ function TierDetailSheet({
           ((tier.maxScore ?? tier.minScore + 1) - tier.minScore)
     );
   const scoreLabel = tier.isMaxTier ? `${score}` : `${score} / ${tier.maxScore}`;
+  const currentTierIndex = TIER_ROADMAP.findIndex((item) => item.minScore === tier.minScore);
 
   return (
     <div
@@ -375,7 +518,7 @@ function TierDetailSheet({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 420,
+          maxWidth: 512,
           borderRadius: 20,
           border: "1px solid var(--border)",
           background: "var(--card)",
@@ -402,7 +545,7 @@ function TierDetailSheet({
                 style={{
                   margin: 0,
                   color: "var(--cream)",
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "'DM Sans', sans-serif",
                   fontSize: 17,
                   fontWeight: 800,
                 }}
@@ -472,6 +615,83 @@ function TierDetailSheet({
           {motivationalText(tier)}
         </p>
 
+        <div
+          style={{
+            maxHeight: "42vh",
+            overflowY: "auto",
+            paddingRight: 2,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            scrollbarWidth: "none",
+          }}
+        >
+          {TIER_ROADMAP.map((item, index) => {
+            const isCurrent = index === currentTierIndex;
+            const isCompleted = index < currentTierIndex;
+            const isFuture = index > currentTierIndex;
+            const rangeLabel = item.maxScore === null
+              ? `${item.minScore}+`
+              : `${item.minScore}-${item.maxScore}`;
+            return (
+              <div
+                key={item.name}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "48px minmax(0, 1fr) auto",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 10px 8px 8px",
+                  borderRadius: 14,
+                  border: isCurrent ? "1px solid rgba(240,96,48,0.42)" : "1px solid rgba(255,255,255,0.07)",
+                  background: isCurrent ? "rgba(240,96,48,0.12)" : "rgba(255,255,255,0.035)",
+                }}
+              >
+                <TierRoadmapArtwork minScore={item.minScore} size={48} muted={isFuture} />
+                <div style={{ minWidth: 0 }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      color: isFuture ? "rgba(255,255,255,0.42)" : "var(--cream)",
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      lineHeight: 1.15,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {item.name}
+                  </p>
+                  <p
+                    style={{
+                      margin: "3px 0 0",
+                      color: isFuture ? "rgba(255,255,255,0.26)" : "var(--muted)",
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {rangeLabel} points
+                  </p>
+                </div>
+                <span
+                  style={{
+                    color: isCurrent ? "var(--orange)" : isCompleted ? "#22C55E" : "rgba(255,255,255,0.28)",
+                    fontFamily: "'DM Sans', sans-serif",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {isCurrent ? "Now" : isCompleted ? "Done" : "Locked"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
         <button
           type="button"
           onClick={onClose}
@@ -482,7 +702,7 @@ function TierDetailSheet({
             border: "1px solid rgba(240,96,48,0.30)",
             background: "rgba(240,96,48,0.10)",
             color: "var(--orange)",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: 13,
             fontWeight: 800,
             cursor: "pointer",
@@ -501,7 +721,7 @@ function BadgeDetailSheet({
   detail,
   onClose,
 }: {
-  detail: Exclude<Detail, { kind: "tier" }>;
+  detail: Extract<Detail, { kind: "permanent" | "temporary" }>;
   onClose: () => void;
 }) {
   const name = detail.item.badgeName;
@@ -510,12 +730,17 @@ function BadgeDetailSheet({
   const footer =
     detail.kind === "permanent"
       ? `Earned ${earnedDate(detail.item.earnedAt)}`
-      : detail.kind === "temporary"
-        ? detail.item.streakLabel
-        : detail.item.label;
+      : detail.item.streakLabel;
   const Icon = iconForBadge(
     "badgeIcon" in detail.item ? detail.item.badgeIcon : undefined
   );
+
+  // Explorer breakdown (area_explorer or cuisine_explorer)
+  const meta = detail.kind === "permanent" ? (detail.item.metadata ?? {}) : {};
+  const areas = meta.areas as Array<{ name: string; count: number }> | undefined;
+  const cuisines = meta.cuisines as Array<{ name: string; count: number }> | undefined;
+  const breakdownItems = areas ?? cuisines;
+  const breakdownLabel = areas ? "Areas" : cuisines ? "Cuisines" : null;
 
   return (
     <div
@@ -538,7 +763,7 @@ function BadgeDetailSheet({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 420,
+          maxWidth: 512,
           borderRadius: 20,
           border: "1px solid var(--border)",
           background: "var(--card)",
@@ -566,7 +791,7 @@ function BadgeDetailSheet({
           style={{
             margin: 0,
             color: "var(--cream)",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: 16,
             fontWeight: 800,
           }}
@@ -586,6 +811,73 @@ function BadgeDetailSheet({
             {description}
           </p>
         )}
+
+        {/* Area / Cuisine breakdown list */}
+        {breakdownItems && breakdownItems.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <p
+              style={{
+                margin: 0,
+                color: "var(--muted)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: 0.6,
+                textTransform: "uppercase",
+              }}
+            >
+              {breakdownLabel}
+            </p>
+            <div
+              style={{
+                maxHeight: "30vh",
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                scrollbarWidth: "none",
+              }}
+            >
+              {breakdownItems.map((item) => (
+                <div
+                  key={item.name}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "9px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    background: "rgba(255,255,255,0.035)",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "var(--cream)",
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.name}
+                  </span>
+                  <span
+                    style={{
+                      color: "var(--orange)",
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.count} {item.count === 1 ? "review" : "reviews"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <p
           style={{
             margin: 0,
@@ -608,7 +900,396 @@ function BadgeDetailSheet({
             border: "1px solid rgba(240,96,48,0.30)",
             background: "rgba(240,96,48,0.10)",
             color: "var(--orange)",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProgressDetailSheet({
+  item,
+  onClose,
+}: {
+  item: BadgeProgress;
+  onClose: () => void;
+}) {
+  const Icon = iconForBadge(item.badgeIcon);
+  const color =
+    item.progressPercent >= 66
+      ? "#22C55E"
+      : item.progressPercent >= 33
+        ? "#F59E0B"
+        : "#F97316";
+
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 70,
+        background: "rgba(0,0,0,0.52)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        padding: "0 16px 24px",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 512,
+          borderRadius: 20,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          padding: "20px 18px 18px",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        {/* Artwork + name + description */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <AchievementBadgeArtwork badgeId={item.badgeId} icon={item.badgeIcon} size={64} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                color: "var(--cream)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 16,
+                fontWeight: 800,
+                lineHeight: 1.2,
+              }}
+            >
+              {item.badgeName}
+            </p>
+            {item.badgeDescription && (
+              <p
+                style={{
+                  margin: "5px 0 0",
+                  color: "var(--muted)",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}
+              >
+                {item.badgeDescription}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Progress bar + label */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <p
+              style={{
+                margin: 0,
+                color: "var(--muted)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: 0.6,
+                textTransform: "uppercase",
+              }}
+            >
+              Progress
+            </p>
+            <p
+              style={{
+                margin: 0,
+                color,
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 800,
+              }}
+            >
+              {item.label}
+            </p>
+          </div>
+          <div
+            style={{
+              height: 6,
+              borderRadius: 999,
+              background: "rgba(255,255,255,0.08)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${item.progressPercent}%`,
+                height: "100%",
+                borderRadius: 999,
+                background: color,
+                transition: "width 0.6s ease",
+              }}
+            />
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: "100%",
+            height: 42,
+            borderRadius: 13,
+            border: "1px solid rgba(240,96,48,0.30)",
+            background: "rgba(240,96,48,0.10)",
+            color: "var(--orange)",
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LockedStreakSheet({
+  badgeId,
+  label,
+  hint,
+  streaks,
+  onClose,
+}: {
+  badgeId: string;
+  label: string;
+  hint: string;
+  streaks: UserProfileReputation["streaks"];
+  onClose: () => void;
+}) {
+  const isMonthly = badgeId === "monthly_explorer";
+  const current = isMonthly ? streaks.currentMonthlyStreak : streaks.currentWeeklyStreak;
+  const best = isMonthly ? streaks.bestMonthlyStreak : streaks.bestWeeklyStreak;
+
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 70,
+        background: "rgba(0,0,0,0.52)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        padding: "0 16px 24px",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 512,
+          borderRadius: 20,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          padding: "20px 18px 18px",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        {/* Artwork + name + hint */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ opacity: 0.4, filter: "grayscale(0.6)" }}>
+            <AchievementBadgeArtwork badgeId={badgeId} size={64} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                color: "var(--cream)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 16,
+                fontWeight: 800,
+                lineHeight: 1.2,
+              }}
+            >
+              {label}
+            </p>
+            <p
+              style={{
+                margin: "6px 0 0",
+                color: "var(--muted)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              {hint} to earn this badge.
+            </p>
+          </div>
+        </div>
+
+        {/* Current + best streak */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
+            <p style={{ margin: 0, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{current}</p>
+            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Current streak</p>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
+            <p style={{ margin: 0, color: "#FACC15", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{best}</p>
+            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Best streak</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: "100%",
+            height: 42,
+            borderRadius: 13,
+            border: "1px solid rgba(240,96,48,0.30)",
+            background: "rgba(240,96,48,0.10)",
+            color: "var(--orange)",
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StreakDetailSheet({
+  badge,
+  streaks,
+  onClose,
+}: {
+  badge: TemporaryBadge;
+  streaks: UserProfileReputation["streaks"];
+  onClose: () => void;
+}) {
+  const isMonthly = badge.badgeId === "monthly_explorer";
+  const current = isMonthly ? streaks.currentMonthlyStreak : streaks.currentWeeklyStreak;
+  const best = isMonthly ? streaks.bestMonthlyStreak : streaks.bestWeeklyStreak;
+  const periods = isMonthly ? streaks.monthlyEarnedPeriods : streaks.weeklyEarnedPeriods;
+  const periodLabel = isMonthly ? "months" : "weeks";
+  const formatPeriod = isMonthly ? formatMonthlyPeriod : formatWeeklyPeriod;
+
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 70,
+        background: "rgba(0,0,0,0.52)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        padding: "0 16px 24px",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 512,
+          borderRadius: 20,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          padding: "20px 18px 18px",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <AchievementBadgeArtwork badgeId={badge.badgeId} icon={badge.badgeIcon} size={64} />
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 800 }}>
+              {badge.badgeName}
+            </p>
+            <p style={{ margin: "3px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700 }}>
+              {badge.badgeDescription}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
+            <p style={{ margin: 0, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{current}</p>
+            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Current streak</p>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
+            <p style={{ margin: 0, color: "#FACC15", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{best}</p>
+            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Best streak</p>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <p style={{ margin: 0, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase" }}>
+            Earned {periodLabel}
+          </p>
+          <div style={{ maxHeight: "34vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, scrollbarWidth: "none" }}>
+            {periods.length > 0 ? periods.map((period) => (
+              <div
+                key={period}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.035)",
+                  padding: "10px 12px",
+                  color: "var(--cream)",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 800,
+                }}
+              >
+                {formatPeriod(period)}
+              </div>
+            )) : (
+              <p style={{ margin: 0, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+                No earned {periodLabel} yet.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: "100%",
+            height: 42,
+            borderRadius: 13,
+            border: "1px solid rgba(240,96,48,0.30)",
+            background: "rgba(240,96,48,0.10)",
+            color: "var(--orange)",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: 13,
             fontWeight: 800,
             cursor: "pointer",
@@ -632,6 +1313,7 @@ function AllAchievementsSheet({
   onClose,
   onTierClick,
   onTemporaryClick,
+  onLockedStreakClick,
   onBadgeClick,
   onProgressClick,
 }: {
@@ -643,6 +1325,7 @@ function AllAchievementsSheet({
   onClose: () => void;
   onTierClick: () => void;
   onTemporaryClick: (badge: TemporaryBadge) => void;
+  onLockedStreakClick: (badgeId: string, label: string, hint: string) => void;
   onBadgeClick: (badge: PermanentBadge) => void;
   onProgressClick: (item: BadgeProgress) => void;
 }) {
@@ -674,7 +1357,7 @@ function AllAchievementsSheet({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 480,
+          maxWidth: 512,
           maxHeight: "88dvh",
           borderRadius: "20px 20px 0 0",
           background: "var(--card)",
@@ -700,7 +1383,7 @@ function AllAchievementsSheet({
             style={{
               margin: 0,
               color: "var(--cream)",
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontSize: 16,
               fontWeight: 800,
             }}
@@ -745,7 +1428,7 @@ function AllAchievementsSheet({
               style={{
                 margin: 0,
                 color: "var(--muted)",
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontSize: 11,
                 fontWeight: 800,
                 letterSpacing: 0.6,
@@ -758,15 +1441,19 @@ function AllAchievementsSheet({
               <TierAchievementPill tier={tier} onClick={onTierClick} />
               <StreakAchievementPill
                 badge={monthlyBadge}
-                label="Monthly badge"
-                hint="Post 4+ times"
-                onClick={monthlyBadge ? () => onTemporaryClick(monthlyBadge) : undefined}
+                label="Monthly Explorer"
+                hint="Post this month"
+                onClick={monthlyBadge
+                  ? () => onTemporaryClick(monthlyBadge)
+                  : () => onLockedStreakClick("monthly_explorer", "Monthly Explorer", "Post this month")}
               />
               <StreakAchievementPill
                 badge={weeklyBadge}
-                label="Weekly badge"
+                label="Weekly Explorer"
                 hint="Post this week"
-                onClick={weeklyBadge ? () => onTemporaryClick(weeklyBadge) : undefined}
+                onClick={weeklyBadge
+                  ? () => onTemporaryClick(weeklyBadge)
+                  : () => onLockedStreakClick("weekly_explorer", "Weekly Explorer", "Post this week")}
               />
             </div>
           </section>
@@ -778,7 +1465,7 @@ function AllAchievementsSheet({
                 style={{
                   margin: 0,
                   color: "var(--muted)",
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "'DM Sans', sans-serif",
                   fontSize: 11,
                   fontWeight: 800,
                   letterSpacing: 0.6,
@@ -821,21 +1508,21 @@ function AllAchievementsSheet({
             </p>
           )}
 
-          {/* Almost There */}
-          {progress.length > 0 && (
+          {/* To Earn — in-progress first, then locked */}
+          {(progress.length > 0 || lockedAchievements.length > 0) && (
             <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <p
                 style={{
                   margin: 0,
                   color: "var(--muted)",
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "'DM Sans', sans-serif",
                   fontSize: 11,
                   fontWeight: 800,
                   letterSpacing: 0.6,
                   textTransform: "uppercase",
                 }}
               >
-                Almost There
+                To Earn
               </p>
               <div
                 style={{
@@ -856,33 +1543,6 @@ function AllAchievementsSheet({
                     onClick={() => onProgressClick(item)}
                   />
                 ))}
-              </div>
-            </section>
-          )}
-
-          {/* Yet to earn */}
-          {lockedAchievements.length > 0 && (
-            <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <p
-                style={{
-                  margin: 0,
-                  color: "var(--muted)",
-                  fontFamily: "'Syne', sans-serif",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  letterSpacing: 0.6,
-                  textTransform: "uppercase",
-                }}
-              >
-                Yet To Earn
-              </p>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))",
-                  gap: 10,
-                }}
-              >
                 {lockedAchievements.map((item) => (
                   <LockedAchievementPill key={item.badgeId} item={item} />
                 ))}
@@ -941,7 +1601,7 @@ export default function ProfileReputationSection({
           style={{
             margin: 0,
             color: "var(--muted)",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: 11,
             fontWeight: 800,
             letterSpacing: 0.6,
@@ -977,15 +1637,19 @@ export default function ProfileReputationSection({
         />
         <StreakAchievementPill
           badge={monthlyBadge}
-          label="Monthly badge"
-          hint="Post 4+ times"
-          onClick={monthlyBadge ? () => setDetail({ kind: "temporary", item: monthlyBadge }) : undefined}
+          label="Monthly Explorer"
+          hint="Post this month"
+          onClick={monthlyBadge
+            ? () => setDetail({ kind: "temporary", item: monthlyBadge })
+            : () => setDetail({ kind: "locked-streak", badgeId: "monthly_explorer", label: "Monthly Explorer", hint: "Post this month" })}
         />
         <StreakAchievementPill
           badge={weeklyBadge}
-          label="Weekly badge"
+          label="Weekly Explorer"
           hint="Post this week"
-          onClick={weeklyBadge ? () => setDetail({ kind: "temporary", item: weeklyBadge }) : undefined}
+          onClick={weeklyBadge
+            ? () => setDetail({ kind: "temporary", item: weeklyBadge })
+            : () => setDetail({ kind: "locked-streak", badgeId: "weekly_explorer", label: "Weekly Explorer", hint: "Post this week" })}
         />
         {previewBadges.map((badge) => (
           <BadgePill
@@ -1009,6 +1673,7 @@ export default function ProfileReputationSection({
               justifyContent: "center",
               gap: 4,
               width: 88,
+              height: 116,
               flexShrink: 0,
               borderRadius: 16,
               border: "1px dashed rgba(255,255,255,0.14)",
@@ -1044,6 +1709,10 @@ export default function ProfileReputationSection({
             setShowAll(false);
             setDetail({ kind: "temporary", item: badge });
           }}
+          onLockedStreakClick={(badgeId, label, hint) => {
+            setShowAll(false);
+            setDetail({ kind: "locked-streak", badgeId, label, hint });
+          }}
           onBadgeClick={(badge) => {
             setShowAll(false);
             setDetail({ kind: "permanent", item: badge });
@@ -1062,7 +1731,29 @@ export default function ProfileReputationSection({
           onClose={() => setDetail(null)}
         />
       )}
-      {detail && detail.kind !== "tier" && (
+      {detail?.kind === "temporary" && (
+        <StreakDetailSheet
+          badge={detail.item}
+          streaks={reputation.streaks}
+          onClose={() => setDetail(null)}
+        />
+      )}
+      {detail?.kind === "locked-streak" && (
+        <LockedStreakSheet
+          badgeId={detail.badgeId}
+          label={detail.label}
+          hint={detail.hint}
+          streaks={reputation.streaks}
+          onClose={() => setDetail(null)}
+        />
+      )}
+      {detail?.kind === "progress" && (
+        <ProgressDetailSheet
+          item={detail.item}
+          onClose={() => setDetail(null)}
+        />
+      )}
+      {detail?.kind === "permanent" && (
         <BadgeDetailSheet
           detail={detail}
           onClose={() => setDetail(null)}

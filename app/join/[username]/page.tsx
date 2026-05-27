@@ -56,7 +56,7 @@ export default async function JoinPage({
       {/* Logo wordmark */}
       <p
         style={{
-          fontFamily: "'Syne', sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
           fontSize: "13px",
           fontWeight: 800,
           color: "var(--orange)",
@@ -90,7 +90,7 @@ export default async function JoinPage({
       {/* Headline */}
       <h1
         style={{
-          fontFamily: "'Syne', sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
           fontSize: "26px",
           color: "var(--cream)",
           lineHeight: 1.3,
@@ -154,7 +154,7 @@ export default async function JoinPage({
             border: "none",
             borderRadius: "16px",
             padding: "16px",
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: "16px",
             fontWeight: 700,
             cursor: "pointer",

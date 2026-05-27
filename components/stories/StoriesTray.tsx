@@ -182,7 +182,7 @@ export default function StoriesTray() {
                       alignItems: "center",
                       justifyContent: "center",
                       color: "var(--cream)",
-                      fontFamily: "'Syne', sans-serif",
+                      fontFamily: "'DM Sans', sans-serif",
                       fontSize: "20px",
                       fontWeight: 800,
                     }}
@@ -240,11 +240,11 @@ export default function StoriesTray() {
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "9px", minWidth: 0 }}>
-                  <span style={{ width: "34px", height: "34px", borderRadius: "50%", background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontFamily: "'Syne', sans-serif", fontWeight: 800, flexShrink: 0 }}>
+                  <span style={{ width: "34px", height: "34px", borderRadius: "50%", background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, flexShrink: 0 }}>
                     {avatarInitial(group.displayName)}
                   </span>
                   <div style={{ minWidth: 0 }}>
-                    <p style={{ margin: 0, fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 800, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <p style={{ margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 800, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {group.authorName === data?.myName ? "You" : group.displayName}
                     </p>
                     <p style={{ margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "rgba(255,255,255,0.72)" }}>

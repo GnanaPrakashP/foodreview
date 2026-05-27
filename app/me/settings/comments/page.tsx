@@ -56,7 +56,7 @@ export default function MyCommentsPage() {
         <button onClick={() => router.push("/me/settings")} style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
         </button>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>My Comments</h1>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>My Comments</h1>
       </div>
 
       <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -87,7 +87,7 @@ export default function MyCommentsPage() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "10px" }}>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 800, color: "var(--cream)" }}>Your comment</p>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 800, color: "var(--cream)" }}>Your comment</p>
                 <p style={{ fontSize: "10px", color: "var(--muted)", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>{commentDate(c.created_at)}</p>
               </div>
 
@@ -98,7 +98,7 @@ export default function MyCommentsPage() {
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
-                <div style={{ width: 26, height: 26, background: restaurantGradient(restaurantName), borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+                <div style={{ width: 26, height: 26, background: restaurantGradient(restaurantName), borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
                   {restaurantName[0]?.toUpperCase() ?? "?"}
                 </div>
                 <p style={{ flex: 1, minWidth: 0, fontSize: "12px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

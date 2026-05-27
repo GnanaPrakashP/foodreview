@@ -218,7 +218,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       }}
     >
       <span style={{ color: "var(--muted)", fontSize: "11px", fontWeight: 800 }}>{label}</span>
-      <strong style={{ color: accent ?? "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "22px" }}>
+      <strong style={{ color: accent ?? "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "22px" }}>
         {value}
       </strong>
     </div>
@@ -247,7 +247,7 @@ function CommandCard({
         gap: "10px",
       }}
     >
-      <h2 style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800 }}>
+      <h2 style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 800 }}>
         {title}
       </h2>
       <p style={labelStyle}>Use this</p>
@@ -311,7 +311,7 @@ function CommandSection({
         }}
       >
         <p style={labelStyle}>{eyebrow}</p>
-        <h2 style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800 }}>
+        <h2 style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800 }}>
           {title}
         </h2>
         <p style={bodyStyle}>{description}</p>
@@ -412,7 +412,7 @@ function TestCard({
           </span>
         </div>
 
-        <h2 style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800 }}>
+        <h2 style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 800 }}>
           {test.title}
         </h2>
 
@@ -610,7 +610,7 @@ export default function ManualQaClient() {
           >
             Internal QA
           </p>
-          <h1 style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "25px", fontWeight: 800 }}>
+          <h1 style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "25px", fontWeight: 800 }}>
             Go-live QA dashboard
           </h1>
         </div>

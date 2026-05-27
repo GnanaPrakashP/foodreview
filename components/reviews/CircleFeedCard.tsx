@@ -491,7 +491,7 @@ export default function CircleFeedCard({
 
         {/* Place */}
         <div style={{ padding: "0 12px 10px" }}>
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
             {review.restaurant_name}
           </h2>
           {locationLabel && (

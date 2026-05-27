@@ -382,7 +382,7 @@ function RatingScore({ rating }: { rating: number }) {
 
   return (
     <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>
-      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatRating(score10FromRating(rating))}</span>
+      <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatRating(score10FromRating(rating))}</span>
       <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
     </div>
   );
@@ -856,7 +856,7 @@ function DiscoveryHeader({
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <Icon size={16} strokeWidth={2.2} color="var(--orange)" />
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
             {title}
           </h2>
         </div>
@@ -949,7 +949,7 @@ function RestaurantList({
           ))
         ) : visibleRestaurants.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
               {selectedCategory === "all" ? "No places yet" : `No ${emptyLabel} places nearby`}
             </p>
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts will shape this list.</p>
@@ -989,7 +989,7 @@ function RestaurantList({
                 <div style={{ padding: 14, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
+                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
                         {formatDistance(restaurant.distanceKm, restaurant.area)}
                       </div>
@@ -1057,7 +1057,7 @@ function DishList({
           ))
         ) : visibleDishes.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
               {selectedCategory === "all" ? "No dishes yet" : `No ${emptyLabel} spots found`}
             </p>
             <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts with dish ratings will shape this list.</p>
@@ -1097,7 +1097,7 @@ function DishList({
                 <div style={{ padding: 14, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{dish.name}</div>
+                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{dish.name}</div>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
                         {dish.topRestaurantName} · {formatDistance(dish.distanceKm, null)}
                       </div>
@@ -1635,7 +1635,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "22px 16px 8px" }}>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", lineHeight: 1.15, color: "var(--cream)", margin: 0 }}>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "28px", lineHeight: 1.15, color: "var(--cream)", margin: 0 }}>
           Explore
         </h1>
         <div ref={locationWrapperRef} style={{ position: "relative", minWidth: 0, maxWidth: "52%" }}>

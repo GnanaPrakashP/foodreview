@@ -95,7 +95,7 @@ export default function RestaurantPostsClient({
         <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "0 16px 20px" }}>
           {shown.length === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 0" }}>
-              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
                 {circleOnly ? "No circle posts yet" : "No public posts yet"}
               </p>
               <p style={{ fontSize: 13, color: "var(--muted)" }}>
@@ -128,7 +128,7 @@ export default function RestaurantPostsClient({
             <button
               onClick={loadMorePosts}
               disabled={loadingMore}
-              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
+              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
             >
               {loadingMore ? "Loading..." : "Load more"}
             </button>
@@ -140,7 +140,7 @@ export default function RestaurantPostsClient({
         <div style={{ padding: "0 16px 20px" }}>
           {dishes.length === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 0" }}>
-              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
                 No dishes yet
               </p>
               <p style={{ fontSize: 13, color: "var(--muted)" }}>
@@ -151,7 +151,7 @@ export default function RestaurantPostsClient({
             dishes.map((dish) => (
               <div key={dish.name} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: 14, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
-                  <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, color: "var(--cream)", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, color: "var(--cream)", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {dish.name}
                   </p>
                   <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: 3 }}>
@@ -160,7 +160,7 @@ export default function RestaurantPostsClient({
                 </div>
                 {dish.averageRating > 0 && (
                   <div style={{ minWidth: "46px", height: "38px", borderRadius: "13px", background: "linear-gradient(180deg, rgba(232,168,48,0.18), rgba(232,168,48,0.07))", border: "1px solid rgba(232,168,48,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>
-                    <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatScore10(dish.averageRating)}</span>
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--gold)" }}>{formatScore10(dish.averageRating)}</span>
                     <span style={{ marginTop: "2px", fontSize: "8px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800 }}>/10</span>
                   </div>
                 )}
@@ -172,7 +172,7 @@ export default function RestaurantPostsClient({
 
       {activeTab === "menu" && (
         <div style={{ textAlign: "center", padding: "48px 24px 20px" }}>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
             Menu coming soon
           </p>
           <p style={{ fontSize: 13, color: "var(--muted)" }}>

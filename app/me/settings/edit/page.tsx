@@ -78,7 +78,7 @@ export default function EditProfilePage() {
         <button onClick={() => router.push("/me/settings")} style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
         </button>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Edit Profile</h1>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Edit Profile</h1>
       </div>
 
       <div style={{ padding: "0 20px" }}>
@@ -114,7 +114,7 @@ export default function EditProfilePage() {
         <button
           onClick={save}
           disabled={!name.trim() || !userId || saving}
-          style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "14px", color: "white", fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: "14px", cursor: "pointer", opacity: !name.trim() || !userId ? 0.5 : 1 }}
+          style={{ width: "100%", background: "var(--orange)", border: "none", borderRadius: "14px", padding: "14px", color: "white", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "14px", cursor: "pointer", opacity: !name.trim() || !userId ? 0.5 : 1 }}
         >
           {saving ? "Saving..." : "Save"}
         </button>

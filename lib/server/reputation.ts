@@ -109,6 +109,23 @@ function restaurantKey(review: Pick<ReviewReputationRow, "restaurant_id" | "rest
   return review.restaurant_id || review.restaurant_name.trim().toLowerCase();
 }
 
+/** Returns the most specific part of a Google Places area string, e.g.
+ *  "Testing Track, Kondapur, Hafeezpet, Hyderabad" → "Testing Track" */
+function shortAreaName(area: string): string {
+  return area.split(",")[0].trim();
+}
+
+/** Checks whether a user has earned an explorer badge, handling both the new
+ *  aggregate form ("area_explorer") and old per-value form ("area_explorer:kondapur"). */
+function hasEarnedExplorer(earnedBadgeIds: Set<string>, baseId: string): boolean {
+  if (earnedBadgeIds.has(baseId)) return true;
+  const prefix = `${baseId}:`;
+  for (const id of earnedBadgeIds) {
+    if (id.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 function addProgress(items: BadgeProgress[], item: Omit<BadgeProgress, "progressPercent"> & { badgeIcon?: string; badgeDescription?: string }) {
   const current = Math.max(0, item.current);
   const target = Math.max(1, item.target);
@@ -129,10 +146,6 @@ function currentWeekStart(now = new Date()) {
   return date;
 }
 
-function currentMonthStart(now = new Date()) {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
 function weekPeriod(date = new Date()) {
   const start = currentWeekStart(date);
   const yearStart = new Date(Date.UTC(start.getUTCFullYear(), 0, 1));
@@ -140,18 +153,8 @@ function weekPeriod(date = new Date()) {
   return `${start.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
-function previousWeekPeriod(date = new Date()) {
-  const previous = currentWeekStart(date);
-  previous.setUTCDate(previous.getUTCDate() - 7);
-  return weekPeriod(previous);
-}
-
 function monthPeriod(date = new Date()) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function previousMonthPeriod(date = new Date()) {
-  return monthPeriod(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1)));
 }
 
 async function loadProfileByUserId(db: SupabaseLike, userId: string): Promise<ProfileRow | null> {
@@ -267,9 +270,15 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
   const areaCounts = new Map<string, number>();
   const cuisineCounts = new Map<string, number>();
   const cuisineEligible = new Map<string, { posts: number; agrees: number; total: number }>();
+  const userRestaurantCount = new Map<string, number>();
   let maxAgrees = 0;
   let maxHiddenGemAgrees = 0;
   let hasGoodCall = false;
+  let maxPhotoCount = 0;
+  let maxItemCount = 0;
+  let totalSaves = 0;
+  let maxSavesOnOnePost = 0;
+  let hasPioneerRestaurant = false;
 
   for (const review of ctx.reviews) {
     const counts = ctx.feedbackByPost.get(review.id) ?? EMPTY_COUNTS;
@@ -293,6 +302,21 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
 
     const placePosts = ctx.restaurantPostCount.get(restaurantKey(review)) ?? 0;
     if (agrees >= 10 && placePosts < 20) maxHiddenGemAgrees = Math.max(maxHiddenGemAgrees, agrees);
+
+    const rKey = restaurantKey(review);
+    userRestaurantCount.set(rKey, (userRestaurantCount.get(rKey) ?? 0) + 1);
+
+    const photos = (review.photo_urls ?? []).filter(Boolean);
+    const photoCount = photos.length > 0 ? photos.length : (review.photo_url ? 1 : 0);
+    maxPhotoCount = Math.max(maxPhotoCount, photoCount);
+
+    maxItemCount = Math.max(maxItemCount, (review.items ?? []).length);
+
+    const saves = ctx.saveCountByPost.get(review.id) ?? 0;
+    totalSaves += saves;
+    maxSavesOnOnePost = Math.max(maxSavesOnOnePost, saves);
+
+    if (placePosts <= 3) hasPioneerRestaurant = true;
   }
 
   if (totalPosts >= 1) {
@@ -336,29 +360,33 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
     });
   }
 
-  for (const [area, count] of areaCounts) {
-    if (count < 3) continue;
+  const earnedAreas = [...areaCounts.entries()]
+    .filter(([, count]) => count >= 3)
+    .sort((a, b) => b[1] - a[1]);
+  if (earnedAreas.length > 0) {
     candidates.push({
-      badgeId: `area_explorer:${normalizeBadgeKey(area)}`,
+      badgeId: "area_explorer",
       badgeType: "permanent",
-      badgeName: `${area} Explorer`,
-      badgeDescription: `Posted three reviews in ${area}.`,
+      badgeName: "Area Explorer",
+      badgeDescription: `Explored ${earnedAreas.length} ${earnedAreas.length === 1 ? "area" : "areas"}.`,
       badgeIcon: "map-pin",
       badgeCategory: "exploration",
-      metadata: { area, count },
+      metadata: { areas: earnedAreas.map(([area, count]) => ({ name: shortAreaName(area), count })) },
     });
   }
 
-  for (const [cuisine, count] of cuisineCounts) {
-    if (count < 3) continue;
+  const earnedCuisines = [...cuisineCounts.entries()]
+    .filter(([, count]) => count >= 3)
+    .sort((a, b) => b[1] - a[1]);
+  if (earnedCuisines.length > 0) {
     candidates.push({
-      badgeId: `cuisine_explorer:${normalizeBadgeKey(cuisine)}`,
+      badgeId: "cuisine_explorer",
       badgeType: "permanent",
-      badgeName: `${cuisine} Explorer`,
-      badgeDescription: `Posted three ${cuisine} reviews.`,
+      badgeName: "Cuisine Explorer",
+      badgeDescription: `Explored ${earnedCuisines.length} ${earnedCuisines.length === 1 ? "cuisine" : "cuisines"}.`,
       badgeIcon: "chef-hat",
       badgeCategory: "exploration",
-      metadata: { cuisine, count },
+      metadata: { cuisines: earnedCuisines.map(([cuisine, count]) => ({ name: cuisine, count })) },
     });
   }
 
@@ -409,6 +437,45 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
     });
   }
 
+  // ── Volume milestones ────────────────────────────────────────────────────
+  if (totalPosts >= 10) {
+    candidates.push({ badgeId: "dozen_reviews", badgeType: "permanent", badgeName: "Hungry Dozen", badgeDescription: "Posted ten food reviews.", badgeIcon: "layers", badgeCategory: "milestone" });
+  }
+  if (totalPosts >= 25) {
+    candidates.push({ badgeId: "twenty_five_reviews", badgeType: "permanent", badgeName: "Quarter Century", badgeDescription: "Posted twenty-five reviews.", badgeIcon: "trophy", badgeCategory: "milestone" });
+  }
+  if (totalPosts >= 100) {
+    candidates.push({ badgeId: "hundred_reviews", badgeType: "permanent", badgeName: "Centurion", badgeDescription: "Posted one hundred reviews.", badgeIcon: "crown", badgeCategory: "milestone" });
+  }
+
+  // ── Quality ──────────────────────────────────────────────────────────────
+  if (maxPhotoCount >= 3) {
+    candidates.push({ badgeId: "multi_photo", badgeType: "permanent", badgeName: "Show & Tell", badgeDescription: "Added three or more photos to a single review.", badgeIcon: "film", badgeCategory: "quality" });
+  }
+  if (maxItemCount >= 5) {
+    candidates.push({ badgeId: "detail_master", badgeType: "permanent", badgeName: "Deep Dive", badgeDescription: "Listed five or more food items in a single review.", badgeIcon: "clipboard-list", badgeCategory: "quality" });
+  }
+  // ── Saves & influence ────────────────────────────────────────────────────
+  if (totalSaves >= 25) {
+    candidates.push({ badgeId: "save_magnet", badgeType: "permanent", badgeName: "Save Magnet", badgeDescription: "Collected 25 saves across all posts.", badgeIcon: "bookmark", badgeCategory: "influence" });
+  }
+  if (maxSavesOnOnePost >= 10) {
+    candidates.push({ badgeId: "must_try", badgeType: "permanent", badgeName: "Must Try", badgeDescription: "A single post was saved ten times.", badgeIcon: "star", badgeCategory: "influence" });
+  }
+
+  // ── Discovery & loyalty ──────────────────────────────────────────────────
+  if (hasPioneerRestaurant) {
+    candidates.push({ badgeId: "taste_pioneer", badgeType: "permanent", badgeName: "Taste Pioneer", badgeDescription: "Reviewed a restaurant among its first three posts.", badgeIcon: "flag", badgeCategory: "discovery" });
+  }
+  if ([...userRestaurantCount.values()].some((c) => c >= 3)) {
+    candidates.push({ badgeId: "regular", badgeType: "permanent", badgeName: "Regular", badgeDescription: "Reviewed the same restaurant three or more times.", badgeIcon: "coffee", badgeCategory: "loyalty" });
+  }
+
+  // ── Diversity ────────────────────────────────────────────────────────────
+  if (areaCounts.size >= 5) {
+    candidates.push({ badgeId: "neighborhood_guide", badgeType: "permanent", badgeName: "Neighborhood Guide", badgeDescription: "Posted reviews across five different areas.", badgeIcon: "map", badgeCategory: "exploration" });
+  }
+
   return candidates;
 }
 
@@ -417,9 +484,14 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
   const areaCounts = new Map<string, number>();
   const cuisineCounts = new Map<string, number>();
   const cuisineEligible = new Map<string, number>();
+  const userRestaurantCount = new Map<string, number>();
   let maxAgrees = 0;
   let maxHiddenGemAgrees = 0;
   let goodCallCount = 0;
+  let maxPhotoCount = 0;
+  let maxItemCount = 0;
+  let totalSaves = 0;
+  let maxSavesOnOnePost = 0;
 
   for (const review of ctx.reviews) {
     const counts = ctx.feedbackByPost.get(review.id) ?? EMPTY_COUNTS;
@@ -437,6 +509,19 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
 
     const placePosts = ctx.restaurantPostCount.get(restaurantKey(review)) ?? 0;
     if (placePosts < 20) maxHiddenGemAgrees = Math.max(maxHiddenGemAgrees, agrees);
+
+    const rKey = restaurantKey(review);
+    userRestaurantCount.set(rKey, (userRestaurantCount.get(rKey) ?? 0) + 1);
+
+    const photos = (review.photo_urls ?? []).filter(Boolean);
+    const photoCount = photos.length > 0 ? photos.length : (review.photo_url ? 1 : 0);
+    maxPhotoCount = Math.max(maxPhotoCount, photoCount);
+
+    maxItemCount = Math.max(maxItemCount, (review.items ?? []).length);
+
+    const saves = ctx.saveCountByPost.get(review.id) ?? 0;
+    totalSaves += saves;
+    maxSavesOnOnePost = Math.max(maxSavesOnOnePost, saves);
   }
 
   if (!earnedBadgeIds.has("first_bite")) {
@@ -452,23 +537,19 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     addProgress(progress, { badgeId: "food_explorer", badgeName: "Food Explorer", current: ctx.reviews.length, target: 3, label: `${ctx.reviews.length}/3 reviews`, badgeIcon: "compass", badgeDescription: "Post three reviews." });
   }
 
-  const bestArea = [...areaCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (bestArea) {
-    const id = `area_explorer:${normalizeBadgeKey(bestArea[0])}`;
-    if (!earnedBadgeIds.has(id)) {
-      addProgress(progress, { badgeId: id, badgeName: `${bestArea[0]} Explorer`, current: bestArea[1], target: 3, label: `${bestArea[1]}/3 reviews`, badgeIcon: "map-pin", badgeDescription: `Post three reviews in ${bestArea[0]}.` });
+  if (!hasEarnedExplorer(earnedBadgeIds, "area_explorer")) {
+    const bestArea = [...areaCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (bestArea) {
+      addProgress(progress, { badgeId: "area_explorer", badgeName: "Area Explorer", current: bestArea[1], target: 3, label: `${bestArea[1]}/3 reviews`, badgeIcon: "map-pin", badgeDescription: "Post three reviews in the same area." });
     }
   }
 
-  const bestCuisine = [...cuisineCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (bestCuisine) {
-    const id = `cuisine_explorer:${normalizeBadgeKey(bestCuisine[0])}`;
-    if (!earnedBadgeIds.has(id)) {
-      addProgress(progress, { badgeId: id, badgeName: `${bestCuisine[0]} Explorer`, current: bestCuisine[1], target: 3, label: `${bestCuisine[1]}/3 reviews`, badgeIcon: "chef-hat", badgeDescription: `Post three ${bestCuisine[0]} reviews.` });
-    }
+  const topCuisine = [...cuisineCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (!hasEarnedExplorer(earnedBadgeIds, "cuisine_explorer") && topCuisine) {
+    addProgress(progress, { badgeId: "cuisine_explorer", badgeName: "Cuisine Explorer", current: topCuisine[1], target: 3, label: `${topCuisine[1]}/3 reviews`, badgeIcon: "chef-hat", badgeDescription: "Post three reviews of the same cuisine." });
   }
 
-  const bestExpertCuisine = [...cuisineEligible.entries()].sort((a, b) => b[1] - a[1])[0] ?? bestCuisine;
+  const bestExpertCuisine = [...cuisineEligible.entries()].sort((a, b) => b[1] - a[1])[0] ?? topCuisine;
   if (bestExpertCuisine) {
     const id = `cuisine_expert:${normalizeBadgeKey(bestExpertCuisine[0])}`;
     if (!earnedBadgeIds.has(id)) {
@@ -486,6 +567,40 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     addProgress(progress, { badgeId: "visit_driver", badgeName: "Visit Driver", current: ctx.uniqueDrivenVisitors, target: 25, label: `${ctx.uniqueDrivenVisitors}/25 visits`, badgeIcon: "route", badgeDescription: "Drive 25 unique visits through your posts." });
   }
 
+  // ── Volume milestones — only the next unearned tier ──────────────────────
+  if (!earnedBadgeIds.has("dozen_reviews")) {
+    addProgress(progress, { badgeId: "dozen_reviews", badgeName: "Hungry Dozen", current: ctx.reviews.length, target: 10, label: `${ctx.reviews.length}/10 reviews`, badgeIcon: "layers", badgeDescription: "Post ten food reviews." });
+  } else if (!earnedBadgeIds.has("twenty_five_reviews")) {
+    addProgress(progress, { badgeId: "twenty_five_reviews", badgeName: "Quarter Century", current: ctx.reviews.length, target: 25, label: `${ctx.reviews.length}/25 reviews`, badgeIcon: "trophy", badgeDescription: "Post twenty-five reviews." });
+  } else if (!earnedBadgeIds.has("hundred_reviews")) {
+    addProgress(progress, { badgeId: "hundred_reviews", badgeName: "Centurion", current: ctx.reviews.length, target: 100, label: `${ctx.reviews.length}/100 reviews`, badgeIcon: "crown", badgeDescription: "Post one hundred reviews." });
+  }
+
+  // ── Quality ──────────────────────────────────────────────────────────────
+  if (!earnedBadgeIds.has("multi_photo")) {
+    addProgress(progress, { badgeId: "multi_photo", badgeName: "Show & Tell", current: maxPhotoCount, target: 3, label: `${maxPhotoCount}/3 photos`, badgeIcon: "film", badgeDescription: "Add three or more photos to a single review." });
+  }
+  if (!earnedBadgeIds.has("detail_master")) {
+    addProgress(progress, { badgeId: "detail_master", badgeName: "Deep Dive", current: maxItemCount, target: 5, label: `${maxItemCount}/5 items`, badgeIcon: "clipboard-list", badgeDescription: "List five or more food items in a single review." });
+  }
+  // ── Saves & influence ────────────────────────────────────────────────────
+  if (!earnedBadgeIds.has("save_magnet")) {
+    addProgress(progress, { badgeId: "save_magnet", badgeName: "Save Magnet", current: totalSaves, target: 25, label: `${totalSaves}/25 saves`, badgeIcon: "bookmark", badgeDescription: "Collect 25 saves across all posts." });
+  }
+  if (!earnedBadgeIds.has("must_try")) {
+    addProgress(progress, { badgeId: "must_try", badgeName: "Must Try", current: maxSavesOnOnePost, target: 10, label: `${maxSavesOnOnePost}/10 saves`, badgeIcon: "star", badgeDescription: "Get a single post saved ten times." });
+  }
+
+  // ── Discovery & loyalty ──────────────────────────────────────────────────
+  if (!earnedBadgeIds.has("regular")) {
+    const maxVisits = userRestaurantCount.size > 0 ? Math.max(...userRestaurantCount.values()) : 0;
+    addProgress(progress, { badgeId: "regular", badgeName: "Regular", current: maxVisits, target: 3, label: `${maxVisits}/3 visits`, badgeIcon: "coffee", badgeDescription: "Review the same restaurant three or more times." });
+  }
+
+  // ── Diversity ────────────────────────────────────────────────────────────
+  if (!earnedBadgeIds.has("neighborhood_guide")) {
+    addProgress(progress, { badgeId: "neighborhood_guide", badgeName: "Neighborhood Guide", current: areaCounts.size, target: 5, label: `${areaCounts.size}/5 areas`, badgeIcon: "map", badgeDescription: "Post reviews across five different areas." });
+  }
   return progress
     .sort((a, b) => b.progressPercent - a.progressPercent || b.current - a.current)
     .slice(0, 3);
@@ -542,81 +657,121 @@ export async function checkAndAwardBadges(db: SupabaseLike, userId: string) {
   return candidates;
 }
 
-async function countActivitySince(db: SupabaseLike, profile: ProfileRow, since: Date, before: Date | null = null) {
-  const sinceIso = since.toISOString();
-  let reviewsQuery = db
-    .from("reviews")
-    .select("id", { count: "exact", head: true })
-    .eq("reviewer_name", profile.username)
-    .is("deleted_at", null)
-    .is("hidden_at", null)
-    .is("reported_at", null)
-    .eq("status", "active")
-    .gte("created_at", sinceIso);
-  let triedQuery = db
-    .from("user_tried_items")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", profile.id)
-    .gte("created_at", sinceIso);
-  if (before) {
-    const beforeIso = before.toISOString();
-    reviewsQuery = reviewsQuery.lt("created_at", beforeIso);
-    triedQuery = triedQuery.lt("created_at", beforeIso);
+type StreakHistory = {
+  currentWeeklyStreak: number;
+  bestWeeklyStreak: number;
+  currentMonthlyStreak: number;
+  bestMonthlyStreak: number;
+  lastWeeklyActivePeriod: string | null;
+  lastMonthlyActivePeriod: string | null;
+  weeklyEarnedPeriods: string[];
+  monthlyEarnedPeriods: string[];
+};
+
+function monthIndex(date = new Date()) {
+  return date.getUTCFullYear() * 12 + date.getUTCMonth();
+}
+
+function bestConsecutiveNumberStreak(values: number[], step = 1) {
+  if (values.length === 0) return 0;
+  let best = 1;
+  let current = 1;
+  for (let i = 1; i < values.length; i += 1) {
+    if (values[i] - values[i - 1] === step) {
+      current += 1;
+    } else {
+      current = 1;
+    }
+    best = Math.max(best, current);
+  }
+  return best;
+}
+
+function currentConsecutiveNumberStreak(values: Set<number>, currentValue: number, step = 1) {
+  if (!values.has(currentValue)) return 0;
+  let count = 0;
+  for (let value = currentValue; values.has(value); value -= step) {
+    count += 1;
+  }
+  return count;
+}
+
+async function loadActivityStreakHistory(db: SupabaseLike, profile: ProfileRow, now = new Date()): Promise<StreakHistory> {
+  if (!profile.username) {
+    return {
+      currentWeeklyStreak: 0,
+      bestWeeklyStreak: 0,
+      currentMonthlyStreak: 0,
+      bestMonthlyStreak: 0,
+      lastWeeklyActivePeriod: null,
+      lastMonthlyActivePeriod: null,
+      weeklyEarnedPeriods: [],
+      monthlyEarnedPeriods: [],
+    };
   }
 
-  const [reviewsResult, triedResult] = await Promise.all([reviewsQuery, triedQuery]);
-  if (reviewsResult.error) throw new Error(reviewsResult.error.message);
-  if (triedResult.error) throw new Error(triedResult.error.message);
-  return (reviewsResult.count ?? 0) + (triedResult.count ?? 0);
+  const [{ data: reviewRows, error: reviewsError }, { data: triedRows, error: triedError }] = await Promise.all([
+    db
+      .from("reviews")
+      .select("created_at")
+      .eq("reviewer_name", profile.username)
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active"),
+    db.from("user_tried_items").select("created_at").eq("user_id", profile.id),
+  ]);
+  if (reviewsError) throw new Error(reviewsError.message);
+  if (triedError) throw new Error(triedError.message);
+
+  const weekStarts = new Set<number>();
+  const monthIndexes = new Set<number>();
+  for (const row of [
+    ...((reviewRows ?? []) as Array<{ created_at: string | null }>),
+    ...((triedRows ?? []) as Array<{ created_at: string | null }>),
+  ]) {
+    if (!row.created_at) continue;
+    const date = new Date(row.created_at);
+    if (Number.isNaN(date.getTime())) continue;
+    weekStarts.add(currentWeekStart(date).getTime());
+    monthIndexes.add(monthIndex(date));
+  }
+
+  const sortedWeeks = [...weekStarts].sort((a, b) => a - b);
+  const sortedMonths = [...monthIndexes].sort((a, b) => a - b);
+  const weeklyEarnedPeriods = sortedWeeks.map((value) => weekPeriod(new Date(value))).reverse();
+  const monthlyEarnedPeriods = sortedMonths
+    .map((value) => `${Math.floor(value / 12)}-${String((value % 12) + 1).padStart(2, "0")}`)
+    .reverse();
+  const currentWeekValue = currentWeekStart(now).getTime();
+  const currentMonthValue = monthIndex(now);
+
+  return {
+    currentWeeklyStreak: currentConsecutiveNumberStreak(weekStarts, currentWeekValue, 604_800_000),
+    bestWeeklyStreak: bestConsecutiveNumberStreak(sortedWeeks, 604_800_000),
+    currentMonthlyStreak: currentConsecutiveNumberStreak(monthIndexes, currentMonthValue, 1),
+    bestMonthlyStreak: bestConsecutiveNumberStreak(sortedMonths, 1),
+    lastWeeklyActivePeriod: weeklyEarnedPeriods[0] ?? null,
+    lastMonthlyActivePeriod: monthlyEarnedPeriods[0] ?? null,
+    weeklyEarnedPeriods,
+    monthlyEarnedPeriods,
+  };
 }
 
 export async function updateUserStreaks(db: SupabaseLike, userId: string, now = new Date()) {
   const profile = await loadProfileByUserId(db, userId);
   if (!profile?.username) return null;
 
-  const { data: existing, error: existingError } = await db
-    .from("user_reputation")
-    .select("current_weekly_streak, best_weekly_streak, current_monthly_streak, best_monthly_streak, last_weekly_active_period, last_monthly_active_period")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  const row = (existing ?? {}) as Partial<ReputationRow>;
-  const week = weekPeriod(now);
-  const month = monthPeriod(now);
-  const weekActivity = await countActivitySince(db, profile, currentWeekStart(now));
-  const monthActivity = await countActivitySince(db, profile, currentMonthStart(now));
-
-  let currentWeekly = Number(row.current_weekly_streak ?? 0);
-  let bestWeekly = Number(row.best_weekly_streak ?? 0);
-  let lastWeekly = row.last_weekly_active_period ?? null;
-  if (weekActivity > 0) {
-    if (lastWeekly !== week) currentWeekly = lastWeekly === previousWeekPeriod(now) ? currentWeekly + 1 : 1;
-    lastWeekly = week;
-    bestWeekly = Math.max(bestWeekly, currentWeekly);
-  } else if (lastWeekly !== week) {
-    currentWeekly = 0;
-  }
-
-  let currentMonthly = Number(row.current_monthly_streak ?? 0);
-  let bestMonthly = Number(row.best_monthly_streak ?? 0);
-  let lastMonthly = row.last_monthly_active_period ?? null;
-  if (monthActivity >= 4) {
-    if (lastMonthly !== month) currentMonthly = lastMonthly === previousMonthPeriod(now) ? currentMonthly + 1 : 1;
-    lastMonthly = month;
-    bestMonthly = Math.max(bestMonthly, currentMonthly);
-  } else if (lastMonthly !== month) {
-    currentMonthly = 0;
-  }
+  const history = await loadActivityStreakHistory(db, profile, now);
 
   const updated = {
     user_id: userId,
-    current_weekly_streak: currentWeekly,
-    best_weekly_streak: bestWeekly,
-    current_monthly_streak: currentMonthly,
-    best_monthly_streak: bestMonthly,
-    last_weekly_active_period: lastWeekly,
-    last_monthly_active_period: lastMonthly,
+    current_weekly_streak: history.currentWeeklyStreak,
+    best_weekly_streak: history.bestWeeklyStreak,
+    current_monthly_streak: history.currentMonthlyStreak,
+    best_monthly_streak: history.bestMonthlyStreak,
+    last_weekly_active_period: history.lastWeeklyActivePeriod,
+    last_monthly_active_period: history.lastMonthlyActivePeriod,
     updated_at: new Date().toISOString(),
   };
 
@@ -625,27 +780,26 @@ export async function updateUserStreaks(db: SupabaseLike, userId: string, now = 
   return updated;
 }
 
-function temporaryBadgesFromReputation(row: ReputationRow | null): TemporaryBadge[] {
-  if (!row) return [];
+function temporaryBadgesFromStreaks(streaks: StreakHistory): TemporaryBadge[] {
   const badges: TemporaryBadge[] = [];
-  if ((row.current_weekly_streak ?? 0) > 0 && row.last_weekly_active_period === weekPeriod()) {
+  if (streaks.currentWeeklyStreak > 0 && streaks.lastWeeklyActivePeriod === weekPeriod()) {
     badges.push({
       badgeId: "weekly_explorer",
       badgeName: "Weekly Explorer",
       badgeDescription: "Posted or logged a visit this week.",
       badgeIcon: "flame",
       badgeCategory: "temporary",
-      streakLabel: `${row.current_weekly_streak}-week streak`,
+      streakLabel: `${streaks.currentWeeklyStreak}-week streak`,
     });
   }
-  if ((row.current_monthly_streak ?? 0) > 0 && row.last_monthly_active_period === monthPeriod()) {
+  if (streaks.currentMonthlyStreak > 0 && streaks.lastMonthlyActivePeriod === monthPeriod()) {
     badges.push({
       badgeId: "monthly_explorer",
       badgeName: "Monthly Explorer",
-      badgeDescription: "Posted or logged four visits this month.",
+      badgeDescription: "Posted or logged a visit this month.",
       badgeIcon: "sparkles",
       badgeCategory: "temporary",
-      streakLabel: `${row.current_monthly_streak}-month streak`,
+      streakLabel: `${streaks.currentMonthlyStreak}-month streak`,
     });
   }
   return badges;
@@ -682,7 +836,7 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
     await updateUserStreaks(db, profile.id);
   }
 
-  const [{ data: freshRep }, { data: badgeData }, badgeProgress] = await Promise.all([
+  const [{ data: freshRep }, { data: badgeData }, badgeProgress, streakHistory] = await Promise.all([
     db
       .from("user_reputation")
       .select("user_id, profile_score, tier_display_name, current_weekly_streak, best_weekly_streak, current_monthly_streak, best_monthly_streak, last_weekly_active_period, last_monthly_active_period")
@@ -694,11 +848,13 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
       .eq("user_id", profile.id)
       .order("earned_at", { ascending: true }),
     getBadgeProgress(db, profile.id),
+    loadActivityStreakHistory(db, profile),
   ]);
 
   const reputation = (freshRep ?? null) as ReputationRow | null;
   const tier = getUserTier(Number(reputation?.profile_score ?? 0));
-  const permanentBadges: PermanentBadge[] = ((badgeData ?? []) as Array<{
+
+  type BadgeRow = {
     badge_id: string;
     badge_type: string;
     badge_name: string;
@@ -707,29 +863,60 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
     badge_category: string | null;
     earned_at: string;
     metadata: Record<string, unknown> | null;
-  }>).map((badge) => ({
-    badgeId: badge.badge_id,
-    badgeType: badge.badge_type,
-    badgeName: badge.badge_name,
-    badgeDescription: badge.badge_description ?? "",
-    badgeIcon: badge.badge_icon ?? "award",
-    badgeCategory: badge.badge_category ?? "general",
-    earnedAt: badge.earned_at,
-    metadata: badge.metadata ?? {},
-  }));
+  };
+
+  let rawBadgeRows = (badgeData ?? []) as BadgeRow[];
+
+  // One-time migration: if the user has old per-area/per-cuisine explorer badges
+  // but not the new aggregate ones, generate the aggregate badges now.
+  const hasLegacyAreaBadge = rawBadgeRows.some((b) => b.badge_id.startsWith("area_explorer:"));
+  const hasLegacyCuisineBadge = rawBadgeRows.some((b) => b.badge_id.startsWith("cuisine_explorer:"));
+  const hasNewAreaExplorer = rawBadgeRows.some((b) => b.badge_id === "area_explorer");
+  const hasNewCuisineExplorer = rawBadgeRows.some((b) => b.badge_id === "cuisine_explorer");
+  const needsMigration = (hasLegacyAreaBadge && !hasNewAreaExplorer) || (hasLegacyCuisineBadge && !hasNewCuisineExplorer);
+  if (needsMigration) {
+    await checkAndAwardBadges(db, profile.id);
+    const { data: migratedData } = await db
+      .from("user_badges")
+      .select("badge_id, badge_type, badge_name, badge_description, badge_icon, badge_category, earned_at, metadata")
+      .eq("user_id", profile.id)
+      .order("earned_at", { ascending: true });
+    rawBadgeRows = (migratedData ?? rawBadgeRows) as BadgeRow[];
+  }
+
+  const permanentBadges: PermanentBadge[] = rawBadgeRows
+    .filter((badge) => {
+      // Hide legacy per-area / per-cuisine explorer badges (replaced by aggregate)
+      if (badge.badge_id.startsWith("area_explorer:") || badge.badge_id.startsWith("cuisine_explorer:")) return false;
+      // Hide cuisine hopper (removed badge)
+      if (badge.badge_id === "cuisine_hopper") return false;
+      return true;
+    })
+    .map((badge) => ({
+      badgeId: badge.badge_id,
+      badgeType: badge.badge_type,
+      badgeName: badge.badge_name,
+      badgeDescription: badge.badge_description ?? "",
+      badgeIcon: badge.badge_icon ?? "award",
+      badgeCategory: badge.badge_category ?? "general",
+      earnedAt: badge.earned_at,
+      metadata: badge.metadata ?? {},
+    }));
 
   return {
     tier,
     permanentBadges,
-    temporaryBadges: temporaryBadgesFromReputation(reputation).slice(0, 2),
+    temporaryBadges: temporaryBadgesFromStreaks(streakHistory).slice(0, 2),
     badgeProgress,
     streaks: {
-      currentWeeklyStreak: Number(reputation?.current_weekly_streak ?? 0),
-      bestWeeklyStreak: Number(reputation?.best_weekly_streak ?? 0),
-      currentMonthlyStreak: Number(reputation?.current_monthly_streak ?? 0),
-      bestMonthlyStreak: Number(reputation?.best_monthly_streak ?? 0),
-      lastWeeklyActivePeriod: reputation?.last_weekly_active_period ?? null,
-      lastMonthlyActivePeriod: reputation?.last_monthly_active_period ?? null,
+      currentWeeklyStreak: streakHistory.currentWeeklyStreak,
+      bestWeeklyStreak: streakHistory.bestWeeklyStreak,
+      currentMonthlyStreak: streakHistory.currentMonthlyStreak,
+      bestMonthlyStreak: streakHistory.bestMonthlyStreak,
+      lastWeeklyActivePeriod: streakHistory.lastWeeklyActivePeriod,
+      lastMonthlyActivePeriod: streakHistory.lastMonthlyActivePeriod,
+      weeklyEarnedPeriods: streakHistory.weeklyEarnedPeriods,
+      monthlyEarnedPeriods: streakHistory.monthlyEarnedPeriods,
     },
   };
 }

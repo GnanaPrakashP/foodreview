@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Award, BadgeCheck, Camera, ChefHat, Compass, Gem, MapPin, Route, Users, Utensils } from "lucide-react";
+import { Award, BadgeCheck, Bookmark, Camera, ChefHat, ClipboardList, Coffee, Compass, Crown, Film, Flag, Gem, Globe, Layers, Map, MapPin, Route, Star, Trophy, Users, Utensils } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 type BadgePillProps = {
@@ -16,12 +16,23 @@ type BadgePillProps = {
 const ICONS: Record<string, LucideIcon> = {
   award: Award,
   "badge-check": BadgeCheck,
+  bookmark: Bookmark,
   camera: Camera,
   "chef-hat": ChefHat,
+  "clipboard-list": ClipboardList,
+  coffee: Coffee,
   compass: Compass,
+  crown: Crown,
+  film: Film,
+  flag: Flag,
   gem: Gem,
+  globe: Globe,
+  layers: Layers,
+  map: Map,
   "map-pin": MapPin,
   route: Route,
+  star: Star,
+  trophy: Trophy,
   users: Users,
   utensils: Utensils,
 };
@@ -86,6 +97,16 @@ const ACHIEVEMENT_BADGE_SRC: Record<string, string> = {
   crowd_approved: "/badges/achievements-transparent-ui/crowd-approved.png",
   hidden_gem_finder: "/badges/achievements-transparent-ui/hidden-gem-finder.png",
   visit_driver: "/badges/achievements-transparent-ui/visit-driver.png",
+  dozen_reviews: "/badges/achievements-transparent-ui/dozen-reviews.png",
+  twenty_five_reviews: "/badges/achievements-transparent-ui/twenty-five-reviews.png",
+  hundred_reviews: "/badges/achievements-transparent-ui/hundred-reviews.png",
+  multi_photo: "/badges/achievements-transparent-ui/multi-photo.png",
+  detail_master: "/badges/achievements-transparent-ui/detail-master.png",
+  save_magnet: "/badges/achievements-transparent-ui/save-magnet.png",
+  must_try: "/badges/achievements-transparent-ui/must-try.png",
+  taste_pioneer: "/badges/achievements-transparent-ui/taste-pioneer.png",
+  regular: "/badges/achievements-transparent-ui/regular.png",
+  neighborhood_guide: "/badges/achievements-transparent-ui/neighborhood-guide.png",
   weekly_explorer: "/badges/achievements-transparent-ui/weekly-explorer.png",
   monthly_explorer: "/badges/achievements-transparent-ui/monthly-explorer.png",
 };
@@ -146,6 +167,7 @@ export default function BadgePill({
         alignItems: "center",
         gap: 6,
         width: 88,
+        height: 116,
         flexShrink: 0,
         padding: "12px 8px 10px",
         borderRadius: 16,
@@ -163,6 +185,10 @@ export default function BadgePill({
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1.25,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}
       >
         {name}

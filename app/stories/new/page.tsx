@@ -9,7 +9,7 @@ export default function NewStoryPage() {
           <p style={{ color: "var(--muted)", fontSize: "13px", fontFamily: "'DM Sans', sans-serif" }}>24-hour update</p>
           <h1
             style={{
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontSize: "20px",
               fontWeight: 800,
               color: "var(--cream)",

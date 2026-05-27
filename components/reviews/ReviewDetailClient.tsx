@@ -330,7 +330,7 @@ export default function ReviewDetailClient({
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", paddingBottom: "92px" }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, background: "var(--bg)", borderBottom: "1px solid var(--border)", padding: "12px 16px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", flex: 1 }}>Post</p>
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", flex: 1 }}>Post</p>
       </div>
       {deleteReviewError && (
         <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", padding: "8px 16px 0" }}>
@@ -405,7 +405,7 @@ export default function ReviewDetailClient({
           </div>
 
           <div style={{ padding: "0 12px 10px" }}>
-            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
+            <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
               {review.restaurant_name}
             </h1>
             {locationLabel && (
@@ -549,7 +549,7 @@ export default function ReviewDetailClient({
       </div>
 
       <section style={{ padding: "12px 16px 0" }}>
-        <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", marginBottom: "10px" }}>
+        <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", marginBottom: "10px" }}>
           Comments
         </h2>
         {comments.length === 0 ? (

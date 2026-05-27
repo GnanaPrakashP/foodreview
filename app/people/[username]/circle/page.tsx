@@ -79,7 +79,7 @@ export default function FriendCirclePage() {
           </div>
         </Link>
         <div>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "17px", color: "var(--cream)", margin: 0 }}>
+          <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "17px", color: "var(--cream)", margin: 0 }}>
             {firstName}&apos;s Circle
           </h1>
           {mounted && (
@@ -105,7 +105,7 @@ export default function FriendCirclePage() {
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Users size={24} strokeWidth={1.8} color="var(--orange)" />
           </div>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
             This is a private account
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
@@ -119,7 +119,7 @@ export default function FriendCirclePage() {
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Users size={24} strokeWidth={1.8} color="var(--orange)" />
           </div>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
             {firstName}&apos;s circle is empty
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
@@ -135,11 +135,11 @@ export default function FriendCirclePage() {
             {members.map(({ name: memberName, placeCount }, i) => (
               <Link key={memberName} href={`/people/${encodeURIComponent(memberName)}`} style={{ textDecoration: "none" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
-                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(memberName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
+                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(memberName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
                     {avatarInitials(memberName)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {memberName}
                     </p>
                     <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "2px" }}>

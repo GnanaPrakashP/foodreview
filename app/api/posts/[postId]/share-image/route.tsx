@@ -137,9 +137,8 @@ export async function GET(
   const outputWidth = shareImageWidth * shareImageScale;
   const db = createAdminClient();
 
-  const [{ data: review }, syne700, dmSans400, dmSans700] = await Promise.all([
+  const [{ data: review }, dmSans400, dmSans700] = await Promise.all([
     db.from("reviews").select(REVIEW_SELECT).eq("id", postId).single<Review>(),
-    loadGoogleFont("Syne", 700),
     loadGoogleFont("DM Sans", 400),
     loadGoogleFont("DM Sans", 700),
   ]);
@@ -183,10 +182,8 @@ export async function GET(
   const outputHeight = imageHeight * shareImageScale;
 
   const dmSansFamily = dmSans400 ? "'DM Sans', sans-serif" : "sans-serif";
-  const syneFamily   = syne700   ? "'Syne', sans-serif"   : "sans-serif";
 
   const fonts: { name: string; data: ArrayBuffer; weight: 400 | 700; style: "normal" }[] = [];
-  if (syne700)   fonts.push({ name: "Syne",    data: syne700,   weight: 700, style: "normal" });
   if (dmSans400) fonts.push({ name: "DM Sans", data: dmSans400, weight: 400, style: "normal" });
   if (dmSans700) fonts.push({ name: "DM Sans", data: dmSans700, weight: 700, style: "normal" });
 
@@ -275,7 +272,7 @@ export async function GET(
               color: C.cream,
               lineHeight: "1.15",
               marginBottom: location ? "5px" : "8px",
-              fontFamily: syneFamily,
+              fontFamily: dmSansFamily,
             }}
           >
             {trunc(restaurantName, 48)}
@@ -383,7 +380,7 @@ export async function GET(
                 fontSize: "12px",
                 fontWeight: 700,
                 color: C.orange,
-                fontFamily: syneFamily,
+                fontFamily: dmSansFamily,
                 flexShrink: 0,
               }}
             >

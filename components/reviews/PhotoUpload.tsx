@@ -526,7 +526,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 6px 10px" }}>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", margin: 0 }}>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 800, color: "var(--cream)", margin: 0 }}>
                   Add media
                 </p>
                 <button
@@ -572,7 +572,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                   <Camera size={17} strokeWidth={1.8} />
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Take photo</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700 }}>Take photo</span>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>Open camera for a fresh shot</span>
                 </span>
               </button>
@@ -598,7 +598,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                   <Video size={17} strokeWidth={1.8} />
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Record video</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700 }}>Record video</span>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>10 seconds max</span>
                 </span>
               </button>
@@ -624,7 +624,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                   <ImageIcon size={17} strokeWidth={1.8} />
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "13px", fontWeight: 700 }}>Choose from library</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700 }}>Choose from library</span>
                   <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--muted)" }}>Photos and videos from your gallery</span>
                 </span>
               </button>
@@ -670,7 +670,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                 gap: "12px",
               }}
             >
-              <h2 style={{ margin: 0, color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800 }}>
+              <h2 style={{ margin: 0, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 800 }}>
                 Adjust photo
               </h2>
               <button
@@ -824,7 +824,7 @@ export default function PhotoUpload({ files, onFilesChange, error }: PhotoUpload
                   fontWeight: 800,
                   cursor: cropSession.crop ? "pointer" : "default",
                   opacity: cropSession.crop ? 1 : 0.7,
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "'DM Sans', sans-serif",
                 }}
               >
                 Use photo

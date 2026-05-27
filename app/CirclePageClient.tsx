@@ -95,7 +95,7 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 12px 10px" }}>
         <div>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "28px", color: "var(--cream)", lineHeight: "1.2", margin: 0 }}>
+          <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "28px", color: "var(--cream)", lineHeight: "1.2", margin: 0 }}>
             What they&rsquo;re{" "}
             <span style={{ fontStyle: "italic", color: "var(--orange)" }}>eating</span>
           </h1>

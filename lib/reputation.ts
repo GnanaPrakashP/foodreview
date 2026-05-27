@@ -68,6 +68,8 @@ export type UserProfileReputation = {
     bestMonthlyStreak: number;
     lastWeeklyActivePeriod: string | null;
     lastMonthlyActivePeriod: string | null;
+    weeklyEarnedPeriods: string[];
+    monthlyEarnedPeriods: string[];
   };
 };
 
@@ -105,6 +107,8 @@ export const EMPTY_REPUTATION: UserProfileReputation = {
     bestMonthlyStreak: 0,
     lastWeeklyActivePeriod: null,
     lastMonthlyActivePeriod: null,
+    weeklyEarnedPeriods: [],
+    monthlyEarnedPeriods: [],
   },
 };
 

@@ -126,7 +126,7 @@ export default function OnboardingPage() {
     }}>
       {/* Wordmark */}
       <div style={{ textAlign: "center", marginBottom: "28px" }}>
-        <p style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
           CircleBites
         </p>
         <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px", fontFamily: "'DM Sans', sans-serif" }}>
@@ -142,7 +142,7 @@ export default function OnboardingPage() {
         borderRadius: "24px",
         padding: "28px 24px",
       }}>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)", marginBottom: "6px" }}>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)", marginBottom: "6px" }}>
           Set up your profile
         </h1>
         <p style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "24px", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>
@@ -236,7 +236,7 @@ export default function OnboardingPage() {
               border: "none",
               borderRadius: "14px",
               padding: "14px",
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontSize: "15px",
               fontWeight: 700,
               cursor: canSubmit ? "pointer" : "default",

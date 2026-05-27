@@ -197,7 +197,7 @@ export default function SwipeStack({
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", boxSizing: "border-box" }}>
         <div style={{ textAlign: "center" }}>
           <p style={{ fontSize: "40px", marginBottom: "10px" }}>🔍</p>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", marginBottom: "6px" }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 800, color: "var(--cream)", marginBottom: "6px" }}>
             {emptyCopy}
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
@@ -250,12 +250,12 @@ export default function SwipeStack({
 
           {dragX > 30 && !dismissDir && (
             <div style={{ position: "absolute", top: 22, right: 18, background: "rgba(34,197,94,0.94)", borderRadius: 12, padding: "7px 14px", transform: "rotate(-10deg)", zIndex: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'Syne', sans-serif" }}>Save</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'DM Sans', sans-serif" }}>Save</span>
             </div>
           )}
           {dragX < -30 && !dismissDir && (
             <div style={{ position: "absolute", top: 22, left: 18, background: "rgba(239,68,68,0.94)", borderRadius: 12, padding: "7px 14px", transform: "rotate(10deg)", zIndex: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'Syne', sans-serif" }}>Skip</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'DM Sans', sans-serif" }}>Skip</span>
             </div>
           )}
       </div>

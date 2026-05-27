@@ -54,7 +54,7 @@ export default function LikedPostsPage() {
         <button onClick={() => router.push("/me/settings")} style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
         </button>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Liked Posts</h1>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Liked Posts</h1>
       </div>
 
       <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "16px" }}>

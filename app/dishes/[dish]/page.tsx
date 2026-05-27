@@ -198,7 +198,7 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
           </div>
         </Link>
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "18px", color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "18px", color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {dishName}
           </h1>
           <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "2px" }}>
@@ -210,7 +210,7 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
       <div style={{ padding: "0 16px" }}>
         {ranked.length === 0 ? (
           <div style={{ textAlign: "center", padding: "52px 20px" }}>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No matches yet</p>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>No matches yet</p>
             <p style={{ fontSize: 13, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
               Public reviews nearby will shape this list.
             </p>
@@ -220,11 +220,11 @@ export default async function DishDetailPage({ params, searchParams }: Props) {
             <Link key={item.key} href={restaurantHref(item)} style={{ textDecoration: "none", display: "block", marginBottom: 10 }}>
               <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: restaurantGradient(item.name), color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Syne', sans-serif", fontWeight: 800, flexShrink: 0 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: restaurantGradient(item.name), color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, flexShrink: 0 }}>
                     {item.name[0]?.toUpperCase() ?? "?"}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {item.name}
                     </p>
                     {item.area && (

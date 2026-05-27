@@ -231,7 +231,7 @@ export default function NotificationsClient() {
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
         </Link>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 800, color: "var(--cream)", lineHeight: 1 }}>Notifications</h1>
+          <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "20px", fontWeight: 800, color: "var(--cream)", lineHeight: 1 }}>Notifications</h1>
           <p style={{ marginTop: "3px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "12px" }}>
             {unreadCount === 0 ? "All caught up" : `${unreadCount} unread`}
           </p>
@@ -252,7 +252,7 @@ export default function NotificationsClient() {
 
         {!loading && notifications.length === 0 && (
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "28px 18px", textAlign: "center" }}>
-            <p style={{ color: "var(--cream)", fontFamily: "'Syne', sans-serif", fontSize: "15px", fontWeight: 800 }}>No notifications yet</p>
+            <p style={{ color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: "15px", fontWeight: 800 }}>No notifications yet</p>
             <p style={{ color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", marginTop: "5px" }}>Circle requests, likes, comments, and circle posts will show here.</p>
           </div>
         )}
@@ -262,7 +262,7 @@ export default function NotificationsClient() {
           if (items.length === 0) return null;
           return (
             <section key={label}>
-              <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", marginBottom: "8px" }}>{label}</h2>
+              <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", marginBottom: "8px" }}>{label}</h2>
               <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", overflow: "hidden" }}>
                 {items.map((notification) => {
                   const metadata = metadataOf(notification);

@@ -24,7 +24,7 @@ function ScoreBar({ score }: { score: number }) {
       </div>
       <span
         style={{
-          fontFamily: "'Syne', sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
           fontSize: "14px",
           fontWeight: 800,
           color,
@@ -55,7 +55,7 @@ function DishCard({ result }: { result: DishResult }) {
           <div style={{ minWidth: 0 }}>
             <p
               style={{
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontSize: "16px",
                 fontWeight: 800,
                 color: "var(--cream)",
@@ -114,7 +114,7 @@ function DishCard({ result }: { result: DishResult }) {
           >
             <p
               style={{
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontStyle: "italic",
                 fontSize: "14px",
                 color: "var(--cream)",
@@ -176,7 +176,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
         </p>
         <h1
           style={{
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: "26px",
             color: "var(--cream)",
             marginTop: "4px",
@@ -217,7 +217,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
               outline: "none",
               color: "var(--cream)",
               fontSize: "16px",
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontStyle: query ? "normal" : "italic",
             }}
           />
@@ -251,7 +251,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
               border: "none",
               borderRadius: "14px",
               padding: "13px",
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'DM Sans', sans-serif",
               fontSize: "14px",
               fontWeight: 700,
               cursor: "pointer",
@@ -304,7 +304,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
       {!hasQuery && popularDishes.length === 0 && (
         <div style={{ textAlign: "center", padding: "48px 20px" }}>
           <span style={{ fontSize: "52px", display: "block", marginBottom: "12px" }}>🍽️</span>
-          <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", marginBottom: "6px" }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", marginBottom: "6px" }}>
             No dish data yet
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: "1.5" }}>
@@ -319,7 +319,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
                 border: "none",
                 borderRadius: "14px",
                 padding: "12px 24px",
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontSize: "14px",
                 fontWeight: 700,
                 cursor: "pointer",
@@ -337,7 +337,7 @@ export default function DishSearch({ reviews, popularDishes }: Props) {
           {results.length === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 0" }}>
               <span style={{ fontSize: "48px", display: "block", marginBottom: "12px" }}>🤷</span>
-              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", marginBottom: "6px" }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", marginBottom: "6px" }}>
                 No "{committed}" logs yet
               </p>
               <p style={{ fontSize: "13px", color: "var(--muted)" }}>

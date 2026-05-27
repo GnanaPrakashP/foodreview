@@ -19,7 +19,7 @@ export default function RouteError({ title = "Something went wrong", reset }: Ro
       }}
     >
       <div style={{ width: "100%", maxWidth: 360, textAlign: "center" }}>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, marginBottom: 8 }}>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 22, fontWeight: 800, marginBottom: 8 }}>
           {title}
         </h1>
         <p style={{ color: "var(--muted)", fontSize: 14, lineHeight: 1.5, marginBottom: 18 }}>

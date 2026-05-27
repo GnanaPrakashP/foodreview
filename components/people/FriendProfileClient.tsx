@@ -413,12 +413,12 @@ export default function FriendProfileClient({
           </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'Syne', sans-serif" }}>
+          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {avatarInitials(displayName || name)}
           </div>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{displayName || name}</p>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "20px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>{displayName || name}</p>
               {!relationshipReady && !isOwnProfile && (
                 <span
                   aria-hidden
@@ -493,17 +493,17 @@ export default function FriendProfileClient({
             <div style={{ width: "100%", height: "48px", background: "var(--card)", border: "1.5px solid var(--border)", borderRadius: "14px", opacity: 0.55 }} />
           )}
           {circleStatus === "one_way" && (
-            <button onClick={() => setConfirmAction("leave_circle")} style={{ width: "100%", background: "rgba(61,214,140,0.12)", border: "1.5px solid rgba(61,214,140,0.35)", borderRadius: "14px", padding: "13px", color: "var(--green)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+            <button onClick={() => setConfirmAction("leave_circle")} style={{ width: "100%", background: "rgba(61,214,140,0.12)", border: "1.5px solid rgba(61,214,140,0.35)", borderRadius: "14px", padding: "13px", color: "var(--green)", fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
               In Circle
             </button>
           )}
           {relationshipReady && circleStatus === "sent" && (
-            <button onClick={() => setConfirmAction("cancel_request")} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+            <button onClick={() => setConfirmAction("cancel_request")} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
               Requested
             </button>
           )}
           {relationshipReady && circleStatus === "none" && (
-            <button onClick={sendRequest} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
+            <button onClick={sendRequest} style={{ width: "100%", background: "rgba(240,96,48,0.12)", border: "1.5px solid rgba(240,96,48,0.35)", borderRadius: "14px", padding: "13px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, cursor: "pointer", letterSpacing: "0.2px" }}>
               Request
             </button>
           )}
@@ -523,7 +523,7 @@ export default function FriendProfileClient({
                 <button
                   onClick={() => respondToIncoming("accept")}
                   disabled={respondBusy}
-                  style={{ width: "100%", background: "var(--orange)", border: "1.5px solid var(--orange)", borderRadius: "11px", padding: "10px", color: "white", fontFamily: "'Syne', sans-serif", fontSize: "12px", fontWeight: 700, cursor: respondBusy ? "default" : "pointer", opacity: respondBusy ? 0.75 : 1 }}
+                  style={{ width: "100%", background: "var(--orange)", border: "1.5px solid var(--orange)", borderRadius: "11px", padding: "10px", color: "white", fontFamily: "'DM Sans', sans-serif", fontSize: "12px", fontWeight: 700, cursor: respondBusy ? "default" : "pointer", opacity: respondBusy ? 0.75 : 1 }}
                 >
                   Accept
                 </button>
@@ -540,7 +540,7 @@ export default function FriendProfileClient({
               <Lock size={16} strokeWidth={2} color="var(--orange)" />
             </div>
             <div style={{ minWidth: 0 }}>
-              <p style={{ margin: 0, color: "var(--cream)", fontSize: "13px", fontWeight: 700, fontFamily: "'Syne', sans-serif" }}>
+              <p style={{ margin: 0, color: "var(--cream)", fontSize: "13px", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>
                 Circle-only posts
               </p>
               <p style={{ margin: "3px 0 0", color: "var(--muted)", fontSize: "12px", lineHeight: 1.45, fontFamily: "'DM Sans', sans-serif" }}>
@@ -578,13 +578,13 @@ export default function FriendProfileClient({
 
       {/* ── Profile Lists ── */}
       <div style={{ padding: "0 20px" }}>
-        <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
           {(displayName || name).split(" ")[0]}&apos;s {activeTab === "dishes" ? "Dishes" : "Places"}
         </p>
 
         {isPrivateLocked ? (
           <div style={{ textAlign: "center", padding: "48px 20px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px" }}>
-            <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
               This is a private account
             </p>
             <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5, margin: "8px auto 0", maxWidth: "260px" }}>
@@ -623,14 +623,14 @@ export default function FriendProfileClient({
               href={`/people/${encodeURIComponent(name)}/${encodeURIComponent(place.name)}`}
               style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", padding: "13px 0", borderBottom: "1px solid var(--border)" }}
             >
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 700, color: RANK_COLORS[i + 1] ?? "var(--border)", width: "24px", textAlign: "center", flexShrink: 0 }}>
+              <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 700, color: RANK_COLORS[i + 1] ?? "var(--border)", width: "24px", textAlign: "center", flexShrink: 0 }}>
                 {i + 1}
               </div>
-              <div style={{ width: "44px", height: "44px", background: restaurantGradient(place.name), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700, color: "white", fontFamily: "'Syne', sans-serif", flexShrink: 0 }}>
+              <div style={{ width: "44px", height: "44px", background: restaurantGradient(place.name), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
                 {place.name[0]?.toUpperCase() ?? "?"}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {place.name}
                 </p>
                 <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
@@ -645,7 +645,7 @@ export default function FriendProfileClient({
               </div>
               {place.score10 > 0 && (
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)" }}>{place.score10}</span>
+                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)" }}>{place.score10}</span>
                   <span style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>/10</span>
                 </div>
               )}
@@ -668,7 +668,7 @@ export default function FriendProfileClient({
                 padding: "13px",
                 margin: "16px 0 110px",
                 width: "100%",
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'DM Sans', sans-serif",
                 fontSize: "13px",
                 fontWeight: 700,
                 cursor: loadingMoreReviews ? "default" : "pointer",

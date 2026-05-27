@@ -121,7 +121,7 @@ export default function SettingsPage() {
         <button onClick={() => router.push("/me")} style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
         </button>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Settings</h1>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "20px", color: "var(--cream)" }}>Settings</h1>
       </div>
 
       {/* Profile actions */}
@@ -210,11 +210,11 @@ export default function SettingsPage() {
       {pendingType && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
           <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>{confirmCopy.title}</h2>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>{confirmCopy.title}</h2>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.6, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>{confirmCopy.body}</p>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setPendingType(null)} disabled={saving} style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--cream)", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>
-              <button onClick={confirmAccountType} disabled={saving} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: saving ? "default" : "pointer", fontFamily: "'Syne', sans-serif", opacity: saving ? 0.6 : 1 }}>
+              <button onClick={confirmAccountType} disabled={saving} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: saving ? "default" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: saving ? 0.6 : 1 }}>
                 {saving ? "Saving…" : "Confirm"}
               </button>
             </div>
@@ -226,11 +226,11 @@ export default function SettingsPage() {
       {showLogoutConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
           <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>Log out?</h2>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>Log out?</h2>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>You can sign back in anytime with your account.</p>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setShowLogoutConfirm(false)} style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--cream)", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>
-              <button onClick={handleLogout} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif" }}>Log out</button>
+              <button onClick={handleLogout} style={{ flex: 1, background: "var(--orange)", border: "none", borderRadius: "12px", padding: "12px", color: "white", fontSize: "14px", fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Log out</button>
             </div>
           </div>
         </div>
@@ -240,7 +240,7 @@ export default function SettingsPage() {
       {showDeleteConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
           <div style={{ background: "var(--card)", borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "320px", border: "1px solid var(--border)" }}>
-            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>Delete account?</h2>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 800, color: "var(--cream)", marginBottom: "8px" }}>Delete account?</h2>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>This will permanently delete your profile and all your reviews. This cannot be undone.</p>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setShowDeleteConfirm(false)} style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--cream)", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>

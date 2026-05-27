@@ -8,7 +8,7 @@ export default function NewReviewPage() {
       <div className="px-5 pt-6 pb-4" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
         <h1
           style={{
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "'DM Sans', sans-serif",
             fontSize: "20px",
             fontWeight: 800,
             color: "var(--cream)",
