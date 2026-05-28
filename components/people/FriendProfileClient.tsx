@@ -413,7 +413,7 @@ export default function FriendProfileClient({
           </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: avatarGradient(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: avatarGradient(displayName || name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {avatarInitials(displayName || name)}
           </div>
           <div>
@@ -606,7 +606,7 @@ export default function FriendProfileClient({
             <ProfileDishesList
               triedReviews={visibleReviews}
               publicReviews={publicBestReviews}
-              triedLabel={`${(displayName || name).split(" ")[0]}'s best`}
+              triedLabel={`${(displayName || name).split(" ")[0]}'s Best`}
               emptyText="No dishes logged yet"
               bottomPadding={110}
             />

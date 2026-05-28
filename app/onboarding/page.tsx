@@ -5,10 +5,9 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { syncStoredActor } from "@/lib/browser-actor";
+import { USERNAME_REGEX } from "@/lib/username";
 
 type UsernameStatus = "idle" | "checking" | "available" | "taken" | "invalid";
-
-const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -189,7 +188,7 @@ export default function OnboardingPage() {
               type="text"
               placeholder="username"
               value={username}
-              onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+              onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._]/g, ""))}
               maxLength={20}
               required
               style={{ ...inputStyle, paddingLeft: "2px" }}
@@ -215,9 +214,9 @@ export default function OnboardingPage() {
           }}>
             {usernameStatus === "available" && "✓ Username is available"}
             {usernameStatus === "taken" && "✗ Username is already taken"}
-            {usernameStatus === "invalid" && "3–20 characters: lowercase letters, numbers, underscore only"}
+            {usernameStatus === "invalid" && "3–20 chars · start/end with a letter or number · only _ and . allowed · no double specials"}
             {(usernameStatus === "idle" || usernameStatus === "checking") &&
-              "3–20 characters: lowercase letters, numbers, underscore"}
+              "3–20 chars · letters, numbers, _ and . · starts and ends with a letter or number"}
           </p>
 
           {errorMsg && (

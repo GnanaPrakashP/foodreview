@@ -7,6 +7,10 @@ import { ArrowLeft } from "lucide-react";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import { restaurantGradient } from "@/lib/profile";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { resolveActorName } from "@/lib/browser-actor";
+import { addName, isAcceptedCircleResponse, isOneWayCircleResponse, personStatusFor, removeName } from "@/lib/people-circle-state";
 
 /* ─── helpers ─────────────────────────────────────── */
 
@@ -86,6 +90,9 @@ export default function RestaurantDetailClient({
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
   const [shouldRedirectToProfile, setShouldRedirectToProfile] = useState(false);
+  const [viewerName, setViewerName] = useState(initialMyName);
+  const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const profileHref = `/people/${encodeURIComponent(username)}`;
 
   const dishes = useMemo(() => buildDishes(visiblePosts), [visiblePosts]);
@@ -95,6 +102,49 @@ export default function RestaurantDetailClient({
     router.replace(profileHref);
     router.refresh();
   }, [profileHref, router, shouldRedirectToProfile]);
+
+  useEffect(() => {
+    const name = resolveActorName(initialMyName);
+    setViewerName(name);
+    if (!name) return;
+    let cancelled = false;
+    cachedCircleStatus(name)
+      .then((data) => {
+        if (cancelled) return;
+        setCircleMembers(new Set(data.members ?? []));
+        setPendingSent(new Set(data.pendingSent ?? []));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [initialMyName]);
+
+  function requestStatusFor(name: string) {
+    const status = personStatusFor(name, { circleMembers, pendingSent });
+    return status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle";
+  }
+
+  async function requestCircleAccess(receiverName: string) {
+    if (!viewerName || viewerName === receiverName || personStatusFor(receiverName, { circleMembers, pendingSent }) !== "none") return;
+    setPendingSent((prev) => addName(prev, receiverName));
+    const res = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: viewerName, receiverName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      return;
+    }
+    invalidateCircleStatusCache(viewerName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
+    if (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+    }
+  }
 
   function handlePostDeleted(deletedPost: Review) {
     const nextPosts = visiblePosts.filter((post) => post.id !== deletedPost.id);
@@ -193,6 +243,8 @@ export default function RestaurantDetailClient({
                 initialBookmarked={postBookmarkedMap[post.id] ?? false}
                 initialMyName={initialMyName}
                 profileMap={profileMap}
+                requestStatus={requestStatusFor(post.reviewer_name)}
+                onRequestClick={() => requestCircleAccess(post.reviewer_name)}
                 onDeleted={handlePostDeleted}
               />
             );

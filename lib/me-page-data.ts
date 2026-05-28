@@ -4,8 +4,10 @@ import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-ca
 import { REVIEW_SELECT } from "@/lib/selects";
 import { engagementForPosts } from "@/lib/server/engagement-list";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { filterGlobalTrendingReviews } from "@/lib/visibility";
 
 const ME_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const PUBLIC_BEST_REVIEWS_PAGE_SIZE = 1000;
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -98,6 +100,11 @@ async function loadMePageData(
     .from("reviews")
     .select(REVIEW_SELECT)
     .eq("reviewer_name", myName)
+    .in("visibility", ["public", "circle", "me"])
+    .is("deleted_at", null)
+    .is("hidden_at", null)
+    .is("reported_at", null)
+    .eq("status", "active")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
 
@@ -134,14 +141,42 @@ async function loadMePageData(
   const engagement = await engagementForPosts(supabase, reviews, myName);
   const statsRows = ((rawStatsReviews ?? []) as Pick<Review, "restaurant_name" | "items">[]);
   const stats = cursor ? undefined : statsFromReviews(statsRows);
+  const publicBestReviews = cursor ? [] : await loadPublicBestReviews(supabase);
 
   return {
     reviews,
-    publicBestReviews: [],
+    publicBestReviews,
     circleMembers: [...relationships.circleMembers],
     hasMore,
     nextCursor,
     stats,
     ...engagement,
   };
+}
+
+async function loadPublicBestReviews(supabase: SupabaseLike): Promise<Review[]> {
+  const reviews: Review[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data: rawRows } = await supabase
+      .from("reviews")
+      .select(REVIEW_SELECT)
+      .eq("visibility", "public")
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .range(from, from + PUBLIC_BEST_REVIEWS_PAGE_SIZE - 1);
+
+    const batch = ((rawRows ?? []) as unknown[])
+      .map((row) => normalizeReview(row as Parameters<typeof normalizeReview>[0]));
+    reviews.push(...filterGlobalTrendingReviews(batch));
+
+    if (batch.length < PUBLIC_BEST_REVIEWS_PAGE_SIZE) break;
+    from += PUBLIC_BEST_REVIEWS_PAGE_SIZE;
+  }
+
+  return reviews;
 }

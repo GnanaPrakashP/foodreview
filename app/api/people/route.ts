@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPeoplePageData } from "@/lib/people-page-data";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 function parseNumber(value: string | null, fallback: number): number {
   if (!value) return fallback;
@@ -10,14 +10,12 @@ function parseNumber(value: string | null, fallback: number): number {
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = await createRouteSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const myName = (user?.user_metadata?.username as string) || user?.email?.split("@")[0] || "";
+    const { supabase, actor } = await getRouteActor();
+    const myName = actor?.actorName ?? "";
     const limit = parseNumber(req.nextUrl.searchParams.get("limit"), 48);
 
     const data = await getPeoplePageData(supabase, myName, { limit });
-    return NextResponse.json(data);
+    return NextResponse.json({ ...data, myName });
   } catch (error) {
     console.error("[people] failed to load:", error);
     return NextResponse.json({ error: "Unable to load people" }, { status: 500 });

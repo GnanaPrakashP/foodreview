@@ -1,9 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { resolveActorName } from "@/lib/browser-actor";
+import {
+  addName,
+  isAcceptedCircleResponse,
+  isOneWayCircleResponse,
+  personStatusFor,
+  removeName,
+} from "@/lib/people-circle-state";
 
 type RestaurantTab = "posts" | "dishes" | "menu";
 
@@ -13,11 +23,18 @@ type RestaurantDish = {
   mentions: number;
 };
 
+type RestaurantStatsValue = {
+  totalPosts: number;
+  averageRating: number;
+  visitsThisWeek: number;
+};
+
 interface Props {
   restaurantReviews: Review[];
   circleRestaurantReviews: Review[];
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
+  initialStats?: RestaurantStatsValue;
   profileMap?: Record<string, string>;
   likedByMeMap?: Record<string, boolean>;
   bookmarkedPostMap?: Record<string, boolean>;
@@ -33,6 +50,7 @@ export default function RestaurantPostsClient({
   circleRestaurantReviews,
   likeCountMap: initialLikeCountMap,
   commentMap: initialCommentMap,
+  initialStats,
   profileMap: initialProfileMap = {},
   likedByMeMap: initialLikedByMeMap = {},
   bookmarkedPostMap: initialBookmarkedPostMap = {},
@@ -54,8 +72,63 @@ export default function RestaurantPostsClient({
   const [nextCursor, setNextCursor] = useState(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
+  const [viewerName, setViewerName] = useState(myName);
+  const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const shown = circleOnly ? circleReviews : publicReviews;
   const dishes = useMemo(() => topDishesForRestaurant(shown), [shown]);
+  const stats = useMemo(() => initialStats ?? restaurantStats(shown), [initialStats, shown]);
+
+  useEffect(() => {
+    const name = resolveActorName(myName);
+    setViewerName(name);
+    if (!name) {
+      setCircleMembers(new Set());
+      setPendingSent(new Set());
+      return;
+    }
+
+    let cancelled = false;
+    cachedCircleStatus(name)
+      .then((data) => {
+        if (cancelled) return;
+        setCircleMembers(new Set(data.members ?? []));
+        setPendingSent(new Set(data.pendingSent ?? []));
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [myName]);
+
+  function requestStatusFor(name: string) {
+    const status = personStatusFor(name, { circleMembers, pendingSent });
+    return status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle";
+  }
+
+  async function requestCircleAccess(receiverName: string) {
+    if (!viewerName || viewerName === receiverName || personStatusFor(receiverName, { circleMembers, pendingSent }) !== "none") return;
+    setPendingSent((prev) => addName(prev, receiverName));
+    const res = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: viewerName, receiverName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      return;
+    }
+    invalidateCircleStatusCache(viewerName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
+    if (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+    }
+  }
 
   async function loadMorePosts() {
     if (loadingMore || !hasMore || !nextCursor || !loadMoreUrl) return;
@@ -89,12 +162,13 @@ export default function RestaurantPostsClient({
 
   return (
     <div>
+      <RestaurantStats stats={stats} />
       <RestaurantTabs activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === "posts" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "0 16px 20px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
           {shown.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <div style={{ textAlign: "center", padding: "48px 24px" }}>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
                 {circleOnly ? "No circle posts yet" : "No public posts yet"}
               </p>
@@ -115,12 +189,14 @@ export default function RestaurantPostsClient({
                   initialBookmarked={bookmarkedPostMap[review.id] ?? false}
                   initialMyName={myName}
                   profileMap={profileMap}
+                  requestStatus={requestStatusFor(review.reviewer_name)}
+                  onRequestClick={() => requestCircleAccess(review.reviewer_name)}
                 />
               );
             })
           )}
           {loadMoreError && (
-            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "0 0 4px" }}>
+            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 12px 0" }}>
               {loadMoreError}
             </p>
           )}
@@ -128,7 +204,7 @@ export default function RestaurantPostsClient({
             <button
               onClick={loadMorePosts}
               disabled={loadingMore}
-              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", width: "100%", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
+              style={{ background: loadingMore ? "var(--surface)" : "var(--orange)", color: loadingMore ? "var(--muted)" : "white", border: "none", borderRadius: "14px", padding: "13px", margin: "16px 12px 0", width: "calc(100% - 24px)", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: loadingMore ? "default" : "pointer" }}
             >
               {loadingMore ? "Loading..." : "Load more"}
             </button>
@@ -175,9 +251,6 @@ export default function RestaurantPostsClient({
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
             Menu coming soon
           </p>
-          <p style={{ fontSize: 13, color: "var(--muted)" }}>
-            We will design this tab next.
-          </p>
         </div>
       )}
     </div>
@@ -218,6 +291,53 @@ function RestaurantTabs({ activeTab, onChange }: { activeTab: RestaurantTab; onC
       })}
     </div>
   );
+}
+
+function RestaurantStats({ stats }: { stats: RestaurantStatsValue }) {
+  const items = [
+    { label: "Posts", value: String(stats.totalPosts) },
+    { label: "Rating", value: stats.averageRating > 0 ? `${formatScore10(stats.averageRating)}/10` : "-" },
+    { label: "This week", value: String(stats.visitsThisWeek) },
+  ];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, padding: "4px 16px 12px" }}>
+      {items.map((item) => (
+        <div
+          key={item.label}
+          style={{
+            minWidth: 0,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--card)",
+            padding: "10px 8px",
+            textAlign: "center",
+          }}
+        >
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, lineHeight: 1.1, fontWeight: 850, color: "var(--cream)", margin: 0 }}>
+            {item.value}
+          </p>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, lineHeight: 1.2, fontWeight: 700, color: "rgba(255,255,255,0.62)", margin: "4px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {item.label}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function restaurantStats(reviews: Review[]): RestaurantStatsValue {
+  const weekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const rated = reviews.flatMap((review) => review.items.filter((item) => item.rating > 0));
+  const averageRating = rated.length > 0
+    ? rated.reduce((sum, item) => sum + item.rating, 0) / rated.length
+    : 0;
+
+  return {
+    totalPosts: reviews.length,
+    averageRating,
+    visitsThisWeek: reviews.filter((review) => new Date(review.created_at).getTime() >= weekStart).length,
+  };
 }
 
 function topDishesForRestaurant(reviews: Review[]): RestaurantDish[] {

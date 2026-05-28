@@ -5,8 +5,16 @@ import { ChevronDown, LocateFixed, Search } from "lucide-react";
 import type { Comment, Review } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { getStoredActorName } from "@/lib/browser-actor";
-import { readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import {
+  addName,
+  isAcceptedCircleResponse,
+  isOneWayCircleResponse,
+  personStatusFor,
+  removeName,
+} from "@/lib/people-circle-state";
 import {
   TRENDING_LOCATION_LABEL_COOKIE,
   TRENDING_LOCATION_LABEL_STORAGE_KEY,
@@ -243,6 +251,8 @@ export default function HungryPageClient() {
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedFeed?.nextCursor ?? null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [myName, setMyName] = useState("");
+  const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>(persistedFeed?.likeCountMap ?? {});
   const [commentMap, setCommentMap] = useState<Record<string, { count: number; top: Comment }>>(persistedFeed?.commentMap ?? {});
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>(persistedFeed?.likedByMeMap ?? {});
@@ -315,6 +325,14 @@ export default function HungryPageClient() {
     setMyName(actor);
     setLocation(savedLocation);
     loadPosts(null, actor, savedLocation);
+    if (actor) {
+      cachedCircleStatus(actor)
+        .then((data) => {
+          setCircleMembers(new Set(data.members ?? []));
+          setPendingSent(new Set(data.pendingSent ?? []));
+        })
+        .catch(() => {});
+    }
     // Initial fetch only; subsequent pages are pulled by the swipe stack.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -401,6 +419,34 @@ export default function HungryPageClient() {
     });
   }, []);
 
+  function requestStatusFor(name: string) {
+    const status = personStatusFor(name, { circleMembers, pendingSent });
+    return status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle";
+  }
+
+  async function requestPostAuthor(receiverName: string) {
+    if (!myName || myName === receiverName || personStatusFor(receiverName, { circleMembers, pendingSent }) !== "none") return;
+    setPendingSent((prev) => addName(prev, receiverName));
+    const res = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: myName, receiverName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      return;
+    }
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
+    if (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+    }
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--bg)", overflow: "hidden", boxSizing: "border-box", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 0", flexShrink: 0 }}>
@@ -454,6 +500,8 @@ export default function HungryPageClient() {
           bookmarkedMap={bookmarkedMap}
           profileMap={profileMap}
           myName={myName}
+          requestStatusFor={requestStatusFor}
+          onRequestPostAuthor={requestPostAuthor}
         />
       </div>
 

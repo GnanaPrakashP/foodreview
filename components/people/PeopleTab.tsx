@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import type { MouseEvent } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
@@ -30,8 +31,10 @@ import {
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import { invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
+import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
+import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
 import { profileDisplayName } from "@/lib/profile-names";
-import { getStoredActorName } from "@/lib/browser-actor";
+import { resolveActorName } from "@/lib/browser-actor";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import {
   normalizeLocationLabel,
@@ -64,15 +67,18 @@ const FEED_PAGE_SIZE = 24;
 const FEED_TTL_MS = 2 * 60 * 1000;
 const FEED_STATE_TTL_MS = 30 * 60 * 1000;
 const MAX_PERSISTED_FEED_POSTS = 120;
+const SEEN_VISIBILITY_RATIO = 0.6;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
 const RESTAURANT_CARD_DISH_LIMIT = 3;
+const EXPLORE_CARD_IMAGE_WIDTH = 116;
+const EXPLORE_CARD_IMAGE_HEIGHT = 145;
 
 /* ─── Types ─────────────────────────────────────── */
 
 type ProfileSearchRow = { username: string; first_name: string; last_name: string };
 
-type PeopleResult   = { name: string; displayName: string; totalPlaces: number };
+type PeopleResult   = { username: string; displayName: string; totalPlaces: number };
 type RestaurantResult = AutocompleteItem;
 type DishResult = { canonicalName: string; mentionCount: number };
 
@@ -81,6 +87,7 @@ type UserLocation = { lat: number; lng: number; label: string };
 type AutocompleteItem = { placeId: string; text: string; mainText: string; secondaryText: string };
 
 type RestaurantSpotlight = {
+  placeId: string | null;
   name: string;
   reviewers: string[];
   reviewerCount: number;
@@ -123,6 +130,12 @@ type PublicFeedResponse = {
 type ExploreFeedSnapshot = PublicFeedResponse & {
   activeTab: ExploreTab;
   locationLabel: string | null;
+};
+
+type ExploreUrlState = {
+  activeTab: ExploreTab | null;
+  placeCategory: PlaceCategoryId;
+  dishCategory: DishClusterId;
 };
 
 /* ─── Helpers ────────────────────────────────────── */
@@ -195,6 +208,27 @@ function publicFeedUrl(viewerName: string, loc: UserLocation | null, cursor: Cir
   }
   if (cursor) params.set("cursor", JSON.stringify(cursor));
   return `/api/feed/public?${params.toString()}`;
+}
+
+function readExploreUrlState(): ExploreUrlState {
+  if (typeof window === "undefined") {
+    return { activeTab: null, placeCategory: "all", dishCategory: "all" };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab");
+  const activeTab =
+    tab === "places" || tab === "restaurants" ? "restaurants" :
+    tab === "dishes" ? "dishes" :
+    tab === "people" ? "people" :
+    tab === "posts" ? "posts" :
+    null;
+
+  return {
+    activeTab,
+    placeCategory: parsePlaceCategory(params.get("placeCategory") ?? (activeTab === "restaurants" ? params.get("category") : null)),
+    dishCategory: parseDishCategory(params.get("dishCategory") ?? (activeTab === "dishes" ? params.get("category") : null)),
+  };
 }
 
 function locationBounds(loc: UserLocation, radiusKm = EXPLORE_NEARBY_RADIUS_KM) {
@@ -415,6 +449,11 @@ function tagsFromIds<T extends string>(ids: T[], labelFor: (id: T) => string, li
     .map(labelFor);
 }
 
+function stopMetadataChipNavigation(event: MouseEvent<HTMLElement>) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 
 function PlaceCategoryImage({ category, size = 24 }: { category: PlaceCategoryId; size?: number }) {
   return (
@@ -427,10 +466,11 @@ function PlaceCategoryImage({ category, size = 24 }: { category: PlaceCategoryId
         overflow: "hidden",
         flexShrink: 0,
         display: "inline-flex",
-        background: "rgba(255,255,255,0.12)",
+        background: "rgba(255,255,255,0.10)",
         backgroundImage: `url(${placeCategoryImagePath(category)})`,
         backgroundPosition: "center",
-        backgroundSize: "cover",
+        backgroundRepeat: "no-repeat",
+        backgroundSize: "contain",
       }}
     />
   );
@@ -485,9 +525,9 @@ function ImageCategoryGrid<T extends string>({
                 background: "transparent",
                 color: active ? "var(--cream)" : "var(--muted)",
                 fontFamily: "'DM Sans', sans-serif",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: active ? 900 : 800,
-                lineHeight: 1.2,
+                lineHeight: 1.15,
                 textAlign: "center",
                 cursor: "pointer",
                 padding: "2px 0 0",
@@ -516,8 +556,9 @@ function ImageCategoryGrid<T extends string>({
               <span
                 style={{
                   display: "block",
-                  color: active ? "var(--orange)" : "var(--muted)",
-                  textShadow: active ? "0 0 16px rgba(240,96,48,0.30)" : "none",
+                  minHeight: 28,
+                  color: active ? "var(--orange)" : "rgba(255,255,255,0.72)",
+                  textShadow: active ? "0 0 16px rgba(240,96,48,0.34)" : "none",
                 }}
               >
                 {category.label}
@@ -571,26 +612,56 @@ function PlaceTagBadge({ category, featured }: { category: PlaceCategoryId; feat
   const label = placeCategoryLabel(category);
   return (
     <span
+      onClick={stopMetadataChipNavigation}
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 6,
-        minHeight: 28,
+        gap: 7,
+        minHeight: 30,
         maxWidth: "100%",
-        color: featured ? "white" : "var(--cream)",
+        color: featured ? "var(--cream)" : "rgba(255,255,255,0.82)",
         background: featured
-          ? "linear-gradient(135deg, rgba(240,96,48,0.88), rgba(18,14,10,0.92))"
+          ? "linear-gradient(135deg, rgba(240,96,48,0.16), rgba(255,255,255,0.055))"
           : "rgba(255,255,255,0.045)",
-        border: featured ? "1px solid rgba(255,255,255,0.20)" : "1px solid var(--border)",
+        border: featured ? "1px solid rgba(240,96,48,0.34)" : "1px solid var(--border)",
         borderRadius: 999,
-        padding: "3px 9px 3px 3px",
-        fontSize: 10,
+        padding: "3px 10px 3px 4px",
+        boxShadow: featured ? "0 8px 20px rgba(0,0,0,0.16)" : "none",
+        fontSize: 11,
         fontWeight: 850,
-        lineHeight: 1,
+        lineHeight: 1.1,
         whiteSpace: "nowrap",
+        cursor: "default",
       }}
     >
-      <PlaceCategoryImage category={category} size={22} />
+      <PlaceCategoryImage category={category} size={24} />
+      {label}
+    </span>
+  );
+}
+
+function DishTagBadge({ label }: { label: string }) {
+  return (
+    <span
+      onClick={stopMetadataChipNavigation}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        minHeight: 28,
+        maxWidth: "100%",
+        color: "var(--green)",
+        background: "linear-gradient(135deg, rgba(61,214,140,0.14), rgba(255,255,255,0.045))",
+        border: "1px solid rgba(61,214,140,0.28)",
+        borderRadius: 999,
+        padding: "4px 10px",
+        boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+        fontSize: 11,
+        fontWeight: 850,
+        lineHeight: 1.1,
+        whiteSpace: "nowrap",
+        cursor: "default",
+      }}
+    >
       {label}
     </span>
   );
@@ -606,6 +677,7 @@ function topRestaurantsFromFeed(feed: Review[], location: UserLocation | null): 
     dishCounts: Map<string, number>;
     areaCounts: Map<string, number>;
     photo: string | null;
+    placeId: string | null;
     lat: number | null;
     lng: number | null;
     latest: number;
@@ -622,6 +694,7 @@ function topRestaurantsFromFeed(feed: Review[], location: UserLocation | null): 
       dishCounts: new Map<string, number>(),
       areaCounts: new Map<string, number>(),
       photo: null,
+      placeId: null,
       lat: null,
       lng: null,
       latest: 0,
@@ -630,6 +703,7 @@ function topRestaurantsFromFeed(feed: Review[], location: UserLocation | null): 
     existing.reviewers.add(review.reviewer_name);
     existing.latest = Math.max(existing.latest, ts);
     if (!existing.photo && photo) existing.photo = photo;
+    if (!existing.placeId && review.restaurant_id) existing.placeId = review.restaurant_id;
     if (review.area) existing.areaCounts.set(review.area, (existing.areaCounts.get(review.area) ?? 0) + 1);
     if (existing.lat == null && typeof review.restaurant_lat === "number") existing.lat = review.restaurant_lat;
     if (existing.lng == null && typeof review.restaurant_lng === "number") existing.lng = review.restaurant_lng;
@@ -662,6 +736,7 @@ function topRestaurantsFromFeed(feed: Review[], location: UserLocation | null): 
           : null;
       const categoryIds = inferPlaceCategories({ name, area, topDishes });
       return {
+        placeId: data.placeId,
         name,
         reviewers: Array.from(data.reviewers),
         reviewerCount: data.reviewers.size,
@@ -776,24 +851,24 @@ function bestDishesFromFeed(feed: Review[], location: UserLocation | null): Dish
 /* ─── Person card ────────────────────────────────── */
 
 function PersonCard({
-  name,
+  username,
   displayName,
   sub,
   status,
   onAdd,
   onInCircleClick,
 }: {
-  name: string;
+  username: string;
   displayName?: string;
   sub: string;
   status: PersonStatus;
   onAdd?: () => void;
   onInCircleClick?: () => void;
 }) {
-  const shownName = displayName || name;
+  const shownName = displayName || username;
   return (
     <div style={{ margin: "0 16px 10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-      <Link href={`/people/${encodeURIComponent(name)}`} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
+      <Link href={`/people/${encodeURIComponent(username)}`} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
         <Avatar name={shownName} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>{shownName}</p>
@@ -819,11 +894,11 @@ function PersonCard({
 
 /* ─── Request card ───────────────────────────────── */
 
-function RequestCard({ name, displayName, onAccept, onReject }: { name: string; displayName?: string; onAccept: () => void; onReject: () => void }) {
-  const shownName = displayName || name;
+function RequestCard({ username, displayName, onAccept, onReject }: { username: string; displayName?: string; onAccept: () => void; onReject: () => void }) {
+  const shownName = displayName || username;
   return (
     <div style={{ margin: "0 16px 10px", background: "var(--card)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: "16px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-      <Link href={`/people/${encodeURIComponent(name)}`} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
+      <Link href={`/people/${encodeURIComponent(username)}`} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
         <Avatar name={shownName} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--cream)", marginBottom: "2px", fontFamily: "'DM Sans', sans-serif" }}>{shownName}</p>
@@ -939,31 +1014,38 @@ function RestaurantList({
     return `${first} + ${others} other${others === 1 ? "" : "s"} have been here`;
   }
 
+  function restaurantSpotlightHref(restaurant: RestaurantSpotlight): string {
+    if (!restaurant.placeId) return `/trending/${encodeURIComponent(restaurant.name)}`;
+    const params = new URLSearchParams({ name: restaurant.name });
+    if (restaurant.area) params.set("address", restaurant.area);
+    return `/places/${encodeURIComponent(restaurant.placeId)}?${params.toString()}`;
+  }
+
   return (
     <div style={{ paddingBottom: "100px" }}>
       <DiscoveryHeader title="Top places near you" Icon={Store} />
       <div style={{ padding: "0 16px" }}>
         {loading && visibleRestaurants.length === 0 ? (
           [1, 2, 3, 4].map((i) => (
-            <div key={i} className="animate-pulse" style={{ height: 148, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
+            <div key={i} className="animate-pulse" style={{ height: EXPLORE_CARD_IMAGE_HEIGHT, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
           ))
         ) : visibleRestaurants.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, color: "var(--cream)", marginBottom: 8 }}>
-              {selectedCategory === "all" ? "No places yet" : `No ${emptyLabel} places nearby`}
+              {selectedCategory === "all" ? "No posts yet" : `No ${emptyLabel} posts yet`}
             </p>
-            <p style={{ fontSize: 13, color: "var(--muted)" }}>Public posts will shape this list.</p>
+            <p style={{ fontSize: 13, color: "var(--muted)" }}>Be the first to share one.</p>
           </div>
         ) : (
           visibleRestaurants.map((restaurant) => (
               <Link
                 key={restaurant.name}
-                href={`/trending/${encodeURIComponent(restaurant.name)}`}
+                href={restaurantSpotlightHref(restaurant)}
                 style={{
                   textDecoration: "none",
                   display: "grid",
-                  gridTemplateColumns: "88px 1fr",
-                  minHeight: 146,
+                  gridTemplateColumns: `${EXPLORE_CARD_IMAGE_WIDTH}px 1fr`,
+                  minHeight: EXPLORE_CARD_IMAGE_HEIGHT,
                   color: "inherit",
                   background: "var(--card)",
                   border: "1px solid var(--border)",
@@ -978,7 +1060,7 @@ function RestaurantList({
                     backgroundImage: restaurant.photo ? `url(${restaurant.photo})` : undefined,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
-                    minHeight: 146,
+                    minHeight: EXPLORE_CARD_IMAGE_HEIGHT,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -990,7 +1072,7 @@ function RestaurantList({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 700, color: "var(--cream)", lineHeight: 1.2 }}>{restaurant.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.72)", marginTop: 3 }}>
                         {formatDistance(restaurant.distanceKm, restaurant.area)}
                       </div>
                     </div>
@@ -998,13 +1080,25 @@ function RestaurantList({
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, color: "var(--muted)" }}>{restaurant.reviewerCount} visit{restaurant.reviewerCount !== 1 ? "s" : ""}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.72)" }}>{restaurant.reviewerCount} visit{restaurant.reviewerCount !== 1 ? "s" : ""}</span>
                   </div>
 
                   {restaurant.topDishes.length > 0 && (
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: restaurant.tags.length ? 8 : 0 }}>
                       {restaurant.topDishes.slice(0, RESTAURANT_CARD_DISH_LIMIT).map((dish) => (
-                        <span key={dish} style={{ fontSize: 10, color: "var(--cream)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: "3px 8px" }}>
+                        <span
+                          key={dish}
+                          onClick={stopMetadataChipNavigation}
+                          style={{
+                            fontSize: 10,
+                            color: "var(--cream)",
+                            background: "var(--surface)",
+                            border: "1px solid var(--border)",
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                            cursor: "default",
+                          }}
+                        >
                           {dish}
                         </span>
                       ))}
@@ -1020,8 +1114,8 @@ function RestaurantList({
                   )}
 
                   {restaurant.reviewers.length > 0 && (
-                    <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid var(--border)" }}>
-                      <p style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
+                    <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid rgba(255,255,255,0.16)" }}>
+                      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.74)", fontFamily: "'DM Sans', sans-serif", margin: 0 }}>
                         {socialProof(restaurant.reviewers)}
                       </p>
                     </div>
@@ -1053,7 +1147,7 @@ function DishList({
       <div style={{ padding: "0 16px" }}>
         {loading && visibleDishes.length === 0 ? (
           [1, 2, 3, 4].map((i) => (
-            <div key={i} className="animate-pulse" style={{ height: 148, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
+            <div key={i} className="animate-pulse" style={{ height: EXPLORE_CARD_IMAGE_HEIGHT, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, marginBottom: 10, opacity: 0.5 }} />
           ))
         ) : visibleDishes.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0" }}>
@@ -1070,8 +1164,8 @@ function DishList({
                 style={{
                   textDecoration: "none",
                   display: "grid",
-                  gridTemplateColumns: "88px 1fr",
-                  minHeight: 146,
+                  gridTemplateColumns: `${EXPLORE_CARD_IMAGE_WIDTH}px 1fr`,
+                  minHeight: EXPLORE_CARD_IMAGE_HEIGHT,
                   color: "inherit",
                   background: "var(--card)",
                   border: "1px solid var(--border)",
@@ -1086,7 +1180,7 @@ function DishList({
                     backgroundImage: dish.photo ? `url(${dish.photo})` : undefined,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
-                    minHeight: 146,
+                    minHeight: EXPLORE_CARD_IMAGE_HEIGHT,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -1112,11 +1206,9 @@ function DishList({
                   </div>
 
                   {dish.tags.length > 0 && (
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: dish.topReviewSnippet ? 9 : 0 }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: dish.topReviewSnippet ? 9 : 0 }}>
                       {dish.tags.map((tag) => (
-                        <span key={tag} style={{ fontSize: 10, color: "var(--green)", background: "rgba(61,214,140,0.11)", borderRadius: 999, padding: "3px 8px", fontWeight: 800 }}>
-                          {tag}
-                        </span>
+                        <DishTagBadge key={tag} label={tag} />
                       ))}
                     </div>
                   )}
@@ -1157,13 +1249,13 @@ function PeopleStrip({
         <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
           {people.map((person) => (
             <PersonCard
-              key={person.name}
-              name={person.name}
+              key={person.username}
+              username={person.username}
               displayName={person.displayName}
-              sub={`${toHandle(person.name)} · ${person.totalPlaces} place${person.totalPlaces !== 1 ? "s" : ""}`}
-              status={statusFor(person.name)}
-              onInCircleClick={statusFor(person.name) === "one_way" ? () => onInCircleClick(person.name) : undefined}
-              onAdd={() => onAdd(person.name)}
+              sub={`${toHandle(person.username)} · ${person.totalPlaces} place${person.totalPlaces !== 1 ? "s" : ""}`}
+              status={statusFor(person.username)}
+              onInCircleClick={statusFor(person.username) === "one_way" ? () => onInCircleClick(person.username) : undefined}
+              onAdd={() => onAdd(person.username)}
             />
           ))}
         </div>
@@ -1174,9 +1266,10 @@ function PeopleStrip({
 
 /* ─── Main Component ─────────────────────────────── */
 
-export default function PeopleTab({ initialCircle }: { initialCircle: CircleMember[] }) {
-  const [initialFeedKey] = useState(() => publicFeedUrl(getStoredActorName(), loadSavedLocation()));
+export default function PeopleTab({ initialCircle, initialMyName = "" }: { initialCircle: CircleMember[]; initialMyName?: string }) {
+  const [initialFeedKey] = useState(() => publicFeedUrl(initialMyName.trim(), loadSavedLocation()));
   const [persistedFeed] = useState(() => readFeedState<ExploreFeedSnapshot>(initialFeedKey));
+  const [initialUrlState] = useState(readExploreUrlState);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [peopleResults, setPeopleResults] = useState<PeopleResult[]>([]);
@@ -1184,15 +1277,17 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [dishResults, setDishResults] = useState<DishResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<ExploreTab>(persistedFeed?.activeTab ?? "posts");
-  const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
-  const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
+  const [activeTab, setActiveTab] = useState<ExploreTab>(initialUrlState.activeTab ?? persistedFeed?.activeTab ?? "posts");
+  const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>(initialUrlState.placeCategory);
+  const [dishCategory, setDishCategory] = useState<DishClusterId>(initialUrlState.dishCategory);
   const [feed, setFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);
   const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>(persistedFeed?.likeCountMap ?? {});
   const [feedCommentMap, setFeedCommentMap] = useState<Record<string, { count: number; top: Comment }>>(persistedFeed?.commentMap ?? {});
   const [feedLikedMap, setFeedLikedMap] = useState<Record<string, boolean>>(persistedFeed?.likedByMeMap ?? {});
   const [feedBookmarkedMap, setFeedBookmarkedMap] = useState<Record<string, boolean>>(persistedFeed?.bookmarkedPostMap ?? {});
   const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(persistedFeed?.profileMap ?? {});
+  const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>({});
+  const [seenStateReady, setSeenStateReady] = useState(false);
   const [feedLoading, setFeedLoading] = useState(!persistedFeed);
   const [feedLoadingMore, setFeedLoadingMore] = useState(false);
   const [feedHasMore, setFeedHasMore] = useState(persistedFeed?.hasMore ?? true);
@@ -1200,9 +1295,10 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [feedError, setFeedError] = useState("");
   const [feedStateKey, setFeedStateKey] = useState(initialFeedKey);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const postsFeedRef = useRef<HTMLDivElement | null>(null);
   const feedLocationRef = useRef<UserLocation | null>(null);
 
-  const [myName, setMyName] = useState("");
+  const [myName, setMyName] = useState(() => initialMyName.trim());
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [locationLabel, setLocationLabel] = useState("Set location");
   const [showLocationPicker, setShowLocationPicker] = useState(false);
@@ -1216,18 +1312,6 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   const [cancelBusy, setCancelBusy] = useState(false);
   const [confirmLeaveName, setConfirmLeaveName] = useState<string | null>(null);
   const [leaveBusy, setLeaveBusy] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
-    if (tab === "places" || tab === "restaurants") setActiveTab("restaurants");
-    else if (tab === "dishes") setActiveTab("dishes");
-    else if (tab === "people") setActiveTab("people");
-    else if (tab === "posts") setActiveTab("posts");
-
-    setPlaceCategory(parsePlaceCategory(params.get("placeCategory") ?? (tab === "places" || tab === "restaurants" ? params.get("category") : null)));
-    setDishCategory(parseDishCategory(params.get("dishCategory") ?? (tab === "dishes" ? params.get("category") : null)));
-  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1264,10 +1348,13 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   }, []);
 
   useEffect(() => {
-    const me = getStoredActorName();
+    const me = initialMyName.trim();
+    if (me) resolveActorName(me);
     setMyName(me);
+    setSeenPostMap(readSeenPostMap(me));
+    setSeenStateReady(true);
     loadCircleStatus(me);
-  }, [loadCircleStatus]);
+  }, [initialMyName, loadCircleStatus]);
 
   useEffect(() => {
     function readLocationLabel() {
@@ -1376,14 +1463,15 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   ]);
 
   useEffect(() => {
-    const me = getStoredActorName();
+    const me = initialMyName.trim();
+    if (me) resolveActorName(me);
     const savedLocation = loadSavedLocation();
     setLocation(savedLocation);
     setLocationLabel(savedLocation ? shortLocationLabel(savedLocation.label) : "Set location");
     loadFeedPage(null, me, savedLocation);
-    // Initial feed load only; location changes are handled by the picker.
+    // Initial feed load and authenticated username refresh; location changes are handled by the picker.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialMyName]);
 
   useEffect(() => {
     if (activeTab !== "posts" || searchQuery.trim() || feedLoading || feedLoadingMore || !feedHasMore) return;
@@ -1403,11 +1491,57 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     return () => observer.disconnect();
   }, [activeTab, feedHasMore, feedLoading, feedLoadingMore, feedNextCursor, loadFeedPage, searchQuery]);
 
+  const rankedFeed = useMemo(() => rankFeedReviewsBySeenState(feed, seenPostMap), [feed, seenPostMap]);
+
+  useEffect(() => {
+    if (activeTab !== "posts") return;
+    const root = postsFeedRef.current;
+    if (!root || rankedFeed.length === 0) return;
+
+    const container = root;
+    const markedThisView = new Set<string>();
+    let frame = 0;
+
+    function scanVisiblePosts() {
+      frame = 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const newlySeen: string[] = [];
+
+      container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
+        const postId = element.getAttribute("data-feed-post-id") ?? "";
+        if (!postId || seenPostMap[postId] || markedThisView.has(postId)) return;
+
+        const rect = element.getBoundingClientRect();
+        const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
+        const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
+        if (visibleRatio >= SEEN_VISIBILITY_RATIO) newlySeen.push(postId);
+      });
+
+      if (newlySeen.length === 0) return;
+      for (const postId of newlySeen) markedThisView.add(postId);
+      markPostsSeen(myName, newlySeen);
+    }
+
+    function scheduleScan() {
+      if (frame) return;
+      frame = window.requestAnimationFrame(scanVisiblePosts);
+    }
+
+    scheduleScan();
+    window.addEventListener("scroll", scheduleScan, { passive: true });
+    window.addEventListener("resize", scheduleScan);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", scheduleScan);
+      window.removeEventListener("resize", scheduleScan);
+    };
+  }, [activeTab, myName, rankedFeed, seenPostMap]);
+
   /* ── Circle actions ── */
 
   async function sendRequest(receiverName: string) {
     if (!myName || myName === receiverName) return;
-    const isPublicAccount = initialCircle.find((m) => m.name === receiverName)?.accountType === "public";
+    const isPublicAccount = initialCircle.find((m) => m.username === receiverName)?.accountType === "public";
     if (isPublicAccount) {
       setCircleMembers((prev) => addName(prev, receiverName));
     } else {
@@ -1539,7 +1673,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
     setPeopleResults(
       Array.from(peopleMap.entries())
         .filter(([name]) => name !== myName)
-        .map(([name, totalPlaces]) => ({ name, displayName: displayNameByUsername.get(name) || name, totalPlaces }))
+        .map(([name, totalPlaces]) => ({ username: name, displayName: displayNameByUsername.get(name) || name, totalPlaces }))
     );
 
     // Places
@@ -1593,9 +1727,9 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
   );
   const discoverablePeople = useMemo(
     () => initialCircle
-      .filter((person) => person.name !== myName)
-      .filter((person) => !circleMembers.has(person.name))
-      .filter((person) => !pendingIncoming.includes(person.name)),
+      .filter((person) => person.username !== myName)
+      .filter((person) => !circleMembers.has(person.username))
+      .filter((person) => !pendingIncoming.includes(person.username)),
     [circleMembers, initialCircle, myName, pendingIncoming]
   );
 
@@ -1719,13 +1853,13 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
                   <SectionLabel>People</SectionLabel>
                   {peopleResults.map((r) => (
                     <PersonCard
-                      key={r.name}
-                      name={r.name}
+                      key={r.username}
+                      username={r.username}
                       displayName={r.displayName}
-                      sub={`${toHandle(r.name)} · ${r.totalPlaces} place${r.totalPlaces !== 1 ? "s" : ""}`}
-                      status={personStatus(r.name)}
-                      onInCircleClick={personStatus(r.name) === "one_way" ? () => setConfirmLeaveName(r.name) : undefined}
-                      onAdd={personStatus(r.name) === "sent" ? () => setConfirmCancelName(r.name) : () => sendRequest(r.name)}
+                      sub={`${toHandle(r.username)} · ${r.totalPlaces} place${r.totalPlaces !== 1 ? "s" : ""}`}
+                      status={personStatus(r.username)}
+                      onInCircleClick={personStatus(r.username) === "one_way" ? () => setConfirmLeaveName(r.username) : undefined}
+                      onAdd={personStatus(r.username) === "sent" ? () => setConfirmCancelName(r.username) : () => sendRequest(r.username)}
                     />
                   ))}
                 </>
@@ -1828,11 +1962,11 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
             <>
               <DiscoveryHeader title={`Circle requests · ${pendingIncoming.length}`} subtitle="People waiting to join your taste circle" Icon={MessageCircle} />
               {pendingIncoming.map((name) => {
-                const member = initialCircle.find((m) => m.name === name);
+                const member = initialCircle.find((m) => m.username === name);
                 return (
                   <RequestCard
                     key={name}
-                    name={name}
+                    username={name}
                     displayName={member?.displayName}
                     onAccept={() => respondToRequest(name, "accept")}
                     onReject={() => respondToRequest(name, "reject")}
@@ -1844,36 +1978,38 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
           )}
 
           {activeTab === "posts" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 0, paddingBottom: "100px" }}>
-              {feedLoading && feed.length === 0 && (
+            <div ref={postsFeedRef} style={{ display: "flex", flexDirection: "column", gap: 0, paddingBottom: "100px" }}>
+              {(!seenStateReady || (feedLoading && feed.length === 0)) && (
                 [1, 2, 3].map((i) => (
                   <div key={i} className="animate-pulse" style={{ height: "360px", background: "var(--card)", borderBottom: "1px solid var(--border)", opacity: 0.5 }} />
                 ))
               )}
 
-              {!feedLoading && feed.length === 0 && (
+              {seenStateReady && !feedLoading && feed.length === 0 && (
                 <p style={{ fontSize: "13px", color: "var(--muted)", textAlign: "center", padding: "48px 24px", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6 }}>
                   No public posts yet.<br />Be the first to share one.
                 </p>
               )}
 
-              {feed.map((review, index) => {
+              {seenStateReady && rankedFeed.map((review, index) => {
                 const eng = feedCommentMap[review.id];
                 const status = personStatus(review.reviewer_name);
                 return (
-                  <CircleFeedCard
-                    key={review.id}
-                    review={review}
-                    initialLikeCount={feedLikeCountMap[review.id] ?? 0}
-                    initialCommentCount={eng?.count ?? 0}
-                    initialLiked={feedLikedMap[review.id] ?? false}
-                    initialBookmarked={feedBookmarkedMap[review.id] ?? false}
-                    initialMyName={myName}
-                    profileMap={feedProfileMap}
-                    priorityImage={index === 0}
-                    requestStatus={status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle"}
-                    onRequestClick={() => handlePeopleAction(review.reviewer_name)}
-                  />
+                  <div key={review.id} data-feed-post-id={review.id}>
+                    <CircleFeedCard
+                      review={review}
+                      initialLikeCount={feedLikeCountMap[review.id] ?? 0}
+                      initialCommentCount={eng?.count ?? 0}
+                      initialLiked={feedLikedMap[review.id] ?? false}
+                      initialBookmarked={feedBookmarkedMap[review.id] ?? false}
+                      initialMyName={myName}
+                      profileMap={feedProfileMap}
+                      priorityImage={index < 2}
+                      requestStatus={status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle"}
+                      onRequestClick={() => handlePeopleAction(review.reviewer_name)}
+                      useStoredActorFallback={false}
+                    />
+                  </div>
                 );
               })}
 
@@ -1934,7 +2070,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
       <ConfirmModal
         open={Boolean(confirmCancelName)}
         title="Cancel request?"
-        message={confirmCancelName ? `Cancel request to join ${initialCircle.find(m => m.name === confirmCancelName)?.displayName || confirmCancelName}'s circle?` : ""}
+        message={confirmCancelName ? `Cancel request to join ${initialCircle.find(m => m.username === confirmCancelName)?.displayName || confirmCancelName}'s circle?` : ""}
         confirmText="Cancel request"
         disabled={cancelBusy}
         onCancel={() => setConfirmCancelName(null)}
@@ -1948,7 +2084,7 @@ export default function PeopleTab({ initialCircle }: { initialCircle: CircleMemb
       <ConfirmModal
         open={Boolean(confirmLeaveName)}
         title="Leave circle?"
-        message={confirmLeaveName ? `Do you no longer want to be in ${initialCircle.find(m => m.name === confirmLeaveName)?.displayName || confirmLeaveName}'s circle?` : ""}
+        message={confirmLeaveName ? `Do you no longer want to be in ${initialCircle.find(m => m.username === confirmLeaveName)?.displayName || confirmLeaveName}'s circle?` : ""}
         confirmText="Leave"
         confirmVariant="danger"
         disabled={leaveBusy}

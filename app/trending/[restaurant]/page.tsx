@@ -1,12 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import type { Review, Comment } from "@/lib/types";
 import RestaurantPostsClient from "@/components/trending/RestaurantPostsClient";
-import { ArrowLeft } from "lucide-react";
 import { restaurantGradient } from "@/lib/profile";
-import { restaurantLocationLabel } from "@/lib/location";
+import { googleMapsUrl, restaurantLocationLabel } from "@/lib/location";
 import { getCircleRelationshipsForName } from "@/lib/circle-db";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { filterGlobalTrendingReviews, filterPublicCircleTrendingReviews } from "@/lib/visibility";
@@ -41,6 +39,15 @@ const REVIEW_SELECT = [
 interface Props {
   params: Promise<{ restaurant: string }>;
   searchParams: Promise<{ circle?: string }>;
+}
+
+function mapsUrlForRestaurant(restaurantName: string, locationLabel: string | null, review: Review | null): string {
+  const coordinateUrl = review ? googleMapsUrl(review) : null;
+  if (coordinateUrl) return coordinateUrl;
+
+  const query = [restaurantName, locationLabel].filter(Boolean).join(", ");
+  const params = new URLSearchParams({ api: "1", query: query || restaurantName });
+  return `https://www.google.com/maps/search/?${params.toString()}`;
 }
 
 export default async function RestaurantPostsPage({ params, searchParams }: Props) {
@@ -145,24 +152,14 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
     else ex.count++;
   }
 
-  // Avg score for the header
-  const allRated = pagedDisplayRestaurantReviews.flatMap((r) => r.items.filter((it) => it.rating > 0));
-  const avgScore = allRated.length > 0
-    ? allRated.reduce((s, it) => s + it.rating, 0) / allRated.length * 2
-    : 0;
-
   const area = pagedDisplayRestaurantReviews.map((r) => restaurantLocationLabel(r)).find(Boolean) ?? null;
+  const mapsUrl = mapsUrlForRestaurant(restaurantName, area, pagedDisplayRestaurantReviews[0] ?? null);
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: "100px" }}>
 
       {/* Header */}
       <div style={{ padding: "16px 20px 14px", display: "flex", alignItems: "center", gap: "12px" }}>
-        <Link href="/explore" style={{ textDecoration: "none", flexShrink: 0 }}>
-          <div style={{ width: 36, height: 36, borderRadius: "10px", background: "var(--card)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <ArrowLeft size={18} strokeWidth={2} color="var(--cream)" />
-          </div>
-        </Link>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
           <div style={{ width: 40, height: 40, background: restaurantGradient(restaurantName), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "17px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
             {restaurantName[0]?.toUpperCase() ?? "?"}
@@ -171,10 +168,16 @@ export default async function RestaurantPostsPage({ params, searchParams }: Prop
             <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "16px", color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {restaurantName}
             </h1>
-            <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "1px" }}>
-              {area && `${area} · `}{pagedDisplayRestaurantReviews.length} post{pagedDisplayRestaurantReviews.length !== 1 ? "s" : ""}
-              {avgScore > 0 ? ` · ${avgScore.toFixed(1)}/10 avg` : ""}
-            </p>
+            {area && (
+              <a
+                href={mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "block", fontSize: "11px", color: "rgba(255,255,255,0.72)", fontFamily: "'DM Sans', sans-serif", marginTop: "1px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: "none" }}
+              >
+                {area}
+              </a>
+            )}
           </div>
         </div>
       </div>

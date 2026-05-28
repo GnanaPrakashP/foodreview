@@ -6,6 +6,9 @@ import { ArrowLeft, Bookmark } from "lucide-react";
 import { restaurantGradient } from "@/lib/profile";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Comment, Review } from "@/lib/types";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import { invalidateCachedJson } from "@/lib/browser-api-cache";
+import { addName, isAcceptedCircleResponse, isOneWayCircleResponse, personStatusFor, removeName } from "@/lib/people-circle-state";
 
 interface WishlistItem {
   id: string;
@@ -34,6 +37,8 @@ export default function SavedPlacesPage() {
   const [profileMap, setProfileMap] = useState<Record<string, string>>({});
   const [myName, setMyName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     async function loadSavedPosts() {
@@ -56,6 +61,47 @@ export default function SavedPlacesPage() {
 
     loadSavedPosts();
   }, []);
+
+  useEffect(() => {
+    if (!myName) return;
+    let cancelled = false;
+    cachedCircleStatus(myName)
+      .then((data) => {
+        if (cancelled) return;
+        setCircleMembers(new Set(data.members ?? []));
+        setPendingSent(new Set(data.pendingSent ?? []));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [myName]);
+
+  function requestStatusFor(name: string) {
+    const status = personStatusFor(name, { circleMembers, pendingSent });
+    return status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle";
+  }
+
+  async function requestCircleAccess(receiverName: string) {
+    if (!myName || myName === receiverName || personStatusFor(receiverName, { circleMembers, pendingSent }) !== "none") return;
+    setPendingSent((prev) => addName(prev, receiverName));
+    const res = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderName: myName, receiverName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      return;
+    }
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle");
+    invalidateCachedJson("/api/people");
+    if (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setCircleMembers((prev) => addName(prev, receiverName));
+    }
+  }
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: 100 }}>
@@ -86,6 +132,8 @@ export default function SavedPlacesPage() {
                 initialBookmarked={bookmarkedPostMap[review.id] ?? true}
                 initialMyName={myName}
                 profileMap={profileMap}
+                requestStatus={requestStatusFor(review.reviewer_name)}
+                onRequestClick={() => requestCircleAccess(review.reviewer_name)}
               />
             ))}
             {placeItems.map((item) => (

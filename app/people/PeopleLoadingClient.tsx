@@ -9,6 +9,7 @@ const API_URL = "/api/people";
 
 type PeopleApiResponse = {
   circleMembers: CircleMember[];
+  myName?: string;
 };
 
 export default function PeopleLoadingClient() {

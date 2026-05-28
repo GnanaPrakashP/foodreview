@@ -128,7 +128,63 @@ test("profile dishes: compares a user's best tried restaurant with the current p
   assert.equal(paneer.triedBest.restaurantName, "Cafe Two");
   assert.equal(paneer.bestNow.restaurantName, "North Kitchen");
   assert.equal(paneer.bestNow.restaurantId, "place-1");
+  assert.equal(paneer.status, "missing_best_place");
+  assert.equal(paneer.hasTriedCommunityBest, false);
   assert.equal(formatDishScore(paneer.bestNow.rating), "10");
+});
+
+test("profile dishes: sorts untried community best places first and nearest first", () => {
+  const { buildDishComparisons } = loadTsModule("lib/profile-dishes.ts");
+  const mine = [
+    review("Alice", "Home Biryani", [{ name: "Biryani", rating: 4 }], { restaurant_id: "mine-biryani" }),
+    review("Alice", "Home Dosa", [{ name: "Dosa", rating: 4 }], { restaurant_id: "mine-dosa" }),
+    review("Alice", "Home Pizza", [{ name: "Pizza", rating: 5 }], { restaurant_id: "mine-pizza" }),
+  ];
+  const publicReviews = [
+    ...mine,
+    review("Bob", "Far Biryani", [{ name: "Biryani", rating: 5 }], {
+      restaurant_id: "far-biryani",
+      restaurant_lat: 17.5,
+      restaurant_lng: 78.5,
+    }),
+    review("Cara", "Near Dosa", [{ name: "Dosa", rating: 5 }], {
+      restaurant_id: "near-dosa",
+      restaurant_lat: 17.401,
+      restaurant_lng: 78.401,
+    }),
+  ];
+
+  const comparisons = buildDishComparisons(publicReviews.slice(0, 3), publicReviews, { lat: 17.4, lng: 78.4 });
+
+  assert.equal(comparisons[0].dishName, "Dosa");
+  assert.equal(comparisons[0].status, "missing_best_place");
+  assert.equal(comparisons[1].dishName, "Biryani");
+  assert.equal(comparisons[1].status, "missing_best_place");
+  assert.equal(comparisons.filter((item) => item.status === "missing_best_place").length, 2);
+  assert.equal(comparisons.at(-1).dishName, "Pizza");
+});
+
+test("profile dishes: private and circle posts count for tried best while community best is public-only input", () => {
+  const { buildDishComparisons } = loadTsModule("lib/profile-dishes.ts");
+  const mine = [
+    review("Alice", "Private Dosa Spot", [{ name: "Dosa", rating: 5 }], { visibility: "me" }),
+    review("Alice", "Public Dosa Spot", [{ name: "Dosa", rating: 4 }], { visibility: "public" }),
+    review("Alice", "Circle Pizza Spot", [{ name: "Pizza", rating: 5 }], { visibility: "circle" }),
+  ];
+  const publicReviews = [
+    mine[1],
+  ];
+
+  const comparisons = buildDishComparisons(mine, publicReviews);
+  const dosa = comparisons.find((item) => item.dishName === "Dosa");
+  const pizza = comparisons.find((item) => item.dishName === "Pizza");
+
+  assert.equal(dosa.triedBest.restaurantName, "Private Dosa Spot");
+  assert.equal(dosa.bestNow.restaurantName, "Public Dosa Spot");
+  assert.equal(dosa.hasTriedCommunityBest, true);
+  assert.equal(dosa.status, "tried_best_place");
+  assert.equal(pizza.triedBest.restaurantName, "Circle Pizza Spot");
+  assert.equal(pizza.bestNow, null);
 });
 
 test("visits: prompt thresholds distinguish first visits and regulars", () => {
@@ -255,6 +311,25 @@ test("feed ranking: newer post wins when engagement and rating are equal", () =>
   });
 
   assert.equal(ranked[0].id, "newer");
+});
+
+test("feed ranking: unseen posts stay above seen posts without hiding seen posts", () => {
+  const { rankFeedReviewsBySeenState } = loadTsModule("lib/feed-ranking.ts");
+  const firstSeen = review("Alice", "Seen Cafe", [{ name: "Latte", rating: 4 }], { id: "seen-1" });
+  const unseen = review("Bob", "New Dosa", [{ name: "Dosa", rating: 5 }], { id: "unseen" });
+  const secondSeen = review("Cara", "Seen Pizza", [{ name: "Pizza", rating: 4 }], { id: "seen-2" });
+
+  const ranked = rankFeedReviewsBySeenState([firstSeen, unseen, secondSeen], {
+    "seen-1": 100,
+    "seen-2": 200,
+  });
+  const allSeen = rankFeedReviewsBySeenState([firstSeen, secondSeen], {
+    "seen-1": 100,
+    "seen-2": 200,
+  });
+
+  assert.equal(JSON.stringify(ranked.map((item) => item.id)), JSON.stringify(["unseen", "seen-1", "seen-2"]));
+  assert.equal(JSON.stringify(allSeen.map((item) => item.id)), JSON.stringify(["seen-1", "seen-2"]));
 });
 
 test("stats: deleted and private posts do not leave ghost counts in global, circle, or profile stats", () => {

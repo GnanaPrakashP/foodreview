@@ -144,7 +144,7 @@ test("people profile exposes dishes tried with current public best picks", () =>
   assert.match(client, /<ProfileDishesList/);
   assert.match(client, /triedReviews=\{visibleReviews\}/);
   assert.match(client, /publicReviews=\{publicBestReviews\}/);
-  assert.match(dishes, /Best now \(public\)/);
+  assert.match(dishes, /Community Best/);
 });
 
 test("profile timeline groups entries by month and year", () => {

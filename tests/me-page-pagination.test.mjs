@@ -39,7 +39,7 @@ function spyDb(...responses) {
         then(res, rej) { return next().then(res, rej); },
         catch(rej)     { return next().catch(rej); },
       };
-      for (const m of ["select", "eq", "is", "or", "limit", "order", "in", "not"]) {
+      for (const m of ["select", "eq", "is", "or", "limit", "order", "in", "not", "range"]) {
         chain[m] = (...args) => { entry.ops.push([m, ...args]); return chain; };
       }
       chain.maybeSingle = (...args) => {
@@ -116,6 +116,9 @@ function loadMePageDataModule({ circleRelationships = { circleMembers: new Set()
       }
       if (id === "@/lib/server/engagement-list") {
         return { engagementForPosts: async () => ({}) };
+      }
+      if (id === "@/lib/visibility") {
+        return { filterGlobalTrendingReviews: (reviews) => reviews.filter((review) => review.visibility === "public" && review.status === "active" && !review.deleted_at && !review.hidden_at && !review.reported_at) };
       }
       throw new Error(`Unexpected require in me-page-pagination tests: ${id}`);
     },
@@ -226,6 +229,30 @@ test("me-page: cursor is applied as .or() filter on the reviews query", async ()
   const reviewsCall = db._calls.find((c) => c.table === "reviews");
   assert.ok(reviewsCall, "should query reviews table");
   assert.ok(hasOp(reviewsCall, "or"), "cursor should be applied as .or() filter");
+});
+
+test("me-page: own dishes include all own visibilities and community best uses public rows", async () => {
+  const ownRows = [
+    review({ id: "private-review", visibility: "me" }),
+    review({ id: "circle-review", visibility: "circle" }),
+  ];
+  const publicRows = [
+    review({ id: "public-review", reviewer_name: "alice", visibility: "public", items: [{ name: "Dosa", rating: 5 }] }),
+  ];
+  const db = spyDb(
+    { data: ownRows, error: null },
+    { data: [], error: null },
+    { data: publicRows, error: null }
+  );
+  const { getMePageData } = loadMePageDataModule({ db });
+  const result = await getMePageData(db, "alice", { limit: 10 });
+  const ownReviewsCall = db._calls.find((c) => c.table === "reviews");
+  const publicReviewsCall = db._calls.filter((c) => c.table === "reviews").at(-1);
+
+  assert.equal(result.reviews.length, 2);
+  assert.equal(result.publicBestReviews.length, 1);
+  assert.equal(JSON.stringify(opArgs(ownReviewsCall, "in")), JSON.stringify(["visibility", ["public", "circle", "me"]]));
+  assert.equal(JSON.stringify(opArgs(publicReviewsCall, "eq")), JSON.stringify(["visibility", "public"]));
 });
 
 test("me-page: circleMembers is always returned regardless of cursor", async () => {

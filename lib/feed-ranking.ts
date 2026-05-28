@@ -8,6 +8,8 @@ export type FeedEngagement = {
   nowMs?: number;
 };
 
+export type SeenPostMap = Record<string, number>;
+
 function averageRating(review: Review): number {
   if (!review.items.length) return 0;
   const ratings = review.items.map((item) => item.rating).filter((rating) => rating > 0);
@@ -41,4 +43,16 @@ export function rankCircleFeedReviews(reviews: Review[], engagement: FeedEngagem
     if (scoreDiff !== 0) return scoreDiff;
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+}
+
+export function rankFeedReviewsBySeenState(reviews: Review[], seenPostMap: SeenPostMap = {}): Review[] {
+  return reviews
+    .map((review, index) => ({ review, index, seenAt: seenPostMap[review.id] ?? 0 }))
+    .sort((a, b) => {
+      const aSeen = a.seenAt > 0;
+      const bSeen = b.seenAt > 0;
+      if (aSeen !== bSeen) return aSeen ? 1 : -1;
+      return a.index - b.index;
+    })
+    .map((item) => item.review);
 }

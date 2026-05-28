@@ -195,6 +195,36 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
   const postIds = reviews.map((review) => review.id);
   const restaurantNames = Array.from(new Set(reviews.map((review) => review.restaurant_name).filter(Boolean)));
 
+  // Fetch wishlist saves in chunks to avoid PostgREST URL-length limit (~8KB)
+  async function fetchWishlistChunked(ids: string[]) {
+    const CHUNK = 100;
+    const rows: { post_id: string | null }[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await db.from("wishlist").select("post_id").in("post_id", ids.slice(i, i + CHUNK));
+      if (error) return { data: null, error };
+      rows.push(...((data ?? []) as { post_id: string | null }[]));
+    }
+    return { data: rows, error: null };
+  }
+
+  async function fetchRestaurantReviewsChunked(names: string[]) {
+    const CHUNK = 50;
+    const rows: Array<{ restaurant_id: string | null; restaurant_name: string }> = [];
+    for (let i = 0; i < names.length; i += CHUNK) {
+      const { data, error } = await db
+        .from("reviews")
+        .select("restaurant_id, restaurant_name")
+        .in("restaurant_name", names.slice(i, i + CHUNK))
+        .is("deleted_at", null)
+        .is("hidden_at", null)
+        .is("reported_at", null)
+        .eq("status", "active");
+      if (error) return { data: null, error };
+      rows.push(...((data ?? []) as Array<{ restaurant_id: string | null; restaurant_name: string }>));
+    }
+    return { data: rows, error: null };
+  }
+
   const [
     { data: feedbackData, error: feedbackError },
     { data: wishlistData, error: wishlistError },
@@ -202,21 +232,13 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
     { data: triedData, error: triedError },
     { data: attributionData },
   ] = await Promise.all([
+    // Query by reviewer_user_id instead of post IDs to avoid URL-length limit
+    db.from("recommendation_feedback").select("post_id, feedback_label, feedback_value").eq("reviewer_user_id", userId),
     postIds.length
-      ? db.from("recommendation_feedback").select("post_id, feedback_label, feedback_value").in("post_id", postIds)
-      : Promise.resolve({ data: [], error: null }),
-    postIds.length
-      ? db.from("wishlist").select("post_id").in("post_id", postIds)
+      ? fetchWishlistChunked(postIds)
       : Promise.resolve({ data: [], error: null }),
     restaurantNames.length
-      ? db
-          .from("reviews")
-          .select("restaurant_id, restaurant_name")
-          .in("restaurant_name", restaurantNames)
-          .is("deleted_at", null)
-          .is("hidden_at", null)
-          .is("reported_at", null)
-          .eq("status", "active")
+      ? fetchRestaurantReviewsChunked(restaurantNames)
       : Promise.resolve({ data: [], error: null }),
     db.from("user_tried_items").select("user_id").eq("source_user_id", userId),
     db.from("post_visit_attributions").select("visitor_user_id").eq("source_user_id", userId),

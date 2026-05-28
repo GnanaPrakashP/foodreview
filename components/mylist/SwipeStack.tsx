@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Comment, Review } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 
+type FeedRequestStatus = "idle" | "loading" | "pending" | "joined";
+
 function BoxedPostCard({
   review,
   likeCountMap,
@@ -13,6 +15,8 @@ function BoxedPostCard({
   profileMap,
   myName,
   priority,
+  requestStatus,
+  onRequestClick,
 }: {
   review: Review;
   likeCountMap: Record<string, number>;
@@ -22,6 +26,8 @@ function BoxedPostCard({
   profileMap: Record<string, string>;
   myName: string;
   priority: boolean;
+  requestStatus?: FeedRequestStatus;
+  onRequestClick?: () => void;
 }) {
   const engagement = commentMap[review.id];
 
@@ -49,6 +55,8 @@ function BoxedPostCard({
         initialMyName={myName}
         profileMap={profileMap}
         priorityImage={priority}
+        requestStatus={requestStatus}
+        onRequestClick={onRequestClick}
         noBorder
       />
     </div>
@@ -66,6 +74,8 @@ export default function SwipeStack({
   bookmarkedMap,
   profileMap,
   myName,
+  requestStatusFor,
+  onRequestPostAuthor,
 }: {
   posts: Review[];
   loading: boolean;
@@ -77,6 +87,8 @@ export default function SwipeStack({
   bookmarkedMap: Record<string, boolean>;
   profileMap: Record<string, string>;
   myName: string;
+  requestStatusFor?: (name: string) => FeedRequestStatus;
+  onRequestPostAuthor?: (name: string) => void;
 }) {
   const [stack, setStack] = useState<Review[]>(posts);
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
@@ -246,6 +258,8 @@ export default function SwipeStack({
             profileMap={profileMap}
             myName={myName}
             priority
+            requestStatus={requestStatusFor?.(current.reviewer_name)}
+            onRequestClick={() => onRequestPostAuthor?.(current.reviewer_name)}
           />
 
           {dragX > 30 && !dismissDir && (

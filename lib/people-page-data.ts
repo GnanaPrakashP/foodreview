@@ -21,7 +21,7 @@ type ProfileSummary = {
 };
 
 export interface CircleMember {
-  name: string;
+  username: string;
   displayName: string;
   accountType: AccountType;
   totalPlaces: number;
@@ -163,7 +163,7 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string, limit:
     .map(([name, data]) => {
       const commonRestaurantCount = Array.from(data.restaurants).filter((restaurant) => myRestaurants.has(restaurant)).length;
       return {
-        name,
+        username: name,
         displayName: displayNameMap.get(name) || name,
         accountType: data.accountType,
         totalPlaces: data.restaurants.size,
@@ -172,7 +172,7 @@ async function loadPeoplePageData(supabase: SupabaseLike, myName: string, limit:
         suggestionRank: commonRestaurantCount * 10_000 + data.lastSeen,
       };
     })
-    .sort((a, b) => b.suggestionRank - a.suggestionRank || b.totalPlaces - a.totalPlaces || a.name.localeCompare(b.name));
+    .sort((a, b) => b.suggestionRank - a.suggestionRank || b.totalPlaces - a.totalPlaces || a.username.localeCompare(b.username));
 
   return {
     circleMembers: sortedMembers.slice(0, limit),

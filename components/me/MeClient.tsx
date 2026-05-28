@@ -20,8 +20,9 @@ import { restaurantLocationLabel } from "@/lib/location";
 import { CalendarDays, Settings } from "lucide-react";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { resolveActorName, resolveDisplayName } from "@/lib/browser-actor";
-import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
+import { uniqueDishRestaurantPairs, type DishSortLocation } from "@/lib/profile-dishes";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
+import { TRENDING_LOCATION_LAT_STORAGE_KEY, TRENDING_LOCATION_LNG_STORAGE_KEY } from "@/lib/trending-location";
 
 type MeTab = "reviews" | "dishes" | "timeline";
 type MeCursor = { id: string; createdAt: string };
@@ -188,6 +189,7 @@ function ReviewsTab({
   reviews,
   engagement,
   myName,
+  displayName,
   hasMore,
   loadingMore,
   loadMoreError,
@@ -196,12 +198,14 @@ function ReviewsTab({
   reviews: Review[];
   engagement: EngagementMaps;
   myName: string;
+  displayName: string;
   hasMore: boolean;
   loadingMore: boolean;
   loadMoreError: string;
   onLoadMore: () => void;
 }) {
   const sorted = [...reviews].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const profileMap = myName && displayName ? { [myName]: displayName } : {};
 
   if (sorted.length === 0) {
     return (
@@ -222,6 +226,7 @@ function ReviewsTab({
           initialLiked={engagement.likedByMeMap[review.id] ?? false}
           initialBookmarked={engagement.bookmarkedPostMap[review.id] ?? false}
           initialMyName={myName}
+          profileMap={profileMap}
         />
       ))}
       {loadMoreError && (
@@ -303,6 +308,7 @@ export default function MeClient({
   const [activeTab, setActiveTab] = useState<MeTab>(persistedSnapshot?.activeTab ?? "reviews");
   const [nearbyPublicReviews, setNearbyPublicReviews] = useState<Review[]>([]);
   const [loadingNearbyDishes, setLoadingNearbyDishes] = useState(false);
+  const [dishSortLocation, setDishSortLocation] = useState<DishSortLocation | null>(null);
   const [reviews, setReviews] = useState<Review[]>(persistedSnapshot?.reviews ?? allReviews);
   const [reviewLikeCountMap, setReviewLikeCountMap] = useState(persistedSnapshot?.likeCountMap ?? likeCountMap);
   const [reviewCommentMap, setReviewCommentMap] = useState(persistedSnapshot?.commentMap ?? commentMap);
@@ -387,6 +393,12 @@ export default function MeClient({
   }, [initialMyName, initialDisplayName, initialBio]);
 
   useEffect(() => {
+    const lat = parseFloat(localStorage.getItem(TRENDING_LOCATION_LAT_STORAGE_KEY) ?? "");
+    const lng = parseFloat(localStorage.getItem(TRENDING_LOCATION_LNG_STORAGE_KEY) ?? "");
+    if (Number.isFinite(lat) && Number.isFinite(lng)) setDishSortLocation({ lat, lng });
+  }, []);
+
+  useEffect(() => {
     if (!myName || publicBestReviews.length > 0) return;
 
     let cancelled = false;
@@ -394,6 +406,10 @@ export default function MeClient({
       setLoadingNearbyDishes(true);
       try {
         const params = new URLSearchParams({ limit: "40" });
+        if (dishSortLocation) {
+          params.set("lat", String(dishSortLocation.lat));
+          params.set("lng", String(dishSortLocation.lng));
+        }
         const response = await fetch(`/api/feed/public?${params.toString()}`, { cache: "no-store" });
         const payload = await response.json().catch(() => ({})) as { reviews?: Review[] };
         if (!cancelled) setNearbyPublicReviews(payload.reviews ?? []);
@@ -408,7 +424,7 @@ export default function MeClient({
     return () => {
       cancelled = true;
     };
-  }, [myName, publicBestReviews.length]);
+  }, [dishSortLocation, myName, publicBestReviews.length]);
 
   async function loadMoreReviews() {
     if (loadingMore || !hasMore || !nextCursor) return;
@@ -466,8 +482,9 @@ export default function MeClient({
       <ProfileDishesList
         triedReviews={myReviews}
         publicReviews={publicBestReviews.length ? publicBestReviews : nearbyPublicReviews}
-        triedLabel="Your best"
+        triedLabel="Your Best"
         emptyText={loadingNearbyDishes && !publicBestReviews.length ? "Checking public picks..." : "No dishes yet"}
+        userLocation={dishSortLocation}
       />
     ) :
     <ReviewsTab
@@ -479,6 +496,7 @@ export default function MeClient({
         bookmarkedPostMap: reviewBookmarkedPostMap,
       }}
       myName={myName}
+      displayName={displayName}
       hasMore={hasMore}
       loadingMore={loadingMore}
       loadMoreError={loadMoreError}
@@ -496,7 +514,7 @@ export default function MeClient({
           </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
+          <div style={{ width: "72px", height: "72px", borderRadius: "22px", background: myName ? avatarGradient(displayName || myName) : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
             {myName ? avatarInitials(displayName || myName) : "?"}
           </div>
           <div>

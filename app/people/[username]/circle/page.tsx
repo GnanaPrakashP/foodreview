@@ -6,13 +6,15 @@ import Link from "next/link";
 import { ArrowLeft, ChevronRight, Users } from "lucide-react";
 import { avatarGradient, avatarInitials } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
+import { profileDisplayName } from "@/lib/profile-names";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { getStoredActorName } from "@/lib/browser-actor";
 
 interface Member {
-  name: string;
+  username: string;
+  displayName: string;
   placeCount: number;
 }
 
@@ -48,11 +50,18 @@ export default function FriendCirclePage() {
       if (memberNames.length === 0) { setMounted(true); return; }
 
       const supabase = createClient();
-      const { data: reviews } = await supabase
-        .from("reviews")
-        .select("reviewer_name, restaurant_name")
-        .in("reviewer_name", memberNames)
-        .returns<Pick<Review, "reviewer_name" | "restaurant_name">[]>();
+      const [{ data: reviews }, { data: profiles }] = await Promise.all([
+        supabase
+          .from("reviews")
+          .select("reviewer_name, restaurant_name")
+          .in("reviewer_name", memberNames)
+          .returns<Pick<Review, "reviewer_name" | "restaurant_name">[]>(),
+        supabase
+          .from("profiles")
+          .select("username, first_name, last_name")
+          .in("username", memberNames)
+          .returns<{ username: string; first_name: string | null; last_name: string | null }[]>(),
+      ]);
 
       const placeCounts = new Map<string, Set<string>>();
       for (const r of reviews ?? []) {
@@ -60,8 +69,14 @@ export default function FriendCirclePage() {
         placeCounts.get(r.reviewer_name)!.add(r.restaurant_name);
       }
 
+      const displayNames = new Map<string, string>();
+      for (const profile of profiles ?? []) {
+        displayNames.set(profile.username, profileDisplayName(profile, profile.username));
+      }
+
       setMembers(memberNames.map(n => ({
-        name: n,
+        username: n,
+        displayName: displayNames.get(n) ?? n,
         placeCount: placeCounts.get(n)?.size ?? 0,
       })));
       setMounted(true);
@@ -132,15 +147,15 @@ export default function FriendCirclePage() {
       {mounted && !locked && members.length > 0 && (
         <div style={{ padding: "0 20px" }}>
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
-            {members.map(({ name: memberName, placeCount }, i) => (
-              <Link key={memberName} href={`/people/${encodeURIComponent(memberName)}`} style={{ textDecoration: "none" }}>
+            {members.map(({ username: memberUsername, displayName: memberDisplayName, placeCount }, i) => (
+              <Link key={memberUsername} href={`/people/${encodeURIComponent(memberUsername)}`} style={{ textDecoration: "none" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
-                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(memberName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
-                    {avatarInitials(memberName)}
+                  <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(memberDisplayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
+                    {avatarInitials(memberDisplayName)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {memberName}
+                      {memberDisplayName}
                     </p>
                     <p style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", marginTop: "2px" }}>
                       {placeCount} place{placeCount !== 1 ? "s" : ""}

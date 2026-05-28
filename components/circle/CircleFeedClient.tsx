@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Review, Comment } from "@/lib/types";
@@ -12,6 +12,8 @@ import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
+import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
+import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
 
 interface Props {
   allReviews: Review[];
@@ -31,6 +33,7 @@ interface Props {
 
 const FEED_STATE_TTL_MS = 30 * 60 * 1000;
 const MAX_PERSISTED_REVIEWS = 120;
+const SEEN_VISIBILITY_RATIO = 0.6;
 
 type CircleFeedSnapshot = {
   reviews: Review[];
@@ -63,12 +66,12 @@ export default function CircleFeedClient({
   initialHasMore = false,
   initialNextCursor = null,
 }: Props) {
-  const stateKey = circleFeedStateKey(initialMyName);
-  const [persistedSnapshot] = useState(() => readFeedState<CircleFeedSnapshot>(stateKey));
-  const hasInitialIdentity = initialMyName.length > 0;
+  const initialStateKey = circleFeedStateKey(initialMyName);
+  const [persistedSnapshot] = useState(() => readFeedState<CircleFeedSnapshot>(initialStateKey));
   const [circle, setCircle] = useState<string[]>(initialCircle);
   const [myName, setMyName] = useState(initialMyName);
-  const [mounted, setMounted] = useState(hasInitialIdentity);
+  const stateKey = circleFeedStateKey(myName || initialMyName);
+  const [mounted, setMounted] = useState(false);
   const [feedReviews, setFeedReviews] = useState<Review[]>(persistedSnapshot?.reviews ?? allReviews);
   const [feedLikeCountMap, setFeedLikeCountMap] = useState(persistedSnapshot?.likeCountMap ?? likeCountMap);
   const [feedCommentMap, setFeedCommentMap] = useState(persistedSnapshot?.commentMap ?? commentMap);
@@ -76,10 +79,17 @@ export default function CircleFeedClient({
   const [feedLikedMap, setFeedLikedMap] = useState(persistedSnapshot?.likedByMeMap ?? initialLikedMap);
   const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(persistedSnapshot?.bookmarkedPostMap ?? initialBookmarkedPostMap);
   const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(persistedSnapshot?.tasteTrustSummaryMap ?? initialTasteTrustSummaryMap);
+  const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>({});
   const [hasMore, setHasMore] = useState(persistedSnapshot?.hasMore ?? initialHasMore);
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedSnapshot?.nextCursor ?? initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
+  const feedContainerRef = useRef<HTMLDivElement | null>(null);
+  const seenPostMapRef = useRef<SeenPostMap>({});
+
+  useEffect(() => {
+    seenPostMapRef.current = seenPostMap;
+  }, [seenPostMap]);
 
   useEffect(() => {
     const snapshot = readFeedState<CircleFeedSnapshot>(stateKey);
@@ -123,6 +133,7 @@ export default function CircleFeedClient({
 
     const name = resolveActorName(initialMyName);
     setMyName(name);
+    setSeenPostMap(readSeenPostMap(name));
     // When server already provided authenticated identity + circle data,
     // trust that snapshot to avoid client-side status drift hiding posts.
     if (initialMyName) {
@@ -180,7 +191,83 @@ export default function CircleFeedClient({
 
   // `allReviews` is already filtered server-side for this viewer and circle graph.
   // Keep client rendering aligned with server results to avoid drift.
-  const circleReviews = feedReviews;
+  const circleReviews = useMemo(() => rankFeedReviewsBySeenState(feedReviews, seenPostMap), [feedReviews, seenPostMap]);
+
+  useEffect(() => {
+    const root = feedContainerRef.current;
+    if (!root || circleReviews.length === 0) return;
+
+    const container = root;
+    const markedThisView = new Set<string>();
+    let frame = 0;
+    let settleTimer = 0;
+
+    function visiblePostIds() {
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const newlySeen: string[] = [];
+      const latestSeenMap = seenPostMapRef.current;
+
+      container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
+        const postId = element.getAttribute("data-feed-post-id") ?? "";
+        if (!postId || latestSeenMap[postId] || markedThisView.has(postId)) return;
+
+        const rect = element.getBoundingClientRect();
+        const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
+        const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
+        if (visibleRatio >= SEEN_VISIBILITY_RATIO) newlySeen.push(postId);
+      });
+
+      return newlySeen;
+    }
+
+    function markVisiblePosts() {
+      const newlySeen = visiblePostIds();
+      if (newlySeen.length === 0) return;
+      for (const postId of newlySeen) markedThisView.add(postId);
+      seenPostMapRef.current = markPostsSeen(myName, newlySeen);
+    }
+
+    function scanVisiblePosts() {
+      frame = 0;
+      markVisiblePosts();
+    }
+
+    function scheduleScan() {
+      if (frame) return;
+      frame = window.requestAnimationFrame(scanVisiblePosts);
+    }
+
+    function flushBeforeLeaving() {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      markVisiblePosts();
+    }
+
+    function flushWhenHidden() {
+      if (document.visibilityState === "hidden") flushBeforeLeaving();
+    }
+
+    scheduleScan();
+    settleTimer = window.setTimeout(scheduleScan, 350);
+    window.addEventListener("scroll", scheduleScan, { passive: true });
+    document.addEventListener("scroll", scheduleScan, { passive: true, capture: true });
+    window.addEventListener("resize", scheduleScan);
+    window.addEventListener("pagehide", flushBeforeLeaving);
+    window.addEventListener("beforeunload", flushBeforeLeaving);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      if (settleTimer) window.clearTimeout(settleTimer);
+      window.removeEventListener("scroll", scheduleScan);
+      document.removeEventListener("scroll", scheduleScan, { capture: true });
+      window.removeEventListener("resize", scheduleScan);
+      window.removeEventListener("pagehide", flushBeforeLeaving);
+      window.removeEventListener("beforeunload", flushBeforeLeaving);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [circleReviews, myName]);
 
   async function loadMore() {
     if (loadingMore || !hasMore) return;
@@ -269,22 +356,23 @@ export default function CircleFeedClient({
 
   return (
     <>
-      <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
+      <div ref={feedContainerRef} style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {circleReviews.map((review, index) => {
           const eng = feedCommentMap[review.id];
           return (
-            <CircleFeedCard
-              key={review.id}
-              review={review}
-              initialLikeCount={feedLikeCountMap[review.id] ?? 0}
-              initialCommentCount={eng?.count ?? 0}
-              initialLiked={feedLikedMap[review.id] ?? false}
-              initialBookmarked={feedBookmarkedPostMap[review.id] ?? false}
-              tasteTrustSummary={feedTasteTrustSummaryMap[review.id] ?? null}
-              initialMyName={myName}
-              profileMap={feedProfileMap}
-              priorityImage={index === 0}
-            />
+            <div key={review.id} data-feed-post-id={review.id}>
+              <CircleFeedCard
+                review={review}
+                initialLikeCount={feedLikeCountMap[review.id] ?? 0}
+                initialCommentCount={eng?.count ?? 0}
+                initialLiked={feedLikedMap[review.id] ?? false}
+                initialBookmarked={feedBookmarkedPostMap[review.id] ?? false}
+                tasteTrustSummary={feedTasteTrustSummaryMap[review.id] ?? null}
+                initialMyName={myName}
+                profileMap={feedProfileMap}
+                priorityImage={index < 2}
+              />
+            </div>
           );
         })}
         {loadMoreError && (

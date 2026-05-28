@@ -342,7 +342,7 @@ export default function ReviewDetailClient({
         <article style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)", overflow: "hidden" }}>
           <div style={{ padding: "12px 4px 10px 12px", display: "flex", alignItems: "center", gap: "10px" }}>
             <Link href={`/people/${encodeURIComponent(review.reviewer_name)}`} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
-              <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(review.reviewer_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+              <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(reviewerDisplayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
                 {initials || "?"}
               </div>
               <div style={{ minWidth: 0 }}>
@@ -568,7 +568,7 @@ export default function ReviewDetailClient({
                 onTouchEnd={endLongPress}
                 style={{ display: "flex", gap: "9px", alignItems: "flex-start", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "14px", padding: "10px" }}
               >
-                <div style={{ width: "30px", height: "30px", borderRadius: "10px", background: avatarGradient(comment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+                <div style={{ width: "30px", height: "30px", borderRadius: "10px", background: avatarGradient(profileMap[comment.user_name] || comment.user_name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "white", flexShrink: 0 }}>
                   {avatarInitials(profileMap[comment.user_name] || comment.user_name)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>

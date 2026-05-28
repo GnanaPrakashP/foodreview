@@ -29,6 +29,7 @@ interface Props {
   onRequestClick?: () => void;
   tasteTrustSummary?: PostTasteTrustSummary | null;
   noBorder?: boolean;
+  useStoredActorFallback?: boolean;
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -78,8 +79,6 @@ function feedImageUrl(url: string): string {
   return url;
 }
 
-const revealedFeedImages = new Set<string>();
-
 function FeedReviewImage({
   src,
   alt,
@@ -89,15 +88,6 @@ function FeedReviewImage({
   alt: string;
   priority: boolean;
 }) {
-  const [revealed, setRevealed] = useState(() => revealedFeedImages.has(src));
-  const [shouldFade, setShouldFade] = useState(() => !revealedFeedImages.has(src));
-
-  useEffect(() => {
-    const alreadyRevealed = revealedFeedImages.has(src);
-    setRevealed(alreadyRevealed);
-    setShouldFade(!alreadyRevealed);
-  }, [src]);
-
   return (
     <Image
       src={src}
@@ -106,11 +96,6 @@ function FeedReviewImage({
       sizes="(max-width: 512px) 100vw, 512px"
       priority={priority}
       loading={priority ? undefined : "lazy"}
-      onLoad={() => {
-        revealedFeedImages.add(src);
-        setRevealed(true);
-      }}
-      className={!revealed ? "image-before-reveal" : shouldFade ? "image-fade-in" : undefined}
       style={{ objectFit: "cover" }}
     />
   );
@@ -136,11 +121,15 @@ export default function CircleFeedCard({
   onRequestClick,
   tasteTrustSummary = null,
   noBorder = false,
+  useStoredActorFallback = true,
 }: Props) {
   const router = useRouter();
   const locationLabel = restaurantLocationLabel(review);
   const mapsUrl = googleMapsUrl(review);
-  const [myName, setMyName] = useState(initialMyName);
+  const [myName, setMyName] = useState(() => {
+    const name = initialMyName.trim();
+    return name || (useStoredActorFallback ? resolveActorName("") : "");
+  });
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [liked, setLiked] = useState(initialLiked);
   const [likeCount, setLikeCount] = useState(initialLikeCount);
@@ -157,21 +146,30 @@ export default function CircleFeedCard({
   const scrollRef = useRef<HTMLDivElement>(null);
   const postMenuRef = useRef<HTMLDivElement>(null);
 
-  const rn = review.reviewer_name;
-  const reviewerDisplayName = profileMap?.[rn] || rn;
+  const reviewerUsername = review.reviewer_name.trim();
+  const viewerUsername = myName.trim();
+  const isOwnReview = Boolean(viewerUsername)
+    && reviewerUsername.toLowerCase() === viewerUsername.toLowerCase();
+  const reviewerDisplayName = profileMap?.[reviewerUsername] || reviewerUsername;
   const initials = (() => {
     const parts = reviewerDisplayName.split(/[\s_]+/).filter(Boolean);
     if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
     return (parts[0]?.[0] ?? reviewerDisplayName[0] ?? "?").toUpperCase();
   })();
   const postHref = `/reviews/${encodeURIComponent(review.id)}`;
-  const canDeleteReview = Boolean(myName) && review.reviewer_name === myName;
+  const canDeleteReview = isOwnReview;
+  const showCircleRequestButton = Boolean(viewerUsername)
+    && !isOwnReview
+    && requestStatus !== undefined
+    && requestStatus !== "joined";
 
   useEffect(() => {
-    const name = resolveActorName(initialMyName);
+    const trimmed = initialMyName.trim();
+    const name = trimmed || (useStoredActorFallback ? resolveActorName("") : "");
+    if (trimmed) resolveActorName(trimmed);
     setMyName(name);
     setMounted(true);
-  }, [initialMyName]);
+  }, [initialMyName, useStoredActorFallback]);
 
   useIsomorphicLayoutEffect(() => {
     const cached = readPostEngagement(review.id);
@@ -394,11 +392,11 @@ export default function CircleFeedCard({
         {/* Header */}
         <div style={{ padding: "12px 4px 10px 12px", display: "flex", alignItems: "center", gap: "10px" }}>
           <Link
-            href={`/people/${encodeURIComponent(review.reviewer_name)}`}
+            href={`/people/${encodeURIComponent(reviewerUsername)}`}
             onClick={(event) => event.stopPropagation()}
             style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}
           >
-            <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(rn), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
+            <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: avatarGradient(reviewerDisplayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: 700, color: "white", flexShrink: 0 }}>
               {initials || "?"}
             </div>
             <div style={{ minWidth: 0 }}>
@@ -408,19 +406,15 @@ export default function CircleFeedCard({
               </p>
             </div>
           </Link>
-          {requestStatus !== undefined && review.reviewer_name !== myName && (
+          {showCircleRequestButton && (
             <button
               onClick={(e) => { e.stopPropagation(); onRequestClick?.(); }}
               disabled={requestStatus === "loading"}
               style={{
                 flexShrink: 0,
-                background: requestStatus === "joined"
-                  ? "rgba(61,214,140,0.12)"
-                  : "rgba(240,96,48,0.12)",
-                border: requestStatus === "joined"
-                  ? "1.5px solid rgba(61,214,140,0.35)"
-                  : "1.5px solid rgba(240,96,48,0.35)",
-                color: requestStatus === "joined" ? "var(--green)" : "var(--orange)",
+                background: "rgba(240,96,48,0.12)",
+                border: "1.5px solid rgba(240,96,48,0.35)",
+                color: "var(--orange)",
                 fontSize: "11px",
                 fontWeight: 600,
                 padding: "6px 12px",
@@ -430,7 +424,7 @@ export default function CircleFeedCard({
                 fontFamily: "'DM Sans', sans-serif",
               }}
             >
-              {requestStatus === "pending" ? "Requested" : requestStatus === "joined" ? "In Circle" : "Request"}
+              {requestStatus === "pending" ? "Requested" : "Request"}
             </button>
           )}
           <div ref={postMenuRef} style={{ position: "relative", flexShrink: 0 }}>
@@ -491,8 +485,20 @@ export default function CircleFeedCard({
 
         {/* Place */}
         <div style={{ padding: "0 12px 10px" }}>
-          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0 }}>
-            {review.restaurant_name}
+          <h2
+            onClick={(e) => e.stopPropagation()}
+            style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", lineHeight: 1.1, marginBottom: locationLabel ? "4px" : 0, cursor: review.restaurant_id ? "pointer" : "default" }}
+          >
+            {review.restaurant_id ? (
+              <Link
+                href={`/places/${encodeURIComponent(review.restaurant_id)}`}
+                style={{ textDecoration: "none", color: "inherit" }}
+              >
+                {review.restaurant_name}
+              </Link>
+            ) : (
+              review.restaurant_name
+            )}
           </h2>
           {locationLabel && (
             <a
@@ -571,7 +577,13 @@ export default function CircleFeedCard({
           {review.body && (
             <div style={{ marginBottom: "10px" }}>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--cream)", lineHeight: 1.5 }}>
-                <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>{" "}
+                <Link
+                  href={`/people/${encodeURIComponent(reviewerUsername)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
+                  <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>
+                </Link>{" "}
                 {review.body}
               </p>
             </div>

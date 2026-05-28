@@ -155,18 +155,29 @@ function makeReview(reviewer, restaurant, items, extra = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// USERNAME VALIDATION (USERNAME_REGEX from app/onboarding/page.tsx)
-// The regex is: /^[a-z0-9_]{3,20}$/
+// USERNAME VALIDATION (USERNAME_REGEX from lib/username.ts)
+// Rules: 3–20 chars, lowercase, start/end with letter or digit,
+//        only _ and . in middle, no consecutive specials (.. __ ._ _.)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
+const USERNAME_REGEX = /^(?!.*[._]{2})[a-z0-9][a-z0-9._]{1,18}[a-z0-9]$/;
+
+// ── Valid cases ───────────────────────────────────────────────────────────────
 
 test("username: lowercase alphanumeric is valid", () => {
   assert.ok(USERNAME_REGEX.test("alice123"));
 });
 
-test("username: underscores are allowed", () => {
+test("username: underscore in middle is valid", () => {
   assert.ok(USERNAME_REGEX.test("alice_smith"));
+});
+
+test("username: dot in middle is valid", () => {
+  assert.ok(USERNAME_REGEX.test("alice.smith"));
+});
+
+test("username: starts with digit is valid", () => {
+  assert.ok(USERNAME_REGEX.test("1alice"));
 });
 
 test("username: exactly 3 characters is valid (minimum)", () => {
@@ -176,6 +187,12 @@ test("username: exactly 3 characters is valid (minimum)", () => {
 test("username: exactly 20 characters is valid (maximum)", () => {
   assert.ok(USERNAME_REGEX.test("a".repeat(20)));
 });
+
+test("username: mixed dot and underscore separated by letters is valid", () => {
+  assert.ok(USERNAME_REGEX.test("a.b_c"));
+});
+
+// ── Invalid cases ─────────────────────────────────────────────────────────────
 
 test("username: 2 characters is invalid (too short)", () => {
   assert.ok(!USERNAME_REGEX.test("ab"));
@@ -201,8 +218,36 @@ test("username: empty string is invalid", () => {
   assert.ok(!USERNAME_REGEX.test(""));
 });
 
-test("username: dots are invalid", () => {
-  assert.ok(!USERNAME_REGEX.test("alice.smith"));
+test("username: leading underscore is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("_alice"));
+});
+
+test("username: trailing underscore is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice_"));
+});
+
+test("username: leading dot is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test(".alice"));
+});
+
+test("username: trailing dot is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice."));
+});
+
+test("username: consecutive dots are invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice..smith"));
+});
+
+test("username: consecutive underscores are invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice__smith"));
+});
+
+test("username: dot followed by underscore is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice._smith"));
+});
+
+test("username: underscore followed by dot is invalid", () => {
+  assert.ok(!USERNAME_REGEX.test("alice_.smith"));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import { DEFAULT_ACCOUNT_TYPE, accountTypeLabel } from "@/lib/circle";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 
 interface Member {
-  name: string;
+  username: string;
   displayName: string;
   placeCount: number;
 }
@@ -61,7 +61,7 @@ export default function MyCirclePage() {
       }
 
       setMembers(memberNames.map(n => ({
-        name: n,
+        username: n,
         displayName: displayNames.get(n) ?? n,
         placeCount: placeCounts.get(n)?.size ?? 0,
       })));
@@ -72,7 +72,7 @@ export default function MyCirclePage() {
   async function removeFromMyCircle(memberName: string) {
     const previousMembers = members;
     setRemovingName(memberName);
-    setMembers((prev) => prev.filter((member) => member.name !== memberName));
+    setMembers((prev) => prev.filter((member) => member.username !== memberName));
 
     try {
       const res = await fetch("/api/circle/remove", {
@@ -146,10 +146,10 @@ export default function MyCirclePage() {
       {mounted && members.length > 0 && (
         <div style={{ padding: "0 20px" }}>
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
-            {members.map(({ name, displayName, placeCount }, i) => (
-              <div key={name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
+            {members.map(({ username, displayName, placeCount }, i) => (
+              <div key={username} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : "none" }}>
                 <Link
-                  href={`/people/${encodeURIComponent(name)}`}
+                  href={`/people/${encodeURIComponent(username)}`}
                   style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}
                 >
                   <div style={{ width: 42, height: 42, borderRadius: "12px", background: avatarGradient(displayName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", fontWeight: 700, color: "white", flexShrink: 0, fontFamily: "'DM Sans', sans-serif" }}>
@@ -166,8 +166,8 @@ export default function MyCirclePage() {
                 </Link>
                 <button
                   type="button"
-                  onClick={() => setConfirmRemoveName(name)}
-                  disabled={removingName === name}
+                  onClick={() => setConfirmRemoveName(username)}
+                  disabled={removingName === username}
                   style={{
                     background: "rgba(239, 68, 68, 0.10)",
                     border: "1.5px solid rgba(239, 68, 68, 0.35)",
@@ -177,12 +177,12 @@ export default function MyCirclePage() {
                     fontSize: "11px",
                     fontWeight: 700,
                     fontFamily: "'DM Sans', sans-serif",
-                    cursor: removingName === name ? "default" : "pointer",
-                    opacity: removingName === name ? 0.6 : 1,
+                    cursor: removingName === username ? "default" : "pointer",
+                    opacity: removingName === username ? 0.6 : 1,
                     flexShrink: 0,
                   }}
                 >
-                  {removingName === name ? "Removing..." : "Remove"}
+                  {removingName === username ? "Removing..." : "Remove"}
                 </button>
               </div>
             ))}
@@ -198,7 +198,7 @@ export default function MyCirclePage() {
               Remove from circle?
             </h2>
             <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.5, marginBottom: "20px", fontFamily: "'DM Sans', sans-serif" }}>
-              Do you want to remove {confirmRemoveName} from your circle?
+              Do you want to remove {members.find(m => m.username === confirmRemoveName)?.displayName || confirmRemoveName} from your circle?
             </p>
             <div style={{ display: "flex", gap: "10px" }}>
               <button

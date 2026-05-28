@@ -15,6 +15,7 @@ const PeopleTab = dynamic(() => import("@/components/people/PeopleTab"), {
 
 type PeopleApiResponse = {
   circleMembers: CircleMember[];
+  myName?: string;
 };
 
 export function PeopleSkeleton() {
@@ -91,5 +92,5 @@ export default function PeoplePageClient({ initialData = null }: { initialData?:
 
   if (!data) return <PeopleSkeleton />;
 
-  return <PeopleTab initialCircle={data.circleMembers} />;
+  return <PeopleTab initialCircle={data.circleMembers} initialMyName={data.myName ?? ""} />;
 }
