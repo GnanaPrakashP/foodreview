@@ -13,7 +13,6 @@ export type FoodItem = {
 
 export type AccountType = "private" | "public";
 export type Visibility = "public" | "circle" | "me";
-export type StoryVisibility = "public" | "circle";
 export type ReviewMediaType = "image" | "video";
 export type CircleRelationshipState = "NONE" | "PENDING" | "CIRCLE_ONE_WAY" | "CIRCLE_MUTUAL";
 export type TasteTrustLevel =
@@ -152,25 +151,6 @@ export interface Database {
           status?: "active" | "deleted" | "hidden" | "reported" | "removed";
           created_at?: string;
         };
-        Relationships: [];
-      };
-      stories: {
-        Row: Story;
-        Insert: {
-          id?: string;
-          author_name: string;
-          media_url: string;
-          storage_path?: string | null;
-          caption?: string | null;
-          visibility?: StoryVisibility;
-          status?: "active" | "deleted" | "hidden" | "reported" | "removed";
-          created_at?: string;
-          expires_at?: string;
-          deleted_at?: string | null;
-          hidden_at?: string | null;
-          reported_at?: string | null;
-        };
-        Update: Partial<Story>;
         Relationships: [];
       };
       circle_requests: {
@@ -497,21 +477,6 @@ export interface Database {
 export type Review = Database["public"]["Tables"]["reviews"]["Row"] & {
   media_items?: ReviewMedia[];
 };
-
-export interface Story {
-  id: string;
-  author_name: string;
-  media_url: string;
-  storage_path: string | null;
-  caption: string | null;
-  visibility: StoryVisibility;
-  status: "active" | "deleted" | "hidden" | "reported" | "removed";
-  created_at: string;
-  expires_at: string;
-  deleted_at: string | null;
-  hidden_at: string | null;
-  reported_at: string | null;
-}
 
 export interface Comment {
   id: string;

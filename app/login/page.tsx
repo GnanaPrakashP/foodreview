@@ -34,22 +34,32 @@ export default function LoginPage() {
   /* ── Google ── */
   async function handleGoogle() {
     setGoogleLoading(true);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) { setErrorMsg(error.message); setGoogleLoading(false); }
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) { setErrorMsg(error.message); setGoogleLoading(false); }
+    } catch {
+      setErrorMsg("Could not reach the server. Check your connection and try again.");
+      setGoogleLoading(false);
+    }
   }
 
   /* ── Sign In ── */
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setStatus("loading"); setErrorMsg("");
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) { setErrorMsg(error.message); setStatus("error"); }
-    else        { router.push("/"); router.refresh(); }
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) { setErrorMsg(error.message); setStatus("error"); }
+      else        { router.push("/"); router.refresh(); }
+    } catch {
+      setErrorMsg("Could not reach the server. Check your connection and try again.");
+      setStatus("error");
+    }
   }
 
   /* ── Sign Up ── */
@@ -58,23 +68,33 @@ export default function LoginPage() {
     if (password !== confirmPassword) { setErrorMsg("Passwords don't match."); setStatus("error"); return; }
     if (password.length < 8)          { setErrorMsg("Password must be at least 8 characters."); setStatus("error"); return; }
     setStatus("loading"); setErrorMsg("");
-    const supabase = createClient();
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error)          { setErrorMsg(error.message); setStatus("error"); }
-    else if (data.session) { router.push("/onboarding"); router.refresh(); }
-    else                   { setStatus("success"); }
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error)             { setErrorMsg(error.message); setStatus("error"); }
+      else if (data.session) { router.push("/onboarding"); router.refresh(); }
+      else                   { setStatus("success"); }
+    } catch {
+      setErrorMsg("Could not reach the server. Check your connection and try again.");
+      setStatus("error");
+    }
   }
 
   /* ── Forgot ── */
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
     setStatus("loading"); setErrorMsg("");
-    const supabase = createClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
-    });
-    if (error) { setErrorMsg(error.message); setStatus("error"); }
-    else        { setStatus("success"); }
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
+      });
+      if (error) { setErrorMsg(error.message); setStatus("error"); }
+      else        { setStatus("success"); }
+    } catch {
+      setErrorMsg("Could not reach the server. Check your connection and try again.");
+      setStatus("error");
+    }
   }
 
   /* ── Success screens ── */

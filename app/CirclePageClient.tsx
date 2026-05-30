@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
+import { consumePendingRoute } from "@/lib/browser-navigation-intent";
+import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
-import StoriesTray from "@/components/stories/StoriesTray";
 import type { CircleFeedPage } from "@/lib/circle-feed";
+import { CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
 
 const CIRCLE_TTL_MS = 3 * 60 * 1000;
 const API_URL = "/api/feed/circle";
+const REFRESH_API_URL = `${API_URL}?limit=${CIRCLE_FEED_MAX_PAGE_SIZE}&refresh=1`;
 
 export function CircleSkeleton() {
   return (
@@ -41,33 +44,47 @@ export function CircleSkeleton() {
 }
 
 export default function CirclePageClient({ initialData = null }: { initialData?: CircleFeedPage | null }) {
-  const [data, setData] = useState<CircleFeedPage | null>(initialData);
+  const [refreshMode] = useState(() => isInitialDocumentReload());
   const [error, setError] = useState(false);
+  const [preserveFeedOrderOnNav] = useState(() => !refreshMode && consumePendingRoute("/"));
+  const [data, setData] = useState<CircleFeedPage | null>(() => refreshMode ? null : initialData);
 
   useEffect(() => {
     let cancelled = false;
+    const requestUrl = refreshMode ? REFRESH_API_URL : API_URL;
+    const forceFreshLoad = refreshMode || !preserveFeedOrderOnNav;
     if (initialData) {
-      const cachedData = readCachedJson<CircleFeedPage>(API_URL, { allowStale: true });
+      if (refreshMode) {
+        setData(null);
+        cachedJson<CircleFeedPage>(requestUrl, CIRCLE_TTL_MS, { forceRefresh: true })
+          .then((fresh) => {
+            if (!cancelled) setData(fresh);
+          })
+          .catch(() => {
+            if (!cancelled) setError(true);
+          });
+        return () => {
+          cancelled = true;
+        };
+      }
+
+      const cachedData = preserveFeedOrderOnNav ? readCachedJson<CircleFeedPage>(API_URL) : null;
       if (cachedData) {
         setData(cachedData);
       } else {
+        setData(initialData);
         primeCachedJson(API_URL, initialData, CIRCLE_TTL_MS);
       }
-      refreshCachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
-        .then((fresh) => {
-          if (!cancelled) setData(fresh);
-        })
-        .catch(() => {});
       return () => {
         cancelled = true;
       };
     }
-    const cachedData = readCachedJson<CircleFeedPage>(API_URL, { allowStale: true });
+    const cachedData = forceFreshLoad ? null : readCachedJson<CircleFeedPage>(API_URL);
     if (cachedData) setData(cachedData);
-    const load = cachedData
-      ? refreshCachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS)
-      : cachedJson<CircleFeedPage>(API_URL, CIRCLE_TTL_MS);
-    load
+    if (cachedData) return () => {
+      cancelled = true;
+    };
+    cachedJson<CircleFeedPage>(requestUrl, CIRCLE_TTL_MS, { forceRefresh: forceFreshLoad })
       .then((fresh) => {
         if (!cancelled) setData(fresh);
       })
@@ -77,7 +94,7 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
     return () => {
       cancelled = true;
     };
-  }, [initialData]);
+  }, [initialData, preserveFeedOrderOnNav, refreshMode]);
 
   if (error) {
     return (
@@ -105,8 +122,6 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
         </div>
       </div>
 
-      <StoriesTray />
-
       <CircleFeedClient
         allReviews={data.reviews}
         likeCountMap={data.likeCountMap}
@@ -121,6 +136,8 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
         initialTasteTrustSummaryMap={data.tasteTrustSummaryMap}
         initialHasMore={data.hasMore}
         initialNextCursor={data.nextCursor}
+        preserveOrderOnNav={preserveFeedOrderOnNav}
+        refreshMode={refreshMode}
       />
     </div>
   );

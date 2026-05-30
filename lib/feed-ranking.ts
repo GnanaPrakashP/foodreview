@@ -52,6 +52,7 @@ export function rankFeedReviewsBySeenState(reviews: Review[], seenPostMap: SeenP
       const aSeen = a.seenAt > 0;
       const bSeen = b.seenAt > 0;
       if (aSeen !== bSeen) return aSeen ? 1 : -1;
+      if (aSeen && bSeen && a.seenAt !== b.seenAt) return a.seenAt - b.seenAt;
       return a.index - b.index;
     })
     .map((item) => item.review);

@@ -332,6 +332,19 @@ test("feed ranking: unseen posts stay above seen posts without hiding seen posts
   assert.equal(JSON.stringify(allSeen.map((item) => item.id)), JSON.stringify(["seen-1", "seen-2"]));
 });
 
+test("feed ranking: recently seen posts drop below older seen posts", () => {
+  const { rankFeedReviewsBySeenState } = loadTsModule("lib/feed-ranking.ts");
+  const olderSeen = review("Alice", "Older Seen Cafe", [{ name: "Latte", rating: 4 }], { id: "older-seen" });
+  const newerSeen = review("Bob", "Newer Seen Dosa", [{ name: "Dosa", rating: 5 }], { id: "newer-seen" });
+
+  const ranked = rankFeedReviewsBySeenState([newerSeen, olderSeen], {
+    "older-seen": 100,
+    "newer-seen": 200,
+  });
+
+  assert.equal(JSON.stringify(ranked.map((item) => item.id)), JSON.stringify(["older-seen", "newer-seen"]));
+});
+
 test("stats: deleted and private posts do not leave ghost counts in global, circle, or profile stats", () => {
   const {
     filterCircleTrendingReviews,

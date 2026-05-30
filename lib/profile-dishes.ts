@@ -45,8 +45,26 @@ function restaurantIdentity(name: string, id: string | null): string {
   return (id || name).trim().toLowerCase();
 }
 
+/**
+ * Two restaurants are "the same" when:
+ *   - both have IDs → compare by ID
+ *   - either side has no ID → compare by name (trimmed, lowercased)
+ *
+ * This prevents a false mismatch when one review was added without a
+ * Google Places ID and the other was linked to a Place.
+ */
+function sameRestaurant(nameA: string, idA: string | null, nameB: string, idB: string | null): boolean {
+  if (idA && idB) return idA.trim().toLowerCase() === idB.trim().toLowerCase();
+  return nameA.trim().toLowerCase() === nameB.trim().toLowerCase();
+}
+
 function dishRestaurantKey(dishName: string, restaurantName: string, restaurantId: string | null): string {
   return `${dishName.toLowerCase()}\x00${restaurantIdentity(restaurantName, restaurantId)}`;
+}
+
+/** Name-based fallback key — used to cross-match tried keys when IDs differ. */
+function dishRestaurantNameKey(dishName: string, restaurantName: string): string {
+  return `${dishName.toLowerCase()}\x00${restaurantName.trim().toLowerCase()}`;
 }
 
 function distanceKmBetween(origin: DishSortLocation, lat: number, lng: number): number {
@@ -159,7 +177,12 @@ function triedDishRestaurantKeys(reviews: Review[]): Set<string> {
   for (const review of reviews) {
     for (const item of review.items) {
       const dishName = normalizeDishDisplayName(item.name);
-      if (dishName && item.rating > 0) keys.add(dishRestaurantKey(dishName, review.restaurant_name, review.restaurant_id));
+      if (!dishName || item.rating <= 0) continue;
+      // Store both the canonical key and the name-based fallback so lookups
+      // succeed even when the community pick was linked to a Place ID but the
+      // user's own review was not (or vice versa).
+      keys.add(dishRestaurantKey(dishName, review.restaurant_name, review.restaurant_id));
+      keys.add(dishRestaurantNameKey(dishName, review.restaurant_name));
     }
   }
   return keys;
@@ -185,10 +208,11 @@ export function buildDishComparisons(
     .map(([dishName, pick]) => {
       const communityPick = bestNow.get(dishName) ?? null;
       const hasTriedCommunityBest = communityPick
-        ? triedKeys.has(dishRestaurantKey(dishName, communityPick.restaurantName, communityPick.restaurantId))
+        ? triedKeys.has(dishRestaurantKey(dishName, communityPick.restaurantName, communityPick.restaurantId)) ||
+          triedKeys.has(dishRestaurantNameKey(dishName, communityPick.restaurantName))
         : false;
       const samePick = communityPick
-        ? restaurantIdentity(pick.restaurantName, pick.restaurantId) === restaurantIdentity(communityPick.restaurantName, communityPick.restaurantId)
+        ? sameRestaurant(pick.restaurantName, pick.restaurantId, communityPick.restaurantName, communityPick.restaurantId)
         : false;
       const status: DishComparisonStatus = !communityPick
         ? "no_public_best"

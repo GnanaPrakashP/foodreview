@@ -11,6 +11,8 @@ type BadgePillProps = {
   icon?: string;
   earnedAt?: string;
   onClick?: () => void;
+  /** When true the pill expands to fill its flex container instead of using a fixed 88 px width. */
+  stretch?: boolean;
 };
 
 const ICONS: Record<string, LucideIcon> = {
@@ -100,15 +102,11 @@ const ACHIEVEMENT_BADGE_SRC: Record<string, string> = {
   dozen_reviews: "/badges/achievements-transparent-ui/dozen-reviews.png",
   twenty_five_reviews: "/badges/achievements-transparent-ui/twenty-five-reviews.png",
   hundred_reviews: "/badges/achievements-transparent-ui/hundred-reviews.png",
-  multi_photo: "/badges/achievements-transparent-ui/multi-photo.png",
-  detail_master: "/badges/achievements-transparent-ui/detail-master.png",
   save_magnet: "/badges/achievements-transparent-ui/save-magnet.png",
   must_try: "/badges/achievements-transparent-ui/must-try.png",
   taste_pioneer: "/badges/achievements-transparent-ui/taste-pioneer.png",
   regular: "/badges/achievements-transparent-ui/regular.png",
   neighborhood_guide: "/badges/achievements-transparent-ui/neighborhood-guide.png",
-  weekly_explorer: "/badges/achievements-transparent-ui/weekly-explorer.png",
-  monthly_explorer: "/badges/achievements-transparent-ui/monthly-explorer.png",
 };
 
 export function achievementBadgeSrc(badgeId?: string) {
@@ -155,6 +153,7 @@ export default function BadgePill({
   icon,
   earnedAt,
   onClick,
+  stretch = false,
 }: BadgePillProps) {
   return (
     <button
@@ -166,9 +165,8 @@ export default function BadgePill({
         flexDirection: "column",
         alignItems: "center",
         gap: 6,
-        width: 88,
-        height: 116,
-        flexShrink: 0,
+        ...(stretch ? { flex: 1, minWidth: 0 } : { width: 88, flexShrink: 0 }),
+        height: 120,
         padding: "12px 8px 10px",
         borderRadius: 16,
         border: "1px solid rgba(255,255,255,0.08)",

@@ -34,6 +34,8 @@ interface Props {
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
+const BODY_TRUNCATE_LIMIT = 125;
+
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -103,8 +105,8 @@ function FeedReviewImage({
 
 function invalidateEngagementCaches() {
   invalidateCachedJson("/api/me");
-  invalidateCachedJson("/api/feed/circle");
-  invalidateCachedJson("/api/feed/public");
+  invalidateCachedJson("/api/feed/circle", { clearFeedSnapshots: false });
+  invalidateCachedJson("/api/feed/public", { clearFeedSnapshots: false });
 }
 
 export default function CircleFeedCard({
@@ -143,6 +145,7 @@ export default function CircleFeedCard({
   const commentCount = initialCommentCount;
   const triedCount = tasteTrustSummary?.tried_count ?? 0;
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [bodyExpanded, setBodyExpanded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const postMenuRef = useRef<HTMLDivElement>(null);
 
@@ -162,6 +165,14 @@ export default function CircleFeedCard({
     && !isOwnReview
     && requestStatus !== undefined
     && requestStatus !== "joined";
+
+  const bodyNeedsExpansion = (review.body?.length ?? 0) > BODY_TRUNCATE_LIMIT;
+  const bodyTruncated = (() => {
+    if (!review.body || !bodyNeedsExpansion) return review.body ?? "";
+    const s = review.body.slice(0, BODY_TRUNCATE_LIMIT);
+    const i = s.lastIndexOf(" ");
+    return i > 0 ? s.slice(0, i) : s;
+  })();
 
   useEffect(() => {
     const trimmed = initialMyName.trim();
@@ -584,7 +595,29 @@ export default function CircleFeedCard({
                 >
                   <strong style={{ fontWeight: 800 }}>{reviewerDisplayName}</strong>
                 </Link>{" "}
-                {review.body}
+                {bodyNeedsExpansion && !bodyExpanded ? (
+                  <>
+                    {bodyTruncated}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setBodyExpanded(true); }}
+                      style={{ background: "none", border: "none", padding: 0, margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)", cursor: "pointer", fontWeight: 600, display: "inline" }}
+                    >
+                      {" "}...more
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {review.body}
+                    {bodyNeedsExpansion && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setBodyExpanded(false); }}
+                        style={{ background: "none", border: "none", padding: 0, margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--muted)", cursor: "pointer", fontWeight: 600, display: "inline" }}
+                      >
+                        {" "}less
+                      </button>
+                    )}
+                  </>
+                )}
               </p>
             </div>
           )}

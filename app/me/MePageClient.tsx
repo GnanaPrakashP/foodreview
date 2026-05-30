@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { cachedJson, primeCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import MeClient from "@/components/me/MeClient";
 import type { Review } from "@/lib/types";
 import type { TasteTrustSummary } from "@/lib/taste-trust";
@@ -33,6 +33,15 @@ type MeApiResponse = {
   };
 };
 
+function isDocumentReload() {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return navigation?.type === "reload";
+  } catch {
+    return false;
+  }
+}
+
 export function MeSkeleton() {
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
@@ -61,27 +70,23 @@ export default function MePageClient({ initialData = null }: { initialData?: MeA
   useEffect(() => {
     let cancelled = false;
     if (initialData) {
-      const cachedData = readCachedJson<MeApiResponse>(API_URL, { allowStale: true });
+      const cachedData = isDocumentReload() ? null : readCachedJson<MeApiResponse>(API_URL);
       if (cachedData) {
         setData(cachedData);
       } else {
+        setData(initialData);
         primeCachedJson(API_URL, initialData, ME_TTL_MS);
       }
-      refreshCachedJson<MeApiResponse>(API_URL, ME_TTL_MS)
-        .then((fresh) => {
-          if (!cancelled) setData(fresh);
-        })
-        .catch(() => {});
       return () => {
         cancelled = true;
       };
     }
-    const cachedData = readCachedJson<MeApiResponse>(API_URL, { allowStale: true });
+    const cachedData = isDocumentReload() ? null : readCachedJson<MeApiResponse>(API_URL);
     if (cachedData) setData(cachedData);
-    const load = cachedData
-      ? refreshCachedJson<MeApiResponse>(API_URL, ME_TTL_MS)
-      : cachedJson<MeApiResponse>(API_URL, ME_TTL_MS);
-    load
+    if (cachedData) return () => {
+      cancelled = true;
+    };
+    cachedJson<MeApiResponse>(API_URL, ME_TTL_MS, { bypassOnReload: true })
       .then((fresh) => {
         if (!cancelled) setData(fresh);
       })

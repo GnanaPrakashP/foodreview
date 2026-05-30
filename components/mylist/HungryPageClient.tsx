@@ -5,7 +5,7 @@ import { ChevronDown, LocateFixed, Search } from "lucide-react";
 import type { Comment, Review } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { getStoredActorName } from "@/lib/browser-actor";
-import { invalidateCachedJson, readCachedJson, refreshCachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, invalidateCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
 import {
@@ -89,6 +89,15 @@ function swipeFeedUrl(viewerName: string, loc: UserLocation | null, cursor: Circ
   }
   if (cursor) params.set("cursor", JSON.stringify(cursor));
   return `/api/feed/public?${params.toString()}`;
+}
+
+function isDocumentReload() {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return navigation?.type === "reload";
+  } catch {
+    return false;
+  }
 }
 
 function LocationPickerSheet({
@@ -243,7 +252,7 @@ function LocationPickerSheet({
 
 export default function HungryPageClient() {
   const [initialFeedKey] = useState(() => swipeFeedUrl(getStoredActorName(), loadSavedLocation()));
-  const [persistedFeed] = useState(() => readFeedState<HungryFeedSnapshot>(initialFeedKey));
+  const [persistedFeed] = useState(() => isDocumentReload() ? null : readFeedState<HungryFeedSnapshot>(initialFeedKey));
   const [posts, setPosts] = useState<Review[]>(persistedFeed?.reviews ?? []);
   const [loading, setLoading] = useState(!persistedFeed);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -294,12 +303,13 @@ export default function HungryPageClient() {
 
       if (!cursor) {
         setFeedStateKey(swipeFeedUrl(viewerName, feedLocation));
-        const cached = readCachedJson<PublicFeedResponse>(url, { allowStale: true });
+        const cached = isDocumentReload() ? null : readCachedJson<PublicFeedResponse>(url);
         if (cached) {
           applyData(cached);
           setLoading(false);
+          return;
         }
-        const data = await refreshCachedJson<PublicFeedResponse>(url, SWIPE_TTL_MS);
+        const data = await cachedJson<PublicFeedResponse>(url, SWIPE_TTL_MS, { bypassOnReload: true });
         if (data.error) throw new Error(data.error);
         applyData(data);
       } else {
@@ -324,7 +334,12 @@ export default function HungryPageClient() {
     const savedLocation = loadSavedLocation();
     setMyName(actor);
     setLocation(savedLocation);
-    loadPosts(null, actor, savedLocation);
+    if (persistedFeed && !isDocumentReload()) {
+      setFeedStateKey(initialFeedKey);
+      setLoading(false);
+    } else {
+      loadPosts(null, actor, savedLocation);
+    }
     if (actor) {
       cachedCircleStatus(actor)
         .then((data) => {

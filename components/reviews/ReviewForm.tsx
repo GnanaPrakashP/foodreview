@@ -84,13 +84,12 @@ type PlaceDetails = {
 const REVIEW_TAG_OPTIONS = [
   "Hidden gem",
   "Worth the hype",
-  "Comfort food",
+  "Must try",
   "Budget friendly",
-  "Date night",
+  "Big portions",
   "Spicy",
   "Sweet tooth",
-  "Big portions",
-  "Must try",
+  "Comfort food",
 ];
 
 function errorMessage(error: unknown): string {
@@ -512,19 +511,30 @@ export default function ReviewForm() {
         for (let i = 0; i < videoFiles.length; i++) {
           const file = videoFiles[i];
           const ext = file.name.split(".").pop() ?? (file.type === "video/webm" ? "webm" : "mp4");
-          const path = `public/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
+          const quarantinePath = `quarantine/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
+
           const { error: uploadErr } = await supabase.storage
             .from("review-photos")
-            .upload(path, file, { contentType: file.type, upsert: false });
+            .upload(quarantinePath, file, { contentType: file.type, upsert: false });
           if (uploadErr) throw new Error("Failed to upload video");
-          const { data: urlData } = supabase.storage.from("review-photos").getPublicUrl(path);
+
+          const moderateRes = await fetch("/api/videos/moderate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ quarantinePath }),
+          });
+          const moderateJson = await moderateRes.json().catch(() => ({}));
+          if (!moderateRes.ok) {
+            throw new Error(moderateJson.error ?? "Video check failed — please try a different video");
+          }
+
           uploadedVideos.push({
-            publicUrl: urlData.publicUrl,
-            storagePath: path,
+            publicUrl: moderateJson.publicUrl,
+            storagePath: moderateJson.storagePath,
             width: null,
             height: null,
             sizeBytes: file.size,
-            durationSeconds: file.durationSeconds ?? 0,
+            durationSeconds: 0,
             mediaType: "video",
           });
         }

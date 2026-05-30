@@ -39,7 +39,19 @@ test("circle tab navigation keeps the circle loading shell during transition", (
   assert.match(nav, /writePendingRoute\(href\)/);
   assert.match(nav, /clearPendingRoute\(\)/);
   assert.match(loading, /readPendingRoute\(\)/);
+  assert.match(loading, /if \(isInitialDocumentReload\(\) \|\| pendingPathname !== "\/"\) return null;/);
+  assert.match(loading, /readCachedJson<CircleFeedPage>\(API_URL, \{ allowStale: true \}\)/);
   assert.match(loading, /pathname !== "\/" && pendingPathname !== "\/"/);
+});
+
+test("explore loading preview does not consume the real explore navigation intent", () => {
+  const loading = source("app/people/PeopleLoadingClient.tsx");
+  const page = source("app/people/PeoplePageClient.tsx");
+
+  assert.match(loading, /readPendingRoute\(\)/);
+  assert.match(loading, /consumeNavigationIntent=\{false\}/);
+  assert.match(loading, /preserveOrderOnNavOverride=\{pendingPathname === "\/explore"\}/);
+  assert.match(page, /consumeNavigationIntent && consumePendingRoute\("\/explore"\)/);
 });
 
 test("Playwright E2E stays serial because seeded accounts are shared state", () => {
@@ -47,4 +59,47 @@ test("Playwright E2E stays serial because seeded accounts are shared state", () 
 
   assert.match(config, /fullyParallel:\s*false/);
   assert.match(config, /workers:\s*1/);
+});
+
+test("Stories feature is removed from MVP: no UI, no API route, no entry points", () => {
+  // StoriesTray must not appear in Circle page
+  const circlePage = source("app/CirclePageClient.tsx");
+  assert.doesNotMatch(circlePage, /StoriesTray/);
+  assert.doesNotMatch(circlePage, /\/api\/stories/);
+
+  // New review page must not link to story creation
+  const newReviewPage = source("app/reviews/new/page.tsx");
+  assert.doesNotMatch(newReviewPage, /stories\/new/);
+  assert.doesNotMatch(newReviewPage, /Add story/);
+
+  // Story API route must not exist (file deleted)
+  assert.equal(
+    existsSync(new URL("../app/api/stories/route.ts", import.meta.url)),
+    false,
+    "app/api/stories/route.ts should not exist"
+  );
+
+  // Story components must not exist (files deleted)
+  assert.equal(
+    existsSync(new URL("../components/stories/StoriesTray.tsx", import.meta.url)),
+    false,
+    "StoriesTray.tsx should not exist"
+  );
+  assert.equal(
+    existsSync(new URL("../components/stories/StoryForm.tsx", import.meta.url)),
+    false,
+    "StoryForm.tsx should not exist"
+  );
+
+  // Story server lib must not exist (file deleted)
+  assert.equal(
+    existsSync(new URL("../lib/stories.ts", import.meta.url)),
+    false,
+    "lib/stories.ts should not exist"
+  );
+
+  // Story types must be removed
+  const types = source("lib/types.ts");
+  assert.doesNotMatch(types, /StoryVisibility/);
+  assert.doesNotMatch(types, /interface Story\b/);
 });

@@ -14,13 +14,18 @@ export async function GET(req: NextRequest) {
   const limit = parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE);
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);
+  const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
 
   if (rawCursor && !cursor) {
     return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
   }
 
   try {
-    const page = await getCircleFeedPage(supabase, { cursor, limit });
+    const page = await getCircleFeedPage(supabase, {
+      cursor,
+      limit,
+      bypassCache: refreshMode && !cursor,
+    });
     if (!page.myName) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { clearFeedState, removePostFromPersistedFeedSnapshots } from "@/lib/browser-feed-state";
+import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
 
 type CacheEntry<T> = {
   expiresAt: number;
@@ -14,6 +15,7 @@ const reloadBypassKeys = new Set<string>();
 
 type CachedJsonOptions = {
   bypassOnReload?: boolean;
+  forceRefresh?: boolean;
 };
 
 type ReadCachedJsonOptions = {
@@ -58,17 +60,9 @@ export function readCachedJson<T>(url: string, options: ReadCachedJsonOptions = 
   return null;
 }
 
-function isDocumentReload() {
-  try {
-    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
-    return navigation?.type === "reload";
-  } catch {
-    return false;
-  }
-}
-
 function shouldBypassStoredCache(url: string, options?: CachedJsonOptions) {
-  if (!options?.bypassOnReload || !isDocumentReload() || reloadBypassKeys.has(url)) return false;
+  if (options?.forceRefresh) return true;
+  if (!options?.bypassOnReload || !isInitialDocumentReload() || reloadBypassKeys.has(url)) return false;
   reloadBypassKeys.add(url);
   return true;
 }
@@ -99,10 +93,10 @@ export async function cachedJson<T>(url: string, ttlMs: number, options?: Cached
   return request;
 }
 
-export function primeCachedJson<T>(url: string, value: T, ttlMs: number) {
+export function primeCachedJson<T>(url: string, value: T, ttlMs: number, options?: { memoryOnly?: boolean }) {
   const entry = { value, expiresAt: Date.now() + ttlMs, savedAt: Date.now() };
   memoryCache.set(url, entry);
-  writeSession(url, entry);
+  if (!options?.memoryOnly) writeSession(url, entry);
 }
 
 export async function refreshCachedJson<T>(url: string, ttlMs: number): Promise<T> {

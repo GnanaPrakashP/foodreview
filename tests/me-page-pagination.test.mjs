@@ -162,7 +162,7 @@ function loadMeRoute({ db, authUser }) {
         return { invalidatePeoplePageCacheForNames: () => {} };
       }
       if (id === "@/lib/taste-trust") {
-        return { tasteTrustSummaryFromProfile: () => ({ trust_score: 50, trust_level: "New Reviewer", confirmed_recommendations_count: 0 }) };
+        return { tasteTrustSummaryFromProfile: () => ({ trust_score: 20, trust_level: "New Reviewer", confirmed_recommendations_count: 0 }) };
       }
       if (id === "@/lib/supabase/admin") {
         return { createAdminClient: () => db };

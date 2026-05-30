@@ -157,7 +157,7 @@ export type CircleFeedPage = {
 
 export async function getCircleFeedPage(
   supabase: FeedDb,
-  options: { cursor?: CircleFeedCursor | null; limit?: number } = {}
+  options: { cursor?: CircleFeedCursor | null; limit?: number; bypassCache?: boolean } = {}
 ): Promise<CircleFeedPage> {
   const cursor = options.cursor ?? null;
   const limit = clampLimit(options.limit ?? CIRCLE_FEED_PAGE_SIZE);
@@ -179,16 +179,23 @@ export async function getCircleFeedPage(
     )
   );
 
+  const load = async () => {
+    const value = await loadCircleFeedPageForNames(supabase, candidateNames, cursor, limit);
+    const tags = Array.from(
+      new Set([value.myName, ...value.joinedCircles, ...candidateNames].filter(Boolean).map(feedCacheTagForName))
+    );
+    return { value, tags };
+  };
+
+  if (options.bypassCache) {
+    const { value } = await load();
+    return value;
+  }
+
   return getPrivateCached({
     key: feedCacheKey(candidateNames, cursor, limit),
     ttlMs: CIRCLE_FEED_CACHE_TTL_MS,
-    load: async () => {
-      const value = await loadCircleFeedPageForNames(supabase, candidateNames, cursor, limit);
-      const tags = Array.from(
-        new Set([value.myName, ...value.joinedCircles, ...candidateNames].filter(Boolean).map(feedCacheTagForName))
-      );
-      return { value, tags };
-    },
+    load,
   });
 }
 

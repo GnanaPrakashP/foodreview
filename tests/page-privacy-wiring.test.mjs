@@ -6,10 +6,10 @@ function source(relativePath) {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
 }
 
-test("home/circle feed filters server reviews before fetching engagement data", () => {
+test("home/circle page defers feed loading to the client cache path", () => {
   const src = source("app/page.tsx");
-  assert.match(src, /getCircleFeedPage\(supabase\)/);
-  assert.match(src, /<CirclePageClient initialData=\{feed\}/);
+  assert.doesNotMatch(src, /getCircleFeedPage\(supabase\)/);
+  assert.match(src, /<CirclePageClient \/>/);
 
   const helper = source("lib/circle-feed.ts");
   assert.match(helper, /createAdminClient\(\)/);

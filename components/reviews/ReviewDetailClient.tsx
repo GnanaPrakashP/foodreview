@@ -44,8 +44,8 @@ function timeAgo(dateStr: string): string {
 
 function invalidateEngagementCaches() {
   invalidateCachedJson("/api/me");
-  invalidateCachedJson("/api/feed/circle");
-  invalidateCachedJson("/api/feed/public");
+  invalidateCachedJson("/api/feed/circle", { clearFeedSnapshots: false });
+  invalidateCachedJson("/api/feed/public", { clearFeedSnapshots: false });
 }
 
 function detailImageUrl(url: string): string {

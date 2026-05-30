@@ -6,7 +6,8 @@ import type { Review, Comment } from "@/lib/types";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import ProfileDishesList from "@/components/profile/ProfileDishesList";
 import ProfileReputationSection from "@/components/reputation/ProfileReputationSection";
-import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
+import TrustScoreSheet from "@/components/taste-trust/TrustScoreSheet";
+import { DEFAULT_TASTE_TRUST_SUMMARY, formatTrustScore, type TasteTrustSummary } from "@/lib/taste-trust";
 import { EMPTY_REPUTATION, type UserProfileReputation } from "@/lib/reputation";
 
 type EngagementMaps = {
@@ -44,6 +45,15 @@ type MeFeedSnapshot = {
 
 function meFeedStateKey(viewerName: string) {
   return `/api/me?viewer=${encodeURIComponent(viewerName || "anonymous")}`;
+}
+
+function isDocumentReload() {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return navigation?.type === "reload";
+  } catch {
+    return false;
+  }
 }
 
 function StatSkeleton() {
@@ -299,7 +309,7 @@ export default function MeClient({
   };
 }) {
   const feedStateKey = meFeedStateKey(initialMyName);
-  const [persistedSnapshot] = useState(() => readFeedState<MeFeedSnapshot>(feedStateKey));
+  const [persistedSnapshot] = useState(() => isDocumentReload() ? null : readFeedState<MeFeedSnapshot>(feedStateKey));
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const [myName, setMyName] = useState(initialMyName);
   const [displayName, setDisplayName] = useState(initialDisplayName || initialMyName);
@@ -318,10 +328,11 @@ export default function MeClient({
   const [nextCursor, setNextCursor] = useState<MeCursor | null>(persistedSnapshot?.nextCursor ?? initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
+  const [showTrustSheet, setShowTrustSheet] = useState(false);
 
   useEffect(() => {
     const snapshot = readFeedState<MeFeedSnapshot>(feedStateKey);
-    if (snapshot && snapshot.reviews.length > allReviews.length) {
+    if (snapshot && !isDocumentReload()) {
       setReviews(snapshot.reviews);
       setReviewLikeCountMap(snapshot.likeCountMap);
       setReviewCommentMap(snapshot.commentMap);
@@ -541,14 +552,19 @@ export default function MeClient({
       <div style={{ padding: "0 20px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", alignItems: "start" }}>
           {/* Taste Trust */}
-          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <button
+            type="button"
+            onClick={() => setShowTrustSheet(true)}
+            aria-label="View trust score details"
+            style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", background: "none", border: "none", cursor: "pointer" }}
+          >
             <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
-              {Math.round(tasteTrust.trust_score)}
+              {formatTrustScore(tasteTrust.trust_score)}
             </div>
             <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, lineHeight: 1.1 }}>
               Trust
             </div>
-          </div>
+          </button>
           {/* Places */}
           <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
@@ -585,6 +601,13 @@ export default function MeClient({
 
       <MeTabs activeTab={activeTab} onChange={setActiveTab} />
       {tabContent}
+      {showTrustSheet && (
+        <TrustScoreSheet
+          summary={tasteTrust}
+          reviews={myReviews}
+          onClose={() => setShowTrustSheet(false)}
+        />
+      )}
     </div>
   );
 }

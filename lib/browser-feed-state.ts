@@ -6,8 +6,6 @@ type FeedStateEntry<T> = {
   value: T;
 };
 
-const STORAGE_PREFIX = "fc_feed_state:";
-
 type SnapshotWithPosts = {
   reviews?: Array<{ id?: unknown }>;
   posts?: Array<{ id?: unknown }>;
@@ -18,46 +16,28 @@ type SnapshotWithPosts = {
   tasteTrustSummaryMap?: Record<string, unknown>;
 };
 
-function storageKey(key: string) {
-  return `${STORAGE_PREFIX}${key}`;
-}
+// In-memory only — intentionally lost on every page reload / hard refresh.
+// SPA navigation within the same JS session keeps this alive; a browser
+// refresh or new tab starts with an empty Map, so stale feed data can
+// never be restored after a reload.
+const snapshots = new Map<string, FeedStateEntry<unknown>>();
 
 export function readFeedState<T>(key: string): T | null {
-  try {
-    const raw = sessionStorage.getItem(storageKey(key));
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as Partial<FeedStateEntry<T>>;
-    if (!entry || typeof entry.expiresAt !== "number" || Date.now() > entry.expiresAt) {
-      sessionStorage.removeItem(storageKey(key));
-      return null;
-    }
-    return (entry as FeedStateEntry<T>).value;
-  } catch {
+  const entry = snapshots.get(key) as FeedStateEntry<T> | undefined;
+  if (!entry || Date.now() > entry.expiresAt) {
+    snapshots.delete(key);
     return null;
   }
+  return entry.value;
 }
 
 export function writeFeedState<T>(key: string, value: T, ttlMs: number) {
-  try {
-    const entry: FeedStateEntry<T> = {
-      value,
-      savedAt: Date.now(),
-      expiresAt: Date.now() + ttlMs,
-    };
-    sessionStorage.setItem(storageKey(key), JSON.stringify(entry));
-  } catch {
-    // Ignore private browsing/quota failures. The in-memory page still works.
-  }
+  snapshots.set(key, { value, expiresAt: Date.now() + ttlMs, savedAt: Date.now() });
 }
 
 export function clearFeedState(keyPrefix: string) {
-  try {
-    for (let index = sessionStorage.length - 1; index >= 0; index--) {
-      const key = sessionStorage.key(index);
-      if (key?.startsWith(storageKey(keyPrefix))) sessionStorage.removeItem(key);
-    }
-  } catch {
-    // Ignore unavailable storage.
+  for (const key of snapshots.keys()) {
+    if (key.startsWith(keyPrefix)) snapshots.delete(key);
   }
 }
 
@@ -76,23 +56,17 @@ function deleteMapEntry(map: Record<string, unknown> | undefined, postId: string
 
 export function removePostFromPersistedFeedSnapshots(postId: string) {
   if (!postId) return;
-  try {
-    for (let index = sessionStorage.length - 1; index >= 0; index--) {
-      const key = sessionStorage.key(index);
-      if (!key?.startsWith(STORAGE_PREFIX)) continue;
+  for (const [key, entry] of snapshots.entries()) {
+    const value = entry.value as SnapshotWithPosts;
+    if (!value || typeof value !== "object") continue;
 
-      const raw = sessionStorage.getItem(key);
-      if (!raw) continue;
+    const reviews = removePostFromList(value.reviews, postId);
+    const posts = removePostFromList(value.posts, postId);
+    if (!reviews.changed && !posts.changed) continue;
 
-      const entry = JSON.parse(raw) as Partial<FeedStateEntry<SnapshotWithPosts>>;
-      const value = entry.value;
-      if (!value || typeof value !== "object") continue;
-
-      const reviews = removePostFromList(value.reviews, postId);
-      const posts = removePostFromList(value.posts, postId);
-      if (!reviews.changed && !posts.changed) continue;
-
-      const nextValue: SnapshotWithPosts = {
+    snapshots.set(key, {
+      ...entry,
+      value: {
         ...value,
         reviews: reviews.items,
         posts: posts.items,
@@ -101,11 +75,7 @@ export function removePostFromPersistedFeedSnapshots(postId: string) {
         likedByMeMap: deleteMapEntry(value.likedByMeMap, postId),
         bookmarkedPostMap: deleteMapEntry(value.bookmarkedPostMap, postId),
         tasteTrustSummaryMap: deleteMapEntry(value.tasteTrustSummaryMap, postId),
-      };
-
-      sessionStorage.setItem(key, JSON.stringify({ ...entry, value: nextValue }));
-    }
-  } catch {
-    // Ignore unavailable storage or malformed snapshots; API cache invalidation still runs.
+      },
+    });
   }
 }

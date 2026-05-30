@@ -1,13 +1,12 @@
 import {
   calculateProfileScore,
-  cuisineExpertBadgeName,
   cuisineForReview,
   EMPTY_REPUTATION,
   getUserTier,
-  normalizeBadgeKey,
   type BadgeProgress,
   type PermanentBadge,
   type ProfileScorePost,
+  type ReputationInput,
   type TemporaryBadge,
   type UserProfileReputation,
 } from "@/lib/reputation";
@@ -19,6 +18,7 @@ type SupabaseLike = {
 type ProfileRow = {
   id: string;
   username: string | null;
+  trust_score: number | null;
 };
 
 type ReputationRow = {
@@ -67,8 +67,11 @@ type ReputationContext = {
   reviews: ReviewReputationRow[];
   feedbackByPost: Map<string, FeedbackCounts>;
   saveCountByPost: Map<string, number>;
+  likeCountByPost: Map<string, number>;
   restaurantPostCount: Map<string, number>;
   uniqueDrivenVisitors: number;
+  /** Weekly-capped sum of outgoing reactions given by this user to others. */
+  outgoingReactionCount: number;
 };
 
 type FeedbackCounts = {
@@ -80,6 +83,7 @@ type FeedbackCounts = {
 };
 
 const EMPTY_COUNTS: FeedbackCounts = { SA: 0, A: 0, N: 0, D: 0, SD: 0 };
+const REMOVED_BADGE_IDS = new Set(["multi_photo", "detail_master", "cuisine_explorer"]);
 
 function feedbackCounts() {
   return { ...EMPTY_COUNTS };
@@ -87,12 +91,19 @@ function feedbackCounts() {
 
 function feedbackBucket(row: FeedbackRow): keyof FeedbackCounts {
   const label = (row.feedback_label ?? "").toLowerCase();
+  // New labels
+  if (label === "strongly agree") return "SA";
+  if (label === "agree") return "A";
+  if (label === "neutral") return "N";
+  if (label === "disagree") return "D";
+  if (label === "strongly disagree") return "SD";
+  // Legacy labels (existing rows in DB before migration)
   if (label.includes("totally")) return "SA";
   if (label.includes("mostly")) return "A";
   if (label.includes("okay")) return "N";
   if (label.includes("not really")) return "D";
   if (label.includes("not worth")) return "SD";
-
+  // Final fallback: use numeric value
   const value = Number(row.feedback_value);
   if (value >= 1) return "SA";
   if (value >= 0.7) return "A";
@@ -160,7 +171,7 @@ function monthPeriod(date = new Date()) {
 async function loadProfileByUserId(db: SupabaseLike, userId: string): Promise<ProfileRow | null> {
   const { data, error } = await db
     .from("profiles")
-    .select("id, username")
+    .select("id, username, trust_score")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -185,6 +196,7 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
     .from("reviews")
     .select("id, reviewer_name, restaurant_id, restaurant_name, area, items, tags, photo_url, photo_urls, created_at")
     .eq("reviewer_name", profile.username)
+    .eq("visibility", "public")
     .is("deleted_at", null)
     .is("hidden_at", null)
     .is("reported_at", null)
@@ -207,6 +219,17 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
     return { data: rows, error: null };
   }
 
+  async function fetchLikesChunked(ids: string[]) {
+    const CHUNK = 100;
+    const rows: { post_id: string }[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await db.from("likes").select("post_id").in("post_id", ids.slice(i, i + CHUNK));
+      if (error) return { data: null, error };
+      rows.push(...((data ?? []) as { post_id: string }[]));
+    }
+    return { data: rows, error: null };
+  }
+
   async function fetchRestaurantReviewsChunked(names: string[]) {
     const CHUNK = 50;
     const rows: Array<{ restaurant_id: string | null; restaurant_name: string }> = [];
@@ -215,6 +238,7 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
         .from("reviews")
         .select("restaurant_id, restaurant_name")
         .in("restaurant_name", names.slice(i, i + CHUNK))
+        .eq("visibility", "public")
         .is("deleted_at", null)
         .is("hidden_at", null)
         .is("reported_at", null)
@@ -228,26 +252,35 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
   const [
     { data: feedbackData, error: feedbackError },
     { data: wishlistData, error: wishlistError },
+    { data: likesData, error: likesError },
     { data: restaurantData, error: restaurantError },
     { data: triedData, error: triedError },
     { data: attributionData },
+    { data: outgoingData, error: outgoingError },
   ] = await Promise.all([
-    // Query by reviewer_user_id instead of post IDs to avoid URL-length limit
+    // Reactions received on this user's posts
     db.from("recommendation_feedback").select("post_id, feedback_label, feedback_value").eq("reviewer_user_id", userId),
     postIds.length
       ? fetchWishlistChunked(postIds)
+      : Promise.resolve({ data: [], error: null }),
+    postIds.length
+      ? fetchLikesChunked(postIds)
       : Promise.resolve({ data: [], error: null }),
     restaurantNames.length
       ? fetchRestaurantReviewsChunked(restaurantNames)
       : Promise.resolve({ data: [], error: null }),
     db.from("user_tried_items").select("user_id").eq("source_user_id", userId),
     db.from("post_visit_attributions").select("visitor_user_id").eq("source_user_id", userId),
+    // Reactions given by this user to other people's posts (community signal)
+    db.from("recommendation_feedback").select("created_at").eq("feedback_user_id", userId),
   ]);
 
   if (feedbackError) throw new Error(feedbackError.message);
   if (wishlistError) throw new Error(wishlistError.message);
+  if (likesError) throw new Error(likesError.message);
   if (restaurantError) throw new Error(restaurantError.message);
   if (triedError) throw new Error(triedError.message);
+  if (outgoingError) throw new Error(outgoingError.message);
 
   const feedbackByPost = new Map<string, FeedbackCounts>();
   for (const row of (feedbackData ?? []) as FeedbackRow[]) {
@@ -260,6 +293,11 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
   const saveCountByPost = new Map<string, number>();
   for (const row of (wishlistData ?? []) as { post_id: string | null }[]) {
     if (row.post_id) saveCountByPost.set(row.post_id, (saveCountByPost.get(row.post_id) ?? 0) + 1);
+  }
+
+  const likeCountByPost = new Map<string, number>();
+  for (const row of (likesData ?? []) as { post_id: string }[]) {
+    if (row.post_id) likeCountByPost.set(row.post_id, (likeCountByPost.get(row.post_id) ?? 0) + 1);
   }
 
   const restaurantPostCount = new Map<string, number>();
@@ -276,13 +314,30 @@ async function loadReputationContext(db: SupabaseLike, userId: string): Promise<
     if (row.visitor_user_id) visitors.add(row.visitor_user_id);
   }
 
+  // Apply a weekly cap (15 reactions/week) to outgoing community reactions.
+  // This prevents farming while keeping community engagement meaningful long-term.
+  const COMMUNITY_WEEKLY_CAP = 15;
+  const outgoingByWeek = new Map<string, number>();
+  for (const row of (outgoingData ?? []) as { created_at: string | null }[]) {
+    const date = row.created_at ? new Date(row.created_at) : null;
+    if (!date || Number.isNaN(date.getTime())) continue;
+    const wk = weekPeriod(date);
+    outgoingByWeek.set(wk, (outgoingByWeek.get(wk) ?? 0) + 1);
+  }
+  let outgoingReactionCount = 0;
+  for (const count of outgoingByWeek.values()) {
+    outgoingReactionCount += Math.min(count, COMMUNITY_WEEKLY_CAP);
+  }
+
   return {
     profile,
     reviews,
     feedbackByPost,
     saveCountByPost,
+    likeCountByPost,
     restaurantPostCount,
     uniqueDrivenVisitors: visitors.size,
+    outgoingReactionCount,
   };
 }
 
@@ -290,14 +345,10 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
   const candidates: BadgeCandidate[] = [];
   const totalPosts = ctx.reviews.length;
   const areaCounts = new Map<string, number>();
-  const cuisineCounts = new Map<string, number>();
-  const cuisineEligible = new Map<string, { posts: number; agrees: number; total: number }>();
   const userRestaurantCount = new Map<string, number>();
-  let maxAgrees = 0;
+  let maxSA = 0;
   let maxHiddenGemAgrees = 0;
   let hasGoodCall = false;
-  let maxPhotoCount = 0;
-  let maxItemCount = 0;
   let totalSaves = 0;
   let maxSavesOnOnePost = 0;
   let hasPioneerRestaurant = false;
@@ -305,34 +356,17 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
   for (const review of ctx.reviews) {
     const counts = ctx.feedbackByPost.get(review.id) ?? EMPTY_COUNTS;
     const agrees = counts.SA + counts.A;
-    const totalRatings = counts.SA + counts.A + counts.N + counts.D + counts.SD;
-    maxAgrees = Math.max(maxAgrees, agrees);
-    hasGoodCall ||= agrees > 0;
+    maxSA = Math.max(maxSA, counts.SA);
+    hasGoodCall ||= counts.SA > 0;
 
     const area = review.area?.trim();
     if (area) areaCounts.set(area, (areaCounts.get(area) ?? 0) + 1);
-
-    const cuisine = cuisineForReview(review);
-    cuisineCounts.set(cuisine, (cuisineCounts.get(cuisine) ?? 0) + 1);
-    if (totalRatings >= 3) {
-      const existing = cuisineEligible.get(cuisine) ?? { posts: 0, agrees: 0, total: 0 };
-      existing.posts += 1;
-      existing.agrees += agrees;
-      existing.total += totalRatings;
-      cuisineEligible.set(cuisine, existing);
-    }
 
     const placePosts = ctx.restaurantPostCount.get(restaurantKey(review)) ?? 0;
     if (agrees >= 10 && placePosts < 20) maxHiddenGemAgrees = Math.max(maxHiddenGemAgrees, agrees);
 
     const rKey = restaurantKey(review);
     userRestaurantCount.set(rKey, (userRestaurantCount.get(rKey) ?? 0) + 1);
-
-    const photos = (review.photo_urls ?? []).filter(Boolean);
-    const photoCount = photos.length > 0 ? photos.length : (review.photo_url ? 1 : 0);
-    maxPhotoCount = Math.max(maxPhotoCount, photoCount);
-
-    maxItemCount = Math.max(maxItemCount, (review.items ?? []).length);
 
     const saves = ctx.saveCountByPost.get(review.id) ?? 0;
     totalSaves += saves;
@@ -397,42 +431,12 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
     });
   }
 
-  const earnedCuisines = [...cuisineCounts.entries()]
-    .filter(([, count]) => count >= 3)
-    .sort((a, b) => b[1] - a[1]);
-  if (earnedCuisines.length > 0) {
-    candidates.push({
-      badgeId: "cuisine_explorer",
-      badgeType: "permanent",
-      badgeName: "Cuisine Explorer",
-      badgeDescription: `Explored ${earnedCuisines.length} ${earnedCuisines.length === 1 ? "cuisine" : "cuisines"}.`,
-      badgeIcon: "chef-hat",
-      badgeCategory: "exploration",
-      metadata: { cuisines: earnedCuisines.map(([cuisine, count]) => ({ name: cuisine, count })) },
-    });
-  }
-
-  for (const [cuisine, data] of cuisineEligible) {
-    const agreeRatio = data.total === 0 ? 0 : data.agrees / data.total;
-    if (data.posts < 5 || agreeRatio < 0.7) continue;
-    const badgeName = cuisineExpertBadgeName(cuisine);
-    candidates.push({
-      badgeId: `cuisine_expert:${normalizeBadgeKey(cuisine)}`,
-      badgeType: "permanent",
-      badgeName,
-      badgeDescription: `Built a trusted track record for ${cuisine}.`,
-      badgeIcon: "award",
-      badgeCategory: "expertise",
-      metadata: { cuisine, eligiblePosts: data.posts, agreeRatio },
-    });
-  }
-
-  if (maxAgrees >= 10) {
+  if (maxSA >= 10) {
     candidates.push({
       badgeId: "crowd_approved",
       badgeType: "permanent",
       badgeName: "Crowd Approved",
-      badgeDescription: "One post reached ten agrees.",
+      badgeDescription: "One post received ten Strongly Agree reactions.",
       badgeIcon: "users",
       badgeCategory: "credibility",
     });
@@ -470,13 +474,6 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
     candidates.push({ badgeId: "hundred_reviews", badgeType: "permanent", badgeName: "Centurion", badgeDescription: "Posted one hundred reviews.", badgeIcon: "crown", badgeCategory: "milestone" });
   }
 
-  // ── Quality ──────────────────────────────────────────────────────────────
-  if (maxPhotoCount >= 3) {
-    candidates.push({ badgeId: "multi_photo", badgeType: "permanent", badgeName: "Show & Tell", badgeDescription: "Added three or more photos to a single review.", badgeIcon: "film", badgeCategory: "quality" });
-  }
-  if (maxItemCount >= 5) {
-    candidates.push({ badgeId: "detail_master", badgeType: "permanent", badgeName: "Deep Dive", badgeDescription: "Listed five or more food items in a single review.", badgeIcon: "clipboard-list", badgeCategory: "quality" });
-  }
   // ── Saves & influence ────────────────────────────────────────────────────
   if (totalSaves >= 25) {
     candidates.push({ badgeId: "save_magnet", badgeType: "permanent", badgeName: "Save Magnet", badgeDescription: "Collected 25 saves across all posts.", badgeIcon: "bookmark", badgeCategory: "influence" });
@@ -504,42 +501,25 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
 function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>): BadgeProgress[] {
   const progress: BadgeProgress[] = [];
   const areaCounts = new Map<string, number>();
-  const cuisineCounts = new Map<string, number>();
-  const cuisineEligible = new Map<string, number>();
   const userRestaurantCount = new Map<string, number>();
-  let maxAgrees = 0;
+  let maxSA = 0;
   let maxHiddenGemAgrees = 0;
-  let goodCallCount = 0;
-  let maxPhotoCount = 0;
-  let maxItemCount = 0;
   let totalSaves = 0;
   let maxSavesOnOnePost = 0;
 
   for (const review of ctx.reviews) {
     const counts = ctx.feedbackByPost.get(review.id) ?? EMPTY_COUNTS;
     const agrees = counts.SA + counts.A;
-    const totalRatings = counts.SA + counts.A + counts.N + counts.D + counts.SD;
-    maxAgrees = Math.max(maxAgrees, agrees);
-    goodCallCount = Math.max(goodCallCount, agrees);
+    maxSA = Math.max(maxSA, counts.SA);
 
     const area = review.area?.trim();
     if (area) areaCounts.set(area, (areaCounts.get(area) ?? 0) + 1);
-
-    const cuisine = cuisineForReview(review);
-    cuisineCounts.set(cuisine, (cuisineCounts.get(cuisine) ?? 0) + 1);
-    if (totalRatings >= 3) cuisineEligible.set(cuisine, (cuisineEligible.get(cuisine) ?? 0) + 1);
 
     const placePosts = ctx.restaurantPostCount.get(restaurantKey(review)) ?? 0;
     if (placePosts < 20) maxHiddenGemAgrees = Math.max(maxHiddenGemAgrees, agrees);
 
     const rKey = restaurantKey(review);
     userRestaurantCount.set(rKey, (userRestaurantCount.get(rKey) ?? 0) + 1);
-
-    const photos = (review.photo_urls ?? []).filter(Boolean);
-    const photoCount = photos.length > 0 ? photos.length : (review.photo_url ? 1 : 0);
-    maxPhotoCount = Math.max(maxPhotoCount, photoCount);
-
-    maxItemCount = Math.max(maxItemCount, (review.items ?? []).length);
 
     const saves = ctx.saveCountByPost.get(review.id) ?? 0;
     totalSaves += saves;
@@ -553,7 +533,7 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     addProgress(progress, { badgeId: "photo_first", badgeName: "Photo First", current: ctx.reviews.some(hasPhoto) ? 1 : 0, target: 1, label: `${ctx.reviews.some(hasPhoto) ? 1 : 0}/1 photo`, badgeIcon: "camera", badgeDescription: "Add a photo or video to any review." });
   }
   if (!earnedBadgeIds.has("good_call")) {
-    addProgress(progress, { badgeId: "good_call", badgeName: "Good Call", current: goodCallCount, target: 1, label: `${Math.min(goodCallCount, 1)}/1 agree`, badgeIcon: "badge-check", badgeDescription: "Get one Agree or Strongly Agree." });
+    addProgress(progress, { badgeId: "good_call", badgeName: "Good Call", current: maxSA, target: 1, label: `${Math.min(maxSA, 1)}/1`, badgeIcon: "badge-check", badgeDescription: "Get a Strongly Agree on any post." });
   }
   if (!earnedBadgeIds.has("food_explorer")) {
     addProgress(progress, { badgeId: "food_explorer", badgeName: "Food Explorer", current: ctx.reviews.length, target: 3, label: `${ctx.reviews.length}/3 reviews`, badgeIcon: "compass", badgeDescription: "Post three reviews." });
@@ -566,21 +546,8 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     }
   }
 
-  const topCuisine = [...cuisineCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (!hasEarnedExplorer(earnedBadgeIds, "cuisine_explorer") && topCuisine) {
-    addProgress(progress, { badgeId: "cuisine_explorer", badgeName: "Cuisine Explorer", current: topCuisine[1], target: 3, label: `${topCuisine[1]}/3 reviews`, badgeIcon: "chef-hat", badgeDescription: "Post three reviews of the same cuisine." });
-  }
-
-  const bestExpertCuisine = [...cuisineEligible.entries()].sort((a, b) => b[1] - a[1])[0] ?? topCuisine;
-  if (bestExpertCuisine) {
-    const id = `cuisine_expert:${normalizeBadgeKey(bestExpertCuisine[0])}`;
-    if (!earnedBadgeIds.has(id)) {
-      addProgress(progress, { badgeId: id, badgeName: cuisineExpertBadgeName(bestExpertCuisine[0]), current: bestExpertCuisine[1], target: 5, label: `${bestExpertCuisine[1]}/5 reviews`, badgeIcon: "award", badgeDescription: "Needs 5 rated posts in one cuisine with 70%+ agreement." });
-    }
-  }
-
   if (!earnedBadgeIds.has("crowd_approved")) {
-    addProgress(progress, { badgeId: "crowd_approved", badgeName: "Crowd Approved", current: maxAgrees, target: 10, label: `${maxAgrees}/10 agrees`, badgeIcon: "users", badgeDescription: "Get ten agrees on one post." });
+    addProgress(progress, { badgeId: "crowd_approved", badgeName: "Crowd Approved", current: maxSA, target: 10, label: `${maxSA}/10`, badgeIcon: "users", badgeDescription: "Get ten Strongly Agree reactions on one post." });
   }
   if (!earnedBadgeIds.has("hidden_gem_finder")) {
     addProgress(progress, { badgeId: "hidden_gem_finder", badgeName: "Hidden Gem Finder", current: maxHiddenGemAgrees, target: 10, label: `${maxHiddenGemAgrees}/10 agrees`, badgeIcon: "gem", badgeDescription: "Get ten agrees for a place with fewer than 20 posts." });
@@ -598,13 +565,6 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     addProgress(progress, { badgeId: "hundred_reviews", badgeName: "Centurion", current: ctx.reviews.length, target: 100, label: `${ctx.reviews.length}/100 reviews`, badgeIcon: "crown", badgeDescription: "Post one hundred reviews." });
   }
 
-  // ── Quality ──────────────────────────────────────────────────────────────
-  if (!earnedBadgeIds.has("multi_photo")) {
-    addProgress(progress, { badgeId: "multi_photo", badgeName: "Show & Tell", current: maxPhotoCount, target: 3, label: `${maxPhotoCount}/3 photos`, badgeIcon: "film", badgeDescription: "Add three or more photos to a single review." });
-  }
-  if (!earnedBadgeIds.has("detail_master")) {
-    addProgress(progress, { badgeId: "detail_master", badgeName: "Deep Dive", current: maxItemCount, target: 5, label: `${maxItemCount}/5 items`, badgeIcon: "clipboard-list", badgeDescription: "List five or more food items in a single review." });
-  }
   // ── Saves & influence ────────────────────────────────────────────────────
   if (!earnedBadgeIds.has("save_magnet")) {
     addProgress(progress, { badgeId: "save_magnet", badgeName: "Save Magnet", current: totalSaves, target: 25, label: `${totalSaves}/25 saves`, badgeIcon: "bookmark", badgeDescription: "Collect 25 saves across all posts." });
@@ -632,15 +592,72 @@ export async function recalculateUserReputation(db: SupabaseLike, userId: string
   const ctx = await loadReputationContext(db, userId);
   if (!ctx) return null;
 
-  const posts: ProfileScorePost[] = ctx.reviews.map((review) => {
+  // Sort reviews chronologically so we can mark first-time places/areas/cuisines
+  const sortedReviews = [...ctx.reviews].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+
+  const seenPlaces = new Set<string>();
+  const seenAreas = new Set<string>();
+  const seenCuisines = new Set<string>();
+
+  const now = new Date();
+  const fourWeeksAgo = new Date(now.getTime() - 28 * 86_400_000);
+  const recentActiveWeeks = new Set<string>();
+
+  // Total feedback received (SA+A+N+D+SD) across all posts — used for
+  // confidence calibration of the trust multiplier.
+  let totalFeedbackReceived = 0;
+  for (const counts of ctx.feedbackByPost.values()) {
+    totalFeedbackReceived += counts.SA + counts.A + counts.N + counts.D + counts.SD;
+  }
+
+  const posts: ProfileScorePost[] = sortedReviews.map((review) => {
     const counts = ctx.feedbackByPost.get(review.id) ?? EMPTY_COUNTS;
+    const rKey = restaurantKey(review);
+    const area = review.area?.trim() ?? "";
+    const cuisine = cuisineForReview(review);
+
+    const isNewPlaceForUser = !seenPlaces.has(rKey);
+    const isLowPostPlace = (ctx.restaurantPostCount.get(rKey) ?? 0) <= 10;
+    const isNewAreaForUser = area ? !seenAreas.has(area) : false;
+    const isNewCuisineForUser = !seenCuisines.has(cuisine);
+
+    seenPlaces.add(rKey);
+    if (area) seenAreas.add(area);
+    seenCuisines.add(cuisine);
+
+    const date = new Date(review.created_at);
+    if (!Number.isNaN(date.getTime()) && date >= fourWeeksAgo) {
+      recentActiveWeeks.add(weekPeriod(date));
+    }
+
     return {
       ...counts,
       saveCount: ctx.saveCountByPost.get(review.id) ?? 0,
+      likeCount: ctx.likeCountByPost.get(review.id) ?? 0,
       createdAt: review.created_at,
+      hasPhoto: hasPhoto(review),
+      tagCount: (review.tags ?? []).length,
+      itemCount: (review.items ?? []).length,
+      isNewPlaceForUser,
+      isLowPostPlace,
+      isNewAreaForUser,
+      isNewCuisineForUser,
     };
   });
-  const profileScore = calculateProfileScore(posts);
+
+  const reputationInput: ReputationInput = {
+    posts,
+    communityReactionCount: ctx.outgoingReactionCount,
+    uniqueDrivenVisitors: ctx.uniqueDrivenVisitors,
+    activeWeeksRecent: recentActiveWeeks.size,
+    trustScore: ctx.profile.trust_score ?? 20,
+    totalFeedbackReceived,
+    now,
+  };
+
+  const profileScore = calculateProfileScore(reputationInput);
   const tier = getUserTier(profileScore);
 
   const { error } = await db
@@ -803,28 +820,8 @@ export async function updateUserStreaks(db: SupabaseLike, userId: string, now = 
 }
 
 function temporaryBadgesFromStreaks(streaks: StreakHistory): TemporaryBadge[] {
-  const badges: TemporaryBadge[] = [];
-  if (streaks.currentWeeklyStreak > 0 && streaks.lastWeeklyActivePeriod === weekPeriod()) {
-    badges.push({
-      badgeId: "weekly_explorer",
-      badgeName: "Weekly Explorer",
-      badgeDescription: "Posted or logged a visit this week.",
-      badgeIcon: "flame",
-      badgeCategory: "temporary",
-      streakLabel: `${streaks.currentWeeklyStreak}-week streak`,
-    });
-  }
-  if (streaks.currentMonthlyStreak > 0 && streaks.lastMonthlyActivePeriod === monthPeriod()) {
-    badges.push({
-      badgeId: "monthly_explorer",
-      badgeName: "Monthly Explorer",
-      badgeDescription: "Posted or logged a visit this month.",
-      badgeIcon: "sparkles",
-      badgeCategory: "temporary",
-      streakLabel: `${streaks.currentMonthlyStreak}-month streak`,
-    });
-  }
-  return badges;
+  void streaks;
+  return [];
 }
 
 export async function getBadgeProgress(db: SupabaseLike, userId: string): Promise<BadgeProgress[]> {
@@ -889,14 +886,11 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
 
   let rawBadgeRows = (badgeData ?? []) as BadgeRow[];
 
-  // One-time migration: if the user has old per-area/per-cuisine explorer badges
-  // but not the new aggregate ones, generate the aggregate badges now.
+  // One-time migration: if the user has old per-area explorer badges
+  // but not the new aggregate one, generate the aggregate badge now.
   const hasLegacyAreaBadge = rawBadgeRows.some((b) => b.badge_id.startsWith("area_explorer:"));
-  const hasLegacyCuisineBadge = rawBadgeRows.some((b) => b.badge_id.startsWith("cuisine_explorer:"));
   const hasNewAreaExplorer = rawBadgeRows.some((b) => b.badge_id === "area_explorer");
-  const hasNewCuisineExplorer = rawBadgeRows.some((b) => b.badge_id === "cuisine_explorer");
-  const needsMigration = (hasLegacyAreaBadge && !hasNewAreaExplorer) || (hasLegacyCuisineBadge && !hasNewCuisineExplorer);
-  if (needsMigration) {
+  if (hasLegacyAreaBadge && !hasNewAreaExplorer) {
     await checkAndAwardBadges(db, profile.id);
     const { data: migratedData } = await db
       .from("user_badges")
@@ -908,10 +902,13 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
 
   const permanentBadges: PermanentBadge[] = rawBadgeRows
     .filter((badge) => {
-      // Hide legacy per-area / per-cuisine explorer badges (replaced by aggregate)
-      if (badge.badge_id.startsWith("area_explorer:") || badge.badge_id.startsWith("cuisine_explorer:")) return false;
-      // Hide cuisine hopper (removed badge)
+      // Hide legacy per-area explorer badges (replaced by aggregate)
+      if (badge.badge_id.startsWith("area_explorer:")) return false;
+      // Hide removed badges (cuisine_explorer, cuisine_expert variants, cuisine_hopper, old badges)
+      if (badge.badge_id.startsWith("cuisine_explorer")) return false;
+      if (badge.badge_id.startsWith("cuisine_expert")) return false;
       if (badge.badge_id === "cuisine_hopper") return false;
+      if (REMOVED_BADGE_IDS.has(badge.badge_id)) return false;
       return true;
     })
     .map((badge) => ({

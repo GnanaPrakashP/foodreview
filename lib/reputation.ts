@@ -22,6 +22,35 @@ export type PostFeedbackCounts = {
 
 export type ProfileScorePost = PostFeedbackCounts & {
   createdAt: string | Date;
+  hasPhoto?: boolean;
+  tagCount?: number;
+  itemCount?: number;
+  likeCount?: number;
+  isNewPlaceForUser?: boolean;
+  isLowPostPlace?: boolean;
+  isNewAreaForUser?: boolean;
+  isNewCuisineForUser?: boolean;
+};
+
+export type ReputationInput = {
+  posts: ProfileScorePost[];
+  /**
+   * Sum of weekly-capped outgoing reactions (given to other people's posts).
+   * Caller must apply the weekly cap (15/week) before passing this value.
+   */
+  communityReactionCount?: number;
+  uniqueDrivenVisitors?: number;
+  /** Number of distinct weeks with review activity in the last 4 weeks. */
+  activeWeeksRecent?: number;
+  /** 0–100 from profiles.trust_score. */
+  trustScore?: number;
+  /**
+   * Total feedback events received across all posts (SA+A+N+D+SD).
+   * Used to measure confidence in the trust score — a new user with few
+   * received reactions is not penalised as heavily as a proven unreliable one.
+   */
+  totalFeedbackReceived?: number;
+  now?: Date;
 };
 
 export type PermanentBadge = {
@@ -81,18 +110,34 @@ type TierBand = {
   nextTierName: string | null;
 };
 
+/**
+ * Tier bands calibrated for the multi-pillar scoring model.
+ *
+ * Expected progression:
+ *   New Taster       — brand new, first review
+ *   Rising Taster    — a few useful reviews (3–5)
+ *   Food Regular     — ~10 useful reviews
+ *   Known Regular    — ~15–20 quality reviews
+ *   Trusted Palate   — ~20–35 quality reviews + growing influence
+ *   Sharp Palate     — ~35–60 reviews + real engagement
+ *   Tastemaker       — ~60–100 reviews + saves/confirmations/driven visits
+ *   Local Tastemaker — ~100+ reviews + strong community footprint
+ *   Food Authority   — 150+ very high-quality reviews + driven visits + high trust
+ *   Top Food Authority — exceptional long-term contribution
+ *   Culinary Legend  — extremely rare
+ */
 const TIER_BANDS: TierBand[] = [
-  { tierName: "New Taster", tierLevel: null, minScore: 0, maxScore: 10, nextTierName: "Rising Taster" },
-  { tierName: "Rising Taster", tierLevel: null, minScore: 11, maxScore: 20, nextTierName: "Food Regular" },
-  { tierName: "Food Regular", tierLevel: null, minScore: 21, maxScore: 40, nextTierName: "Known Regular" },
-  { tierName: "Known Regular", tierLevel: null, minScore: 41, maxScore: 75, nextTierName: "Trusted Palate" },
-  { tierName: "Trusted Palate", tierLevel: null, minScore: 76, maxScore: 125, nextTierName: "Sharp Palate" },
-  { tierName: "Sharp Palate", tierLevel: null, minScore: 126, maxScore: 200, nextTierName: "Tastemaker" },
-  { tierName: "Tastemaker", tierLevel: null, minScore: 201, maxScore: 350, nextTierName: "Local Tastemaker" },
-  { tierName: "Local Tastemaker", tierLevel: null, minScore: 351, maxScore: 600, nextTierName: "Food Authority" },
-  { tierName: "Food Authority", tierLevel: null, minScore: 601, maxScore: 1000, nextTierName: "Top Food Authority" },
-  { tierName: "Top Food Authority", tierLevel: null, minScore: 1001, maxScore: 1500, nextTierName: "Culinary Legend" },
-  { tierName: "Culinary Legend", tierLevel: null, minScore: 1501, maxScore: null, nextTierName: null },
+  { tierName: "New Taster",        tierLevel: null, minScore: 0,    maxScore: 4,    nextTierName: "Rising Taster" },
+  { tierName: "Rising Taster",     tierLevel: null, minScore: 5,    maxScore: 12,   nextTierName: "Food Regular" },
+  { tierName: "Food Regular",      tierLevel: null, minScore: 13,   maxScore: 28,   nextTierName: "Known Regular" },
+  { tierName: "Known Regular",     tierLevel: null, minScore: 29,   maxScore: 55,   nextTierName: "Trusted Palate" },
+  { tierName: "Trusted Palate",    tierLevel: null, minScore: 56,   maxScore: 100,  nextTierName: "Sharp Palate" },
+  { tierName: "Sharp Palate",      tierLevel: null, minScore: 101,  maxScore: 175,  nextTierName: "Tastemaker" },
+  { tierName: "Tastemaker",        tierLevel: null, minScore: 176,  maxScore: 320,  nextTierName: "Local Tastemaker" },
+  { tierName: "Local Tastemaker",  tierLevel: null, minScore: 321,  maxScore: 580,  nextTierName: "Food Authority" },
+  { tierName: "Food Authority",    tierLevel: null, minScore: 581,  maxScore: 1000, nextTierName: "Top Food Authority" },
+  { tierName: "Top Food Authority",tierLevel: null, minScore: 1001, maxScore: 1700, nextTierName: "Culinary Legend" },
+  { tierName: "Culinary Legend",   tierLevel: null, minScore: 1701, maxScore: null, nextTierName: null },
 ];
 
 export const EMPTY_REPUTATION: UserProfileReputation = {
@@ -136,21 +181,83 @@ export function getUserTier(profileScore: number): UserTier {
   };
 }
 
-export function calculatePostScore(postStats: PostFeedbackCounts): number {
-  const SA = Math.max(0, postStats.SA ?? 0);
-  const A = Math.max(0, postStats.A ?? 0);
-  const N = Math.max(0, postStats.N ?? 0);
-  const D = Math.max(0, postStats.D ?? 0);
-  const SD = Math.max(0, postStats.SD ?? 0);
-  const saveCount = Math.max(0, postStats.saveCount ?? 0);
-  const ratingScore = SA * 2 + A - D * 0.25 - SD * 0.5;
-  const positiveRatings = SA + A;
-  const totalRatings = SA + A + N + D + SD;
-  const qualityMultiplier = totalRatings === 0 ? 1 : positiveRatings / totalRatings;
-  const reachMultiplier = Math.log(1 + totalRatings);
-  const saveBonus = Math.log(1 + saveCount) * 0.1;
+/**
+ * Confidence-aware trust multiplier.
+ *
+ * A brand-new user with no feedback history gets a mild neutral multiplier
+ * (0.9) regardless of their trust score — we cannot yet judge reliability.
+ * As feedback accumulates (confidence approaches 1 at ~30 received reactions),
+ * the multiplier moves toward the fully-earned value:
+ *   trust=0   → 0.55×  (proven unreliable)
+ *   trust=50  → 1.00×  (neutral / average)
+ *   trust=100 → 1.15×  (high quality, small boost)
+ */
+export function trustMultiplier(trustScore: number, totalFeedbackReceived = 0): number {
+  const confidence = clamp(totalFeedbackReceived / 30, 0, 1);
+  const t = clamp(trustScore, 0, 100);
 
-  return ratingScore * qualityMultiplier * reachMultiplier + saveBonus;
+  const fullConfidenceMultiplier =
+    t <= 50
+      ? 0.55 + (t / 50) * 0.45   // 0.55 → 1.00
+      : 1.0 + ((t - 50) / 50) * 0.15; // 1.00 → 1.15
+
+  const result = 0.9 + confidence * (fullConfidenceMultiplier - 0.9);
+  return clamp(result, 0.5, 1.15);
+}
+
+/**
+ * Diminishing factor applied only to the base creation credit (0.75).
+ * Quality signals (photo, items, tags, discovery, influence) are unaffected.
+ * This prevents pure bare-review spam from scaling linearly to high tiers.
+ */
+function creationDiminishingFactor(reviewIndex: number): number {
+  if (reviewIndex < 10) return 1.0;
+  if (reviewIndex < 30) return 0.8;
+  if (reviewIndex < 60) return 0.6;
+  return 0.4;
+}
+
+/**
+ * Score a single post across three pillars: Creation, Discovery, Influence.
+ * The review's chronological index is used for diminishing-return base credit.
+ */
+function scorePost(post: ProfileScorePost, reviewIndex: number): number {
+  // ── Creation pillar ──────────────────────────────────────────────────────
+  const hasPhoto = post.hasPhoto ?? false;
+  const tagCount = Math.max(0, post.tagCount ?? 0);
+  const itemCount = Math.max(0, post.itemCount ?? 0);
+
+  const creation =
+    0.75 * creationDiminishingFactor(reviewIndex) +
+    (hasPhoto ? 0.3 : 0) +
+    (itemCount >= 3 ? 0.3 : 0) +
+    (tagCount >= 3 ? 0.2 : tagCount >= 1 ? 0.1 : 0) +
+    (hasPhoto && itemCount >= 2 && tagCount >= 2 ? 0.1 : 0);
+
+  // ── Discovery pillar ─────────────────────────────────────────────────────
+  const rawDiscovery =
+    (post.isNewPlaceForUser ? 1.0 : 0) +
+    (post.isLowPostPlace ? 0.75 : 0) +
+    (post.isNewAreaForUser ? 0.5 : 0) +
+    (post.isNewCuisineForUser ? 0.5 : 0);
+  const discovery = Math.min(rawDiscovery, 2.5);
+
+  // ── Influence pillar ─────────────────────────────────────────────────────
+  const SA = Math.max(0, post.SA ?? 0);
+  const A = Math.max(0, post.A ?? 0);
+  const D = Math.max(0, post.D ?? 0);
+  const SD = Math.max(0, post.SD ?? 0);
+  const saveCount = Math.max(0, post.saveCount ?? 0);
+  const likeCount = Math.max(0, post.likeCount ?? 0);
+
+  const netConfirms = Math.max(0, SA + A - (D + SD) * 0.5);
+  const influence =
+    Math.min(likeCount * 0.08, 0.8) +
+    Math.min(saveCount * 0.4, 2.5) +
+    Math.min(netConfirms * 0.75, 4.0);
+
+  // Per-post soft cap: prevents a single viral post from dominating the score
+  return Math.min(creation + discovery + influence, 10.0);
 }
 
 export function getRecencyDecay(createdAt: string | Date, now: Date = new Date()): number {
@@ -163,12 +270,49 @@ export function getRecencyDecay(createdAt: string | Date, now: Date = new Date()
   return 0.4;
 }
 
-export function calculateProfileScore(posts: ProfileScorePost[], now: Date = new Date()): number {
-  const total = posts.reduce(
-    (sum, post) => sum + calculatePostScore(post) * getRecencyDecay(post.createdAt, now),
-    0
+/**
+ * Compute the overall profile score from a ReputationInput.
+ *
+ * Also accepts the legacy (posts[], now?) signature so existing callers
+ * continue to work without modification.
+ *
+ * Formula:
+ *   profile_score =
+ *     Σ(scorePost(p, i) × recencyDecay(p))   ← posts, with diminishing returns
+ *   + min(communityReactionCount × 0.04, 20)  ← weekly-capped community signal
+ *   + min(uniqueDrivenVisitors × 2, 20)        ← visit attribution (strong, capped)
+ *   + min(activeWeeksRecent × 0.5, 2)          ← recent consistency bonus
+ *   × trustMultiplier(trustScore, feedback)    ← confidence-aware quality gate
+ */
+export function calculateProfileScore(input: ReputationInput): number;
+export function calculateProfileScore(posts: ProfileScorePost[], now?: Date): number;
+export function calculateProfileScore(
+  inputOrPosts: ReputationInput | ProfileScorePost[],
+  legacyNow?: Date,
+): number {
+  const input: ReputationInput = Array.isArray(inputOrPosts)
+    ? { posts: inputOrPosts, now: legacyNow }
+    : inputOrPosts;
+
+  const now = input.now ?? new Date();
+
+  let postSum = 0;
+  input.posts.forEach((post, i) => {
+    postSum += scorePost(post, i) * getRecencyDecay(post.createdAt, now);
+  });
+
+  const communityPoints = Math.min((input.communityReactionCount ?? 0) * 0.04, 20);
+  const drivenVisitsPoints = Math.min((input.uniqueDrivenVisitors ?? 0) * 2, 20);
+  const consistencyBonus = Math.min((input.activeWeeksRecent ?? 0) * 0.5, 2);
+
+  const rawScore = postSum + communityPoints + drivenVisitsPoints + consistencyBonus;
+
+  const multiplier = trustMultiplier(
+    input.trustScore ?? 20,
+    input.totalFeedbackReceived ?? 0,
   );
-  return Math.max(0, Math.round(total * 10) / 10);
+
+  return Math.max(0, Math.round(rawScore * multiplier * 10) / 10);
 }
 
 export function normalizeBadgeKey(value: string) {

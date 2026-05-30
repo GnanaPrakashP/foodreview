@@ -35,7 +35,7 @@ export default function BadgeProgressPill({
         alignItems: "center",
         gap: 5,
         width: 88,
-        height: 116,
+        height: 120,
         flexShrink: 0,
         padding: "12px 8px 10px",
         borderRadius: 16,

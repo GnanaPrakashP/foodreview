@@ -9,11 +9,12 @@ import { normalizeVisibility } from "@/lib/visibility";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import ProfileDishesList from "@/components/profile/ProfileDishesList";
 import ProfileReputationSection from "@/components/reputation/ProfileReputationSection";
+import TrustScoreSheet from "@/components/taste-trust/TrustScoreSheet";
 import { ArrowLeft, ChefHat, Lock } from "lucide-react";
 import { freshCircleStatus, invalidateCircleStatusCache, type CircleStatusPayload } from "@/lib/browser-circle-status";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
-import { DEFAULT_TASTE_TRUST_SUMMARY, type TasteTrustSummary } from "@/lib/taste-trust";
+import { DEFAULT_TASTE_TRUST_SUMMARY, formatTrustScore, type TasteTrustSummary } from "@/lib/taste-trust";
 import { uniqueDishRestaurantPairs } from "@/lib/profile-dishes";
 import { EMPTY_REPUTATION, type UserProfileReputation } from "@/lib/reputation";
 
@@ -162,6 +163,7 @@ export default function FriendProfileClient({
   const [nextReviewsCursor, setNextReviewsCursor] = useState<ProfileCursor | null>(initialNextCursor);
   const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
   const [loadMoreReviewsError, setLoadMoreReviewsError] = useState("");
+  const [showTrustSheet, setShowTrustSheet] = useState(false);
   // If the server already supplied relationship data we can show the button immediately.
   const [mounted, setMounted] = useState(Boolean(initialMyName));
   const loadSeqRef = useRef(0);
@@ -453,10 +455,15 @@ export default function FriendProfileClient({
       {/* ── Stats Row ── */}
       <div style={{ padding: "0 20px 20px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px", alignItems: "start" }}>
-          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{Math.round(tasteTrust.trust_score)}</div>
+          <button
+            type="button"
+            onClick={() => setShowTrustSheet(true)}
+            aria-label="View trust score details"
+            style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", background: "none", border: "none", cursor: "pointer" }}
+          >
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{formatTrustScore(tasteTrust.trust_score)}</div>
             <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, lineHeight: 1.1 }}>Trust</div>
-          </div>
+          </button>
           {[
             { val: uniquePlaces, label: "Places" },
             { val: uniqueDishes, label: "Dishes" },
@@ -485,6 +492,13 @@ export default function FriendProfileClient({
       </div>
 
       <ProfileReputationSection reputation={reputation} />
+      {showTrustSheet && (
+        <TrustScoreSheet
+          summary={tasteTrust}
+          reviews={visibleReviews}
+          onClose={() => setShowTrustSheet(false)}
+        />
+      )}
 
       {/* ── Circle action button ── */}
       {!isOwnProfile && (

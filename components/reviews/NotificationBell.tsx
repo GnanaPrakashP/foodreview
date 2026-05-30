@@ -2,21 +2,42 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { cachedJson } from "@/lib/browser-api-cache";
+import { cachedJson, readCachedJson } from "@/lib/browser-api-cache";
 
 const UNREAD_COUNT_TTL_MS = 15_000;
+const API_URL = "/api/notifications/unread-count";
+
+function isDocumentReload() {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+    return navigation?.type === "reload";
+  } catch {
+    return false;
+  }
+}
 
 export default function NotificationBell({ initialUnreadCount = 0 }: { initialUnreadCount?: number }) {
-  const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
+  const [unreadCount, setUnreadCount] = useState(() => {
+    const cached = readCachedJson<{ unreadCount?: number }>(API_URL, { allowStale: true });
+    return typeof cached?.unreadCount === "number" ? cached.unreadCount : initialUnreadCount;
+  });
 
   useEffect(() => {
     let active = true;
 
-    async function loadUnreadCount() {
+    async function loadUnreadCount(options: { skipWhenCached?: boolean } = {}) {
       try {
+        const cached = !isDocumentReload()
+          ? readCachedJson<{ unreadCount?: number }>(API_URL, { allowStale: true })
+          : null;
+        if (options.skipWhenCached && cached) {
+          if (active && typeof cached.unreadCount === "number") setUnreadCount(cached.unreadCount);
+          return;
+        }
         const data = await cachedJson<{ unreadCount?: number }>(
-          "/api/notifications/unread-count",
-          UNREAD_COUNT_TTL_MS
+          API_URL,
+          UNREAD_COUNT_TTL_MS,
+          { bypassOnReload: true }
         );
         if (active && typeof data.unreadCount === "number") setUnreadCount(data.unreadCount);
       } catch {
@@ -24,7 +45,7 @@ export default function NotificationBell({ initialUnreadCount = 0 }: { initialUn
       }
     }
 
-    loadUnreadCount();
+    loadUnreadCount({ skipWhenCached: true });
     const interval = window.setInterval(loadUnreadCount, 45_000);
     return () => {
       active = false;

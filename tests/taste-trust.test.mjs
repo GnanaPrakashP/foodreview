@@ -34,22 +34,48 @@ const tasteTrust = loadCommonJs(
   transpile(readFileSync(new URL("../lib/taste-trust.ts", import.meta.url), "utf8"))
 );
 
-test("new user default Taste Trust is neutral New Reviewer", () => {
+test("new user default Taste Trust starts as unproven New Reviewer", () => {
   assert.deepEqual(tasteTrust.calculateTasteTrustFromFeedback([]), tasteTrust.DEFAULT_TASTE_TRUST_SUMMARY);
 });
 
 test("positive feedback increases hidden trust score but stays New Reviewer under 5 confirmations", () => {
   const summary = tasteTrust.calculateTasteTrustFromFeedback([{ feedback_value: 1.0 }]);
-  assert.equal(summary.trust_score, 100);
+  assert.equal(summary.trust_score, 25);
   assert.equal(summary.trust_level, "New Reviewer");
   assert.equal(summary.positive_confirmations_count, 1);
   assert.equal(summary.agreement_percentage, 100);
 });
 
-test("negative feedback decreases hidden trust score", () => {
+test("negative feedback gently decreases hidden trust score early", () => {
   const summary = tasteTrust.calculateTasteTrustFromFeedback([{ feedback_value: -1.0 }]);
-  assert.equal(summary.trust_score, 0);
+  assert.equal(summary.trust_score, 18.8);
   assert.equal(summary.negative_confirmations_count, 1);
+});
+
+test("Taste Trust uses confirmation freshness for score weight", () => {
+  const now = new Date("2026-05-30T00:00:00.000Z");
+  const recent = tasteTrust.calculateTasteTrustFromFeedback([
+    { feedback_value: 1.0, updated_at: "2026-05-01T00:00:00.000Z" },
+  ], now);
+  const old = tasteTrust.calculateTasteTrustFromFeedback([
+    { feedback_value: 1.0, updated_at: "2025-01-01T00:00:00.000Z" },
+  ], now);
+  assert.equal(recent.trust_score, 25);
+  assert.equal(old.trust_score, 22.1);
+  assert.ok(old.trust_score < recent.trust_score);
+});
+
+test("old negative confirmations fade instead of punishing forever", () => {
+  const now = new Date("2026-05-30T00:00:00.000Z");
+  const recentNegative = tasteTrust.calculateTasteTrustFromFeedback([
+    { feedback_value: -1.0, updated_at: "2026-05-01T00:00:00.000Z" },
+  ], now);
+  const oldNegative = tasteTrust.calculateTasteTrustFromFeedback([
+    { feedback_value: -1.0, updated_at: "2025-01-01T00:00:00.000Z" },
+  ], now);
+  assert.equal(recentNegative.trust_score, 18.8);
+  assert.equal(oldNegative.trust_score, 19.5);
+  assert.ok(oldNegative.trust_score > recentNegative.trust_score);
 });
 
 test("updated feedback is represented once in recalculated totals", () => {
@@ -63,9 +89,11 @@ test("updated feedback is represented once in recalculated totals", () => {
 test("Taste Trust levels change correctly after 5 or more confirmations", () => {
   assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: -1 })).trust_level, "Low Trust");
   assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 0 })).trust_level, "Mixed Trust");
-  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 0.3 })).trust_level, "Growing Trust");
-  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 0.7 })).trust_level, "Trusted");
-  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 1 })).trust_level, "Highly Trusted");
+  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 0.3 })).trust_level, "Mixed Trust");
+  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 0.7 })).trust_level, "Growing Trust");
+  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(5).fill({ feedback_value: 1 })).trust_level, "Growing Trust");
+  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(20).fill({ feedback_value: 1 })).trust_level, "Trusted");
+  assert.equal(tasteTrust.calculateTasteTrustFromFeedback(Array(50).fill({ feedback_value: 1 })).trust_level, "Highly Trusted");
 });
 
 function spyDb(...responses) {
@@ -161,7 +189,7 @@ test("POST /taste-trust/feedback rejects own post feedback", async () => {
     error: null,
   });
   const { POST } = loadFeedbackRoute({ db, recalcCalls: [] });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Totally worth it" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Strongly agree" }));
   assert.equal(res.status, 403);
   assert.match(res.body.error, /own post/i);
 });
@@ -182,7 +210,7 @@ test("POST /taste-trust/feedback rejects private posts", async () => {
     error: null,
   });
   const { POST } = loadFeedbackRoute({ db, recalcCalls: [] });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Mostly yes" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Agree" }));
   assert.equal(res.status, 403);
   assert.match(res.body.error, /private posts/i);
 });
@@ -226,7 +254,7 @@ test("POST /taste-trust/feedback updates existing feedback and tried history ins
     }
   );
   const { POST } = loadFeedbackRoute({ db, recalcCalls });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Not really" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Disagree" }));
   assert.equal(res.status, 200);
   assert.ok(updateCall(db), "expected existing feedback to be updated");
   assert.equal(insertCall(db), undefined);

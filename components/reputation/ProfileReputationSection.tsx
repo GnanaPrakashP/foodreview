@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Flame, Plus, Sparkles, X } from "lucide-react";
-import BadgePill, { AchievementBadgeArtwork, achievementBadgeSrc, iconForBadge } from "@/components/reputation/BadgePill";
+import { Plus, X } from "lucide-react";
+import BadgePill, { AchievementBadgeArtwork, iconForBadge } from "@/components/reputation/BadgePill";
 import BadgeProgressPill from "@/components/reputation/BadgeProgressPill";
 import type {
   BadgeProgress,
   PermanentBadge,
-  TemporaryBadge,
   UserProfileReputation,
   UserTier,
 } from "@/lib/reputation";
@@ -16,9 +15,7 @@ import type {
 type Detail =
   | { kind: "tier" }
   | { kind: "permanent"; item: PermanentBadge }
-  | { kind: "temporary"; item: TemporaryBadge }
-  | { kind: "progress"; item: BadgeProgress }
-  | { kind: "locked-streak"; badgeId: string; label: string; hint: string };
+  | { kind: "progress"; item: BadgeProgress };
 
 type LockedAchievement = {
   badgeId: string;
@@ -59,18 +56,6 @@ const LOCKED_ACHIEVEMENT_CATALOG: LockedAchievement[] = [
     badgeIcon: "map-pin",
   },
   {
-    badgeId: "cuisine_explorer",
-    badgeName: "Cuisine Explorer",
-    badgeDescription: "Post three reviews in one cuisine.",
-    badgeIcon: "chef-hat",
-  },
-  {
-    badgeId: "cuisine_expert",
-    badgeName: "Cuisine Expert",
-    badgeDescription: "Build a trusted track record in one cuisine.",
-    badgeIcon: "award",
-  },
-  {
     badgeId: "crowd_approved",
     badgeName: "Crowd Approved",
     badgeDescription: "Get ten agrees on one post.",
@@ -106,19 +91,6 @@ const LOCKED_ACHIEVEMENT_CATALOG: LockedAchievement[] = [
     badgeName: "Centurion",
     badgeDescription: "Post one hundred reviews.",
     badgeIcon: "crown",
-  },
-  // Quality
-  {
-    badgeId: "multi_photo",
-    badgeName: "Show & Tell",
-    badgeDescription: "Add three or more photos to a single review.",
-    badgeIcon: "film",
-  },
-  {
-    badgeId: "detail_master",
-    badgeName: "Deep Dive",
-    badgeDescription: "List five or more food items in a single review.",
-    badgeIcon: "clipboard-list",
   },
   // Saves & influence
   {
@@ -167,21 +139,6 @@ function earnedDate(value: string) {
   }).format(date);
 }
 
-function HScrollRow({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 8,
-        overflowX: "auto",
-        paddingBottom: 2,
-        scrollbarWidth: "none",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
 
 function badgeBaseId(badgeId: string) {
   return badgeId.split(":")[0];
@@ -189,50 +146,37 @@ function badgeBaseId(badgeId: string) {
 
 function motivationalText(tier: UserTier): string {
   if (tier.isMaxTier) return "You've reached the top. Culinary Legend!";
-  if (tier.progressPercent >= 75) return "Almost at the next tier — keep it going!";
-  if (tier.progressPercent >= 40) return "Solid progress — keep exploring and reviewing!";
-  return "Keep sharing great food and level up!";
-}
-
-function formatWeeklyPeriod(period: string) {
-  const match = period.match(/^(\d{4})-W(\d{2})$/);
-  if (!match) return period;
-  return `Week ${Number(match[2])}, ${match[1]}`;
-}
-
-function formatMonthlyPeriod(period: string) {
-  const match = period.match(/^(\d{4})-(\d{2})$/);
-  if (!match) return period;
-  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
-  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+  if (tier.progressPercent >= 75) return "Almost there — post useful reviews, get saves, and stay active!";
+  if (tier.progressPercent >= 40) return "Keep it up — try new cuisines and places for a boost!";
+  return "Post useful reviews, get saves, and confirm others to level up.";
 }
 
 const TIER_BADGE_SRC_BY_MIN_SCORE: Record<number, string> = {
-  0: "/badges/tiers-transparent-ui/tier-01-new-taster.png",
-  11: "/badges/tiers-transparent-ui/tier-02-rising-taster.png",
-  21: "/badges/tiers-transparent-ui/tier-03-food-regular.png",
-  41: "/badges/tiers-transparent-ui/tier-04-known-regular.png",
-  76: "/badges/tiers-transparent-ui/tier-05-trusted-palate.png",
-  126: "/badges/tiers-transparent-ui/tier-06-sharp-palate.png",
-  201: "/badges/tiers-transparent-ui/tier-07-tastemaker.png",
-  351: "/badges/tiers-transparent-ui/tier-08-local-tastemaker.png",
-  601: "/badges/tiers-transparent-ui/tier-09-food-authority.png",
+  0:    "/badges/tiers-transparent-ui/tier-01-new-taster.png",
+  5:    "/badges/tiers-transparent-ui/tier-02-rising-taster.png",
+  13:   "/badges/tiers-transparent-ui/tier-03-food-regular.png",
+  29:   "/badges/tiers-transparent-ui/tier-04-known-regular.png",
+  56:   "/badges/tiers-transparent-ui/tier-05-trusted-palate.png",
+  101:  "/badges/tiers-transparent-ui/tier-06-sharp-palate.png",
+  176:  "/badges/tiers-transparent-ui/tier-07-tastemaker.png",
+  321:  "/badges/tiers-transparent-ui/tier-08-local-tastemaker.png",
+  581:  "/badges/tiers-transparent-ui/tier-09-food-authority.png",
   1001: "/badges/tiers-transparent-ui/tier-10-top-food-authority.png",
-  1501: "/badges/tiers-transparent-ui/tier-11-culinary-legend.png",
+  1701: "/badges/tiers-transparent-ui/tier-11-culinary-legend.png",
 };
 
 const TIER_ROADMAP = [
-  { name: "New Taster", minScore: 0, maxScore: 10 },
-  { name: "Rising Taster", minScore: 11, maxScore: 20 },
-  { name: "Food Regular", minScore: 21, maxScore: 40 },
-  { name: "Known Regular", minScore: 41, maxScore: 75 },
-  { name: "Trusted Palate", minScore: 76, maxScore: 125 },
-  { name: "Sharp Palate", minScore: 126, maxScore: 200 },
-  { name: "Tastemaker", minScore: 201, maxScore: 350 },
-  { name: "Local Tastemaker", minScore: 351, maxScore: 600 },
-  { name: "Food Authority", minScore: 601, maxScore: 1000 },
-  { name: "Top Food Authority", minScore: 1001, maxScore: 1500 },
-  { name: "Culinary Legend", minScore: 1501, maxScore: null },
+  { name: "New Taster",        minScore: 0,    maxScore: 4 },
+  { name: "Rising Taster",     minScore: 5,    maxScore: 12 },
+  { name: "Food Regular",      minScore: 13,   maxScore: 28 },
+  { name: "Known Regular",     minScore: 29,   maxScore: 55 },
+  { name: "Trusted Palate",    minScore: 56,   maxScore: 100 },
+  { name: "Sharp Palate",      minScore: 101,  maxScore: 175 },
+  { name: "Tastemaker",        minScore: 176,  maxScore: 320 },
+  { name: "Local Tastemaker",  minScore: 321,  maxScore: 580 },
+  { name: "Food Authority",    minScore: 581,  maxScore: 1000 },
+  { name: "Top Food Authority",minScore: 1001, maxScore: 1700 },
+  { name: "Culinary Legend",   minScore: 1701, maxScore: null },
 ];
 
 function tierBadgeSrc(tier: UserTier) {
@@ -307,9 +251,11 @@ function TierRoadmapArtwork({
 function TierAchievementPill({
   tier,
   onClick,
+  stretch = false,
 }: {
   tier: UserTier;
   onClick: () => void;
+  stretch?: boolean;
 }) {
   return (
     <button
@@ -320,9 +266,8 @@ function TierAchievementPill({
         flexDirection: "column",
         alignItems: "center",
         gap: 6,
-        width: 88,
-        height: 116,
-        flexShrink: 0,
+        ...(stretch ? { flex: 1, minWidth: 0 } : { width: 88, flexShrink: 0 }),
+        height: 120,
         padding: "12px 8px 10px",
         borderRadius: 16,
         border: "1.5px solid rgba(240,96,48,0.36)",
@@ -353,88 +298,6 @@ function TierAchievementPill({
   );
 }
 
-function StreakAchievementPill({
-  badge,
-  label,
-  hint,
-  onClick,
-}: {
-  badge?: TemporaryBadge;
-  label: string;
-  hint: string;
-  onClick?: () => void;
-}) {
-  const active = Boolean(badge);
-  const icon = badge?.badgeIcon;
-  const Icon = icon === "sparkles" ? Sparkles : icon === "flame" ? Flame : Plus;
-  const artworkBadgeId = badge?.badgeId ?? (label.toLowerCase().includes("monthly") ? "monthly_explorer" : label.toLowerCase().includes("weekly") ? "weekly_explorer" : undefined);
-  const hasArtwork = Boolean(achievementBadgeSrc(artworkBadgeId));
-  const accent = icon === "sparkles" ? "#FACC15" : active ? "#F97316" : "rgba(255,255,255,0.28)";
-  const border = active
-    ? icon === "sparkles" ? "rgba(250,204,21,0.32)" : "rgba(249,115,22,0.36)"
-    : "rgba(255,255,255,0.14)";
-  const background = active
-    ? icon === "sparkles" ? "rgba(250,204,21,0.10)" : "rgba(249,115,22,0.10)"
-    : "rgba(255,255,255,0.03)";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={badge ? `${badge.badgeName}, ${badge.streakLabel}` : `${label}, ${hint}`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 6,
-        width: 88,
-        height: 116,
-        flexShrink: 0,
-        padding: "12px 8px 10px",
-        borderRadius: 16,
-        border: `1.5px ${active ? "solid" : "dashed"} ${border}`,
-        background,
-        cursor: "pointer",
-        textAlign: "center",
-      }}
-    >
-      {hasArtwork ? (
-        <AchievementBadgeArtwork badgeId={artworkBadgeId} icon={icon} size={62} />
-      ) : (
-        <div
-          style={{
-            width: 62,
-            height: 62,
-            borderRadius: 16,
-            background: active ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          <Icon size={26} strokeWidth={2.2} color={accent} />
-        </div>
-      )}
-      <span
-        style={{
-          color: active ? "var(--cream)" : "rgba(255,255,255,0.42)",
-          fontFamily: "'DM Sans', sans-serif",
-          fontSize: 11,
-          fontWeight: 800,
-          lineHeight: 1.2,
-          display: "-webkit-box",
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
-      >
-        {badge?.badgeName ?? label}
-      </span>
-    </button>
-  );
-}
-
 function LockedAchievementPill({ item }: { item: LockedAchievement }) {
   return (
     <div
@@ -446,7 +309,7 @@ function LockedAchievementPill({ item }: { item: LockedAchievement }) {
         alignItems: "center",
         gap: 6,
         width: 88,
-        height: 116,
+        height: 120,
         padding: "12px 8px 10px",
         borderRadius: 16,
         border: "1px dashed rgba(255,255,255,0.14)",
@@ -509,7 +372,6 @@ function TierDetailSheet({
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
-        padding: "0 16px 24px",
       }}
     >
       <div
@@ -519,11 +381,13 @@ function TierDetailSheet({
         style={{
           width: "100%",
           maxWidth: 512,
-          borderRadius: 20,
+          maxHeight: "88dvh",
+          overflowY: "auto",
+          borderRadius: "20px 20px 0 0",
           border: "1px solid var(--border)",
+          borderBottom: "none",
           background: "var(--card)",
-          padding: "20px 18px 18px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          padding: "20px 18px 32px",
           display: "flex",
           flexDirection: "column",
           gap: 12,
@@ -721,22 +585,18 @@ function BadgeDetailSheet({
   detail,
   onClose,
 }: {
-  detail: Extract<Detail, { kind: "permanent" | "temporary" }>;
+  detail: Extract<Detail, { kind: "permanent" }>;
   onClose: () => void;
 }) {
   const name = detail.item.badgeName;
-  const description =
-    "badgeDescription" in detail.item ? detail.item.badgeDescription : "";
-  const footer =
-    detail.kind === "permanent"
-      ? `Earned ${earnedDate(detail.item.earnedAt)}`
-      : detail.item.streakLabel;
+  const description = detail.item.badgeDescription;
+  const footer = `Earned ${earnedDate(detail.item.earnedAt)}`;
   const Icon = iconForBadge(
-    "badgeIcon" in detail.item ? detail.item.badgeIcon : undefined
+    detail.item.badgeIcon
   );
 
   // Explorer breakdown (area_explorer or cuisine_explorer)
-  const meta = detail.kind === "permanent" ? (detail.item.metadata ?? {}) : {};
+  const meta = detail.item.metadata ?? {};
   const areas = meta.areas as Array<{ name: string; count: number }> | undefined;
   const cuisines = meta.cuisines as Array<{ name: string; count: number }> | undefined;
   const breakdownItems = areas ?? cuisines;
@@ -754,7 +614,6 @@ function BadgeDetailSheet({
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
-        padding: "0 16px 24px",
       }}
     >
       <div
@@ -764,11 +623,13 @@ function BadgeDetailSheet({
         style={{
           width: "100%",
           maxWidth: 512,
-          borderRadius: 20,
+          maxHeight: "88dvh",
+          overflowY: "auto",
+          borderRadius: "20px 20px 0 0",
           border: "1px solid var(--border)",
+          borderBottom: "none",
           background: "var(--card)",
-          padding: "20px 18px 18px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          padding: "20px 18px 32px",
           display: "flex",
           flexDirection: "column",
           gap: 10,
@@ -920,7 +781,6 @@ function ProgressDetailSheet({
   item: BadgeProgress;
   onClose: () => void;
 }) {
-  const Icon = iconForBadge(item.badgeIcon);
   const color =
     item.progressPercent >= 66
       ? "#22C55E"
@@ -940,7 +800,6 @@ function ProgressDetailSheet({
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
-        padding: "0 16px 24px",
       }}
     >
       <div
@@ -950,11 +809,13 @@ function ProgressDetailSheet({
         style={{
           width: "100%",
           maxWidth: 512,
-          borderRadius: 20,
+          maxHeight: "88dvh",
+          overflowY: "auto",
+          borderRadius: "20px 20px 0 0",
           border: "1px solid var(--border)",
+          borderBottom: "none",
           background: "var(--card)",
-          padding: "20px 18px 18px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+          padding: "20px 18px 32px",
           display: "flex",
           flexDirection: "column",
           gap: 14,
@@ -1063,269 +924,22 @@ function ProgressDetailSheet({
   );
 }
 
-function LockedStreakSheet({
-  badgeId,
-  label,
-  hint,
-  streaks,
-  onClose,
-}: {
-  badgeId: string;
-  label: string;
-  hint: string;
-  streaks: UserProfileReputation["streaks"];
-  onClose: () => void;
-}) {
-  const isMonthly = badgeId === "monthly_explorer";
-  const current = isMonthly ? streaks.currentMonthlyStreak : streaks.currentWeeklyStreak;
-  const best = isMonthly ? streaks.bestMonthlyStreak : streaks.bestWeeklyStreak;
-
-  return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 70,
-        background: "rgba(0,0,0,0.52)",
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "center",
-        padding: "0 16px 24px",
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "100%",
-          maxWidth: 512,
-          borderRadius: 20,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          padding: "20px 18px 18px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-        }}
-      >
-        {/* Artwork + name + hint */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ opacity: 0.4, filter: "grayscale(0.6)" }}>
-            <AchievementBadgeArtwork badgeId={badgeId} size={64} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--cream)",
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 16,
-                fontWeight: 800,
-                lineHeight: 1.2,
-              }}
-            >
-              {label}
-            </p>
-            <p
-              style={{
-                margin: "6px 0 0",
-                color: "var(--muted)",
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 13,
-                lineHeight: 1.5,
-              }}
-            >
-              {hint} to earn this badge.
-            </p>
-          </div>
-        </div>
-
-        {/* Current + best streak */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
-            <p style={{ margin: 0, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{current}</p>
-            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Current streak</p>
-          </div>
-          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
-            <p style={{ margin: 0, color: "#FACC15", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{best}</p>
-            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Best streak</p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            width: "100%",
-            height: 42,
-            borderRadius: 13,
-            border: "1px solid rgba(240,96,48,0.30)",
-            background: "rgba(240,96,48,0.10)",
-            color: "var(--orange)",
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: 13,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
-        >
-          Got it
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StreakDetailSheet({
-  badge,
-  streaks,
-  onClose,
-}: {
-  badge: TemporaryBadge;
-  streaks: UserProfileReputation["streaks"];
-  onClose: () => void;
-}) {
-  const isMonthly = badge.badgeId === "monthly_explorer";
-  const current = isMonthly ? streaks.currentMonthlyStreak : streaks.currentWeeklyStreak;
-  const best = isMonthly ? streaks.bestMonthlyStreak : streaks.bestWeeklyStreak;
-  const periods = isMonthly ? streaks.monthlyEarnedPeriods : streaks.weeklyEarnedPeriods;
-  const periodLabel = isMonthly ? "months" : "weeks";
-  const formatPeriod = isMonthly ? formatMonthlyPeriod : formatWeeklyPeriod;
-
-  return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 70,
-        background: "rgba(0,0,0,0.52)",
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "center",
-        padding: "0 16px 24px",
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "100%",
-          maxWidth: 512,
-          borderRadius: 20,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          padding: "20px 18px 18px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <AchievementBadgeArtwork badgeId={badge.badgeId} icon={badge.badgeIcon} size={64} />
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, color: "var(--cream)", fontFamily: "'DM Sans', sans-serif", fontSize: 17, fontWeight: 800 }}>
-              {badge.badgeName}
-            </p>
-            <p style={{ margin: "3px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700 }}>
-              {badge.badgeDescription}
-            </p>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
-            <p style={{ margin: 0, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{current}</p>
-            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Current streak</p>
-          </div>
-          <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, background: "rgba(255,255,255,0.04)", padding: "12px" }}>
-            <p style={{ margin: 0, color: "#FACC15", fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 800 }}>{best}</p>
-            <p style={{ margin: "4px 0 0", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800 }}>Best streak</p>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <p style={{ margin: 0, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase" }}>
-            Earned {periodLabel}
-          </p>
-          <div style={{ maxHeight: "34vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, scrollbarWidth: "none" }}>
-            {periods.length > 0 ? periods.map((period) => (
-              <div
-                key={period}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 12,
-                  background: "rgba(255,255,255,0.035)",
-                  padding: "10px 12px",
-                  color: "var(--cream)",
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 13,
-                  fontWeight: 800,
-                }}
-              >
-                {formatPeriod(period)}
-              </div>
-            )) : (
-              <p style={{ margin: 0, color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-                No earned {periodLabel} yet.
-              </p>
-            )}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            width: "100%",
-            height: 42,
-            borderRadius: 13,
-            border: "1px solid rgba(240,96,48,0.30)",
-            background: "rgba(240,96,48,0.10)",
-            color: "var(--orange)",
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: 13,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
-        >
-          Got it
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /* ─── "View All" full achievements sheet ─────────────────────────────────── */
 
 function AllAchievementsSheet({
   tier,
-  weeklyBadge,
-  monthlyBadge,
   badges,
   progress,
   onClose,
   onTierClick,
-  onTemporaryClick,
-  onLockedStreakClick,
   onBadgeClick,
   onProgressClick,
 }: {
   tier: UserTier;
-  weeklyBadge?: TemporaryBadge;
-  monthlyBadge?: TemporaryBadge;
   badges: PermanentBadge[];
   progress: BadgeProgress[];
   onClose: () => void;
   onTierClick: () => void;
-  onTemporaryClick: (badge: TemporaryBadge) => void;
-  onLockedStreakClick: (badgeId: string, label: string, hint: string) => void;
   onBadgeClick: (badge: PermanentBadge) => void;
   onProgressClick: (item: BadgeProgress) => void;
 }) {
@@ -1422,7 +1036,7 @@ function AllAchievementsSheet({
             scrollbarWidth: "none",
           }}
         >
-          {/* Tier status */}
+          {/* Reputation Tier */}
           <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <p
               style={{
@@ -1435,26 +1049,10 @@ function AllAchievementsSheet({
                 textTransform: "uppercase",
               }}
             >
-              Status
+              Reputation Tier
             </p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <TierAchievementPill tier={tier} onClick={onTierClick} />
-              <StreakAchievementPill
-                badge={monthlyBadge}
-                label="Monthly Explorer"
-                hint="Post this month"
-                onClick={monthlyBadge
-                  ? () => onTemporaryClick(monthlyBadge)
-                  : () => onLockedStreakClick("monthly_explorer", "Monthly Explorer", "Post this month")}
-              />
-              <StreakAchievementPill
-                badge={weeklyBadge}
-                label="Weekly Explorer"
-                hint="Post this week"
-                onClick={weeklyBadge
-                  ? () => onTemporaryClick(weeklyBadge)
-                  : () => onLockedStreakClick("weekly_explorer", "Weekly Explorer", "Post this week")}
-              />
             </div>
           </section>
 
@@ -1565,19 +1163,12 @@ export default function ProfileReputationSection({
   const [detail, setDetail] = useState<Detail | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  const weeklyBadge = reputation.temporaryBadges.find(
-    (b) => b.badgeId === "weekly_explorer"
-  );
-  const monthlyBadge = reputation.temporaryBadges.find(
-    (b) => b.badgeId === "monthly_explorer"
-  );
-
-  const previewBadges = reputation.permanentBadges.slice(0, 3);
-  const hiddenCount = Math.max(0, reputation.permanentBadges.length - previewBadges.length);
+  // Most-recently-earned badges first (badges arrive oldest-first from the server)
+  const recentBadges = [...reputation.permanentBadges].reverse().slice(0, 2);
+  const remainingCount = Math.max(0, reputation.permanentBadges.length - 2);
   const hasContent =
     reputation.permanentBadges.length > 0 ||
-    reputation.badgeProgress.length > 0 ||
-    reputation.temporaryBadges.length > 0;
+    reputation.badgeProgress.length > 0;
 
   return (
     <div
@@ -1630,28 +1221,14 @@ export default function ProfileReputationSection({
         )}
       </div>
 
-      <HScrollRow>
+      {/* Fixed row — no horizontal scroll */}
+      <div style={{ display: "flex", gap: 8 }}>
         <TierAchievementPill
           tier={reputation.tier}
           onClick={() => setDetail({ kind: "tier" })}
+          stretch
         />
-        <StreakAchievementPill
-          badge={monthlyBadge}
-          label="Monthly Explorer"
-          hint="Post this month"
-          onClick={monthlyBadge
-            ? () => setDetail({ kind: "temporary", item: monthlyBadge })
-            : () => setDetail({ kind: "locked-streak", badgeId: "monthly_explorer", label: "Monthly Explorer", hint: "Post this month" })}
-        />
-        <StreakAchievementPill
-          badge={weeklyBadge}
-          label="Weekly Explorer"
-          hint="Post this week"
-          onClick={weeklyBadge
-            ? () => setDetail({ kind: "temporary", item: weeklyBadge })
-            : () => setDetail({ kind: "locked-streak", badgeId: "weekly_explorer", label: "Weekly Explorer", hint: "Post this week" })}
-        />
-        {previewBadges.map((badge) => (
+        {recentBadges.map((badge) => (
           <BadgePill
             key={badge.badgeId}
             badgeId={badge.badgeId}
@@ -1660,21 +1237,22 @@ export default function ProfileReputationSection({
             description={badge.badgeDescription}
             earnedAt={badge.earnedAt}
             onClick={() => setDetail({ kind: "permanent", item: badge })}
+            stretch
           />
         ))}
-        {hiddenCount > 0 && (
+        {remainingCount > 0 && (
           <button
             type="button"
             onClick={() => setShowAll(true)}
             style={{
+              flex: 1,
+              minWidth: 0,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               gap: 4,
-              width: 88,
-              height: 116,
-              flexShrink: 0,
+              height: 120,
               borderRadius: 16,
               border: "1px dashed rgba(255,255,255,0.14)",
               background: "none",
@@ -1687,31 +1265,21 @@ export default function ProfileReputationSection({
             }}
           >
             <Plus size={14} color="rgba(255,255,255,0.32)" />
-            <span>+{hiddenCount} more</span>
+            <span>+{remainingCount} more</span>
           </button>
         )}
-      </HScrollRow>
+      </div>
 
       {/* View All sheet */}
       {showAll && (
         <AllAchievementsSheet
           tier={reputation.tier}
-          monthlyBadge={monthlyBadge}
-          weeklyBadge={weeklyBadge}
           badges={reputation.permanentBadges}
           progress={reputation.badgeProgress}
           onClose={() => setShowAll(false)}
           onTierClick={() => {
             setShowAll(false);
             setDetail({ kind: "tier" });
-          }}
-          onTemporaryClick={(badge) => {
-            setShowAll(false);
-            setDetail({ kind: "temporary", item: badge });
-          }}
-          onLockedStreakClick={(badgeId, label, hint) => {
-            setShowAll(false);
-            setDetail({ kind: "locked-streak", badgeId, label, hint });
           }}
           onBadgeClick={(badge) => {
             setShowAll(false);
@@ -1728,22 +1296,6 @@ export default function ProfileReputationSection({
       {detail?.kind === "tier" && (
         <TierDetailSheet
           tier={reputation.tier}
-          onClose={() => setDetail(null)}
-        />
-      )}
-      {detail?.kind === "temporary" && (
-        <StreakDetailSheet
-          badge={detail.item}
-          streaks={reputation.streaks}
-          onClose={() => setDetail(null)}
-        />
-      )}
-      {detail?.kind === "locked-streak" && (
-        <LockedStreakSheet
-          badgeId={detail.badgeId}
-          label={detail.label}
-          hint={detail.hint}
-          streaks={reputation.streaks}
           onClose={() => setDetail(null)}
         />
       )}

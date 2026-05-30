@@ -68,6 +68,7 @@ export async function GET(req: NextRequest) {
   // Explore top picks and public posts are based on the whole public user base.
   // Keep an explicit exclude override for callers that need a narrower view.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
+  const excludeSeenParam = req.nextUrl.searchParams.get("excludeSeen") ?? "";
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
   const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
   const placeId = req.nextUrl.searchParams.get("placeId")?.trim() || "";
@@ -84,6 +85,12 @@ export async function GET(req: NextRequest) {
         .map((n) => n.trim())
         .filter(Boolean),
     ].filter(Boolean)));
+    const excludeSeenSet = new Set(
+      excludeSeenParam
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
 
     let query = db
       .from("reviews")
@@ -113,18 +120,26 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Fetch extra rows so we can filter out excluded names and still fill the page
-    const fetchLimit = Math.min(excludeSynthetic ? 500 : 200, (excludeNames.length + 1) * limit + limit + (excludeSynthetic ? 200 : 0));
+    // Fetch extra rows so we can filter out excluded names/seen posts and still fill the page.
+    const maxFetchLimit = excludeSynthetic || excludeSeenSet.size > 0 ? 500 : 200;
+    const fetchLimit = Math.min(
+      maxFetchLimit,
+      (excludeNames.length + 1) * limit + limit + excludeSeenSet.size + (excludeSynthetic ? 200 : 0)
+    );
     const { data: rawRows, error } = await query.limit(fetchLimit);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     const excludeSet = new Set(excludeNames);
-    const filtered = ((rawRows ?? []) as unknown[])
+    const baseFiltered = ((rawRows ?? []) as unknown[])
       .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]))
       .filter((r) => !excludeSet.has(r.reviewer_name))
       .filter((r) => !excludeSynthetic || !/^e2e_/i.test(r.reviewer_name) && !/^e2e\b/i.test(r.restaurant_name));
+    const unseenFiltered = excludeSeenSet.size > 0
+      ? baseFiltered.filter((r) => !excludeSeenSet.has(r.id))
+      : baseFiltered;
+    const filtered = unseenFiltered.length > 0 ? unseenFiltered : baseFiltered;
 
     const hasMore = filtered.length > limit;
     const reviews = filtered.slice(0, limit);

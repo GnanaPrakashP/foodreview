@@ -12,6 +12,8 @@ type SupabaseLike = {
 
 type FeedbackValueRow = {
   feedback_value: number | string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type PostFeedbackValueRow = FeedbackValueRow & {
@@ -33,7 +35,7 @@ export async function recalculateTasteTrust(
 ): Promise<TasteTrustSummary> {
   const { data: feedbackRows, error: feedbackError } = await db
     .from("recommendation_feedback")
-    .select("feedback_value")
+    .select("feedback_value, created_at, updated_at")
     .eq("reviewer_user_id", reviewerUserId);
 
   if (feedbackError) throw new Error(feedbackError.message);

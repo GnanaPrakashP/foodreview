@@ -32,11 +32,11 @@ const EMPTY_SUMMARY: PostTasteTrustSummary = {
 };
 
 const FEEDBACK_EMOJIS: Record<string, string> = {
-  "Totally worth it": "😍",
-  "Mostly yes": "🙂",
-  "It was okay": "😐",
-  "Not really": "🙁",
-  "Not worth it": "😖",
+  "Strongly agree": "😍",
+  "Agree": "🙂",
+  "Neutral": "😐",
+  "Disagree": "🙁",
+  "Strongly disagree": "😖",
 };
 
 function invalidateTasteTrustCaches() {
@@ -46,11 +46,11 @@ function invalidateTasteTrustCaches() {
 }
 
 const FEEDBACK_LABELS: Record<string, string> = {
-  "Totally worth it": "Worth",
-  "Mostly yes": "Good",
-  "It was okay": "Okay",
-  "Not really": "Meh",
-  "Not worth it": "Nope",
+  "Strongly agree": "Strong",
+  "Agree": "Agree",
+  "Neutral": "Neutral",
+  "Disagree": "Disagree",
+  "Strongly disagree": "Strong",
 };
 
 export default function RecommendationFeedback({
@@ -168,7 +168,7 @@ export default function RecommendationFeedback({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
         <div style={{ minWidth: 0 }}>
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: compact ? "12px" : "13px", fontWeight: 900, color: "var(--cream)", margin: 0, lineHeight: 1.25 }}>
-            How was it?
+            Do you agree?
           </p>
           {subtitle && (
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: selectedLabel ? "var(--orange)" : "var(--muted)", margin: "3px 0 0", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

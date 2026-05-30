@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { readCachedJson } from "@/lib/browser-api-cache";
 import { readPendingRoute } from "@/lib/browser-navigation-intent";
+import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
 import type { CircleFeedPage } from "@/lib/circle-feed";
 import CirclePageClient, { CircleSkeleton } from "./CirclePageClient";
 
@@ -46,7 +47,10 @@ function GenericLoadingSkeleton() {
 export default function CircleLoadingClient() {
   const pathname = usePathname();
   const [pendingPathname] = useState(() => readPendingRoute());
-  const [data] = useState(() => readCachedJson<CircleFeedPage>(API_URL, { allowStale: true }));
+  const [data] = useState(() => {
+    if (isInitialDocumentReload() || pendingPathname !== "/") return null;
+    return readCachedJson<CircleFeedPage>(API_URL, { allowStale: true });
+  });
 
   if (pathname !== "/" && pendingPathname !== "/") return <GenericLoadingSkeleton />;
   if (!data) return <CircleSkeleton />;

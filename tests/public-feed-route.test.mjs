@@ -243,6 +243,47 @@ test("public feed: excludeSynthetic hides E2E fixture posts for discovery surfac
   assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["bob"]);
 });
 
+test("public feed: excludeSeen removes locally seen post ids from refresh results", async () => {
+  const db = mockDb(
+    {
+      data: [
+        review({ id: "seen-1", reviewer_name: "alice" }),
+        review({ id: "fresh-1", reviewer_name: "bob" }),
+        review({ id: "seen-2", reviewer_name: "carol" }),
+        review({ id: "fresh-2", reviewer_name: "dave" }),
+      ],
+      error: null,
+    },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+  );
+  const { GET } = loadRoute({ db });
+  const res = await GET(makeReq("excludeSeen=seen-1,seen-2"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res).reviews.map((r) => r.id), ["fresh-1", "fresh-2"]);
+});
+
+test("public feed: excludeSeen falls back to seen rows instead of returning an empty feed", async () => {
+  const db = mockDb(
+    {
+      data: [
+        review({ id: "seen-1", reviewer_name: "alice" }),
+        review({ id: "seen-2", reviewer_name: "bob" }),
+      ],
+      error: null,
+    },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+    { data: [], error: null },
+  );
+  const { GET } = loadRoute({ db });
+  const res = await GET(makeReq("excludeSeen=seen-1,seen-2"));
+  assert.equal(status(res), 200);
+  assert.deepEqual(body(res).reviews.map((r) => r.id), ["seen-1", "seen-2"]);
+});
+
 test("public feed: empty exclude returns all rows", async () => {
   const db = mockDb(
     { data: [review({ reviewer_name: "alice" }), review({ reviewer_name: "bob" })], error: null },

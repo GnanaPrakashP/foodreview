@@ -20,7 +20,7 @@ create table public.profiles (
   avatar_url   text,
   bio          text,
   account_type text        not null default 'public',
-  trust_score  numeric     not null default 50,
+  trust_score  numeric     not null default 20,
   trust_level  text        not null default 'New Reviewer',
   confirmed_recommendations_count integer not null default 0,
   positive_confirmations_count integer not null default 0,
@@ -329,7 +329,7 @@ end $$;
 
 alter table public.profiles add column if not exists account_type text;
 alter table public.profiles add column if not exists bio text;
-alter table public.profiles add column if not exists trust_score numeric not null default 50;
+alter table public.profiles add column if not exists trust_score numeric not null default 20;
 alter table public.profiles add column if not exists trust_level text not null default 'New Reviewer';
 alter table public.profiles add column if not exists confirmed_recommendations_count integer not null default 0;
 alter table public.profiles add column if not exists positive_confirmations_count integer not null default 0;
@@ -796,7 +796,7 @@ create table if not exists public.recommendation_feedback (
   constraint recommendation_feedback_unique_user_post unique (post_id, feedback_user_id),
   constraint recommendation_feedback_not_self check (feedback_user_id <> reviewer_user_id),
   constraint recommendation_feedback_value_check check (feedback_value in (1.0, 0.7, 0.3, -0.5, -1.0)),
-  constraint recommendation_feedback_label_check check (feedback_label in ('Totally worth it', 'Mostly yes', 'It was okay', 'Not really', 'Not worth it'))
+  constraint recommendation_feedback_label_check check (feedback_label in ('Strongly agree', 'Agree', 'Neutral', 'Disagree', 'Strongly disagree'))
 );
 create index if not exists recommendation_feedback_post_id_idx on public.recommendation_feedback(post_id);
 create index if not exists recommendation_feedback_reviewer_user_id_idx on public.recommendation_feedback(reviewer_user_id);

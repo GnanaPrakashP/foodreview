@@ -4,8 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Users, Search, Plus, Flame, User } from "lucide-react";
-import { getStoredActorName } from "@/lib/browser-actor";
-import { prefetchCachedJson } from "@/lib/browser-api-cache";
 import { clearPendingRoute, writePendingRoute } from "@/lib/browser-navigation-intent";
 
 const TABS = [
@@ -28,23 +26,9 @@ export default function BottomNav() {
 
   const prefetchTab = (href: string) => {
     if (href === "/reviews/new") return;
+    if (href === "/") return;
+    if (href === "/explore") return;
     router.prefetch(href);
-
-    const actor = getStoredActorName();
-    if (href === "/") {
-      if (actor) void prefetchCachedJson("/api/feed/circle", 60 * 1000);
-    } else if (href === "/explore") {
-      void prefetchCachedJson("/api/people", 2 * 60 * 1000);
-      const params = new URLSearchParams({ limit: "24", excludeSynthetic: "1" });
-      if (actor) params.set("viewer", actor);
-      void prefetchCachedJson(`/api/feed/public?${params.toString()}`, 2 * 60 * 1000);
-    } else if (href === "/hungry") {
-      const params = new URLSearchParams({ limit: "40", excludeSynthetic: "1" });
-      if (actor) params.set("viewer", actor);
-      void prefetchCachedJson(`/api/feed/public?${params.toString()}`, 2 * 60 * 1000);
-    } else if (href === "/me" && actor) {
-      void prefetchCachedJson("/api/me", 2 * 60 * 1000);
-    }
   };
 
   useEffect(() => {
@@ -128,7 +112,7 @@ export default function BottomNav() {
             <Link
               key={tab.href}
               href={href}
-              prefetch
+              prefetch={href === "/" || href === "/explore" ? false : undefined}
               onClick={beginNavigation}
               onPointerEnter={() => prefetchTab(href)}
               onFocus={() => prefetchTab(href)}

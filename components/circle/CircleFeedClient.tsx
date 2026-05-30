@@ -29,11 +29,15 @@ interface Props {
   initialTasteTrustSummaryMap?: Record<string, PostTasteTrustSummary>;
   initialHasMore?: boolean;
   initialNextCursor?: CircleFeedCursor | null;
+  preserveOrderOnNav?: boolean;
+  refreshMode?: boolean;
 }
 
 const FEED_STATE_TTL_MS = 30 * 60 * 1000;
 const MAX_PERSISTED_REVIEWS = 120;
-const SEEN_VISIBILITY_RATIO = 0.6;
+const SEEN_VISIBILITY_RATIO = 0.35;
+const FEED_STATE_VERSION = "stable-nav-v2";
+const MAX_FRESH_UNSEEN_PAGE_LOADS = 8;
 
 type CircleFeedSnapshot = {
   reviews: Review[];
@@ -43,12 +47,12 @@ type CircleFeedSnapshot = {
   likedByMeMap: Record<string, boolean>;
   bookmarkedPostMap: Record<string, boolean>;
   tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
-  hasMore: boolean;
-  nextCursor: CircleFeedCursor | null;
+  // hasMore and nextCursor are intentionally excluded: pagination cursor must
+  // never be restored from a persisted snapshot. Always use server-provided values.
 };
 
 function circleFeedStateKey(viewerName: string) {
-  return `/api/feed/circle?viewer=${encodeURIComponent(viewerName || "anonymous")}`;
+  return `/api/feed/circle?viewer=${encodeURIComponent(viewerName || "anonymous")}&stateVersion=${FEED_STATE_VERSION}`;
 }
 
 export default function CircleFeedClient({
@@ -65,11 +69,15 @@ export default function CircleFeedClient({
   initialTasteTrustSummaryMap = {},
   initialHasMore = false,
   initialNextCursor = null,
+  preserveOrderOnNav = false,
+  refreshMode = false,
 }: Props) {
-  const initialStateKey = circleFeedStateKey(initialMyName);
-  const [persistedSnapshot] = useState(() => readFeedState<CircleFeedSnapshot>(initialStateKey));
+  const [initialViewerName] = useState(() => resolveActorName(initialMyName));
+  const initialStateKey = circleFeedStateKey(initialViewerName || initialMyName);
+  const [persistedSnapshot] = useState(() => !refreshMode && preserveOrderOnNav ? readFeedState<CircleFeedSnapshot>(initialStateKey) : null);
+  const [preserveFeedOrderOnNav] = useState(() => !refreshMode && Boolean(persistedSnapshot));
   const [circle, setCircle] = useState<string[]>(initialCircle);
-  const [myName, setMyName] = useState(initialMyName);
+  const [myName, setMyName] = useState(initialViewerName);
   const stateKey = circleFeedStateKey(myName || initialMyName);
   const [mounted, setMounted] = useState(false);
   const [feedReviews, setFeedReviews] = useState<Review[]>(persistedSnapshot?.reviews ?? allReviews);
@@ -79,11 +87,12 @@ export default function CircleFeedClient({
   const [feedLikedMap, setFeedLikedMap] = useState(persistedSnapshot?.likedByMeMap ?? initialLikedMap);
   const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(persistedSnapshot?.bookmarkedPostMap ?? initialBookmarkedPostMap);
   const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(persistedSnapshot?.tasteTrustSummaryMap ?? initialTasteTrustSummaryMap);
-  const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>({});
-  const [hasMore, setHasMore] = useState(persistedSnapshot?.hasMore ?? initialHasMore);
-  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedSnapshot?.nextCursor ?? initialNextCursor);
+  const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>(() => readSeenPostMap(initialViewerName || initialMyName));
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
+  const [freshUnseenPageLoads, setFreshUnseenPageLoads] = useState(0);
   const feedContainerRef = useRef<HTMLDivElement | null>(null);
   const seenPostMapRef = useRef<SeenPostMap>({});
 
@@ -93,7 +102,7 @@ export default function CircleFeedClient({
 
   useEffect(() => {
     const snapshot = readFeedState<CircleFeedSnapshot>(stateKey);
-    if (snapshot && snapshot.reviews.length > allReviews.length) {
+    if (!refreshMode && snapshot && preserveOrderOnNav) {
       setFeedReviews(snapshot.reviews);
       setFeedLikeCountMap(snapshot.likeCountMap);
       setFeedCommentMap(snapshot.commentMap);
@@ -101,8 +110,9 @@ export default function CircleFeedClient({
       setFeedLikedMap(snapshot.likedByMeMap);
       setFeedBookmarkedPostMap(snapshot.bookmarkedPostMap);
       setFeedTasteTrustSummaryMap(snapshot.tasteTrustSummaryMap);
-      setHasMore(snapshot.hasMore);
-      setNextCursor(snapshot.nextCursor);
+      // Always use server-provided pagination — cursor is never restored from snapshot.
+      setHasMore(initialHasMore);
+      setNextCursor(initialNextCursor);
     } else {
       setFeedReviews(allReviews);
       setFeedLikeCountMap(likeCountMap);
@@ -129,7 +139,7 @@ export default function CircleFeedClient({
       mutualMembers: initialMutualCircle,
       hasMore: initialHasMore,
       nextCursor: initialNextCursor,
-    }, 3 * 60 * 1000);
+    }, 3 * 60 * 1000, { memoryOnly: true });
 
     const name = resolveActorName(initialMyName);
     setMyName(name);
@@ -161,20 +171,34 @@ export default function CircleFeedClient({
     initialMutualCircle,
     initialHasMore,
     initialNextCursor,
+    preserveOrderOnNav,
+    refreshMode,
     stateKey,
   ]);
 
+  // Keep cached SPA navigation stable; only fresh loads apply seen-post reranking.
+  const circleReviews = useMemo(
+    () => preserveFeedOrderOnNav ? feedReviews : rankFeedReviewsBySeenState(feedReviews, seenPostMap),
+    [feedReviews, preserveFeedOrderOnNav, seenPostMap]
+  );
+  const unseenFeedReviewCount = useMemo(
+    () => feedReviews.filter((review) => !seenPostMap[review.id]).length,
+    [feedReviews, seenPostMap]
+  );
+
   useEffect(() => {
+    // Don't persist until seen-post data is loaded; on refresh this ensures the
+    // snapshot is only written after rankFeedReviewsBySeenState has run with the
+    // real seenPostMap, not with the empty initial state.
+    if (!mounted) return;
     writeFeedState<CircleFeedSnapshot>(stateKey, {
-      reviews: feedReviews.slice(0, MAX_PERSISTED_REVIEWS),
+      reviews: circleReviews.slice(0, MAX_PERSISTED_REVIEWS),
       likeCountMap: feedLikeCountMap,
       commentMap: feedCommentMap,
       profileMap: feedProfileMap,
       likedByMeMap: feedLikedMap,
       bookmarkedPostMap: feedBookmarkedPostMap,
       tasteTrustSummaryMap: feedTasteTrustSummaryMap,
-      hasMore,
-      nextCursor,
     }, FEED_STATE_TTL_MS);
   }, [
     feedBookmarkedPostMap,
@@ -182,16 +206,11 @@ export default function CircleFeedClient({
     feedLikedMap,
     feedLikeCountMap,
     feedProfileMap,
-    feedReviews,
     feedTasteTrustSummaryMap,
-    hasMore,
-    nextCursor,
+    circleReviews,
     stateKey,
+    mounted,
   ]);
-
-  // `allReviews` is already filtered server-side for this viewer and circle graph.
-  // Keep client rendering aligned with server results to avoid drift.
-  const circleReviews = useMemo(() => rankFeedReviewsBySeenState(feedReviews, seenPostMap), [feedReviews, seenPostMap]);
 
   useEffect(() => {
     const root = feedContainerRef.current;
@@ -249,6 +268,7 @@ export default function CircleFeedClient({
       if (document.visibilityState === "hidden") flushBeforeLeaving();
     }
 
+    markVisiblePosts();
     scheduleScan();
     settleTimer = window.setTimeout(scheduleScan, 350);
     window.addEventListener("scroll", scheduleScan, { passive: true });
@@ -258,7 +278,7 @@ export default function CircleFeedClient({
     window.addEventListener("beforeunload", flushBeforeLeaving);
     document.addEventListener("visibilitychange", flushWhenHidden);
     return () => {
-      if (frame) window.cancelAnimationFrame(frame);
+      flushBeforeLeaving();
       if (settleTimer) window.clearTimeout(settleTimer);
       window.removeEventListener("scroll", scheduleScan);
       document.removeEventListener("scroll", scheduleScan, { capture: true });
@@ -302,8 +322,38 @@ export default function CircleFeedClient({
     }
   }
 
+  useEffect(() => {
+    if (
+      preserveFeedOrderOnNav ||
+      !refreshMode ||
+      !mounted ||
+      loadingMore ||
+      !hasMore ||
+      !nextCursor ||
+      feedReviews.length === 0 ||
+      unseenFeedReviewCount > 0 ||
+      freshUnseenPageLoads >= MAX_FRESH_UNSEEN_PAGE_LOADS
+    ) {
+      return;
+    }
+
+    setFreshUnseenPageLoads((count) => count + 1);
+    void loadMore();
+  // loadMore is intentionally excluded because this effect is gated by feed state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedReviews.length, freshUnseenPageLoads, hasMore, loadingMore, mounted, nextCursor, preserveFeedOrderOnNav, refreshMode, unseenFeedReviewCount]);
+
+  const searchingForUnseenOnRefresh = refreshMode
+    && !preserveFeedOrderOnNav
+    && !loadMoreError
+    && hasMore
+    && Boolean(nextCursor)
+    && feedReviews.length > 0
+    && unseenFeedReviewCount === 0
+    && freshUnseenPageLoads < MAX_FRESH_UNSEEN_PAGE_LOADS;
+
   // Don't render until we've read localStorage to avoid flash
-  if (!mounted) {
+  if (!mounted || searchingForUnseenOnRefresh) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {[1, 2, 3].map((i) => (
