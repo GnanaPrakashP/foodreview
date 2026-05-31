@@ -116,7 +116,7 @@ export default function ReviewDetailClient({
   }, [initialMyName]);
 
   useIsomorphicLayoutEffect(() => {
-    const cached = readPostEngagementEntry(review.id);
+    const cached = readPostEngagementEntry(myName, review.id);
     setLiked(initialLiked);
     setLikeCount(initialLikeCount);
     setBookmarked(initialBookmarked);
@@ -176,7 +176,7 @@ export default function ReviewDetailClient({
     const nextLikeCount = liked ? Math.max(0, likeCount - 1) : likeCount + 1;
     setLiked(nextLiked);
     setLikeCount(nextLikeCount);
-    patchPostEngagement(review.id, { liked: nextLiked, likeCount: nextLikeCount });
+    patchPostEngagement(myName, review.id, { liked: nextLiked, likeCount: nextLikeCount });
 
     if (liked) {
       const response = await fetch("/api/likes", {
@@ -187,7 +187,7 @@ export default function ReviewDetailClient({
       if (!response.ok) {
         setLiked(true);
         setLikeCount(likeCount);
-        patchPostEngagement(review.id, { liked: true, likeCount });
+        patchPostEngagement(myName, review.id, { liked: true, likeCount });
         return;
       }
       invalidateEngagementCaches();
@@ -208,7 +208,7 @@ export default function ReviewDetailClient({
     if (!response.ok) {
       setLiked(false);
       setLikeCount(likeCount);
-      patchPostEngagement(review.id, { liked: false, likeCount });
+      patchPostEngagement(myName, review.id, { liked: false, likeCount });
       return;
     }
     invalidateEngagementCaches();
@@ -225,7 +225,7 @@ export default function ReviewDetailClient({
     setBookmarkBounceKey((key) => key + 1);
     const nextBookmarked = !bookmarked;
     setBookmarked(nextBookmarked);
-    patchPostEngagement(review.id, { bookmarked: nextBookmarked });
+    patchPostEngagement(myName, review.id, { bookmarked: nextBookmarked });
 
     if (bookmarked) {
       const response = await fetch("/api/wishlist", {
@@ -235,7 +235,7 @@ export default function ReviewDetailClient({
       });
       if (!response.ok) {
         setBookmarked(true);
-        patchPostEngagement(review.id, { bookmarked: true });
+        patchPostEngagement(myName, review.id, { bookmarked: true });
         return;
       }
       invalidateEngagementCaches();
@@ -248,7 +248,7 @@ export default function ReviewDetailClient({
       });
       if (!response.ok) {
         setBookmarked(false);
-        patchPostEngagement(review.id, { bookmarked: false });
+        patchPostEngagement(myName, review.id, { bookmarked: false });
         return;
       }
       invalidateEngagementCaches();

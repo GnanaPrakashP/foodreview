@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { readCachedJson } from "@/lib/browser-api-cache";
+import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
 import MePageClient, { MeSkeleton } from "./MePageClient";
 import type { Review } from "@/lib/types";
 
@@ -17,7 +18,9 @@ type MeApiResponse = {
 };
 
 export default function MeLoadingClient() {
-  const [data] = useState(() => readCachedJson<MeApiResponse>(API_URL, { allowStale: true }));
+  // On hard reload the sessionStorage cache may be stale; skip it so we don't
+  // flash old profile data before the fresh fetch arrives.
+  const [data] = useState(() => isInitialDocumentReload() ? null : readCachedJson<MeApiResponse>(API_URL, { allowStale: true }));
 
   if (!data) return <MeSkeleton />;
 

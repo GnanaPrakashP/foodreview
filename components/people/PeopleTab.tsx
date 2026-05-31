@@ -1333,6 +1333,11 @@ export default function PeopleTab({
   const postsFeedRef = useRef<HTMLDivElement | null>(null);
   const seenPostMapRef = useRef<SeenPostMap>({});
   const feedLocationRef = useRef<UserLocation | null>(null);
+  // Session-only seen tracking — resets on each fresh feed load (cursor === null).
+  // Drives the auto-load trigger so a full localStorage seenPostMap does not
+  // cause premature pagination before the user actually scrolls in this visit.
+  const sessionSeenIdsRef = useRef(new Set<string>());
+  const [sessionSeenCount, setSessionSeenCount] = useState(0);
 
   const [myName, setMyName] = useState(() => initialViewerName);
   const [location, setLocation] = useState<UserLocation | null>(null);
@@ -1429,6 +1434,22 @@ export default function PeopleTab({
     try {
       const applyFeedData = (data: PublicFeedResponse, pageCursor: CircleFeedCursor | null) => {
         const rows = data.reviews ?? [];
+        if (!pageCursor) {
+          // Reset session tracking on every fresh page.
+          sessionSeenIdsRef.current = new Set<string>();
+          setSessionSeenCount(0);
+          // Rank by seen/unseen only on hard browser reload AND only when there are
+          // unseen posts to float up — mirrors Circle's behavior exactly.
+          // SPA navigation (any) and the all-seen case keep server score order.
+          const seenMap = readSeenPostMap(viewerName);
+          const hasUnseen = refreshMode && rows.some(r => !seenMap[r.id]);
+          setRankedFeed(hasUnseen ? rankFeedReviewsBySeenState(rows, seenMap) : rows);
+        } else {
+          setRankedFeed((prev) => {
+            const existing = new Set(prev.map((r) => r.id));
+            return [...prev, ...rows.filter((r) => !existing.has(r.id))];
+          });
+        }
         setFeed((current) => {
           if (!pageCursor) return rows;
           const seen = new Set(current.map((item) => item.id));
@@ -1486,11 +1507,9 @@ export default function PeopleTab({
     }
   }, [location, myName]);
 
-  // Keep cached SPA navigation stable; only fresh loads apply seen-post reranking.
-  const rankedFeed = useMemo(
-    () => preserveFeedOrderOnNav ? feed : rankFeedReviewsBySeenState(feed, seenPostMap),
-    [feed, preserveFeedOrderOnNav, seenPostMap]
-  );
+  // Stable ranked feed: ranked once at load time, appended-to on cursor pages.
+  // Not a useMemo so seenPostMap updates while scrolling cannot re-sort visible cards.
+  const [rankedFeed, setRankedFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);
   const unseenFeedPostCount = useMemo(
     () => feed.filter((review) => !seenPostMap[review.id]).length,
     [feed, seenPostMap]
@@ -1561,6 +1580,14 @@ export default function PeopleTab({
   }, [activeTab, feedHasMore, feedLoading, feedLoadingMore, feedNextCursor, loadFeedPage, searchQuery]);
 
   useEffect(() => {
+    // On hard reload: use persistent seenPostMap to skip past already-seen pages and
+    // find fresh content (intentional "catch up" behavior, capped at MAX_FRESH_UNSEEN_PAGE_LOADS).
+    // On normal visit: use session-scoped counter so stale localStorage data cannot
+    // trigger auto-pagination before the user actually scrolls through current posts.
+    const allCurrentPostsConsumed = refreshMode
+      ? unseenFeedPostCount === 0
+      : sessionSeenCount >= feed.length;
+
     if (
       preserveFeedOrderOnNav ||
       !seenStateReady ||
@@ -1571,7 +1598,7 @@ export default function PeopleTab({
       !feedHasMore ||
       !feedNextCursor ||
       feed.length === 0 ||
-      unseenFeedPostCount > 0 ||
+      !allCurrentPostsConsumed ||
       freshUnseenPageLoads >= MAX_FRESH_UNSEEN_PAGE_LOADS
     ) {
       return;
@@ -1589,8 +1616,10 @@ export default function PeopleTab({
     freshUnseenPageLoads,
     loadFeedPage,
     preserveFeedOrderOnNav,
+    refreshMode,
     searchQuery,
     seenStateReady,
+    sessionSeenCount,
     unseenFeedPostCount,
   ]);
 
@@ -1606,27 +1635,41 @@ export default function PeopleTab({
 
     function visiblePostIds() {
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const newlySeen: string[] = [];
+      const unseenIds: string[] = [];    // not yet in persistent seenPostMap
+      const allVisibleIds: string[] = []; // every visible post for session tracking
       const latestSeenMap = seenPostMapRef.current;
 
       container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
         const postId = element.getAttribute("data-feed-post-id") ?? "";
-        if (!postId || latestSeenMap[postId] || markedThisView.has(postId)) return;
+        if (!postId || markedThisView.has(postId)) return;
 
         const rect = element.getBoundingClientRect();
         const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
         const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
-        if (visibleRatio >= SEEN_VISIBILITY_RATIO) newlySeen.push(postId);
+        if (visibleRatio >= SEEN_VISIBILITY_RATIO) {
+          allVisibleIds.push(postId);
+          if (!latestSeenMap[postId]) unseenIds.push(postId);
+        }
       });
 
-      return newlySeen;
+      return { unseenIds, allVisibleIds };
     }
 
     function markVisiblePosts() {
-      const newlySeen = visiblePostIds();
-      if (newlySeen.length === 0) return;
-      for (const postId of newlySeen) markedThisView.add(postId);
-      seenPostMapRef.current = markPostsSeen(myName, newlySeen);
+      const { unseenIds, allVisibleIds } = visiblePostIds();
+      if (allVisibleIds.length === 0) return;
+      for (const postId of allVisibleIds) markedThisView.add(postId);
+
+      if (unseenIds.length > 0) {
+        seenPostMapRef.current = markPostsSeen(myName, unseenIds);
+      }
+
+      // Session-scoped counter: counts posts seen in this visit regardless of localStorage.
+      const newToSession = allVisibleIds.filter(id => !sessionSeenIdsRef.current.has(id));
+      if (newToSession.length > 0) {
+        for (const id of newToSession) sessionSeenIdsRef.current.add(id);
+        setSessionSeenCount(sessionSeenIdsRef.current.size);
+      }
     }
 
     function scanVisiblePosts() {

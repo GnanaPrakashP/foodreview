@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useEffect, useState } from "react";
-import { ChevronDown, LocateFixed, Search } from "lucide-react";
+import { ChevronDown, LocateFixed, RotateCcw, Search, X } from "lucide-react";
+import Link from "next/link";
 import type { Comment, Review } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import { getStoredActorName } from "@/lib/browser-actor";
@@ -261,6 +262,11 @@ export default function HungryPageClient() {
   const [hasMore, setHasMore] = useState(persistedFeed?.hasMore ?? true);
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(persistedFeed?.nextCursor ?? null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedPosts, setSavedPosts] = useState<Review[]>([]);
+  const [skippedStack, setSkippedStack] = useState<Review[]>([]);
+  const [undoKey, setUndoKey] = useState(0);
+  const [undoPost, setUndoPost] = useState<Review | null>(null);
+  const [showSavedSheet, setShowSavedSheet] = useState(false);
   const [myName, setMyName] = useState("");
   const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
@@ -422,24 +428,33 @@ export default function HungryPageClient() {
 
   const savePost = useCallback((post: Review) => {
     setSavedIds((current) => new Set(current).add(post.id));
+    setSavedPosts((current) => current.some(p => p.id === post.id) ? current : [...current, post]);
     fetch("/api/wishlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ restaurantName: post.restaurant_name, postId: post.id }),
     }).then((response) => {
       if (!response.ok) {
-        setSavedIds((current) => {
-          const next = new Set(current);
-          next.delete(post.id);
-          return next;
-        });
+        setSavedIds((current) => { const next = new Set(current); next.delete(post.id); return next; });
+        setSavedPosts((current) => current.filter(p => p.id !== post.id));
       }
     }).catch(() => {
-      setSavedIds((current) => {
-        const next = new Set(current);
-        next.delete(post.id);
-        return next;
-      });
+      setSavedIds((current) => { const next = new Set(current); next.delete(post.id); return next; });
+      setSavedPosts((current) => current.filter(p => p.id !== post.id));
+    });
+  }, []);
+
+  const skipPost = useCallback((post: Review) => {
+    setSkippedStack(prev => [...prev, post]);
+  }, []);
+
+  const undoSkip = useCallback(() => {
+    setSkippedStack(prev => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setUndoPost(last);
+      setUndoKey(k => k + 1);
+      return prev.slice(0, -1);
     });
   }, []);
 
@@ -526,32 +541,55 @@ export default function HungryPageClient() {
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        <div aria-hidden={activeTab !== "now"} style={{ position: "absolute", inset: 0, display: activeTab === "now" ? "block" : "none" }}>
-          <div
-            aria-label="Bucket"
-            style={{ position: "absolute", top: 8, right: 16, zIndex: 5, minWidth: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--cream)" }}
-          >
-            <span style={{ fontSize: 22, lineHeight: 1 }}>🥡</span>
-            {savedIds.size > 0 && (
-              <span style={{ position: "absolute", top: -6, right: -7, minWidth: 17, height: 17, padding: "0 5px", borderRadius: 999, background: "var(--orange)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800, border: "2px solid var(--bg)" }}>
-                {savedIds.size}
-              </span>
+        <div aria-hidden={activeTab !== "now"} style={{ position: "absolute", inset: 0, display: activeTab === "now" ? "flex" : "none", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px 0", flexShrink: 0 }}>
+            {/* Undo last skip — only visible when there is at least one skipped post */}
+            {skippedStack.length > 0 ? (
+              <button
+                onClick={undoSkip}
+                aria-label="Undo last skip"
+                style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.08)", border: "1px solid var(--border)", borderRadius: 10, cursor: "pointer", color: "var(--cream)" }}
+              >
+                <RotateCcw size={16} strokeWidth={2.2} />
+              </button>
+            ) : (
+              <div style={{ width: 34 }} />
             )}
+
+            {/* Saved picks bucket */}
+            <button
+              onClick={() => savedPosts.length > 0 && setShowSavedSheet(true)}
+              aria-label="Saved picks"
+              style={{ position: "relative", minWidth: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: savedPosts.length > 0 ? "pointer" : "default", color: "var(--cream)", padding: 0 }}
+            >
+              <span style={{ fontSize: 22, lineHeight: 1 }}>🥡</span>
+              {savedIds.size > 0 && (
+                <span style={{ position: "absolute", top: -6, right: -7, minWidth: 17, height: 17, padding: "0 5px", borderRadius: 999, background: "var(--orange)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800, border: "2px solid var(--bg)" }}>
+                  {savedIds.size}
+                </span>
+              )}
+            </button>
           </div>
-          <SwipeStack
-            posts={posts}
-            loading={loading || loadingMore}
-            onSavePost={savePost}
-            onNeedMore={loadMoreIfNeeded}
-            likeCountMap={likeCountMap}
-            commentMap={commentMap}
-            likedMap={likedMap}
-            bookmarkedMap={bookmarkedMap}
-            profileMap={profileMap}
-            myName={myName}
-            requestStatusFor={requestStatusFor}
-            onRequestPostAuthor={requestPostAuthor}
-          />
+
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <SwipeStack
+              posts={posts}
+              loading={loading || loadingMore}
+              onSavePost={savePost}
+              onSkipPost={skipPost}
+              onNeedMore={loadMoreIfNeeded}
+              undoKey={undoKey}
+              undoPost={undoPost}
+              likeCountMap={likeCountMap}
+              commentMap={commentMap}
+              likedMap={likedMap}
+              bookmarkedMap={bookmarkedMap}
+              profileMap={profileMap}
+              myName={myName}
+              requestStatusFor={requestStatusFor}
+              onRequestPostAuthor={requestPostAuthor}
+            />
+          </div>
         </div>
         <div aria-hidden={activeTab !== "must_try"} style={{ position: "absolute", inset: 0, display: activeTab === "must_try" ? "block" : "none" }}>
           <MustTryChecklist
@@ -561,6 +599,70 @@ export default function HungryPageClient() {
           />
         </div>
       </div>
+
+      {/* Saved picks sheet */}
+      {showSavedSheet && (
+        <div
+          onClick={() => setShowSavedSheet(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "flex-end" }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: "32rem", margin: "0 auto", background: "var(--card)", borderRadius: "24px 24px 0 0", border: "1px solid var(--border)", borderBottom: "none", maxHeight: "75vh", display: "flex", flexDirection: "column" }}
+          >
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 12px", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 22 }}>🥡</span>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: 18, color: "var(--cream)" }}>Saved Picks</span>
+                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, color: "var(--orange)", background: "rgba(240,96,48,0.12)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: 999, padding: "2px 8px" }}>{savedPosts.length}</span>
+              </div>
+              <button
+                onClick={() => setShowSavedSheet(false)}
+                style={{ width: 32, height: 32, borderRadius: 8, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--muted)" }}
+              >
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
+
+            {/* List */}
+            <div style={{ overflowY: "auto", flex: 1 }}>
+              {savedPosts.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px 24px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}>
+                  No saved picks yet.
+                </div>
+              ) : (
+                savedPosts.map((post, index) => (
+                  <Link
+                    key={post.id}
+                    href={`/reviews/${encodeURIComponent(post.id)}`}
+                    onClick={() => setShowSavedSheet(false)}
+                    style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: index < savedPosts.length - 1 ? "1px solid var(--border)" : "none" }}
+                  >
+                    <div style={{ width: 44, height: 44, borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {post.photo_url ? (
+                        <img src={post.photo_url} alt={post.restaurant_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <span style={{ fontSize: 20 }}>🍽️</span>
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700, color: "var(--cream)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {post.restaurant_name}
+                      </p>
+                      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: "var(--muted)", margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        by {profileMap[post.reviewer_name] || post.reviewer_name}
+                        {post.area ? ` · ${post.area}` : ""}
+                      </p>
+                    </div>
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>›</span>
+                  </Link>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

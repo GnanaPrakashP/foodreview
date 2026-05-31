@@ -67,7 +67,10 @@ export default function SwipeStack({
   posts,
   loading,
   onSavePost,
+  onSkipPost,
   onNeedMore,
+  undoKey = 0,
+  undoPost = null,
   likeCountMap,
   commentMap,
   likedMap,
@@ -80,7 +83,10 @@ export default function SwipeStack({
   posts: Review[];
   loading: boolean;
   onSavePost: (post: Review) => void;
+  onSkipPost?: (post: Review) => void;
   onNeedMore?: () => void;
+  undoKey?: number;
+  undoPost?: Review | null;
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   likedMap: Record<string, boolean>;
@@ -98,6 +104,7 @@ export default function SwipeStack({
   const startXRef = useRef(0);
   const startYRef = useRef(0);
   const draggedRef = useRef(false);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setStack((current) => {
@@ -134,11 +141,45 @@ export default function SwipeStack({
     if (stack.length <= 3) onNeedMore?.();
   }, [onNeedMore, stack.length]);
 
+  // React's synthetic onPointerMoveCapture cannot call preventDefault() reliably
+  // because browsers make touchmove passive by default. A non-passive DOM listener
+  // on the card wrapper intercepts horizontal gestures before the photo carousel's
+  // overflow-x:auto can claim native scroll, while still allowing vertical pan.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (!e.touches.length) return;
+      const deltaX = Math.abs(e.touches[0].clientX - startXRef.current);
+      const deltaY = Math.abs(e.touches[0].clientY - startYRef.current);
+      if (deltaX > 5 && deltaX > deltaY) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onTouchMove);
+  }, [stack[0]?.id]);
+
   const current = stack[0];
+
+  // Undo: when undoKey increments, prepend undoPost to the front of the stack.
+  useEffect(() => {
+    if (undoKey === 0 || !undoPost) return;
+    setStack(prev => {
+      const filtered = prev.filter(p => p.id !== undoPost.id);
+      return [undoPost, ...filtered];
+    });
+    setSeenIds(prev => {
+      const next = new Set(prev);
+      next.delete(undoPost.id);
+      return next;
+    });
+  }, [undoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function dismiss(dir: "left" | "right") {
     if (dismissDir || !current) return;
     if (dir === "right") onSavePost(current);
+    if (dir === "left") onSkipPost?.(current);
     setDismissDir(dir);
     setIsDragging(false);
     setSeenIds((prev) => new Set(prev).add(current.id));
@@ -184,7 +225,20 @@ export default function SwipeStack({
     dismissDir === "left"  ? "translateX(-150%) rotate(-22deg)" :
     `translateX(${dragX}px) rotate(${dragX * 0.045}deg)`;
 
-  const cardTransition = isDragging ? "none" : "transform 0.33s ease";
+  const cardTransition = isDragging ? "none" : "transform 0.33s ease, box-shadow 0.25s ease";
+
+  // Glow builds from 10 px drag → full at 70 px, matches dismiss threshold at 80 px.
+  const glowIntensity = dismissDir ? 0 : Math.min(1, Math.max(0, (Math.abs(dragX) - 10) / 60));
+  const glowGreen = `34,197,94`;
+  const glowRed   = `239,68,68`;
+  const glowRgb   = dragX >= 0 ? glowGreen : glowRed;
+  const cardBoxShadow = glowIntensity > 0
+    ? [
+        `0 0 0 2px rgba(${glowRgb},${(glowIntensity * 0.85).toFixed(2)})`,
+        `0 0 18px 4px rgba(${glowRgb},${(glowIntensity * 0.45).toFixed(2)})`,
+        `0 0 48px 14px rgba(${glowRgb},${(glowIntensity * 0.18).toFixed(2)})`,
+      ].join(", ")
+    : "none";
 
   const emptyCopy = useMemo(() => {
     if (loading) return "Finding posts worth swiping...";
@@ -220,9 +274,21 @@ export default function SwipeStack({
     );
   }
 
+  // Background tint for the whole swipe area — complements the card edge glow.
+  const containerBg = glowIntensity > 0
+    ? dragX > 0
+      ? `rgba(${glowGreen},${(glowIntensity * 0.13).toFixed(2)})`
+      : `rgba(${glowRed},${(glowIntensity * 0.13).toFixed(2)})`
+    : "transparent";
+  const containerTransition = isDragging ? "none" : "background 0.25s ease";
+
   return (
-    <div style={{ height: "100%", minHeight: 0, padding: "16px", boxSizing: "border-box", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    // overflow visible so the card's box-shadow can spread into the background;
+    // the parent wrapper in HungryPageClient already has overflow:hidden to clip
+    // the card during its fly-off dismiss animation.
+    <div style={{ height: "100%", minHeight: 0, padding: "16px", boxSizing: "border-box", display: "flex", flexDirection: "column", background: containerBg, transition: containerTransition }}>
       <div
+          ref={cardRef}
           key={current.id}
           style={{
             position: "relative",
@@ -231,8 +297,10 @@ export default function SwipeStack({
             maxHeight: "100%",
             display: "flex",
             flexDirection: "column",
+            borderRadius: 22,
             transform: cardTransform,
             transition: cardTransition,
+            boxShadow: cardBoxShadow,
             touchAction: "pan-y",
             userSelect: "none",
             cursor: isDragging ? "grabbing" : "grab",
@@ -262,15 +330,20 @@ export default function SwipeStack({
             onRequestClick={() => onRequestPostAuthor?.(current.reviewer_name)}
           />
 
-          {dragX > 30 && !dismissDir && (
-            <div style={{ position: "absolute", top: 22, right: 18, background: "rgba(34,197,94,0.94)", borderRadius: 12, padding: "7px 14px", transform: "rotate(-10deg)", zIndex: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'DM Sans', sans-serif" }}>Save</span>
-            </div>
-          )}
-          {dragX < -30 && !dismissDir && (
-            <div style={{ position: "absolute", top: 22, left: 18, background: "rgba(239,68,68,0.94)", borderRadius: 12, padding: "7px 14px", transform: "rotate(10deg)", zIndex: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: "white", fontFamily: "'DM Sans', sans-serif" }}>Skip</span>
-            </div>
+          {/* Edge light wash — directional gradient that grows with drag distance */}
+          {glowIntensity > 0 && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: 22,
+                pointerEvents: "none",
+                zIndex: 8,
+                background: dragX > 0
+                  ? `linear-gradient(to left, rgba(${glowGreen},${(glowIntensity * 0.28).toFixed(2)}) 0%, rgba(${glowGreen},${(glowIntensity * 0.06).toFixed(2)}) 45%, transparent 70%)`
+                  : `linear-gradient(to right, rgba(${glowRed},${(glowIntensity * 0.28).toFixed(2)}) 0%, rgba(${glowRed},${(glowIntensity * 0.06).toFixed(2)}) 45%, transparent 70%)`,
+              }}
+            />
           )}
       </div>
     </div>

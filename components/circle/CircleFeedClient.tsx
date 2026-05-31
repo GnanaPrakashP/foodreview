@@ -12,7 +12,7 @@ import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
-import type { SeenPostMap } from "@/lib/feed-ranking";
+import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
 import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
 
 interface Props {
@@ -133,6 +133,11 @@ export default function CircleFeedClient({
   const [loadMoreError, setLoadMoreError] = useState("");
   const feedContainerRef = useRef<HTMLDivElement | null>(null);
   const seenPostMapRef = useRef<SeenPostMap>({});
+  // Session-only seen tracking — resets to zero on every fresh load / hard reload.
+  // Used for the fallback trigger so that a populated localStorage seenPostMap
+  // from previous sessions does not immediately fire the public fallback on mount.
+  const sessionSeenIdsRef = useRef(new Set<string>());
+  const [sessionSeenCount, setSessionSeenCount] = useState(0);
 
   useEffect(() => {
     seenPostMapRef.current = seenPostMap;
@@ -155,7 +160,14 @@ export default function CircleFeedClient({
       setPublicFallbackAttempted(snapshot.feedMode === "public");
       setPublicStartIndex(snapshot.publicStartIndex ?? null);
     } else {
-      setFeedReviews(allReviews);
+      const resolvedName = resolveActorName(initialMyName);
+      const freshSeenMap = readSeenPostMap(resolvedName);
+      // Rank by seen state only on hard browser reload AND only when there are
+      // unseen posts to float up. SPA navigation (with or without snapshot) keeps
+      // server score order. All-seen case also keeps server order so posts stay
+      // visible and coherent instead of showing in oldest-seen-first order.
+      const hasUnseen = refreshMode && allReviews.some(r => !freshSeenMap[r.id]);
+      setFeedReviews(hasUnseen ? rankFeedReviewsBySeenState(allReviews, freshSeenMap) : allReviews);
       setFeedLikeCountMap(likeCountMap);
       setFeedCommentMap(commentMap);
       setFeedProfileMap(initialProfileMap);
@@ -167,6 +179,8 @@ export default function CircleFeedClient({
       setFeedMode("circle");
       setPublicFallbackAttempted(false);
       setPublicStartIndex(null);
+      sessionSeenIdsRef.current = new Set<string>();
+      setSessionSeenCount(0);
     }
 
     primeCachedJson("/api/feed/circle", {
@@ -221,10 +235,6 @@ export default function CircleFeedClient({
   ]);
 
   const circleReviews = useMemo(() => feedReviews, [feedReviews]);
-  const unseenFeedReviewCount = useMemo(
-    () => feedReviews.filter((review) => !seenPostMap[review.id]).length,
-    [feedReviews, seenPostMap]
-  );
 
   useEffect(() => {
     // Don't persist until seen-post data is loaded; on refresh this ensures the
@@ -267,29 +277,44 @@ export default function CircleFeedClient({
 
     function visiblePostIds() {
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const newlySeen: string[] = [];
+      const unseenIds: string[] = [];   // not yet in persistent seenPostMap
+      const allVisibleIds: string[] = []; // every visible post, for session tracking
       const latestSeenMap = seenPostMapRef.current;
 
       container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
         const postId = element.getAttribute("data-feed-post-id") ?? "";
-        if (!postId || latestSeenMap[postId] || markedThisView.has(postId)) return;
+        if (!postId || markedThisView.has(postId)) return;
 
         const rect = element.getBoundingClientRect();
         const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
         const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
-        if (visibleRatio >= SEEN_VISIBILITY_RATIO) newlySeen.push(postId);
+        if (visibleRatio >= SEEN_VISIBILITY_RATIO) {
+          allVisibleIds.push(postId);
+          if (!latestSeenMap[postId]) unseenIds.push(postId);
+        }
       });
 
-      return newlySeen;
+      return { unseenIds, allVisibleIds };
     }
 
     function markVisiblePosts() {
-      const newlySeen = visiblePostIds();
-      if (newlySeen.length === 0) return;
-      for (const postId of newlySeen) markedThisView.add(postId);
-      const nextSeenMap = markPostsSeen(myName, newlySeen);
-      seenPostMapRef.current = nextSeenMap;
-      setSeenPostMap(nextSeenMap);
+      const { unseenIds, allVisibleIds } = visiblePostIds();
+      if (allVisibleIds.length === 0) return;
+      for (const postId of allVisibleIds) markedThisView.add(postId);
+
+      // Write newly-seen posts to persistent localStorage map
+      if (unseenIds.length > 0) {
+        const nextSeenMap = markPostsSeen(myName, unseenIds);
+        seenPostMapRef.current = nextSeenMap;
+        setSeenPostMap(nextSeenMap);
+      }
+
+      // Update session-scoped counter (drives fallback trigger, never reads localStorage)
+      const newToSession = allVisibleIds.filter(id => !sessionSeenIdsRef.current.has(id));
+      if (newToSession.length > 0) {
+        for (const id of newToSession) sessionSeenIdsRef.current.add(id);
+        setSessionSeenCount(sessionSeenIdsRef.current.size);
+      }
     }
 
     function scanVisiblePosts() {
@@ -420,7 +445,7 @@ export default function CircleFeedClient({
       publicFallbackAttempted ||
       loadingMore ||
       hasMore ||
-      unseenFeedReviewCount > 0
+      sessionSeenCount < feedReviews.length
     ) {
       return;
     }
@@ -430,12 +455,13 @@ export default function CircleFeedClient({
   }, [
     appendPublicFallbackPosts,
     feedMode,
+    feedReviews.length,
     hasMore,
     loadingMore,
     mounted,
     preserveFeedOrderOnNav,
     publicFallbackAttempted,
-    unseenFeedReviewCount,
+    sessionSeenCount,
   ]);
 
   // Don't render until we've read localStorage to avoid flash
