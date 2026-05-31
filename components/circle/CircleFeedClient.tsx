@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Review, Comment } from "@/lib/types";
@@ -12,7 +12,7 @@ import { cachedCircleStatus } from "@/lib/browser-circle-status";
 import { primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
-import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
+import type { SeenPostMap } from "@/lib/feed-ranking";
 import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
 
 interface Props {
@@ -37,7 +37,6 @@ const FEED_STATE_TTL_MS = 30 * 60 * 1000;
 const MAX_PERSISTED_REVIEWS = 120;
 const SEEN_VISIBILITY_RATIO = 0.35;
 const FEED_STATE_VERSION = "stable-nav-v2";
-const MAX_FRESH_UNSEEN_PAGE_LOADS = 8;
 
 type CircleFeedSnapshot = {
   reviews: Review[];
@@ -47,12 +46,48 @@ type CircleFeedSnapshot = {
   likedByMeMap: Record<string, boolean>;
   bookmarkedPostMap: Record<string, boolean>;
   tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
+  feedMode?: "circle" | "public";
+  publicStartIndex?: number | null;
   // hasMore and nextCursor are intentionally excluded: pagination cursor must
   // never be restored from a persisted snapshot. Always use server-provided values.
 };
 
+type PublicFeedResponse = {
+  reviews: Review[];
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
+  profileMap: Record<string, string>;
+  hasMore: boolean;
+  nextCursor: CircleFeedCursor | null;
+  error?: string;
+};
+
 function circleFeedStateKey(viewerName: string) {
   return `/api/feed/circle?viewer=${encodeURIComponent(viewerName || "anonymous")}&stateVersion=${FEED_STATE_VERSION}`;
+}
+
+function publicFallbackUrl(
+  viewerName: string,
+  cursor: CircleFeedCursor | null,
+  currentIds: string[],
+  seenIds: string[],
+) {
+  const params = new URLSearchParams({
+    limit: String(CIRCLE_FEED_PAGE_SIZE),
+    excludeSynthetic: "1",
+    strictExclude: "1",
+  });
+  if (viewerName) params.set("viewer", viewerName);
+  if (cursor) params.set("cursor", JSON.stringify(cursor));
+  // Build exclusion list: currently rendered posts take priority so they can
+  // never be dropped by the 120-item cap. Seen (scrolled-past) IDs fill the rest.
+  const excludeSet = new Set(currentIds);
+  for (const id of seenIds) excludeSet.add(id);
+  const excludeIds = Array.from(excludeSet);
+  if (excludeIds.length > 0) params.set("excludeSeen", excludeIds.slice(0, 120).join(","));
+  return `/api/feed/public?${params.toString()}`;
 }
 
 export default function CircleFeedClient({
@@ -90,9 +125,12 @@ export default function CircleFeedClient({
   const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>(() => readSeenPostMap(initialViewerName || initialMyName));
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
+  const [feedMode, setFeedMode] = useState<"circle" | "public">(persistedSnapshot?.feedMode ?? "circle");
+  const [publicFallbackAttempted, setPublicFallbackAttempted] = useState(persistedSnapshot?.feedMode === "public");
+  const [publicStartIndex, setPublicStartIndex] = useState<number | null>(persistedSnapshot?.publicStartIndex ?? null);
+  const [publicFallbackEmpty, setPublicFallbackEmpty] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
-  const [freshUnseenPageLoads, setFreshUnseenPageLoads] = useState(0);
   const feedContainerRef = useRef<HTMLDivElement | null>(null);
   const seenPostMapRef = useRef<SeenPostMap>({});
 
@@ -113,6 +151,9 @@ export default function CircleFeedClient({
       // Always use server-provided pagination — cursor is never restored from snapshot.
       setHasMore(initialHasMore);
       setNextCursor(initialNextCursor);
+      setFeedMode(snapshot.feedMode ?? "circle");
+      setPublicFallbackAttempted(snapshot.feedMode === "public");
+      setPublicStartIndex(snapshot.publicStartIndex ?? null);
     } else {
       setFeedReviews(allReviews);
       setFeedLikeCountMap(likeCountMap);
@@ -123,6 +164,9 @@ export default function CircleFeedClient({
       setFeedTasteTrustSummaryMap(initialTasteTrustSummaryMap);
       setHasMore(initialHasMore);
       setNextCursor(initialNextCursor);
+      setFeedMode("circle");
+      setPublicFallbackAttempted(false);
+      setPublicStartIndex(null);
     }
 
     primeCachedJson("/api/feed/circle", {
@@ -176,11 +220,7 @@ export default function CircleFeedClient({
     stateKey,
   ]);
 
-  // Keep cached SPA navigation stable; only fresh loads apply seen-post reranking.
-  const circleReviews = useMemo(
-    () => preserveFeedOrderOnNav ? feedReviews : rankFeedReviewsBySeenState(feedReviews, seenPostMap),
-    [feedReviews, preserveFeedOrderOnNav, seenPostMap]
-  );
+  const circleReviews = useMemo(() => feedReviews, [feedReviews]);
   const unseenFeedReviewCount = useMemo(
     () => feedReviews.filter((review) => !seenPostMap[review.id]).length,
     [feedReviews, seenPostMap]
@@ -199,8 +239,11 @@ export default function CircleFeedClient({
       likedByMeMap: feedLikedMap,
       bookmarkedPostMap: feedBookmarkedPostMap,
       tasteTrustSummaryMap: feedTasteTrustSummaryMap,
+      feedMode,
+      publicStartIndex,
     }, FEED_STATE_TTL_MS);
   }, [
+    feedMode,
     feedBookmarkedPostMap,
     feedCommentMap,
     feedLikedMap,
@@ -210,6 +253,7 @@ export default function CircleFeedClient({
     circleReviews,
     stateKey,
     mounted,
+    publicStartIndex,
   ]);
 
   useEffect(() => {
@@ -243,7 +287,9 @@ export default function CircleFeedClient({
       const newlySeen = visiblePostIds();
       if (newlySeen.length === 0) return;
       for (const postId of newlySeen) markedThisView.add(postId);
-      seenPostMapRef.current = markPostsSeen(myName, newlySeen);
+      const nextSeenMap = markPostsSeen(myName, newlySeen);
+      seenPostMapRef.current = nextSeenMap;
+      setSeenPostMap(nextSeenMap);
     }
 
     function scanVisiblePosts() {
@@ -289,8 +335,52 @@ export default function CircleFeedClient({
     };
   }, [circleReviews, myName]);
 
+  const appendPublicFallbackPosts = useCallback(async (cursor: CircleFeedCursor | null = null) => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const seenIds = Object.keys(readSeenPostMap(myName));
+      const currentIds = feedReviews.map((review) => review.id);
+      const response = await fetch(publicFallbackUrl(myName, cursor, currentIds, seenIds), { cache: "no-store" });
+      const data = await response.json() as PublicFeedResponse;
+      if (!response.ok || data.error) throw new Error(data.error ?? "Unable to load public posts");
+
+      setFeedMode("public");
+      let freshCount = 0;
+      setFeedReviews((current) => {
+        const seen = new Set(current.map((review) => review.id));
+        const fresh = (data.reviews ?? []).filter((review) => !seen.has(review.id));
+        freshCount = fresh.length;
+        if (fresh.length > 0) {
+          setPublicStartIndex((existing) => existing ?? current.length);
+        }
+        return [...current, ...fresh];
+      });
+      setFeedLikeCountMap((current) => ({ ...current, ...(data.likeCountMap ?? {}) }));
+      setFeedCommentMap((current) => ({ ...current, ...(data.commentMap ?? {}) }));
+      setFeedProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
+      setFeedLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
+      setFeedBookmarkedPostMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
+      setHasMore(Boolean(data.hasMore));
+      setNextCursor(data.nextCursor ?? null);
+      if (freshCount === 0 && !data.hasMore) {
+        setPublicFallbackEmpty(true);
+      }
+    } catch {
+      setLoadMoreError("Could not load more posts. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [feedReviews, loadingMore, myName]);
+
   async function loadMore() {
     if (loadingMore || !hasMore) return;
+    if (feedMode === "public") {
+      await appendPublicFallbackPosts(nextCursor);
+      return;
+    }
+
     setLoadingMore(true);
     setLoadMoreError("");
     try {
@@ -324,36 +414,32 @@ export default function CircleFeedClient({
 
   useEffect(() => {
     if (
-      preserveFeedOrderOnNav ||
-      !refreshMode ||
       !mounted ||
+      preserveFeedOrderOnNav ||
+      feedMode !== "circle" ||
+      publicFallbackAttempted ||
       loadingMore ||
-      !hasMore ||
-      !nextCursor ||
-      feedReviews.length === 0 ||
-      unseenFeedReviewCount > 0 ||
-      freshUnseenPageLoads >= MAX_FRESH_UNSEEN_PAGE_LOADS
+      hasMore ||
+      unseenFeedReviewCount > 0
     ) {
       return;
     }
 
-    setFreshUnseenPageLoads((count) => count + 1);
-    void loadMore();
-  // loadMore is intentionally excluded because this effect is gated by feed state.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feedReviews.length, freshUnseenPageLoads, hasMore, loadingMore, mounted, nextCursor, preserveFeedOrderOnNav, refreshMode, unseenFeedReviewCount]);
-
-  const searchingForUnseenOnRefresh = refreshMode
-    && !preserveFeedOrderOnNav
-    && !loadMoreError
-    && hasMore
-    && Boolean(nextCursor)
-    && feedReviews.length > 0
-    && unseenFeedReviewCount === 0
-    && freshUnseenPageLoads < MAX_FRESH_UNSEEN_PAGE_LOADS;
+    setPublicFallbackAttempted(true);
+    void appendPublicFallbackPosts(null);
+  }, [
+    appendPublicFallbackPosts,
+    feedMode,
+    hasMore,
+    loadingMore,
+    mounted,
+    preserveFeedOrderOnNav,
+    publicFallbackAttempted,
+    unseenFeedReviewCount,
+  ]);
 
   // Don't render until we've read localStorage to avoid flash
-  if (!mounted || searchingForUnseenOnRefresh) {
+  if (!mounted || (publicFallbackAttempted && loadingMore && circleReviews.length === 0)) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {[1, 2, 3].map((i) => (
@@ -364,7 +450,24 @@ export default function CircleFeedClient({
   }
 
   // Circle is empty and there are no joined-circle posts to show.
-  if (circle.length === 0 && circleReviews.length === 0) {
+  // Also covers: feedMode switched to "public" after fallback returned 0 posts.
+  if (publicFallbackAttempted && circleReviews.length === 0 && !loadingMore) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Users size={28} strokeWidth={1.8} color="var(--orange)" />
+        </div>
+        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
+          Nothing new right now
+        </p>
+        <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: "1.5", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "280px" }}>
+          Your circle and nearby public picks are caught up for now.
+        </p>
+      </div>
+    );
+  }
+
+  if (feedMode === "circle" && circle.length === 0 && circleReviews.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
         <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -388,7 +491,7 @@ export default function CircleFeedClient({
   }
 
   // Circle has people but none have posted yet
-  if (circleReviews.length === 0) {
+  if (feedMode === "circle" && circleReviews.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
         <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -411,6 +514,16 @@ export default function CircleFeedClient({
           const eng = feedCommentMap[review.id];
           return (
             <div key={review.id} data-feed-post-id={review.id}>
+              {publicStartIndex === index && (
+                <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
+                  <p style={{ margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800, color: "var(--orange)" }}>
+                    Suggested near you
+                  </p>
+                  <p style={{ margin: "3px 0 0", fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: "var(--muted)" }}>
+                    Trusted nearby food posts from outside your circle.
+                  </p>
+                </div>
+              )}
               <CircleFeedCard
                 review={review}
                 initialLikeCount={feedLikeCountMap[review.id] ?? 0}
@@ -452,11 +565,11 @@ export default function CircleFeedClient({
           </button>
         )}
 
-        {!hasMore && circleReviews.length > CIRCLE_FEED_PAGE_SIZE && (
+        {(!hasMore && circleReviews.length > CIRCLE_FEED_PAGE_SIZE) || (publicFallbackEmpty && !hasMore) ? (
           <p style={{ fontSize: "11px", color: "var(--muted)", textAlign: "center", padding: "10px 0 20px", fontFamily: "'DM Sans', sans-serif" }}>
             You are caught up for now.
           </p>
-        )}
+        ) : null}
       </div>
     </>
   );

@@ -4,6 +4,11 @@ import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { canActorReadPost } from "@/lib/server/review-access";
 
+async function fetchPostReviewerName(db: ReturnType<typeof createAdminClient>, postId: string): Promise<string> {
+  const { data } = await db.from("reviews").select("reviewer_name").eq("id", postId).maybeSingle();
+  return typeof data?.reviewer_name === "string" ? data.reviewer_name : "";
+}
+
 export async function POST(req: NextRequest) {
   const { postId } = await req.json();
   if (!postId) {
@@ -22,9 +27,10 @@ export async function POST(req: NextRequest) {
   }
 
   // user_name is always the authenticated actor — never from the request body
-  const { error } = await writeDb
-    .from("likes")
-    .insert({ post_id: postId, user_name: actor.actorName });
+  const [{ error }, reviewerName] = await Promise.all([
+    writeDb.from("likes").insert({ post_id: postId, user_name: actor.actorName }),
+    fetchPostReviewerName(writeDb, postId),
+  ]);
 
   if (error) {
     if (error.code === "23505") {
@@ -33,7 +39,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json({ ok: true });
 }
 
@@ -49,16 +57,17 @@ export async function DELETE(req: NextRequest) {
   }
 
   const writeDb = createAdminClient();
-  const { error } = await writeDb
-    .from("likes")
-    .delete()
-    .eq("post_id", postId)
-    .eq("user_name", actor.actorName);
+  const [{ error }, reviewerName] = await Promise.all([
+    writeDb.from("likes").delete().eq("post_id", postId).eq("user_name", actor.actorName),
+    fetchPostReviewerName(writeDb, postId),
+  ]);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json({ ok: true });
 }

@@ -10,6 +10,7 @@ import {
   type TemporaryBadge,
   type UserProfileReputation,
 } from "@/lib/reputation";
+import { createNotificationForNames } from "@/lib/notifications";
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -61,6 +62,28 @@ type BadgeCandidate = {
   badgeCategory: string;
   metadata?: Record<string, unknown>;
 };
+
+async function notifyNewBadges(db: SupabaseLike, profile: ProfileRow, badges: BadgeCandidate[]) {
+  const username = profile.username?.trim();
+  if (!username || badges.length === 0) return;
+
+  await Promise.all(badges.map((badge) => createNotificationForNames(db, {
+    recipientName: username,
+    actorName: null,
+    type: "ACHIEVEMENT_UNLOCKED",
+    title: "Achievement unlocked",
+    message: `You earned the ${badge.badgeName} badge`,
+    entityType: "SYSTEM",
+    entityId: `badge:${badge.badgeId}`,
+    metadata: {
+      badgeId: badge.badgeId,
+      badgeName: badge.badgeName,
+      badgeDescription: badge.badgeDescription,
+      badgeIcon: badge.badgeIcon,
+      badgeCategory: badge.badgeCategory,
+    },
+  })));
+}
 
 type ReputationContext = {
   profile: ProfileRow;
@@ -672,13 +695,25 @@ export async function recalculateUserReputation(db: SupabaseLike, userId: string
   return { profileScore, tier };
 }
 
-export async function checkAndAwardBadges(db: SupabaseLike, userId: string) {
+export async function checkAndAwardBadges(db: SupabaseLike, userId: string, options: { notify?: boolean } = {}) {
   const ctx = await loadReputationContext(db, userId);
   if (!ctx) return [];
   const candidates = buildBadgeCandidates(ctx);
   if (candidates.length === 0) return [];
+  const candidateIds = candidates.map((badge) => badge.badgeId);
 
-  const rows = candidates.map((badge) => ({
+  const { data: existingRows, error: existingError } = await db
+    .from("user_badges")
+    .select("badge_id")
+    .eq("user_id", userId)
+    .in("badge_id", candidateIds);
+  if (existingError) throw new Error(existingError.message);
+
+  const existingBadgeIds = new Set(((existingRows ?? []) as { badge_id: string }[]).map((row) => row.badge_id));
+  const newlyEarned = candidates.filter((badge) => !existingBadgeIds.has(badge.badgeId));
+  if (newlyEarned.length === 0) return [];
+
+  const rows = newlyEarned.map((badge) => ({
     user_id: userId,
     badge_id: badge.badgeId,
     badge_type: badge.badgeType,
@@ -693,7 +728,8 @@ export async function checkAndAwardBadges(db: SupabaseLike, userId: string) {
     .from("user_badges")
     .upsert(rows, { onConflict: "user_id,badge_id", ignoreDuplicates: true });
   if (error) throw new Error(error.message);
-  return candidates;
+  if (options.notify !== false) await notifyNewBadges(db, ctx.profile, newlyEarned);
+  return newlyEarned;
 }
 
 type StreakHistory = {
@@ -847,7 +883,7 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
 
   if (!reputationData) {
     await recalculateUserReputation(db, profile.id);
-    await checkAndAwardBadges(db, profile.id);
+    await checkAndAwardBadges(db, profile.id, { notify: false });
   }
 
   const row = (reputationData ?? null) as ReputationRow | null;
@@ -891,7 +927,7 @@ export async function getUserProfileReputation(db: SupabaseLike, userIdOrUsernam
   const hasLegacyAreaBadge = rawBadgeRows.some((b) => b.badge_id.startsWith("area_explorer:"));
   const hasNewAreaExplorer = rawBadgeRows.some((b) => b.badge_id === "area_explorer");
   if (hasLegacyAreaBadge && !hasNewAreaExplorer) {
-    await checkAndAwardBadges(db, profile.id);
+    await checkAndAwardBadges(db, profile.id, { notify: false });
     const { data: migratedData } = await db
       .from("user_badges")
       .select("badge_id, badge_type, badge_name, badge_description, badge_icon, badge_category, earned_at, metadata")

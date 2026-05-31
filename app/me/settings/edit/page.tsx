@@ -68,6 +68,8 @@ export default function EditProfilePage() {
     setStoredDisplayName(trimmed);
     invalidateCachedJson("/api/me");
     invalidateCachedJson("/api/people");
+    // Drop server-side getPrivateCached entries (me-page, people-page, circle feed).
+    void fetch("/api/me", { method: "POST" });
     router.push("/me/settings");
     router.refresh();
   }

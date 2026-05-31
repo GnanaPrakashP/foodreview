@@ -510,6 +510,7 @@ export interface Notification {
     | "THREAD_REPLY"
     | "CIRCLE_POST_CREATED"
     | "COMMON_RESTAURANT_SCORE_UPDATED"
+    | "ACHIEVEMENT_UNLOCKED"
     | "SYSTEM_ANNOUNCEMENT";
   title: string | null;
   message: string | null;

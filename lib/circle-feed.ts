@@ -187,7 +187,9 @@ export async function getCircleFeedPage(
     return { value, tags };
   };
 
-  if (options.bypassCache) {
+  // Cursor pages always bypass server private cache — they must fetch fresh data so
+  // that deleted posts and new engagement are not stale during load-more.
+  if (options.bypassCache || cursor) {
     const { value } = await load();
     return value;
   }

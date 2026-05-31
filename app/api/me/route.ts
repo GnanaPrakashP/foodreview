@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMePageData, invalidateMePageCacheForNames, type MeCursor } from "@/lib/me-page-data";
 import { invalidatePeoplePageCacheForNames } from "@/lib/people-page-data";
+import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
 import { createRouteSupabase } from "@/lib/server/route-supabase";
 import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -93,6 +94,9 @@ export async function POST(_req: NextRequest) {
     if (myName) {
       invalidateMePageCacheForNames([myName]);
       invalidatePeoplePageCacheForNames([myName]);
+      // Circle feed is tagged by member names, so this also clears viewers who have
+      // this user in their circle — important when account type / visibility changes.
+      invalidateCircleFeedCacheForNames([myName]);
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

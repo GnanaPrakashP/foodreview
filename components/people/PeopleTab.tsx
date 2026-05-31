@@ -241,7 +241,6 @@ function readExploreUrlState(): ExploreUrlState {
     tab === "places" || tab === "restaurants" ? "restaurants" :
     tab === "dishes" ? "dishes" :
     tab === "people" ? "people" :
-    tab === "posts" ? "posts" :
     null;
 
   return {
@@ -967,7 +966,6 @@ function DiscoveryHeader({
 
 function ExploreTabs({ activeTab, onChange }: { activeTab: ExploreTab; onChange: (tab: ExploreTab) => void }) {
   const tabs: Array<{ id: ExploreTab; label: string }> = [
-    { id: "posts", label: "Posts" },
     { id: "restaurants", label: "Places" },
     { id: "dishes", label: "Dishes" },
     { id: "people", label: "People" },
@@ -1311,7 +1309,9 @@ export default function PeopleTab({
   const [dishResults, setDishResults] = useState<DishResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<ExploreTab>(initialUrlState.activeTab ?? persistedFeed?.activeTab ?? "posts");
+  const [activeTab, setActiveTab] = useState<ExploreTab>(
+    initialUrlState.activeTab ?? (persistedFeed?.activeTab === "posts" ? "restaurants" : persistedFeed?.activeTab) ?? "restaurants"
+  );
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>(initialUrlState.placeCategory);
   const [dishCategory, setDishCategory] = useState<DishClusterId>(initialUrlState.dishCategory);
   const [feed, setFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);

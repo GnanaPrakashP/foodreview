@@ -71,6 +71,9 @@ export async function GET(req: NextRequest) {
   const excludeSeenParam = req.nextUrl.searchParams.get("excludeSeen") ?? "";
   const myName = req.nextUrl.searchParams.get("viewer") ?? "";
   const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
+  // When true, return an empty result set rather than falling back to base rows when all
+  // candidates are excluded. Used by Circle suggested-fallback to avoid reintroducing seen posts.
+  const strictExclude = req.nextUrl.searchParams.get("strictExclude") === "1";
   const placeId = req.nextUrl.searchParams.get("placeId")?.trim() || "";
   const restaurantName = req.nextUrl.searchParams.get("restaurantName")?.trim() || "";
   const lat = parseCoordinate(req.nextUrl.searchParams.get("lat"), -90, 90);
@@ -139,7 +142,8 @@ export async function GET(req: NextRequest) {
     const unseenFiltered = excludeSeenSet.size > 0
       ? baseFiltered.filter((r) => !excludeSeenSet.has(r.id))
       : baseFiltered;
-    const filtered = unseenFiltered.length > 0 ? unseenFiltered : baseFiltered;
+    // strictExclude: no fallback to base rows — return empty rather than reintroduce seen posts.
+    const filtered = unseenFiltered.length > 0 ? unseenFiltered : (strictExclude ? [] : baseFiltered);
 
     const hasMore = filtered.length > limit;
     const reviews = filtered.slice(0, limit);

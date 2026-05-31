@@ -3,6 +3,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 
+async function fetchPostReviewerName(db: ReturnType<typeof createAdminClient>, postId: string): Promise<string> {
+  const { data } = await db.from("reviews").select("reviewer_name").eq("id", postId).maybeSingle();
+  return typeof data?.reviewer_name === "string" ? data.reviewer_name : "";
+}
+
 export async function POST(req: NextRequest) {
   const { postId, content } = await req.json();
 
@@ -23,16 +28,21 @@ export async function POST(req: NextRequest) {
 
   // user_name is always the authenticated actor — never from the request body
   const writeDb = createAdminClient();
-  const { data, error } = await writeDb
-    .from("comments")
-    .insert({ post_id: postId, user_name: actor.actorName, content: content.trim() })
-    .select("id, post_id, user_name, content, created_at")
-    .single();
+  const [{ data, error }, reviewerName] = await Promise.all([
+    writeDb
+      .from("comments")
+      .insert({ post_id: postId, user_name: actor.actorName, content: content.trim() })
+      .select("id, post_id, user_name, content, created_at")
+      .single(),
+    fetchPostReviewerName(writeDb, postId),
+  ]);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json(data);
 }

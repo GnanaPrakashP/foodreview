@@ -23,6 +23,7 @@ import {
   normalizeLocationLabel,
 } from "@/lib/trending-location";
 import SwipeStack from "./SwipeStack";
+import MustTryChecklist from "./MustTryChecklist";
 
 const SWIPE_PAGE_SIZE = 40;
 const SWIPE_TTL_MS = 2 * 60 * 1000;
@@ -251,6 +252,7 @@ function LocationPickerSheet({
 }
 
 export default function HungryPageClient() {
+  const [activeTab, setActiveTab] = useState<"now" | "must_try">("now");
   const [initialFeedKey] = useState(() => swipeFeedUrl(getStoredActorName(), loadSavedLocation()));
   const [persistedFeed] = useState(() => isDocumentReload() ? null : readFeedState<HungryFeedSnapshot>(initialFeedKey));
   const [posts, setPosts] = useState<Review[]>(persistedFeed?.reviews ?? []);
@@ -405,6 +407,13 @@ export default function HungryPageClient() {
     loadPosts(null, myName, nextLocation);
   }
 
+  function openLocationPicker() {
+    if (locationWrapperRef.current) {
+      setDropdownTop(locationWrapperRef.current.getBoundingClientRect().bottom + 8);
+    }
+    setShowLocationPicker(true);
+  }
+
   const loadMoreIfNeeded = useCallback(() => {
     if (!loading && !loadingMore && hasMore && nextCursor) {
       loadPosts(nextCursor);
@@ -464,19 +473,22 @@ export default function HungryPageClient() {
 
   return (
     <div style={{ position: "fixed", inset: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: "32rem", background: "var(--bg)", overflow: "hidden", boxSizing: "border-box", paddingBottom: "calc(64px + env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 0", flexShrink: 0 }}>
-        <div ref={locationWrapperRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "22px 16px 8px", flexShrink: 0 }}>
+        <h1 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "28px", lineHeight: 1.15, color: "var(--cream)", margin: 0 }}>
+          Hungry
+        </h1>
+        <div ref={locationWrapperRef} style={{ position: "relative", minWidth: 0, maxWidth: "52%" }}>
           <button
+            type="button"
             onClick={() => {
-              if (!showLocationPicker && locationWrapperRef.current) {
-                setDropdownTop(locationWrapperRef.current.getBoundingClientRect().bottom + 8);
-              }
-              setShowLocationPicker(v => !v);
+              if (!showLocationPicker) openLocationPicker();
+              else setShowLocationPicker(false);
             }}
-            style={{ width: "100%", background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", gap: 8, color: "var(--cream)", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
+            aria-label="Location"
+            style={{ width: "100%", background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", gap: 8, color: "var(--cream)", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 800 }}
           >
             <span style={{ fontSize: 22, lineHeight: 1 }}>🧭</span>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 800 }}>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {location ? shortLocationLabel(location.label) : "Set location"}
             </span>
             <ChevronDown size={14} strokeWidth={2.2} color="var(--muted)" style={{ flexShrink: 0 }} />
@@ -490,34 +502,64 @@ export default function HungryPageClient() {
             />
           )}
         </div>
-        <div
-          aria-label="Bucket"
-          style={{ position: "relative", minWidth: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--cream)" }}
-        >
-          <span style={{ fontSize: 22, lineHeight: 1 }}>🥡</span>
-          {savedIds.size > 0 && (
-            <span style={{ position: "absolute", top: -3, right: -5, minWidth: 17, height: 17, padding: "0 5px", borderRadius: 999, background: "var(--orange)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800, border: "2px solid var(--bg)" }}>
-              {savedIds.size}
-            </span>
-          )}
-        </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <SwipeStack
-          posts={posts}
-          loading={loading || loadingMore}
-          onSavePost={savePost}
-          onNeedMore={loadMoreIfNeeded}
-          likeCountMap={likeCountMap}
-          commentMap={commentMap}
-          likedMap={likedMap}
-          bookmarkedMap={bookmarkedMap}
-          profileMap={profileMap}
-          myName={myName}
-          requestStatusFor={requestStatusFor}
-          onRequestPostAuthor={requestPostAuthor}
-        />
+      <div role="tablist" aria-label="Hungry modes" style={{ display: "flex", padding: "0 16px 14px", flexShrink: 0 }}>
+          {([
+            ["now", "Pick Now"],
+            ["must_try", "Must Try"],
+          ] as const).map(([value, label]) => {
+            const selected = activeTab === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setActiveTab(value)}
+                style={{ flex: 1, padding: "10px 0 9px", fontSize: 12, fontWeight: 600, cursor: "pointer", color: selected ? "var(--orange)" : "var(--muted)", background: "none", border: "none", borderBottom: `2px solid ${selected ? "var(--orange)" : "var(--border)"}`, fontFamily: "'DM Sans', sans-serif" }}
+              >
+                {label}
+              </button>
+            );
+          })}
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div aria-hidden={activeTab !== "now"} style={{ position: "absolute", inset: 0, display: activeTab === "now" ? "block" : "none" }}>
+          <div
+            aria-label="Bucket"
+            style={{ position: "absolute", top: 8, right: 16, zIndex: 5, minWidth: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--cream)" }}
+          >
+            <span style={{ fontSize: 22, lineHeight: 1 }}>🥡</span>
+            {savedIds.size > 0 && (
+              <span style={{ position: "absolute", top: -6, right: -7, minWidth: 17, height: 17, padding: "0 5px", borderRadius: 999, background: "var(--orange)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", fontSize: 10, fontWeight: 800, border: "2px solid var(--bg)" }}>
+                {savedIds.size}
+              </span>
+            )}
+          </div>
+          <SwipeStack
+            posts={posts}
+            loading={loading || loadingMore}
+            onSavePost={savePost}
+            onNeedMore={loadMoreIfNeeded}
+            likeCountMap={likeCountMap}
+            commentMap={commentMap}
+            likedMap={likedMap}
+            bookmarkedMap={bookmarkedMap}
+            profileMap={profileMap}
+            myName={myName}
+            requestStatusFor={requestStatusFor}
+            onRequestPostAuthor={requestPostAuthor}
+          />
+        </div>
+        <div aria-hidden={activeTab !== "must_try"} style={{ position: "absolute", inset: 0, display: activeTab === "must_try" ? "block" : "none" }}>
+          <MustTryChecklist
+            location={location}
+            active={activeTab === "must_try"}
+            onChooseLocation={openLocationPicker}
+          />
+        </div>
       </div>
 
     </div>

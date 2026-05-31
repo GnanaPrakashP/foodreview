@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid } from "@/lib/server/review-validation";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+async function fetchPostReviewerName(postId: string): Promise<string> {
+  const db = createAdminClient();
+  const { data } = await db.from("reviews").select("reviewer_name").eq("id", postId).maybeSingle();
+  return typeof data?.reviewer_name === "string" ? data.reviewer_name : "";
+}
 
 export async function DELETE(
   _req: NextRequest,
@@ -31,16 +38,17 @@ export async function DELETE(
     return NextResponse.json({ error: "Not your comment" }, { status: 403 });
   }
 
-  const { error } = await supabase
-    .from("comments")
-    .delete()
-    .eq("id", id)
-    .eq("user_name", actor.actorName);
+  const [{ error }, reviewerName] = await Promise.all([
+    supabase.from("comments").delete().eq("id", id).eq("user_name", actor.actorName),
+    fetchPostReviewerName(comment.post_id),
+  ]);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json({ ok: true });
 }

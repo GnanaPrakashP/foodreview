@@ -5,28 +5,29 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { canActorReadPost } from "@/lib/server/review-access";
 import { recalculateUserReputation } from "@/lib/server/reputation";
 
-async function refreshPostAuthorReputation(db: { from: (table: string) => any }, postId: unknown) {
-  if (typeof postId !== "string" || !postId.trim()) return;
+async function refreshPostAuthorReputation(db: { from: (table: string) => any }, postId: unknown): Promise<string> {
+  if (typeof postId !== "string" || !postId.trim()) return "";
   const { data: review } = await db
     .from("reviews")
     .select("reviewer_name")
     .eq("id", postId.trim())
     .maybeSingle();
   const reviewerName = typeof review?.reviewer_name === "string" ? review.reviewer_name : "";
-  if (!reviewerName) return;
+  if (!reviewerName) return "";
 
   const { data: profile } = await db
     .from("profiles")
     .select("id")
     .eq("username", reviewerName)
     .maybeSingle();
-  if (typeof profile?.id !== "string") return;
+  if (typeof profile?.id !== "string") return reviewerName;
 
   try {
     await recalculateUserReputation(db, profile.id);
   } catch (error) {
     console.error("[wishlist] Failed to refresh author reputation:", error);
   }
+  return reviewerName;
 }
 
 export async function POST(req: NextRequest) {
@@ -60,8 +61,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
-  await refreshPostAuthorReputation(writeDb, postId);
+  const reviewerName = await refreshPostAuthorReputation(writeDb, postId);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json({ ok: true });
 }
 
@@ -95,7 +98,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  invalidateSocialCachesForNames([actor.actorName]);
-  await refreshPostAuthorReputation(writeDb, postId);
+  const reviewerName = await refreshPostAuthorReputation(writeDb, postId);
+  const names = [actor.actorName];
+  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
+  invalidateSocialCachesForNames(names);
   return NextResponse.json({ ok: true });
 }
