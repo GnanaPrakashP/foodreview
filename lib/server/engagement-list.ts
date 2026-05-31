@@ -14,6 +14,11 @@ type WishlistRow = {
   created_at: string;
 };
 
+type HungryPickRow = {
+  post_id: string;
+  created_at: string;
+};
+
 type CommentRow = {
   id: string;
   post_id: string;
@@ -180,6 +185,25 @@ export async function savedPostsForActor(db: EngagementDb, actorName: string) {
   const actorMaps = await actorStateMaps(db, reviews, actorName);
 
   return { reviews, placeItems, ...maps, ...actorMaps };
+}
+
+export async function hungryPicksForActor(db: EngagementDb, actorName: string) {
+  const { data } = await db
+    .from("hungry_picks")
+    .select("post_id, created_at")
+    .eq("user_name", actorName)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as HungryPickRow[];
+  const postIds = rows.map((row) => row.post_id);
+  const reviewMap = await reviewsById(db, postIds, actorName);
+  const reviews = rows
+    .map((row) => reviewMap.get(row.post_id))
+    .filter((review): review is Review => Boolean(review));
+  const maps = await engagementMaps(db, reviews.map((review) => review.id));
+  const actorMaps = await actorStateMaps(db, reviews, actorName);
+
+  return { reviews, ...maps, ...actorMaps };
 }
 
 export async function commentsForActor(db: EngagementDb, actorName: string) {

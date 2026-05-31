@@ -66,7 +66,7 @@ function BoxedPostCard({
 export default function SwipeStack({
   posts,
   loading,
-  onSavePost,
+  onPickPost,
   onSkipPost,
   onNeedMore,
   undoKey = 0,
@@ -82,7 +82,7 @@ export default function SwipeStack({
 }: {
   posts: Review[];
   loading: boolean;
-  onSavePost: (post: Review) => void;
+  onPickPost: (post: Review) => void;
   onSkipPost?: (post: Review) => void;
   onNeedMore?: () => void;
   undoKey?: number;
@@ -103,6 +103,8 @@ export default function SwipeStack({
   const [dismissDir, setDismissDir] = useState<"left" | "right" | null>(null);
   const startXRef = useRef(0);
   const startYRef = useRef(0);
+  const dragXRef = useRef(0);
+  const isDraggingRef = useRef(false);
   const draggedRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -178,15 +180,17 @@ export default function SwipeStack({
 
   function dismiss(dir: "left" | "right") {
     if (dismissDir || !current) return;
-    if (dir === "right") onSavePost(current);
+    if (dir === "right") onPickPost(current);
     if (dir === "left") onSkipPost?.(current);
     setDismissDir(dir);
     setIsDragging(false);
+    isDraggingRef.current = false;
     setSeenIds((prev) => new Set(prev).add(current.id));
     setTimeout(() => {
       setStack((prev) => prev.slice(1));
       setDismissDir(null);
       setDragX(0);
+      dragXRef.current = 0;
     }, 330);
   }
 
@@ -195,27 +199,36 @@ export default function SwipeStack({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     startXRef.current = e.clientX;
     startYRef.current = e.clientY;
+    dragXRef.current = 0;
+    isDraggingRef.current = true;
     draggedRef.current = false;
     setIsDragging(true);
   }
 
   function handlePointerMove(e: React.PointerEvent) {
-    if (!isDragging || dismissDir) return;
+    if (!isDraggingRef.current || dismissDir) return;
     const nextDragX = e.clientX - startXRef.current;
     const dragY = e.clientY - startYRef.current;
     if (Math.abs(nextDragX) > 8 && Math.abs(nextDragX) > Math.abs(dragY)) {
       draggedRef.current = true;
       e.preventDefault();
     }
+    dragXRef.current = nextDragX;
     setDragX(nextDragX);
   }
 
-  function handlePointerUp() {
-    if (!isDragging) return;
+  function handlePointerUp(e: React.PointerEvent) {
+    if (!isDraggingRef.current) return;
+    const pointerUpDragX = e.clientX - startXRef.current;
     setIsDragging(false);
-    if (Math.abs(dragX) >= 80) {
-      dismiss(dragX > 0 ? "right" : "left");
+    isDraggingRef.current = false;
+    const finalDragX = Math.abs(dragXRef.current) > Math.abs(pointerUpDragX)
+      ? dragXRef.current
+      : pointerUpDragX;
+    if (Math.abs(finalDragX) >= 80) {
+      dismiss(finalDragX > 0 ? "right" : "left");
     } else {
+      dragXRef.current = 0;
       setDragX(0);
     }
   }
