@@ -171,6 +171,11 @@ export default async function UserProfilePage({ params }: Props) {
       reputation={reputation}
       initialHasMore={profileReviewsPage.hasMore}
       initialNextCursor={profileReviewsPage.nextCursor}
+      likeCountMap={profileReviewsPage.likeCountMap}
+      commentMap={profileReviewsPage.commentMap}
+      likedByMeMap={profileReviewsPage.likedByMeMap}
+      bookmarkedPostMap={profileReviewsPage.bookmarkedPostMap}
+      profileMap={profileReviewsPage.profileMap}
     />
   );
 }

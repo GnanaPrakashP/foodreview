@@ -34,6 +34,7 @@ function loadCircleFeedModule() {
         if (id === "@/lib/profile-display") return { buildProfileDisplayMap: async () => ({}) };
         if (id === "@/lib/server/normalize-review") return { normalizeReview: (review) => review };
         if (id === "@/lib/server/taste-trust") return { getPostTasteTrustSummaryMap: async () => ({}) };
+        if (id === "@/lib/server/post-views") return { loadSeenPostIdsForUser: async (_db, _userId, extraPostIds = []) => new Set(extraPostIds) };
         throw new Error(`Unexpected require in circle-feed pagination tests: ${id}`);
       },
     }

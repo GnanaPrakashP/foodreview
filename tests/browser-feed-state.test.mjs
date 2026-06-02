@@ -71,6 +71,14 @@ test("browser feed state prefix clearing removes matching snapshots only", () =>
   assert.equal(feedState.readFeedState("/api/feed/public?viewer=alice"), null);
 });
 
+test("seen post storage is versioned so old seen maps can be invalidated safely", () => {
+  const source = readFileSync(new URL("../lib/browser-post-views.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const SEEN_POST_STORAGE_VERSION = "v2"/);
+  assert.match(source, /const STORAGE_PREFIX = `fc_seen_posts:\$\{SEEN_POST_STORAGE_VERSION\}:`/);
+  assert.doesNotMatch(source, /const STORAGE_PREFIX = "fc_seen_posts:"/);
+});
+
 test("browser feed state removes a deleted post from all persisted snapshots", () => {
   const { feedState } = loadFeedState();
 

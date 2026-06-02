@@ -58,7 +58,7 @@ export async function loadProfileReviewsPage(
   viewerName: string,
   options: { cursor?: ProfileReviewsCursor | null; limit?: number; restaurantName?: string | null } = {}
 ): Promise<ProfileReviewsPage> {
-  const limit = Math.min(40, Math.max(1, Math.floor(options.limit ?? 24)));
+  const limit = Math.min(500, Math.max(1, Math.floor(options.limit ?? 24)));
   const visibility = await allowedVisibilities(db, ownerName, viewerName);
 
   let query = db

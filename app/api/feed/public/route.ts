@@ -5,6 +5,8 @@ import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import type { Comment } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import { loadSeenPostIdsForUser } from "@/lib/server/post-views";
 
 const REVIEW_SELECT = [
   "id",
@@ -69,7 +71,7 @@ export async function GET(req: NextRequest) {
   // Keep an explicit exclude override for callers that need a narrower view.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
   const excludeSeenParam = req.nextUrl.searchParams.get("excludeSeen") ?? "";
-  const myName = req.nextUrl.searchParams.get("viewer") ?? "";
+  const requestedViewerName = req.nextUrl.searchParams.get("viewer") ?? "";
   const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
   // When true, return an empty result set rather than falling back to base rows when all
   // candidates are excluded. Used by Circle suggested-fallback to avoid reintroducing seen posts.
@@ -81,6 +83,8 @@ export async function GET(req: NextRequest) {
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
 
   try {
+    const { actor } = await getRouteActor().catch(() => ({ actor: null }));
+    const myName = actor?.actorName ?? requestedViewerName;
     const db = createAdminClient();
     const excludeNames = Array.from(new Set([
       ...excludeParam
@@ -88,11 +92,14 @@ export async function GET(req: NextRequest) {
         .map((n) => n.trim())
         .filter(Boolean),
     ].filter(Boolean)));
-    const excludeSeenSet = new Set(
-      excludeSeenParam
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean)
+    const excludeSeenIds = excludeSeenParam
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const excludeSeenSet = await loadSeenPostIdsForUser(
+      db,
+      actor?.userId ?? null,
+      excludeSeenIds
     );
 
     let query = db

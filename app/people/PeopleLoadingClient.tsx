@@ -23,11 +23,5 @@ export default function PeopleLoadingClient() {
   if (pathname !== "/explore" && pendingPathname !== "/explore") return <PeopleSkeleton />;
   if (!data) return <PeopleSkeleton />;
 
-  return (
-    <PeoplePageClient
-      initialData={data}
-      consumeNavigationIntent={false}
-      preserveOrderOnNavOverride={pendingPathname === "/explore"}
-    />
-  );
+  return <PeoplePageClient initialData={data} />;
 }

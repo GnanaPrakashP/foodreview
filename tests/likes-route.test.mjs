@@ -158,7 +158,10 @@ test("POST /likes: insert contains correct post_id", async () => {
 
 test("POST /likes: duplicate like (23505) returns ok with alreadyLiked flag", async () => {
   const { POST } = loadRoute(src, {
-    db: spyDb({ error: { code: "23505", message: "unique constraint" } }),
+    db: spyDb(
+      { data: { reviewer_name: "Bob" }, error: null },
+      { error: { code: "23505", message: "unique constraint" } }
+    ),
     authName: "Alice",
   });
   const res = await POST(makeReq({ postId: "post-1" }));
@@ -168,7 +171,10 @@ test("POST /likes: duplicate like (23505) returns ok with alreadyLiked flag", as
 
 test("POST /likes: other DB error returns 500", async () => {
   const { POST } = loadRoute(src, {
-    db: spyDb({ error: { code: "42P01", message: "relation not found" } }),
+    db: spyDb(
+      { data: { reviewer_name: "Bob" }, error: null },
+      { error: { code: "42P01", message: "relation not found" } }
+    ),
     authName: "Alice",
   });
   const res = await POST(makeReq({ postId: "post-1" }));
@@ -232,7 +238,10 @@ test("DELETE /likes: successful unlike returns ok", async () => {
 
 test("DELETE /likes: DB error returns 500", async () => {
   const { DELETE } = loadRoute(src, {
-    db: spyDb({ error: { message: "delete failed" } }),
+    db: spyDb(
+      { data: { reviewer_name: "Bob" }, error: null },
+      { error: { message: "delete failed" } }
+    ),
     authName: "Alice",
   });
   const res = await DELETE(makeReq({ postId: "post-1" }));

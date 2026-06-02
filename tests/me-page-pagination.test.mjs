@@ -161,6 +161,12 @@ function loadMeRoute({ db, authUser }) {
       if (id === "@/lib/people-page-data") {
         return { invalidatePeoplePageCacheForNames: () => {} };
       }
+      if (id === "@/lib/server/cache-invalidation") {
+        return {
+          invalidateCircleFeedCacheForNames: () => {},
+          invalidateSocialCachesForNames: () => {},
+        };
+      }
       if (id === "@/lib/taste-trust") {
         return { tasteTrustSummaryFromProfile: () => ({ trust_score: 20, trust_level: "New Reviewer", confirmed_recommendations_count: 0 }) };
       }

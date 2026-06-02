@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
 import { consumePendingRoute } from "@/lib/browser-navigation-intent";
 import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
+import { resolveActorName } from "@/lib/browser-actor";
+import { readSeenPostMap } from "@/lib/browser-post-views";
 import CircleFeedClient from "@/components/circle/CircleFeedClient";
 import NotificationBell from "@/components/reviews/NotificationBell";
 import type { CircleFeedPage } from "@/lib/circle-feed";
@@ -12,6 +14,19 @@ import { CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
 const CIRCLE_TTL_MS = 3 * 60 * 1000;
 const API_URL = "/api/feed/circle";
 const REFRESH_API_URL = `${API_URL}?limit=${CIRCLE_FEED_MAX_PAGE_SIZE}&refresh=1`;
+const MAX_REFRESH_EXCLUDED_SEEN_POSTS = 160;
+
+function circleFeedRequestUrl(baseUrl: string, viewerName = "") {
+  const name = resolveActorName(viewerName);
+  if (!name) return baseUrl;
+  const seenIds = Object.keys(readSeenPostMap(name));
+  if (seenIds.length === 0) return baseUrl;
+
+  const [path, query = ""] = baseUrl.split("?");
+  const params = new URLSearchParams(query);
+  params.set("excludeSeen", seenIds.slice(0, MAX_REFRESH_EXCLUDED_SEEN_POSTS).join(","));
+  return `${path}?${params.toString()}`;
+}
 
 export function CircleSkeleton() {
   return (
@@ -51,7 +66,7 @@ export default function CirclePageClient({ initialData = null }: { initialData?:
 
   useEffect(() => {
     let cancelled = false;
-    const requestUrl = refreshMode ? REFRESH_API_URL : API_URL;
+    const requestUrl = circleFeedRequestUrl(refreshMode ? REFRESH_API_URL : API_URL, initialData?.myName ?? "");
     const forceFreshLoad = refreshMode || !preserveFeedOrderOnNav;
     if (initialData) {
       if (refreshMode) {

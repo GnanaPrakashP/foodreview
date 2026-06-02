@@ -2,7 +2,8 @@
 
 import type { SeenPostMap } from "@/lib/feed-ranking";
 
-const STORAGE_PREFIX = "fc_seen_posts:";
+const SEEN_POST_STORAGE_VERSION = "v2";
+const STORAGE_PREFIX = `fc_seen_posts:${SEEN_POST_STORAGE_VERSION}:`;
 const MAX_SEEN_POSTS = 700;
 const SEEN_POST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 

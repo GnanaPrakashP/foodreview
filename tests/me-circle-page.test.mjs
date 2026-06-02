@@ -8,14 +8,14 @@ const source = readFileSync(
 );
 
 test("me/circle page renders a per-member remove button", () => {
-  assert.match(source, />\s*\{removingName === name \? "Removing\.\.\." : "Remove"\}\s*<\/button>/);
+  assert.match(source, />\s*\{removingName === username \? "Removing\.\.\." : "Remove"\}\s*<\/button>/);
 });
 
 test("me/circle page uses in-app confirmation modal before removing a member", () => {
   assert.match(source, /const \[confirmRemoveName,\s*setConfirmRemoveName\] = useState<string \| null>\(null\)/);
-  assert.match(source, /setConfirmRemoveName\(name\)/);
+  assert.match(source, /setConfirmRemoveName\(username\)/);
   assert.match(source, /Remove from circle\?/);
-  assert.match(source, /Do you want to remove \{confirmRemoveName\} from your circle\?/);
+  assert.match(source, /Do you want to remove \{members\.find\(m => m\.username === confirmRemoveName\)\?\.displayName \|\| confirmRemoveName\} from your circle\?/);
   assert.match(source, />\s*Cancel\s*<\/button>/);
   assert.match(source, />\s*Remove\s*<\/button>/);
   assert.match(source, /await removeFromMyCircle\(target\)/);
@@ -29,7 +29,7 @@ test("me/circle page calls remove API with otherName", () => {
 });
 
 test("me/circle page optimistically removes the member before the API responds", () => {
-  assert.match(source, /setMembers\(\(prev\) => prev\.filter\(\(member\) => member\.name !== memberName\)\)/);
+  assert.match(source, /setMembers\(\(prev\) => prev\.filter\(\(member\) => member\.username !== memberName\)\)/);
 });
 
 test("me/circle page rolls back member list when API returns a non-ok response", () => {
@@ -72,7 +72,7 @@ test("me/circle page sets removingName to the member being removed at the start 
 });
 
 test("me/circle page disables the row-level remove button while that specific member is being removed", () => {
-  assert.match(source, /disabled=\{removingName === name\}/);
+  assert.match(source, /disabled=\{removingName === username\}/);
 });
 
 test("me/circle page shows different empty-state copy for public vs private accounts", () => {

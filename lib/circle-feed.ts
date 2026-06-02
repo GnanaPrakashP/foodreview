@@ -10,6 +10,7 @@ import { buildProfileDisplayMap } from "@/lib/profile-display";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { getPostTasteTrustSummaryMap } from "@/lib/server/taste-trust";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
+import { loadSeenPostIdsForUser } from "@/lib/server/post-views";
 
 type FeedDb = {
   auth: {
@@ -85,10 +86,16 @@ export type CircleFeedCursor = {
   id: string;
 };
 
-function feedCacheKey(candidateNames: string[], cursor: CircleFeedCursor | null, limit: number) {
+function feedCacheKey(
+  candidateNames: string[],
+  cursor: CircleFeedCursor | null,
+  limit: number,
+  excludePostIds: string[]
+) {
   const identity = candidateNames.map(normalizeCacheName).sort().join("|") || "anonymous";
   const cursorKey = cursor ? `${cursor.createdAt}|${cursor.id}` : "first";
-  return `circle-feed:v2:${identity}:${cursorKey}:${limit}`;
+  const excludeKey = excludePostIds.length > 0 ? `exclude:${excludePostIds.slice().sort().join("|")}` : "exclude:none";
+  return `circle-feed:v3:${identity}:${cursorKey}:${limit}:${excludeKey}`;
 }
 
 export function cursorForCircleFeedReview(review: Pick<Review, "created_at" | "id">): CircleFeedCursor {
@@ -157,10 +164,11 @@ export type CircleFeedPage = {
 
 export async function getCircleFeedPage(
   supabase: FeedDb,
-  options: { cursor?: CircleFeedCursor | null; limit?: number; bypassCache?: boolean } = {}
+  options: { cursor?: CircleFeedCursor | null; limit?: number; bypassCache?: boolean; excludePostIds?: string[] } = {}
 ): Promise<CircleFeedPage> {
   const cursor = options.cursor ?? null;
   const limit = clampLimit(options.limit ?? CIRCLE_FEED_PAGE_SIZE);
+  const excludePostIds = Array.from(new Set((options.excludePostIds ?? []).map((id) => id.trim()).filter(Boolean)));
 
   const [actor, { data: { user } }] = await Promise.all([
     getAuthenticatedCircleActor(supabase),
@@ -180,7 +188,7 @@ export async function getCircleFeedPage(
   );
 
   const load = async () => {
-    const value = await loadCircleFeedPageForNames(supabase, candidateNames, cursor, limit);
+    const value = await loadCircleFeedPageForNames(supabase, candidateNames, cursor, limit, excludePostIds, actor?.userId ?? null);
     const tags = Array.from(
       new Set([value.myName, ...value.joinedCircles, ...candidateNames].filter(Boolean).map(feedCacheTagForName))
     );
@@ -189,13 +197,13 @@ export async function getCircleFeedPage(
 
   // Cursor pages always bypass server private cache — they must fetch fresh data so
   // that deleted posts and new engagement are not stale during load-more.
-  if (options.bypassCache || cursor) {
+  if (options.bypassCache || cursor || excludePostIds.length > 0 || actor?.userId) {
     const { value } = await load();
     return value;
   }
 
   return getPrivateCached({
-    key: feedCacheKey(candidateNames, cursor, limit),
+    key: feedCacheKey(candidateNames, cursor, limit, excludePostIds),
     ttlMs: CIRCLE_FEED_CACHE_TTL_MS,
     load,
   });
@@ -205,7 +213,9 @@ async function loadCircleFeedPageForNames(
   supabase: FeedDb,
   candidateNames: string[],
   cursor: CircleFeedCursor | null,
-  limit: number
+  limit: number,
+  excludePostIds: string[] = [],
+  userId: string | null = null
 ): Promise<CircleFeedPage> {
   const readDb = candidateNames.length > 0 ? createAdminClient() : supabase;
 
@@ -224,8 +234,10 @@ async function loadCircleFeedPageForNames(
   const joinedCircles = Array.from(joinedCircleSet);
   const mutualMembers = Array.from(mutualMemberSet);
   const feedReviewerNames = Array.from(new Set(joinedCircles.filter(Boolean)));
+  const excludePostIdSet = await loadSeenPostIdsForUser(readDb, userId, excludePostIds);
 
   const visibleRows: Review[] = [];
+  const seenFallbackRows: Review[] = [];
   let scanCursor = cursor;
   let exhausted = feedReviewerNames.length === 0;
   const batchSize = Math.min(100, Math.max(limit + 1, limit * 2));
@@ -257,19 +269,27 @@ async function loadCircleFeedPageForNames(
       break;
     }
 
-    visibleRows.push(
-      ...filterCircleTrendingReviews(batch, {
-        viewerName: myName,
-        circleOwnerNames: joinedCircles,
-      })
-    );
+    const visibleBatch = filterCircleTrendingReviews(batch, {
+      viewerName: myName,
+      circleOwnerNames: joinedCircles,
+    });
+
+    for (const review of visibleBatch) {
+      if (excludePostIdSet.has(review.id)) {
+        seenFallbackRows.push(review);
+      } else {
+        visibleRows.push(review);
+      }
+    }
 
     scanCursor = cursorForCircleFeedReview(batch[batch.length - 1]);
     exhausted = batch.length < batchSize;
   }
 
-  const hasMore = visibleRows.length > limit;
-  const allReviews = visibleRows.slice(0, limit);
+  const unseenPostIds = new Set(visibleRows.map((review) => review.id));
+  const orderedRows = [...visibleRows, ...seenFallbackRows];
+  const hasMore = orderedRows.length > limit;
+  const allReviews = orderedRows.slice(0, limit);
   const nextCursor = hasMore && allReviews.length > 0
     ? cursorForCircleFeedReview(allReviews[allReviews.length - 1])
     : null;
@@ -317,10 +337,15 @@ async function loadCircleFeedPageForNames(
     }
   }
 
-  const rankedReviews = rankCircleFeedReviews(allReviews, {
-    likeCountMap,
-    commentMap,
-  });
+  const rankedUnseenReviews = rankCircleFeedReviews(
+    allReviews.filter((review) => unseenPostIds.has(review.id)),
+    { likeCountMap, commentMap }
+  );
+  const rankedSeenFallbackReviews = rankCircleFeedReviews(
+    allReviews.filter((review) => !unseenPostIds.has(review.id)),
+    { likeCountMap, commentMap }
+  );
+  const rankedReviews = [...rankedUnseenReviews, ...rankedSeenFallbackReviews];
 
   const visitCounts = new Map<string, number>();
   for (const review of allReviews) {

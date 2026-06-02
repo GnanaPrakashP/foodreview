@@ -14,8 +14,20 @@ const circleRouteSource = readFileSync(
   new URL("../app/api/feed/circle/route.ts", import.meta.url),
   "utf8"
 );
+const postViewsRouteSource = readFileSync(
+  new URL("../app/api/post-views/route.ts", import.meta.url),
+  "utf8"
+);
 const circleFeedSource = readFileSync(
   new URL("../lib/circle-feed.ts", import.meta.url),
+  "utf8"
+);
+const publicRouteSource = readFileSync(
+  new URL("../app/api/feed/public/route.ts", import.meta.url),
+  "utf8"
+);
+const postViewsSource = readFileSync(
+  new URL("../lib/server/post-views.ts", import.meta.url),
   "utf8"
 );
 const bottomNavSource = readFileSync(
@@ -82,10 +94,18 @@ test("circle feed still fetches circle status when only local storage identity e
   assert.match(source, /setCircle\(data\.members \?\? \[\]\)/);
 });
 
-test("circle feed does not append public discovery posts", () => {
-  assert.doesNotMatch(source, /\/api\/feed\/public/);
-  assert.doesNotMatch(source, /Show public posts/);
-  assert.doesNotMatch(source, /Discover People/);
+test("circle feed mixes filtered public discovery posts into the feed", () => {
+  assert.match(source, /return `\/api\/feed\/public\?\$\{params\.toString\(\)\}`/);
+  assert.match(source, /excludeSynthetic: "1"/);
+  assert.match(source, /if \(strictExclude\) params\.set\("strictExclude", "1"\);/);
+  assert.match(source, /function interleaveUnseenPosts\(circlePosts: Review\[\], publicPosts: Review\[\]\)/);
+  assert.match(source, /70\/30 mix: seven circle posts and three public discovery posts per cycle/);
+  assert.match(source, /const pattern: Array<"circle" \| "public"> = \[\s*"circle",\s*"circle",\s*"public",\s*"circle",\s*"circle",\s*"public",\s*"circle",\s*"circle",\s*"public",\s*"circle",\s*\]/);
+  assert.match(source, /let data = await fetchPublicPage\(cursor, seenIds, true\);/);
+  assert.match(source, /data = await fetchPublicPage\(null, \[\], false\);/);
+  assert.match(source, /const isPublicPost = publicPostIds\.has\(review\.id\)/);
+  assert.match(source, /requestStatus=\{isPublicPost \? requestStatusFor\(review\.reviewer_name\) : undefined\}/);
+  assert.doesNotMatch(source, /Suggested near you/);
 });
 
 test("circle feed persists visible posts without reranking the current viewport", () => {
@@ -94,46 +114,47 @@ test("circle feed persists visible posts without reranking the current viewport"
   assert.match(circlePageSource, /useState<CircleFeedPage \| null>\(\(\) => refreshMode \? null : initialData\)/);
   assert.match(circlePageSource, /preserveOrderOnNav=\{preserveFeedOrderOnNav\}/);
   assert.match(source, /!refreshMode && preserveOrderOnNav \? readFeedState<CircleFeedSnapshot>\(initialStateKey\) : null/);
-  assert.match(source, /seenPostMapRef\.current = markPostsSeen\(myName, newlySeen\);/);
+  assert.match(source, /const nextSeenMap = markPostsSeen\(myName, unseenIds\);/);
+  assert.match(source, /seenPostMapRef\.current = nextSeenMap;/);
+  assert.match(source, /recordSeenPostsOnServer\(unseenIds\);/);
+  assert.match(source, /fetch\("\/api\/post-views"/);
+  assert.match(source, /navigator\.sendBeacon\("\/api\/post-views", blob\)/);
+  assert.match(source, /keepalive: true/);
+  assert.match(source, /this mounted feed should not reshuffle itself/);
+  assert.match(source, /const SEEN_DWELL_MS = 1000;/);
+  assert.match(source, /const SEEN_EXIT_DWELL_MS = 250;/);
+  assert.match(source, /visibleForMs >= requiredDwellMs/);
+  assert.match(source, /scheduleDwellScan\(\);/);
   assert.match(source, /useState<SeenPostMap>\(\(\) => readSeenPostMap\(initialViewerName \|\| initialMyName\)\)/);
-  assert.match(source, /const \[preserveFeedOrderOnNav\] = useState\(\(\) => !refreshMode && Boolean\(persistedSnapshot\)\);/);
-  assert.match(source, /preserveFeedOrderOnNav \? feedReviews : rankFeedReviewsBySeenState\(feedReviews, seenPostMap\)/);
+  assert.match(source, /const displayedReviews = useMemo\(\(\) => \{/);
+  assert.match(source, /const unseenCircle: Review\[\] = \[\];/);
+  assert.match(source, /\.\.\.interleaveUnseenPosts\(unseenCircle, unseenPublic\)/);
+  assert.doesNotMatch(source, /rankFeedReviewsBySeenState/);
   assert.match(source, /markVisiblePosts\(\);\n    scheduleScan\(\);/);
   assert.match(source, /flushBeforeLeaving\(\);\n      if \(settleTimer\)/);
   assert.doesNotMatch(source, /setSeenPostMap\(markPostsSeen/);
+  assert.doesNotMatch(source, /setSeenPostMap\(nextSeenMap\)/);
 });
 
-test("explore feed persists visible posts before tab switches or page hides", () => {
-  assert.match(peoplePageSource, /consumePendingRoute\("\/explore"\)/);
-  assert.match(peoplePageSource, /consumeNavigationIntent && consumePendingRoute\("\/explore"\)/);
+test("explore page stays discovery-only without the old posts feed state", () => {
   assert.match(peoplePageSource, /const \[refreshMode\] = useState\(\(\) => isInitialDocumentReload\(\)\)/);
   assert.match(peoplePageSource, /useState<PeopleApiResponse \| null>\(\(\) => refreshMode \? null : initialData\)/);
-  assert.match(peoplePageSource, /preserveOrderOnNav=\{preserveFeedOrderOnNav\}/);
-  assert.match(peopleLoadingSource, /consumeNavigationIntent=\{false\}/);
-  assert.match(peopleLoadingSource, /preserveOrderOnNavOverride=\{pendingPathname === "\/explore"\}/);
-  assert.match(peopleTabSource, /function hasRestorableExploreFeedSnapshot/);
-  assert.match(peopleTabSource, /snapshot\.reviews\.length > 0/);
-  assert.match(peopleTabSource, /preserveOrderOnNav \? readFeedState<ExploreFeedSnapshot>\(initialFeedKey\) : null/);
-  assert.match(peopleTabSource, /const \[preserveFeedOrderOnNav\] = useState\(\(\) => Boolean\(persistedFeed\)\);/);
-  assert.match(peopleTabSource, /preserveFeedOrderOnNav \? feed : rankFeedReviewsBySeenState\(feed, seenPostMap\)/);
-  assert.match(peopleTabSource, /const seenPostMapRef = useRef<SeenPostMap>\(\{\}\);/);
-  assert.match(peopleTabSource, /seenPostMapRef\.current = markPostsSeen\(myName, newlySeen\);/);
-  assert.match(peopleTabSource, /useState<SeenPostMap>\(\(\) => readSeenPostMap\(initialViewerName\)\)/);
-  assert.match(peopleTabSource, /MAX_REFRESH_EXCLUDED_SEEN_POSTS = 80/);
-  assert.match(peopleTabSource, /params\.set\("excludeSeen", excludeSeenPostIds\.slice\(0, MAX_REFRESH_EXCLUDED_SEEN_POSTS\)\.join\(","\)\)/);
-  assert.match(peopleTabSource, /Object\.entries\(readSeenPostMap\(viewerName\)\)/);
-  assert.match(peopleTabSource, /window\.addEventListener\("pagehide", flushBeforeLeaving\);/);
-  assert.match(peopleTabSource, /document\.addEventListener\("visibilitychange", flushWhenHidden\);/);
-  assert.match(peopleTabSource, /markVisiblePosts\(\);\n    scheduleScan\(\);/);
-  assert.match(peopleTabSource, /flushBeforeLeaving\(\);\n      if \(settleTimer\)/);
-  assert.doesNotMatch(peopleTabSource, /setSeenPostMap\(markPostsSeen/);
+  assert.doesNotMatch(peoplePageSource, /preserveOrderOnNav/);
+  assert.doesNotMatch(peopleLoadingSource, /preserveOrderOnNavOverride/);
+  assert.doesNotMatch(peopleTabSource, /ExploreFeedSnapshot/);
+  assert.doesNotMatch(peopleTabSource, /readFeedState/);
+  assert.doesNotMatch(peopleTabSource, /rankFeedReviewsBySeenState/);
+  assert.doesNotMatch(peopleTabSource, /CircleFeedCard/);
+  assert.match(peopleTabSource, /function publicFeedUrl\(viewerName: string, loc: UserLocation \| null\)/);
+  assert.match(peopleTabSource, /function topRestaurantsFromFeed\(feed: Review\[\], location: UserLocation \| null\)/);
+  assert.match(peopleTabSource, /function bestDishesFromFeed\(feed: Review\[\], location: UserLocation \| null\)/);
 });
 
-test("circle feed does not auto-page on normal navigation", () => {
+test("circle feed auto-loads public fallback without auto-paging circle posts", () => {
   assert.doesNotMatch(source, /autoLoadSeenCursorRef/);
-  assert.match(source, /preserveFeedOrderOnNav \|\|[\s\S]*!refreshMode[\s\S]*freshUnseenPageLoads >= MAX_FRESH_UNSEEN_PAGE_LOADS/);
-  assert.match(source, /searchingForUnseenOnRefresh/);
-  assert.match(source, /void loadMore\(\);/);
+  assert.doesNotMatch(source, /searchingForUnseenOnRefresh/);
+  assert.match(source, /publicFeedAttempted \|\|[\s\S]*loadingMore[\s\S]*return;/);
+  assert.match(source, /void appendPublicFallbackPosts\(null\);/);
   assert.match(source, /onClick=\{loadMore\}/);
 });
 
@@ -157,9 +178,9 @@ test("explore page uses client cache without refreshing APIs on navigation", () 
   assert.doesNotMatch(peoplePageSource, /refreshCachedJson<PeopleApiResponse>/);
   assert.match(peoplePageSource, /cachedJson<PeopleApiResponse>\(API_URL, PEOPLE_TTL_MS, \{ forceRefresh: refreshMode \}\)/);
   assert.doesNotMatch(peopleTabSource, /refreshCachedJson<PublicFeedResponse>/);
-  assert.match(peopleTabSource, /if \(persistedFeed && preserveOrderOnNav\)/);
-  assert.match(peopleTabSource, /return cached;/);
-  assert.match(peopleTabSource, /if \(feed\.length === 0\) return;/);
+  assert.match(peopleTabSource, /cachedJson<PublicFeedResponse>\(publicFeedUrl\(viewerName, feedLocation\), FEED_TTL_MS\)/);
+  assert.match(peopleTabSource, /setFeed\(rows\);/);
+  assert.match(peopleTabSource, /topRestaurantsFromFeed\(feed, location\)/);
 });
 
 test("me page uses client cache without server feed loading on navigation", () => {
@@ -176,23 +197,27 @@ test("hungry page uses persisted stack without refreshing public feed on navigat
   assert.match(hungrySource, /if \(persistedFeed && !isDocumentReload\(\)\)/);
 });
 
-test("browser refresh: seen-post map loaded and rerank applied before snapshot is written", () => {
-  // On refresh preserveOrderOnNav=false → no snapshot restore, rerank runs
+test("browser refresh: seen-post map loaded before mixed feed snapshot is written", () => {
+  // On refresh preserveOrderOnNav=false → no snapshot restore, seen-state order derives from localStorage
   assert.match(circlePageSource, /const \[preserveFeedOrderOnNav\] = useState\(\(\) => !refreshMode && consumePendingRoute\("\/"\)\)/);
   assert.match(circlePageSource, /refreshMode=\{refreshMode\}/);
   assert.match(source, /!refreshMode && preserveOrderOnNav \? readFeedState<CircleFeedSnapshot>\(initialStateKey\) : null/);
   assert.match(source, /if \(!refreshMode && snapshot && preserveOrderOnNav\)/);
   // Seen-post ids are loaded from localStorage after the API response arrives
   assert.match(source, /setSeenPostMap\(readSeenPostMap\(name\)\)/);
-  // Rerank runs in fresh mode (when preserveFeedOrderOnNav is false)
-  assert.match(source, /preserveFeedOrderOnNav \? feedReviews : rankFeedReviewsBySeenState\(feedReviews, seenPostMap\)/);
+  // Render order is derived from source + seen state, not from the old reranker
+  assert.match(source, /const displayedReviews = useMemo\(\(\) => \{/);
+  assert.match(source, /const isSeen = Boolean\(seenPostMap\[review\.id\]\);/);
+  assert.doesNotMatch(source, /rankFeedReviewsBySeenState/);
   // Snapshot is only written after mounted=true (after seen-post map is ready)
   assert.match(source, /if \(!mounted\) return;/);
-  assert.match(source, /mounted,\s*\]/);
+  assert.match(source, /mounted,/);
   // CirclePageClient bypasses API cache on browser reload
   assert.match(circlePageSource, /forceRefresh: forceFreshLoad/);
   assert.match(circlePageSource, /const REFRESH_API_URL = `\$\{API_URL\}\?limit=\$\{CIRCLE_FEED_MAX_PAGE_SIZE\}&refresh=1`/);
-  assert.match(circlePageSource, /const requestUrl = refreshMode \? REFRESH_API_URL : API_URL/);
+  assert.match(circlePageSource, /function circleFeedRequestUrl\(baseUrl: string, viewerName = ""\)/);
+  assert.match(circlePageSource, /params\.set\("excludeSeen", seenIds\.slice\(0, MAX_REFRESH_EXCLUDED_SEEN_POSTS\)\.join\(","\)\)/);
+  assert.match(circlePageSource, /const requestUrl = circleFeedRequestUrl\(refreshMode \? REFRESH_API_URL : API_URL, initialData\?\.myName \?\? ""\)/);
   assert.match(circlePageSource, /forceFreshLoad \? null : readCachedJson<CircleFeedPage>\(API_URL\)/);
   assert.match(navigationStateSource, /legacyNavigation\?\.type === 1/);
   assert.match(navigationStateSource, /spaNavigationStarted/);
@@ -201,10 +226,29 @@ test("browser refresh: seen-post map loaded and rerank applied before snapshot i
 
 test("browser refresh bypasses only the first-page Circle server feed cache", () => {
   assert.match(circleRouteSource, /const refreshMode = req\.nextUrl\.searchParams\.get\("refresh"\) === "1"/);
+  assert.match(circleRouteSource, /const excludePostIds = parseCsvIds\(req\.nextUrl\.searchParams\.get\("excludeSeen"\)\)/);
+  assert.match(circleRouteSource, /excludePostIds,/);
   assert.match(circleRouteSource, /bypassCache: refreshMode && !cursor/);
-  assert.match(circleFeedSource, /options: \{ cursor\?: CircleFeedCursor \| null; limit\?: number; bypassCache\?: boolean \} = \{\}/);
-  assert.match(circleFeedSource, /if \(options\.bypassCache\) \{[\s\S]*return value;[\s\S]*\}/);
+  assert.match(circleFeedSource, /options: \{ cursor\?: CircleFeedCursor \| null; limit\?: number; bypassCache\?: boolean; excludePostIds\?: string\[\] \} = \{\}/);
+  assert.match(circleFeedSource, /excludePostIds = Array\.from\(new Set/);
+  assert.match(circleFeedSource, /loadSeenPostIdsForUser\(readDb, userId, excludePostIds\)/);
+  assert.match(circleFeedSource, /const seenFallbackRows: Review\[\] = \[\];/);
+  assert.match(circleFeedSource, /seenFallbackRows\.push\(review\);/);
+  assert.match(circleFeedSource, /const orderedRows = \[\.\.\.visibleRows, \.\.\.seenFallbackRows\];/);
+  assert.match(circleFeedSource, /const rankedReviews = \[\.\.\.rankedUnseenReviews, \.\.\.rankedSeenFallbackReviews\];/);
+  assert.match(circleFeedSource, /if \(options\.bypassCache \|\| cursor \|\| excludePostIds\.length > 0 \|\| actor\?\.userId\) \{[\s\S]*return value;[\s\S]*\}/);
   assert.match(circleFeedSource, /return getPrivateCached\(\{/);
+});
+
+test("seen posts are persisted server-side for same-user cross-browser feeds", () => {
+  assert.match(postViewsRouteSource, /export async function POST/);
+  assert.match(postViewsRouteSource, /getRouteActor\(\)/);
+  assert.match(postViewsRouteSource, /recordSeenPostIdsForUser\(createAdminClient\(\), actor\.userId, postIds\)/);
+  assert.match(postViewsSource, /from\("post_views"\)/);
+  assert.match(postViewsSource, /\.eq\("user_id", userId\)/);
+  assert.match(postViewsSource, /\.upsert\(rows, \{ onConflict: "user_id,post_id" \}\)/);
+  assert.match(publicRouteSource, /loadSeenPostIdsForUser\(/);
+  assert.match(publicRouteSource, /actor\?\.userId \?\? null/);
 });
 
 test("engagement actions do not clear Circle feed snapshot, but structural actions do", () => {

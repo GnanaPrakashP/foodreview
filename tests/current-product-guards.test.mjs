@@ -49,9 +49,9 @@ test("explore loading preview does not consume the real explore navigation inten
   const page = source("app/people/PeoplePageClient.tsx");
 
   assert.match(loading, /readPendingRoute\(\)/);
-  assert.match(loading, /consumeNavigationIntent=\{false\}/);
-  assert.match(loading, /preserveOrderOnNavOverride=\{pendingPathname === "\/explore"\}/);
-  assert.match(page, /consumeNavigationIntent && consumePendingRoute\("\/explore"\)/);
+  assert.match(loading, /pathname !== "\/explore" && pendingPathname !== "\/explore"/);
+  assert.match(loading, /readCachedJson<PeopleApiResponse>\(API_URL, \{ allowStale: true \}\)/);
+  assert.doesNotMatch(page, /consumePendingRoute\("\/explore"\)/);
 });
 
 test("Playwright E2E stays serial because seeded accounts are shared state", () => {

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { cachedJson, primeCachedJson, readCachedJson } from "@/lib/browser-api-cache";
-import { consumePendingRoute } from "@/lib/browser-navigation-intent";
 import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
 import type { CircleMember } from "@/lib/people-page-data";
 
@@ -45,20 +44,12 @@ export function PeopleSkeleton() {
 
 export default function PeoplePageClient({
   initialData = null,
-  consumeNavigationIntent = true,
-  preserveOrderOnNavOverride,
 }: {
   initialData?: PeopleApiResponse | null;
-  consumeNavigationIntent?: boolean;
-  preserveOrderOnNavOverride?: boolean;
 }) {
   const [refreshMode] = useState(() => isInitialDocumentReload());
   const [data, setData] = useState<PeopleApiResponse | null>(() => refreshMode ? null : initialData);
   const [error, setError] = useState(false);
-  const [preserveFeedOrderOnNav] = useState(() => {
-    if (typeof preserveOrderOnNavOverride === "boolean") return !refreshMode && preserveOrderOnNavOverride;
-    return !refreshMode && consumeNavigationIntent && consumePendingRoute("/explore");
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -118,5 +109,5 @@ export default function PeoplePageClient({
 
   if (!data) return <PeopleSkeleton />;
 
-  return <PeopleTab initialCircle={data.circleMembers} initialMyName={data.myName ?? ""} preserveOrderOnNav={preserveFeedOrderOnNav} />;
+  return <PeopleTab initialCircle={data.circleMembers} initialMyName={data.myName ?? ""} />;
 }

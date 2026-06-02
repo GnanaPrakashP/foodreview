@@ -6,8 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { CircleMember } from "@/lib/people-page-data";
-import type { Comment, Review } from "@/lib/types";
-import type { CircleFeedCursor } from "@/lib/circle-feed";
+import type { Review } from "@/lib/types";
 import {
   addName,
   isAcceptedCircleResponse,
@@ -29,14 +28,9 @@ import {
   X,
 } from "lucide-react";
 import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
-import { cachedJson, invalidateCachedJson, readCachedJson } from "@/lib/browser-api-cache";
-import { isInitialDocumentReload } from "@/lib/browser-navigation-state";
-import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
-import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
-import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
+import { cachedJson, invalidateCachedJson } from "@/lib/browser-api-cache";
 import { profileDisplayName } from "@/lib/profile-names";
 import { resolveActorName } from "@/lib/browser-actor";
-import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import {
   normalizeLocationLabel,
   TRENDING_LOCATION_LABEL_COOKIE,
@@ -66,12 +60,6 @@ import {
 
 const FEED_PAGE_SIZE = 24;
 const FEED_TTL_MS = 2 * 60 * 1000;
-const FEED_STATE_TTL_MS = 30 * 60 * 1000;
-const MAX_PERSISTED_FEED_POSTS = 120;
-const SEEN_VISIBILITY_RATIO = 0.35;
-const FEED_STATE_VERSION = "stable-nav-v2";
-const MAX_FRESH_UNSEEN_PAGE_LOADS = 8;
-const MAX_REFRESH_EXCLUDED_SEEN_POSTS = 80;
 const LOCATION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const EXPLORE_NEARBY_RADIUS_KM = 30;
 const RESTAURANT_CARD_DISH_LIMIT = 3;
@@ -86,7 +74,7 @@ type PeopleResult   = { username: string; displayName: string; totalPlaces: numb
 type RestaurantResult = AutocompleteItem;
 type DishResult = { canonicalName: string; mentionCount: number };
 
-type ExploreTab = "posts" | "restaurants" | "dishes" | "people";
+type ExploreTab = "restaurants" | "dishes" | "people";
 type UserLocation = { lat: number; lng: number; label: string };
 type AutocompleteItem = { placeId: string; text: string; mainText: string; secondaryText: string };
 
@@ -121,19 +109,8 @@ type DishSpotlight = {
 
 type PublicFeedResponse = {
   reviews: Review[];
-  likeCountMap: Record<string, number>;
-  commentMap: Record<string, { count: number; top: Comment }>;
-  likedByMeMap: Record<string, boolean>;
-  bookmarkedPostMap: Record<string, boolean>;
   profileMap: Record<string, string>;
-  hasMore: boolean;
-  nextCursor: CircleFeedCursor | null;
   error?: string;
-};
-
-type ExploreFeedSnapshot = PublicFeedResponse & {
-  activeTab: ExploreTab;
-  locationLabel: string | null;
 };
 
 type ExploreUrlState = {
@@ -203,31 +180,14 @@ function saveLocation(loc: UserLocation) {
   }
 }
 
-function publicFeedUrl(
-  viewerName: string,
-  loc: UserLocation | null,
-  cursor: CircleFeedCursor | null = null,
-  excludeSeenPostIds: string[] = []
-) {
+function publicFeedUrl(viewerName: string, loc: UserLocation | null) {
   const params = new URLSearchParams({ limit: String(FEED_PAGE_SIZE), excludeSynthetic: "1" });
   if (viewerName) params.set("viewer", viewerName);
   if (loc) {
     params.set("lat", String(loc.lat));
     params.set("lng", String(loc.lng));
   }
-  if (cursor) params.set("cursor", JSON.stringify(cursor));
-  if (!cursor && excludeSeenPostIds.length > 0) {
-    params.set("excludeSeen", excludeSeenPostIds.slice(0, MAX_REFRESH_EXCLUDED_SEEN_POSTS).join(","));
-  }
   return `/api/feed/public?${params.toString()}`;
-}
-
-function exploreFeedStateKey(viewerName: string, loc: UserLocation | null) {
-  return `${publicFeedUrl(viewerName, loc)}&stateVersion=${FEED_STATE_VERSION}`;
-}
-
-function hasRestorableExploreFeedSnapshot(snapshot: ExploreFeedSnapshot | null) {
-  return Array.isArray(snapshot?.reviews) && snapshot.reviews.length > 0;
 }
 
 function readExploreUrlState(): ExploreUrlState {
@@ -1287,20 +1247,11 @@ function PeopleStrip({
 export default function PeopleTab({
   initialCircle,
   initialMyName = "",
-  preserveOrderOnNav = false,
 }: {
   initialCircle: CircleMember[];
   initialMyName?: string;
-  preserveOrderOnNav?: boolean;
 }) {
   const [initialViewerName] = useState(() => resolveActorName(initialMyName.trim()));
-  const [initialFeedKey] = useState(() => exploreFeedStateKey(initialViewerName, loadSavedLocation()));
-  const [persistedFeed] = useState(() => {
-    const snapshot = preserveOrderOnNav ? readFeedState<ExploreFeedSnapshot>(initialFeedKey) : null;
-    return hasRestorableExploreFeedSnapshot(snapshot) ? snapshot : null;
-  });
-  const [preserveFeedOrderOnNav] = useState(() => Boolean(persistedFeed));
-  const [refreshMode] = useState(() => isInitialDocumentReload());
   const [initialUrlState] = useState(readExploreUrlState);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -1310,34 +1261,14 @@ export default function PeopleTab({
   const [hasSearched, setHasSearched] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ExploreTab>(
-    initialUrlState.activeTab ?? (persistedFeed?.activeTab === "posts" ? "restaurants" : persistedFeed?.activeTab) ?? "restaurants"
+    initialUrlState.activeTab ?? "restaurants"
   );
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>(initialUrlState.placeCategory);
   const [dishCategory, setDishCategory] = useState<DishClusterId>(initialUrlState.dishCategory);
-  const [feed, setFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);
-  const [feedLikeCountMap, setFeedLikeCountMap] = useState<Record<string, number>>(persistedFeed?.likeCountMap ?? {});
-  const [feedCommentMap, setFeedCommentMap] = useState<Record<string, { count: number; top: Comment }>>(persistedFeed?.commentMap ?? {});
-  const [feedLikedMap, setFeedLikedMap] = useState<Record<string, boolean>>(persistedFeed?.likedByMeMap ?? {});
-  const [feedBookmarkedMap, setFeedBookmarkedMap] = useState<Record<string, boolean>>(persistedFeed?.bookmarkedPostMap ?? {});
-  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>(persistedFeed?.profileMap ?? {});
-  const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>(() => readSeenPostMap(initialViewerName));
-  const [seenStateReady, setSeenStateReady] = useState(Boolean(initialViewerName || initialMyName));
-  const [feedLoading, setFeedLoading] = useState(!persistedFeed);
-  const [feedLoadingMore, setFeedLoadingMore] = useState(false);
-  const [feedHasMore, setFeedHasMore] = useState(persistedFeed?.hasMore ?? true);
-  const [feedNextCursor, setFeedNextCursor] = useState<CircleFeedCursor | null>(persistedFeed?.nextCursor ?? null);
+  const [feed, setFeed] = useState<Review[]>([]);
+  const [feedProfileMap, setFeedProfileMap] = useState<Record<string, string>>({});
+  const [feedLoading, setFeedLoading] = useState(true);
   const [feedError, setFeedError] = useState("");
-  const [feedStateKey, setFeedStateKey] = useState(initialFeedKey);
-  const [freshUnseenPageLoads, setFreshUnseenPageLoads] = useState(0);
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const postsFeedRef = useRef<HTMLDivElement | null>(null);
-  const seenPostMapRef = useRef<SeenPostMap>({});
-  const feedLocationRef = useRef<UserLocation | null>(null);
-  // Session-only seen tracking — resets on each fresh feed load (cursor === null).
-  // Drives the auto-load trigger so a full localStorage seenPostMap does not
-  // cause premature pagination before the user actually scrolls in this visit.
-  const sessionSeenIdsRef = useRef(new Set<string>());
-  const [sessionSeenCount, setSessionSeenCount] = useState(0);
 
   const [myName, setMyName] = useState(() => initialViewerName);
   const [location, setLocation] = useState<UserLocation | null>(null);
@@ -1348,15 +1279,10 @@ export default function PeopleTab({
   const [circleMembers, setCircleMembers] = useState<Set<string>>(new Set());
   const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [pendingIncoming, setPendingIncoming] = useState<string[]>([]);
-  const [statusLoaded, setStatusLoaded] = useState(false);
   const [confirmCancelName, setConfirmCancelName] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [confirmLeaveName, setConfirmLeaveName] = useState<string | null>(null);
   const [leaveBusy, setLeaveBusy] = useState(false);
-
-  useEffect(() => {
-    seenPostMapRef.current = seenPostMap;
-  }, [seenPostMap]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1384,19 +1310,16 @@ export default function PeopleTab({
   /* ── Load circle status ── */
 
   const loadCircleStatus = useCallback(async (name: string) => {
-    if (!name) { setStatusLoaded(true); return; }
+    if (!name) return;
     const data = await cachedCircleStatus(name);
     setCircleMembers(new Set(data.members ?? []));
     setPendingSent(new Set(data.pendingSent ?? []));
     setPendingIncoming(data.pendingIncoming ?? []);
-    setStatusLoaded(true);
   }, []);
 
   useEffect(() => {
     const me = resolveActorName(initialMyName.trim());
     setMyName(me);
-    setSeenPostMap(readSeenPostMap(me));
-    setSeenStateReady(true);
     loadCircleStatus(me);
   }, [initialMyName, loadCircleStatus]);
 
@@ -1420,300 +1343,46 @@ export default function PeopleTab({
   /* ── Load discovery feed ── */
 
   const loadFeedPage = useCallback(async (
-    cursor: CircleFeedCursor | null = null,
     viewerName = myName,
-    loc?: UserLocation | null,
-    forceRefresh = false
+    loc?: UserLocation | null
   ) => {
-    const requestedLocation = loc === undefined ? (cursor ? feedLocationRef.current : location) : loc;
-    if (!cursor) {
-      setFeedLoading(true);
-      setFeedError("");
-    }
-    else setFeedLoadingMore(true);
+    const requestedLocation = loc === undefined ? location : loc;
+    setFeedLoading(true);
+    setFeedError("");
     try {
-      const applyFeedData = (data: PublicFeedResponse, pageCursor: CircleFeedCursor | null) => {
+      const applyFeedData = (data: PublicFeedResponse) => {
         const rows = data.reviews ?? [];
-        if (!pageCursor) {
-          // Reset session tracking on every fresh page.
-          sessionSeenIdsRef.current = new Set<string>();
-          setSessionSeenCount(0);
-          // Rank by seen/unseen only on hard browser reload AND only when there are
-          // unseen posts to float up — mirrors Circle's behavior exactly.
-          // SPA navigation (any) and the all-seen case keep server score order.
-          const seenMap = readSeenPostMap(viewerName);
-          const hasUnseen = refreshMode && rows.some(r => !seenMap[r.id]);
-          setRankedFeed(hasUnseen ? rankFeedReviewsBySeenState(rows, seenMap) : rows);
-        } else {
-          setRankedFeed((prev) => {
-            const existing = new Set(prev.map((r) => r.id));
-            return [...prev, ...rows.filter((r) => !existing.has(r.id))];
-          });
-        }
-        setFeed((current) => {
-          if (!pageCursor) return rows;
-          const seen = new Set(current.map((item) => item.id));
-          return [...current, ...rows.filter((item) => !seen.has(item.id))];
-        });
-        setFeedLikeCountMap((current) => pageCursor ? { ...current, ...(data.likeCountMap ?? {}) } : (data.likeCountMap ?? {}));
-        setFeedCommentMap((current) => pageCursor ? { ...current, ...(data.commentMap ?? {}) } : (data.commentMap ?? {}));
-        setFeedLikedMap((current) => pageCursor ? { ...current, ...(data.likedByMeMap ?? {}) } : (data.likedByMeMap ?? {}));
-        setFeedBookmarkedMap((current) => pageCursor ? { ...current, ...(data.bookmarkedPostMap ?? {}) } : (data.bookmarkedPostMap ?? {}));
-        setFeedProfileMap((current) => pageCursor ? { ...current, ...(data.profileMap ?? {}) } : (data.profileMap ?? {}));
-        setFeedHasMore(Boolean(data.hasMore));
-        setFeedNextCursor(data.nextCursor ?? null);
+        setFeed(rows);
+        setFeedProfileMap(data.profileMap ?? {});
       };
 
-      const refreshSeenPostIds = !cursor && forceRefresh
-        ? Object.entries(readSeenPostMap(viewerName))
-            .sort((a, b) => b[1] - a[1])
-            .map(([postId]) => postId)
-            .slice(0, MAX_REFRESH_EXCLUDED_SEEN_POSTS)
-        : [];
-
       const fetchPage = async (feedLocation: UserLocation | null) => {
-        const url = publicFeedUrl(viewerName, feedLocation, cursor, refreshSeenPostIds);
-        if (!cursor) {
-          const cached = forceRefresh ? null : readCachedJson<PublicFeedResponse>(url);
-          if (cached) {
-            applyFeedData(cached, null);
-            setFeedLoading(false);
-            return cached;
-          }
-          const data = await cachedJson<PublicFeedResponse>(url, FEED_TTL_MS, { forceRefresh });
-          if (data.error) throw new Error(data.error);
-          return data;
-        }
-        const response = await fetch(url, { cache: "no-store" });
-        const data = await response.json() as PublicFeedResponse & { error?: string };
-        if (!response.ok || data.error) throw new Error(data.error || "Unable to load public posts");
+        const data = await cachedJson<PublicFeedResponse>(publicFeedUrl(viewerName, feedLocation), FEED_TTL_MS);
+        if (data.error) throw new Error(data.error);
         return data;
       };
 
       let data = await fetchPage(requestedLocation ?? null);
-      let feedLocation = requestedLocation ?? null;
-      if (!cursor && requestedLocation && (data.reviews ?? []).length === 0) {
+      if (requestedLocation && (data.reviews ?? []).length === 0) {
         data = await fetchPage(null);
-        feedLocation = null;
       }
-      if (!cursor) feedLocationRef.current = feedLocation;
-      if (!cursor) setFeedStateKey(exploreFeedStateKey(viewerName, feedLocation));
-      applyFeedData(data, cursor);
+      applyFeedData(data);
     } catch {
-      setFeedError("Could not load public posts. Please try again.");
+      setFeedError("Could not load places and dishes. Please try again.");
     } finally {
-      if (!cursor) setFeedLoading(false);
-      else setFeedLoadingMore(false);
+      setFeedLoading(false);
     }
   }, [location, myName]);
-
-  // Stable ranked feed: ranked once at load time, appended-to on cursor pages.
-  // Not a useMemo so seenPostMap updates while scrolling cannot re-sort visible cards.
-  const [rankedFeed, setRankedFeed] = useState<Review[]>(persistedFeed?.reviews ?? []);
-  const unseenFeedPostCount = useMemo(
-    () => feed.filter((review) => !seenPostMap[review.id]).length,
-    [feed, seenPostMap]
-  );
-
-  useEffect(() => {
-    if (feedLoading && feed.length === 0) return;
-    if (feed.length === 0) return;
-    writeFeedState<ExploreFeedSnapshot>(feedStateKey, {
-      reviews: rankedFeed.slice(0, MAX_PERSISTED_FEED_POSTS),
-      likeCountMap: feedLikeCountMap,
-      commentMap: feedCommentMap,
-      likedByMeMap: feedLikedMap,
-      bookmarkedPostMap: feedBookmarkedMap,
-      profileMap: feedProfileMap,
-      hasMore: feedHasMore,
-      nextCursor: feedNextCursor,
-      activeTab,
-      locationLabel: feedLocationRef.current?.label ?? null,
-    }, FEED_STATE_TTL_MS);
-  }, [
-    activeTab,
-    feed.length,
-    feedBookmarkedMap,
-    feedCommentMap,
-    feedHasMore,
-    feedLikedMap,
-    feedLoading,
-    feedLikeCountMap,
-    feedNextCursor,
-    feedProfileMap,
-    feedStateKey,
-    rankedFeed,
-  ]);
 
   useEffect(() => {
     const me = resolveActorName(initialMyName.trim());
     const savedLocation = loadSavedLocation();
     setLocation(savedLocation);
     setLocationLabel(savedLocation ? shortLocationLabel(savedLocation.label) : "Set location");
-    if (persistedFeed && preserveOrderOnNav) {
-      feedLocationRef.current = savedLocation;
-      setFeedStateKey(initialFeedKey);
-      setFeedLoading(false);
-      return;
-    }
-    loadFeedPage(null, me, savedLocation, refreshMode);
+    loadFeedPage(me, savedLocation);
     // Initial feed load and authenticated username refresh; location changes are handled by the picker.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMyName, refreshMode]);
-
-  useEffect(() => {
-    if (activeTab !== "posts" || searchQuery.trim() || feedLoading || feedLoadingMore || !feedHasMore) return;
-    const target = loadMoreRef.current;
-    if (!target) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          loadFeedPage(feedNextCursor);
-        }
-      },
-      { rootMargin: "420px 0px" }
-    );
-
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [activeTab, feedHasMore, feedLoading, feedLoadingMore, feedNextCursor, loadFeedPage, searchQuery]);
-
-  useEffect(() => {
-    // On hard reload: use persistent seenPostMap to skip past already-seen pages and
-    // find fresh content (intentional "catch up" behavior, capped at MAX_FRESH_UNSEEN_PAGE_LOADS).
-    // On normal visit: use session-scoped counter so stale localStorage data cannot
-    // trigger auto-pagination before the user actually scrolls through current posts.
-    const allCurrentPostsConsumed = refreshMode
-      ? unseenFeedPostCount === 0
-      : sessionSeenCount >= feed.length;
-
-    if (
-      preserveFeedOrderOnNav ||
-      !seenStateReady ||
-      activeTab !== "posts" ||
-      searchQuery.trim() ||
-      feedLoading ||
-      feedLoadingMore ||
-      !feedHasMore ||
-      !feedNextCursor ||
-      feed.length === 0 ||
-      !allCurrentPostsConsumed ||
-      freshUnseenPageLoads >= MAX_FRESH_UNSEEN_PAGE_LOADS
-    ) {
-      return;
-    }
-
-    setFreshUnseenPageLoads((count) => count + 1);
-    loadFeedPage(feedNextCursor);
-  }, [
-    activeTab,
-    feed.length,
-    feedHasMore,
-    feedLoading,
-    feedLoadingMore,
-    feedNextCursor,
-    freshUnseenPageLoads,
-    loadFeedPage,
-    preserveFeedOrderOnNav,
-    refreshMode,
-    searchQuery,
-    seenStateReady,
-    sessionSeenCount,
-    unseenFeedPostCount,
-  ]);
-
-  useEffect(() => {
-    if (activeTab !== "posts") return;
-    const root = postsFeedRef.current;
-    if (!root || rankedFeed.length === 0) return;
-
-    const container = root;
-    const markedThisView = new Set<string>();
-    let frame = 0;
-    let settleTimer = 0;
-
-    function visiblePostIds() {
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const unseenIds: string[] = [];    // not yet in persistent seenPostMap
-      const allVisibleIds: string[] = []; // every visible post for session tracking
-      const latestSeenMap = seenPostMapRef.current;
-
-      container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
-        const postId = element.getAttribute("data-feed-post-id") ?? "";
-        if (!postId || markedThisView.has(postId)) return;
-
-        const rect = element.getBoundingClientRect();
-        const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
-        const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
-        if (visibleRatio >= SEEN_VISIBILITY_RATIO) {
-          allVisibleIds.push(postId);
-          if (!latestSeenMap[postId]) unseenIds.push(postId);
-        }
-      });
-
-      return { unseenIds, allVisibleIds };
-    }
-
-    function markVisiblePosts() {
-      const { unseenIds, allVisibleIds } = visiblePostIds();
-      if (allVisibleIds.length === 0) return;
-      for (const postId of allVisibleIds) markedThisView.add(postId);
-
-      if (unseenIds.length > 0) {
-        seenPostMapRef.current = markPostsSeen(myName, unseenIds);
-      }
-
-      // Session-scoped counter: counts posts seen in this visit regardless of localStorage.
-      const newToSession = allVisibleIds.filter(id => !sessionSeenIdsRef.current.has(id));
-      if (newToSession.length > 0) {
-        for (const id of newToSession) sessionSeenIdsRef.current.add(id);
-        setSessionSeenCount(sessionSeenIdsRef.current.size);
-      }
-    }
-
-    function scanVisiblePosts() {
-      frame = 0;
-      markVisiblePosts();
-    }
-
-    function scheduleScan() {
-      if (frame) return;
-      frame = window.requestAnimationFrame(scanVisiblePosts);
-    }
-
-    function flushBeforeLeaving() {
-      if (frame) {
-        window.cancelAnimationFrame(frame);
-        frame = 0;
-      }
-      markVisiblePosts();
-    }
-
-    function flushWhenHidden() {
-      if (document.visibilityState === "hidden") flushBeforeLeaving();
-    }
-
-    markVisiblePosts();
-    scheduleScan();
-    settleTimer = window.setTimeout(scheduleScan, 350);
-    window.addEventListener("scroll", scheduleScan, { passive: true });
-    document.addEventListener("scroll", scheduleScan, { passive: true, capture: true });
-    window.addEventListener("resize", scheduleScan);
-    window.addEventListener("pagehide", flushBeforeLeaving);
-    window.addEventListener("beforeunload", flushBeforeLeaving);
-    document.addEventListener("visibilitychange", flushWhenHidden);
-    return () => {
-      flushBeforeLeaving();
-      if (settleTimer) window.clearTimeout(settleTimer);
-      window.removeEventListener("scroll", scheduleScan);
-      document.removeEventListener("scroll", scheduleScan, { capture: true });
-      window.removeEventListener("resize", scheduleScan);
-      window.removeEventListener("pagehide", flushBeforeLeaving);
-      window.removeEventListener("beforeunload", flushBeforeLeaving);
-      document.removeEventListener("visibilitychange", flushWhenHidden);
-    };
-  }, [activeTab, myName, rankedFeed]);
+  }, [initialMyName]);
 
   /* ── Circle actions ── */
 
@@ -1921,7 +1590,7 @@ export default function PeopleTab({
     setLocationLabel(shortLocationLabel(nextLocation.label));
     saveLocation(nextLocation);
     setShowLocationPicker(false);
-    loadFeedPage(null, myName, nextLocation);
+    loadFeedPage(myName, nextLocation);
   }
 
   function dishHref(dishName: string): string {
@@ -1943,17 +1612,6 @@ export default function PeopleTab({
   }
 
   /* ── Render ── */
-
-  const searchingForUnseenOnRefresh = refreshMode
-    && !preserveFeedOrderOnNav
-    && activeTab === "posts"
-    && !searchQuery.trim()
-    && !feedError
-    && feedHasMore
-    && Boolean(feedNextCursor)
-    && feed.length > 0
-    && unseenFeedPostCount === 0
-    && freshUnseenPageLoads < MAX_FRESH_UNSEEN_PAGE_LOADS;
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
@@ -2166,62 +1824,10 @@ export default function PeopleTab({
             </>
           )}
 
-          {activeTab === "posts" && (
-            <div ref={postsFeedRef} style={{ display: "flex", flexDirection: "column", gap: 0, paddingBottom: "100px" }}>
-              {(!seenStateReady || searchingForUnseenOnRefresh || (feedLoading && feed.length === 0)) && (
-                [1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse" style={{ height: "360px", background: "var(--card)", borderBottom: "1px solid var(--border)", opacity: 0.5 }} />
-                ))
-              )}
-
-              {seenStateReady && !feedLoading && feed.length === 0 && (
-                <p style={{ fontSize: "13px", color: "var(--muted)", textAlign: "center", padding: "48px 24px", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6 }}>
-                  No public posts yet.<br />Be the first to share one.
-                </p>
-              )}
-
-              {seenStateReady && !searchingForUnseenOnRefresh && rankedFeed.map((review, index) => {
-                const eng = feedCommentMap[review.id];
-                const status = personStatus(review.reviewer_name);
-                return (
-                  <div key={review.id} data-feed-post-id={review.id}>
-                    <CircleFeedCard
-                      review={review}
-                      initialLikeCount={feedLikeCountMap[review.id] ?? 0}
-                      initialCommentCount={eng?.count ?? 0}
-                      initialLiked={feedLikedMap[review.id] ?? false}
-                      initialBookmarked={feedBookmarkedMap[review.id] ?? false}
-                      initialMyName={myName}
-                      profileMap={feedProfileMap}
-                      priorityImage={index < 2}
-                      requestStatus={status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle"}
-                      onRequestClick={() => handlePeopleAction(review.reviewer_name)}
-                      useStoredActorFallback={false}
-                    />
-                  </div>
-                );
-              })}
-
-              {feedError && (
-                <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 12px 0" }}>
-                  {feedError}
-                </p>
-              )}
-
-              <div ref={loadMoreRef} style={{ height: "1px" }} />
-
-              {!feedLoading && feedLoadingMore && (
-                [1, 2].map((i) => (
-                  <div key={i} className="animate-pulse" style={{ height: "260px", background: "var(--card)", borderBottom: "1px solid var(--border)", opacity: 0.45 }} />
-                ))
-              )}
-
-              {!feedLoading && !feedHasMore && feed.length > 8 && (
-                <p style={{ fontSize: "11px", color: "var(--muted)", textAlign: "center", padding: "10px 0 20px", fontFamily: "'DM Sans', sans-serif" }}>
-                  You are caught up for now.
-                </p>
-              )}
-            </div>
+          {feedError && activeTab !== "people" && (
+            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 16px" }}>
+              {feedError}
+            </p>
           )}
 
           {activeTab === "restaurants" && (

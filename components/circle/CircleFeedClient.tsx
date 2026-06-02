@@ -1,19 +1,25 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import Link from "next/link";
 import CircleFeedCard from "@/components/reviews/CircleFeedCard";
 import type { Review, Comment } from "@/lib/types";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import { Users } from "lucide-react";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
-import { cachedCircleStatus } from "@/lib/browser-circle-status";
-import { primeCachedJson } from "@/lib/browser-api-cache";
+import { cachedCircleStatus, invalidateCircleStatusCache } from "@/lib/browser-circle-status";
+import { invalidateCachedJson, primeCachedJson } from "@/lib/browser-api-cache";
 import { resolveActorName } from "@/lib/browser-actor";
 import { readFeedState, writeFeedState } from "@/lib/browser-feed-state";
-import { rankFeedReviewsBySeenState, type SeenPostMap } from "@/lib/feed-ranking";
+import type { SeenPostMap } from "@/lib/feed-ranking";
 import { markPostsSeen, readSeenPostMap } from "@/lib/browser-post-views";
+import {
+  addName,
+  isAcceptedCircleResponse,
+  isOneWayCircleResponse,
+  personStatusFor,
+  removeName,
+} from "@/lib/people-circle-state";
 
 interface Props {
   allReviews: Review[];
@@ -36,18 +42,19 @@ interface Props {
 const FEED_STATE_TTL_MS = 30 * 60 * 1000;
 const MAX_PERSISTED_REVIEWS = 120;
 const SEEN_VISIBILITY_RATIO = 0.35;
-const FEED_STATE_VERSION = "stable-nav-v2";
+const SEEN_DWELL_MS = 1000;
+const SEEN_EXIT_DWELL_MS = 250;
+const FEED_STATE_VERSION = "mixed-circle-public-v1";
 
 type CircleFeedSnapshot = {
   reviews: Review[];
+  publicPostIds?: string[];
   likeCountMap: Record<string, number>;
   commentMap: Record<string, { count: number; top: Comment }>;
   profileMap: Record<string, string>;
   likedByMeMap: Record<string, boolean>;
   bookmarkedPostMap: Record<string, boolean>;
   tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
-  feedMode?: "circle" | "public";
-  publicStartIndex?: number | null;
   // hasMore and nextCursor are intentionally excluded: pagination cursor must
   // never be restored from a persisted snapshot. Always use server-provided values.
 };
@@ -73,13 +80,17 @@ function publicFallbackUrl(
   cursor: CircleFeedCursor | null,
   currentIds: string[],
   seenIds: string[],
+  excludedReviewers: string[],
+  strictExclude = true,
 ) {
   const params = new URLSearchParams({
     limit: String(CIRCLE_FEED_PAGE_SIZE),
     excludeSynthetic: "1",
-    strictExclude: "1",
   });
+  if (strictExclude) params.set("strictExclude", "1");
   if (viewerName) params.set("viewer", viewerName);
+  const excludedNames = Array.from(new Set(excludedReviewers.map((name) => name.trim()).filter(Boolean)));
+  if (excludedNames.length > 0) params.set("exclude", excludedNames.join(","));
   if (cursor) params.set("cursor", JSON.stringify(cursor));
   // Build exclusion list: currently rendered posts take priority so they can
   // never be dropped by the 120-item cap. Seen (scrolled-past) IDs fill the rest.
@@ -88,6 +99,66 @@ function publicFallbackUrl(
   const excludeIds = Array.from(excludeSet);
   if (excludeIds.length > 0) params.set("excludeSeen", excludeIds.slice(0, 120).join(","));
   return `/api/feed/public?${params.toString()}`;
+}
+
+function interleaveUnseenPosts(circlePosts: Review[], publicPosts: Review[]) {
+  if (circlePosts.length === 0) return publicPosts;
+  if (publicPosts.length === 0) return circlePosts;
+
+  const result: Review[] = [];
+  // 70/30 mix: seven circle posts and three public discovery posts per cycle.
+  const pattern: Array<"circle" | "public"> = [
+    "circle",
+    "circle",
+    "public",
+    "circle",
+    "circle",
+    "public",
+    "circle",
+    "circle",
+    "public",
+    "circle",
+  ];
+  let circleIndex = 0;
+  let publicIndex = 0;
+
+  while (circleIndex < circlePosts.length || publicIndex < publicPosts.length) {
+    for (const source of pattern) {
+      if (source === "circle") {
+        if (circleIndex < circlePosts.length) {
+          result.push(circlePosts[circleIndex++]);
+        } else if (publicIndex < publicPosts.length) {
+          result.push(publicPosts[publicIndex++]);
+        }
+      } else if (publicIndex < publicPosts.length) {
+        result.push(publicPosts[publicIndex++]);
+      } else if (circleIndex < circlePosts.length) {
+        result.push(circlePosts[circleIndex++]);
+      }
+
+      if (circleIndex >= circlePosts.length && publicIndex >= publicPosts.length) break;
+    }
+  }
+
+  return result;
+}
+
+function recordSeenPostsOnServer(postIds: string[]) {
+  const uniquePostIds = Array.from(new Set(postIds.map((id) => id.trim()).filter(Boolean)));
+  if (uniquePostIds.length === 0) return;
+  const body = JSON.stringify({ postIds: uniquePostIds });
+
+  if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    const blob = new Blob([body], { type: "application/json" });
+    if (navigator.sendBeacon("/api/post-views", blob)) return;
+  }
+
+  void fetch("/api/post-views", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
 }
 
 export default function CircleFeedClient({
@@ -110,8 +181,10 @@ export default function CircleFeedClient({
   const [initialViewerName] = useState(() => resolveActorName(initialMyName));
   const initialStateKey = circleFeedStateKey(initialViewerName || initialMyName);
   const [persistedSnapshot] = useState(() => !refreshMode && preserveOrderOnNav ? readFeedState<CircleFeedSnapshot>(initialStateKey) : null);
-  const [preserveFeedOrderOnNav] = useState(() => !refreshMode && Boolean(persistedSnapshot));
+  const persistedPublicPostIds = persistedSnapshot?.publicPostIds ?? [];
   const [circle, setCircle] = useState<string[]>(initialCircle);
+  const [requestCircleMembers, setRequestCircleMembers] = useState<Set<string>>(() => new Set(initialCircle));
+  const [pendingSent, setPendingSent] = useState<Set<string>>(new Set());
   const [myName, setMyName] = useState(initialViewerName);
   const stateKey = circleFeedStateKey(myName || initialMyName);
   const [mounted, setMounted] = useState(false);
@@ -122,23 +195,20 @@ export default function CircleFeedClient({
   const [feedLikedMap, setFeedLikedMap] = useState(persistedSnapshot?.likedByMeMap ?? initialLikedMap);
   const [feedBookmarkedPostMap, setFeedBookmarkedPostMap] = useState(persistedSnapshot?.bookmarkedPostMap ?? initialBookmarkedPostMap);
   const [feedTasteTrustSummaryMap, setFeedTasteTrustSummaryMap] = useState(persistedSnapshot?.tasteTrustSummaryMap ?? initialTasteTrustSummaryMap);
+  const [publicPostIds, setPublicPostIds] = useState<Set<string>>(() => new Set(persistedPublicPostIds));
   const [seenPostMap, setSeenPostMap] = useState<SeenPostMap>(() => readSeenPostMap(initialViewerName || initialMyName));
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [nextCursor, setNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
-  const [feedMode, setFeedMode] = useState<"circle" | "public">(persistedSnapshot?.feedMode ?? "circle");
-  const [publicFallbackAttempted, setPublicFallbackAttempted] = useState(persistedSnapshot?.feedMode === "public");
-  const [publicStartIndex, setPublicStartIndex] = useState<number | null>(persistedSnapshot?.publicStartIndex ?? null);
+  const [circleHasMore, setCircleHasMore] = useState(initialHasMore);
+  const [circleNextCursor, setCircleNextCursor] = useState<CircleFeedCursor | null>(initialNextCursor);
+  const [publicFeedAttempted, setPublicFeedAttempted] = useState(persistedPublicPostIds.length > 0);
+  const [publicHasMore, setPublicHasMore] = useState(false);
+  const [publicNextCursor, setPublicNextCursor] = useState<CircleFeedCursor | null>(null);
   const [publicFallbackEmpty, setPublicFallbackEmpty] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
   const feedContainerRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
   const seenPostMapRef = useRef<SeenPostMap>({});
-  // Session-only seen tracking — resets to zero on every fresh load / hard reload.
-  // Used for the fallback trigger so that a populated localStorage seenPostMap
-  // from previous sessions does not immediately fire the public fallback on mount.
-  const sessionSeenIdsRef = useRef(new Set<string>());
-  const [sessionSeenCount, setSessionSeenCount] = useState(0);
-
+  const visibleSinceRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     seenPostMapRef.current = seenPostMap;
   }, [seenPostMap]);
@@ -153,34 +223,31 @@ export default function CircleFeedClient({
       setFeedLikedMap(snapshot.likedByMeMap);
       setFeedBookmarkedPostMap(snapshot.bookmarkedPostMap);
       setFeedTasteTrustSummaryMap(snapshot.tasteTrustSummaryMap);
+      setPublicPostIds(new Set(snapshot.publicPostIds ?? []));
       // Always use server-provided pagination — cursor is never restored from snapshot.
-      setHasMore(initialHasMore);
-      setNextCursor(initialNextCursor);
-      setFeedMode(snapshot.feedMode ?? "circle");
-      setPublicFallbackAttempted(snapshot.feedMode === "public");
-      setPublicStartIndex(snapshot.publicStartIndex ?? null);
+      setCircleHasMore(initialHasMore);
+      setCircleNextCursor(initialNextCursor);
+      setPublicFeedAttempted((snapshot.publicPostIds ?? []).length > 0);
+      setPublicHasMore(false);
+      setPublicNextCursor(null);
     } else {
       const resolvedName = resolveActorName(initialMyName);
       const freshSeenMap = readSeenPostMap(resolvedName);
-      // Rank by seen state only on hard browser reload AND only when there are
-      // unseen posts to float up. SPA navigation (with or without snapshot) keeps
-      // server score order. All-seen case also keeps server order so posts stay
-      // visible and coherent instead of showing in oldest-seen-first order.
-      const hasUnseen = refreshMode && allReviews.some(r => !freshSeenMap[r.id]);
-      setFeedReviews(hasUnseen ? rankFeedReviewsBySeenState(allReviews, freshSeenMap) : allReviews);
+      setFeedReviews(allReviews);
       setFeedLikeCountMap(likeCountMap);
       setFeedCommentMap(commentMap);
       setFeedProfileMap(initialProfileMap);
       setFeedLikedMap(initialLikedMap);
       setFeedBookmarkedPostMap(initialBookmarkedPostMap);
       setFeedTasteTrustSummaryMap(initialTasteTrustSummaryMap);
-      setHasMore(initialHasMore);
-      setNextCursor(initialNextCursor);
-      setFeedMode("circle");
-      setPublicFallbackAttempted(false);
-      setPublicStartIndex(null);
-      sessionSeenIdsRef.current = new Set<string>();
-      setSessionSeenCount(0);
+      setPublicPostIds(new Set());
+      setCircleHasMore(initialHasMore);
+      setCircleNextCursor(initialNextCursor);
+      setPublicFeedAttempted(false);
+      setPublicHasMore(false);
+      setPublicNextCursor(null);
+      setPublicFallbackEmpty(false);
+      setSeenPostMap(freshSeenMap);
     }
 
     primeCachedJson("/api/feed/circle", {
@@ -202,16 +269,27 @@ export default function CircleFeedClient({
     const name = resolveActorName(initialMyName);
     setMyName(name);
     setSeenPostMap(readSeenPostMap(name));
+    setRequestCircleMembers(new Set(initialCircle));
     // When server already provided authenticated identity + circle data,
     // trust that snapshot to avoid client-side status drift hiding posts.
     if (initialMyName) {
       setMounted(true);
+      if (name) {
+        cachedCircleStatus(name)
+          .then((data) => {
+            setRequestCircleMembers(new Set(data.members ?? []));
+            setPendingSent(new Set(data.pendingSent ?? []));
+          })
+          .catch(() => {});
+      }
       return;
     }
     if (!name) { setMounted(true); return; }
     cachedCircleStatus(name)
       .then((data) => {
         setCircle(data.members ?? []);
+        setRequestCircleMembers(new Set(data.members ?? []));
+        setPendingSent(new Set(data.pendingSent ?? []));
       })
       .catch(() => {})
       .finally(() => setMounted(true));
@@ -234,26 +312,82 @@ export default function CircleFeedClient({
     stateKey,
   ]);
 
+  function requestStatusFor(name: string) {
+    const status = personStatusFor(name, { circleMembers: requestCircleMembers, pendingSent });
+    return status === "one_way" ? "joined" : status === "sent" ? "pending" : "idle";
+  }
+
+  async function requestCircleAccess(receiverName: string) {
+    if (
+      !myName ||
+      myName === receiverName ||
+      personStatusFor(receiverName, { circleMembers: requestCircleMembers, pendingSent }) !== "none"
+    ) {
+      return;
+    }
+
+    setPendingSent((prev) => addName(prev, receiverName));
+    const response = await fetch("/api/circle/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ receiverName }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      return;
+    }
+
+    invalidateCircleStatusCache(myName);
+    invalidateCircleStatusCache(receiverName);
+    invalidateCachedJson("/api/feed/circle", { clearFeedSnapshots: false });
+    invalidateCachedJson("/api/people");
+
+    if (isAcceptedCircleResponse(data) || isOneWayCircleResponse(data)) {
+      setPendingSent((prev) => removeName(prev, receiverName));
+      setRequestCircleMembers((prev) => addName(prev, receiverName));
+      setCircle((prev) => Array.from(addName(new Set(prev), receiverName)));
+    }
+  }
+
   const circleReviews = useMemo(() => feedReviews, [feedReviews]);
+  const displayedReviews = useMemo(() => {
+    const unseenCircle: Review[] = [];
+    const unseenPublic: Review[] = [];
+    const seenCircle: Review[] = [];
+    const seenPublic: Review[] = [];
+
+    for (const review of feedReviews) {
+      const isPublic = publicPostIds.has(review.id);
+      const isSeen = Boolean(seenPostMap[review.id]);
+      if (isPublic && isSeen) seenPublic.push(review);
+      else if (isPublic) unseenPublic.push(review);
+      else if (isSeen) seenCircle.push(review);
+      else unseenCircle.push(review);
+    }
+
+    return [
+      ...interleaveUnseenPosts(unseenCircle, unseenPublic),
+      ...seenCircle,
+      ...seenPublic,
+    ];
+  }, [feedReviews, publicPostIds, seenPostMap]);
 
   useEffect(() => {
-    // Don't persist until seen-post data is loaded; on refresh this ensures the
-    // snapshot is only written after rankFeedReviewsBySeenState has run with the
-    // real seenPostMap, not with the empty initial state.
+    // Don't persist until seen-post data is loaded; the render order is derived
+    // from the real seenPostMap and the circle/public source map.
     if (!mounted) return;
     writeFeedState<CircleFeedSnapshot>(stateKey, {
       reviews: circleReviews.slice(0, MAX_PERSISTED_REVIEWS),
+      publicPostIds: Array.from(publicPostIds).slice(0, MAX_PERSISTED_REVIEWS),
       likeCountMap: feedLikeCountMap,
       commentMap: feedCommentMap,
       profileMap: feedProfileMap,
       likedByMeMap: feedLikedMap,
       bookmarkedPostMap: feedBookmarkedPostMap,
       tasteTrustSummaryMap: feedTasteTrustSummaryMap,
-      feedMode,
-      publicStartIndex,
     }, FEED_STATE_TTL_MS);
   }, [
-    feedMode,
     feedBookmarkedPostMap,
     feedCommentMap,
     feedLikedMap,
@@ -263,58 +397,78 @@ export default function CircleFeedClient({
     circleReviews,
     stateKey,
     mounted,
-    publicStartIndex,
+    publicPostIds,
   ]);
 
   useEffect(() => {
     const root = feedContainerRef.current;
-    if (!root || circleReviews.length === 0) return;
+    if (!root || displayedReviews.length === 0) return;
 
     const container = root;
-    const markedThisView = new Set<string>();
     let frame = 0;
     let settleTimer = 0;
+    let dwellTimer = 0;
 
-    function visiblePostIds() {
+    function scheduleDwellScan() {
+      if (dwellTimer) window.clearTimeout(dwellTimer);
+      dwellTimer = window.setTimeout(() => {
+        dwellTimer = 0;
+        scheduleScan();
+      }, SEEN_DWELL_MS + 50);
+    }
+
+    function visiblePostIds(force = false) {
+      const now = Date.now();
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const unseenIds: string[] = [];   // not yet in persistent seenPostMap
-      const allVisibleIds: string[] = []; // every visible post, for session tracking
+      const visibleIds = new Set<string>();
+      const unseenIds: string[] = [];
+      let hasVisibleUnseen = false;
       const latestSeenMap = seenPostMapRef.current;
 
       container.querySelectorAll<HTMLElement>("[data-feed-post-id]").forEach((element) => {
         const postId = element.getAttribute("data-feed-post-id") ?? "";
-        if (!postId || markedThisView.has(postId)) return;
+        if (!postId) return;
 
         const rect = element.getBoundingClientRect();
         const visiblePx = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
         const visibleRatio = visiblePx / Math.max(1, Math.min(rect.height, viewportHeight));
         if (visibleRatio >= SEEN_VISIBILITY_RATIO) {
-          allVisibleIds.push(postId);
-          if (!latestSeenMap[postId]) unseenIds.push(postId);
+          visibleIds.add(postId);
+          if (!visibleSinceRef.current.has(postId)) {
+            visibleSinceRef.current.set(postId, now);
+          }
+
+          const visibleForMs = now - (visibleSinceRef.current.get(postId) ?? now);
+          const requiredDwellMs = force ? SEEN_EXIT_DWELL_MS : SEEN_DWELL_MS;
+          if (!latestSeenMap[postId]) {
+            hasVisibleUnseen = true;
+            if (visibleForMs >= requiredDwellMs) {
+              unseenIds.push(postId);
+            }
+          }
         }
       });
 
-      return { unseenIds, allVisibleIds };
+      for (const postId of visibleSinceRef.current.keys()) {
+        if (!visibleIds.has(postId)) visibleSinceRef.current.delete(postId);
+      }
+
+      return { unseenIds, hasVisibleUnseen };
     }
 
-    function markVisiblePosts() {
-      const { unseenIds, allVisibleIds } = visiblePostIds();
-      if (allVisibleIds.length === 0) return;
-      for (const postId of allVisibleIds) markedThisView.add(postId);
-
-      // Write newly-seen posts to persistent localStorage map
-      if (unseenIds.length > 0) {
-        const nextSeenMap = markPostsSeen(myName, unseenIds);
-        seenPostMapRef.current = nextSeenMap;
-        setSeenPostMap(nextSeenMap);
+    function markVisiblePosts(force = false) {
+      const { unseenIds, hasVisibleUnseen } = visiblePostIds(force);
+      if (!force && hasVisibleUnseen && unseenIds.length === 0) {
+        scheduleDwellScan();
       }
+      if (unseenIds.length === 0) return;
 
-      // Update session-scoped counter (drives fallback trigger, never reads localStorage)
-      const newToSession = allVisibleIds.filter(id => !sessionSeenIdsRef.current.has(id));
-      if (newToSession.length > 0) {
-        for (const id of newToSession) sessionSeenIdsRef.current.add(id);
-        setSessionSeenCount(sessionSeenIdsRef.current.size);
-      }
+      const nextSeenMap = markPostsSeen(myName, unseenIds);
+      seenPostMapRef.current = nextSeenMap;
+      for (const postId of unseenIds) visibleSinceRef.current.delete(postId);
+      recordSeenPostsOnServer(unseenIds);
+      // Keep the current viewport stable. The freshly written seen map is used
+      // by future loads, but this mounted feed should not reshuffle itself.
     }
 
     function scanVisiblePosts() {
@@ -332,7 +486,7 @@ export default function CircleFeedClient({
         window.cancelAnimationFrame(frame);
         frame = 0;
       }
-      markVisiblePosts();
+      markVisiblePosts(true);
     }
 
     function flushWhenHidden() {
@@ -342,6 +496,7 @@ export default function CircleFeedClient({
     markVisiblePosts();
     scheduleScan();
     settleTimer = window.setTimeout(scheduleScan, 350);
+    scheduleDwellScan();
     window.addEventListener("scroll", scheduleScan, { passive: true });
     document.addEventListener("scroll", scheduleScan, { passive: true, capture: true });
     window.addEventListener("resize", scheduleScan);
@@ -351,6 +506,7 @@ export default function CircleFeedClient({
     return () => {
       flushBeforeLeaving();
       if (settleTimer) window.clearTimeout(settleTimer);
+      if (dwellTimer) window.clearTimeout(dwellTimer);
       window.removeEventListener("scroll", scheduleScan);
       document.removeEventListener("scroll", scheduleScan, { capture: true });
       window.removeEventListener("resize", scheduleScan);
@@ -358,28 +514,38 @@ export default function CircleFeedClient({
       window.removeEventListener("beforeunload", flushBeforeLeaving);
       document.removeEventListener("visibilitychange", flushWhenHidden);
     };
-  }, [circleReviews, myName]);
+  }, [displayedReviews, myName]);
 
   const appendPublicFallbackPosts = useCallback(async (cursor: CircleFeedCursor | null = null) => {
     if (loadingMore) return;
+    if (!cursor) setPublicFeedAttempted(true);
     setLoadingMore(true);
     setLoadMoreError("");
     try {
       const seenIds = Object.keys(readSeenPostMap(myName));
       const currentIds = feedReviews.map((review) => review.id);
-      const response = await fetch(publicFallbackUrl(myName, cursor, currentIds, seenIds), { cache: "no-store" });
-      const data = await response.json() as PublicFeedResponse;
-      if (!response.ok || data.error) throw new Error(data.error ?? "Unable to load public posts");
+      const excludedReviewers = [myName, ...circle, ...Array.from(requestCircleMembers)];
 
-      setFeedMode("public");
-      let freshCount = 0;
+      async function fetchPublicPage(nextCursor: CircleFeedCursor | null, excludedSeenIds: string[], strictExclude: boolean) {
+        const response = await fetch(
+          publicFallbackUrl(myName, nextCursor, currentIds, excludedSeenIds, excludedReviewers, strictExclude),
+          { cache: "no-store" }
+        );
+        const data = await response.json() as PublicFeedResponse;
+        if (!response.ok || data.error) throw new Error(data.error ?? "Unable to load public posts");
+        return data;
+      }
+
+      let data = await fetchPublicPage(cursor, seenIds, true);
+      if ((data.reviews ?? []).length === 0 && !data.hasMore) {
+        data = await fetchPublicPage(null, [], false);
+      }
+
+      const incomingReviews = data.reviews ?? [];
       setFeedReviews((current) => {
         const seen = new Set(current.map((review) => review.id));
-        const fresh = (data.reviews ?? []).filter((review) => !seen.has(review.id));
-        freshCount = fresh.length;
-        if (fresh.length > 0) {
-          setPublicStartIndex((existing) => existing ?? current.length);
-        }
+        const fresh = incomingReviews.filter((review) => !seen.has(review.id));
+        if (fresh.length > 0) setPublicPostIds((ids) => new Set([...ids, ...fresh.map((review) => review.id)]));
         return [...current, ...fresh];
       });
       setFeedLikeCountMap((current) => ({ ...current, ...(data.likeCountMap ?? {}) }));
@@ -387,9 +553,9 @@ export default function CircleFeedClient({
       setFeedProfileMap((current) => ({ ...current, ...(data.profileMap ?? {}) }));
       setFeedLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
       setFeedBookmarkedPostMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
-      setHasMore(Boolean(data.hasMore));
-      setNextCursor(data.nextCursor ?? null);
-      if (freshCount === 0 && !data.hasMore) {
+      setPublicHasMore(Boolean(data.hasMore));
+      setPublicNextCursor(data.nextCursor ?? null);
+      if (incomingReviews.length === 0 && !data.hasMore) {
         setPublicFallbackEmpty(true);
       }
     } catch {
@@ -397,22 +563,29 @@ export default function CircleFeedClient({
     } finally {
       setLoadingMore(false);
     }
-  }, [feedReviews, loadingMore, myName]);
+  }, [circle, feedReviews, loadingMore, myName, requestCircleMembers]);
 
-  async function loadMore() {
-    if (loadingMore || !hasMore) return;
-    if (feedMode === "public") {
-      await appendPublicFallbackPosts(nextCursor);
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    if (!circleHasMore) {
+      if (publicHasMore) {
+        await appendPublicFallbackPosts(publicNextCursor);
+      } else if (!publicFeedAttempted) {
+        await appendPublicFallbackPosts(null);
+      }
       return;
     }
 
+    let loadedCirclePage = false;
     setLoadingMore(true);
     setLoadMoreError("");
     try {
       const params = new URLSearchParams({
         limit: String(CIRCLE_FEED_PAGE_SIZE),
       });
-      if (nextCursor) params.set("cursor", JSON.stringify(nextCursor));
+      if (circleNextCursor) params.set("cursor", JSON.stringify(circleNextCursor));
+      const excludedSeenIds = Object.keys(readSeenPostMap(myName)).slice(0, 160);
+      if (excludedSeenIds.length > 0) params.set("excludeSeen", excludedSeenIds.join(","));
       const response = await fetch(`/api/feed/circle?${params}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error ?? "Unable to load more posts");
@@ -428,44 +601,74 @@ export default function CircleFeedClient({
       setFeedLikedMap((current) => ({ ...current, ...(data.likedByMeMap ?? {}) }));
       setFeedBookmarkedPostMap((current) => ({ ...current, ...(data.bookmarkedPostMap ?? {}) }));
       setFeedTasteTrustSummaryMap((current) => ({ ...current, ...(data.tasteTrustSummaryMap ?? {}) }));
-      setHasMore(Boolean(data.hasMore));
-      setNextCursor(data.nextCursor ?? null);
+      setCircleHasMore(Boolean(data.hasMore));
+      setCircleNextCursor(data.nextCursor ?? null);
+      loadedCirclePage = true;
     } catch {
       setLoadMoreError("Could not load more posts. Please try again.");
     } finally {
       setLoadingMore(false);
     }
-  }
+
+    if (loadedCirclePage && publicHasMore) {
+      await appendPublicFallbackPosts(publicNextCursor);
+    }
+  }, [
+    appendPublicFallbackPosts,
+    circleHasMore,
+    circleNextCursor,
+    loadingMore,
+    myName,
+    publicFeedAttempted,
+    publicHasMore,
+    publicNextCursor,
+  ]);
 
   useEffect(() => {
     if (
       !mounted ||
-      preserveFeedOrderOnNav ||
-      feedMode !== "circle" ||
-      publicFallbackAttempted ||
-      loadingMore ||
-      hasMore ||
-      sessionSeenCount < feedReviews.length
+      publicFeedAttempted ||
+      loadingMore
     ) {
       return;
     }
 
-    setPublicFallbackAttempted(true);
     void appendPublicFallbackPosts(null);
   }, [
     appendPublicFallbackPosts,
-    feedMode,
-    feedReviews.length,
-    hasMore,
     loadingMore,
     mounted,
-    preserveFeedOrderOnNav,
-    publicFallbackAttempted,
-    sessionSeenCount,
+    publicFeedAttempted,
+  ]);
+
+  useEffect(() => {
+    const target = loadMoreSentinelRef.current;
+    if (!target || loadingMore || (!circleHasMore && !publicHasMore && (publicFeedAttempted || publicFallbackEmpty))) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadMore();
+        }
+      },
+      { root: null, rootMargin: "900px 0px", threshold: 0 }
+    );
+    observer.observe(target);
+
+    return () => observer.disconnect();
+  }, [
+    circleHasMore,
+    loadingMore,
+    publicFallbackEmpty,
+    publicFeedAttempted,
+    publicHasMore,
+    loadMore,
   ]);
 
   // Don't render until we've read localStorage to avoid flash
-  if (!mounted || (publicFallbackAttempted && loadingMore && circleReviews.length === 0)) {
+  if (!mounted || (!publicFeedAttempted && displayedReviews.length === 0)) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
         {[1, 2, 3].map((i) => (
@@ -475,9 +678,7 @@ export default function CircleFeedClient({
     );
   }
 
-  // Circle is empty and there are no joined-circle posts to show.
-  // Also covers: feedMode switched to "public" after fallback returned 0 posts.
-  if (publicFallbackAttempted && circleReviews.length === 0 && !loadingMore) {
+  if (displayedReviews.length === 0 && publicFeedAttempted && !loadingMore) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
         <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -493,63 +694,14 @@ export default function CircleFeedClient({
     );
   }
 
-  if (feedMode === "circle" && circle.length === 0 && circleReviews.length === 0) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
-        <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Users size={28} strokeWidth={1.8} color="var(--orange)" />
-        </div>
-        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
-          Your circle is empty
-        </p>
-        <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: "1.5", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "260px" }}>
-          Add friends to see what they&apos;re eating.
-        </p>
-        <div style={{ display: "flex", gap: "10px", marginTop: "8px", width: "100%", maxWidth: "320px" }}>
-          <Link href="/explore" style={{ flex: 1, textDecoration: "none" }}>
-            <button style={{ width: "100%", background: "var(--surface)", color: "var(--cream)", border: "1px solid var(--border)", borderRadius: "14px", padding: "13px", fontFamily: "'DM Sans', sans-serif", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-              Find friends
-            </button>
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  // Circle has people but none have posted yet
-  if (feedMode === "circle" && circleReviews.length === 0) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px 100px", gap: "12px" }}>
-        <div style={{ width: 64, height: 64, borderRadius: 20, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Users size={28} strokeWidth={1.8} color="var(--orange)" />
-        </div>
-        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "17px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
-          Your circle hasn&apos;t posted yet
-        </p>
-        <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: "1.5", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "260px" }}>
-          {circle.length === 1 ? "They haven't" : "None of them have"} logged a place yet. Check back soon.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <>
       <div ref={feedContainerRef} style={{ display: "flex", flexDirection: "column", gap: 0, padding: "0 0 100px" }}>
-        {circleReviews.map((review, index) => {
+        {displayedReviews.map((review, index) => {
           const eng = feedCommentMap[review.id];
+          const isPublicPost = publicPostIds.has(review.id);
           return (
             <div key={review.id} data-feed-post-id={review.id}>
-              {publicStartIndex === index && (
-                <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
-                  <p style={{ margin: 0, fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800, color: "var(--orange)" }}>
-                    Suggested near you
-                  </p>
-                  <p style={{ margin: "3px 0 0", fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: "var(--muted)" }}>
-                    Trusted nearby food posts from outside your circle.
-                  </p>
-                </div>
-              )}
               <CircleFeedCard
                 review={review}
                 initialLikeCount={feedLikeCountMap[review.id] ?? 0}
@@ -560,6 +712,8 @@ export default function CircleFeedClient({
                 initialMyName={myName}
                 profileMap={feedProfileMap}
                 priorityImage={index < 2}
+                requestStatus={isPublicPost ? requestStatusFor(review.reviewer_name) : undefined}
+                onRequestClick={isPublicPost ? () => requestCircleAccess(review.reviewer_name) : undefined}
               />
             </div>
           );
@@ -569,7 +723,7 @@ export default function CircleFeedClient({
             {loadMoreError}
           </p>
         )}
-        {hasMore && (
+        {(circleHasMore || publicHasMore || (!publicFeedAttempted && !publicFallbackEmpty && displayedReviews.length > 0)) && (
           <button
             onClick={loadMore}
             disabled={loadingMore}
@@ -591,11 +745,12 @@ export default function CircleFeedClient({
           </button>
         )}
 
-        {(!hasMore && circleReviews.length > CIRCLE_FEED_PAGE_SIZE) || (publicFallbackEmpty && !hasMore) ? (
+        {(!circleHasMore && !publicHasMore && displayedReviews.length > CIRCLE_FEED_PAGE_SIZE) || (publicFallbackEmpty && !circleHasMore && !publicHasMore) ? (
           <p style={{ fontSize: "11px", color: "var(--muted)", textAlign: "center", padding: "10px 0 20px", fontFamily: "'DM Sans', sans-serif" }}>
             You are caught up for now.
           </p>
         ) : null}
+        <div ref={loadMoreSentinelRef} aria-hidden="true" style={{ height: 1 }} />
       </div>
     </>
   );

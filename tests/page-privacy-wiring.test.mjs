@@ -19,7 +19,9 @@ test("home/circle page defers feed loading to the client cache path", () => {
   assert.match(helper, /normalizeReview\(r as Parameters<typeof normalizeReview>\[0\]\)/);
   assert.match(helper, /filterCircleTrendingReviews\(batch,/);
   assert.match(helper, /const postIds = allReviews\.map/);
-  assert.match(helper, /const rankedReviews = rankCircleFeedReviews\(allReviews,/);
+  assert.match(helper, /const rankedUnseenReviews = rankCircleFeedReviews\(/);
+  assert.match(helper, /const rankedSeenFallbackReviews = rankCircleFeedReviews\(/);
+  assert.match(helper, /const rankedReviews = \[\.\.\.rankedUnseenReviews, \.\.\.rankedSeenFallbackReviews\]/);
 });
 
 test("normal social cache invalidation does not clear trending globally", () => {
@@ -117,7 +119,7 @@ test("explore universal search produces typed people, dish, and restaurant desti
   assert.match(people, /dishSearchMatches\(canonical, trimmed\)/);
   assert.match(people, /return `\/dishes\/\$\{encodeURIComponent\(dishName\)\}/);
   assert.match(people, /return `\/restaurants\/\$\{encodeURIComponent\(restaurant\.placeId\)\}/);
-  assert.match(people, /href=\{`\/people\/\$\{encodeURIComponent\(name\)\}`\}/);
+  assert.match(people, /href=\{`\/people\/\$\{encodeURIComponent\(username\)\}`\}/);
 });
 
 test("profile tabs include dishes between posts and timeline", () => {
@@ -127,7 +129,7 @@ test("profile tabs include dishes between posts and timeline", () => {
   assert.match(src, /type MeTab = "reviews" \| "dishes" \| "timeline"/);
   assert.match(src, /\{ id: "reviews", label: "Posts" \},\s*\{ id: "dishes", label: "Dishes" \},\s*\{ id: "timeline", label: "Timeline" \}/);
   assert.match(src, /<ProfileDishesList/);
-  assert.match(dishes, /buildDishComparisons\(triedReviews, publicReviews\)/);
+  assert.match(dishes, /buildDishComparisons\(triedReviews, publicReviews, userLocation\)/);
   assert.doesNotMatch(dishes, /Your Dishes|See how your favorites stack up|About|All \(|Top rated|Need more public data/);
   assert.doesNotMatch(dishes, /Chevron|ArrowRight|→/);
 });
@@ -140,7 +142,8 @@ test("people profile exposes dishes tried with current public best picks", () =>
   assert.match(page, /filterGlobalTrendingReviews/);
   assert.match(page, /const publicBestReviews = filterGlobalTrendingReviews\(/);
   assert.match(page, /publicBestReviews=\{publicBestReviews\}/);
-  assert.match(client, /type ProfileTab = "places" \| "dishes"/);
+  assert.match(client, /type ProfileTab = "reviews" \| "dishes" \| "timeline"/);
+  assert.match(client, /\{ id: "reviews", label: "Posts" \},\s*\{ id: "dishes", label: "Dishes" \},\s*\{ id: "timeline", label: "Timeline" \}/);
   assert.match(client, /<ProfileDishesList/);
   assert.match(client, /triedReviews=\{visibleReviews\}/);
   assert.match(client, /publicReviews=\{publicBestReviews\}/);
@@ -275,7 +278,7 @@ test("review detail ignores older optimistic engagement cache after fresh SSR st
   const client = source("components/reviews/ReviewDetailClient.tsx");
   const cache = source("lib/post-engagement-cache.ts");
 
-  assert.match(client, /readPostEngagementEntry\(review\.id\)/);
+  assert.match(client, /readPostEngagementEntry\(myName, review\.id\)/);
   assert.match(client, /cached\.updatedAt <= initialSnapshotAt/);
   assert.match(cache, /const MAX_AGE_MS = 30 \* 1000/);
 });

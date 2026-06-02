@@ -7,13 +7,11 @@ test("circle feed cards use next/image in a stable responsive media box", () => 
 
   assert.match(source, /import Image from "next\/image"/);
   assert.match(source, /aspectRatio: "4\/5"/);
-  assert.match(source, /set\("height", "1200"\)/);
-  assert.match(source, /const revealedFeedImages = new Set<string>\(\)/);
+  assert.match(source, /set\("height",\s*"1200"\)/);
   assert.match(source, /function FeedReviewImage/);
   assert.match(source, /<Image[\s\S]*fill/);
   assert.match(source, /sizes="\(max-width: 512px\) 100vw, 512px"/);
   assert.match(source, /loading=\{priority \? undefined : "lazy"\}/);
-  assert.match(source, /className=\{!revealed \? "image-before-reveal" : shouldFade \? "image-fade-in" : undefined\}/);
   assert.match(source, /<FeedReviewImage[\s\S]*priority=\{priorityImage && i === 0\}/);
   assert.doesNotMatch(source, /<img\s/);
 });

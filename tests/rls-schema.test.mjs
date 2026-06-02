@@ -104,6 +104,19 @@ test("schema: notifications have unread badge indexes for user id and username r
   assert.match(schema, /on public\.notifications\s*\(\s*recipient_name\s*,\s*is_read\s*,\s*read\s*\)/i);
 });
 
+test("schema: post views store seen posts by authenticated user", () => {
+  assert.match(schema, /create table if not exists public\.post_views/i);
+  assert.match(schema, /primary key \(user_id, post_id\)/i);
+  assert.match(schema, /post_views_user_viewed_at_idx/i);
+  const insertBlocks = policiesFor("post_views", "insert");
+  assert.ok(insertBlocks.length > 0, "No post_views INSERT policy found");
+  assert.ok(hasAuthenticatedActorBinding(insertBlocks), "post_views INSERT policy must bind to auth.uid()");
+  assert.ok(
+    insertBlocks.some((b) => /can_read_review_id\(post_id\)/.test(b)),
+    "post_views INSERT policy must check parent review readability"
+  );
+});
+
 // ── LIKES ──────────────────────────────────────────────────────────────────────
 
 test("schema: old open likes INSERT policy is dropped", () => {

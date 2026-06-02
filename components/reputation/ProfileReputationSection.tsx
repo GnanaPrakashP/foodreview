@@ -1221,12 +1221,10 @@ export default function ProfileReputationSection({
         )}
       </div>
 
-      {/* Fixed row — no horizontal scroll */}
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 2 }}>
         <TierAchievementPill
           tier={reputation.tier}
           onClick={() => setDetail({ kind: "tier" })}
-          stretch
         />
         {recentBadges.map((badge) => (
           <BadgePill
@@ -1237,7 +1235,6 @@ export default function ProfileReputationSection({
             description={badge.badgeDescription}
             earnedAt={badge.earnedAt}
             onClick={() => setDetail({ kind: "permanent", item: badge })}
-            stretch
           />
         ))}
         {remainingCount > 0 && (
@@ -1245,8 +1242,8 @@ export default function ProfileReputationSection({
             type="button"
             onClick={() => setShowAll(true)}
             style={{
-              flex: 1,
-              minWidth: 0,
+              width: 88,
+              flexShrink: 0,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",

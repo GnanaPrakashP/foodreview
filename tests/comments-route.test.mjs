@@ -191,14 +191,20 @@ test("POST /comments: content over 500 characters returns 400", async () => {
 });
 
 test("POST /comments: content exactly 500 characters is accepted", async () => {
-  const db = mockDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
+  const db = mockDb(
+    { data: { reviewer_name: "Bob" }, error: null },
+    { data: { id: "33333333-3333-4333-8333-333333333333" }, error: null }
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(makeReq({ postId: "post-1", content: "x".repeat(500) }));
   assert.equal(status(res), 200);
 });
 
 test("POST /comments: user_name is always the authenticated actor, not the request body", async () => {
-  const db = spyDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
+  const db = spyDb(
+    { data: { reviewer_name: "Bob" }, error: null },
+    { data: { id: "33333333-3333-4333-8333-333333333333" }, error: null }
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(
     makeReq({ postId: "post-1", content: "Nice!", userName: "Mallory" })
@@ -211,7 +217,10 @@ test("POST /comments: user_name is always the authenticated actor, not the reque
 });
 
 test("POST /comments: inserted content is trimmed and tied to the post id", async () => {
-  const db = spyDb({ data: { id: "33333333-3333-4333-8333-333333333333" }, error: null });
+  const db = spyDb(
+    { data: { reviewer_name: "Bob" }, error: null },
+    { data: { id: "33333333-3333-4333-8333-333333333333" }, error: null }
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(makeReq({ postId: "post-1", content: "  Delicious!  " }));
   assert.equal(status(res), 200);
@@ -221,7 +230,10 @@ test("POST /comments: inserted content is trimmed and tied to the post id", asyn
 });
 
 test("POST /comments: valid comment returns the new comment id", async () => {
-  const db = mockDb({ data: { id: "cmt-xyz" }, error: null });
+  const db = mockDb(
+    { data: { reviewer_name: "Bob" }, error: null },
+    { data: { id: "cmt-xyz" }, error: null }
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(makeReq({ postId: "post-1", content: "Delicious!" }));
   assert.equal(status(res), 200);
@@ -230,7 +242,10 @@ test("POST /comments: valid comment returns the new comment id", async () => {
 
 test("POST /comments: DB error returns 500", async () => {
   const { POST } = loadRoute(src.create, {
-    db: mockDb({ data: null, error: { message: "insert failed" } }),
+    db: mockDb(
+      { data: { reviewer_name: "Bob" }, error: null },
+      { data: null, error: { message: "insert failed" } }
+    ),
     authName: "Alice",
   });
   const res = await POST(makeReq({ postId: "post-1", content: "Nice!" }));
@@ -305,6 +320,7 @@ test("DELETE /comments/[id]: DB delete error returns 500", async () => {
   const { DELETE } = loadRoute(src.deleteById, {
     db: mockDb(
       { data: { user_name: "Alice" }, error: null },
+      { data: { reviewer_name: "Bob" }, error: null },
       { data: null, error: { message: "delete failed" } }
     ),
     authName: "Alice",
@@ -331,7 +347,10 @@ test("POST /comments: success response includes full comment row (id, post_id, u
     content: "Delicious!",
     created_at: "2026-05-01T00:00:00.000Z",
   };
-  const db = mockDb({ data: fullRow, error: null });
+  const db = mockDb(
+    { data: { reviewer_name: "Bob" }, error: null },
+    { data: fullRow, error: null }
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
 
   const res = await POST(makeReq({ postId: "post-1", content: "Delicious!" }));

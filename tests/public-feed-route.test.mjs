@@ -138,6 +138,12 @@ function loadRoute({ db }) {
       if (id === "@/lib/server/normalize-review") {
         return { normalizeReview: (review) => review };
       }
+      if (id === "@/lib/server/route-supabase") {
+        return { getRouteActor: async () => ({ actor: null }) };
+      }
+      if (id === "@/lib/server/post-views") {
+        return { loadSeenPostIdsForUser: async (_db, _userId, extraPostIds = []) => new Set(extraPostIds) };
+      }
       throw new Error(`Unexpected require in public-feed tests: ${id}`);
     },
   });

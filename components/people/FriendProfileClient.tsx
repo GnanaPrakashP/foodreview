@@ -3,8 +3,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { AccountType, Review } from "@/lib/types";
-import { avatarGradient, avatarInitials, restaurantGradient } from "@/lib/profile";
+import type { AccountType, Comment, Review } from "@/lib/types";
+import CircleFeedCard from "@/components/reviews/CircleFeedCard";
+import { avatarGradient, avatarInitials } from "@/lib/profile";
+import { restaurantLocationLabel } from "@/lib/location";
 import { normalizeVisibility } from "@/lib/visibility";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 import ProfileDishesList from "@/components/profile/ProfileDishesList";
@@ -20,47 +22,17 @@ import { EMPTY_REPUTATION, type UserProfileReputation } from "@/lib/reputation";
 
 /* ─── helpers ─────────────────────────────────────── */
 
-const RANK_COLORS: Record<number, string> = { 1: "#E8A830", 2: "#9CA3AF", 3: "#CD7C2F" };
-
-interface RankedPlace {
-  name: string;
-  score10: number;
-  visitCount: number;
-  dishCount: number;
-  isRegular: boolean;
-}
-
-function buildRankedPlaces(reviews: Review[]): RankedPlace[] {
-  const map = new Map<string, { totalRating: number; ratingCount: number; visitCount: number; dishes: Set<string> }>();
-  for (const r of reviews) {
-    const existing = map.get(r.restaurant_name);
-    const rated = r.items.filter((it) => it.rating > 0);
-    const sum = rated.reduce((s, it) => s + it.rating, 0);
-    if (existing) {
-      existing.visitCount++;
-      existing.totalRating += sum;
-      existing.ratingCount += rated.length;
-      for (const it of r.items) if (it.name.trim()) existing.dishes.add(it.name.trim().toLowerCase());
-    } else {
-      const dishes = new Set<string>();
-      for (const it of r.items) if (it.name.trim()) dishes.add(it.name.trim().toLowerCase());
-      map.set(r.restaurant_name, { totalRating: sum, ratingCount: rated.length, visitCount: 1, dishes });
-    }
-  }
-  return [...map.entries()]
-    .map(([name, d]) => ({
-      name,
-      score10: d.ratingCount > 0 ? Math.round((d.totalRating / d.ratingCount) * 2 * 10) / 10 : 0,
-      visitCount: d.visitCount,
-      dishCount: d.dishes.size,
-      isRegular: d.visitCount >= 5,
-    }))
-    .sort((a, b) => b.score10 - a.score10);
-}
-
 type CircleStatus = "one_way" | "sent" | "none";
-type ProfileTab = "places" | "dishes";
+type ProfileTab = "reviews" | "dishes" | "timeline";
 type ProfileCursor = { createdAt: string; id: string };
+
+type EngagementMaps = {
+  likeCountMap: Record<string, number>;
+  commentMap: Record<string, { count: number; top: Comment }>;
+  likedByMeMap: Record<string, boolean>;
+  bookmarkedPostMap: Record<string, boolean>;
+  profileMap: Record<string, string>;
+};
 
 async function fetchCircleStatusPayload(personName: string): Promise<CircleStatusPayload> {
   try {
@@ -72,8 +44,9 @@ async function fetchCircleStatusPayload(personName: string): Promise<CircleStatu
 
 function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
   const tabs: Array<{ id: ProfileTab; label: string }> = [
-    { id: "places", label: "Places" },
+    { id: "reviews", label: "Posts" },
     { id: "dishes", label: "Dishes" },
+    { id: "timeline", label: "Timeline" },
   ];
 
   return (
@@ -105,6 +78,164 @@ function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange:
   );
 }
 
+function timelineDateParts(value: string): { day: string; month: string } {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { day: "--", month: "" };
+  return {
+    day: new Intl.DateTimeFormat("en-US", { day: "2-digit" }).format(date),
+    month: new Intl.DateTimeFormat("en-US", { month: "short" }).format(date),
+  };
+}
+
+function timelineMonthLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+}
+
+function timelineLocationLabel(review: Review): string {
+  const label = (restaurantLocationLabel(review) ?? "Location not added").replace(/\s+/g, " ").trim();
+  if (label.length <= 30) return label;
+  const firstPart = label.split(",")[0]?.trim();
+  if (firstPart && firstPart.length <= 30) return firstPart;
+  return `${label.slice(0, 28).trimEnd()}...`;
+}
+
+function TimelineTab({ reviews }: { reviews: Review[] }) {
+  const entries = reviews.length > 0
+    ? [...reviews]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 12)
+    : [];
+
+  if (entries.length === 0) {
+    return (
+      <div style={{ padding: "60px 20px 110px", textAlign: "center" }}>
+        <p style={{ color: "var(--muted)", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>No timeline yet</p>
+      </div>
+    );
+  }
+
+  const groupedEntries = entries.reduce<Array<{ month: string; entries: Review[] }>>((groups, entry) => {
+    const month = timelineMonthLabel(entry.created_at);
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup?.month === month) lastGroup.entries.push(entry);
+    else groups.push({ month, entries: [entry] });
+    return groups;
+  }, []);
+
+  return (
+    <div style={{ padding: "0 20px 110px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {groupedEntries.map((group) => (
+          <section key={group.month}>
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: "var(--cream)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.2 }}>
+              {group.month}
+            </h2>
+            <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ position: "absolute", left: 6.5, top: 10, bottom: 10, width: 1, background: "linear-gradient(180deg, rgba(240,96,48,0.55), rgba(255,255,255,0.08))" }} />
+              {group.entries.map((entry, index) => {
+                const date = timelineDateParts(entry.created_at);
+                const location = timelineLocationLabel(entry);
+                return (
+                  <div key={`${entry.restaurant_name}-${entry.created_at}-${index}`} style={{ display: "grid", gridTemplateColumns: "14px minmax(0, 1fr)", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 14, height: 14, borderRadius: 999, background: "var(--orange)", border: "4px solid var(--bg)", flexShrink: 0, position: "relative", zIndex: 1, boxSizing: "border-box" }} />
+                    <div style={{ flex: 1, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: "11px 13px", display: "grid", gridTemplateColumns: "38px 1px minmax(0, 1fr)", alignItems: "center", gap: 12 }}>
+                      <div style={{ color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontWeight: 800, lineHeight: 1, textAlign: "center" }}>
+                        <span style={{ display: "block", fontSize: 14 }}>{date.day}</span>
+                        <span style={{ display: "block", marginTop: 3, fontSize: 10, color: "var(--muted)", textTransform: "uppercase" }}>{date.month}</span>
+                      </div>
+                      <div style={{ alignSelf: "stretch", background: "rgba(255,255,255,0.18)" }} />
+                      <div style={{ minWidth: 0 }}>
+                        <h3 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: "var(--cream)", margin: 0, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {entry.restaurant_name}
+                        </h3>
+                        <p style={{ color: "var(--muted)", fontSize: 12, margin: "4px 0 0", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {location}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewsTab({
+  reviews,
+  engagement,
+  myName,
+  hasMore,
+  loadingMore,
+  loadMoreError,
+  onLoadMore,
+}: {
+  reviews: Review[];
+  engagement: EngagementMaps;
+  myName: string;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMoreError: string;
+  onLoadMore: () => void;
+}) {
+  const sorted = [...reviews].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  if (sorted.length === 0) {
+    return (
+      <div style={{ padding: "60px 20px 110px", textAlign: "center" }}>
+        <p style={{ color: "var(--muted)", fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>No reviews yet</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "0 0 110px", display: "flex", flexDirection: "column", gap: 0 }}>
+      {sorted.map((review) => (
+        <CircleFeedCard
+          key={review.id}
+          review={review}
+          initialLikeCount={engagement.likeCountMap[review.id] ?? 0}
+          initialCommentCount={engagement.commentMap[review.id]?.count ?? 0}
+          initialLiked={engagement.likedByMeMap[review.id] ?? false}
+          initialBookmarked={engagement.bookmarkedPostMap[review.id] ?? false}
+          initialMyName={myName}
+          profileMap={engagement.profileMap}
+        />
+      ))}
+      {loadMoreError && (
+        <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 0 0" }}>
+          {loadMoreError}
+        </p>
+      )}
+      {hasMore && (
+        <button
+          onClick={onLoadMore}
+          disabled={loadingMore}
+          style={{
+            background: loadingMore ? "var(--surface)" : "var(--orange)",
+            color: loadingMore ? "var(--muted)" : "white",
+            border: "none",
+            borderRadius: "14px",
+            padding: "13px",
+            margin: "16px 20px 0",
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: "13px",
+            fontWeight: 700,
+            cursor: loadingMore ? "default" : "pointer",
+          }}
+        >
+          {loadingMore ? "Loading..." : "Load more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ─── main component ──────────────────────────────── */
 
 export default function FriendProfileClient({
@@ -124,6 +255,11 @@ export default function FriendProfileClient({
   reputation = EMPTY_REPUTATION,
   initialHasMore = false,
   initialNextCursor = null,
+  likeCountMap = {},
+  commentMap = {},
+  likedByMeMap = {},
+  bookmarkedPostMap = {},
+  profileMap = {},
 }: {
   name: string;
   displayName?: string;
@@ -141,6 +277,11 @@ export default function FriendProfileClient({
   reputation?: UserProfileReputation;
   initialHasMore?: boolean;
   initialNextCursor?: ProfileCursor | null;
+  likeCountMap?: Record<string, number>;
+  commentMap?: Record<string, { count: number; top: Comment }>;
+  likedByMeMap?: Record<string, boolean>;
+  bookmarkedPostMap?: Record<string, boolean>;
+  profileMap?: Record<string, string>;
 }) {
   const router = useRouter();
   const hasVisibleCirclePosts = useMemo(
@@ -157,8 +298,13 @@ export default function FriendProfileClient({
   const [confirmAction, setConfirmAction] = useState<"cancel_request" | "leave_circle" | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [respondBusy, setRespondBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<ProfileTab>("places");
+  const [activeTab, setActiveTab] = useState<ProfileTab>("reviews");
   const [profileReviews, setProfileReviews] = useState(reviews);
+  const [reviewLikeCountMap, setReviewLikeCountMap] = useState(likeCountMap);
+  const [reviewCommentMap, setReviewCommentMap] = useState(commentMap);
+  const [reviewLikedByMeMap, setReviewLikedByMeMap] = useState(likedByMeMap);
+  const [reviewBookmarkedPostMap, setReviewBookmarkedPostMap] = useState(bookmarkedPostMap);
+  const [reviewProfileMap, setReviewProfileMap] = useState(profileMap);
   const [hasMoreReviews, setHasMoreReviews] = useState(initialHasMore);
   const [nextReviewsCursor, setNextReviewsCursor] = useState<ProfileCursor | null>(initialNextCursor);
   const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
@@ -179,9 +325,14 @@ export default function FriendProfileClient({
 
   useEffect(() => {
     setProfileReviews(reviews);
+    setReviewLikeCountMap(likeCountMap);
+    setReviewCommentMap(commentMap);
+    setReviewLikedByMeMap(likedByMeMap);
+    setReviewBookmarkedPostMap(bookmarkedPostMap);
+    setReviewProfileMap(profileMap);
     setHasMoreReviews(initialHasMore);
     setNextReviewsCursor(initialNextCursor);
-  }, [reviews, initialHasMore, initialNextCursor]);
+  }, [reviews, likeCountMap, commentMap, likedByMeMap, bookmarkedPostMap, profileMap, initialHasMore, initialNextCursor]);
 
   const uniquePlaces = useMemo(() => new Set(profileReviews.map((r) => r.restaurant_name)).size, [profileReviews]);
 
@@ -190,7 +341,6 @@ export default function FriendProfileClient({
   }, [profileReviews]);
 
   const totalVisits = useMemo(() => profileReviews.length, [profileReviews]);
-  const rankedPlaces = useMemo(() => buildRankedPlaces(visibleReviews), [visibleReviews]);
 
   const loadCircleStatus = useCallback((me: string) => {
     if (!me) return Promise.resolve();
@@ -393,10 +543,15 @@ export default function FriendProfileClient({
         const fresh = ((payload.reviews ?? []) as Review[]).filter((review) => !seen.has(review.id));
         return [...current, ...fresh];
       });
+      setReviewLikeCountMap((current) => ({ ...current, ...(payload.likeCountMap ?? {}) }));
+      setReviewCommentMap((current) => ({ ...current, ...(payload.commentMap ?? {}) }));
+      setReviewLikedByMeMap((current) => ({ ...current, ...(payload.likedByMeMap ?? {}) }));
+      setReviewBookmarkedPostMap((current) => ({ ...current, ...(payload.bookmarkedPostMap ?? {}) }));
+      setReviewProfileMap((current) => ({ ...current, ...(payload.profileMap ?? {}) }));
       setHasMoreReviews(Boolean(payload.hasMore));
       setNextReviewsCursor(payload.nextCursor ?? null);
     } catch {
-      setLoadMoreReviewsError("Could not load more places. Please try again.");
+      setLoadMoreReviewsError("Could not load more posts. Please try again.");
     } finally {
       setLoadingMoreReviews(false);
     }
@@ -464,15 +619,16 @@ export default function FriendProfileClient({
             <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{formatTrustScore(tasteTrust.trust_score)}</div>
             <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, lineHeight: 1.1 }}>Trust</div>
           </button>
-          {[
-            { val: uniquePlaces, label: "Places" },
-            { val: uniqueDishes, label: "Dishes" },
-          ].map(({ val, label }) => (
-            <div key={label} style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-              <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{val}</div>
-              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>{label}</div>
+          <Link href={`/people/${encodeURIComponent(name)}/places`} style={{ textDecoration: "none", display: "block" }}>
+            <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
+              <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{uniquePlaces}</div>
+              <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Places</div>
             </div>
-          ))}
+          </Link>
+          <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{uniqueDishes}</div>
+            <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "6px", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Dishes</div>
+          </div>
           {isPrivateLocked ? (
             <div style={{ minHeight: "58px", padding: "8px 2px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <div style={{ fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: "23px", fontWeight: 700, color: "var(--cream)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{theirCircleCount}</div>
@@ -591,12 +747,8 @@ export default function FriendProfileClient({
       {!isPrivateLocked && <ProfileTabs activeTab={activeTab} onChange={setActiveTab} />}
 
       {/* ── Profile Lists ── */}
-      <div style={{ padding: "0 20px" }}>
-        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
-          {(displayName || name).split(" ")[0]}&apos;s {activeTab === "dishes" ? "Dishes" : "Places"}
-        </p>
-
-        {isPrivateLocked ? (
+      {isPrivateLocked ? (
+        <div style={{ padding: "0 20px" }}>
           <div style={{ textAlign: "center", padding: "48px 20px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px" }}>
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
               This is a private account
@@ -605,7 +757,9 @@ export default function FriendProfileClient({
               Add them to see their meal list and Circle.
             </p>
           </div>
-        ) : isCheckingPrivateAccess ? (
+        </div>
+      ) : isCheckingPrivateAccess ? (
+        <div style={{ padding: "0 20px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             {[1, 2, 3].map((i) => (
               <div
@@ -615,85 +769,34 @@ export default function FriendProfileClient({
               />
             ))}
           </div>
-        ) : activeTab === "dishes" ? (
-          <div style={{ margin: "0 -20px" }}>
-            <ProfileDishesList
-              triedReviews={visibleReviews}
-              publicReviews={publicBestReviews}
-              triedLabel={`${(displayName || name).split(" ")[0]}'s Best`}
-              emptyText="No dishes logged yet"
-              bottomPadding={110}
-            />
-          </div>
-        ) : rankedPlaces.length === 0 ? (
-          <p style={{ textAlign: "center", padding: "48px 0", fontSize: "15px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>
-            No places logged yet
-          </p>
-        ) : (
-          <>
-          {rankedPlaces.map((place, i) => (
-            <Link
-              key={place.name}
-              href={`/people/${encodeURIComponent(name)}/${encodeURIComponent(place.name)}`}
-              style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "12px", padding: "13px 0", borderBottom: "1px solid var(--border)" }}
-            >
-              <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "18px", fontWeight: 700, color: RANK_COLORS[i + 1] ?? "var(--border)", width: "24px", textAlign: "center", flexShrink: 0 }}>
-                {i + 1}
-              </div>
-              <div style={{ width: "44px", height: "44px", background: restaurantGradient(place.name), borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", fontWeight: 700, color: "white", fontFamily: "'DM Sans', sans-serif", flexShrink: 0 }}>
-                {place.name[0]?.toUpperCase() ?? "?"}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "14px", fontWeight: 700, color: "var(--cream)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {place.name}
-                </p>
-                <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px", fontFamily: "'DM Sans', sans-serif" }}>
-                  {place.visitCount} visit{place.visitCount !== 1 ? "s" : ""}
-                  {place.dishCount > 0 && ` · ${place.dishCount} dish${place.dishCount !== 1 ? "es" : ""}`}
-                  {place.isRegular && (
-                    <span style={{ marginLeft: "8px", background: "rgba(240,96,48,0.12)", border: "1px solid rgba(240,96,48,0.25)", borderRadius: "20px", padding: "1px 7px", fontSize: "9px", fontWeight: 700, color: "var(--orange)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                      Regular
-                    </span>
-                  )}
-                </p>
-              </div>
-              {place.score10 > 0 && (
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)" }}>{place.score10}</span>
-                  <span style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif" }}>/10</span>
-                </div>
-              )}
-            </Link>
-          ))}
-          {loadMoreReviewsError && (
-            <p style={{ color: "#F87171", fontSize: "12px", fontFamily: "'DM Sans', sans-serif", textAlign: "center", margin: "12px 0 0" }}>
-              {loadMoreReviewsError}
-            </p>
-          )}
-          {hasMoreReviews && (
-            <button
-              onClick={loadMoreReviews}
-              disabled={loadingMoreReviews}
-              style={{
-                background: loadingMoreReviews ? "var(--surface)" : "var(--orange)",
-                color: loadingMoreReviews ? "var(--muted)" : "white",
-                border: "none",
-                borderRadius: "14px",
-                padding: "13px",
-                margin: "16px 0 110px",
-                width: "100%",
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: "13px",
-                fontWeight: 700,
-                cursor: loadingMoreReviews ? "default" : "pointer",
-              }}
-            >
-              {loadingMoreReviews ? "Loading..." : "Load more"}
-            </button>
-          )}
-          </>
-        )}
-      </div>
+        </div>
+      ) : activeTab === "timeline" ? (
+        <TimelineTab reviews={visibleReviews} />
+      ) : activeTab === "dishes" ? (
+        <ProfileDishesList
+          triedReviews={visibleReviews}
+          publicReviews={publicBestReviews}
+          triedLabel={`${(displayName || name).split(" ")[0]}'s Best`}
+          emptyText="No dishes yet"
+          bottomPadding={110}
+        />
+      ) : (
+        <ReviewsTab
+          reviews={visibleReviews}
+          engagement={{
+            likeCountMap: reviewLikeCountMap,
+            commentMap: reviewCommentMap,
+            likedByMeMap: reviewLikedByMeMap,
+            bookmarkedPostMap: reviewBookmarkedPostMap,
+            profileMap: reviewProfileMap,
+          }}
+          myName={myName}
+          hasMore={hasMoreReviews}
+          loadingMore={loadingMoreReviews}
+          loadMoreError={loadMoreReviewsError}
+          onLoadMore={loadMoreReviews}
+        />
+      )}
     </div>
   );
 }

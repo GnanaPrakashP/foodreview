@@ -208,6 +208,8 @@ export default function TrustScoreSheet({
   const matchText = summary.agreement_percentage == null ? "—" : `${summary.agreement_percentage}%`;
   const confirmations = summary.confirmed_recommendations_count;
   const confirmationsUntilLevel = Math.max(0, TASTE_TRUST_MIN_CONFIRMATIONS - confirmations);
+  const scoreLabel = formatTrustScore(summary.trust_score);
+  const scoreFontSize = scoreLabel.length > 3 ? 36 : 40;
 
   return (
     <div
@@ -258,12 +260,12 @@ export default function TrustScoreSheet({
 
         <div style={{ overflowY: "auto", flex: 1, padding: "16px 18px calc(28px + env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column", gap: 14, scrollbarWidth: "none" }}>
           <section style={{ display: "grid", gridTemplateColumns: "112px minmax(0, 1fr)", gap: 14, alignItems: "stretch" }}>
-            <div style={{ minHeight: 118, borderRadius: 18, background: "linear-gradient(180deg, rgba(240,96,48,0.18), rgba(240,96,48,0.06))", border: "1.5px solid rgba(240,96,48,0.30)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 18px 44px rgba(240,96,48,0.08)" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 4 }}>
-                <p style={{ margin: 0, color: "var(--cream)", fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: 40, lineHeight: 0.9, fontWeight: 900 }}>
-                  {formatTrustScore(summary.trust_score)}
+            <div style={{ minHeight: 118, minWidth: 0, borderRadius: 18, background: "linear-gradient(180deg, rgba(240,96,48,0.18), rgba(240,96,48,0.06))", border: "1.5px solid rgba(240,96,48,0.30)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 18px 44px rgba(240,96,48,0.08)", overflow: "hidden", padding: "0 8px" }}>
+              <div style={{ width: "100%", minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                <p style={{ maxWidth: "100%", margin: 0, color: "var(--cream)", fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace", fontSize: scoreFontSize, lineHeight: 0.9, fontWeight: 900, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                  {scoreLabel}
                 </p>
-                <p style={{ margin: "0 0 3px", color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, lineHeight: 1, fontWeight: 900 }}>
+                <p style={{ margin: 0, color: "var(--orange)", fontFamily: "'DM Sans', sans-serif", fontSize: 11, lineHeight: 1, fontWeight: 900 }}>
                   /100
                 </p>
               </div>
