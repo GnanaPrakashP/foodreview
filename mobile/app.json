@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "CircleBites",
+    "slug": "circlebites-mobile",
+    "scheme": "circlebites",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.circlebites.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "CircleBites uses the camera to capture food photos and short food videos for posts.",
+        "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library so you can add food photos and videos to posts.",
+        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location to show nearby restaurants and dishes."
+      }
+    },
+    "android": {
+      "package": "com.circlebites.mobile",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-image-picker",
+      "expo-notifications",
+      "expo-font",
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
