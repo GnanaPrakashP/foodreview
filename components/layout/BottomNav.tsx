@@ -9,7 +9,7 @@ import { clearPendingRoute, writePendingRoute } from "@/lib/browser-navigation-i
 const TABS = [
   { href: "/", label: "Circle", Icon: Users, center: false },
   { href: "/explore", label: "Explore", Icon: Search, center: false },
-  { href: "/reviews/new", label: "+", Icon: Plus, center: true },
+  { href: "/share", label: "+", Icon: Plus, center: true },
   { href: "/hungry", label: "Hungry", Icon: Flame, center: false },
   { href: "/me", label: "Me", Icon: User, center: false },
 ];
@@ -25,7 +25,7 @@ export default function BottomNav() {
   }, [pathname]);
 
   const prefetchTab = (href: string) => {
-    if (href === "/reviews/new") return;
+    if (href === "/share") return;
     if (href === "/") return;
     if (href === "/explore") return;
     router.prefetch(href);
@@ -46,8 +46,11 @@ export default function BottomNav() {
     pathname === "/onboarding" ||
     pathname.startsWith("/auth/reset-password") ||
     pathname.startsWith("/comments/") ||
+    pathname.startsWith("/memory-room/") ||
+    pathname.startsWith("/memories/") ||
     (pathname.startsWith("/reviews/") && pathname !== "/reviews/new") ||
     pathname.startsWith("/qa") ||
+    pathname === "/share" ||
     pathname === "/privacy" ||
     pathname === "/terms"
   )
