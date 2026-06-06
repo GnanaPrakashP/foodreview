@@ -29,12 +29,25 @@ export type MemoryMessageRow = {
   created_at: string;
 };
 
+export type MemoryDishRow = {
+  id: string;
+  room_id: string;
+  added_by: string;
+  dish_name: string;
+  rating: number | string | null;
+  note: string | null;
+  created_at: string;
+};
+
 export type MemoryPhotoRow = {
   id: string;
   room_id: string;
+  message_id: string | null;
   uploader_name: string;
   public_url: string;
   storage_path: string;
+  media_type: "image" | "video" | null;
+  position: number | null;
   created_at: string;
 };
 
@@ -53,7 +66,7 @@ export const ROOM_SELECT = [
 
 export function memoryTablesError(error: { message?: string; code?: string } | null | undefined) {
   if (isMissingMemoryTableError(error)) {
-    return new Error("Shared memory tables are missing. See mobile-context/10-shared-memory-sql-suggestions.md.");
+    return new Error("Shared memory database setup is missing. Run the mobile Supabase migrations in mobile/supabase/migrations.");
   }
   return new Error(error?.message ?? "Shared memory request failed");
 }
@@ -75,5 +88,6 @@ function isMissingMemoryTableError(error: { message?: string; code?: string } | 
   const message = error?.message ?? "";
   return error?.code === "42P01" ||
     error?.code === "PGRST205" ||
-    /shared_memory_|schema cache|could not find the table|relation .* does not exist/i.test(message);
+    error?.code === "PGRST202" ||
+    /shared_memory_|create_shared_memory_room|schema cache|could not find the (table|function)|relation .* does not exist/i.test(message);
 }

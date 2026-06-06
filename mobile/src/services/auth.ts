@@ -2,7 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { apiBaseUrl, apiUrl } from "@/api/config";
-import { supabase } from "@/api/supabase";
+import { assertSupabaseConfigured, isSupabaseConfigured, supabase } from "@/api/supabase";
 import { actorFromProfile, getCurrentUserProfile } from "@/services/profiles";
 import type { ActorProfile, AuthSnapshot } from "@/types/models";
 
@@ -34,6 +34,8 @@ type OAuthResult = {
   session: Session;
   profile: ActorProfile | null;
 };
+
+const AUTH_UNAVAILABLE_MESSAGE = "Sign in is unavailable right now. Please try again later.";
 
 function assertValidSignup(input: SignupInput) {
   if (!input.email.trim()) throw new Error("Email is required");
@@ -79,6 +81,7 @@ export async function resolveEmailAuthMode(input: ResolveEmailAuthModeInput): Pr
 }
 
 export async function getAuthSnapshot(): Promise<AuthSnapshot> {
+  assertSupabaseConfigured();
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new Error(error.message);
   if (!data.session) {
@@ -96,6 +99,7 @@ export async function getAuthSnapshot(): Promise<AuthSnapshot> {
 }
 
 export async function login(input: LoginInput): Promise<{ session: Session; profile: ActorProfile | null }> {
+  assertSupabaseConfigured();
   const { data, error } = await supabase.auth.signInWithPassword({
     email: input.email.trim(),
     password: input.password
@@ -116,6 +120,7 @@ export function getOAuthRedirectUrl() {
 }
 
 export async function completeOAuthSessionFromUrl(url: string): Promise<OAuthResult> {
+  assertSupabaseConfigured();
   const parsedUrl = new URL(url);
   const params = new URLSearchParams(parsedUrl.hash.replace(/^#/, ""));
   const accessToken = params.get("access_token");
@@ -141,6 +146,7 @@ export async function completeOAuthSessionFromUrl(url: string): Promise<OAuthRes
 }
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
+  assertSupabaseConfigured();
   const redirectTo = getOAuthRedirectUrl();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -161,6 +167,7 @@ export async function signInWithGoogle(): Promise<OAuthResult> {
 
 export async function signup(input: SignupInput): Promise<{ session: Session | null; profile: ActorProfile | null }> {
   assertValidSignup(input);
+  assertSupabaseConfigured();
 
   const { data, error } = await supabase.auth.signUp({
     email: input.email.trim(),
@@ -186,12 +193,14 @@ export async function signup(input: SignupInput): Promise<{ session: Session | n
 }
 
 export async function logout() {
+  assertSupabaseConfigured();
   const { error } = await supabase.auth.signOut();
   if (error) throw new Error(error.message);
 }
 
 export async function sendPasswordReset(input: ResetPasswordInput) {
   if (!input.email.trim()) throw new Error("Email is required");
+  assertSupabaseConfigured();
   const { error } = await supabase.auth.resetPasswordForEmail(input.email.trim());
   if (error) throw new Error(error.message);
 }
@@ -199,8 +208,30 @@ export async function sendPasswordReset(input: ResetPasswordInput) {
 export function onAuthStateChange(
   callback: (snapshot: { session: Session | null }) => void
 ) {
+  if (!isSupabaseConfigured) {
+    return () => {};
+  }
+
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
     callback({ session });
   });
   return () => data.subscription.unsubscribe();
+}
+
+export function userFacingAuthError(error: unknown, fallback = "Something went wrong. Please try again.") {
+  const message = error instanceof Error ? error.message : "";
+
+  if (message === "auth_unavailable") return AUTH_UNAVAILABLE_MESSAGE;
+  if (message === "Email is required") return "Enter your email to continue.";
+  if (message.includes("Invalid login credentials")) return "Email or password is incorrect.";
+  if (message.includes("Email not confirmed")) return "Check your email to confirm your account before signing in.";
+  if (message.includes("Google sign-in was cancelled")) return "Google sign-in was cancelled.";
+  if (message.includes("Password must be")) return message;
+  if (message.includes("Passwords don't match")) return message;
+  if (message.includes("Unable to continue with this email")) return "We couldn't continue with that email. Please try again.";
+  if (message.includes("Unable to reach") || message.includes("Missing mobile API URL")) {
+    return "We can't reach CircleBites right now. Please try again later.";
+  }
+
+  return fallback;
 }

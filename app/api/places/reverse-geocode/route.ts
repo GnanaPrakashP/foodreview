@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ label: null }, { status: 400 });
   }
 
-  const apiKey = process.env.GOOGLE_PLACES_API_KEY?.trim() ?? process.env.GOOGLE_MAPS_API_KEY?.trim();
+  const apiKey =
+    process.env.GOOGLE_API_KEY?.trim() ||
+    process.env.GOOGLE_PLACES_API_KEY?.trim() ||
+    process.env.GOOGLE_MAPS_API_KEY?.trim();
   if (!apiKey) return NextResponse.json({ label: null }, { status: 200 });
 
   try {

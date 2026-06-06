@@ -24,27 +24,35 @@ export function PostFeed({
   posts = []
 }: PostFeedProps) {
   if (isLoading) {
-    return <LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" />;
+    return (
+      <View style={styles.stateWrap}>
+        <LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" />
+      </View>
+    );
   }
 
   if (isError) {
     return (
-      <ErrorState
-        actionLabel={onRetry ? "Try again" : undefined}
-        message={errorMessage ?? "Could not load posts."}
-        onAction={onRetry}
-        title="Feed unavailable"
-      />
+      <View style={styles.stateWrap}>
+        <ErrorState
+          actionLabel={onRetry ? "Try again" : undefined}
+          message={errorMessage ?? "Could not load posts."}
+          onAction={onRetry}
+          title="Feed unavailable"
+        />
+      </View>
     );
   }
 
   if (posts.length === 0) {
     return (
-      <EmptyState
-        icon="restaurant-outline"
-        message={emptyMessage}
-        title={emptyTitle}
-      />
+      <View style={styles.stateWrap}>
+        <EmptyState
+          icon="restaurant-outline"
+          message={emptyMessage}
+          title={emptyTitle}
+        />
+      </View>
     );
   }
 
@@ -72,6 +80,10 @@ export function SignedOutFeedState({ message = "Sign in to see your CircleBites 
 }
 
 const styles = StyleSheet.create({
+  stateWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 10
+  },
   stack: {
     gap: 0
   }

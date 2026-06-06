@@ -36,7 +36,22 @@ type GoogleErrorResponse = {
   };
 };
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Origin": "*"
+};
 const loggedGoogleErrors = new Set<string>();
+
+function placesJson(body: unknown, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...CORS_HEADERS,
+      ...init?.headers
+    }
+  });
+}
 
 export async function GET(req: NextRequest) {
   const input = req.nextUrl.searchParams.get("input")?.trim() ?? "";
@@ -47,15 +62,20 @@ export async function GET(req: NextRequest) {
   const lng = lngStr ? parseFloat(lngStr) : NaN;
 
   if (!input) {
-    return NextResponse.json({ error: "input is required" }, { status: 400 });
+    return placesJson({ error: "input is required" }, { status: 400 });
   }
 
+  const googleApiKey = process.env.GOOGLE_API_KEY?.trim();
   const placesApiKey = process.env.GOOGLE_PLACES_API_KEY?.trim();
   const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
-  const apiKey = placesApiKey || mapsApiKey;
-  const apiKeySource = placesApiKey ? "GOOGLE_PLACES_API_KEY" : "GOOGLE_MAPS_API_KEY";
+  const apiKey = googleApiKey || placesApiKey || mapsApiKey;
+  const apiKeySource = googleApiKey
+    ? "GOOGLE_API_KEY"
+    : placesApiKey
+      ? "GOOGLE_PLACES_API_KEY"
+      : "GOOGLE_MAPS_API_KEY";
   if (!apiKey) {
-    return NextResponse.json({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+    return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
   }
 
   try {
@@ -120,7 +140,7 @@ export async function GET(req: NextRequest) {
           restrictionHint,
         );
       }
-      return NextResponse.json({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+      return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
     }
 
     const payload = (await response.json()) as GoogleAutocompleteResponse;
@@ -149,8 +169,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ suggestions }, { status: 200 });
+    return placesJson({ suggestions }, { status: 200 });
   } catch {
-    return NextResponse.json({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+    return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
   }
+}
+
+export function OPTIONS() {
+  return new NextResponse(null, {
+    headers: CORS_HEADERS,
+    status: 204
+  });
 }

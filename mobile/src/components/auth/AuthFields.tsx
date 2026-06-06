@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 
@@ -30,15 +31,21 @@ export function AuthInput({
   placeholder,
   value
 }: AuthInputProps) {
+  const [focused, setFocused] = useState(false);
+
   return (
-    <View style={[styles.inputWrap, error && styles.inputWrapError]}>
+    <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
       <Ionicons name={icon} size={16} color={colors.dark.muted} />
       <TextInput
         autoCapitalize={autoCapitalize}
         autoComplete={autoComplete}
         keyboardType={keyboardType}
         onChangeText={onChangeText}
-        onFocus={onFocus}
+        onBlur={() => setFocused(false)}
+        onFocus={() => {
+          setFocused(true);
+          onFocus?.();
+        }}
         placeholder={placeholder}
         placeholderTextColor={colors.dark.muted}
         style={styles.input}
@@ -57,14 +64,20 @@ export function PasswordInput({
   show,
   value
 }: PasswordInputProps) {
+  const [focused, setFocused] = useState(false);
+
   return (
-    <View style={[styles.inputWrap, error && styles.inputWrapError]}>
+    <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
       <Ionicons name="lock-closed-outline" size={16} color={colors.dark.muted} />
       <TextInput
         autoCapitalize="none"
         autoComplete="password"
         onChangeText={onChangeText}
-        onFocus={onFocus}
+        onBlur={() => setFocused(false)}
+        onFocus={() => {
+          setFocused(true);
+          onFocus?.();
+        }}
         placeholder={placeholder}
         placeholderTextColor={colors.dark.muted}
         secureTextEntry={!show}
@@ -90,6 +103,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.s,
     paddingHorizontal: 14,
     paddingVertical: 13
+  },
+  inputWrapFocused: {
+    borderColor: colors.dark.orangeBorder
   },
   inputWrapError: {
     borderColor: colors.dark.danger

@@ -1,6 +1,6 @@
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import { CalendarDays, LogOut, Settings, Star, UserPlus, Utensils } from "lucide-react-native";
+import { CalendarDays, Images, LogOut, MessageCircle, Settings, Star, UserPlus, Users, Utensils } from "lucide-react-native";
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
@@ -11,12 +11,14 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { achievementImageForBadge, tierImageForName } from "@/constants/achievementAssets";
 import { useLogoutMutation } from "@/hooks/useAuth";
+import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, spacing } from "@/theme";
-import type { FoodItem, PermanentBadge, ProfilePageData, ReviewPost, UserProfileReputation } from "@/types/models";
+import type { FoodItem, MemoryRoomSummary, PermanentBadge, ProfilePageData, ReviewPost, UserProfileReputation } from "@/types/models";
+import { formatDisplayDate } from "@/utils/datetime";
 
-type ProfileTab = "posts" | "dishes" | "timeline";
+type ProfileTab = "posts" | "memories" | "dishes" | "timeline";
 
 type DishEntry = {
   key: string;
@@ -65,6 +67,7 @@ export default function ProfileScreen() {
 
 function ProfileContent({ page }: { page: ProfilePageData }) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("posts");
+  const memories = useMemoryRoomsQuery();
   const dishes = useMemo(() => uniqueDishesFromPosts(page.posts), [page.posts]);
   const timeline = useMemo(() => timelineGroupsFromPosts(page.posts), [page.posts]);
 
@@ -80,6 +83,14 @@ function ProfileContent({ page }: { page: ProfilePageData }) {
           emptyMessage="Your posts will appear here after you share a food review."
           emptyTitle="No posts yet"
           posts={page.posts}
+        />
+      ) : activeTab === "memories" ? (
+        <MemoriesTab
+          isError={memories.isError}
+          isLoading={memories.isLoading}
+          memories={memories.data ?? []}
+          onRetry={() => memories.refetch()}
+          errorMessage={memories.error?.message}
         />
       ) : activeTab === "dishes" ? (
         <DishesTab dishes={dishes} />
@@ -228,6 +239,7 @@ function AchievementPill({ badge }: { badge: PermanentBadge }) {
 function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "posts", label: "Posts" },
+    { id: "memories", label: "Memories" },
     { id: "dishes", label: "Dishes" },
     { id: "timeline", label: "Timeline" }
   ];
@@ -243,6 +255,82 @@ function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange:
           </Pressable>
         );
       })}
+    </View>
+  );
+}
+
+function MemoriesTab({
+  errorMessage,
+  isError,
+  isLoading,
+  memories,
+  onRetry
+}: {
+  errorMessage?: string;
+  isError: boolean;
+  isLoading: boolean;
+  memories: MemoryRoomSummary[];
+  onRetry: () => void;
+}) {
+  const router = useRouter();
+
+  if (isLoading) {
+    return <LoadingState message="Fetching your shared food memories." title="Loading memories" />;
+  }
+
+  if (isError) {
+    return (
+      <ErrorState
+        actionLabel="Try again"
+        message={errorMessage ?? "We couldn't load your memory rooms."}
+        onAction={onRetry}
+        title="Memories unavailable"
+      />
+    );
+  }
+
+  if (memories.length === 0) {
+    return (
+      <EmptyState
+        icon="images-outline"
+        message="Rooms you create or join with friends will appear here."
+        title="No memories yet"
+      />
+    );
+  }
+
+  return (
+    <View style={styles.memoryList}>
+      {memories.map((memory) => (
+        <Pressable
+          key={memory.id}
+          onPress={() => router.push({ pathname: "/memories/[id]", params: { id: memory.id } })}
+          style={styles.memoryRow}
+        >
+          <View style={styles.memoryIcon}>
+            <Images size={18} color={colors.dark.orange} strokeWidth={2.1} />
+          </View>
+          <View style={styles.memoryCopy}>
+            <Text numberOfLines={1} style={styles.memoryTitle}>{memory.title}</Text>
+            <Text numberOfLines={1} style={styles.memoryMeta}>
+              {memory.area || "Area not set"} · {formatDisplayDate(memory.visitDate)}
+            </Text>
+            {memory.latestMessage ? (
+              <Text numberOfLines={1} style={styles.memoryMessage}>{memory.latestMessage}</Text>
+            ) : null}
+          </View>
+          <View style={styles.memoryCounts}>
+            <View style={styles.memoryCountRow}>
+              <Users size={12} color={colors.dark.muted} strokeWidth={2.2} />
+              <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
+            </View>
+            <View style={styles.memoryCountRow}>
+              <MessageCircle size={12} color={colors.dark.muted} strokeWidth={2.2} />
+              <Text style={styles.memoryCountText}>{memory.messageCount}</Text>
+            </View>
+          </View>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -796,6 +884,71 @@ const styles = StyleSheet.create({
   },
   tabUnderlineActive: {
     backgroundColor: colors.dark.orange
+  },
+  memoryList: {
+    gap: spacing.sm
+  },
+  memoryRow: {
+    alignItems: "center",
+    backgroundColor: colors.dark.card,
+    borderColor: colors.dark.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 86,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12
+  },
+  memoryIcon: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orangeDim,
+    borderRadius: radius.md,
+    height: 42,
+    justifyContent: "center",
+    width: 42
+  },
+  memoryCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  memoryTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 15,
+    lineHeight: 19
+  },
+  memoryMeta: {
+    ...fontStyles.semiBold,
+    color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 3
+  },
+  memoryMessage: {
+    ...fontStyles.medium,
+    color: colors.dark.cream,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 6,
+    opacity: 0.7
+  },
+  memoryCounts: {
+    alignItems: "flex-end",
+    gap: 7
+  },
+  memoryCountRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4,
+    justifyContent: "flex-end",
+    minWidth: 34
+  },
+  memoryCountText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    fontSize: 11,
+    lineHeight: 14
   },
   dishList: {
     gap: spacing.sm

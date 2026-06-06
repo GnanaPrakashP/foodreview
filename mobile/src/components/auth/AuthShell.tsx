@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Image } from "expo-image";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, type Edge, useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, fontStyles, spacing } from "@/theme";
 
@@ -30,21 +30,29 @@ export function AuthShell({
   return (
     <SafeAreaView edges={edges} style={styles.shell}>
       {showGlow ? <View pointerEvents="none" style={styles.topGlow} /> : null}
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          {
-            paddingBottom: spacing.xxl + insets.bottom,
-            paddingHorizontal: horizontalPadding,
-            paddingTop: topPadding + insets.top
-          }
-        ]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+        style={styles.keyboardView}
       >
-        {showHero ? <AuthHero /> : null}
-        {children}
-      </ScrollView>
+        <ScrollView
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={[
+            styles.content,
+            {
+              paddingBottom: spacing.xxl + insets.bottom,
+              paddingHorizontal: horizontalPadding,
+              paddingTop: topPadding + insets.top
+            }
+          ]}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {showHero ? <AuthHero /> : null}
+          {children}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -64,6 +72,9 @@ export function AuthHero() {
 const styles = StyleSheet.create({
   shell: {
     backgroundColor: colors.dark.bg,
+    flex: 1
+  },
+  keyboardView: {
     flex: 1
   },
   topGlow: {

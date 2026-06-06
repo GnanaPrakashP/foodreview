@@ -161,13 +161,14 @@ export async function POST(req: NextRequest) {
 
   // 2. Run explicit-content check via Google Video Intelligence API
   const apiKey =
+    process.env.GOOGLE_API_KEY ??
     process.env.GOOGLE_VIDEO_INTELLIGENCE_API_KEY ??
     process.env.GOOGLE_VISION_API_KEY;
 
   if (!apiKey) {
     // No key configured — skip moderation (same pattern as photos/moderate)
     console.warn(
-      "[videos/moderate] GOOGLE_VIDEO_INTELLIGENCE_API_KEY not set — skipping moderation",
+      "[videos/moderate] GOOGLE_API_KEY not set — skipping moderation",
     );
   } else {
     const safety = await runExplicitContentCheck(buffer, apiKey);

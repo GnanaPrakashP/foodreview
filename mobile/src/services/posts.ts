@@ -6,6 +6,11 @@ export type CreatePostInput = {
   imageUri: string;
   imageMimeType?: string | null;
   restaurantName: string;
+  restaurantId?: string | null;
+  restaurantArea?: string | null;
+  restaurantAddress?: string | null;
+  restaurantLat?: number | null;
+  restaurantLng?: number | null;
   dishName: string;
   dishes?: FoodItem[];
   caption: string;
@@ -86,16 +91,18 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   if (!profile) throw new Error("Log in before posting");
 
   const uploaded = await uploadPostImage(input, profile.id);
-  const tags = [
-    input.recommended ? "Recommended" : "Not recommended",
-    ...(input.tags ?? []).map((tag) => tag.trim()).filter(Boolean)
-  ];
+  const tags = (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
 
   const { data, error } = await supabase
     .from("reviews")
     .insert({
       reviewer_name: profile.username,
+      restaurant_id: input.restaurantId?.trim() || null,
       restaurant_name: input.restaurantName.trim(),
+      area: input.restaurantArea?.trim() || null,
+      restaurant_address: input.restaurantAddress?.trim() || null,
+      restaurant_lat: typeof input.restaurantLat === "number" ? input.restaurantLat : null,
+      restaurant_lng: typeof input.restaurantLng === "number" ? input.restaurantLng : null,
       items: normalizedDishes(input),
       body: input.caption.trim() || null,
       tags,

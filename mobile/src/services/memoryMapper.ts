@@ -1,12 +1,28 @@
 import {
   normalizeStatus,
   titleForRoom,
+  type MemoryDishRow,
   type MemoryMemberRow,
   type MemoryMessageRow,
   type MemoryPhotoRow,
   type MemoryRoomRow
 } from "@/services/memoryShared";
-import type { MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+
+function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, string>): MemoryPhoto {
+  return {
+    id: photo.id,
+    roomId: photo.room_id,
+    messageId: photo.message_id ?? null,
+    uploaderName: photo.uploader_name,
+    uploaderDisplayName: namesByUsername[photo.uploader_name] ?? photo.uploader_name,
+    publicUrl: photo.public_url,
+    storagePath: photo.storage_path,
+    mediaType: photo.media_type === "video" ? "video" : "image",
+    position: photo.position ?? 0,
+    createdAt: photo.created_at
+  };
+}
 
 export function mapMemorySummary({
   members,
@@ -37,18 +53,31 @@ export function mapMemorySummary({
 }
 
 export function mapMemoryRoom({
+  dishes,
   members,
   messages,
   namesByUsername,
   photos,
   room
 }: {
+  dishes: MemoryDishRow[];
   members: MemoryMemberRow[];
   messages: MemoryMessageRow[];
   namesByUsername: Record<string, string>;
   photos: MemoryPhotoRow[];
   room: MemoryRoomRow;
 }): MemoryRoom {
+  const mappedPhotos = photos.map((photo) => mapMemoryPhoto(photo, namesByUsername));
+  const photosByMessageId = mappedPhotos.reduce<Record<string, MemoryPhoto[]>>((groups, photo) => {
+    if (!photo.messageId) return groups;
+    groups[photo.messageId] = [...(groups[photo.messageId] ?? []), photo];
+    return groups;
+  }, {});
+
+  for (const group of Object.values(photosByMessageId)) {
+    group.sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
   return {
     id: room.id,
     title: titleForRoom(room),
@@ -67,21 +96,25 @@ export function mapMemoryRoom({
       role: member.role === "owner" ? "owner" : "participant",
       joinedAt: member.created_at
     })),
+    dishes: dishes.map((dish): MemoryDish => ({
+      id: dish.id,
+      roomId: dish.room_id,
+      addedBy: dish.added_by,
+      addedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
+      dishName: dish.dish_name,
+      rating: dish.rating === null || dish.rating === undefined ? null : Number(dish.rating),
+      note: dish.note,
+      createdAt: dish.created_at
+    })),
     messages: messages.map((message): MemoryMessage => ({
       id: message.id,
       roomId: message.room_id,
       authorName: message.author_name,
       authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
       body: message.body,
+      attachments: photosByMessageId[message.id] ?? [],
       createdAt: message.created_at
     })),
-    photos: photos.map((photo): MemoryPhoto => ({
-      id: photo.id,
-      roomId: photo.room_id,
-      uploaderName: photo.uploader_name,
-      publicUrl: photo.public_url,
-      storagePath: photo.storage_path,
-      createdAt: photo.created_at
-    }))
+    photos: mappedPhotos
   };
 }

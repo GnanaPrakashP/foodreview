@@ -141,10 +141,8 @@ Mobile app public config:
 Backend/server config remains server-only:
 
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `GOOGLE_PLACES_API_KEY`
-- `GOOGLE_MAPS_API_KEY`
-- `GOOGLE_VISION_API_KEY`
-- `GOOGLE_VIDEO_INTELLIGENCE_API_KEY`
+- `GOOGLE_API_KEY`
+- Optional legacy per-service fallbacks: `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_VISION_API_KEY`, `GOOGLE_VIDEO_INTELLIGENCE_API_KEY`
 
 ## Validation Checklist
 

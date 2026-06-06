@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { ChevronDown, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
@@ -520,31 +520,31 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.md,
+    gap: Platform.OS === "web" ? spacing.md : spacing.sm,
     justifyContent: "space-between",
     paddingBottom: 8,
     paddingHorizontal: spacing.base,
-    paddingTop: 22
+    paddingTop: Platform.OS === "web" ? 22 : 16
   },
   title: {
     ...fontStyles.regular,
     color: colors.dark.cream,
     flex: 1,
-    fontSize: typography.webTitle,
-    lineHeight: 32
+    fontSize: Platform.OS === "web" ? typography.webTitle : 24,
+    lineHeight: Platform.OS === "web" ? 32 : 29
   },
   locationButton: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 8,
+    gap: Platform.OS === "web" ? 8 : 6,
     justifyContent: "flex-end",
     maxWidth: "52%",
     minWidth: 0,
-    paddingVertical: 9
+    paddingVertical: Platform.OS === "web" ? 9 : 7
   },
   locationCompass: {
-    fontSize: 22,
-    lineHeight: 24
+    fontSize: Platform.OS === "web" ? 22 : 18,
+    lineHeight: Platform.OS === "web" ? 24 : 20
   },
   locationText: {
     ...fontStyles.extraBold,
@@ -554,9 +554,9 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   searchWrap: {
-    paddingBottom: spacing.md,
+    paddingBottom: Platform.OS === "web" ? spacing.md : spacing.sm,
     paddingHorizontal: spacing.base,
-    paddingTop: spacing.sm
+    paddingTop: Platform.OS === "web" ? spacing.sm : 4
   },
   searchBox: {
     alignItems: "center",
@@ -565,9 +565,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
     borderWidth: 1,
     flexDirection: "row",
-    gap: 10,
+    gap: Platform.OS === "web" ? 10 : 8,
     paddingHorizontal: spacing.base,
-    paddingVertical: 12
+    paddingVertical: Platform.OS === "web" ? 12 : 10
   },
   searchInput: {
     ...fontStyles.regular,
@@ -589,32 +589,32 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: "row",
-    paddingBottom: 14,
+    paddingBottom: Platform.OS === "web" ? 14 : 10,
     paddingHorizontal: spacing.base
   },
   categoryScroller: {
-    paddingBottom: 14,
+    paddingBottom: Platform.OS === "web" ? 14 : 10,
     paddingHorizontal: spacing.base
   },
   categoryGrid: {
-    columnGap: 8,
+    columnGap: Platform.OS === "web" ? 8 : 6,
     flexDirection: "row",
-    minWidth: 344
+    minWidth: Platform.OS === "web" ? 344 : 0
   },
   categoryButton: {
     alignItems: "center",
     flexShrink: 0,
     paddingTop: 2,
-    width: 78
+    width: Platform.OS === "web" ? 78 : 68
   },
   categoryImage: {
-    height: 76,
-    marginBottom: 8,
-    width: 76
+    height: Platform.OS === "web" ? 76 : 62,
+    marginBottom: Platform.OS === "web" ? 8 : 6,
+    width: Platform.OS === "web" ? 76 : 62
   },
   categoryImageCompact: {
-    height: 72,
-    width: 72
+    height: Platform.OS === "web" ? 72 : 58,
+    width: Platform.OS === "web" ? 72 : 58
   },
   categoryImageActive: {
     transform: [{ translateY: -2 }, { scale: 1.02 }]
@@ -622,9 +622,9 @@ const styles = StyleSheet.create({
   categoryLabel: {
     ...fontStyles.extraBold,
     color: "rgba(255, 255, 255, 0.72)",
-    fontSize: 12,
-    lineHeight: 14,
-    minHeight: 28,
+    fontSize: Platform.OS === "web" ? 12 : 11,
+    lineHeight: Platform.OS === "web" ? 14 : 13,
+    minHeight: Platform.OS === "web" ? 28 : 26,
     textAlign: "center",
     width: "100%"
   },
@@ -657,7 +657,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.base
   },
   list: {
-    gap: 10,
+    gap: Platform.OS === "web" ? 10 : 8,
     paddingBottom: 100,
     paddingHorizontal: spacing.base
   },
@@ -683,15 +683,16 @@ const styles = StyleSheet.create({
     borderColor: colors.dark.border,
     borderRadius: 14,
     borderWidth: 1,
-    flexDirection: "row",
-    minHeight: 132,
+    flexDirection: Platform.OS === "web" ? "row" : "column",
+    minHeight: Platform.OS === "web" ? 132 : 0,
     overflow: "hidden"
   },
   spotlightMedia: {
     alignItems: "center",
     backgroundColor: "rgba(240, 96, 48, 0.12)",
+    height: Platform.OS === "web" ? "auto" : 148,
     justifyContent: "center",
-    width: 104
+    width: Platform.OS === "web" ? 104 : "100%"
   },
   dishMedia: {
     backgroundColor: "rgba(61, 214, 140, 0.10)"
@@ -703,14 +704,14 @@ const styles = StyleSheet.create({
   spotlightBody: {
     flex: 1,
     minWidth: 0,
-    padding: 14
+    padding: Platform.OS === "web" ? 14 : 13
   },
   spotlightTop: {
     alignItems: "flex-start",
     flexDirection: "row",
-    gap: spacing.md,
+    gap: Platform.OS === "web" ? spacing.md : spacing.sm,
     justifyContent: "space-between",
-    marginBottom: spacing.sm
+    marginBottom: Platform.OS === "web" ? spacing.sm : 6
   },
   spotlightText: {
     flex: 1,
@@ -719,14 +720,15 @@ const styles = StyleSheet.create({
   spotlightName: {
     ...fontStyles.bold,
     color: colors.dark.cream,
-    fontSize: 17,
-    lineHeight: 20
+    fontSize: Platform.OS === "web" ? 17 : 16,
+    lineHeight: Platform.OS === "web" ? 20 : 19
   },
   spotlightMeta: {
     ...fontStyles.regular,
     color: "rgba(255, 255, 255, 0.72)",
     fontSize: 11,
-    marginTop: 3
+    lineHeight: 14,
+    marginTop: 2
   },
   ratingScore: {
     alignItems: "center",
@@ -736,8 +738,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 4
+    paddingHorizontal: Platform.OS === "web" ? 7 : 6,
+    paddingVertical: Platform.OS === "web" ? 4 : 3
   },
   ratingScoreText: {
     ...fontStyles.extraBold,
@@ -749,20 +751,21 @@ const styles = StyleSheet.create({
     ...fontStyles.regular,
     color: "rgba(255, 255, 255, 0.72)",
     fontSize: 11,
-    marginBottom: spacing.sm
+    lineHeight: 14,
+    marginBottom: Platform.OS === "web" ? spacing.sm : 6
   },
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 5,
-    marginBottom: spacing.sm
+    marginBottom: Platform.OS === "web" ? spacing.sm : 6
   },
   chip: {
     backgroundColor: colors.dark.surface,
     borderColor: colors.dark.border,
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: 8,
+    paddingHorizontal: Platform.OS === "web" ? 8 : 7,
     paddingVertical: 3
   },
   chipText: {
@@ -773,15 +776,15 @@ const styles = StyleSheet.create({
   tags: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
-    marginBottom: spacing.sm
+    gap: 5,
+    marginBottom: Platform.OS === "web" ? spacing.sm : 6
   },
   tag: {
     backgroundColor: colors.dark.orangeDim,
     borderColor: colors.dark.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: 7,
+    paddingHorizontal: Platform.OS === "web" ? 7 : 6,
     paddingVertical: 3
   },
   tagText: {
@@ -796,8 +799,8 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.74)",
     fontSize: 11,
     lineHeight: 15,
-    marginTop: 3,
-    paddingTop: 9
+    marginTop: Platform.OS === "web" ? 3 : 1,
+    paddingTop: Platform.OS === "web" ? 9 : 7
   },
   snippet: {
     ...fontStyles.regular,

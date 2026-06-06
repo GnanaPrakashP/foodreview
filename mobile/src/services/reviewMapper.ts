@@ -147,6 +147,8 @@ export function mapReviewPost(
     commentCount?: number;
     likedByMe?: boolean;
     bookmarkedByMe?: boolean;
+    circleRequestStatus?: ReviewPost["circleRequestStatus"];
+    isPublicDiscovery?: boolean;
   } = {}
 ): ReviewPost {
   const authorName = options.displayName || row.reviewer_name;
@@ -171,6 +173,8 @@ export function mapReviewPost(
     likeCount: options.likeCount ?? 0,
     commentCount: options.commentCount ?? 0,
     likedByMe: options.likedByMe ?? false,
-    bookmarkedByMe: options.bookmarkedByMe ?? false
+    bookmarkedByMe: options.bookmarkedByMe ?? false,
+    circleRequestStatus: options.circleRequestStatus,
+    isPublicDiscovery: options.isPublicDiscovery
   };
 }

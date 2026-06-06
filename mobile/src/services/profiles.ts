@@ -54,6 +54,11 @@ export type SignupProfileInput = {
 
 export type ProfileSetupInput = Omit<SignupProfileInput, "userId">;
 
+export type UserSearchResult = {
+  displayName: string;
+  username: string;
+};
+
 const TIER_BANDS: TierBand[] = [
   { tierName: "New Taster", tierLevel: null, minScore: 0, maxScore: 4, nextTierName: "Rising Taster" },
   { tierName: "Rising Taster", tierLevel: null, minScore: 5, maxScore: 12, nextTierName: "Food Regular" },
@@ -182,6 +187,34 @@ export async function getProfileByUsername(username: string): Promise<Profile | 
 
   if (error) throw new Error(error.message);
   return data ? mapProfile(data) : null;
+}
+
+export async function searchUserProfiles(query: string, excludedUsernames: string[] = []): Promise<UserSearchResult[]> {
+  const trimmed = query.trim().replace(/^@/, "");
+  if (trimmed.length < 2) return [];
+
+  const search = trimmed.replace(/[^a-zA-Z0-9_\s]/g, " ").trim();
+  if (search.length < 2) return [];
+  const excluded = new Set(excludedUsernames.map((username) => username.toLowerCase()));
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("username, first_name, last_name")
+    .or(`username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`)
+    .limit(8)
+    .returns<Array<Pick<ProfileRow, "username" | "first_name" | "last_name">>>();
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? [])
+    .filter((profile) => profile.username && !excluded.has(profile.username.toLowerCase()))
+    .map((profile) => ({
+      displayName: displayNameForProfile({
+        firstName: profile.first_name,
+        lastName: profile.last_name,
+        username: profile.username
+      }),
+      username: profile.username
+    }));
 }
 
 function statsFromRows(rows: ReviewRow[]): ProfileStats {

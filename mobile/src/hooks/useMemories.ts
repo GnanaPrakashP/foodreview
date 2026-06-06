@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  addMemoryDish,
   addMemoryMessage,
   addMemoryParticipant,
   addMemoryPhoto,
@@ -7,6 +8,7 @@ import {
   getMemoryRoom,
   listMemoryRooms,
   type AddMemoryPhotoInput,
+  type AddMemoryDishInput,
   type CreateMemoryRoomInput
 } from "@/services/memories";
 
@@ -55,6 +57,17 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: string) => addMemoryMessage(roomId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function useAddMemoryDishMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<AddMemoryDishInput, "roomId">) => addMemoryDish({ ...input, roomId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });

@@ -1,8 +1,11 @@
 import type { ActorProfile } from "@/types/models";
+import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   AuthButton,
   AuthDivider,
@@ -11,7 +14,6 @@ import {
   AuthShell,
   ErrorMessage,
   GoogleAuthButton,
-  LoginHeroIllustration,
   NoticeMessage,
   PasswordInput
 } from "@/components/auth/AuthUi";
@@ -22,9 +24,11 @@ import {
   useResolveEmailAuthModeMutation,
   useSignupMutation
 } from "@/hooks/useAuth";
+import { userFacingAuthError } from "@/services/auth";
 import { colors, fontStyles, spacing } from "@/theme";
 
 type AuthMode = "entry" | "email" | "sign_in" | "sign_up" | "forgot";
+const heroSource = require("../../assets/onboarding/food-decision-hero.webp");
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -42,6 +46,18 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
   const [localError, setLocalError] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const shouldCompactHero = mode !== "entry" && keyboardVisible;
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   function routeAfterAuth(profile: ActorProfile | null) {
     router.replace(profile ? "/" : "/onboarding/profile");
@@ -127,40 +143,50 @@ export default function LoginScreen() {
   }
 
   return (
-    <AuthShell contentHorizontalPadding={0} contentTopPadding={0} edges={["bottom"]} showGlow={false} showHero={false}>
+    <AuthShell contentHorizontalPadding={0} contentTopPadding={0} edges={["top", "bottom"]} showGlow={false} showHero={false}>
       <View style={styles.entryPanel}>
-        <EntryHero />
-        <View style={styles.entryBody}>
-        {mode === "entry" ? (
-          <>
-            <View style={styles.entryActions}>
-              <View style={styles.entryMethodButton}>
-                <GoogleAuthButton
-                  disabled={login.isPending || signup.isPending || resetPassword.isPending}
-                  loading={googleLogin.isPending}
-                  onPress={submitGoogleLogin}
-                />
-              </View>
-              {googleLogin.isError ? <ErrorMessage>{googleLogin.error.message}</ErrorMessage> : null}
+        <View pointerEvents="none" style={styles.backgroundVisual}>
+          <Image source={heroSource} style={styles.backgroundImage} contentFit="cover" />
+          <LinearGradient
+            colors={[
+              "rgba(14, 11, 8, 0.08)",
+              "rgba(14, 11, 8, 0.48)",
+              "rgba(14, 11, 8, 0.86)",
+              colors.dark.bg
+            ]}
+            locations={[0, 0.28, 0.58, 0.86]}
+            style={styles.screenFade}
+          />
+        </View>
+        <EntryHero compact={shouldCompactHero} />
+        <View style={[styles.entryBody, mode !== "entry" && styles.flowBody, shouldCompactHero && styles.flowBodyKeyboard]}>
+          {mode === "entry" ? (
+            <>
+              <View style={styles.entryActions}>
+                <View style={styles.entryMethodButton}>
+                  <GoogleAuthButton
+                    disabled={login.isPending || signup.isPending || resetPassword.isPending}
+                    loading={googleLogin.isPending}
+                    onPress={submitGoogleLogin}
+                  />
+                </View>
+                {googleLogin.isError ? <ErrorMessage>{userFacingAuthError(googleLogin.error, "Google sign-in failed. Please try again.")}</ErrorMessage> : null}
 
-              <View style={styles.entryMethodButton}>
-                <AuthDivider />
-              </View>
+                <View style={styles.entryMethodButton}>
+                  <AuthDivider />
+                </View>
 
-              <View style={styles.entryMethodButton}>
-                <EmailAuthButton onPress={() => changeMode("email")} />
+                <View style={styles.entryMethodButton}>
+                  <EmailAuthButton onPress={() => changeMode("email")} />
+                </View>
               </View>
-            </View>
-
-            <View style={styles.entryBottomSpacer} />
-            <TermsBlock />
-          </>
-        ) : null}
+            </>
+          ) : null}
 
         {mode === "email" ? (
           <AuthFlowPane>
             <BackLink onPress={() => changeMode("entry")}>Back</BackLink>
-              <AuthHeader title="Continue with email" text="Enter your email and we'll take you to the right next step." />
+            <AuthHeader title="Continue with email" text="Enter your email and we'll take you to the right next step." />
 
             <AuthInput
               autoComplete="email"
@@ -173,14 +199,14 @@ export default function LoginScreen() {
               value={email}
             />
 
-            {resolveEmail.isError ? <ErrorMessage>{resolveEmail.error.message}</ErrorMessage> : null}
+            {resolveEmail.isError ? <ErrorMessage>{userFacingAuthError(resolveEmail.error, "We couldn't continue with that email. Please try again.")}</ErrorMessage> : null}
 
             <AuthButton
               disabled={!email.trim()}
               loading={resolveEmail.isPending}
               onPress={submitEmailContinue}
             >
-              Continue →
+              Continue
             </AuthButton>
           </AuthFlowPane>
         ) : null}
@@ -188,7 +214,7 @@ export default function LoginScreen() {
         {mode === "sign_in" ? (
           <AuthFlowPane>
             <BackLink onPress={() => changeMode("email")}>Back</BackLink>
-              <AuthHeader title="Welcome back" text="Enter your password to sign in." />
+            <AuthHeader title="Welcome back" text="Enter your password to sign in." />
 
             <AuthInput
               autoComplete="email"
@@ -210,7 +236,7 @@ export default function LoginScreen() {
               value={password}
             />
 
-            {login.isError ? <ErrorMessage>{login.error.message}</ErrorMessage> : null}
+            {login.isError ? <ErrorMessage>{userFacingAuthError(login.error, "Sign in failed. Please try again.")}</ErrorMessage> : null}
 
             <View style={styles.forgotRow}>
               <Pressable onPress={() => changeMode("forgot")} hitSlop={8}>
@@ -223,7 +249,7 @@ export default function LoginScreen() {
               loading={login.isPending}
               onPress={submitLogin}
             >
-              Sign In →
+              Sign In
             </AuthButton>
           </AuthFlowPane>
         ) : null}
@@ -231,7 +257,7 @@ export default function LoginScreen() {
         {mode === "sign_up" ? (
           <AuthFlowPane>
             <BackLink onPress={() => changeMode("email")}>Back</BackLink>
-              <AuthHeader title="Create your account" text="Set your name and password. You'll choose a username next." />
+            <AuthHeader title="Create your account" text="Set your name and password. You'll choose a username next." />
 
             <View style={styles.nameRow}>
               <View style={styles.nameField}>
@@ -289,7 +315,7 @@ export default function LoginScreen() {
             />
 
             {localError ? <ErrorMessage>{localError}</ErrorMessage> : null}
-            {signup.isError ? <ErrorMessage>{signup.error.message}</ErrorMessage> : null}
+            {signup.isError ? <ErrorMessage>{userFacingAuthError(signup.error, "We couldn't create your account. Please try again.")}</ErrorMessage> : null}
             {notice ? <NoticeMessage>{notice}</NoticeMessage> : null}
 
             <AuthButton
@@ -297,15 +323,16 @@ export default function LoginScreen() {
               loading={signup.isPending}
               onPress={submitSignup}
             >
-              Create Account →
+              Create Account
             </AuthButton>
+            <SignupTermsBlock />
           </AuthFlowPane>
         ) : null}
 
         {mode === "forgot" ? (
           <AuthFlowPane>
             <BackLink onPress={() => changeMode("sign_in")}>Back to Sign In</BackLink>
-              <AuthHeader title="Reset password" text="Enter your email and we'll send a reset link." />
+            <AuthHeader title="Reset password" text="Enter your email and we'll send a reset link." />
 
             <AuthInput
               autoComplete="email"
@@ -318,7 +345,7 @@ export default function LoginScreen() {
               value={email}
             />
 
-            {resetPassword.isError ? <ErrorMessage>{resetPassword.error.message}</ErrorMessage> : null}
+            {resetPassword.isError ? <ErrorMessage>{userFacingAuthError(resetPassword.error, "We couldn't send the reset link. Please try again.")}</ErrorMessage> : null}
             {notice ? <NoticeMessage>{notice}</NoticeMessage> : null}
 
             <AuthButton
@@ -326,11 +353,16 @@ export default function LoginScreen() {
               loading={resetPassword.isPending}
               onPress={submitReset}
             >
-              Send reset link →
+              Send reset link
             </AuthButton>
           </AuthFlowPane>
         ) : null}
         </View>
+        {mode === "entry" ? (
+          <View style={styles.termsWrap}>
+            <TermsBlock />
+          </View>
+        ) : null}
       </View>
     </AuthShell>
   );
@@ -347,21 +379,20 @@ function AuthFlowPane({ children }: { children: ReactNode }) {
 function BackLink({ children, onPress }: { children: ReactNode; onPress: () => void }) {
   return (
     <Pressable hitSlop={10} onPress={onPress} style={styles.backLink}>
+      <Ionicons name="chevron-back" size={16} color={colors.dark.orange} />
       <Text style={styles.backLinkText}>{children}</Text>
     </Pressable>
   );
 }
 
-function EntryHero() {
+function EntryHero({ compact }: { compact: boolean }) {
   return (
-    <View style={styles.entryHero}>
-      <LoginHeroIllustration />
+    <View style={[styles.entryHero, compact && styles.entryHeroCompact]}>
       <View style={styles.entryHeroContent}>
         <Text style={styles.entryWordmark}>
           Circle<Text style={styles.entryWordmarkAccent}>Bites</Text>
         </Text>
-        <Text style={styles.entryTitle}>Food is better together</Text>
-        <Text style={styles.entrySubtitle}>See what friends loved. Share memories worth revisiting.</Text>
+        {!compact ? <Text style={styles.entryTaglineText}>Food picks from people you trust</Text> : null}
       </View>
     </View>
   );
@@ -372,6 +403,15 @@ function TermsBlock() {
     <Text style={styles.termsText}>
       By continuing, you agree to our{"\n"}
       <Text style={styles.termsLink}>Terms of Service</Text> and <Text style={styles.termsLink}>Privacy Policy</Text>.
+    </Text>
+  );
+}
+
+function SignupTermsBlock() {
+  return (
+    <Text style={styles.signupTermsText}>
+      By creating an account, you agree to our <Text style={styles.termsLink}>Terms of Service</Text> and{" "}
+      <Text style={styles.termsLink}>Privacy Policy</Text>.
     </Text>
   );
 }
@@ -426,71 +466,102 @@ const styles = StyleSheet.create({
   entryPanel: {
     alignSelf: "center",
     flexGrow: 1,
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
     minHeight: "100%",
+    overflow: "hidden",
+    paddingBottom: 24,
     paddingTop: 0,
+    position: "relative",
     width: "100%"
+  },
+  backgroundVisual: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
+  },
+  backgroundImage: {
+    height: 560,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
+  },
+  screenFade: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
   },
   entryHero: {
     alignItems: "center",
-    width: "100%"
+    paddingHorizontal: 22,
+    paddingTop: 270,
+    width: "100%",
+    zIndex: 1
+  },
+  entryHeroCompact: {
+    paddingTop: 92
   },
   entryHeroContent: {
     alignItems: "center",
     maxWidth: 430,
-    paddingHorizontal: 22,
     width: "100%"
   },
   entryBody: {
     alignSelf: "center",
-    flexGrow: 1,
+    marginTop: 34,
     maxWidth: 430,
     paddingHorizontal: 22,
-    width: "100%"
+    width: "100%",
+    zIndex: 1
+  },
+  flowBody: {
+    marginTop: 24
+  },
+  flowBodyKeyboard: {
+    marginTop: 18
   },
   entryWordmark: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 29,
-    lineHeight: 33,
-    marginTop: 40,
+    fontSize: 36,
+    lineHeight: 40,
+    marginTop: 0,
     textAlign: "center"
   },
   entryWordmarkAccent: {
     color: colors.dark.orange
   },
-  entryTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 19,
-    marginTop: 12,
-    textAlign: "center"
-  },
-  entrySubtitle: {
-    ...fontStyles.medium,
-    color: "rgba(255, 255, 255, 0.58)",
+  entryTaglineText: {
+    ...fontStyles.semiBold,
+    color: "rgba(255, 255, 255, 0.68)",
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 40,
-    marginTop: 7,
+    marginTop: 8,
     textAlign: "center"
   },
   entryActions: {
-    gap: 12
+    gap: 10
   },
   entryForm: {
     alignSelf: "center",
     gap: 12,
     maxWidth: 360,
-    width: "90%"
+    width: "100%"
   },
   entryMethodButton: {
     alignSelf: "center",
     maxWidth: 360,
-    width: "90%"
+    width: "100%"
   },
   backLink: {
-    alignSelf: "center",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: 2,
     marginBottom: spacing.xs
   },
   backLinkText: {
@@ -498,9 +569,13 @@ const styles = StyleSheet.create({
     color: colors.dark.orange,
     fontSize: 13
   },
-  entryBottomSpacer: {
-    flexGrow: 1,
-    minHeight: 48
+  termsWrap: {
+    alignSelf: "center",
+    maxWidth: 360,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    width: "100%",
+    zIndex: 1
   },
   termsText: {
     ...fontStyles.medium,
@@ -513,5 +588,13 @@ const styles = StyleSheet.create({
   termsLink: {
     ...fontStyles.bold,
     color: colors.dark.orange
+  },
+  signupTermsText: {
+    ...fontStyles.medium,
+    color: "rgba(255, 255, 255, 0.52)",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: spacing.xs,
+    textAlign: "center"
   }
 });

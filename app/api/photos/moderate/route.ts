@@ -19,10 +19,13 @@ type SafeSearchLikelihood = "UNKNOWN" | "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE
 const UNSAFE: Set<SafeSearchLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
 
 async function runSafeSearch(buffer: Buffer): Promise<{ safe: boolean; reason?: string }> {
-  const apiKey = process.env.GOOGLE_VISION_API_KEY ?? process.env.GOOGLE_PLACES_API_KEY;
+  const apiKey =
+    process.env.GOOGLE_API_KEY ??
+    process.env.GOOGLE_VISION_API_KEY ??
+    process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
     // No key configured — skip moderation (log so operators notice in prod)
-    console.warn("[photos/moderate] GOOGLE_VISION_API_KEY not set — skipping SafeSearch");
+    console.warn("[photos/moderate] GOOGLE_API_KEY not set — skipping SafeSearch");
     return { safe: true };
   }
 

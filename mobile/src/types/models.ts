@@ -57,11 +57,23 @@ export type ReviewPost = {
   commentCount: number;
   likedByMe: boolean;
   bookmarkedByMe: boolean;
+  circleRequestStatus?: "idle" | "loading" | "pending" | "joined";
+  isPublicDiscovery?: boolean;
 };
 
 export type FeedPage = {
   posts: ReviewPost[];
   viewerName: string;
+};
+
+export type PostComment = {
+  id: string;
+  postId: string;
+  userName: string;
+  authorName: string;
+  authorInitials: string;
+  content: string;
+  createdAt: string;
 };
 
 export type ProfileStats = {
@@ -128,15 +140,31 @@ export type MemoryMessage = {
   authorName: string;
   authorDisplayName: string;
   body: string;
+  attachments: MemoryPhoto[];
+  createdAt: string;
+};
+
+export type MemoryDish = {
+  id: string;
+  roomId: string;
+  addedBy: string;
+  addedByDisplayName: string;
+  dishName: string;
+  rating: number | null;
+  note: string | null;
   createdAt: string;
 };
 
 export type MemoryPhoto = {
   id: string;
   roomId: string;
+  messageId: string | null;
   uploaderName: string;
+  uploaderDisplayName: string;
   publicUrl: string;
   storagePath: string;
+  mediaType: "image" | "video";
+  position: number;
   createdAt: string;
 };
 
@@ -152,6 +180,7 @@ export type MemoryRoom = {
   status: MemoryRoomStatus;
   createdAt: string;
   participants: MemoryParticipant[];
+  dishes: MemoryDish[];
   messages: MemoryMessage[];
   photos: MemoryPhoto[];
 };

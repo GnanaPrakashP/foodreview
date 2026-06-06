@@ -1,0 +1,298 @@
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Send } from "lucide-react-native";
+import { useState } from "react";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { PostCard } from "@/components/posts/PostCard";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
+import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
+import { useReviewPostQuery } from "@/hooks/useFeeds";
+import { useSessionStore } from "@/stores/sessionStore";
+import { colors, fontStyles, radius, spacing } from "@/theme";
+
+const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+
+function avatarColor(name: string) {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) & 0xffff;
+  return avatarColors[hash % avatarColors.length];
+}
+
+function timeAgo(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+export default function ReviewDetailScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ id?: string }>();
+  const postId = params.id ?? "";
+  const post = useReviewPostQuery(postId);
+  const comments = usePostCommentsQuery(postId);
+  const addComment = useAddPostCommentMutation(postId);
+  const deleteComment = useDeletePostCommentMutation(postId);
+  const viewerName = useSessionStore((state) => state.profile?.username ?? "");
+  const [commentText, setCommentText] = useState("");
+
+  async function submitComment() {
+    const content = commentText.trim();
+    if (!content || addComment.isPending) return;
+    try {
+      setCommentText("");
+      await addComment.mutateAsync(content);
+    } catch (error) {
+      setCommentText(content);
+      Alert.alert("Could not post comment", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  function confirmDeleteComment(commentId: string, ownerName: string) {
+    if (ownerName !== viewerName || deleteComment.isPending) return;
+    Alert.alert("Delete comment?", "Delete this comment permanently?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteComment.mutateAsync(commentId);
+          } catch (error) {
+            Alert.alert("Could not delete comment", error instanceof Error ? error.message : "Please try again.");
+          }
+        }
+      }
+    ]);
+  }
+
+  return (
+    <Screen padded={false} scroll>
+      <View style={styles.headerWrap}>
+        <MemoryRouteHeader kicker="Circle" onBack={() => router.back()} title="Post" />
+      </View>
+
+      {post.isLoading ? (
+        <View style={styles.stateWrap}>
+          <LoadingState message="Fetching this food post." title="Loading post" />
+        </View>
+      ) : post.isError ? (
+        <View style={styles.stateWrap}>
+          <ErrorState
+            actionLabel="Try again"
+            message="We couldn't load this post. Please try again."
+            onAction={() => post.refetch()}
+            title="Post unavailable"
+          />
+        </View>
+      ) : !post.data ? (
+        <View style={styles.stateWrap}>
+          <EmptyState
+            icon="restaurant-outline"
+            message="This post may have been removed or is no longer available."
+            title="Post not found"
+          />
+        </View>
+      ) : (
+        <>
+          <PostCard post={post.data} />
+          <View style={styles.commentsSection}>
+            <Text style={styles.commentsTitle}>Comments</Text>
+            {comments.isLoading ? (
+              <Text style={styles.commentsMuted}>Loading comments...</Text>
+            ) : comments.isError ? (
+              <Pressable onPress={() => comments.refetch()} style={styles.retryComments}>
+                <Text style={styles.retryCommentsText}>Could not load comments. Tap to retry.</Text>
+              </Pressable>
+            ) : comments.data?.length ? (
+              <View style={styles.commentList}>
+                {comments.data.map((comment) => (
+                  <Pressable
+                    key={comment.id}
+                    onLongPress={() => confirmDeleteComment(comment.id, comment.userName)}
+                    style={styles.commentRow}
+                  >
+                    <View style={[styles.commentAvatar, { backgroundColor: avatarColor(comment.authorName) }]}>
+                      <Text style={styles.commentAvatarText}>{comment.authorInitials}</Text>
+                    </View>
+                    <View style={styles.commentBody}>
+                      <Text style={styles.commentText}>
+                        <Text style={styles.commentAuthor}>{comment.authorName}</Text>
+                        {" "}
+                        {comment.content}
+                      </Text>
+                      <Text style={styles.commentTime}>{timeAgo(comment.createdAt)}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.commentsMuted}>No comments yet</Text>
+            )}
+          </View>
+
+          <View style={styles.composer}>
+            <View style={[styles.composerAvatar, { backgroundColor: avatarColor(viewerName || "me") }]}>
+              <Text style={styles.composerAvatarText}>{(viewerName[0] ?? "?").toUpperCase()}</Text>
+            </View>
+            <TextInput
+              editable={Boolean(viewerName) && !addComment.isPending}
+              maxLength={500}
+              onChangeText={setCommentText}
+              onSubmitEditing={submitComment}
+              placeholder={viewerName ? "Add a comment..." : "Log in to comment"}
+              placeholderTextColor={colors.dark.muted}
+              returnKeyType="send"
+              style={styles.commentInput}
+              value={commentText}
+            />
+            <Pressable
+              disabled={!commentText.trim() || !viewerName || addComment.isPending}
+              hitSlop={8}
+              onPress={submitComment}
+              style={[styles.sendButton, (!commentText.trim() || !viewerName || addComment.isPending) && styles.sendButtonDisabled]}
+            >
+              <Send size={16} color={colors.dark.white} strokeWidth={2.2} />
+            </Pressable>
+          </View>
+        </>
+      )}
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  headerWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md
+  },
+  stateWrap: {
+    padding: spacing.lg
+  },
+  commentsSection: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.base
+  },
+  commentsTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 16,
+    lineHeight: 20,
+    marginBottom: 10
+  },
+  commentsMuted: {
+    ...fontStyles.regular,
+    color: colors.dark.muted,
+    fontSize: 13,
+    lineHeight: 19
+  },
+  retryComments: {
+    backgroundColor: colors.dark.card,
+    borderColor: colors.dark.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md
+  },
+  retryCommentsText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center"
+  },
+  commentList: {
+    gap: 8
+  },
+  commentRow: {
+    alignItems: "flex-start",
+    backgroundColor: colors.dark.card,
+    borderColor: colors.dark.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 9,
+    padding: 10
+  },
+  commentAvatar: {
+    alignItems: "center",
+    borderRadius: 10,
+    height: 30,
+    justifyContent: "center",
+    width: 30
+  },
+  commentAvatarText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    fontSize: 10,
+    lineHeight: 12
+  },
+  commentBody: {
+    flex: 1,
+    minWidth: 0
+  },
+  commentText: {
+    ...fontStyles.regular,
+    color: colors.dark.cream,
+    fontSize: 13,
+    lineHeight: 19
+  },
+  commentAuthor: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream
+  },
+  commentTime: {
+    ...fontStyles.regular,
+    color: colors.dark.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 3
+  },
+  composer: {
+    alignItems: "center",
+    borderColor: colors.dark.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.base,
+    padding: 10
+  },
+  composerAvatar: {
+    alignItems: "center",
+    borderRadius: 10,
+    height: 32,
+    justifyContent: "center",
+    width: 32
+  },
+  composerAvatarText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    fontSize: 11,
+    lineHeight: 13
+  },
+  commentInput: {
+    ...fontStyles.regular,
+    color: colors.dark.cream,
+    flex: 1,
+    fontSize: 13,
+    minHeight: 36,
+    minWidth: 0
+  },
+  sendButton: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orange,
+    borderRadius: 12,
+    height: 38,
+    justifyContent: "center",
+    width: 38
+  },
+  sendButtonDisabled: {
+    backgroundColor: colors.dark.muted,
+    opacity: 0.7
+  }
+});

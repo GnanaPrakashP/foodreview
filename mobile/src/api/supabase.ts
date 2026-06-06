@@ -6,6 +6,8 @@ import { Platform } from "react-native";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const fallbackSupabaseUrl = "https://example.supabase.co";
+const fallbackSupabaseAnonKey = "missing-anon-key";
 
 const memoryStorage = new Map<string, string>();
 
@@ -50,15 +52,20 @@ const supabaseStorageAdapter = {
   }
 };
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase environment variables. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to mobile/.env."
-  );
+export const isSupabaseConfigured =
+  Boolean(supabaseUrl && supabaseAnonKey) &&
+  !supabaseUrl.includes("your-project-ref") &&
+  !supabaseAnonKey.includes("replace-with-your-supabase-anon-key");
+
+export function assertSupabaseConfigured() {
+  if (!isSupabaseConfigured) {
+    throw new Error("auth_unavailable");
+  }
 }
 
 export const supabase = createClient(
-  supabaseUrl,
-  supabaseAnonKey,
+  isSupabaseConfigured ? supabaseUrl : fallbackSupabaseUrl,
+  isSupabaseConfigured ? supabaseAnonKey : fallbackSupabaseAnonKey,
   {
     auth: {
       autoRefreshToken: true,

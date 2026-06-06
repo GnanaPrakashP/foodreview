@@ -8,5 +8,5 @@ export function formatDisplayDate(value: string | null) {
 export function formatDisplayTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString(undefined, { hour: "numeric", hour12: true, minute: "2-digit" });
 }
