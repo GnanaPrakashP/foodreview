@@ -36,6 +36,14 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function compactLocationLabel(area: string | null, address: string | null) {
+  const rawLabel = (area || address || "").replace(/\s+/g, " ").trim();
+  if (!rawLabel) return "";
+  const firstPart = rawLabel.split(",")[0]?.trim();
+  const label = firstPart || rawLabel;
+  return label.length <= 34 ? label : `${label.slice(0, 32).trimEnd()}...`;
+}
+
 export function PostCard({ post }: PostCardProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -45,12 +53,13 @@ export function PostCard({ post }: PostCardProps) {
   const requestCircleMutation = useRequestCircleAccessMutation();
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
   const primaryMedia = post.media[0];
-  const area = post.area || post.restaurantAddress;
+  const area = compactLocationLabel(post.area, post.restaurantAddress);
   const avatarBackground = avatarColor(post.authorName || post.reviewerName);
   const [liked, setLiked] = useState(post.likedByMe);
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [bookmarked, setBookmarked] = useState(post.bookmarkedByMe);
   const [requestStatus, setRequestStatus] = useState(post.circleRequestStatus ?? "joined");
+  const [showPostActions, setShowPostActions] = useState(false);
   const hasReviewContent = Boolean(post.body) || post.tags.length > 0 || post.items.length > 0;
   const isOwnPost = Boolean(viewerName) && viewerName.toLowerCase() === post.reviewerName.toLowerCase();
   const showRequestButton = !isOwnPost && post.isPublicDiscovery && requestStatus !== "joined";
@@ -60,7 +69,8 @@ export function PostCard({ post }: PostCardProps) {
     setLikeCount(post.likeCount);
     setBookmarked(post.bookmarkedByMe);
     setRequestStatus(post.circleRequestStatus ?? "joined");
-  }, [post.bookmarkedByMe, post.circleRequestStatus, post.likeCount, post.likedByMe]);
+    setShowPostActions(false);
+  }, [post.bookmarkedByMe, post.circleRequestStatus, post.id, post.likeCount, post.likedByMe]);
 
   function openPost() {
     router.push({ pathname: "/reviews/[id]", params: { id: post.id } });
@@ -99,6 +109,7 @@ export function PostCard({ post }: PostCardProps) {
 
   function confirmDeletePost() {
     if (!isOwnPost || deletePostMutation.isPending) return;
+    setShowPostActions(false);
     Alert.alert("Delete post?", "Delete this post permanently?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -153,11 +164,34 @@ export function PostCard({ post }: PostCardProps) {
               {requestStatus === "loading" ? "Requesting" : requestStatus === "pending" ? "Requested" : "Request"}
             </Text>
           </Pressable>
-        ) : isOwnPost ? (
-          <Pressable hitSlop={10} onPress={confirmDeletePost} style={styles.moreButton}>
+        ) : null}
+        <View style={styles.postActionsWrap}>
+          <Pressable
+            disabled={deletePostMutation.isPending}
+            hitSlop={10}
+            onPress={() => setShowPostActions((open) => !open)}
+            style={[styles.moreButton, deletePostMutation.isPending && styles.moreButtonDisabled]}
+          >
             <MoreVertical size={18} color={colors.dark.cream} strokeWidth={2} />
           </Pressable>
-        ) : null}
+          {showPostActions ? (
+            <View style={styles.postActionsMenu}>
+              {isOwnPost ? (
+                <Pressable
+                  disabled={deletePostMutation.isPending}
+                  onPress={confirmDeletePost}
+                  style={[styles.deleteAction, deletePostMutation.isPending && styles.deleteActionDisabled]}
+                >
+                  <Text style={styles.deleteActionText}>
+                    {deletePostMutation.isPending ? "Deleting..." : "Delete post"}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={styles.noActionsText}>No actions</Text>
+              )}
+            </View>
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.postContentBlock}>
@@ -289,17 +323,17 @@ const styles = StyleSheet.create({
   avatar: {
     alignItems: "center",
     borderColor: "rgba(245, 237, 216, 0.14)",
-    borderRadius: 17,
+    borderRadius: 19,
     borderWidth: 1,
-    height: 34,
+    height: 38,
     justifyContent: "center",
-    width: 34
+    width: 38
   },
   avatarText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 13,
+    lineHeight: 15,
     textAlign: "center"
   },
   contentColumn: {
@@ -352,6 +386,52 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
     width: 34
+  },
+  moreButtonDisabled: {
+    opacity: 0.7
+  },
+  postActionsWrap: {
+    flexShrink: 0,
+    position: "relative",
+    zIndex: 20
+  },
+  postActionsMenu: {
+    backgroundColor: colors.dark.surface,
+    borderColor: colors.dark.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: 6,
+    position: "absolute",
+    right: 0,
+    top: 38,
+    width: 152,
+    zIndex: 25
+  },
+  deleteAction: {
+    backgroundColor: colors.dark.dangerDim,
+    borderColor: colors.dark.dangerBorder,
+    borderRadius: 9,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  deleteActionDisabled: {
+    opacity: 0.7
+  },
+  deleteActionText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.danger,
+    fontSize: 13,
+    lineHeight: 17
+  },
+  noActionsText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    textAlign: "center"
   },
   requestButton: {
     alignItems: "center",

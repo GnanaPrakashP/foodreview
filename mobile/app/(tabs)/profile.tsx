@@ -1,8 +1,9 @@
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import { CalendarDays, Images, LogOut, MessageCircle, Settings, Star, UserPlus, Users, Utensils } from "lucide-react-native";
+import { CalendarDays, ChevronRight, FileText, MessageCircle, Pencil, Settings, Shield, ShieldCheck, Star, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
@@ -10,13 +11,12 @@ import { AppText } from "@/components/ui/AppText";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { achievementImageForBadge, tierImageForName } from "@/constants/achievementAssets";
-import { useLogoutMutation } from "@/hooks/useAuth";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
+import { compactPlaceLocation } from "@/services/places";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 import type { FoodItem, MemoryRoomSummary, PermanentBadge, ProfilePageData, ReviewPost, UserProfileReputation } from "@/types/models";
-import { formatDisplayDate } from "@/utils/datetime";
 
 type ProfileTab = "posts" | "memories" | "dishes" | "timeline";
 
@@ -34,13 +34,21 @@ type TimelineGroup = {
   posts: ReviewPost[];
 };
 
+const TASTE_TRUST_MIN_CONFIRMATIONS = 5;
+
+function formatTrustScore(score: number | string | null | undefined) {
+  const value = typeof score === "number" ? score : Number(score);
+  const rounded = Number.isFinite(value) ? Math.round(value * 10) / 10 : 20;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
 export default function ProfileScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const page = useCurrentProfilePageQuery({ enabled: isReady && isAuthenticated });
 
   return (
-    <Screen scroll>
+    <Screen padded={false} scroll>
       <View style={styles.stack}>
         {!isReady ? (
           <LoadingState message="Restoring your session." title="Loading profile" />
@@ -66,24 +74,32 @@ export default function ProfileScreen() {
 }
 
 function ProfileContent({ page }: { page: ProfilePageData }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ProfileTab>("posts");
+  const [showTrustSheet, setShowTrustSheet] = useState(false);
   const memories = useMemoryRoomsQuery();
   const dishes = useMemo(() => uniqueDishesFromPosts(page.posts), [page.posts]);
   const timeline = useMemo(() => timelineGroupsFromPosts(page.posts), [page.posts]);
 
   return (
       <View style={styles.profileStack}>
-        <ProfileHero page={page} />
-        <ProfileStats page={page} />
+        <ProfileHero page={page} onSettingsPress={() => router.push("/profile/settings")} />
+        <ProfileStats
+          page={page}
+          onCirclePress={() => router.push("/profile/circle")}
+          onTrustPress={() => setShowTrustSheet(true)}
+        />
         <AchievementsSection reputation={page.reputation} />
         <ProfileTabs activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === "posts" ? (
-        <PostFeed
-          emptyMessage="Your posts will appear here after you share a food review."
-          emptyTitle="No posts yet"
-          posts={page.posts}
-        />
+        <View style={styles.postsFeedBleed}>
+          <PostFeed
+            emptyMessage="Your posts will appear here after you share a food review."
+            emptyTitle="No posts yet"
+            posts={page.posts}
+          />
+        </View>
       ) : activeTab === "memories" ? (
         <MemoriesTab
           isError={memories.isError}
@@ -97,21 +113,20 @@ function ProfileContent({ page }: { page: ProfilePageData }) {
       ) : (
         <TimelineTab groups={timeline} />
       )}
-
-      <LogoutButton />
+      <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} />
     </View>
   );
 }
 
-function ProfileHero({ page }: { page: ProfilePageData }) {
+function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; page: ProfilePageData }) {
   const profile = page.profile;
   const initials = initialsForName(page.displayName, profile.username);
   const joinedAt = joinedLabel(profile.createdAt);
 
   return (
     <View style={styles.hero}>
-      <Pressable accessibilityLabel="Open settings" style={styles.settingsButton}>
-        <Settings size={18} color={colors.dark.cream} strokeWidth={2.1} />
+      <Pressable accessibilityLabel="Open settings" onPress={onSettingsPress} style={styles.settingsButton}>
+        <Settings size={21} color={colors.dark.cream} strokeWidth={2.1} />
       </Pressable>
 
       <View style={styles.heroIdentityRow}>
@@ -142,22 +157,139 @@ function ProfileHero({ page }: { page: ProfilePageData }) {
   );
 }
 
-function ProfileStats({ page }: { page: ProfilePageData }) {
+function ProfileStats({
+  onCirclePress,
+  onTrustPress,
+  page
+}: {
+  onCirclePress: () => void;
+  onTrustPress: () => void;
+  page: ProfilePageData;
+}) {
   const stats = [
-    { value: String(Math.round(page.profile.trustScore)), label: "Trust" },
+    { value: formatTrustScore(page.profile.trustScore), label: "Trust", onPress: onTrustPress },
     { value: String(page.stats.uniquePlaces), label: "Places" },
     { value: String(page.stats.uniqueDishes), label: "Dishes" },
-    { value: String(page.circleCount), label: "Circle" }
+    { value: String(page.circleCount), label: "Circle", onPress: onCirclePress }
   ];
 
   return (
     <View style={styles.statsRow}>
       {stats.map((stat) => (
-        <View key={stat.label} style={styles.statItem}>
+        <Pressable
+          key={stat.label}
+          disabled={!stat.onPress}
+          onPress={stat.onPress}
+          style={styles.statItem}
+        >
           <Text style={styles.statValue}>{stat.value}</Text>
           <Text style={styles.statLabel}>{stat.label}</Text>
-        </View>
+        </Pressable>
       ))}
+    </View>
+  );
+}
+
+function TrustScoreSheet({
+  onClose,
+  page,
+  visible
+}: {
+  onClose: () => void;
+  page: ProfilePageData;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const profile = page.profile;
+  const scoreLabel = formatTrustScore(profile.trustScore);
+  const confirmations = profile.confirmedRecommendationsCount;
+  const matchText = confirmations > 0
+    ? `${Math.round((profile.positiveConfirmationsCount / confirmations) * 100)}%`
+    : "--";
+  const publicTrustLevel = confirmations < TASTE_TRUST_MIN_CONFIRMATIONS ? "New Reviewer" : profile.trustLevel;
+  const confirmationsUntilLevel = Math.max(0, TASTE_TRUST_MIN_CONFIRMATIONS - confirmations);
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
+      <View style={styles.trustModalRoot}>
+        <Pressable accessibilityLabel="Close trust score details" onPress={onClose} style={StyleSheet.absoluteFillObject} />
+        <View style={[styles.trustSheet, { paddingBottom: spacing.xl + insets.bottom }]}>
+          <View style={styles.trustSheetHeader}>
+            <Text style={styles.trustSheetTitle}>Trust Score</Text>
+            <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.trustCloseButton}>
+              <X size={16} color={colors.dark.muted} strokeWidth={2.5} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.trustSheetContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.trustHeroRow}>
+              <View style={styles.trustScoreCard}>
+                <Text adjustsFontSizeToFit numberOfLines={1} style={styles.trustScoreValue}>{scoreLabel}</Text>
+                <Text style={styles.trustScoreMax}>/100</Text>
+              </View>
+              <View style={styles.trustLevelCard}>
+                <View style={styles.trustLevelRow}>
+                  <View style={styles.trustLevelIcon}>
+                    <User size={15} color={colors.dark.orange} strokeWidth={2.3} />
+                  </View>
+                  <Text numberOfLines={1} style={styles.trustLevelText}>{publicTrustLevel}</Text>
+                </View>
+                <Text style={styles.trustLevelDescription}>Earn trust when others try and confirm your posts.</Text>
+              </View>
+            </View>
+
+            <View style={styles.trustMetricGrid}>
+              <TrustMetric Icon={FileText} label="Posts" value={String(page.posts.length)} />
+              <TrustMetric Icon={ShieldCheck} label="Confirmed" value={String(confirmations)} />
+              <TrustMetric Icon={Users} label="Match" value={matchText} />
+            </View>
+
+            <View style={styles.trustUnlockRow}>
+              <ShieldCheck size={13} color={colors.dark.orange} strokeWidth={2.3} />
+              <Text style={styles.trustUnlockText}>
+                {confirmationsUntilLevel > 0
+                  ? `${confirmationsUntilLevel} more confirmation${confirmationsUntilLevel !== 1 ? "s" : ""} to unlock level`
+                  : "Level unlocked at 5 confirmations"}
+              </Text>
+            </View>
+
+            <View style={styles.trustGrowthCard}>
+              <Text style={styles.trustGrowthEyebrow}>How it grows</Text>
+              <View style={styles.trustGrowthSteps}>
+                <TrustGrowthStep Icon={Pencil} label="Post" />
+                <ChevronRight size={15} color={colors.dark.muted} strokeWidth={2.4} />
+                <TrustGrowthStep Icon={Shield} label="Confirm" />
+                <ChevronRight size={15} color={colors.dark.muted} strokeWidth={2.4} />
+                <TrustGrowthStep Icon={TrendingUp} label="Grow" />
+              </View>
+              <Text style={styles.trustGrowthNote}>Confirmations strengthen trust.</Text>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function TrustMetric({ Icon, label, value }: { Icon: typeof Users; label: string; value: string }) {
+  return (
+    <View style={styles.trustMetricCard}>
+      <View style={styles.trustMetricTop}>
+        <Icon size={15} color={colors.dark.orange} strokeWidth={2.2} />
+        <Text numberOfLines={1} style={styles.trustMetricValue}>{value}</Text>
+      </View>
+      <Text numberOfLines={1} style={styles.trustMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string }) {
+  return (
+    <View style={styles.trustGrowthStep}>
+      <View style={styles.trustGrowthIcon}>
+        <Icon size={16} color={colors.dark.orange} strokeWidth={2.3} />
+      </View>
+      <Text style={styles.trustGrowthLabel}>{label}</Text>
     </View>
   );
 }
@@ -302,36 +434,50 @@ function MemoriesTab({
   return (
     <View style={styles.memoryList}>
       {memories.map((memory) => (
-        <Pressable
+        <MemoryRow
           key={memory.id}
+          memory={memory}
           onPress={() => router.push({ pathname: "/memories/[id]", params: { id: memory.id } })}
-          style={styles.memoryRow}
-        >
-          <View style={styles.memoryIcon}>
-            <Images size={18} color={colors.dark.orange} strokeWidth={2.1} />
-          </View>
-          <View style={styles.memoryCopy}>
-            <Text numberOfLines={1} style={styles.memoryTitle}>{memory.title}</Text>
-            <Text numberOfLines={1} style={styles.memoryMeta}>
-              {memory.area || "Area not set"} · {formatDisplayDate(memory.visitDate)}
-            </Text>
-            {memory.latestMessage ? (
-              <Text numberOfLines={1} style={styles.memoryMessage}>{memory.latestMessage}</Text>
-            ) : null}
-          </View>
-          <View style={styles.memoryCounts}>
-            <View style={styles.memoryCountRow}>
-              <Users size={12} color={colors.dark.muted} strokeWidth={2.2} />
-              <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
-            </View>
-            <View style={styles.memoryCountRow}>
-              <MessageCircle size={12} color={colors.dark.muted} strokeWidth={2.2} />
-              <Text style={styles.memoryCountText}>{memory.messageCount}</Text>
-            </View>
-          </View>
-        </Pressable>
+        />
       ))}
     </View>
+  );
+}
+
+function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: () => void }) {
+  const locationLabel = compactPlaceLocation({
+    formattedAddress: memory.area ?? "",
+    shortFormattedAddress: memory.area ?? ""
+  });
+  const date = timelineDateParts(memory.visitDate ?? memory.createdAt);
+
+  return (
+    <Pressable onPress={onPress} style={styles.memoryRow}>
+      <View style={styles.memoryDate}>
+        <Text style={styles.memoryDay}>{date.day}</Text>
+        <Text style={styles.memoryMonthShort}>{date.month}</Text>
+      </View>
+      <View style={styles.memoryDivider} />
+      <View style={styles.memoryCopy}>
+        <Text numberOfLines={1} style={styles.memoryTitle}>{memory.title}</Text>
+        <Text numberOfLines={1} style={styles.memoryMeta}>
+          {locationLabel || "Area not set"}
+        </Text>
+        {memory.latestMessage ? (
+          <Text numberOfLines={1} style={styles.memoryMessage}>{memory.latestMessage}</Text>
+        ) : null}
+      </View>
+      <View style={styles.memoryCounts}>
+        <View style={styles.memoryCountRow}>
+          <Users size={12} color={colors.dark.muted} strokeWidth={2.2} />
+          <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
+        </View>
+        <View style={styles.memoryCountRow}>
+          <MessageCircle size={12} color={colors.dark.muted} strokeWidth={2.2} />
+          <Text style={styles.memoryCountText}>{memory.messageCount}</Text>
+        </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -476,30 +622,6 @@ function ProfileInput(props: {
   );
 }
 
-function LogoutButton() {
-  const router = useRouter();
-  const logout = useLogoutMutation();
-
-  async function submit() {
-    try {
-      await logout.mutateAsync();
-      router.replace("/login");
-    } catch {
-      // Mutation error is rendered below.
-    }
-  }
-
-  return (
-    <View style={styles.logoutWrap}>
-      {logout.isError ? <Text style={styles.error}>{logout.error.message}</Text> : null}
-      <Pressable disabled={logout.isPending} onPress={submit} style={styles.logoutButton}>
-        <LogOut size={16} color={colors.dark.muted} strokeWidth={2.1} />
-        <Text style={styles.logoutText}>{logout.isPending ? "Signing out..." : "Log out"}</Text>
-      </Pressable>
-    </View>
-  );
-}
-
 function initialsForName(displayName: string, username: string) {
   return displayName
     .split(/\s+/)
@@ -594,10 +716,15 @@ function tierMotivation(progressPercent: number, isMaxTier: boolean): string {
 
 const styles = StyleSheet.create({
   stack: {
-    gap: spacing.md
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg
   },
   profileStack: {
     gap: spacing.base
+  },
+  postsFeedBleed: {
+    marginHorizontal: -spacing.lg
   },
   hero: {
     backgroundColor: colors.dark.bg,
@@ -606,10 +733,6 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
     height: 40,
     justifyContent: "center",
     position: "absolute",
@@ -647,7 +770,7 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   name: {
-    ...fontStyles.extraBold,
+    ...fontStyles.bold,
     color: colors.dark.cream,
     fontSize: 23,
     lineHeight: 29
@@ -707,6 +830,215 @@ const styles = StyleSheet.create({
     color: colors.dark.muted,
     fontSize: 11,
     lineHeight: 14
+  },
+  trustModalRoot: {
+    backgroundColor: "rgba(0, 0, 0, 0.60)",
+    flex: 1,
+    justifyContent: "flex-end"
+  },
+  trustSheet: {
+    backgroundColor: colors.dark.card,
+    borderColor: "rgba(245, 237, 216, 0.09)",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    maxHeight: "88%",
+    overflow: "hidden"
+  },
+  trustSheetHeader: {
+    alignItems: "center",
+    borderBottomColor: "rgba(245, 237, 216, 0.06)",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingBottom: 14,
+    paddingHorizontal: 18,
+    paddingTop: 18
+  },
+  trustSheetTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 16,
+    lineHeight: 20
+  },
+  trustCloseButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(245, 237, 216, 0.07)",
+    borderRadius: radius.pill,
+    height: 30,
+    justifyContent: "center",
+    width: 30
+  },
+  trustSheetContent: {
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingTop: 16
+  },
+  trustHeroRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 14
+  },
+  trustScoreCard: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orangeDim,
+    borderColor: "rgba(240, 96, 48, 0.30)",
+    borderRadius: 18,
+    borderWidth: 1.5,
+    justifyContent: "center",
+    minHeight: 118,
+    paddingHorizontal: 8,
+    width: 112
+  },
+  trustScoreValue: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 40,
+    letterSpacing: 0,
+    lineHeight: 42,
+    textAlign: "center"
+  },
+  trustScoreMax: {
+    ...fontStyles.extraBold,
+    color: colors.dark.orange,
+    fontSize: 11,
+    lineHeight: 13,
+    marginTop: 3
+  },
+  trustLevelCard: {
+    backgroundColor: "rgba(245, 237, 216, 0.03)",
+    borderColor: "rgba(245, 237, 216, 0.07)",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minWidth: 0,
+    padding: 14
+  },
+  trustLevelRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8
+  },
+  trustLevelIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(245, 237, 216, 0.06)",
+    borderRadius: radius.pill,
+    height: 28,
+    justifyContent: "center",
+    width: 28
+  },
+  trustLevelText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  trustLevelDescription: {
+    ...fontStyles.bold,
+    color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 12
+  },
+  trustMetricGrid: {
+    flexDirection: "row",
+    gap: 8
+  },
+  trustMetricCard: {
+    backgroundColor: "rgba(245, 237, 216, 0.035)",
+    borderColor: "rgba(245, 237, 216, 0.08)",
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 11
+  },
+  trustMetricTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8
+  },
+  trustMetricValue: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    flexShrink: 1,
+    fontSize: 17,
+    lineHeight: 19
+  },
+  trustMetricLabel: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    fontSize: 10,
+    lineHeight: 13,
+    marginTop: 9
+  },
+  trustUnlockRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 7,
+    minHeight: 16
+  },
+  trustUnlockText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  trustGrowthCard: {
+    backgroundColor: "rgba(245, 237, 216, 0.035)",
+    borderColor: "rgba(245, 237, 216, 0.08)",
+    borderRadius: radius.card,
+    borderWidth: 1,
+    padding: 14
+  },
+  trustGrowthEyebrow: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    lineHeight: 13,
+    textTransform: "uppercase"
+  },
+  trustGrowthSteps: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 13
+  },
+  trustGrowthStep: {
+    alignItems: "center",
+    flex: 1,
+    gap: 7,
+    minWidth: 0
+  },
+  trustGrowthIcon: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orangeDim,
+    borderColor: colors.dark.orangeBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: "center",
+    width: 38
+  },
+  trustGrowthLabel: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 11,
+    lineHeight: 13
+  },
+  trustGrowthNote: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 15,
+    marginTop: 13,
+    textAlign: "center"
   },
   achievementsSection: {
     gap: spacing.md
@@ -900,13 +1232,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 12
   },
-  memoryIcon: {
+  memoryDate: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderRadius: radius.md,
-    height: 42,
-    justifyContent: "center",
-    width: 42
+    width: 38
+  },
+  memoryDay: {
+    ...fontStyles.extraBold,
+    color: colors.dark.orange,
+    fontSize: 14,
+    lineHeight: 16
+  },
+  memoryMonthShort: {
+    ...fontStyles.bold,
+    color: colors.dark.muted,
+    fontSize: 10,
+    lineHeight: 13,
+    marginTop: 2,
+    textTransform: "uppercase"
+  },
+  memoryDivider: {
+    alignSelf: "stretch",
+    backgroundColor: colors.dark.border,
+    width: 1
   },
   memoryCopy: {
     flex: 1,
@@ -1125,25 +1472,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingHorizontal: spacing.md,
     paddingVertical: 12
-  },
-  logoutWrap: {
-    gap: spacing.sm,
-    marginTop: spacing.sm
-  },
-  logoutButton: {
-    alignItems: "center",
-    borderColor: colors.dark.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    justifyContent: "center",
-    paddingVertical: 13
-  },
-  logoutText: {
-    ...fontStyles.bold,
-    color: colors.dark.muted,
-    fontSize: 14
   },
   error: {
     ...fontStyles.regular,

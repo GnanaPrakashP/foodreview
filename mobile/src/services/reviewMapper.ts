@@ -60,6 +60,10 @@ export type ProfileRow = {
   account_type: string | null;
   trust_score: number | null;
   trust_level: string | null;
+  confirmed_recommendations_count: number | null;
+  positive_confirmations_count: number | null;
+  negative_confirmations_count: number | null;
+  total_feedback_points: number | string | null;
   created_at: string;
 };
 
@@ -135,6 +139,10 @@ export function mapProfile(row: ProfileRow): Profile {
     accountType: row.account_type === "private" ? "private" : "public",
     trustScore: row.trust_score ?? 20,
     trustLevel: row.trust_level ?? "New Reviewer",
+    confirmedRecommendationsCount: row.confirmed_recommendations_count ?? 0,
+    positiveConfirmationsCount: row.positive_confirmations_count ?? 0,
+    negativeConfirmationsCount: row.negative_confirmations_count ?? 0,
+    totalFeedbackPoints: Number(row.total_feedback_points ?? 0) || 0,
     createdAt: row.created_at
   };
 }

@@ -1,5 +1,5 @@
 import { supabase } from "@/api/supabase";
-import type { ActorProfile, PermanentBadge, Profile, ProfilePageData, ProfileStats, UserProfileReputation, UserTier } from "@/types/models";
+import type { AccountType, ActorProfile, PermanentBadge, Profile, ProfilePageData, ProfileStats, UserProfileReputation, UserTier } from "@/types/models";
 import {
   displayNameForProfile,
   mapProfile,
@@ -42,6 +42,10 @@ const PROFILE_SELECT = [
   "account_type",
   "trust_score",
   "trust_level",
+  "confirmed_recommendations_count",
+  "positive_confirmations_count",
+  "negative_confirmations_count",
+  "total_feedback_points",
   "created_at"
 ].join(", ");
 
@@ -53,6 +57,11 @@ export type SignupProfileInput = {
 };
 
 export type ProfileSetupInput = Omit<SignupProfileInput, "userId">;
+
+export type ProfileDetailsInput = {
+  bio: string;
+  name: string;
+};
 
 export type UserSearchResult = {
   displayName: string;
@@ -176,6 +185,58 @@ export async function getCurrentUserProfile(): Promise<Profile | null> {
 
   if (error) throw new Error(error.message);
   return data ? mapProfile(data) : null;
+}
+
+export async function updateCurrentAccountType(accountType: AccountType): Promise<Profile> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw new Error(userError.message);
+  const user = userData.user;
+  if (!user) throw new Error("Log in before updating account settings");
+
+  const { error: authError } = await supabase.auth.updateUser({ data: { account_type: accountType } });
+  if (authError) throw new Error(authError.message);
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ account_type: accountType })
+    .eq("id", user.id)
+    .select(PROFILE_SELECT)
+    .single<ProfileRow>();
+
+  if (error) throw new Error(error.message);
+  return mapProfile(data);
+}
+
+export async function updateCurrentProfileDetails(input: ProfileDetailsInput): Promise<Profile> {
+  const trimmedName = input.name.trim();
+  if (!trimmedName) throw new Error("Name is required");
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw new Error(userError.message);
+  const user = userData.user;
+  if (!user) throw new Error("Log in before updating your profile");
+
+  const [firstName, ...lastParts] = trimmedName.split(/\s+/);
+  const lastName = lastParts.join(" ");
+  const bio = input.bio.trim().slice(0, 160);
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({
+      bio: bio || null,
+      first_name: firstName,
+      last_name: lastName
+    })
+    .eq("id", user.id)
+    .select(PROFILE_SELECT)
+    .single<ProfileRow>();
+
+  if (error) throw new Error(error.message);
+
+  const { error: authError } = await supabase.auth.updateUser({ data: { bio, full_name: trimmedName } });
+  if (authError) throw new Error(authError.message);
+
+  return mapProfile(data);
 }
 
 export async function getProfileByUsername(username: string): Promise<Profile | null> {

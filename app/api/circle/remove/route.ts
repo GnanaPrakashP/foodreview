@@ -22,7 +22,7 @@ async function removeFromCircle(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
   const admin = createAdminClient();

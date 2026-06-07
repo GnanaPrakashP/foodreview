@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { CircleUserRound, Flame, Plus, Search, Users, type LucideIcon } from "lucide-react-native";
+import { CircleUserRound, Plus, Search, Users, type LucideIcon } from "lucide-react-native";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, fontStyles, typography } from "@/theme";
@@ -7,8 +7,7 @@ import { colors, fontStyles, typography } from "@/theme";
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
   index: { title: "Circle", icon: Users },
   explore: { title: "Explore", icon: Search },
-  share: { title: "Post", icon: Plus },
-  hungry: { title: "Hungry", icon: Flame },
+  share: { title: "Create", icon: Plus },
   profile: { title: "Profile", icon: CircleUserRound }
 };
 
@@ -61,7 +60,7 @@ export default function TabLayout() {
       <Tabs.Screen name="index" />
       <Tabs.Screen name="explore" />
       <Tabs.Screen name="share" />
-      <Tabs.Screen name="hungry" />
+      <Tabs.Screen name="hungry" options={{ href: null }} />
       <Tabs.Screen name="profile" />
     </Tabs>
   );

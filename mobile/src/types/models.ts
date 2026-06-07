@@ -25,6 +25,10 @@ export type Profile = {
   accountType: AccountType;
   trustScore: number;
   trustLevel: string;
+  confirmedRecommendationsCount: number;
+  positiveConfirmationsCount: number;
+  negativeConfirmationsCount: number;
+  totalFeedbackPoints: number;
   createdAt: string;
 };
 

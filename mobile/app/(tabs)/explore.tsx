@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
-import { ChevronDown, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
+import { ChevronDown, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
@@ -51,10 +51,20 @@ type PersonSpotlight = {
   totalPlaces: number;
 };
 
+const PLACE_CARD_HEIGHT = 152;
+const PLACE_MEDIA_WIDTH = PLACE_CARD_HEIGHT * 4 / 5;
+const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+
 function initialsFor(name: string) {
   const parts = name.split(/[\s_]+/).filter(Boolean);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   return (parts[0]?.[0] ?? "?").toUpperCase();
+}
+
+function avatarColor(name: string) {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) & 0xffff;
+  return avatarColors[hash % avatarColors.length];
 }
 
 function average(values: number[]) {
@@ -321,37 +331,46 @@ function CategoryGrid<T extends string>({
   onChange: (category: T) => void;
   selected: T;
 }) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.categoryScroller}
-    >
-      <View style={styles.categoryGrid}>
-        {categories.map((category) => {
-          const active = category.id === selected;
-          return (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              key={category.id}
-              onPress={() => onChange(category.id)}
-              style={styles.categoryButton}
-            >
-              <Image
-                source={category.image}
-                style={[styles.categoryImage, compact && styles.categoryImageCompact, active && styles.categoryImageActive]}
-                contentFit="contain"
-              />
-              <Text numberOfLines={2} style={[styles.categoryLabel, active && styles.categoryLabelActive]}>
-                {category.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </ScrollView>
+  const { width } = useWindowDimensions();
+  const columnCount = compact ? 5 : 4;
+  const columnGap = Platform.OS === "web" ? 8 : 6;
+  const gridWidth = Math.max(0, width - (spacing.base * 2));
+  const cellWidth = Math.floor((gridWidth - columnGap * (columnCount - 1)) / columnCount);
+  const imageSize = compact
+    ? Math.max(48, Math.min(66, cellWidth - 4))
+    : Math.max(62, Math.min(86, cellWidth - 6));
+
+  const content = (
+    <View style={[styles.categoryGrid, styles.categoryGridWrapped]}>
+      {categories.map((category) => {
+        const active = category.id === selected;
+        return (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            key={category.id}
+            onPress={() => onChange(category.id)}
+            style={[styles.categoryButton, { width: cellWidth }]}
+          >
+            <Image
+              source={category.image}
+              style={[
+                styles.categoryImage,
+                { height: imageSize, width: imageSize },
+                active && styles.categoryImageActive
+              ]}
+              contentFit="contain"
+            />
+            <Text numberOfLines={2} style={[styles.categoryLabel, active && styles.categoryLabelActive]}>
+              {category.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
+
+  return <View style={styles.categoryStaticWrap}>{content}</View>;
 }
 
 function DiscoveryHeader({ icon, title }: { icon: "places" | "dishes" | "people"; title: string }) {
@@ -422,8 +441,8 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
       : `${firstName(place.reviewers[0])} + ${place.reviewers.length - 1} others have been here`;
 
   return (
-    <View style={styles.spotlightCard}>
-      <View style={styles.spotlightMedia}>
+    <View style={[styles.spotlightCard, styles.fixedSpotlightCard]}>
+      <View style={[styles.spotlightMedia, styles.fixedSpotlightMedia]}>
         {place.photo ? (
           <Image source={{ uri: place.photo }} style={styles.spotlightImage} contentFit="cover" />
         ) : (
@@ -433,15 +452,17 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
       <View style={styles.spotlightBody}>
         <View style={styles.spotlightTop}>
           <View style={styles.spotlightText}>
-            <Text numberOfLines={2} style={styles.spotlightName}>{place.name}</Text>
-            <Text numberOfLines={1} style={styles.spotlightMeta}>{place.area || "Nearby"}</Text>
+            <Text numberOfLines={1} style={styles.spotlightName}>{place.name}</Text>
+            <View style={styles.spotlightMetaRow}>
+              <MapPin size={12} color="rgba(255, 255, 255, 0.72)" strokeWidth={2} />
+              <Text numberOfLines={1} style={styles.spotlightMeta}>{place.area || "Nearby"}</Text>
+            </View>
           </View>
           <RatingScore rating={place.averageRating} />
         </View>
-        <Text style={styles.visitText}>{place.reviewerCount} visit{place.reviewerCount !== 1 ? "s" : ""}</Text>
-        {place.topDishes.length > 0 ? <ChipRow labels={place.topDishes} /> : null}
-        {place.tags.length > 0 ? <TagRow labels={place.tags} /> : null}
-        {proof ? <Text numberOfLines={2} style={styles.socialProof}>{proof}</Text> : null}
+        <Text numberOfLines={1} style={styles.visitText}>{place.reviewerCount} visit{place.reviewerCount !== 1 ? "s" : ""}</Text>
+        {place.topDishes.length > 0 ? <ChipRow labels={place.topDishes} singleLine /> : null}
+        {proof ? <Text numberOfLines={1} style={styles.socialProof}>{proof}</Text> : null}
       </View>
     </View>
   );
@@ -449,8 +470,8 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
 
 function DishCard({ dish }: { dish: DishSpotlight }) {
   return (
-    <View style={styles.spotlightCard}>
-      <View style={[styles.spotlightMedia, styles.dishMedia]}>
+    <View style={[styles.spotlightCard, styles.fixedSpotlightCard]}>
+      <View style={[styles.spotlightMedia, styles.fixedSpotlightMedia, styles.dishMedia]}>
         {dish.photo ? (
           <Image source={{ uri: dish.photo }} style={styles.spotlightImage} contentFit="cover" />
         ) : (
@@ -461,7 +482,10 @@ function DishCard({ dish }: { dish: DishSpotlight }) {
         <View style={styles.spotlightTop}>
           <View style={styles.spotlightText}>
             <Text numberOfLines={2} style={styles.spotlightName}>{dish.name}</Text>
-            <Text numberOfLines={1} style={styles.spotlightMeta}>{dish.topRestaurantName} · Nearby</Text>
+            <View style={styles.spotlightMetaRow}>
+              <MapPin size={12} color="rgba(255, 255, 255, 0.72)" strokeWidth={2} />
+              <Text numberOfLines={1} style={styles.spotlightMeta}>{dish.topRestaurantName} · Nearby</Text>
+            </View>
           </View>
           <RatingScore rating={dish.averageRating} />
         </View>
@@ -475,26 +499,28 @@ function DishCard({ dish }: { dish: DishSpotlight }) {
 
 function PersonCard({ person }: { person: PersonSpotlight }) {
   return (
-    <View style={styles.personCard}>
-      <View style={styles.personAvatar}>
-        <Text style={styles.personAvatarText}>{person.initials}</Text>
+    <View style={styles.personCardOuter}>
+      <View style={styles.personCard}>
+        <View style={[styles.personAvatar, { backgroundColor: avatarColor(person.displayName || person.username) }]}>
+          <Text style={styles.personAvatarText}>{person.initials}</Text>
+        </View>
+        <View style={styles.personText}>
+          <Text numberOfLines={1} style={styles.personName}>{person.displayName}</Text>
+          <Text numberOfLines={1} style={styles.personMeta}>
+            @{person.username} · {person.totalPlaces} place{person.totalPlaces !== 1 ? "s" : ""}
+          </Text>
+        </View>
+        <Pressable style={styles.addButton}>
+          <Text style={styles.addButtonText}>Request</Text>
+        </Pressable>
       </View>
-      <View style={styles.personText}>
-        <Text numberOfLines={1} style={styles.personName}>{person.displayName}</Text>
-        <Text numberOfLines={1} style={styles.personMeta}>
-          @{person.username} · {person.totalPlaces} place{person.totalPlaces !== 1 ? "s" : ""}
-        </Text>
-      </View>
-      <Pressable style={styles.addButton}>
-        <Text style={styles.addButtonText}>Request</Text>
-      </Pressable>
     </View>
   );
 }
 
-function ChipRow({ labels }: { labels: string[] }) {
+function ChipRow({ labels, singleLine = false }: { labels: string[]; singleLine?: boolean }) {
   return (
-    <View style={styles.chips}>
+    <View style={[styles.chips, singleLine && styles.chipsSingleLine]}>
       {labels.map((label) => (
         <View key={label} style={styles.chip}>
           <Text numberOfLines={1} style={styles.chipText}>{label}</Text>
@@ -523,8 +549,8 @@ const styles = StyleSheet.create({
     gap: Platform.OS === "web" ? spacing.md : spacing.sm,
     justifyContent: "space-between",
     paddingBottom: 8,
-    paddingHorizontal: spacing.base,
-    paddingTop: Platform.OS === "web" ? 22 : 16
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg
   },
   title: {
     ...fontStyles.regular,
@@ -592,7 +618,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === "web" ? 14 : 10,
     paddingHorizontal: spacing.base
   },
-  categoryScroller: {
+  categoryStaticWrap: {
     paddingBottom: Platform.OS === "web" ? 14 : 10,
     paddingHorizontal: spacing.base
   },
@@ -600,6 +626,12 @@ const styles = StyleSheet.create({
     columnGap: Platform.OS === "web" ? 8 : 6,
     flexDirection: "row",
     minWidth: Platform.OS === "web" ? 344 : 0
+  },
+  categoryGridWrapped: {
+    columnGap: Platform.OS === "web" ? 8 : 6,
+    flexWrap: "wrap",
+    minWidth: 0,
+    rowGap: Platform.OS === "web" ? 12 : 10
   },
   categoryButton: {
     alignItems: "center",
@@ -611,10 +643,6 @@ const styles = StyleSheet.create({
     height: Platform.OS === "web" ? 76 : 62,
     marginBottom: Platform.OS === "web" ? 8 : 6,
     width: Platform.OS === "web" ? 76 : 62
-  },
-  categoryImageCompact: {
-    height: Platform.OS === "web" ? 72 : 58,
-    width: Platform.OS === "web" ? 72 : 58
   },
   categoryImageActive: {
     transform: [{ translateY: -2 }, { scale: 1.02 }]
@@ -657,7 +685,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.base
   },
   list: {
-    gap: Platform.OS === "web" ? 10 : 8,
+    gap: 10,
     paddingBottom: 100,
     paddingHorizontal: spacing.base
   },
@@ -683,16 +711,23 @@ const styles = StyleSheet.create({
     borderColor: colors.dark.border,
     borderRadius: 14,
     borderWidth: 1,
-    flexDirection: Platform.OS === "web" ? "row" : "column",
-    minHeight: Platform.OS === "web" ? 132 : 0,
+    flexDirection: "row",
+    minHeight: 132,
     overflow: "hidden"
+  },
+  fixedSpotlightCard: {
+    height: PLACE_CARD_HEIGHT,
+    minHeight: PLACE_CARD_HEIGHT
   },
   spotlightMedia: {
     alignItems: "center",
     backgroundColor: "rgba(240, 96, 48, 0.12)",
-    height: Platform.OS === "web" ? "auto" : 148,
     justifyContent: "center",
-    width: Platform.OS === "web" ? 104 : "100%"
+    width: 104
+  },
+  fixedSpotlightMedia: {
+    height: PLACE_CARD_HEIGHT,
+    width: PLACE_MEDIA_WIDTH
   },
   dishMedia: {
     backgroundColor: "rgba(61, 214, 140, 0.10)"
@@ -704,14 +739,14 @@ const styles = StyleSheet.create({
   spotlightBody: {
     flex: 1,
     minWidth: 0,
-    padding: Platform.OS === "web" ? 14 : 13
+    padding: 14
   },
   spotlightTop: {
     alignItems: "flex-start",
     flexDirection: "row",
-    gap: Platform.OS === "web" ? spacing.md : spacing.sm,
+    gap: spacing.md,
     justifyContent: "space-between",
-    marginBottom: Platform.OS === "web" ? spacing.sm : 6
+    marginBottom: spacing.sm
   },
   spotlightText: {
     flex: 1,
@@ -720,15 +755,23 @@ const styles = StyleSheet.create({
   spotlightName: {
     ...fontStyles.bold,
     color: colors.dark.cream,
-    fontSize: Platform.OS === "web" ? 17 : 16,
-    lineHeight: Platform.OS === "web" ? 20 : 19
+    fontSize: 17,
+    lineHeight: 20
+  },
+  spotlightMetaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 2,
+    minWidth: 0
   },
   spotlightMeta: {
     ...fontStyles.regular,
     color: "rgba(255, 255, 255, 0.72)",
+    flex: 1,
     fontSize: 11,
     lineHeight: 14,
-    marginTop: 2
+    minWidth: 0
   },
   ratingScore: {
     alignItems: "center",
@@ -738,8 +781,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 3,
-    paddingHorizontal: Platform.OS === "web" ? 7 : 6,
-    paddingVertical: Platform.OS === "web" ? 4 : 3
+    paddingHorizontal: 7,
+    paddingVertical: 4
   },
   ratingScoreText: {
     ...fontStyles.extraBold,
@@ -752,39 +795,47 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.72)",
     fontSize: 11,
     lineHeight: 14,
-    marginBottom: Platform.OS === "web" ? spacing.sm : 6
+    marginBottom: spacing.sm
   },
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 5,
-    marginBottom: Platform.OS === "web" ? spacing.sm : 6
+    marginBottom: spacing.sm
+  },
+  chipsSingleLine: {
+    flexWrap: "nowrap",
+    overflow: "hidden"
   },
   chip: {
     backgroundColor: colors.dark.surface,
     borderColor: colors.dark.border,
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: Platform.OS === "web" ? 8 : 7,
+    flexShrink: 1,
+    maxWidth: "100%",
+    minWidth: 0,
+    paddingHorizontal: 8,
     paddingVertical: 3
   },
   chipText: {
     ...fontStyles.regular,
     color: colors.dark.cream,
+    flexShrink: 1,
     fontSize: 10
   },
   tags: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 5,
-    marginBottom: Platform.OS === "web" ? spacing.sm : 6
+    marginBottom: spacing.sm
   },
   tag: {
     backgroundColor: colors.dark.orangeDim,
     borderColor: colors.dark.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: Platform.OS === "web" ? 7 : 6,
+    paddingHorizontal: 7,
     paddingVertical: 3
   },
   tagText: {
@@ -799,8 +850,8 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.74)",
     fontSize: 11,
     lineHeight: 15,
-    marginTop: Platform.OS === "web" ? 3 : 1,
-    paddingTop: Platform.OS === "web" ? 9 : 7
+    marginTop: 3,
+    paddingTop: 9
   },
   snippet: {
     ...fontStyles.regular,
@@ -809,27 +860,31 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 1
   },
-  personCard: {
-    alignItems: "center",
+  personCardOuter: {
     borderBottomColor: colors.dark.border,
     borderBottomWidth: 1,
+    marginHorizontal: spacing.base
+  },
+  personCard: {
+    alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
-    paddingHorizontal: spacing.base,
     paddingVertical: 12
   },
   personAvatar: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: 14,
-    height: 42,
+    borderColor: "rgba(255, 255, 255, 0.14)",
+    borderRadius: 24,
+    borderWidth: 1,
+    height: 48,
     justifyContent: "center",
-    width: 42
+    width: 48
   },
   personAvatarText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 13
+    fontSize: 15,
+    lineHeight: 18
   },
   personText: {
     flex: 1,
@@ -838,12 +893,14 @@ const styles = StyleSheet.create({
   personName: {
     ...fontStyles.bold,
     color: colors.dark.cream,
-    fontSize: 14
+    fontSize: 16,
+    lineHeight: 20
   },
   personMeta: {
     ...fontStyles.regular,
-    color: colors.dark.muted,
+    color: "rgba(255, 255, 255, 0.72)",
     fontSize: 11,
+    lineHeight: 14,
     marginTop: 2
   },
   addButton: {
@@ -851,8 +908,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(240, 96, 48, 0.35)",
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7
+    paddingHorizontal: 14,
+    paddingVertical: 8
   },
   addButtonText: {
     ...fontStyles.semiBold,

@@ -1,8 +1,9 @@
-import { Image } from "expo-image";
+import { Image, type ImageSource } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { ArrowLeft, Bookmark, Camera, ChevronRight, Globe, Heart, ImagePlus, Lock, MapPin, MessageCircle, PenLine, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
@@ -27,8 +28,12 @@ import {
 } from "@/services/places";
 import { searchUserProfiles, type UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
+
+const POST_BITE_IMAGE = require("../../assets/create/post-bite-card-bg.png");
+const TABLE_MEMORY_IMAGE = require("../../assets/create/table-memory-card-bg.png");
+const ACTION_CARD_HEIGHT = Platform.OS === "web" ? 286 : 252;
 
 type PickedImage = {
   mimeType?: string | null;
@@ -421,9 +426,10 @@ export default function ShareScreen() {
           ) : null}
           <View style={styles.headerText}>
             {shareMode === "solo" || shareMode === "friends" ? null : (
-              <Text style={styles.title}>
-                <>What are you <Text style={styles.titleAccent}>sharing?</Text></>
-              </Text>
+              <>
+                <Text style={styles.title}>Create</Text>
+                <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
+              </>
             )}
           </View>
           {isReady && isAuthenticated && shareMode === "solo" ? (
@@ -453,19 +459,27 @@ export default function ShareScreen() {
             <SignedOutFeedState message="Sign in to share a real food post." />
           ) : shareMode === "choice" ? (
             <View style={styles.choiceStack}>
-              <ShareChoiceCard
+              <ActionCard
                 Icon={PenLine}
                 accent="orange"
-                label="Solo Bite"
+                cta="Capture Dish"
+                CtaIcon={Camera}
+                description="Share the dish worth talking about."
+                imageSource={POST_BITE_IMAGE}
                 onPress={openSolo}
-                sub="Post your own food review with a required photo, dishes, and rating."
+                tags={["Photo", "Rating"]}
+                title="Post a Bite"
               />
-              <ShareChoiceCard
+              <ActionCard
                 Icon={Users}
                 accent="green"
-                label="Table Memory"
+                cta="Create Room"
+                CtaIcon={UserPlus}
+                description="Capture private table memories with friends."
+                imageSource={TABLE_MEMORY_IMAGE}
                 onPress={() => setShareMode("friends")}
-                sub="Create a private food room with friends before publishing."
+                tags={["Private", "Invite friends"]}
+                title="Shared Bite"
               />
             </View>
           ) : (
@@ -819,33 +833,69 @@ export default function ShareScreen() {
   );
 }
 
-function ShareChoiceCard({
+function ActionCard({
+  CtaIcon,
   Icon,
   accent,
-  label,
+  cta,
+  description,
+  imageSource,
   onPress,
-  sub
+  tags,
+  title
 }: {
   accent: "green" | "orange";
+  cta: string;
+  CtaIcon?: typeof Users;
+  description: string;
   Icon: typeof Users;
-  label: string;
+  imageSource: ImageSource;
   onPress: () => void;
-  sub: string;
+  tags: string[];
+  title: string;
 }) {
   const isGreen = accent === "green";
   const accentColor = isGreen ? colors.dark.green : colors.dark.orange;
+  const gradientColors: readonly [string, string, string] = isGreen
+    ? ["rgba(61, 214, 140, 0.18)", "rgba(20, 184, 166, 0.08)", "rgba(33, 28, 23, 0.98)"]
+    : ["rgba(240, 96, 48, 0.22)", "rgba(232, 168, 48, 0.08)", "rgba(33, 28, 23, 0.98)"];
 
   return (
-    <Pressable onPress={onPress} style={[styles.choiceCard, isGreen && styles.choiceCardGreen]}>
-      <View style={styles.choiceContent}>
-        <View style={[styles.choiceIcon, isGreen ? styles.choiceIconGreen : styles.choiceIconOrange]}>
-          <Icon size={21} color={accentColor} strokeWidth={2.2} />
+    <Pressable onPress={onPress} style={[styles.actionCard, isGreen ? styles.actionCardGreen : styles.actionCardOrange]}>
+      <Image source={imageSource} style={styles.actionBackgroundImage} contentFit="cover" contentPosition="right center" />
+      <LinearGradient colors={gradientColors} end={{ x: 1, y: 1 }} start={{ x: 0, y: 0 }} style={StyleSheet.absoluteFillObject} />
+      <LinearGradient
+        colors={["rgba(12, 9, 7, 0.28)", "rgba(12, 9, 7, 0.08)", "rgba(12, 9, 7, 0.18)"]}
+        end={{ x: 1, y: 0.5 }}
+        start={{ x: 0, y: 0.5 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View style={styles.actionContent}>
+        <View style={[styles.actionIcon, isGreen ? styles.actionIconGreen : styles.actionIconOrange]}>
+          <Icon size={22} color={accentColor} strokeWidth={2.3} />
         </View>
-        <Text style={styles.choiceTitle}>{label}</Text>
-        <Text style={styles.choiceSub}>{sub}</Text>
+        <Text numberOfLines={2} style={styles.actionTitle}>{title}</Text>
+        <Text numberOfLines={2} style={styles.actionDescription}>{description}</Text>
+        <View style={styles.actionChips}>
+          {tags.map((tag) => <ChoiceChip key={tag} accent={accent} label={tag} />)}
+        </View>
+        <View style={styles.actionCtaRow}>
+          {CtaIcon ? <CtaIcon size={14} color={accentColor} strokeWidth={2.4} /> : null}
+          <Text style={[styles.actionCta, { color: accentColor }]}>{cta}</Text>
+        </View>
       </View>
-      <ChevronRight size={21} color={accentColor} strokeWidth={2.3} />
     </Pressable>
+  );
+}
+
+function ChoiceChip({ accent, label }: { accent: "green" | "orange"; label: string }) {
+  const isGreen = accent === "green";
+  return (
+    <View style={[styles.actionChip, isGreen ? styles.actionChipGreen : styles.actionChipOrange]}>
+      <Text style={[styles.actionChipText, { color: isGreen ? colors.dark.green : colors.dark.orange }]}>
+        {label}
+      </Text>
+    </View>
   );
 }
 
@@ -1033,13 +1083,14 @@ const styles = StyleSheet.create({
     paddingBottom: 0
   },
   scrollContent: {
-    paddingTop: 0
+    paddingTop: 0,
+    position: "relative"
   },
   header: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingBottom: 12,
+    paddingBottom: 8,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg
   },
@@ -1076,66 +1127,126 @@ const styles = StyleSheet.create({
   title: {
     ...fontStyles.regular,
     color: colors.dark.cream,
-    fontSize: 28,
+    fontSize: Platform.OS === "web" ? typography.webTitle : 24,
     letterSpacing: 0,
-    lineHeight: 34
+    lineHeight: Platform.OS === "web" ? 32 : 29
   },
-  titleAccent: {
-    ...fontStyles.regularItalic,
-    color: colors.dark.orange
+  subtitle: {
+    ...fontStyles.semiBold,
+    color: "rgba(245, 237, 216, 0.62)",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 5,
+    maxWidth: 300
   },
   stack: {
     gap: spacing.base,
     paddingHorizontal: spacing.lg
   },
   choiceStack: {
-    gap: spacing.md
+    gap: 18,
+    paddingTop: 8
   },
-  choiceCard: {
-    alignItems: "center",
+  actionCard: {
     backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.md,
+    borderRadius: 24,
     borderWidth: 1,
     flexDirection: "row",
-    gap: spacing.base,
-    justifyContent: "space-between",
-    minHeight: 132,
-    padding: 18
+    height: ACTION_CARD_HEIGHT,
+    overflow: "hidden",
+    padding: 18,
+    position: "relative"
   },
-  choiceCardGreen: {
-    backgroundColor: "rgba(61, 214, 140, 0.08)",
-    borderColor: colors.dark.greenBorder
+  actionCardOrange: {
+    borderColor: "rgba(240, 96, 48, 0.42)",
+    shadowColor: colors.dark.orange,
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { height: 10, width: 0 },
+    elevation: 4
   },
-  choiceContent: {
+  actionCardGreen: {
+    borderColor: "rgba(61, 214, 140, 0.34)",
+    shadowColor: colors.dark.green,
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { height: 10, width: 0 },
+    elevation: 4
+  },
+  actionBackgroundImage: {
+    ...StyleSheet.absoluteFillObject
+  },
+  actionContent: {
     flex: 1,
-    gap: 5,
-    minWidth: 0
+    minWidth: 0,
+    maxWidth: "62%",
+    zIndex: 3
   },
-  choiceIcon: {
+  actionIcon: {
     alignItems: "center",
     borderRadius: radius.pill,
-    height: 42,
+    borderWidth: 1,
+    height: 48,
     justifyContent: "center",
-    marginBottom: 9,
-    width: 42
+    marginBottom: 13,
+    width: 48
   },
-  choiceIconOrange: {
-    backgroundColor: colors.dark.orangeDim
+  actionIconOrange: {
+    backgroundColor: "rgba(240, 96, 48, 0.16)",
+    borderColor: "rgba(240, 96, 48, 0.34)"
   },
-  choiceIconGreen: {
-    backgroundColor: colors.dark.greenDim
+  actionIconGreen: {
+    backgroundColor: "rgba(61, 214, 140, 0.14)",
+    borderColor: "rgba(61, 214, 140, 0.30)"
   },
-  choiceTitle: {
+  actionTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 18,
-    lineHeight: 22
+    fontSize: 24,
+    letterSpacing: 0,
+    lineHeight: 28,
+    marginBottom: 8
   },
-  choiceSub: {
-    ...fontStyles.bold,
-    color: colors.dark.muted,
+  actionDescription: {
+    ...fontStyles.semiBold,
+    color: "rgba(245, 237, 216, 0.70)",
     fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12
+  },
+  actionChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 14
+  },
+  actionChip: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 5
+  },
+  actionChipOrange: {
+    backgroundColor: "rgba(240, 96, 48, 0.10)",
+    borderColor: "rgba(240, 96, 48, 0.24)"
+  },
+  actionChipGreen: {
+    backgroundColor: "rgba(61, 214, 140, 0.10)",
+    borderColor: "rgba(61, 214, 140, 0.22)"
+  },
+  actionChipText: {
+    ...fontStyles.extraBold,
+    fontSize: 10,
+    lineHeight: 12
+  },
+  actionCtaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6
+  },
+  actionCta: {
+    ...fontStyles.extraBold,
+    fontSize: 14,
     lineHeight: 18
   },
   composerCard: {
