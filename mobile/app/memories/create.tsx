@@ -48,7 +48,7 @@ export default function CreateMemoryScreen() {
     <Screen padded={false}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.keyboard}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <MemoryRouteHeader kicker="Create" onBack={() => router.back()} title="Memory room" />
+          <MemoryRouteHeader kicker="Create" onBack={() => router.back()} title="Table Memory" />
 
           <View style={styles.segmentRow}>
             <SegmentButton active={mode === "manual"} label="Manual" onPress={() => setMode("manual")} />
@@ -75,7 +75,7 @@ export default function CreateMemoryScreen() {
             autoCapitalize="none"
             multiline
             onChangeText={setParticipants}
-            placeholder="Participants by username, comma separated"
+            placeholder="Friends by username, comma separated"
             tall
             value={participants}
           />
@@ -83,7 +83,7 @@ export default function CreateMemoryScreen() {
           {createRoom.isError ? <Text style={styles.error}>{createRoom.error.message}</Text> : null}
 
           <Pressable disabled={createRoom.isPending} onPress={submit} style={[styles.button, createRoom.isPending && styles.buttonDisabled]}>
-            <Text style={styles.buttonText}>{createRoom.isPending ? "Creating..." : "Create memory room"}</Text>
+            <Text style={styles.buttonText}>{createRoom.isPending ? "Creating..." : "Create table memory"}</Text>
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>

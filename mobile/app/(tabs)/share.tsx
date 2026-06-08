@@ -33,7 +33,6 @@ import type { FoodItem, Visibility } from "@/types/models";
 
 const POST_BITE_IMAGE = require("../../assets/create/post-bite-card-bg.png");
 const TABLE_MEMORY_IMAGE = require("../../assets/create/table-memory-card-bg.png");
-const ACTION_CARD_HEIGHT = Platform.OS === "web" ? 286 : 252;
 
 type PickedImage = {
   mimeType?: string | null;
@@ -425,7 +424,12 @@ export default function ShareScreen() {
             </Pressable>
           ) : null}
           <View style={styles.headerText}>
-            {shareMode === "solo" || shareMode === "friends" ? null : (
+            {shareMode === "friends" ? (
+              <>
+                <Text style={styles.title}>Table Memory</Text>
+                <Text style={styles.subtitle}>Save the place you visited with friends.</Text>
+              </>
+            ) : shareMode === "solo" ? null : (
               <>
                 <Text style={styles.title}>Create</Text>
                 <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
@@ -473,13 +477,13 @@ export default function ShareScreen() {
               <ActionCard
                 Icon={Users}
                 accent="green"
-                cta="Create Room"
+                cta="Create memory"
                 CtaIcon={UserPlus}
-                description="Capture private table memories with friends."
+                description="Remember the places you visit with friends."
                 imageSource={TABLE_MEMORY_IMAGE}
                 onPress={() => setShareMode("friends")}
-                tags={["Private", "Invite friends"]}
-                title="Shared Bite"
+                tags={["Private", "With friends", "Photos + dishes"]}
+                title="Table Memory"
               />
             </View>
           ) : (
@@ -721,7 +725,7 @@ export default function ShareScreen() {
                     <PlaceField
                       onChangeText={setMemoryRestaurantName}
                       onSelect={setMemoryRestaurantPlace}
-                      placeholder="Place name"
+                      placeholder="Where did you go?"
                       selectedPlace={memoryRestaurantPlace}
                       value={memoryRestaurantName}
                     />
@@ -737,7 +741,7 @@ export default function ShareScreen() {
                           }}
                           onFocus={() => setMemoryFriendFocused(true)}
                           onSubmitEditing={() => addMemoryParticipant()}
-                          placeholder="Add friend"
+                          placeholder="Who is at the table?"
                           placeholderTextColor={colors.dark.muted}
                           returnKeyType="done"
                           style={styles.fieldInput}
@@ -786,10 +790,14 @@ export default function ShareScreen() {
                         </View>
                       ) : null}
                     </View>
+                    <View style={styles.memoryPrivacyNote}>
+                      <Lock size={13} color={colors.dark.green} strokeWidth={2.1} />
+                      <Text style={styles.memoryPrivacyNoteText}>Private to invited friends.</Text>
+                    </View>
                   </View>
 
                   {createMemoryRoom.isError ? (
-                    <ErrorState message={createMemoryRoom.error.message} title="Could not create room" />
+                    <ErrorState message={createMemoryRoom.error.message} title="Could not create table memory" />
                   ) : null}
                 </View>
               )}
@@ -874,8 +882,8 @@ function ActionCard({
         <View style={[styles.actionIcon, isGreen ? styles.actionIconGreen : styles.actionIconOrange]}>
           <Icon size={22} color={accentColor} strokeWidth={2.3} />
         </View>
-        <Text numberOfLines={2} style={styles.actionTitle}>{title}</Text>
-        <Text numberOfLines={2} style={styles.actionDescription}>{description}</Text>
+        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={styles.actionDescription}>{description}</Text>
         <View style={styles.actionChips}>
           {tags.map((tag) => <ChoiceChip key={tag} accent={accent} label={tag} />)}
         </View>
@@ -914,6 +922,8 @@ function PlaceField({
 }) {
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searchAttempted, setSearchAttempted] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [selectingPlaceId, setSelectingPlaceId] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState(() => createPlacesSessionToken());
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
@@ -922,20 +932,27 @@ function PlaceField({
     const query = value.trim();
     if (query.length < 2 || selectedPlaceMatches(value, selectedPlace)) {
       setLoading(false);
+      setSearchAttempted(false);
+      setSearchError("");
       setSuggestions([]);
       return;
     }
 
     let alive = true;
     setLoading(true);
+    setSearchAttempted(false);
+    setSearchError("");
     const timeout = setTimeout(async () => {
       try {
         const nextSuggestions = await autocompletePlaces(query, sessionToken);
         if (!alive) return;
         setSuggestions(nextSuggestions);
+        setSearchAttempted(true);
       } catch {
         if (!alive) return;
+        setSearchError("Could not search places right now.");
         setSuggestions([]);
+        setSearchAttempted(true);
       } finally {
         if (alive) setLoading(false);
       }
@@ -956,13 +973,16 @@ function PlaceField({
       onSelect(selected);
       setSuggestions([]);
       setFocused(false);
+      setSearchAttempted(false);
+      setSearchError("");
       setSessionToken(createPlacesSessionToken());
     } finally {
       setSelectingPlaceId(null);
     }
   }
 
-  const showSuggestions = focused && (loading || suggestions.length > 0);
+  const hasSearchableQuery = value.trim().length >= 2 && !selectedPlaceMatches(value, selectedPlace);
+  const showSuggestions = focused && hasSearchableQuery && (loading || suggestions.length > 0 || searchAttempted || Boolean(searchError));
   const selectedLocationLabel = selectedPlaceMatches(value, selectedPlace)
     ? compactPlaceLocation(selectedPlace)
     : "";
@@ -996,6 +1016,16 @@ function PlaceField({
             <View style={styles.placeSuggestionLoading}>
               <ActivityIndicator color={colors.dark.orange} size="small" />
               <Text style={styles.placeSuggestionMuted}>Searching places</Text>
+            </View>
+          ) : null}
+          {!loading && searchError ? (
+            <View style={styles.placeSuggestionLoading}>
+              <Text style={styles.placeSuggestionError}>{searchError}</Text>
+            </View>
+          ) : null}
+          {!loading && !searchError && searchAttempted && suggestions.length === 0 ? (
+            <View style={styles.placeSuggestionLoading}>
+              <Text style={styles.placeSuggestionMuted}>No places found</Text>
             </View>
           ) : null}
           {suggestions.map((suggestion) => (
@@ -1087,7 +1117,7 @@ const styles = StyleSheet.create({
     position: "relative"
   },
   header: {
-    alignItems: "center",
+    alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
     paddingBottom: 8,
@@ -1105,7 +1135,8 @@ const styles = StyleSheet.create({
   },
   headerText: {
     flex: 1,
-    minWidth: 0
+    minWidth: 0,
+    paddingTop: 2
   },
   headerSubmitButton: {
     alignItems: "center",
@@ -1152,7 +1183,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     flexDirection: "row",
-    height: ACTION_CARD_HEIGHT,
+    minHeight: Platform.OS === "web" ? 244 : 222,
     overflow: "hidden",
     padding: 18,
     position: "relative"
@@ -1736,6 +1767,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16
   },
+  placeSuggestionError: {
+    ...fontStyles.semiBold,
+    color: colors.dark.dangerSoft,
+    fontSize: 12,
+    lineHeight: 16
+  },
   placeSuggestionRow: {
     alignItems: "center",
     borderTopColor: colors.dark.border,
@@ -1768,6 +1805,18 @@ const styles = StyleSheet.create({
   },
   memoryFriendSection: {
     gap: spacing.sm
+  },
+  memoryPrivacyNote: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 7,
+    paddingTop: 2
+  },
+  memoryPrivacyNoteText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 16
   },
   friendSuggestions: {
     backgroundColor: colors.dark.surface,

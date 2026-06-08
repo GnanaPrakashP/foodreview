@@ -146,6 +146,8 @@ export type MemoryMessage = {
   body: string;
   attachments: MemoryPhoto[];
   createdAt: string;
+  deliveryStatus?: "pending" | "sent" | "failed";
+  editedAt: string | null;
 };
 
 export type MemoryDish = {
@@ -168,6 +170,8 @@ export type MemoryPhoto = {
   publicUrl: string;
   storagePath: string;
   mediaType: "image" | "video";
+  imageWidth: number | null;
+  imageHeight: number | null;
   position: number;
   createdAt: string;
 };
@@ -182,6 +186,7 @@ export type MemoryRoom = {
   sourcePostId: string | null;
   createdBy: string;
   status: MemoryRoomStatus;
+  lastReadAt: string | null;
   createdAt: string;
   participants: MemoryParticipant[];
   dishes: MemoryDish[];
@@ -200,6 +205,8 @@ export type MemoryRoomSummary = {
   participantCount: number;
   photoCount: number;
   messageCount: number;
+  unreadCount: number;
   latestMessage: string | null;
+  latestActivityAt: string;
   createdAt: string;
 };

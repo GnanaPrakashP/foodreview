@@ -27,6 +27,7 @@ export type MemoryMessageRow = {
   author_name: string;
   body: string;
   created_at: string;
+  edited_at: string | null;
 };
 
 export type MemoryDishRow = {
@@ -47,8 +48,17 @@ export type MemoryPhotoRow = {
   public_url: string;
   storage_path: string;
   media_type: "image" | "video" | null;
+  image_width: number | null;
+  image_height: number | null;
   position: number | null;
   created_at: string;
+};
+
+export type MemoryReadRow = {
+  room_id: string;
+  user_name: string;
+  last_read_at: string;
+  updated_at: string;
 };
 
 export const ROOM_SELECT = [

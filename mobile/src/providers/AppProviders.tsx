@@ -3,6 +3,7 @@ import { PropsWithChildren, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthBootstrap } from "@/providers/AuthBootstrap";
 import { AuthGate } from "@/providers/AuthGate";
+import { PushNotificationBootstrap } from "@/providers/PushNotificationBootstrap";
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [queryClient] = useState(
@@ -23,6 +24,7 @@ export function AppProviders({ children }: PropsWithChildren) {
       <QueryClientProvider client={queryClient}>
         <AuthBootstrap>
           {children}
+          <PushNotificationBootstrap />
           <AuthGate />
         </AuthBootstrap>
       </QueryClientProvider>

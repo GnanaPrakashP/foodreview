@@ -371,7 +371,7 @@ function AchievementPill({ badge }: { badge: PermanentBadge }) {
 function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "posts", label: "Posts" },
-    { id: "memories", label: "Memories" },
+    { id: "memories", label: "Tables" },
     { id: "dishes", label: "Dishes" },
     { id: "timeline", label: "Timeline" }
   ];
@@ -407,16 +407,16 @@ function MemoriesTab({
   const router = useRouter();
 
   if (isLoading) {
-    return <LoadingState message="Fetching your shared food memories." title="Loading memories" />;
+    return <LoadingState message="Fetching your table memories." title="Loading tables" />;
   }
 
   if (isError) {
     return (
       <ErrorState
         actionLabel="Try again"
-        message={errorMessage ?? "We couldn't load your memory rooms."}
+        message={errorMessage ?? "We couldn't load your table memories."}
         onAction={onRetry}
-        title="Memories unavailable"
+        title="Table memories unavailable"
       />
     );
   }
@@ -425,8 +425,8 @@ function MemoriesTab({
     return (
       <EmptyState
         icon="images-outline"
-        message="Rooms you create or join with friends will appear here."
-        title="No memories yet"
+        message="Private table memories you create or join with friends will appear here."
+        title="No table memories yet"
       />
     );
   }
@@ -450,24 +450,30 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
     shortFormattedAddress: memory.area ?? ""
   });
   const date = timelineDateParts(memory.visitDate ?? memory.createdAt);
+  const hasUnread = memory.unreadCount > 0;
 
   return (
-    <Pressable onPress={onPress} style={styles.memoryRow}>
+    <Pressable onPress={onPress} style={[styles.memoryRow, hasUnread && styles.memoryRowUnread]}>
       <View style={styles.memoryDate}>
         <Text style={styles.memoryDay}>{date.day}</Text>
         <Text style={styles.memoryMonthShort}>{date.month}</Text>
       </View>
       <View style={styles.memoryDivider} />
       <View style={styles.memoryCopy}>
-        <Text numberOfLines={1} style={styles.memoryTitle}>{memory.title}</Text>
+        <Text numberOfLines={1} style={[styles.memoryTitle, hasUnread && styles.memoryTitleUnread]}>{memory.title}</Text>
         <Text numberOfLines={1} style={styles.memoryMeta}>
           {locationLabel || "Area not set"}
         </Text>
         {memory.latestMessage ? (
-          <Text numberOfLines={1} style={styles.memoryMessage}>{memory.latestMessage}</Text>
+          <Text numberOfLines={1} style={[styles.memoryMessage, hasUnread && styles.memoryMessageUnread]}>{memory.latestMessage}</Text>
         ) : null}
       </View>
       <View style={styles.memoryCounts}>
+        {hasUnread ? (
+          <View style={styles.memoryUnreadBadge}>
+            <Text style={styles.memoryUnreadText}>{memory.unreadCount > 99 ? "99+" : memory.unreadCount}</Text>
+          </View>
+        ) : null}
         <View style={styles.memoryCountRow}>
           <Users size={12} color={colors.dark.muted} strokeWidth={2.2} />
           <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
@@ -1232,6 +1238,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 12
   },
+  memoryRowUnread: {
+    borderColor: "rgba(240,96,48,0.45)"
+  },
   memoryDate: {
     alignItems: "center",
     width: 38
@@ -1265,6 +1274,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 19
   },
+  memoryTitleUnread: {
+    color: colors.dark.white
+  },
   memoryMeta: {
     ...fontStyles.semiBold,
     color: colors.dark.muted,
@@ -1280,9 +1292,28 @@ const styles = StyleSheet.create({
     marginTop: 6,
     opacity: 0.7
   },
+  memoryMessageUnread: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    opacity: 1
+  },
   memoryCounts: {
     alignItems: "flex-end",
     gap: 7
+  },
+  memoryUnreadBadge: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orange,
+    borderRadius: radius.pill,
+    minWidth: 22,
+    paddingHorizontal: 7,
+    paddingVertical: 3
+  },
+  memoryUnreadText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    fontSize: 10,
+    lineHeight: 12
   },
   memoryCountRow: {
     alignItems: "center",

@@ -5,6 +5,7 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
   const uri = input.mediaUri ?? input.imageUri;
   if (!uri) throw new Error("Choose a photo or video");
 
+  const dimensions = normalizedDimensions(input.imageWidth, input.imageHeight);
   const mimeType = input.mediaMimeType ?? input.imageMimeType ?? null;
   const mediaType = input.mediaType ?? (mimeType?.startsWith("video/") ? "video" : "image");
   const ext = extensionFor(uri, mimeType, mediaType);
@@ -19,7 +20,20 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
   if (error) throw new Error(error.message);
 
   const { data } = supabase.storage.from("review-photos").getPublicUrl(path);
-  return { mediaType, publicUrl: data.publicUrl, storagePath: path };
+  return {
+    imageHeight: dimensions.imageHeight,
+    imageWidth: dimensions.imageWidth,
+    mediaType,
+    publicUrl: data.publicUrl,
+    storagePath: path
+  };
+}
+
+function normalizedDimensions(width?: number | null, height?: number | null) {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return { imageHeight: null, imageWidth: null };
+  }
+  return { imageHeight: Math.round(height), imageWidth: Math.round(width) };
 }
 
 function uniqueUploadName(ext: string) {
