@@ -99,6 +99,8 @@ export function mapMemoryRoom({
     group.sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }
 
+  const messageRowsById = new Map(messages.map((message) => [message.id, message]));
+
   return {
     id: room.id,
     title: titleForRoom(room),
@@ -136,7 +138,15 @@ export function mapMemoryRoom({
       body: message.body,
       attachments: photosByMessageId[message.id] ?? [],
       createdAt: message.created_at,
-      editedAt: message.edited_at ?? null
+      editedAt: message.edited_at ?? null,
+      replyToMessageId: message.reply_to_message_id ?? null,
+      replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
+        ? {
+          id: message.reply_to_message_id,
+          authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
+          body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
+        }
+        : null
     })),
     photos: mappedPhotos
   };

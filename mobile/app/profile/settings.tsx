@@ -1,10 +1,12 @@
 import { useRouter } from "expo-router";
+import type { ReactNode } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
-import { ChevronRight, LogOut, Settings, Shield } from "lucide-react-native";
+import { Bookmark, ChevronRight, FileText, Heart, LifeBuoy, LogOut, MessageCircle, Settings, Shield, Trash2 } from "lucide-react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useLogoutMutation } from "@/hooks/useAuth";
 import { useCurrentUserProfileQuery, useUpdateAccountTypeMutation } from "@/hooks/useProfiles";
+import { useDeleteAccountMutation } from "@/hooks/useSettings";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 import type { AccountType } from "@/types/models";
 
@@ -17,6 +19,7 @@ export default function ProfileSettingsScreen() {
   const profile = useCurrentUserProfileQuery();
   const logout = useLogoutMutation();
   const updateAccountType = useUpdateAccountTypeMutation();
+  const deleteAccount = useDeleteAccountMutation();
 
   function confirmAccountType(nextType: AccountType) {
     if (!profile.data || profile.data.accountType === nextType || updateAccountType.isPending) return;
@@ -63,22 +66,58 @@ export default function ProfileSettingsScreen() {
     ]);
   }
 
+  function confirmDeleteAccount() {
+    Alert.alert("Delete account?", "This will permanently delete your profile and all your reviews. This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: deleteAccount.isPending ? "Deleting..." : "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteAccount.mutateAsync();
+            router.replace("/login");
+          } catch (error) {
+            Alert.alert("Could not delete account", error instanceof Error ? error.message : "Please try again.");
+          }
+        }
+      }
+    ]);
+  }
+
   return (
-    <Screen padded={false}>
+    <Screen padded={false} scroll>
       <View style={styles.content}>
-        <MemoryRouteHeader kicker="Profile" onBack={() => router.back()} title="Settings" />
+        <MemoryRouteHeader backButtonVariant="plain" onBack={() => router.back()} title="Settings" titleWeight="regular" />
 
-        <View style={styles.section}>
-          <Pressable onPress={() => router.push("/profile/settings/edit")} style={styles.row}>
-            <View style={styles.rowIcon}>
-              <Settings size={16} color={colors.dark.muted} strokeWidth={2.1} />
-            </View>
-            <Text style={styles.rowLabel}>Edit Profile</Text>
-            <ChevronRight size={16} color={colors.dark.muted} strokeWidth={2.2} />
-          </Pressable>
-        </View>
+        <SettingsSection title="Profile">
+          <SettingsRow
+            Icon={Settings}
+            label="Edit Profile"
+            onPress={() => router.push("/profile/settings/edit")}
+          />
+        </SettingsSection>
 
-        <View style={styles.section}>
+        <SettingsSection title="Activity">
+          <SettingsRow
+            Icon={Heart}
+            label="Liked Posts"
+            onPress={() => router.push("/profile/settings/liked")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Bookmark}
+            label="Saved Posts"
+            onPress={() => router.push("/profile/settings/saved")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={MessageCircle}
+            label="My Comments"
+            onPress={() => router.push("/profile/settings/comments")}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Preferences">
           <View style={styles.row}>
             <View style={styles.rowIcon}>
               <Shield size={16} color={colors.dark.muted} strokeWidth={2.1} />
@@ -102,9 +141,15 @@ export default function ProfileSettingsScreen() {
               })}
             </View>
           </View>
-        </View>
+        </SettingsSection>
 
-        <View style={styles.section}>
+        <SettingsSection title="Support & Account">
+          <SettingsRow
+            Icon={LifeBuoy}
+            label="Help & Contact"
+            onPress={() => router.push("/profile/settings/help")}
+          />
+          <View style={styles.separator} />
           <Pressable disabled={logout.isPending} onPress={confirmLogout} style={styles.row}>
             <View style={[styles.rowIcon, styles.dangerIcon]}>
               <LogOut size={16} color={colors.dark.dangerSoft} strokeWidth={2.1} />
@@ -112,9 +157,59 @@ export default function ProfileSettingsScreen() {
             <Text style={[styles.rowLabel, styles.dangerText]}>{logout.isPending ? "Signing out..." : "Log out"}</Text>
             <ChevronRight size={16} color={colors.dark.dangerSoft} strokeWidth={2.2} />
           </Pressable>
-        </View>
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Shield}
+            label="Privacy Policy"
+            onPress={() => router.push("/profile/settings/privacy")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={FileText}
+            label="Terms of Service"
+            onPress={() => router.push("/profile/settings/terms")}
+          />
+          <View style={styles.separator} />
+          <Pressable disabled={deleteAccount.isPending} onPress={confirmDeleteAccount} style={styles.row}>
+            <View style={[styles.rowIcon, styles.dangerIcon]}>
+              <Trash2 size={16} color={colors.dark.dangerSoft} strokeWidth={2.1} />
+            </View>
+            <Text style={[styles.rowLabel, styles.dangerText]}>{deleteAccount.isPending ? "Deleting..." : "Delete account"}</Text>
+            <ChevronRight size={16} color={colors.dark.dangerSoft} strokeWidth={2.2} />
+          </Pressable>
+        </SettingsSection>
       </View>
     </Screen>
+  );
+}
+
+function SettingsSection({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionDivider} />
+      <View>{children}</View>
+    </View>
+  );
+}
+
+function SettingsRow({
+  Icon,
+  label,
+  onPress
+}: {
+  Icon: typeof Settings;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.row}>
+      <View style={styles.rowIcon}>
+        <Icon size={16} color={colors.dark.muted} strokeWidth={2.1} />
+      </View>
+      <Text style={styles.rowLabel}>{label}</Text>
+      <ChevronRight size={16} color={colors.dark.muted} strokeWidth={2.2} />
+    </Pressable>
   );
 }
 
@@ -124,23 +219,36 @@ const styles = StyleSheet.create({
     padding: spacing.lg
   },
   section: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    overflow: "hidden"
+    gap: spacing.xs
+  },
+  sectionTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.muted,
+    fontSize: 11,
+    letterSpacing: 0.9,
+    lineHeight: 14,
+    textTransform: "uppercase"
+  },
+  sectionDivider: {
+    backgroundColor: "rgba(245, 237, 216, 0.10)",
+    height: 1
   },
   row: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
     minHeight: 64,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 0,
     paddingVertical: 14
+  },
+  separator: {
+    backgroundColor: "rgba(245, 237, 216, 0.08)",
+    height: 1,
+    marginLeft: 46
   },
   rowIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.surface,
+    backgroundColor: "rgba(245, 237, 216, 0.055)",
     borderRadius: radius.md,
     height: 34,
     justifyContent: "center",

@@ -26,6 +26,7 @@ export type MemoryMessageRow = {
   room_id: string;
   author_name: string;
   body: string;
+  reply_to_message_id: string | null;
   created_at: string;
   edited_at: string | null;
 };

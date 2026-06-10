@@ -16,17 +16,20 @@ export default function EditProfileScreen() {
   const updateProfile = useUpdateProfileDetailsMutation();
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
+  const [username, setUsername] = useState("");
+  const usernameValid = /^[a-z0-9_]{3,20}$/.test(username);
 
   useEffect(() => {
     if (!profile.data) return;
     setName(displayName(profile.data.firstName, profile.data.lastName, profile.data.username));
     setBio(profile.data.bio ?? "");
+    setUsername(profile.data.username);
   }, [profile.data]);
 
   async function save() {
-    if (!name.trim() || updateProfile.isPending) return;
+    if (!name.trim() || !usernameValid || updateProfile.isPending) return;
     try {
-      await updateProfile.mutateAsync({ bio, name });
+      await updateProfile.mutateAsync({ bio, name, username });
       router.back();
     } catch (error) {
       Alert.alert("Could not save profile", error instanceof Error ? error.message : "Please try again.");
@@ -36,7 +39,7 @@ export default function EditProfileScreen() {
   return (
     <Screen padded={false}>
       <View style={styles.content}>
-        <MemoryRouteHeader kicker="Settings" onBack={() => router.back()} title="Edit Profile" />
+        <MemoryRouteHeader backButtonVariant="plain" onBack={() => router.back()} title="Edit Profile" titleWeight="regular" />
 
         <View style={styles.form}>
           <View style={styles.field}>
@@ -48,6 +51,19 @@ export default function EditProfileScreen() {
               style={styles.input}
               value={name}
             />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              autoCapitalize="none"
+              onChangeText={(value) => setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+              placeholder="username"
+              placeholderTextColor={colors.dark.muted}
+              style={styles.input}
+              value={username}
+            />
+            <Text style={styles.hint}>3-20 characters, lowercase letters, numbers, or underscore.</Text>
           </View>
 
           <View style={styles.field}>
@@ -66,9 +82,9 @@ export default function EditProfileScreen() {
           </View>
 
           <Pressable
-            disabled={!name.trim() || updateProfile.isPending}
+            disabled={!name.trim() || !usernameValid || updateProfile.isPending}
             onPress={save}
-            style={[styles.saveButton, (!name.trim() || updateProfile.isPending) && styles.saveButtonDisabled]}
+            style={[styles.saveButton, (!name.trim() || !usernameValid || updateProfile.isPending) && styles.saveButtonDisabled]}
           >
             <Text style={styles.saveButtonText}>{updateProfile.isPending ? "Saving..." : "Save"}</Text>
           </Pressable>
@@ -118,6 +134,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
     textAlign: "right"
+  },
+  hint: {
+    ...fontStyles.semiBold,
+    color: colors.dark.muted,
+    fontSize: 11,
+    lineHeight: 15
   },
   saveButton: {
     alignItems: "center",

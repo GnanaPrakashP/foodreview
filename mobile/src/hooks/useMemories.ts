@@ -12,6 +12,7 @@ import {
   deleteMemoryPhoto,
   editMemoryMessage,
   getMemoryRoom,
+  leaveMemoryRoom,
   listMemoryRooms,
   markMemoryRoomRead,
   type AddMemoryPhotoInput,
@@ -125,17 +126,33 @@ export function useAddMemoryParticipantMutation(roomId: string) {
   });
 }
 
+export function useLeaveMemoryRoomMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => leaveMemoryRoom(roomId),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
 export function useAddMemoryMessageMutation(roomId: string) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
-    mutationFn: (body: string) => addMemoryMessage(roomId, body),
-    onMutate: async (body) => {
+    mutationFn: (input: { body: string; replyToMessageId?: string | null }) => addMemoryMessage(roomId, input.body, input.replyToMessageId),
+    onMutate: async (input) => {
+      const body = input.body;
       const trimmed = body.trim();
       if (!trimmed || !profile?.username) return {};
 
       const detailKey = memoryKeys.detail(roomId);
       const now = new Date().toISOString();
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const replyToMessage = input.replyToMessageId
+        ? previousRoom?.messages.find((message) => message.id === input.replyToMessageId) ?? null
+        : null;
       const optimisticMessage: MemoryMessage = {
         attachments: [],
         authorDisplayName: profile.displayName || profile.username,
@@ -145,6 +162,14 @@ export function useAddMemoryMessageMutation(roomId: string) {
         deliveryStatus: "pending",
         editedAt: null,
         id: `optimistic-message:${roomId}:${now}`,
+        replyToMessage: replyToMessage
+          ? {
+            id: replyToMessage.id,
+            authorDisplayName: replyToMessage.authorDisplayName,
+            body: replyToMessage.body || "Media"
+          }
+          : null,
+        replyToMessageId: replyToMessage?.id ?? null,
         roomId
       };
 
@@ -153,7 +178,6 @@ export function useAddMemoryMessageMutation(roomId: string) {
         queryClient.cancelQueries({ queryKey: memoryKeys.list })
       ]);
 
-      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
@@ -181,7 +205,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
 
       return { previousList, previousRoom };
     },
-    onError: (_error, _body, context) => {
+    onError: (_error, _input, context) => {
       if (context?.previousRoom) {
         queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
       }
@@ -275,6 +299,10 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       const detailKey = memoryKeys.detail(roomId);
       const now = new Date().toISOString();
       const optimisticMessageId = `optimistic-media-message:${roomId}:${now}`;
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const replyToMessage = input.replyToMessageId
+        ? previousRoom?.messages.find((message) => message.id === input.replyToMessageId) ?? null
+        : null;
       const optimisticPhotos: MemoryPhoto[] = usableAssets.map((asset, index) => {
         const uri = asset.mediaUri || asset.imageUri || "";
         const mediaType: MemoryPhoto["mediaType"] =
@@ -294,7 +322,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           uploaderName: profile.username
         };
       });
-      const preview = input.body?.trim() || `${optimisticPhotos.length} photo${optimisticPhotos.length === 1 ? "" : "s"}`;
+      const preview = input.body?.trim() || `${optimisticPhotos.length} media item${optimisticPhotos.length === 1 ? "" : "s"}`;
       const optimisticMessage: MemoryMessage = {
         attachments: optimisticPhotos,
         authorDisplayName: profile.displayName || profile.username,
@@ -304,6 +332,14 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         deliveryStatus: "pending",
         editedAt: null,
         id: optimisticMessageId,
+        replyToMessage: replyToMessage
+          ? {
+            id: replyToMessage.id,
+            authorDisplayName: replyToMessage.authorDisplayName,
+            body: replyToMessage.body || "Media"
+          }
+          : null,
+        replyToMessageId: replyToMessage?.id ?? null,
         roomId
       };
 
@@ -312,7 +348,6 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         queryClient.cancelQueries({ queryKey: memoryKeys.list })
       ]);
 
-      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {

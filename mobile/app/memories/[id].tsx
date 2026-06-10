@@ -4,9 +4,12 @@ import * as Contacts from "expo-contacts";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Fragment, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
+  Animated,
   Dimensions,
+  FlatList,
   Keyboard,
   KeyboardAvoidingView,
   type KeyboardEvent,
@@ -14,7 +17,9 @@ import {
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -23,13 +28,15 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type TextStyle,
   useWindowDimensions,
   View,
   type ViewStyle
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import Svg, { Circle, Defs, G, Line, Path, Pattern, Rect } from "react-native-svg";
+import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
@@ -37,6 +44,7 @@ import {
   useAddMemoryPhotoMutation,
   useDeleteMemoryItemsMutation,
   useEditMemoryMessageMutation,
+  useLeaveMemoryRoomMutation,
   useMarkMemoryRoomReadMutation,
   useMemoryRoomQuery,
   useMemoryRoomRealtime
@@ -56,6 +64,27 @@ type RoomMode = "chat" | "media" | "dishes" | "people";
 type TimelineItem =
   | { id: string; createdAt: string; type: "message"; value: MemoryMessage }
   | { id: string; createdAt: string; type: "media"; value: MemoryPhoto };
+type ChatTimelineRow =
+  | { id: string; label: string; type: "date" }
+  | { id: string; type: "unread" }
+  | {
+    groupPosition: MessageGroupPosition;
+    id: string;
+    mine: boolean;
+    rowSpacing: "break" | "group-start" | "grouped";
+    showSenderDetails: boolean;
+    type: "message";
+    value: MemoryMessage;
+  }
+  | {
+    groupPosition: MessageGroupPosition;
+    id: string;
+    mine: boolean;
+    rowSpacing: "break" | "group-start" | "grouped";
+    showSenderDetails: boolean;
+    type: "media";
+    value: MemoryPhoto;
+  };
 type MediaViewerState = {
   index: number;
   items: MemoryPhoto[];
@@ -79,14 +108,47 @@ type ContactInvite = {
 };
 
 const ROOM_MAX_WIDTH = 640;
-const CHAT_ACCENTS = ["#8B6CFF", "#F06030", "#3DD68C", "#E8A830", "#38BDF8", "#F472B6"] as const;
-const CHAT_MESSAGE_GAP = 8;
-const COMPOSER_TOP_GAP = 16;
-const CLOSED_COMPOSER_BOTTOM_GAP = 22;
-const KEYBOARD_COMPOSER_BOTTOM_GAP = 8;
+const ROOM_COLORS = {
+  bg: "#0B0E10",
+  header: "#101316",
+  panel: "#151719",
+  panelRaised: "#1B1E21",
+  mediaPanel: "#111416",
+  border: "rgba(226, 232, 240, 0.09)",
+  borderStrong: "rgba(226, 232, 240, 0.14)",
+  muted: "#8B929C",
+  cool: "#22C7B8",
+  coolDim: "rgba(34, 199, 184, 0.12)",
+  coolBorder: "rgba(34, 199, 184, 0.30)",
+  selection: "rgba(34, 199, 184, 0.15)"
+} as const;
+const CHAT_OWN_BUBBLE_COLOR = "#005C4B";
+const CHAT_OTHER_BUBBLE_COLOR = "#1B2022";
+const CHAT_ACCENTS = ["#22C7B8", "#8B6CFF", "#F06030", "#E8A830", "#38BDF8", "#F472B6", "#3DD68C"] as const;
+const COMPOSER_TOP_GAP = 8;
+const CLOSED_COMPOSER_BOTTOM_GAP = 16;
+const KEYBOARD_COMPOSER_BOTTOM_GAP = 6;
 const ANDROID_KEYBOARD_SAFETY_LIFT = 28;
 const MEDIA_GRID_GAP = 4;
+const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.lg;
+const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
+const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
+const COMPOSER_INPUT_VERTICAL_PADDING = 12;
+const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING;
+const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING;
+const SELECTION_ACTION_BUTTON_SIZE = 38;
+const SELECTION_SECONDARY_ICON_SIZE = 19;
+const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
+const REPLY_SWIPE_MAX_TRANSLATE = 58;
 type MediaPreviewSize = { height: number; width: number };
+type MediaTimestampPlacement = "bottom-left" | "bottom-right";
+type MessageGroupPosition = "single" | "first" | "middle" | "last";
+type AttachmentSheetView = "actions" | "dish" | "media";
+type TypingScrollOptions = {
+  animated?: boolean;
+  delays?: number[];
+  force?: boolean;
+};
 
 function getAndroidKeyboardHeight(event: KeyboardEvent) {
   return Math.max(0, Math.round(event.endCoordinates.height));
@@ -121,12 +183,12 @@ function getSingleMediaPreviewSize({
   imageWidth?: number | null;
   screenWidth: number;
 }): MediaPreviewSize {
-  const maxMediaWidth = Math.min(screenWidth * 0.72, 320);
+  const maxMediaWidth = Math.min(screenWidth * 0.82, 340);
 
   if (!imageWidth || !imageHeight || imageWidth <= 0 || imageHeight <= 0) {
     return {
       height: 220,
-      width: Math.min(maxMediaWidth, 280)
+      width: Math.min(maxMediaWidth * 0.9, 310)
     };
   }
 
@@ -134,14 +196,14 @@ function getSingleMediaPreviewSize({
   if (!Number.isFinite(aspect) || aspect <= 0) {
     return {
       height: 220,
-      width: Math.min(maxMediaWidth, 280)
+      width: Math.min(maxMediaWidth * 0.9, 310)
     };
   }
 
   if (aspect < 0.8) {
-    const width = Math.min(maxMediaWidth * 0.72, 240);
+    const width = Math.min(maxMediaWidth * 0.72, 250);
     const rawHeight = width / aspect;
-    const height = Math.max(300, Math.min(rawHeight, 360));
+    const height = Math.max(300, Math.min(rawHeight, 370));
 
     return {
       height: Math.round(height),
@@ -150,9 +212,9 @@ function getSingleMediaPreviewSize({
   }
 
   if (aspect <= 1.25) {
-    const width = Math.min(maxMediaWidth * 0.9, 290);
+    const width = Math.min(maxMediaWidth * 0.9, 310);
     const rawHeight = width / aspect;
-    const height = Math.min(rawHeight, 310);
+    const height = Math.max(240, Math.min(rawHeight, 320));
 
     return {
       height: Math.round(height),
@@ -162,7 +224,7 @@ function getSingleMediaPreviewSize({
 
   const width = maxMediaWidth;
   const rawHeight = width / aspect;
-  const height = Math.max(180, Math.min(rawHeight, 240));
+  const height = Math.max(180, Math.min(rawHeight, 250));
 
   return {
     height: Math.round(height),
@@ -171,13 +233,30 @@ function getSingleMediaPreviewSize({
 }
 
 function getMultiMediaGridWidth(screenWidth: number) {
-  return Math.round(Math.min(screenWidth * 0.72, Platform.OS === "web" ? 280 : 320));
+  const baseContentWidth = Math.max(0, screenWidth - 32);
+  return Math.round(Math.min(baseContentWidth * 0.82, 330));
+}
+
+function getTimelineSenderUsername(item: TimelineItem) {
+  return item.type === "message" ? item.value.authorName : item.value.uploaderName;
+}
+
+function getTimelineDateKey(item: TimelineItem) {
+  return new Date(item.createdAt).toDateString();
+}
+
+function getMessageGroupPosition(startsGroup: boolean, endsGroup: boolean): MessageGroupPosition {
+  if (startsGroup && endsGroup) return "single";
+  if (startsGroup) return "first";
+  if (endsGroup) return "last";
+  return "middle";
 }
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const roomId = params.id ?? "";
+  const insets = useSafeAreaInsets();
   const room = useMemoryRoomQuery(roomId);
   useMemoryRoomRealtime(roomId);
   const addParticipant = useAddMemoryParticipantMutation(roomId);
@@ -187,12 +266,18 @@ export default function MemoryDetailScreen() {
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
+  const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
   const { height: windowHeight } = useWindowDimensions();
   const peopleInputRef = useRef<TextInput>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
   const initialWindowHeightRef = useRef(Dimensions.get("window").height);
-  const nearBottomRef = useRef(true);
+  const nearBottomRef = useRef(false);
+  const composerHeightRef = useRef(0);
+  const chatTimelineHeightRef = useRef(0);
+  const keepChatPinnedDuringKeyboardRef = useRef(false);
+  const keyboardTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingScrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const readMarkerRef = useRef<string | null>(null);
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -206,9 +291,11 @@ export default function MemoryDetailScreen() {
   const [dishRating, setDishRating] = useState(0);
   const [message, setMessage] = useState("");
   const [editingMessage, setEditingMessage] = useState<MemoryMessage | null>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<MemoryMessage | null>(null);
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [mediaError, setMediaError] = useState("");
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
+  const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -250,7 +337,7 @@ export default function MemoryDetailScreen() {
     };
   }, [mode, myUsername, participant, room.data?.participants, selectedParticipants]);
 
-  useEffect(() => {
+  function markLatestRoomRead() {
     if (!roomId || !room.data) return;
     const latestMessage = room.data.messages[room.data.messages.length - 1];
     const marker = latestMessage?.createdAt ?? room.data.createdAt;
@@ -261,7 +348,12 @@ export default function MemoryDetailScreen() {
         readMarkerRef.current = null;
       }
     });
-  }, [markRead, room.data, roomId]);
+  }
+
+  useEffect(() => {
+    if (mode !== "chat" || !nearBottomRef.current) return;
+    markLatestRoomRead();
+  }, [markRead, mode, room.data, roomId]);
 
   useEffect(() => {
     if (!keyboardVisible) initialWindowHeightRef.current = windowHeight;
@@ -269,25 +361,111 @@ export default function MemoryDetailScreen() {
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", (event: KeyboardEvent) => {
+      Keyboard.scheduleLayoutAnimation(event);
       setKeyboardVisible(true);
       if (Platform.OS === "android") setAndroidKeyboardHeight(getAndroidKeyboardHeight(event));
-      scrollToLatestForTyping();
+      beginKeyboardTransitionPin();
+      scrollToLatestForTyping({
+        animated: true,
+        delays: Platform.OS === "ios" ? [16, 64, 120, 220, 340] : [16, 48, 96, 180]
+      });
     });
-    const hideSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => {
+    const hideSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", (event: KeyboardEvent) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      keepChatPinnedDuringKeyboardRef.current = false;
       setKeyboardVisible(false);
       setAndroidKeyboardHeight(0);
     });
 
     return () => {
+      clearTypingScrollTimers();
+      clearKeyboardTransitionTimer();
       showSubscription.remove();
       hideSubscription.remove();
     };
   }, []);
 
-  function scrollToLatestForTyping() {
-    if (!nearBottomRef.current) return;
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
+  function clearKeyboardTransitionTimer() {
+    if (!keyboardTransitionTimeoutRef.current) return;
+    clearTimeout(keyboardTransitionTimeoutRef.current);
+    keyboardTransitionTimeoutRef.current = null;
+  }
+
+  function beginKeyboardTransitionPin() {
+    keepChatPinnedDuringKeyboardRef.current = nearBottomRef.current;
+    clearKeyboardTransitionTimer();
+    keyboardTransitionTimeoutRef.current = setTimeout(() => {
+      keyboardTransitionTimeoutRef.current = null;
+    }, 520);
+  }
+
+  function clearTypingScrollTimers() {
+    typingScrollTimeoutsRef.current.forEach(clearTimeout);
+    typingScrollTimeoutsRef.current = [];
+  }
+
+  function scrollToLatestForTyping({
+    animated = true,
+    delays = [48, 120, 240],
+    force = false
+  }: TypingScrollOptions = {}) {
+    if (!force && !keepChatPinnedDuringKeyboardRef.current && !nearBottomRef.current) return;
+    clearTypingScrollTimers();
+    scrollRef.current?.scrollToEnd({ animated: false });
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
+    delays.forEach((delay, index) => {
+      const timeout = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: index === 0 && animated });
+      }, delay);
+      typingScrollTimeoutsRef.current.push(timeout);
+    });
+  }
+
+  function handleComposerLayout(event: LayoutChangeEvent) {
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (Math.abs(nextHeight - composerHeightRef.current) < 1) return;
+    composerHeightRef.current = nextHeight;
+    scrollToLatestForTyping({
+      animated: false,
+      delays: [32, 96, 180, 300],
+      force: keepChatPinnedDuringKeyboardRef.current
+    });
+  }
+
+  function handleChatTimelineLayout(event: LayoutChangeEvent) {
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (Math.abs(nextHeight - chatTimelineHeightRef.current) < 1) return;
+    chatTimelineHeightRef.current = nextHeight;
+    scrollToLatestForTyping({
+      animated: false,
+      delays: [32, 96, 180, 300],
+      force: keepChatPinnedDuringKeyboardRef.current
+    });
+  }
+
+  function handleChatNearBottomChange(isNearBottom: boolean) {
+    if (!isNearBottom && keepChatPinnedDuringKeyboardRef.current && keyboardTransitionTimeoutRef.current) return;
+    nearBottomRef.current = isNearBottom;
+    if (isNearBottom) {
+      if (keyboardVisible) keepChatPinnedDuringKeyboardRef.current = true;
+      markLatestRoomRead();
+    } else if (!keyboardTransitionTimeoutRef.current) {
+      keepChatPinnedDuringKeyboardRef.current = false;
+    }
+  }
+
+  function handleChatScrollBeginDrag() {
+    keepChatPinnedDuringKeyboardRef.current = false;
+    clearTypingScrollTimers();
+  }
+
+  function handleComposerFocus() {
+    beginKeyboardTransitionPin();
+    scrollToLatestForTyping({
+      animated: true,
+      delays: Platform.OS === "ios" ? [16, 64, 120, 220, 340] : [16, 48, 96, 180],
+      force: keepChatPinnedDuringKeyboardRef.current
+    });
   }
 
   async function submitParticipants() {
@@ -324,9 +502,10 @@ export default function MemoryDetailScreen() {
         await editMessage.mutateAsync({ body: message, messageId: editingMessage.id });
         setEditingMessage(null);
       } else {
-        await addMessage.mutateAsync(message);
+        await addMessage.mutateAsync({ body: message, replyToMessageId: replyingToMessage?.id ?? null });
       }
       setMessage("");
+      setReplyingToMessage(null);
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     } catch {
       // Rendered from mutation state.
@@ -335,8 +514,16 @@ export default function MemoryDetailScreen() {
 
   function beginEditMessage(target: MemoryMessage) {
     setSelectedItemKeys([]);
+    setReplyingToMessage(null);
     setEditingMessage(target);
     setMessage(target.body);
+    setMode("chat");
+  }
+
+  function beginReplyMessage(target: MemoryMessage) {
+    setSelectedItemKeys([]);
+    setEditingMessage(null);
+    setReplyingToMessage(target);
     setMode("chat");
   }
 
@@ -345,9 +532,14 @@ export default function MemoryDetailScreen() {
     setMessage("");
   }
 
+  function cancelReplyMessage() {
+    setReplyingToMessage(null);
+  }
+
   function beginSelection(target: MemoryActionTarget) {
     const key = memoryActionKey(target);
     setEditingMessage(null);
+    setReplyingToMessage(null);
     setMessage("");
     setSelectedItemKeys([key]);
     suppressSelectionToggleRef.current = key;
@@ -409,9 +601,11 @@ export default function MemoryDetailScreen() {
           mediaUri: asset.uri
         })),
         body: message.trim() || undefined,
+        replyToMessageId: replyingToMessage?.id ?? null,
         roomId
       });
       setMessage("");
+      setReplyingToMessage(null);
       setMode("chat");
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     } catch {
@@ -445,9 +639,19 @@ export default function MemoryDetailScreen() {
       setDishName("");
       setDishNote("");
       setDishRating(0);
+      return true;
     } catch {
       // Rendered from mutation state.
+      return false;
     }
+  }
+
+  async function submitDishFromAttachment() {
+    const didAdd = await submitDish();
+    if (!didAdd) return;
+    setAttachmentOptionsVisible(false);
+    setMode("chat");
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }
 
   function focusPeopleInput() {
@@ -469,6 +673,47 @@ export default function MemoryDetailScreen() {
 
   function openAttachmentOptions() {
     setAttachmentOptionsVisible(true);
+  }
+
+  function openRoomActions() {
+    setRoomActionsVisible(true);
+  }
+
+  function closeRoomActions() {
+    setRoomActionsVisible(false);
+  }
+
+  function openPeopleFromRoomActions() {
+    closeRoomActions();
+    openPeopleAdd();
+  }
+
+  function viewPeopleFromRoomActions() {
+    closeRoomActions();
+    setMode("people");
+  }
+
+  function confirmLeaveRoom() {
+    closeRoomActions();
+    Alert.alert(
+      "Leave room?",
+      "You will no longer see this table memory in your rooms. Messages and media you shared will remain for everyone else.",
+      [
+        { style: "cancel", text: "Cancel" },
+        {
+          onPress: async () => {
+            try {
+              await leaveRoom.mutateAsync();
+              router.replace("/profile");
+            } catch (error) {
+              Alert.alert("Could not leave room", error instanceof Error ? error.message : "Please try again.");
+            }
+          },
+          style: "destructive",
+          text: leaveRoom.isPending ? "Leaving..." : "Leave"
+        }
+      ]
+    );
   }
 
   function openCamera() {
@@ -535,10 +780,9 @@ export default function MemoryDetailScreen() {
       <RoomHeader
         data={data}
         mode={mode}
-        myUsername={myUsername}
-        onAddPeople={openPeopleAdd}
         onBack={goBackToMemories}
         onChangeMode={setMode}
+        onOpenActions={openRoomActions}
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -562,11 +806,13 @@ export default function MemoryDetailScreen() {
                 onAddMedia={openAttachmentOptions}
                 onAddPeople={openPeopleAdd}
                 onBeginSelection={beginSelection}
-                onNearBottomChange={(isNearBottom) => {
-                  nearBottomRef.current = isNearBottom;
-                }}
+                onLayoutChange={handleChatTimelineLayout}
+                onNearBottomChange={handleChatNearBottomChange}
                 onOpenMedia={openMediaViewer}
+                onReplyMessage={beginReplyMessage}
+                onScrollBeginDrag={handleChatScrollBeginDrag}
                 onToggleSelection={toggleSelectedItem}
+                editingMessageId={editingMessage?.id ?? null}
                 lastReadAt={data.lastReadAt}
                 scrollRef={scrollRef}
                 selectedItemKeys={selectedItemKeys}
@@ -614,6 +860,7 @@ export default function MemoryDetailScreen() {
             <SelectionActionBar
               canDelete={canDeleteSelected}
               count={selectedItemKeys.length}
+              bottomInset={insets.bottom}
               deleteError={deleteItems.error?.message}
               deleting={deleteItems.isPending}
               editableMessage={editableSelectedMessage}
@@ -630,22 +877,43 @@ export default function MemoryDetailScreen() {
               messageError={addMessage.error?.message || editMessage.error?.message}
               messagePending={addMessage.isPending || editMessage.isPending}
               editingLabel={editingMessage ? `Editing message` : undefined}
+              bottomInset={insets.bottom}
               keyboardOpen={keyboardVisible}
               onAttach={openAttachmentOptions}
               onCancelEdit={cancelEditMessage}
+              onCancelReply={cancelReplyMessage}
               onChangeMessage={setMessage}
-              onInputFocus={scrollToLatestForTyping}
+              onLayoutChange={handleComposerLayout}
+              onInputFocus={handleComposerFocus}
+              replyingToMessage={replyingToMessage}
               onSend={submitMessage}
             />
           ) : null}
         </View>
 
         <AttachmentOptionsSheet
+          dishError={addDish.error?.message}
+          dishName={dishName}
+          dishNote={dishNote}
+          dishPending={addDish.isPending}
+          dishRating={dishRating}
+          onChangeDishName={setDishName}
+          onChangeDishNote={setDishNote}
+          onChangeDishRating={setDishRating}
           onCamera={openCamera}
           onClose={() => setAttachmentOptionsVisible(false)}
+          onDishSubmit={submitDishFromAttachment}
           onGallery={() => submitMedia(pickMemoryMediaFromGallery)}
           pending={addPhoto.isPending}
           visible={attachmentOptionsVisible}
+        />
+        <RoomActionsSheet
+          leavePending={leaveRoom.isPending}
+          onAddPeople={openPeopleFromRoomActions}
+          onClose={closeRoomActions}
+          onLeave={confirmLeaveRoom}
+          onViewPeople={viewPeopleFromRoomActions}
+          visible={roomActionsVisible}
         />
         <MemoryCameraModal
           onCapture={submitCameraCapture}
@@ -661,17 +929,15 @@ export default function MemoryDetailScreen() {
 function RoomHeader({
   data,
   mode,
-  myUsername,
-  onAddPeople,
   onBack,
-  onChangeMode
+  onChangeMode,
+  onOpenActions
 }: {
   data: MemoryRoom;
   mode: RoomMode;
-  myUsername: string;
-  onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
+  onOpenActions: () => void;
 }) {
   const locationLabel = compactPlaceLocation({
     formattedAddress: data.area ?? "",
@@ -681,7 +947,7 @@ function RoomHeader({
   return (
     <View style={styles.header}>
       <View style={styles.headerTop}>
-        <Pressable accessibilityLabel="Go back" hitSlop={8} onPress={onBack} style={styles.headerIconButton}>
+        <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={onBack} style={styles.headerIconButton}>
           <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
         </Pressable>
         <View style={styles.headerText}>
@@ -691,78 +957,18 @@ function RoomHeader({
             <Text numberOfLines={1} style={styles.roomSubtitle}>{locationLabel || "Area not set"}</Text>
           </View>
         </View>
-        <Pressable accessibilityLabel="Add participant" hitSlop={8} onPress={onAddPeople} style={styles.headerIconButton}>
-          <Ionicons name="person-add-outline" size={19} color={colors.dark.cream} />
+        <Pressable accessibilityLabel="Room actions" accessibilityRole="button" hitSlop={8} onPress={onOpenActions} style={styles.headerIconButton}>
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.dark.cream} />
         </Pressable>
       </View>
 
-      <ParticipantsPreview
-        myUsername={myUsername}
-        onPress={() => onChangeMode("people")}
-        participants={data.participants}
-      />
-
       <View style={styles.modeTabs}>
-        <ModeButton active={mode === "chat"} icon="sparkles-outline" label="Table" onPress={() => onChangeMode("chat")} />
-        <ModeButton active={mode === "media"} icon="images-outline" label="Photos" onPress={() => onChangeMode("media")} />
+        <ModeButton active={mode === "chat"} icon="chatbubble-ellipses-outline" label="Chat" onPress={() => onChangeMode("chat")} />
+        <ModeButton active={mode === "media"} icon="images-outline" label="Media" onPress={() => onChangeMode("media")} />
         <ModeButton active={mode === "dishes"} icon="restaurant-outline" label="Dishes" onPress={() => onChangeMode("dishes")} />
-        <ModeButton active={mode === "people"} icon="people-outline" label="Friends" onPress={() => onChangeMode("people")} />
+        <ModeButton active={mode === "people"} icon="people-outline" label="People" onPress={() => onChangeMode("people")} />
       </View>
     </View>
-  );
-}
-
-function firstNameForDisplay(value: string) {
-  return value.trim().split(/\s+/).filter(Boolean)[0] ?? value;
-}
-
-function ParticipantsPreview({
-  myUsername,
-  onPress,
-  participants
-}: {
-  myUsername?: string;
-  onPress: () => void;
-  participants: MemoryParticipant[];
-}) {
-  const orderedParticipants = myUsername
-    ? [...participants].sort((a, b) => Number(b.username === myUsername) - Number(a.username === myUsername))
-    : participants;
-  const visible = orderedParticipants.slice(0, 3);
-  const remaining = Math.max(0, orderedParticipants.length - visible.length);
-  const names = orderedParticipants.map((participant) => (
-    participant.username === myUsername ? "You" : firstNameForDisplay(participant.displayName || participant.username)
-  ));
-  const label = orderedParticipants.length > 0
-    ? names.join(", ")
-    : "Invite friends";
-
-  return (
-    <Pressable onPress={onPress} style={styles.participantsPreview}>
-      <View style={styles.avatarStack}>
-        {visible.map((participant, index) => (
-          <View
-            key={participant.id}
-            style={[
-              styles.participantAvatar,
-              {
-                backgroundColor: senderAccent(participant.displayName),
-                marginLeft: index === 0 ? 0 : -8
-              }
-            ]}
-          >
-            <Text style={styles.participantInitial}>{participant.displayName.slice(0, 1).toUpperCase()}</Text>
-          </View>
-        ))}
-        {remaining > 0 ? (
-          <View style={[styles.participantAvatar, styles.remainingAvatar, { marginLeft: -8 }]}>
-            <Text style={styles.participantInitial}>+{remaining}</Text>
-          </View>
-        ) : null}
-      </View>
-      <Text numberOfLines={1} style={styles.participantSummary}>{label}</Text>
-      <Ionicons name="chevron-forward" size={14} color={colors.dark.muted} />
-    </Pressable>
   );
 }
 
@@ -778,8 +984,14 @@ function ModeButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
-      <Ionicons name={icon} size={16} color={active ? colors.dark.white : colors.dark.muted} />
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={[styles.modeButton, active && styles.modeButtonActive]}
+    >
+      <Ionicons name={icon} size={15} color={active ? colors.dark.white : colors.dark.muted} />
       <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
     </Pressable>
   );
@@ -787,13 +999,17 @@ function ModeButton({
 
 function ChatTimeline({
   data,
+  editingMessageId,
   myUsername,
   onAddDish,
   onAddMedia,
   onAddPeople,
   onBeginSelection,
+  onLayoutChange,
   onNearBottomChange,
   onOpenMedia,
+  onReplyMessage,
+  onScrollBeginDrag,
   onToggleSelection,
   lastReadAt,
   scrollRef,
@@ -801,16 +1017,20 @@ function ChatTimeline({
   selectionMode
 }: {
   data: MemoryRoom;
+  editingMessageId: string | null;
   myUsername: string;
   onAddDish: () => void;
   onAddMedia: () => void;
   onAddPeople: () => void;
   onBeginSelection: (target: MemoryActionTarget) => void;
+  onLayoutChange: (event: LayoutChangeEvent) => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenMedia: OpenMediaHandler;
+  onReplyMessage: (message: MemoryMessage) => void;
+  onScrollBeginDrag: () => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
   lastReadAt: string | null;
-  scrollRef: React.RefObject<ScrollView | null>;
+  scrollRef: React.RefObject<FlatList<ChatTimelineRow> | null>;
   selectedItemKeys: string[];
   selectionMode: boolean;
 }) {
@@ -836,6 +1056,8 @@ function ChatTimeline({
     [data.participants]
   );
   const didScrollToUnreadRef = useRef(false);
+  const didInitialBottomScrollRef = useRef(false);
+  const listNearBottomRef = useRef(false);
   const firstUnreadItemId = useMemo(() => {
     const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
     return timeline.find((item) => {
@@ -851,374 +1073,561 @@ function ChatTimeline({
     didScrollToUnreadRef.current = false;
   }, [firstUnreadItemId]);
 
-  function handleUnreadDividerLayout(event: LayoutChangeEvent) {
-    if (!firstUnreadItemId || didScrollToUnreadRef.current) return;
-    didScrollToUnreadRef.current = true;
-    const y = Math.max(0, event.nativeEvent.layout.y - 18);
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ animated: false, y }));
+  useEffect(() => {
+    didInitialBottomScrollRef.current = false;
+    listNearBottomRef.current = false;
+  }, [data.id]);
+
+  const timelineRows = useMemo(() => {
+    const rows: ChatTimelineRow[] = [];
+
+    timeline.forEach((item, index) => {
+      const senderUsername = getTimelineSenderUsername(item);
+      const previousItem = timeline[index - 1];
+      const nextItem = timeline[index + 1];
+      const previousSenderUsername = previousItem ? getTimelineSenderUsername(previousItem) : null;
+      const nextSenderUsername = nextItem ? getTimelineSenderUsername(nextItem) : null;
+      const startsNewDay = !previousItem || getTimelineDateKey(previousItem) !== getTimelineDateKey(item);
+      const nextStartsNewDay = nextItem ? getTimelineDateKey(nextItem) !== getTimelineDateKey(item) : false;
+      const mine = senderUsername === myUsername;
+      const startsUnreadGroup = item.id === firstUnreadItemId;
+      const nextStartsUnreadGroup = nextItem?.id === firstUnreadItemId;
+      const startsGroup = startsNewDay || startsUnreadGroup || senderUsername !== previousSenderUsername;
+      const endsGroup = !nextItem || nextStartsNewDay || nextStartsUnreadGroup || senderUsername !== nextSenderUsername;
+      const rowSpacing = startsNewDay || startsUnreadGroup || index === 0
+        ? "break"
+        : startsGroup
+          ? "group-start"
+          : "grouped";
+
+      if (startsNewDay) {
+        rows.push({
+          id: `date:${getTimelineDateKey(item)}`,
+          label: formatDisplayDate(item.createdAt),
+          type: "date"
+        });
+      }
+
+      if (startsUnreadGroup) {
+        rows.push({
+          id: `unread:${item.id}`,
+          type: "unread"
+        });
+      }
+
+      if (item.type === "message") {
+        rows.push({
+          groupPosition: getMessageGroupPosition(startsGroup, endsGroup),
+          id: item.id,
+          mine,
+          rowSpacing,
+          showSenderDetails: !mine && startsGroup,
+          type: "message",
+          value: item.value
+        });
+        return;
+      }
+
+      rows.push({
+        groupPosition: getMessageGroupPosition(startsGroup, endsGroup),
+        id: item.id,
+        mine,
+        rowSpacing,
+        showSenderDetails: !mine && startsGroup,
+        type: "media",
+        value: item.value
+      });
+    });
+
+    return rows;
+  }, [firstUnreadItemId, myUsername, timeline]);
+  const firstUnreadRowIndex = useMemo(
+    () => timelineRows.findIndex((row) => row.type === "unread"),
+    [timelineRows]
+  );
+
+  useEffect(() => {
+    if (firstUnreadRowIndex < 0 || didScrollToUnreadRef.current) return;
+    const timeout = setTimeout(() => {
+      didScrollToUnreadRef.current = true;
+      scrollRef.current?.scrollToIndex({
+        animated: false,
+        index: firstUnreadRowIndex,
+        viewPosition: 0.08
+      });
+    }, 50);
+
+    return () => clearTimeout(timeout);
+  }, [firstUnreadRowIndex, scrollRef]);
+
+  function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" }>["rowSpacing"]) {
+    if (rowSpacing === "break") return styles.chatMessageRowAfterBreak;
+    if (rowSpacing === "group-start") return styles.chatMessageRowGroupStart;
+    return styles.chatMessageRowGrouped;
+  }
+
+  function renderTimelineRow({ item }: { item: ChatTimelineRow }) {
+    if (item.type === "date") return <DateDivider label={item.label} />;
+
+    if (item.type === "unread") {
+      return (
+        <UnreadDivider
+          onJumpToLatest={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        />
+      );
+    }
+
+    const rowStyle = [rowSpacingStyle(item.rowSpacing)];
+
+    if (item.type === "message") {
+      return (
+        <MessageBubble
+          message={item.value}
+          mine={item.mine}
+          onBeginSelection={() => onBeginSelection({ type: "message", value: item.value })}
+          onOpenMedia={onOpenMedia}
+          onReply={() => onReplyMessage(item.value)}
+          onToggleSelection={() => onToggleSelection({ type: "message", value: item.value })}
+          editing={editingMessageId === item.value.id}
+          groupPosition={item.groupPosition}
+          rowStyle={rowStyle}
+          selected={selectedItemKeys.includes(`message:${item.value.id}`)}
+          selectionMode={selectionMode}
+          showSenderDetails={item.showSenderDetails}
+        />
+      );
+    }
+
+    return (
+      <MediaBubble
+        mine={item.mine}
+        onBeginSelection={() => onBeginSelection({ type: "photo", value: item.value })}
+        onOpenMedia={onOpenMedia}
+        onToggleSelection={() => onToggleSelection({ type: "photo", value: item.value })}
+        photo={item.value}
+        groupPosition={item.groupPosition}
+        rowStyle={rowStyle}
+        selected={selectedItemKeys.includes(`photo:${item.value.id}`)}
+        selectionMode={selectionMode}
+        showSenderDetails={item.showSenderDetails}
+        uploaderDisplayName={participantNames.get(item.value.uploaderName) ?? item.value.uploaderName}
+      />
+    );
   }
 
   return (
-    <View style={styles.chatTimelineWrap}>
-      <ScrollView
+    <View onLayout={onLayoutChange} style={styles.chatTimelineWrap}>
+      <FlatList
+        data={timelineRows}
         ref={scrollRef}
-        contentContainerStyle={styles.timelineContent}
+        contentContainerStyle={[
+          styles.timelineContent,
+          timelineRows.length === 0 && styles.timelineContentEmpty
+        ]}
+        keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
-        onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-          onNearBottomChange(distanceFromBottom < 96);
-        }}
-        onContentSizeChange={() => {
-          if (!firstUnreadItemId) scrollRef.current?.scrollToEnd({ animated: false });
-        }}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        style={styles.timelineList}
-      >
-        {timeline.length === 0 ? (
+        ListEmptyComponent={(
           <View style={styles.emptyChat}>
             <View style={styles.emptyIcon}>
-              <Ionicons name="sparkles-outline" size={26} color={colors.dark.orange} />
+              <Ionicons name="sparkles-outline" size={26} color={ROOM_COLORS.cool} />
             </View>
             <Text style={styles.emptyTitle}>Build the table memory</Text>
-            <Text style={styles.emptyText}>Start with a photo, a favorite dish, or the friends who were there.</Text>
+            <Text style={styles.emptyText}>Start with media, a favorite dish, or the friends who were there.</Text>
             <View style={styles.emptyActionRow}>
-              <MemoryQuickAction icon="camera-outline" label="Photo" onPress={onAddMedia} />
+              <MemoryQuickAction icon="camera-outline" label="Media" onPress={onAddMedia} />
               <MemoryQuickAction icon="restaurant-outline" label="Dish" onPress={onAddDish} />
               <MemoryQuickAction icon="person-add-outline" label="Invite" onPress={onAddPeople} />
             </View>
           </View>
-        ) : (
-          timeline.map((item) => (
-            <Fragment key={item.id}>
-              {item.id === firstUnreadItemId ? (
-                <UnreadDivider
-                  onJumpToLatest={() => scrollRef.current?.scrollToEnd({ animated: true })}
-                  onLayout={handleUnreadDividerLayout}
-                />
-              ) : null}
-              {item.type === "message" ? (
-                <MessageBubble
-                  message={item.value}
-                  mine={item.value.authorName === myUsername}
-                  onBeginSelection={() => onBeginSelection({ type: "message", value: item.value })}
-                  onOpenMedia={onOpenMedia}
-                  onToggleSelection={() => onToggleSelection({ type: "message", value: item.value })}
-                  selected={selectedItemKeys.includes(`message:${item.value.id}`)}
-                  selectionMode={selectionMode}
-                />
-              ) : (
-                <MediaBubble
-                  mine={item.value.uploaderName === myUsername}
-                  onBeginSelection={() => onBeginSelection({ type: "photo", value: item.value })}
-                  onOpenMedia={onOpenMedia}
-                  onToggleSelection={() => onToggleSelection({ type: "photo", value: item.value })}
-                  photo={item.value}
-                  selected={selectedItemKeys.includes(`photo:${item.value.id}`)}
-                  selectionMode={selectionMode}
-                  uploaderDisplayName={participantNames.get(item.value.uploaderName) ?? item.value.uploaderName}
-                />
-              )}
-            </Fragment>
-          ))
         )}
-      </ScrollView>
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          const isNearBottom = distanceFromBottom < 96;
+          listNearBottomRef.current = isNearBottom;
+          onNearBottomChange(isNearBottom);
+        }}
+        onScrollBeginDrag={onScrollBeginDrag}
+        onContentSizeChange={() => {
+          const shouldScrollToBottom = !firstUnreadItemId && (
+            !didInitialBottomScrollRef.current || listNearBottomRef.current
+          );
+          if (shouldScrollToBottom) {
+            didInitialBottomScrollRef.current = true;
+            scrollRef.current?.scrollToEnd({ animated: false });
+            listNearBottomRef.current = true;
+            onNearBottomChange(true);
+          }
+        }}
+        onScrollToIndexFailed={(info) => {
+          const offset = Math.max(0, info.averageItemLength * info.index - 18);
+          setTimeout(() => {
+            scrollRef.current?.scrollToOffset({ animated: false, offset });
+          }, 50);
+        }}
+        renderItem={renderTimelineRow}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        style={styles.timelineList}
+      />
     </View>
   );
 }
 
-function FoodChatWallpaper() {
+type DoodleProps = {
+  children: ReactNode;
+  opacity?: number;
+  transform: string;
+};
+
+const FOOD_WALLPAPER_TILE_SIZE = 260;
+const FOOD_WALLPAPER_LINE_COLOR = "#D7CAB9";
+const FOOD_WALLPAPER_OPACITY = 0.34;
+
+function Doodle({ children, opacity = 1, transform }: DoodleProps) {
+  return (
+    <G opacity={opacity} transform={transform}>
+      {children}
+    </G>
+  );
+}
+
+function Pizza({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M0 0l42 14-32 32z" />
+      <Path d="M7 8c9 4 20 8 31 10" />
+      <Circle cx={14} cy={15} r={2} />
+      <Circle cx={24} cy={19} r={1.8} />
+      <Circle cx={17} cy={27} r={1.5} />
+      <Path d="M9 38c4 2 8 1 11-2" />
+    </Doodle>
+  );
+}
+
+function Burger({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M2 20h38" />
+      <Path d="M7 20c0-10 8-17 17-17s17 7 17 17" />
+      <Path d="M5 28h36" />
+      <Path d="M9 36h28" />
+      <Path d="M11 14h2" />
+      <Path d="M19 10h2" />
+      <Path d="M28 13h2" />
+    </Doodle>
+  );
+}
+
+function Fries({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M7 14h31l-5 34H12z" />
+      <Path d="M3 14h39" />
+      <Line x1={13} x2={12} y1={2} y2={34} />
+      <Line x1={21} x2={21} y1={0} y2={35} />
+      <Line x1={30} x2={33} y1={3} y2={34} />
+      <Path d="M18 30c4 3 9 3 14 0" />
+    </Doodle>
+  );
+}
+
+function CoffeeCup({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M7 9h29l-5 36H12z" />
+      <Path d="M3 9h37" />
+      <Path d="M13 45h18" />
+      <Path d="M13 24c5 3 12 3 17 0" />
+      <Path d="M18 2c3-4 9-4 12 0" />
+    </Doodle>
+  );
+}
+
+function BubbleTea({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M8 10h31l-5 42H13z" />
+      <Path d="M3 10h41" />
+      <Line x1={28} x2={22} y1={0} y2={31} />
+      <Circle cx={18} cy={42} r={1.6} />
+      <Circle cx={25} cy={43} r={1.6} />
+      <Circle cx={31} cy={39} r={1.5} />
+      <Circle cx={21} cy={35} r={1.4} />
+      <Path d="M13 27c6 4 15 4 21 0" />
+    </Doodle>
+  );
+}
+
+function Donut({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Circle cx={18} cy={18} r={16} />
+      <Circle cx={18} cy={18} r={7} />
+      <Circle cx={10} cy={12} r={1} />
+      <Circle cx={26} cy={13} r={1} />
+      <Circle cx={12} cy={25} r={1} />
+      <Circle cx={25} cy={25} r={1} />
+      <Path d="M7 18c4-3 7-3 11 0s7 3 11 0" />
+    </Doodle>
+  );
+}
+
+function Ramen({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M0 27h48c-2 12-11 19-24 19S2 39 0 27z" />
+      <Path d="M7 22c9-7 25-7 34 0" />
+      <Path d="M9 31c4-3 7-3 11 0s7 3 11 0 7-3 10 0" />
+      <Path d="M11 37c4-2 7-2 10 0s7 2 11 0" />
+      <Circle cx={28} cy={24} r={4} />
+      <Line x1={35} x2={47} y1={2} y2={25} />
+      <Line x1={42} x2={49} y1={1} y2={21} />
+    </Doodle>
+  );
+}
+
+function Taco({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M2 28c3-14 13-23 25-23s22 9 25 23z" />
+      <Path d="M5 29h45" />
+      <Path d="M12 23c4-4 8-4 12 0s8 4 12 0 7-4 10 0" />
+      <Circle cx={17} cy={17} r={1.4} />
+      <Circle cx={30} cy={15} r={1.4} />
+      <Circle cx={39} cy={19} r={1.4} />
+    </Doodle>
+  );
+}
+
+function Sushi({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Ellipse cx={18} cy={14} rx={17} ry={11} />
+      <Ellipse cx={18} cy={14} rx={8} ry={5} />
+      <Path d="M11 14c4-3 10-3 14 0" />
+      <Path d="M8 25h20" />
+    </Doodle>
+  );
+}
+
+function IceCream({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M11 20c0-7 6-13 14-13s14 6 14 13c0 4-2 7-5 9H16c-3-2-5-5-5-9z" />
+      <Path d="M16 29l9 28 9-28z" />
+      <Path d="M19 37h12" />
+      <Path d="M21 45h8" />
+      <Circle cx={25} cy={4} r={2} />
+    </Doodle>
+  );
+}
+
+function Cocktail({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M1 1h43L23 26z" />
+      <Line x1={23} x2={23} y1={26} y2={51} />
+      <Path d="M10 51h26" />
+      <Circle cx={36} cy={8} r={5} />
+      <Line x1={36} x2={36} y1={3} y2={13} />
+      <Line x1={31} x2={41} y1={8} y2={8} />
+    </Doodle>
+  );
+}
+
+function Cake({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M2 14l37-10v34H2z" />
+      <Path d="M2 14h37" />
+      <Path d="M2 25h37" />
+      <Path d="M13 9c2-5 8-5 10 0" />
+      <Circle cx={18} cy={6} r={2} />
+    </Doodle>
+  );
+}
+
+function Croissant({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M2 23c5-13 18-21 32-17" />
+      <Path d="M34 6c10 3 16 10 18 21" />
+      <Path d="M2 23c10 8 38 8 50 4" />
+      <Path d="M15 14c3 6 3 11 0 17" />
+      <Path d="M30 8c3 8 3 16 0 24" />
+      <Path d="M43 15c-3 6-3 10 0 15" />
+    </Doodle>
+  );
+}
+
+function Cookie({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M30 12c4 3 7 8 7 14 0 10-8 18-18 18S1 36 1 26 9 8 19 8c3 0 5 1 7 2" />
+      <Path d="M29 6c-3 3-2 8 3 9" />
+      <Circle cx={13} cy={20} r={1.5} />
+      <Circle cx={22} cy={18} r={1.4} />
+      <Circle cx={16} cy={31} r={1.5} />
+      <Circle cx={27} cy={29} r={1.3} />
+    </Doodle>
+  );
+}
+
+function Egg({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M2 21c0-9 8-16 17-16 7 0 12 4 14 10 5 1 8 5 8 10 0 9-9 16-21 16S2 33 2 21z" />
+      <Circle cx={22} cy={23} r={6} />
+    </Doodle>
+  );
+}
+
+function Leaf({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M0 10c8-8 20-8 28 0-8 8-20 8-28 0z" />
+      <Path d="M3 10h22" />
+    </Doodle>
+  );
+}
+
+function Sparkle({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M10 0l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" />
+    </Doodle>
+  );
+}
+
+function Heart({ transform }: { transform: string }) {
+  return (
+    <Doodle transform={transform}>
+      <Path d="M12 21C5 15 1 11 1 6c0-3 2-5 5-5 3 0 5 2 6 4 1-2 3-4 6-4 3 0 5 2 5 5 0 5-4 9-11 15z" />
+    </Doodle>
+  );
+}
+
+function TinyMarks() {
+  return (
+    <>
+      <Circle cx={28} cy={52} r={1.2} />
+      <Circle cx={98} cy={34} r={1.2} />
+      <Circle cx={202} cy={26} r={1.2} />
+      <Circle cx={226} cy={88} r={1.2} />
+      <Circle cx={64} cy={128} r={1.2} />
+      <Circle cx={150} cy={116} r={1.2} />
+      <Circle cx={238} cy={168} r={1.2} />
+      <Circle cx={116} cy={224} r={1.2} />
+      <Circle cx={190} cy={236} r={1.2} />
+      <Path d="M74 66c5-3 10-1 12 4" />
+      <Path d="M182 54c-4 2-8 1-11-3" />
+      <Path d="M38 178c4 3 9 3 13 0" />
+      <Path d="M132 188c5-3 10-1 12 4" />
+      <Path d="M214 214c-4 2-8 1-11-3" />
+      <Line x1={40} x2={49} y1={222} y2={231} />
+      <Line x1={49} x2={40} y1={222} y2={231} />
+      <Line x1={168} x2={177} y1={76} y2={85} />
+      <Line x1={177} x2={168} y1={76} y2={85} />
+      <Path d="M18 112h10" />
+      <Path d="M23 107v10" />
+      <Path d="M222 128h10" />
+      <Path d="M227 123v10" />
+    </>
+  );
+}
+
+const FoodChatWallpaper = memo(function FoodChatWallpaper() {
   return (
     <View pointerEvents="none" style={styles.chatWallpaper}>
       <Svg height="100%" style={StyleSheet.absoluteFill} width="100%">
         <Defs>
-          <Pattern height={196} id="foodChatPattern" patternUnits="userSpaceOnUse" width={196}>
-            <Rect fill="#0F0F0E" height={196} width={196} x={0} y={0} />
-            <G fill="none" opacity={0.2} stroke="#81786D" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.2}>
-              <G transform="translate(18 21) rotate(-14) scale(0.9)">
-                <Path d="M0 18h30c-1 8-6 13-15 13S1 26 0 18z" />
-                <Path d="M7 14c4-5 15-5 19 0" />
-                <Line x1={10} x2={9} y1={5} y2={15} />
-                <Line x1={18} x2={18} y1={3} y2={15} />
-                <Line x1={25} x2={27} y1={6} y2={15} />
-              </G>
-
-              <G transform="translate(118 14) rotate(18) scale(0.8)">
-                <Path d="M0 0l35 12-27 25z" />
-                <Circle cx={15} cy={13} r={2} />
-                <Circle cx={23} cy={17} r={2} />
-                <Path d="M8 8c7 3 14 6 23 8" />
-              </G>
-
-              <G transform="translate(61 47) rotate(9) scale(0.72)">
-                <Path d="M0 18h30" />
-                <Path d="M5 18c0-9 6-16 13-16s13 7 13 16" />
-                <Path d="M0 24h31" />
-                <Path d="M7 31h18" />
-              </G>
-
-              <G transform="translate(139 63) rotate(-9) scale(0.75)">
-                <Path d="M6 8h27l-4 28H11z" />
-                <Path d="M0 8h39" />
-                <Path d="M17 0c3-6 10-6 13 0" />
-                <Line x1={23} x2={23} y1={8} y2={36} />
-              </G>
-
-              <G transform="translate(25 105) rotate(12) scale(0.8)">
-                <Path d="M0 18h26" />
-                <Path d="M5 12h16c3 0 5 3 5 6H0c0-3 2-6 5-6z" />
-                <Path d="M7 7h12" />
-              </G>
-
-              <G transform="translate(108 127) rotate(-17) scale(0.8)">
-                <Path d="M5 17c6-8 17-8 23 0" />
-                <Path d="M0 17h33c-1 9-7 14-17 14S1 26 0 17z" />
-                <Path d="M13 9h9" />
-                <Path d="M17 3v11" />
-              </G>
-
-              <G transform="translate(150 150) rotate(25) scale(0.64)">
-                <Path d="M7 0v25" />
-                <Line x1={2} x2={12} y1={2} y2={2} />
-                <Line x1={2} x2={12} y1={7} y2={7} />
-                <Line x1={2} x2={12} y1={12} y2={12} />
-                <Path d="M22 0v25" />
-                <Path d="M29 0c-8 6-8 14 0 20" />
-              </G>
-
-              <G transform="translate(170 28) rotate(-24) scale(0.61)">
-                <Path d="M7 7h24l-5 26H12z" />
-                <Path d="M3 7h32" />
-                <Path d="M14 33h10" />
-                <Path d="M19 33v8" />
-                <Path d="M12 17c4 3 10 3 15 0" />
-              </G>
-
-              <G transform="translate(168 112) rotate(13) scale(0.62)">
-                <Path d="M3 2h22" />
-                <Path d="M6 9h16" />
-                <Path d="M1 16h26" />
-                <Path d="M7 23h14" />
-              </G>
-
-              <G transform="translate(28 168) rotate(-11) scale(0.6)">
-                <Path d="M0 0l30 11-23 21z" />
-                <Circle cx={12} cy={12} r={1.8} />
-                <Circle cx={20} cy={15} r={1.6} />
-                <Path d="M6 8c7 3 13 5 21 7" />
-              </G>
-
-              <G transform="translate(78 12) rotate(28) scale(0.56)">
-                <Path d="M0 16h24" />
-                <Path d="M5 11h14c3 0 5 2 5 5H0c0-3 2-5 5-5z" />
-                <Path d="M7 6h10" />
-              </G>
-
-              <G transform="translate(124 170) rotate(-8) scale(0.54)">
-                <Path d="M5 16h26" />
-                <Path d="M10 10h16c3 0 5 3 5 6H5c0-3 2-6 5-6z" />
-                <Path d="M12 5h11" />
-              </G>
-
-              <G transform="translate(42 70) rotate(-27) scale(0.56)">
-                <Path d="M12 0h10v9l5 6v29H7V15l5-6z" />
-                <Path d="M12 9h10" />
-                <Path d="M10 25h14" />
-                <Path d="M10 34h14" />
-              </G>
-
-              <G transform="translate(162 76) rotate(16) scale(0.54)">
-                <Path d="M13 0h7v10l5 7v30H8V17l5-7z" />
-                <Path d="M10 25c5 3 10 3 15 0" />
-                <Circle cx={28} cy={8} r={1.6} />
-                <Circle cx={33} cy={2} r={1.2} />
-              </G>
-
-              <G transform="translate(98 118) rotate(-22) scale(0.52)">
-                <Path d="M0 0l31 10-23 23z" />
-                <Circle cx={12} cy={11} r={1.7} />
-                <Circle cx={20} cy={15} r={1.5} />
-                <Path d="M6 8c7 3 14 5 22 6" />
-              </G>
-
-              <G transform="translate(6 132) rotate(18) scale(0.48)">
-                <Path d="M13 0h8v9l5 7v28H8V16l5-7z" />
-                <Path d="M10 25h14" />
-                <Path d="M10 34h14" />
-              </G>
-
-              <G transform="translate(112 70) rotate(-33) scale(0.46)">
-                <Path d="M0 0l30 10-22 22z" />
-                <Circle cx={11} cy={11} r={1.6} />
-                <Circle cx={19} cy={14} r={1.4} />
-                <Path d="M6 7c6 3 13 5 21 6" />
-              </G>
-
-              <G transform="translate(74 170) rotate(13) scale(0.48)">
-                <Path d="M2 7h27l-4 27H7z" />
-                <Line x1={8} x2={8} y1={0} y2={26} />
-                <Line x1={15} x2={15} y1={0} y2={27} />
-                <Line x1={22} x2={22} y1={0} y2={26} />
-              </G>
+          <Pattern
+            height={FOOD_WALLPAPER_TILE_SIZE}
+            id="foodChatDoodlePattern"
+            patternUnits="userSpaceOnUse"
+            width={FOOD_WALLPAPER_TILE_SIZE}
+            x={0}
+            y={0}
+          >
+            <Rect fill={ROOM_COLORS.bg} height={FOOD_WALLPAPER_TILE_SIZE} width={FOOD_WALLPAPER_TILE_SIZE} x={0} y={0} />
+            <G
+              fill="none"
+              opacity={FOOD_WALLPAPER_OPACITY}
+              stroke={FOOD_WALLPAPER_LINE_COLOR}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.25}
+            >
+              <Pizza transform="translate(18 22) rotate(-18) scale(0.75)" />
+              <BubbleTea transform="translate(188 14) rotate(10) scale(0.62)" />
+              <Donut transform="translate(104 26) rotate(14) scale(0.55)" />
+              <Croissant transform="translate(42 86) rotate(12) scale(0.48)" />
+              <Ramen transform="translate(158 78) rotate(-8) scale(0.55)" />
+              <CoffeeCup transform="translate(20 150) rotate(-12) scale(0.58)" />
+              <Taco transform="translate(80 132) rotate(15) scale(0.48)" />
+              <Cocktail transform="translate(176 162) rotate(14) scale(0.48)" />
+              <Burger transform="translate(20 214) rotate(-8) scale(0.55)" />
+              <Cake transform="translate(112 198) rotate(12) scale(0.5)" />
+              <IceCream transform="translate(214 210) rotate(-16) scale(0.42)" />
             </G>
-            <G fill="none" opacity={0.17} stroke="#6F6960" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}>
-              <G transform="translate(88 88) rotate(8) scale(0.74)">
-                <Path d="M20 7c0 9-5 15-13 15S-6 16-6 7z" />
-                <Path d="M-1 2c5-5 13-5 17 0" />
-                <Path d="M26 8c6 0 6 9 0 9h-7" />
-              </G>
-
-              <G transform="translate(16 154) rotate(-22) scale(0.68)">
-                <Path d="M0 0c7 1 12 6 13 13C6 12 1 7 0 0z" />
-                <Path d="M29 13c-6-1-10-5-11-11 6 1 10 5 11 11z" />
-              </G>
-
-              <G transform="translate(73 152) rotate(14) scale(0.7)">
-                <Path d="M0 12c6-6 15-6 21 0" />
-                <Path d="M2 18h17" />
-                <Path d="M6 5c2-4 8-4 10 0" />
-              </G>
-
-              <G transform="translate(125 174) rotate(-31) scale(0.58)">
-                <Path d="M0 5c8-6 18-6 26 0" />
-                <Path d="M4 13h18" />
-                <Path d="M8 1c2-4 8-4 10 0" />
-              </G>
-
-              <G transform="translate(172 174) rotate(21) scale(0.64)">
-                <Path d="M3 0v22" />
-                <Path d="M10 0v22" />
-                <Path d="M18 0c5 5 5 13 0 18" />
-              </G>
-
-              <G transform="translate(151 84) rotate(-18) scale(0.54)">
-                <Path d="M0 11c5-5 13-5 18 0" />
-                <Path d="M2 16h14" />
-                <Path d="M6 4c2-3 6-3 8 0" />
-              </G>
-
-              <G transform="translate(16 25) rotate(19) scale(0.52)">
-                <Path d="M0 0c6 1 10 5 11 11C5 10 1 6 0 0z" />
-                <Path d="M22 11c-5-1-8-4-9-9 5 1 8 4 9 9z" />
-              </G>
-
-              <G transform="translate(62 174) rotate(23) scale(0.5)">
-                <Path d="M4 6h25l-4 27H8z" />
-                <Line x1={9} x2={9} y1={0} y2={25} />
-                <Line x1={16} x2={16} y1={0} y2={26} />
-                <Line x1={23} x2={23} y1={0} y2={25} />
-              </G>
-
-              <G transform="translate(126 54) rotate(31) scale(0.46)">
-                <Path d="M6 5h24l-5 25H11z" />
-                <Path d="M2 5h32" />
-                <Path d="M17 30v8" />
-                <Path d="M10 39h15" />
-              </G>
-
-              <G transform="translate(7 80) rotate(-14) scale(0.48)">
-                <Path d="M0 16h25" />
-                <Path d="M4 11h17c3 0 5 2 5 5H0c0-3 2-5 4-5z" />
-                <Path d="M7 6h11" />
-              </G>
-
-              <G transform="translate(48 8) rotate(-19) scale(0.44)">
-                <Path d="M8 8h20l-4 21H12z" />
-                <Path d="M4 8h28" />
-                <Path d="M18 29v7" />
-                <Path d="M11 36h14" />
-              </G>
-
-              <G transform="translate(154 28) rotate(26) scale(0.46)">
-                <Path d="M0 15h24" />
-                <Path d="M5 10h14c3 0 5 2 5 5H0c0-3 2-5 5-5z" />
-                <Path d="M7 5h10" />
-              </G>
-
-              <G transform="translate(174 152) rotate(-24) scale(0.46)">
-                <Path d="M8 0h8v20" />
-                <Path d="M0 20h24" />
-                <Path d="M4 27h16" />
-              </G>
-
-              <G transform="translate(104 14) rotate(11) scale(0.44)">
-                <Path d="M5 16h24" />
-                <Path d="M10 10h14c3 0 5 2 5 6H5c0-4 2-6 5-6z" />
-                <Path d="M12 5h10" />
-              </G>
-
-              <Path d="M52 22l2 4 4 2-4 2-2 4-2-4-4-2 4-2z" />
-              <Path d="M164 103l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M184 64l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M92 180l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M18 118l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M142 28l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M88 44l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M172 92l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M116 184l2 3 3 2-3 2-2 3-2-3-3-2 3-2z" />
-              <Path d="M108 37c5-1 9 2 11 7-5 1-9-2-11-7z" />
-              <Path d="M42 79c-4-1-7-4-8-8 5 1 8 4 8 8z" />
-              <Path d="M181 151c5 0 9 3 10 8-5 0-9-3-10-8z" />
-              <Path d="M68 181c-4 0-8-3-9-7 5 0 8 3 9 7z" />
-              <Path d="M128 137c4-1 8 2 9 6-4 1-8-2-9-6z" />
-              <Path d="M31 103c-4-1-7-4-8-8 5 1 8 4 8 8z" />
-              <Circle cx={47} cy={133} r={1.6} />
-              <Circle cx={121} cy={106} r={1.5} />
-              <Circle cx={172} cy={42} r={1.4} />
-              <Circle cx={82} cy={24} r={1.4} />
-              <Circle cx={30} cy={57} r={1.3} />
-              <Circle cx={169} cy={132} r={1.3} />
-              <Circle cx={190} cy={87} r={1.4} />
-              <Circle cx={146} cy={190} r={1.3} />
-              <Circle cx={17} cy={188} r={1.3} />
-              <Circle cx={190} cy={12} r={1.3} />
-              <Circle cx={116} cy={151} r={1.4} />
-              <Circle cx={5} cy={64} r={1.3} />
-              <Circle cx={187} cy={5} r={1.3} />
-              <Circle cx={58} cy={101} r={1.3} />
-              <Circle cx={93} cy={67} r={1.3} />
-              <Circle cx={137} cy={106} r={1.3} />
-              <Circle cx={27} cy={143} r={1.3} />
-              <Circle cx={183} cy={176} r={1.3} />
-              <Circle cx={72} cy={31} r={1.3} />
-              <Circle cx={101} cy={103} r={1.3} />
-              <Circle cx={149} cy={72} r={1.3} />
-              <Circle cx={45} cy={188} r={1.3} />
-              <Circle cx={160} cy={124} r={1.3} />
-              <Circle cx={12} cy={13} r={1.3} />
-              <Path d="M74 117h12" />
-              <Path d="M80 111v12" />
-              <Line x1={137} x2={147} y1={111} y2={121} />
-              <Line x1={147} x2={137} y1={111} y2={121} />
-              <Line x1={181} x2={191} y1={137} y2={147} />
-              <Line x1={191} x2={181} y1={137} y2={147} />
-              <Path d="M12 92h10" />
-              <Path d="M17 87v10" />
-              <Path d="M154 132h9" />
-              <Path d="M158 128v9" />
-              <Line x1={34} x2={42} y1={165} y2={173} />
-              <Line x1={42} x2={34} y1={165} y2={173} />
+            <G
+              fill="none"
+              opacity={FOOD_WALLPAPER_OPACITY * 0.78}
+              stroke={FOOD_WALLPAPER_LINE_COLOR}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.05}
+            >
+              <Fries transform="translate(90 80) rotate(-7) scale(0.42)" />
+              <Sushi transform="translate(218 62) rotate(19) scale(0.4)" />
+              <Cookie transform="translate(132 142) rotate(-20) scale(0.4)" />
+              <Egg transform="translate(60 188) rotate(18) scale(0.36)" />
+              <CoffeeCup transform="translate(224 120) rotate(18) scale(0.34)" />
+              <Pizza transform="translate(144 232) rotate(-18) scale(0.38)" />
+              <Donut transform="translate(62 30) rotate(-12) scale(0.32)" />
+              <BubbleTea transform="translate(6 72) rotate(18) scale(0.32)" />
+              <Taco transform="translate(202 244) rotate(10) scale(0.34)" />
+            </G>
+            <G
+              fill="none"
+              opacity={FOOD_WALLPAPER_OPACITY * 0.65}
+              stroke={FOOD_WALLPAPER_LINE_COLOR}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={0.95}
+            >
+              <Sparkle transform="translate(150 18) scale(0.55)" />
+              <Sparkle transform="translate(228 44) rotate(18) scale(0.42)" />
+              <Sparkle transform="translate(32 132) rotate(-12) scale(0.45)" />
+              <Sparkle transform="translate(150 176) rotate(8) scale(0.38)" />
+              <Sparkle transform="translate(88 232) rotate(-16) scale(0.42)" />
+              <Heart transform="translate(70 54) rotate(-8) scale(0.42)" />
+              <Heart transform="translate(216 190) rotate(16) scale(0.34)" />
+              <Heart transform="translate(8 238) rotate(-18) scale(0.34)" />
+              <Leaf transform="translate(132 68) rotate(-22) scale(0.38)" />
+              <Leaf transform="translate(238 98) rotate(28) scale(0.32)" />
+              <Leaf transform="translate(104 166) rotate(12) scale(0.34)" />
+              <Leaf transform="translate(170 226) rotate(-24) scale(0.32)" />
+              <TinyMarks />
             </G>
           </Pattern>
         </Defs>
-        <Rect fill="#0F0F0E" height="100%" width="100%" x={0} y={0} />
-        <Rect fill="url(#foodChatPattern)" height="100%" width="100%" x={0} y={0} />
+        <Rect fill={ROOM_COLORS.bg} height="100%" width="100%" x={0} y={0} />
+        <Rect fill="url(#foodChatDoodlePattern)" height="100%" width="100%" x={0} y={0} />
       </Svg>
       <View style={styles.chatWallpaperOverlay} />
     </View>
   );
-}
+});
 
 function UnreadDivider({
-  onJumpToLatest,
-  onLayout
+  onJumpToLatest
 }: {
   onJumpToLatest: () => void;
-  onLayout: (event: LayoutChangeEvent) => void;
 }) {
   return (
-    <View onLayout={onLayout} style={styles.unreadDividerRow}>
+    <View style={styles.unreadDividerRow}>
       <View style={styles.unreadDividerLine} />
       <Text style={styles.unreadDividerText}>New messages</Text>
       <Pressable hitSlop={6} onPress={onJumpToLatest} style={styles.unreadDividerButton}>
@@ -1229,9 +1638,17 @@ function UnreadDivider({
   );
 }
 
+function DateDivider({ label }: { label: string }) {
+  return (
+    <View style={styles.dateDividerRow}>
+      <Text style={styles.dateDividerText}>{label}</Text>
+    </View>
+  );
+}
+
 function MemoryQuickAction({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={styles.quickAction}>
+    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.quickAction}>
       <Ionicons name={icon} size={16} color={colors.dark.cream} />
       <Text numberOfLines={1} style={styles.quickActionText}>{label}</Text>
     </Pressable>
@@ -1253,6 +1670,29 @@ function isOptimisticMemoryMedia(media: MemoryPhoto) {
   return media.id.startsWith("optimistic-media:");
 }
 
+function memoryMessageReplyPreview(message: Pick<MemoryMessage, "attachments" | "body">) {
+  const body = message.body.trim();
+  if (body) return body;
+  return message.attachments.length > 0 ? "Media" : "Message";
+}
+
+function ReplyPreviewBlock({
+  author,
+  body,
+  mine
+}: {
+  author: string;
+  body: string;
+  mine?: boolean;
+}) {
+  return (
+    <View style={[styles.replyPreviewBlock, mine && styles.replyPreviewBlockMine]}>
+      <Text numberOfLines={1} style={styles.replyPreviewAuthor}>{author}</Text>
+      <Text numberOfLines={2} style={styles.replyPreviewText}>{body}</Text>
+    </View>
+  );
+}
+
 function SenderAvatar({ accentColor, name }: { accentColor: string; name: string }) {
   const initials = senderInitials(name);
 
@@ -1263,279 +1703,631 @@ function SenderAvatar({ accentColor, name }: { accentColor: string; name: string
   );
 }
 
-function ChatMessageRow({
-  bubbleStyle,
+function useMediaOpenGuard(onBeginSelection: () => void) {
+  const ignoreOpenAfterLongPressRef = useRef(false);
+  const ignoreOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
+  }, []);
+
+  function handleMediaLongPress() {
+    ignoreOpenAfterLongPressRef.current = true;
+    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
+    ignoreOpenTimeoutRef.current = setTimeout(() => {
+      ignoreOpenAfterLongPressRef.current = false;
+    }, 450);
+    onBeginSelection();
+  }
+
+  function shouldIgnoreMediaOpen() {
+    if (!ignoreOpenAfterLongPressRef.current) return false;
+    ignoreOpenAfterLongPressRef.current = false;
+    if (ignoreOpenTimeoutRef.current) {
+      clearTimeout(ignoreOpenTimeoutRef.current);
+      ignoreOpenTimeoutRef.current = null;
+    }
+    return true;
+  }
+
+  return { handleMediaLongPress, shouldIgnoreMediaOpen };
+}
+
+function getMessageTimestampLabel(message: MemoryMessage) {
+  const time = formatDisplayTime(message.createdAt);
+  return message.editedAt ? `edited ${time}` : time;
+}
+
+function MessageRow({
   children,
-  contentStyle,
-  inlineTimestamp,
+  editing = false,
   mine,
   onPress,
   onLongPress,
+  onSwipeRight,
   rowStyle,
   selected,
   senderName,
-  timestamp
+  showSenderDetails = true
 }: {
-  bubbleStyle?: StyleProp<ViewStyle>;
   children: ReactNode;
-  contentStyle?: StyleProp<ViewStyle>;
-  inlineTimestamp?: boolean;
+  editing?: boolean;
   mine: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
+  onSwipeRight?: () => void;
   rowStyle?: StyleProp<ViewStyle>;
   selected?: boolean;
   senderName: string;
-  timestamp: string;
+  showSenderDetails?: boolean;
 }) {
   const accentColor = senderAccent(senderName);
-  const avatar = <SenderAvatar accentColor={accentColor} name={senderName} />;
-  const bubbleContent = (
-    <>
-      <Text numberOfLines={1} style={[styles.senderName, { color: accentColor }]}>{senderName}</Text>
-      <View style={[styles.chatBubbleContent, contentStyle]}>
-        {children}
-      </View>
-      {inlineTimestamp ? null : <Text style={styles.bubbleTime}>{timestamp}</Text>}
-    </>
-  );
-  const bubble = (
-    <View style={[styles.chatBubble, bubbleStyle]}>
-      {bubbleContent}
-    </View>
-  );
+  const swipeTranslateX = useRef(new Animated.Value(0)).current;
+  const swipeIndicatorOpacity = swipeTranslateX.interpolate({
+    inputRange: [0, REPLY_SWIPE_TRIGGER_DISTANCE],
+    outputRange: [0, 1],
+    extrapolate: "clamp"
+  });
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      Boolean(onSwipeRight) &&
+      gesture.dx > 8 &&
+      Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35
+    ),
+    onPanResponderMove: (_event, gesture) => {
+      if (!onSwipeRight) return;
+      swipeTranslateX.setValue(Math.min(REPLY_SWIPE_MAX_TRANSLATE, Math.max(0, gesture.dx)));
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (onSwipeRight && gesture.dx >= REPLY_SWIPE_TRIGGER_DISTANCE && Math.abs(gesture.dy) < 42) {
+        onSwipeRight();
+      }
+      Animated.spring(swipeTranslateX, {
+        bounciness: 0,
+        speed: 22,
+        toValue: 0,
+        useNativeDriver: true
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(swipeTranslateX, {
+        bounciness: 0,
+        speed: 22,
+        toValue: 0,
+        useNativeDriver: true
+      }).start();
+    }
+  }), [onSwipeRight, swipeTranslateX]);
 
   const rowContent = mine ? (
     <>
-      {bubble}
-      {avatar}
+      {children}
     </>
   ) : (
     <>
-      {avatar}
-      {bubble}
+      <View style={styles.senderAvatarSlot}>
+        {showSenderDetails ? <SenderAvatar accentColor={accentColor} name={senderName} /> : null}
+      </View>
+      {children}
     </>
   );
-  const resolvedRowStyle = [styles.chatMessageRow, rowStyle, mine && styles.chatMessageRowMine, selected && styles.chatMessageRowSelected];
+  const resolvedRowStyle = [
+    styles.chatMessageRow,
+    rowStyle,
+    mine && styles.chatMessageRowMine,
+    selected && styles.chatMessageRowSelected,
+    editing && styles.chatMessageRowEditing
+  ];
 
-  if (onLongPress || onPress) {
+  const rowElement = onLongPress || onPress ? (
+    <Pressable
+      accessibilityLabel={onPress ? `${selected ? "Deselect" : "Select"} chat item` : undefined}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityState={onPress ? { selected: Boolean(selected) } : undefined}
+      delayLongPress={280}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={resolvedRowStyle}
+    >
+      {rowContent}
+    </Pressable>
+  ) : (
+    <View style={resolvedRowStyle}>
+      {rowContent}
+    </View>
+  );
+
+  if (onSwipeRight) {
     return (
-      <Pressable delayLongPress={280} onLongPress={onLongPress} onPress={onPress} style={resolvedRowStyle}>
-        {rowContent}
-      </Pressable>
+      <View style={styles.swipeReplyWrap}>
+        <Animated.View style={[styles.swipeReplyIndicator, { opacity: swipeIndicatorOpacity }]}>
+          <Ionicons name="arrow-undo-outline" size={17} color={colors.dark.white} />
+        </Animated.View>
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={[styles.swipeReplyContent, { transform: [{ translateX: swipeTranslateX }] }]}
+        >
+          {rowElement}
+        </Animated.View>
+      </View>
     );
   }
 
+  return rowElement;
+}
+
+function groupedBubbleCornerStyle(mine: boolean, groupPosition: MessageGroupPosition) {
+  if (groupPosition === "middle" || groupPosition === "last") {
+    return mine ? styles.messageBubbleGroupedMine : styles.messageBubbleGroupedOther;
+  }
+  return null;
+}
+
+function MessageBubbleFrame({
+  children,
+  style
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <View style={resolvedRowStyle}>
-      {rowContent}
+    <View style={[styles.messageBubbleFrame, style]}>
+      {children}
+    </View>
+  );
+}
+
+function MessageMeta({
+  overlay = false,
+  textStyle,
+  time
+}: {
+  overlay?: boolean;
+  textStyle?: StyleProp<TextStyle>;
+  time: string;
+}) {
+  return (
+    <Text style={[styles.inlineTimestampText, overlay && styles.mediaTimestampText, textStyle]}>
+      {time}
+    </Text>
+  );
+}
+
+function InlineTimestampText({
+  fill = false,
+  minWidth,
+  nativeAvailableWidth,
+  text,
+  textStyle,
+  time,
+  timeStyle
+}: {
+  fill?: boolean;
+  minWidth?: number;
+  nativeAvailableWidth?: number;
+  text: string;
+  textStyle?: StyleProp<TextStyle>;
+  time: string;
+  timeStyle?: StyleProp<TextStyle>;
+}) {
+  return (
+    <View
+      style={[
+        styles.inlineTimestampWrap,
+        fill && styles.inlineTimestampWrapFill,
+        Platform.OS !== "web" && fill && nativeAvailableWidth && nativeAvailableWidth > 0
+          ? { width: nativeAvailableWidth }
+          : null,
+        minWidth && minWidth > 0 ? { minWidth } : null
+      ]}
+    >
+      <Text style={[styles.inlineTimestampMessageText, textStyle]}>
+        {text}
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[timeStyle, styles.inlineTimestampReserve]}
+        >
+          {`  ${time}`}
+        </Text>
+      </Text>
+      <View pointerEvents="none" style={styles.inlineTimestampPinnedMeta}>
+        <MessageMeta
+          textStyle={timeStyle}
+          time={time}
+        />
+      </View>
+    </View>
+  );
+}
+
+function MediaSenderHeader({ name }: { name: string }) {
+  return (
+    <View style={styles.mediaSenderHeader}>
+      <Text numberOfLines={1} style={[styles.senderName, styles.mediaSenderName, { color: senderAccent(name) }]}>
+        {name}
+      </Text>
     </View>
   );
 }
 
 function MessageBubble({
+  editing,
+  groupPosition,
   message,
   mine,
   onBeginSelection,
   onOpenMedia,
+  onReply,
+  rowStyle,
   onToggleSelection,
   selected,
-  selectionMode
+  selectionMode,
+  showSenderDetails
 }: {
+  editing: boolean;
+  groupPosition: MessageGroupPosition;
   message: MemoryMessage;
   mine: boolean;
   onBeginSelection: () => void;
   onOpenMedia: OpenMediaHandler;
+  onReply: () => void;
+  rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
   selected: boolean;
   selectionMode: boolean;
+  showSenderDetails: boolean;
 }) {
+  const { width: screenWidth } = useWindowDimensions();
+  const [textBubbleWidth, setTextBubbleWidth] = useState(0);
   const body = message.body.trim();
-  const hasAttachments = message.attachments.length > 0;
-  const timestampLabel = message.deliveryStatus === "pending"
-    ? "Sending..."
-    : `${formatDisplayTime(message.createdAt)}${message.editedAt ? " · edited" : ""}`;
-
-  return (
-    <ChatMessageRow
-      bubbleStyle={!body && hasAttachments ? styles.mediaOnlyChatBubble : undefined}
-      contentStyle={hasAttachments ? (body ? styles.messageWithMediaContent : styles.mediaBubbleContent) : undefined}
-      inlineTimestamp={!hasAttachments}
-      mine={mine}
-      onLongPress={!selectionMode ? onBeginSelection : undefined}
-      onPress={selectionMode ? onToggleSelection : undefined}
-      rowStyle={hasAttachments ? styles.chatMessageRowMedia : undefined}
-      selected={selected}
-      senderName={message.authorDisplayName}
-      timestamp={timestampLabel}
-    >
-      {body ? (
-        hasAttachments ? (
-            <Text style={styles.bubbleText}>{body}</Text>
-        ) : (
-          <View style={styles.textMessageLine}>
-            <Text style={styles.bubbleText}>{body}</Text>
-            <Text style={[styles.inlineBubbleTime, message.deliveryStatus === "pending" && styles.pendingBubbleTime]}>
-              {timestampLabel}
-            </Text>
-          </View>
-        )
-      ) : null}
-      {hasAttachments ? (
-        <MediaAttachmentGrid
-          hasText={Boolean(body)}
-          media={message.attachments}
-          onBeginSelection={onBeginSelection}
-          onOpenMedia={onOpenMedia}
-          selectionMode={selectionMode}
-        />
-      ) : null}
-    </ChatMessageRow>
+  const mediaCount = message.attachments.length;
+  const hasText = body.length > 0;
+  const hasMedia = mediaCount > 0;
+  const isTextOnly = hasText && !hasMedia;
+  const isSingleMedia = mediaCount === 1;
+  const isMultiMedia = mediaCount >= 2;
+  const isMediaOnly = hasMedia && !hasText;
+  const isMediaWithCaption = hasMedia && hasText;
+  const timestampLabel = getMessageTimestampLabel(message);
+  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
+  const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
+  const textBubbleContentMinWidth = Math.max(0, (mine ? 64 : 88) - 22);
+  const textBubbleMeasuredContentWidth = textBubbleWidth > 0 ? Math.max(0, textBubbleWidth - 22) : undefined;
+  const shouldFillTextTimestamp = Boolean(
+    message.replyToMessage && (Platform.OS === "web" || textBubbleMeasuredContentWidth)
   );
+
+  function renderReplyPreview() {
+    return message.replyToMessage ? (
+      <ReplyPreviewBlock
+        author={message.replyToMessage.authorDisplayName}
+        body={message.replyToMessage.body || "Message"}
+        mine={mine}
+      />
+    ) : null;
+  }
+
+  function handleTextBubbleLayout(event: LayoutChangeEvent) {
+    const nextWidth = Math.floor(event.nativeEvent.layout.width);
+    if (nextWidth > 0 && Math.abs(nextWidth - textBubbleWidth) > 1) {
+      setTextBubbleWidth(nextWidth);
+    }
+  }
+
+  function renderTextMessage() {
+    return (
+      <MessageRow
+        editing={editing}
+        mine={mine}
+        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onPress={selectionMode ? onToggleSelection : undefined}
+        onSwipeRight={!selectionMode ? onReply : undefined}
+        rowStyle={rowStyle}
+        selected={selected}
+        senderName={message.authorDisplayName}
+        showSenderDetails={showSenderDetails}
+      >
+        <MessageBubbleFrame
+          style={styles.textMessageFrame}
+        >
+          <View
+            onLayout={message.replyToMessage ? handleTextBubbleLayout : undefined}
+            style={[
+              styles.textMessageBubble,
+              mine ? styles.textMessageBubbleMine : styles.textMessageBubbleOther,
+              bubbleCornerStyle
+            ]}
+          >
+            {!mine && showSenderDetails ? (
+              <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(message.authorDisplayName) }]}>
+                {message.authorDisplayName}
+              </Text>
+            ) : null}
+            {renderReplyPreview()}
+            <InlineTimestampText
+              fill={shouldFillTextTimestamp}
+              minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
+              nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
+              text={body}
+              textStyle={styles.textOnlyBubbleText}
+              time={timestampLabel}
+            />
+          </View>
+        </MessageBubbleFrame>
+      </MessageRow>
+    );
+  }
+
+  function renderSingleMediaMessage() {
+    const media = message.attachments[0];
+    const previewSize = getSingleMediaPreviewSize({
+      imageHeight: media.imageHeight,
+      imageWidth: media.imageWidth,
+      screenWidth
+    });
+
+    function handleOpenMedia() {
+      if (shouldIgnoreMediaOpen()) return;
+      onOpenMedia(media, message.attachments);
+    }
+
+    return (
+      <MessageRow
+        editing={editing}
+        mine={mine}
+        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onPress={selectionMode ? onToggleSelection : undefined}
+        onSwipeRight={!selectionMode ? onReply : undefined}
+        rowStyle={[rowStyle, styles.chatMessageRowMedia]}
+        selected={selected}
+        senderName={message.authorDisplayName}
+        showSenderDetails={showSenderDetails}
+      >
+        <MessageBubbleFrame
+          style={{ width: previewSize.width }}
+        >
+          <View
+            style={[
+              styles.singleMediaMessageCard,
+              mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
+              styles.messageMediaCardFill,
+              bubbleCornerStyle
+            ]}
+          >
+            {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
+            {isMediaOnly && message.replyToMessage ? (
+              <View style={styles.mediaReplyHeader}>
+                {renderReplyPreview()}
+              </View>
+            ) : null}
+            <Pressable
+              delayLongPress={280}
+              disabled={selectionMode}
+              onLongPress={!selectionMode ? handleMediaLongPress : undefined}
+              onPress={handleOpenMedia}
+              style={styles.mediaMessageContent}
+            >
+              <SingleMediaPreview
+                media={media}
+                sizeOverride={previewSize}
+                timestamp={isMediaOnly ? timestampLabel : undefined}
+                timestampPlacement={media.mediaType === "video" ? "bottom-left" : "bottom-right"}
+              />
+            </Pressable>
+            {isMediaWithCaption ? (
+              <View style={styles.mediaCaptionContainer}>
+                {message.replyToMessage ? renderReplyPreview() : null}
+                <InlineTimestampText
+                  fill
+                  nativeAvailableWidth={Math.max(0, previewSize.width - 24)}
+                  text={body}
+                  textStyle={styles.mediaCaptionText}
+                  time={timestampLabel}
+                />
+              </View>
+            ) : null}
+          </View>
+        </MessageBubbleFrame>
+      </MessageRow>
+    );
+  }
+
+  function renderMultiMediaMessage() {
+    const multiMediaCardWidth = getMultiMediaGridWidth(screenWidth);
+
+    return (
+      <MessageRow
+        editing={editing}
+        mine={mine}
+        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onPress={selectionMode ? onToggleSelection : undefined}
+        onSwipeRight={!selectionMode ? onReply : undefined}
+        rowStyle={[rowStyle, styles.chatMessageRowMedia]}
+        selected={selected}
+        senderName={message.authorDisplayName}
+        showSenderDetails={showSenderDetails}
+      >
+        <MessageBubbleFrame
+          style={{ width: multiMediaCardWidth }}
+        >
+          <View
+            style={[
+              styles.multiMediaMessageCard,
+              mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
+              styles.messageMediaCardFill,
+              bubbleCornerStyle
+            ]}
+          >
+            {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
+            {isMediaOnly && message.replyToMessage ? (
+              <View style={styles.mediaReplyHeader}>
+                {renderReplyPreview()}
+              </View>
+            ) : null}
+            <MediaAttachmentGrid
+              gridWidth={multiMediaCardWidth}
+              media={message.attachments}
+              onBeginSelection={onBeginSelection}
+              onOpenMedia={onOpenMedia}
+              selectionMode={selectionMode}
+              timestamp={isMediaOnly ? timestampLabel : undefined}
+            />
+            {isMediaWithCaption ? (
+              <View style={styles.mediaCaptionContainer}>
+                {message.replyToMessage ? renderReplyPreview() : null}
+                <InlineTimestampText
+                  fill
+                  nativeAvailableWidth={Math.max(0, multiMediaCardWidth - 24)}
+                  text={body}
+                  textStyle={styles.mediaCaptionText}
+                  time={timestampLabel}
+                />
+              </View>
+            ) : null}
+          </View>
+        </MessageBubbleFrame>
+      </MessageRow>
+    );
+  }
+
+  if (isTextOnly) return renderTextMessage();
+  if (isSingleMedia) return renderSingleMediaMessage();
+  if (isMultiMedia) return renderMultiMediaMessage();
+
+  return null;
 }
 
 function MediaBubble({
+  groupPosition,
   mine,
   onBeginSelection,
   onOpenMedia,
+  rowStyle,
   onToggleSelection,
   photo,
   selected,
   selectionMode,
+  showSenderDetails,
   uploaderDisplayName
 }: {
+  groupPosition: MessageGroupPosition;
   mine: boolean;
   onBeginSelection: () => void;
   onOpenMedia: OpenMediaHandler;
+  rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
   photo: MemoryPhoto;
   selected: boolean;
   selectionMode: boolean;
+  showSenderDetails: boolean;
   uploaderDisplayName: string;
 }) {
-  const ignoreOpenAfterLongPressRef = useRef(false);
-  const ignoreOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function handleMediaLongPress() {
-    ignoreOpenAfterLongPressRef.current = true;
-    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
-    ignoreOpenTimeoutRef.current = setTimeout(() => {
-      ignoreOpenAfterLongPressRef.current = false;
-    }, 450);
-    onBeginSelection();
-  }
+  const { width: screenWidth } = useWindowDimensions();
+  const singleMediaPreviewSize = getSingleMediaPreviewSize({
+    imageHeight: photo.imageHeight,
+    imageWidth: photo.imageWidth,
+    screenWidth
+  });
+  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
+  const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
 
   function handleOpenMedia() {
-    if (ignoreOpenAfterLongPressRef.current) {
-      ignoreOpenAfterLongPressRef.current = false;
-      if (ignoreOpenTimeoutRef.current) {
-        clearTimeout(ignoreOpenTimeoutRef.current);
-        ignoreOpenTimeoutRef.current = null;
-      }
-      return;
-    }
+    if (shouldIgnoreMediaOpen()) return;
     onOpenMedia(photo, [photo]);
   }
 
   return (
-    <ChatMessageRow
-      bubbleStyle={styles.mediaOnlyChatBubble}
-      contentStyle={styles.mediaBubbleContent}
+    <MessageRow
       mine={mine}
       onLongPress={!selectionMode ? onBeginSelection : undefined}
       onPress={selectionMode ? onToggleSelection : undefined}
-      rowStyle={styles.chatMessageRowMedia}
+      rowStyle={[rowStyle, styles.chatMessageRowMedia]}
       selected={selected}
       senderName={uploaderDisplayName}
-      timestamp={formatDisplayTime(photo.createdAt)}
+      showSenderDetails={showSenderDetails}
     >
-      <Pressable
-        disabled={selectionMode}
-        delayLongPress={280}
-        onLongPress={!selectionMode ? handleMediaLongPress : undefined}
-        onPress={handleOpenMedia}
-        style={styles.mediaMessageContent}
+      <MessageBubbleFrame
+        style={{ width: singleMediaPreviewSize.width }}
       >
-        <SingleMediaPreview media={photo} />
-      </Pressable>
-    </ChatMessageRow>
+        <View
+          style={[
+            styles.singleMediaMessageCard,
+            mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
+            styles.messageMediaCardFill,
+            bubbleCornerStyle
+          ]}
+        >
+          {!mine && showSenderDetails ? <MediaSenderHeader name={uploaderDisplayName} /> : null}
+          <Pressable
+            disabled={selectionMode}
+            delayLongPress={280}
+            onLongPress={!selectionMode ? handleMediaLongPress : undefined}
+            onPress={handleOpenMedia}
+            style={styles.mediaMessageContent}
+          >
+            <SingleMediaPreview
+              media={photo}
+              sizeOverride={singleMediaPreviewSize}
+              timestamp={formatDisplayTime(photo.createdAt)}
+              timestampPlacement={photo.mediaType === "video" ? "bottom-left" : "bottom-right"}
+            />
+          </Pressable>
+        </View>
+      </MessageBubbleFrame>
+    </MessageRow>
   );
 }
 
 function MediaAttachmentGrid({
-  hasText,
+  gridWidth,
   media,
   onBeginSelection,
   onOpenMedia,
-  selectionMode
+  selectionMode,
+  timestamp
 }: {
-  hasText?: boolean;
+  gridWidth: number;
   media: MemoryPhoto[];
   onBeginSelection: () => void;
   onOpenMedia: OpenMediaHandler;
   selectionMode?: boolean;
+  timestamp?: string;
 }) {
-  const { width: screenWidth } = useWindowDimensions();
-  const ignoreOpenAfterLongPressRef = useRef(false);
-  const ignoreOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
   const visible = media.slice(0, 4);
   const hiddenCount = Math.max(0, media.length - visible.length);
-  const gridWidth = getMultiMediaGridWidth(screenWidth);
-
-  function handleMediaLongPress() {
-    ignoreOpenAfterLongPressRef.current = true;
-    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
-    ignoreOpenTimeoutRef.current = setTimeout(() => {
-      ignoreOpenAfterLongPressRef.current = false;
-    }, 450);
-    onBeginSelection();
-  }
 
   function handleOpenMedia(item: MemoryPhoto) {
-    if (ignoreOpenAfterLongPressRef.current) {
-      ignoreOpenAfterLongPressRef.current = false;
-      if (ignoreOpenTimeoutRef.current) {
-        clearTimeout(ignoreOpenTimeoutRef.current);
-        ignoreOpenTimeoutRef.current = null;
-      }
-      return;
-    }
+    if (shouldIgnoreMediaOpen()) return;
     onOpenMedia(item, media);
   }
 
-  if (media.length === 1) {
-    return (
-      <View style={[styles.singleAttachment, hasText && styles.attachmentsAfterText]}>
-        <Pressable
-          delayLongPress={280}
-          disabled={selectionMode}
-          onLongPress={!selectionMode ? handleMediaLongPress : undefined}
-          onPress={() => handleOpenMedia(media[0])}
-          style={styles.mediaMessageContent}
-        >
-          <SingleMediaPreview media={media[0]} />
-        </Pressable>
-      </View>
-    );
-  }
-
   if (media.length === 2) {
-    const tileWidth = (gridWidth - MEDIA_GRID_GAP) / 2;
-    const tileSize = { height: Platform.OS === "web" ? 138 : 160, width: tileWidth };
+    const tileWidth = Math.floor((gridWidth - MEDIA_GRID_GAP) / 2);
+    const tileSize = { height: Platform.OS === "web" ? 140 : 168, width: tileWidth };
 
     return (
-      <View style={[styles.multiMediaGrid, hasText && styles.attachmentsAfterText, { width: gridWidth }]}>
-        {visible.slice(0, 2).map((item) => (
-          <MediaGridTile
-            hiddenCount={0}
-            key={item.id}
-            media={item}
-            onLongPress={handleMediaLongPress}
-            onPress={() => handleOpenMedia(item)}
-            selectionMode={selectionMode}
-            style={tileSize}
+      <View style={[styles.attachmentGridFrame, { width: gridWidth }]}>
+        <View style={[styles.multiMediaGrid, { width: gridWidth }]}>
+          {visible.slice(0, 2).map((item) => (
+            <MediaGridTile
+              hiddenCount={0}
+              key={item.id}
+              media={item}
+              onLongPress={handleMediaLongPress}
+              onPress={() => handleOpenMedia(item)}
+              selectionMode={selectionMode}
+              style={tileSize}
+            />
+          ))}
+        </View>
+        {timestamp ? (
+          <MediaTimestampOverlay
+            placement={getMediaGridTimestampPlacement(media)}
+            timestamp={timestamp}
           />
-        ))}
+        ) : null}
       </View>
     );
   }
@@ -1547,54 +2339,78 @@ function MediaAttachmentGrid({
     const rightTileHeight = (gridHeight - MEDIA_GRID_GAP) / 2;
 
     return (
-      <View style={[styles.multiMediaGrid, hasText && styles.attachmentsAfterText, { height: gridHeight, width: gridWidth }]}>
-        <MediaGridTile
-          hiddenCount={0}
-          media={visible[0]}
-          onLongPress={handleMediaLongPress}
-          onPress={() => handleOpenMedia(visible[0])}
-          selectionMode={selectionMode}
-          style={{ height: gridHeight, width: leftWidth }}
-        />
-        <View style={styles.mediaGridStack}>
-          {visible.slice(1, 3).map((item) => (
+      <View style={[styles.attachmentGridFrame, { width: gridWidth }]}>
+        <View style={[styles.multiMediaGrid, { height: gridHeight, width: gridWidth }]}>
+          <MediaGridTile
+            hiddenCount={0}
+            media={visible[0]}
+            onLongPress={handleMediaLongPress}
+            onPress={() => handleOpenMedia(visible[0])}
+            selectionMode={selectionMode}
+            style={{ height: gridHeight, width: leftWidth }}
+          />
+          <View style={styles.mediaGridStack}>
+            {visible.slice(1, 3).map((item) => (
+              <MediaGridTile
+                hiddenCount={0}
+                key={item.id}
+                media={item}
+                onLongPress={handleMediaLongPress}
+                onPress={() => handleOpenMedia(item)}
+                selectionMode={selectionMode}
+                style={{ height: rightTileHeight, width: rightWidth }}
+              />
+            ))}
+          </View>
+        </View>
+        {timestamp ? (
+          <MediaTimestampOverlay
+            placement={getMediaGridTimestampPlacement(media)}
+            timestamp={timestamp}
+          />
+        ) : null}
+      </View>
+    );
+  }
+
+  const tileWidth = Math.floor((gridWidth - MEDIA_GRID_GAP) / 2);
+  const tileHeight = Platform.OS === "web" ? 130 : 150;
+
+  return (
+    <View style={[styles.attachmentGridFrame, { width: gridWidth }]}>
+      <View style={[styles.multiMediaGrid, styles.multiMediaGridWrap, { width: gridWidth }]}>
+        {visible.map((item, index) => {
+          const showHiddenCount = index === visible.length - 1 && hiddenCount > 0;
+
+          return (
             <MediaGridTile
-              hiddenCount={0}
+              hiddenCount={showHiddenCount ? hiddenCount : 0}
               key={item.id}
               media={item}
               onLongPress={handleMediaLongPress}
               onPress={() => handleOpenMedia(item)}
               selectionMode={selectionMode}
-              style={{ height: rightTileHeight, width: rightWidth }}
+              style={{ height: tileHeight, width: tileWidth }}
             />
-          ))}
-        </View>
+          );
+        })}
       </View>
-    );
-  }
-
-  const tileWidth = (gridWidth - MEDIA_GRID_GAP) / 2;
-  const tileHeight = Platform.OS === "web" ? 128 : 150;
-
-  return (
-    <View style={[styles.multiMediaGrid, styles.multiMediaGridWrap, hasText && styles.attachmentsAfterText, { width: gridWidth }]}>
-      {visible.map((item, index) => {
-        const showHiddenCount = index === visible.length - 1 && hiddenCount > 0;
-
-        return (
-          <MediaGridTile
-            hiddenCount={showHiddenCount ? hiddenCount : 0}
-            key={item.id}
-            media={item}
-            onLongPress={handleMediaLongPress}
-            onPress={() => handleOpenMedia(item)}
-            selectionMode={selectionMode}
-            style={{ height: tileHeight, width: tileWidth }}
-          />
-        );
-      })}
+      {timestamp ? (
+        <MediaTimestampOverlay
+          placement={getMediaGridTimestampPlacement(media)}
+          timestamp={timestamp}
+        />
+      ) : null}
     </View>
   );
+}
+
+function getMediaGridTimestampPlacement(media: MemoryPhoto[]): MediaTimestampPlacement {
+  const visible = media.slice(0, 4);
+  const bottomRightMedia = media.length === 3 ? visible[2] : visible[Math.min(visible.length - 1, 3)];
+  const hasMoreOverlay = media.length > 4;
+  if (hasMoreOverlay || bottomRightMedia?.mediaType === "video") return "bottom-left";
+  return "bottom-right";
 }
 
 function MediaGridTile({
@@ -1612,21 +2428,58 @@ function MediaGridTile({
   selectionMode?: boolean;
   style: MediaPreviewSize;
 }) {
+  const mediaLabel = media.mediaType === "video" ? "Open video" : "Open photo";
+  const accessibilityLabel = hiddenCount > 0 ? `${mediaLabel}, plus ${hiddenCount} more` : mediaLabel;
+
   return (
     <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="imagebutton"
       delayLongPress={280}
       disabled={selectionMode}
       onLongPress={!selectionMode ? onLongPress : undefined}
       onPress={onPress}
       style={[styles.mediaGridTile, style]}
     >
-      <MediaPreview media={media} style={styles.mediaFill} />
+      <GridMediaPreview media={media} />
       {hiddenCount > 0 ? (
         <View style={styles.attachmentMoreOverlay}>
           <Text style={styles.attachmentMoreText}>+{hiddenCount}</Text>
         </View>
       ) : null}
     </Pressable>
+  );
+}
+
+function GridMediaPreview({ media }: { media: MemoryPhoto }) {
+  if (media.mediaType === "video") {
+    return (
+      <View style={styles.gridVideoPreview}>
+        <View style={styles.gridVideoOverlay}>
+          {isOptimisticMemoryMedia(media) ? (
+            <View style={styles.mediaPendingOverlay}>
+              <Ionicons name="cloud-upload-outline" size={17} color={colors.dark.white} />
+              <Text style={styles.mediaPendingText}>Sending</Text>
+            </View>
+          ) : null}
+          <View style={styles.gridPlayBadge}>
+            <Ionicons name="play" size={18} color={colors.dark.white} />
+          </View>
+          <View style={styles.gridMediaTypeBadge}>
+            <Ionicons name="videocam" size={11} color={colors.dark.white} />
+            <Text style={styles.mediaTypeBadgeText}>Video</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      contentFit="cover"
+      source={{ uri: media.publicUrl }}
+      style={styles.gridMediaFill}
+    />
   );
 }
 
@@ -1647,14 +2500,19 @@ function MediaGallery({
           <View style={styles.emptyIcon}>
             <Ionicons name="images-outline" size={26} color={colors.dark.orange} />
           </View>
-          <Text style={styles.emptyTitle}>No table photos yet</Text>
-          <Text style={styles.emptyText}>Photos and videos from everyone at the meal will collect here.</Text>
+          <Text style={styles.emptyTitle}>No media shared yet</Text>
+          <Text style={styles.emptyText}>Photos and videos from the table will appear here.</Text>
         </View>
       ) : (
         <View style={styles.galleryGrid}>
           {photos.map((photo) => (
             <View key={photo.id} style={styles.galleryItem}>
-              <Pressable onPress={() => onOpenMedia(photo, [photo])} style={styles.galleryMediaButton}>
+              <Pressable
+                accessibilityLabel={photo.mediaType === "video" ? "Open video" : "Open photo"}
+                accessibilityRole="imagebutton"
+                onPress={() => onOpenMedia(photo, [photo])}
+                style={styles.galleryMediaButton}
+              >
                 <MediaPreview media={photo} style={styles.mediaPreviewFlush} />
               </Pressable>
             </View>
@@ -1867,7 +2725,7 @@ function PeoplePanel({
   }
 
   async function inviteContact(contact: ContactInvite) {
-    const message = `Join my Table Memory for ${roomName} on CircleBites. We can save the photos, dishes, and notes from this place together.`;
+    const message = `Join my Table Memory for ${roomName} on CircleBites. We can save the media, dishes, and notes from this place together.`;
     try {
       if (contact.kind === "phone") {
         const separator = Platform.OS === "ios" ? "&" : "?";
@@ -2072,37 +2930,197 @@ function ContactsInviteModal({
 }
 
 function AttachmentOptionsSheet({
+  dishError,
+  dishName,
+  dishNote,
+  dishPending,
+  dishRating,
+  onChangeDishName,
+  onChangeDishNote,
+  onChangeDishRating,
   onCamera,
   onClose,
+  onDishSubmit,
   onGallery,
   pending,
   visible
 }: {
+  dishError?: string;
+  dishName: string;
+  dishNote: string;
+  dishPending: boolean;
+  dishRating: number;
+  onChangeDishName: (value: string) => void;
+  onChangeDishNote: (value: string) => void;
+  onChangeDishRating: (value: number) => void;
   onCamera: () => void;
   onClose: () => void;
+  onDishSubmit: () => void;
   onGallery: () => void;
   pending: boolean;
   visible: boolean;
 }) {
+  const [view, setView] = useState<AttachmentSheetView>("actions");
+  const canSubmitDish = Boolean(dishName.trim()) && !dishPending;
+
+  useEffect(() => {
+    if (visible) setView("actions");
+  }, [visible]);
+
+  const title = view === "dish" ? "Add dish" : view === "media" ? "Add media" : "Add to memory";
+  const subtitle = view === "dish"
+    ? "Save a dish and your rating for this group."
+    : view === "media"
+      ? "Share a photo or video in the chat."
+      : "Choose what you want to add to this chat.";
+
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <Pressable onPress={onClose} style={styles.attachSheetBackdrop}>
-        <Pressable style={styles.attachSheet} onPress={(event) => event.stopPropagation()}>
-          <View style={styles.attachSheetHandle} />
-          <Pressable disabled={pending} onPress={onCamera} style={styles.attachSheetOption}>
-            <View style={styles.attachSheetIcon}>
-              <Ionicons name="camera-outline" size={20} color={colors.dark.orange} />
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.attachSheetKeyboard}>
+        <Pressable onPress={onClose} style={styles.attachSheetBackdrop}>
+          <Pressable style={styles.attachSheet} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.attachSheetHeaderRow}>
+              {view === "actions" ? <View style={styles.attachSheetHeaderSpacer} /> : (
+                <Pressable accessibilityLabel="Back" hitSlop={8} onPress={() => setView("actions")} style={styles.attachSheetHeaderButton}>
+                  <Ionicons name="chevron-back" size={18} color={ROOM_COLORS.cool} />
+                </Pressable>
+              )}
+              <View style={styles.attachSheetHeaderText}>
+                <Text style={styles.attachSheetTitle}>{title}</Text>
+                <Text numberOfLines={1} style={styles.attachSheetSubtitle}>{subtitle}</Text>
+              </View>
+              <Pressable accessibilityLabel="Close" hitSlop={8} onPress={onClose} style={styles.attachSheetHeaderButton}>
+                <Ionicons name="close" size={18} color={colors.dark.muted} />
+              </Pressable>
             </View>
-            <Text style={styles.attachSheetOptionText}>Camera</Text>
+
+            {view === "actions" ? (
+              <View style={styles.attachActionGrid}>
+                <Pressable disabled={pending} onPress={() => setView("media")} style={[styles.attachActionCard, pending && styles.attachActionCardDisabled]}>
+                  <View style={styles.attachActionIcon}>
+                    <Ionicons name="images-outline" size={22} color={ROOM_COLORS.cool} />
+                  </View>
+                  <Text style={styles.attachActionTitle}>Media</Text>
+                  <Text numberOfLines={2} style={styles.attachActionSubtitle}>Photos and videos</Text>
+                </Pressable>
+                <Pressable disabled={dishPending} onPress={() => setView("dish")} style={[styles.attachActionCard, dishPending && styles.attachActionCardDisabled]}>
+                  <View style={[styles.attachActionIcon, styles.attachActionIconDish]}>
+                    <Ionicons name="restaurant-outline" size={22} color={colors.dark.gold} />
+                  </View>
+                  <Text style={styles.attachActionTitle}>Dish</Text>
+                  <Text numberOfLines={2} style={styles.attachActionSubtitle}>Name, note and rating</Text>
+                </Pressable>
+              </View>
+            ) : view === "media" ? (
+              <View style={styles.attachSheetOptionList}>
+                <Pressable disabled={pending} onPress={onCamera} style={[styles.attachSheetOption, pending && styles.attachActionCardDisabled]}>
+                  <View style={styles.attachSheetIcon}>
+                    <Ionicons name="camera-outline" size={20} color={ROOM_COLORS.cool} />
+                  </View>
+                  <View style={styles.attachSheetOptionCopy}>
+                    <Text style={styles.attachSheetOptionText}>Camera</Text>
+                    <Text style={styles.attachSheetOptionSubtext}>Take a new photo.</Text>
+                  </View>
+                </Pressable>
+                <Pressable disabled={pending} onPress={onGallery} style={[styles.attachSheetOption, pending && styles.attachActionCardDisabled]}>
+                  <View style={styles.attachSheetIcon}>
+                    <Ionicons name="images-outline" size={20} color={ROOM_COLORS.cool} />
+                  </View>
+                  <View style={styles.attachSheetOptionCopy}>
+                    <Text style={styles.attachSheetOptionText}>Gallery</Text>
+                    <Text style={styles.attachSheetOptionSubtext}>Choose photos or videos.</Text>
+                  </View>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.attachDishForm}>
+                <View style={styles.attachDishInputWrap}>
+                  <Ionicons name="restaurant-outline" size={16} color={colors.dark.gold} />
+                  <TextInput
+                    onChangeText={onChangeDishName}
+                    placeholder="Dish name"
+                    placeholderTextColor={colors.dark.muted}
+                    style={styles.attachDishInput}
+                    value={dishName}
+                  />
+                </View>
+                <View style={styles.attachDishInputWrap}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.dark.muted} />
+                  <TextInput
+                    onChangeText={onChangeDishNote}
+                    placeholder="Note for the group"
+                    placeholderTextColor={colors.dark.muted}
+                    style={styles.attachDishInput}
+                    value={dishNote}
+                  />
+                </View>
+                <View style={styles.attachDishFooter}>
+                  <View style={styles.attachDishStars}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Pressable key={star} hitSlop={6} onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}>
+                        <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={22} color={colors.dark.gold} />
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Pressable disabled={!canSubmitDish} onPress={onDishSubmit} style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}>
+                    <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding" : "Add"}</Text>
+                  </Pressable>
+                </View>
+                {dishError ? <Text style={styles.error}>{dishError}</Text> : null}
+              </View>
+            )}
           </Pressable>
-          <Pressable disabled={pending} onPress={onGallery} style={styles.attachSheetOption}>
-            <View style={styles.attachSheetIcon}>
-              <Ionicons name="images-outline" size={20} color={colors.dark.orange} />
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function RoomActionsSheet({
+  leavePending,
+  onAddPeople,
+  onClose,
+  onLeave,
+  onViewPeople,
+  visible
+}: {
+  leavePending: boolean;
+  onAddPeople: () => void;
+  onClose: () => void;
+  onLeave: () => void;
+  onViewPeople: () => void;
+  visible: boolean;
+}) {
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+      <Pressable onPress={onClose} style={styles.roomActionsBackdrop}>
+        <Pressable style={styles.roomActionsPopover} onPress={(event) => event.stopPropagation()}>
+          <Pressable onPress={onAddPeople} style={styles.roomActionOption}>
+            <View style={styles.roomActionIcon}>
+              <Ionicons name="person-add-outline" size={19} color={colors.dark.orange} />
             </View>
-            <Text style={styles.attachSheetOptionText}>Gallery</Text>
+            <View style={styles.roomActionText}>
+              <Text style={styles.roomActionTitle}>Add friends</Text>
+              <Text style={styles.roomActionSubtitle}>Invite more people to this room.</Text>
+            </View>
           </Pressable>
-          <Pressable onPress={onClose} style={styles.attachSheetCancel}>
-            <Text style={styles.attachSheetCancelText}>Cancel</Text>
+          <Pressable onPress={onViewPeople} style={styles.roomActionOption}>
+            <View style={[styles.roomActionIcon, styles.roomActionIconCool]}>
+              <Ionicons name="people-outline" size={19} color={ROOM_COLORS.cool} />
+            </View>
+            <View style={styles.roomActionText}>
+              <Text style={styles.roomActionTitle}>View friends</Text>
+              <Text style={styles.roomActionSubtitle}>See everyone in the room.</Text>
+            </View>
+          </Pressable>
+          <Pressable disabled={leavePending} onPress={onLeave} style={[styles.roomActionOption, leavePending && styles.roomActionDisabled]}>
+            <View style={[styles.roomActionIcon, styles.roomActionIconDanger]}>
+              <Ionicons name="exit-outline" size={19} color={colors.dark.dangerSoft} />
+            </View>
+            <View style={styles.roomActionText}>
+              <Text style={[styles.roomActionTitle, styles.roomActionDangerText]}>{leavePending ? "Leaving..." : "Leave room"}</Text>
+              <Text style={styles.roomActionSubtitle}>Remove this memory from your rooms.</Text>
+            </View>
           </Pressable>
         </Pressable>
       </Pressable>
@@ -2111,6 +3129,7 @@ function AttachmentOptionsSheet({
 }
 
 function SelectionActionBar({
+  bottomInset,
   canDelete,
   count,
   deleteError,
@@ -2120,6 +3139,7 @@ function SelectionActionBar({
   onDelete,
   onEdit
 }: {
+  bottomInset: number;
   canDelete: boolean;
   count: number;
   deleteError?: string;
@@ -2130,7 +3150,12 @@ function SelectionActionBar({
   onEdit: (message: MemoryMessage) => void;
 }) {
   return (
-    <View style={styles.selectionBarWrap}>
+    <View
+      style={[
+        styles.selectionBarWrap,
+        { paddingBottom: Math.max(CLOSED_COMPOSER_BOTTOM_GAP, bottomInset + spacing.sm) }
+      ]}
+    >
       {deleteError ? <Text style={styles.error}>{deleteError}</Text> : null}
       <View style={styles.selectionBar}>
         <Pressable accessibilityLabel="Cancel selection" onPress={onCancel} style={styles.selectionBarButton}>
@@ -2146,7 +3171,7 @@ function SelectionActionBar({
             onPress={() => onEdit(editableMessage)}
             style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
           >
-            <Ionicons name="create-outline" size={19} color={colors.dark.white} />
+            <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={colors.dark.white} />
           </Pressable>
         ) : null}
         {canDelete ? (
@@ -2156,7 +3181,7 @@ function SelectionActionBar({
             onPress={onDelete}
             style={[styles.selectionDeleteButton, (deleting || count === 0) && styles.selectionDeleteButtonDisabled]}
           >
-            <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={19} color={colors.dark.white} />
+            <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={colors.dark.white} />
           </Pressable>
         ) : null}
       </View>
@@ -2173,6 +3198,7 @@ function MemoryCameraModal({
   onClose: () => void;
   visible: boolean;
 }) {
+  const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
   const [cameraMode, setCameraMode] = useState<"picture" | "video">("picture");
   const [facing, setFacing] = useState<"back" | "front">("back");
@@ -2288,7 +3314,12 @@ function MemoryCameraModal({
           </View>
         )}
 
-        <View style={styles.cameraTopControls}>
+        <View
+          style={[
+            styles.cameraTopControls,
+            { paddingTop: Platform.OS === "web" ? spacing.lg : Math.max(54, insets.top + spacing.sm) }
+          ]}
+        >
           <Pressable accessibilityLabel="Close camera" onPress={closeCamera} style={styles.cameraIconButton}>
             <Ionicons name="close" size={22} color={colors.dark.white} />
           </Pressable>
@@ -2302,7 +3333,12 @@ function MemoryCameraModal({
           </Pressable>
         </View>
 
-        <View style={styles.cameraBottomControls}>
+        <View
+          style={[
+            styles.cameraBottomControls,
+            { paddingBottom: Platform.OS === "web" ? spacing.xl : Math.max(42, insets.bottom + spacing.lg) }
+          ]}
+        >
           {cameraError && cameraGranted ? <Text style={styles.cameraError}>{cameraError}</Text> : null}
           <View style={styles.cameraModeSwitch}>
             <Pressable
@@ -2466,9 +3502,19 @@ function ViewerVideo({ media }: { media: MemoryPhoto }) {
   );
 }
 
-function SingleMediaPreview({ media }: { media: MemoryPhoto }) {
+function SingleMediaPreview({
+  media,
+  sizeOverride,
+  timestamp,
+  timestampPlacement = "bottom-right"
+}: {
+  media: MemoryPhoto;
+  sizeOverride?: MediaPreviewSize;
+  timestamp?: string;
+  timestampPlacement?: MediaTimestampPlacement;
+}) {
   const { width: screenWidth } = useWindowDimensions();
-  const previewSize = getSingleMediaPreviewSize({
+  const previewSize = sizeOverride ?? getSingleMediaPreviewSize({
     imageHeight: media.imageHeight,
     imageWidth: media.imageWidth,
     screenWidth
@@ -2477,6 +3523,32 @@ function SingleMediaPreview({ media }: { media: MemoryPhoto }) {
   return (
     <View style={[styles.singleMediaContainer, previewSize]}>
       <MediaPreview media={media} style={styles.singleMediaFill} />
+      {timestamp ? (
+        <MediaTimestampOverlay
+          placement={timestampPlacement}
+          timestamp={timestamp}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function MediaTimestampOverlay({
+  placement = "bottom-right",
+  timestamp
+}: {
+  placement?: MediaTimestampPlacement;
+  timestamp: string;
+}) {
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.mediaTimestampOverlay,
+        placement === "bottom-left" ? styles.mediaTimestampOverlayLeft : styles.mediaTimestampOverlayRight
+      ]}
+    >
+      <MessageMeta overlay time={timestamp} />
     </View>
   );
 }
@@ -2520,6 +3592,7 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
 }
 
 function Composer({
+  bottomInset,
   editingLabel,
   keyboardOpen,
   mediaError,
@@ -2530,10 +3603,14 @@ function Composer({
   messagePending,
   onAttach,
   onCancelEdit,
+  onCancelReply,
   onChangeMessage,
+  onLayoutChange,
   onInputFocus,
+  replyingToMessage,
   onSend
 }: {
+  bottomInset: number;
   editingLabel?: string;
   keyboardOpen: boolean;
   mediaError?: string;
@@ -2544,14 +3621,39 @@ function Composer({
   messagePending: boolean;
   onAttach: () => void;
   onCancelEdit?: () => void;
+  onCancelReply?: () => void;
   onChangeMessage: (value: string) => void;
+  onLayoutChange: (event: LayoutChangeEvent) => void;
   onInputFocus: () => void;
+  replyingToMessage?: MemoryMessage | null;
   onSend: () => void;
 }) {
-  const canSend = Boolean(message.trim()) && !messagePending;
+  const canSend = Boolean(message.trim()) && !messagePending && !mediaPending;
+  const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
+  const composerCanScroll = composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT;
+  const bottomPadding = keyboardOpen
+    ? KEYBOARD_COMPOSER_BOTTOM_GAP
+    : Math.max(CLOSED_COMPOSER_BOTTOM_GAP, bottomInset + spacing.xs);
+
+  useEffect(() => {
+    if (message.length === 0 && composerInputHeight !== COMPOSER_INPUT_MIN_HEIGHT) {
+      setComposerInputHeight(COMPOSER_INPUT_MIN_HEIGHT);
+    }
+  }, [composerInputHeight, message]);
+
+  function handleComposerContentSizeChange(event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) {
+    const nextHeight = Math.max(
+      COMPOSER_INPUT_MIN_HEIGHT,
+      Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height))
+    );
+    setComposerInputHeight(nextHeight);
+  }
 
   return (
-    <View style={[styles.composerWrap, keyboardOpen && styles.composerWrapKeyboardOpen]}>
+    <View
+      onLayout={onLayoutChange}
+      style={[styles.composerWrap, keyboardOpen && styles.composerWrapKeyboardOpen, { paddingBottom: bottomPadding }]}
+    >
       {messageError || mediaError || mediaMutationError ? (
         <Text style={styles.error}>{messageError || mediaError || mediaMutationError}</Text>
       ) : null}
@@ -2563,25 +3665,55 @@ function Composer({
           </Pressable>
         </View>
       ) : null}
+      {!editingLabel && replyingToMessage ? (
+        <View style={styles.replyComposerBanner}>
+          <View style={styles.replyComposerCopy}>
+            <Text numberOfLines={1} style={styles.replyComposerLabel}>Replying to {replyingToMessage.authorDisplayName}</Text>
+            <Text numberOfLines={2} style={styles.replyComposerPreview}>
+              {memoryMessageReplyPreview(replyingToMessage)}
+            </Text>
+          </View>
+          <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply}>
+            <Ionicons name="close" size={18} color={colors.dark.muted} />
+          </Pressable>
+        </View>
+      ) : null}
       <View style={styles.composer}>
         <View style={styles.messageBox}>
-          <Pressable accessibilityLabel="Attach photo or video" disabled={Boolean(editingLabel) || mediaPending} onPress={onAttach} style={[styles.attachButton, editingLabel && styles.attachButtonDisabled]}>
-            <Ionicons name={mediaPending ? "hourglass-outline" : "add"} size={Platform.OS === "web" ? 19 : 21} color={colors.dark.orange} />
+          <Pressable
+            accessibilityLabel="Attach photo or video"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: Boolean(editingLabel) || mediaPending }}
+            disabled={Boolean(editingLabel) || mediaPending}
+            onPress={onAttach}
+            style={[styles.attachButton, (editingLabel || mediaPending) && styles.attachButtonDisabled]}
+          >
+            <Ionicons name={mediaPending ? "hourglass-outline" : "add"} size={Platform.OS === "web" ? 19 : 21} color={ROOM_COLORS.cool} />
           </Pressable>
           <TextInput
             multiline
+            onContentSizeChange={handleComposerContentSizeChange}
             onChangeText={onChangeMessage}
             onFocus={onInputFocus}
             placeholder="Message..."
             placeholderTextColor={colors.dark.muted}
+            scrollEnabled={composerCanScroll}
             style={[
               styles.composerInput,
-              Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative
+              Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative,
+              { height: composerInputHeight }
             ]}
             value={message}
           />
         </View>
-        <Pressable accessibilityLabel={editingLabel ? "Save message" : "Send message"} disabled={!canSend} onPress={onSend} style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}>
+        <Pressable
+          accessibilityLabel={editingLabel ? "Save message" : "Send message"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSend }}
+          disabled={!canSend}
+          onPress={onSend}
+          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+        >
           <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={colors.dark.white} />
         </Pressable>
       </View>
@@ -2600,23 +3732,23 @@ const styles = StyleSheet.create({
     flex: 1
   },
   roomStageChat: {
-    backgroundColor: "#0F0F0E",
+    backgroundColor: ROOM_COLORS.bg,
     overflow: "hidden"
   },
   header: {
     alignSelf: "center",
-    backgroundColor: colors.dark.bg,
-    borderBottomColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.header,
+    borderBottomColor: ROOM_COLORS.border,
     borderBottomWidth: 1,
-    borderLeftColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
-    borderRightColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
-    gap: spacing.sm,
+    gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: spacing.base,
+    paddingBottom: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.base,
+    paddingTop: spacing.md,
     width: "100%"
   },
   headerTop: {
@@ -2659,71 +3791,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16
   },
-  participantsPreview: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 30
-  },
-  avatarStack: {
-    flexDirection: "row"
-  },
-  participantAvatar: {
-    alignItems: "center",
-    borderColor: colors.dark.bg,
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    height: 28,
-    justifyContent: "center",
-    width: 28
-  },
-  remainingAvatar: {
-    backgroundColor: colors.dark.surface
-  },
-  participantInitial: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 11,
-    lineHeight: 14
-  },
-  participantSummary: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 16
-  },
   modeTabs: {
-    backgroundColor: colors.dark.surface,
+    backgroundColor: ROOM_COLORS.panel,
     borderRadius: radius.input,
     flexDirection: "row",
-    padding: 3
+    padding: 2
   },
   modeButton: {
     alignItems: "center",
     borderRadius: radius.md,
     flex: 1,
     flexDirection: "row",
-    gap: 4,
+    gap: 3,
     justifyContent: "center",
-    minHeight: 38
+    minHeight: 34
   },
   modeButtonActive: {
-    backgroundColor: colors.dark.orange
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR
   },
   modeButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
-    fontSize: 11
+    color: ROOM_COLORS.muted,
+    fontSize: 10
   },
   modeButtonTextActive: {
     color: colors.dark.white
   },
   body: {
     alignSelf: "center",
-    borderLeftColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
-    borderRightColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     flex: 1,
     maxWidth: ROOM_MAX_WIDTH,
@@ -2736,11 +3834,11 @@ const styles = StyleSheet.create({
   },
   chatWallpaper: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#0F0F0E"
+    backgroundColor: ROOM_COLORS.bg
   },
   chatWallpaperOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.02)"
+    backgroundColor: "transparent"
   },
   timelineList: {
     backgroundColor: "transparent",
@@ -2748,32 +3846,57 @@ const styles = StyleSheet.create({
   },
   timelineContent: {
     backgroundColor: "transparent",
-    gap: CHAT_MESSAGE_GAP,
+    flexGrow: 1,
+    gap: 0,
+    justifyContent: "flex-end",
     paddingTop: spacing.base,
     paddingBottom: 0
+  },
+  timelineContentEmpty: {
+    flexGrow: 1
+  },
+  dateDividerRow: {
+    alignItems: "center",
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    paddingVertical: 8,
+    width: "100%"
+  },
+  dateDividerText: {
+    ...fontStyles.extraBold,
+    backgroundColor: "rgba(21,23,25,0.92)",
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    color: ROOM_COLORS.muted,
+    fontSize: 10,
+    lineHeight: 12,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    textTransform: "uppercase"
   },
   unreadDividerRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
     paddingVertical: 3,
     width: "100%"
   },
   unreadDividerLine: {
-    backgroundColor: "rgba(240,96,48,0.34)",
+    backgroundColor: ROOM_COLORS.coolBorder,
     flex: 1,
     height: 1
   },
   unreadDividerText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: ROOM_COLORS.cool,
     fontSize: 11,
     lineHeight: 14
   },
   unreadDividerButton: {
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     paddingHorizontal: 9,
@@ -2781,13 +3904,13 @@ const styles = StyleSheet.create({
   },
   unreadDividerButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: ROOM_COLORS.cool,
     fontSize: 10,
     lineHeight: 12
   },
   quickAction: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
     borderRadius: radius.input,
     flex: 1,
     flexDirection: "row",
@@ -2810,120 +3933,252 @@ const styles = StyleSheet.create({
     width: "100%"
   },
   chatMessageRow: {
-    alignItems: "flex-start",
+    alignItems: "flex-end",
     borderRadius: 12,
     flexDirection: "row",
-    gap: 10,
-    paddingHorizontal: Platform.OS === "web" ? spacing.base : spacing.lg,
+    gap: 8,
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
     width: "100%"
   },
   chatMessageRowMedia: {
-    gap: Platform.OS === "web" ? 10 : 8,
-    paddingHorizontal: Platform.OS === "web" ? spacing.base : spacing.md
+    alignItems: "flex-end"
+  },
+  chatMessageRowAfterBreak: {
+    marginTop: 0
+  },
+  chatMessageRowGroupStart: {
+    marginTop: 7
+  },
+  chatMessageRowGrouped: {
+    marginTop: 2
   },
   chatMessageRowMine: {
     justifyContent: "flex-end"
   },
   chatMessageRowSelected: {
-    backgroundColor: "rgba(240,96,48,0.16)",
+    backgroundColor: ROOM_COLORS.selection,
     borderRadius: 0
   },
-  chatBubble: {
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
-    borderRadius: 15,
+  chatMessageRowEditing: {
+    backgroundColor: "rgba(232,168,48,0.10)",
+    borderLeftColor: colors.dark.gold,
+    borderLeftWidth: 3,
+    paddingVertical: 3
+  },
+  swipeReplyWrap: {
+    overflow: "hidden",
+    position: "relative",
+    width: "100%"
+  },
+  swipeReplyContent: {
+    width: "100%"
+  },
+  swipeReplyIndicator: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    height: 34,
+    justifyContent: "center",
+    left: CHAT_ROW_SIDE_PADDING,
+    marginTop: -17,
+    position: "absolute",
+    top: "50%",
+    width: 34
+  },
+  messageBubbleFrame: {
+    flexShrink: 1,
+    position: "relative"
+  },
+  textMessageFrame: {
+    maxWidth: Platform.OS === "web" ? "68%" : "73%"
+  },
+  textMessageBubble: {
+    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 16,
     borderWidth: 1,
-    maxWidth: Platform.OS === "web" ? "68%" : "73%",
-    minWidth: 112,
-    paddingHorizontal: 13,
-    paddingVertical: 10
+    maxWidth: "100%",
+    overflow: "hidden",
+    paddingBottom: 6,
+    paddingHorizontal: 11,
+    paddingTop: 7,
+    position: "relative",
+    zIndex: 1
   },
-  mediaOnlyChatBubble: {
-    backgroundColor: "#120F0D",
-    borderColor: "rgba(245,237,216,0.10)",
-    maxWidth: Platform.OS === "web" ? "72%" : "88%",
-    paddingHorizontal: 13,
-    paddingVertical: 10
+  textMessageBubbleMine: {
+    alignSelf: "flex-end",
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    borderColor: ROOM_COLORS.coolBorder,
+    minWidth: 64
   },
-  chatBubbleContent: {
+  textMessageBubbleOther: {
+    alignSelf: "flex-start",
+    minWidth: 88
+  },
+  messageBubbleGroupedMine: {
+    borderTopRightRadius: 7
+  },
+  messageBubbleGroupedOther: {
+    borderTopLeftRadius: 7
+  },
+  singleMediaMessageCard: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderRadius: 16,
+    overflow: "hidden",
+    padding: 0,
+    position: "relative",
+    zIndex: 1
+  },
+  multiMediaMessageCard: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderRadius: 16,
+    overflow: "hidden",
+    padding: 0,
+    position: "relative",
+    zIndex: 1
+  },
+  mediaMessageCardMine: {
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    borderColor: "rgba(34, 199, 184, 0.18)"
+  },
+  mediaMessageCardOther: {
+    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    borderColor: "rgba(255,255,255,0.08)"
+  },
+  messageMediaCardFill: {
+    width: "100%"
+  },
+  replyPreviewBlock: {
+    alignSelf: "flex-start",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderLeftColor: ROOM_COLORS.cool,
+    borderLeftWidth: 3,
+    borderRadius: 9,
+    marginBottom: 7,
+    maxWidth: "100%",
     minWidth: 0,
-    paddingRight: 0
+    paddingHorizontal: 9,
+    paddingVertical: 7
+  },
+  replyPreviewBlockMine: {
+    backgroundColor: "rgba(14,11,8,0.18)",
+    borderLeftColor: colors.dark.gold
+  },
+  replyPreviewAuthor: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  replyPreviewText: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2
   },
   senderAvatar: {
     alignItems: "center",
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
-    height: 36,
+    height: 32,
     justifyContent: "center",
-    width: 36
+    width: 32
+  },
+  senderAvatarSlot: {
+    alignSelf: "flex-start",
+    flexShrink: 0,
+    height: 32,
+    width: 32
   },
   senderInitial: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 11,
-    lineHeight: 14
+    fontSize: 10,
+    lineHeight: 12
   },
   senderName: {
     ...fontStyles.extraBold,
-    maxWidth: "100%",
+    flexShrink: 1,
     fontSize: 11,
     lineHeight: 14,
-    marginBottom: 4
+    marginBottom: 4,
+    maxWidth: "100%"
   },
-  bubbleText: {
+  mediaSenderHeader: {
+    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    paddingBottom: 7,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    width: "100%"
+  },
+  mediaSenderName: {
+    marginBottom: 0
+  },
+  mediaReplyHeader: {
+    paddingBottom: 3,
+    paddingHorizontal: 12,
+    paddingTop: 9,
+    width: "100%"
+  },
+  inlineTimestampWrap: {
+    alignSelf: "flex-start",
+    flexShrink: 1,
+    maxWidth: "100%",
+    minWidth: 0,
+    position: "relative"
+  },
+  inlineTimestampWrapFill: {
+    alignSelf: "stretch",
+    width: "100%"
+  },
+  inlineTimestampMessageText: {
     ...fontStyles.medium,
     color: colors.dark.cream,
     flexShrink: 1,
-    fontSize: 14,
-    lineHeight: 20
+    flexWrap: "wrap",
+    includeFontPadding: false
   },
-  textMessageLine: {
-    alignItems: "flex-end",
+  inlineTimestampText: {
+    ...fontStyles.semiBold,
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 13
+  },
+  inlineTimestampReserve: {
+    ...fontStyles.semiBold,
+    color: "rgba(255,255,255,0)",
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 13,
+    opacity: 0
+  },
+  inlineTimestampPinnedMeta: {
+    alignItems: "center",
+    bottom: 0,
     flexDirection: "row",
-    gap: 8,
-    justifyContent: "space-between"
+    position: "absolute",
+    right: 0
   },
-  inlineBubbleTime: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    flexShrink: 0,
-    fontSize: 10,
-    lineHeight: 12,
-    marginBottom: 2,
-    textAlign: "right"
-  },
-  pendingBubbleTime: {
-    color: "rgba(245,237,216,0.46)"
-  },
-  bubbleTime: {
-    ...fontStyles.semiBold,
-    alignSelf: "flex-end",
-    color: colors.dark.muted,
-    fontSize: 10,
-    lineHeight: 12,
-    marginTop: 4,
-    minWidth: 58,
-    textAlign: "right"
-  },
-  mediaBubbleContent: {
-    marginHorizontal: -13,
-    marginBottom: 2,
-    marginTop: 4,
-    paddingRight: 0
-  },
-  messageWithMediaContent: {
-    marginBottom: 2,
-    paddingRight: 0
-  },
-  singleAttachment: {
-    borderRadius: 0,
-    overflow: "hidden"
+  textOnlyBubbleText: {
+    flexShrink: 1,
+    flexWrap: "wrap",
+    fontSize: 16,
+    includeFontPadding: false,
+    lineHeight: 22,
+    maxWidth: "100%"
   },
   singleMediaContainer: {
     alignSelf: "flex-start",
     borderRadius: 0,
-    overflow: "hidden"
+    overflow: "hidden",
+    position: "relative"
   },
   singleMediaFill: {
     aspectRatio: undefined,
@@ -2931,14 +4186,32 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%"
   },
-  attachmentsAfterText: {
-    marginHorizontal: -13,
-    marginTop: 8
+  mediaCaptionContainer: {
+    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingTop: 9,
+    width: "100%"
+  },
+  mediaCaptionText: {
+    flexShrink: 1,
+    flexWrap: "wrap",
+    fontSize: 14,
+    includeFontPadding: false,
+    lineHeight: 20,
+    marginTop: 0,
+    maxWidth: "100%"
+  },
+  attachmentGridFrame: {
+    alignSelf: "flex-start",
+    minWidth: 0,
+    overflow: "hidden",
+    position: "relative"
   },
   multiMediaGrid: {
     flexDirection: "row",
     gap: MEDIA_GRID_GAP,
-    overflow: "hidden"
+    overflow: "hidden",
+    position: "relative"
   },
   multiMediaGridWrap: {
     flexWrap: "wrap"
@@ -2947,9 +4220,68 @@ const styles = StyleSheet.create({
     gap: MEDIA_GRID_GAP
   },
   mediaGridTile: {
-    backgroundColor: colors.dark.surface,
+    backgroundColor: "#0B0D0F",
     position: "relative",
     overflow: "hidden"
+  },
+  gridMediaFill: {
+    ...StyleSheet.absoluteFillObject,
+    height: "100%",
+    width: "100%"
+  },
+  gridVideoPreview: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#0B0D0F",
+    height: "100%",
+    overflow: "hidden",
+    width: "100%"
+  },
+  gridVideoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  gridPlayBadge: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: radius.pill,
+    height: 44,
+    justifyContent: "center",
+    width: 44
+  },
+  gridMediaTypeBadge: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.58)",
+    borderRadius: radius.pill,
+    flexDirection: "row",
+    gap: 4,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    position: "absolute",
+    top: 8
+  },
+  mediaTimestampOverlay: {
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: 10,
+    bottom: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    position: "absolute",
+    zIndex: 3
+  },
+  mediaTimestampOverlayLeft: {
+    left: 8
+  },
+  mediaTimestampOverlayRight: {
+    right: 8
+  },
+  mediaTimestampText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.white,
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 13
   },
   attachmentMoreOverlay: {
     alignItems: "center",
@@ -2973,7 +4305,7 @@ const styles = StyleSheet.create({
   },
   mediaImageWrap: {
     aspectRatio: 1,
-    backgroundColor: colors.dark.surface,
+    backgroundColor: ROOM_COLORS.panelRaised,
     borderRadius: radius.md,
     overflow: "hidden",
     position: "relative",
@@ -3045,65 +4377,122 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 48
   },
+  attachSheetKeyboard: {
+    flex: 1
+  },
   attachSheetBackdrop: {
-    backgroundColor: "rgba(0,0,0,0.46)",
+    backgroundColor: "rgba(0,0,0,0.20)",
     flex: 1,
     justifyContent: "flex-end"
   },
   attachSheet: {
     alignSelf: "center",
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: 18,
     borderWidth: 1,
-    gap: 4,
+    gap: spacing.md,
+    marginBottom: Platform.OS === "web" ? 78 : 74,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: Platform.OS === "web" ? spacing.lg : 30,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    width: "100%"
+    padding: spacing.md,
+    width: Platform.OS === "web" ? "88%" : "90%"
   },
-  attachSheetHandle: {
-    alignSelf: "center",
-    backgroundColor: "rgba(255,255,255,0.22)",
+  attachSheetHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  attachSheetHeaderButton: {
+    alignItems: "center",
     borderRadius: radius.pill,
-    height: 4,
-    marginBottom: spacing.sm,
-    width: 38
+    height: 32,
+    justifyContent: "center",
+    width: 32
   },
-  actionSheetHeader: {
-    backgroundColor: "rgba(245,237,216,0.04)",
-    borderColor: "rgba(245,237,216,0.08)",
-    borderRadius: radius.input,
-    borderWidth: 1,
-    gap: 3,
-    marginBottom: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10
+  attachSheetHeaderSpacer: {
+    height: 32,
+    width: 32
   },
-  actionSheetTitle: {
+  attachSheetHeaderText: {
+    flex: 1,
+    minWidth: 0
+  },
+  attachSheetTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
     fontSize: 14,
     lineHeight: 18
   },
-  actionSheetPreview: {
+  attachSheetSubtitle: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16
   },
+  attachActionGrid: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  attachActionCard: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 112,
+    padding: spacing.md
+  },
+  attachActionCardDisabled: {
+    opacity: 0.45
+  },
+  attachActionIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: "center",
+    marginBottom: spacing.sm,
+    width: 42
+  },
+  attachActionIconDish: {
+    backgroundColor: "rgba(232, 168, 48, 0.12)",
+    borderColor: "rgba(232, 168, 48, 0.24)"
+  },
+  attachActionTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  attachActionSubtitle: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 3
+  },
+  attachSheetOptionList: {
+    gap: spacing.sm
+  },
   attachSheetOption: {
     alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
     flexDirection: "row",
     gap: spacing.md,
-    minHeight: 52
+    minHeight: 58,
+    paddingHorizontal: spacing.md
   },
   attachSheetIcon: {
     alignItems: "center",
-    backgroundColor: "rgba(240,96,48,0.12)",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
+    borderWidth: 1,
     height: 38,
     justifyContent: "center",
     width: 38
@@ -3116,32 +4505,151 @@ const styles = StyleSheet.create({
   attachSheetOptionText: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 15,
-    lineHeight: 20
+    fontSize: 14,
+    lineHeight: 18
+  },
+  attachSheetOptionCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  attachSheetOptionSubtext: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2
   },
   deleteSheetText: {
     color: colors.dark.dangerSoft
   },
-  attachSheetCancel: {
-    alignItems: "center",
-    borderTopColor: "rgba(255,255,255,0.06)",
-    borderTopWidth: 1,
-    minHeight: 48,
-    justifyContent: "center",
-    marginTop: spacing.xs
+  attachDishForm: {
+    gap: spacing.sm
   },
-  attachSheetCancelText: {
+  attachDishInputWrap: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 46,
+    paddingHorizontal: spacing.md
+  },
+  attachDishInput: {
+    ...fontStyles.medium,
+    color: colors.dark.cream,
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+    paddingVertical: Platform.OS === "web" ? 8 : 0
+  },
+  attachDishFooter: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "space-between"
+  },
+  attachDishStars: {
+    flexDirection: "row",
+    gap: spacing.xs
+  },
+  attachDishSubmit: {
+    alignItems: "center",
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    borderRadius: radius.pill,
+    minHeight: 38,
+    minWidth: 84,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md
+  },
+  attachDishSubmitDisabled: {
+    opacity: 0.45
+  },
+  attachDishSubmitText: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: colors.dark.white,
     fontSize: 14,
     lineHeight: 18
+  },
+  roomActionsBackdrop: {
+    backgroundColor: "transparent",
+    flex: 1
+  },
+  roomActionsPopover: {
+    alignSelf: "flex-end",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    gap: 2,
+    marginRight: Platform.OS === "web" ? spacing.lg : spacing.md,
+    marginTop: Platform.OS === "web" ? 58 : 54,
+    maxWidth: 292,
+    padding: spacing.sm,
+    shadowColor: colors.dark.black,
+    shadowOffset: { height: 12, width: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    width: "74%",
+    elevation: 10
+  },
+  roomActionOption: {
+    alignItems: "center",
+    borderRadius: radius.md,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 54,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm
+  },
+  roomActionDisabled: {
+    opacity: 0.55
+  },
+  roomActionIcon: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orangeDim,
+    borderRadius: radius.pill,
+    height: 36,
+    justifyContent: "center",
+    width: 36
+  },
+  roomActionIconCool: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderWidth: 1
+  },
+  roomActionIconDanger: {
+    backgroundColor: colors.dark.dangerDim,
+    borderColor: colors.dark.dangerBorder,
+    borderWidth: 1
+  },
+  roomActionText: {
+    flex: 1,
+    minWidth: 0
+  },
+  roomActionTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 13,
+    lineHeight: 17
+  },
+  roomActionSubtitle: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 2
+  },
+  roomActionDangerText: {
+    color: colors.dark.dangerSoft
   },
   selectionBarWrap: {
     alignSelf: "center",
     backgroundColor: "transparent",
-    borderLeftColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
-    borderRightColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
@@ -3152,8 +4660,8 @@ const styles = StyleSheet.create({
   },
   selectionBar: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: 16,
     borderWidth: 1,
     flexDirection: "row",
@@ -3180,17 +4688,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.dark.dangerSoft,
     borderRadius: radius.pill,
-    height: 38,
+    height: SELECTION_ACTION_BUTTON_SIZE,
     justifyContent: "center",
-    width: 38
+    width: SELECTION_ACTION_BUTTON_SIZE
   },
   selectionEditButton: {
     alignItems: "center",
     backgroundColor: colors.dark.orange,
     borderRadius: radius.pill,
-    height: 38,
+    height: SELECTION_ACTION_BUTTON_SIZE,
     justifyContent: "center",
-    width: 38
+    width: SELECTION_ACTION_BUTTON_SIZE
   },
   selectionDeleteButtonDisabled: {
     opacity: 0.5
@@ -3403,8 +4911,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2
   },
   viewerThumbnail: {
-    backgroundColor: colors.dark.surface,
-    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: 10,
     borderWidth: 1,
     height: 54,
@@ -3470,8 +4978,8 @@ const styles = StyleSheet.create({
   },
   peopleAddInputWrap: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flex: 1,
@@ -3506,8 +5014,8 @@ const styles = StyleSheet.create({
   },
   contactsImportButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flexDirection: "row",
@@ -3528,14 +5036,14 @@ const styles = StyleSheet.create({
   },
   contactsImportSubtitle: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 11,
     lineHeight: 14,
     marginTop: 1
   },
   peopleSuggestions: {
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     overflow: "hidden"
@@ -3596,8 +5104,8 @@ const styles = StyleSheet.create({
   },
   selectedPeopleChip: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -3608,7 +5116,7 @@ const styles = StyleSheet.create({
   },
   selectedPeopleChipText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: ROOM_COLORS.cool,
     fontSize: 12,
     lineHeight: 15
   },
@@ -3651,8 +5159,8 @@ const styles = StyleSheet.create({
   },
   contactsSearchBox: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flexDirection: "row",
@@ -3688,8 +5196,8 @@ const styles = StyleSheet.create({
   },
   contactInviteRow: {
     alignItems: "center",
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: "row",
@@ -3743,8 +5251,8 @@ const styles = StyleSheet.create({
     lineHeight: 15
   },
   dishAddWrap: {
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     gap: spacing.sm,
@@ -3752,8 +5260,8 @@ const styles = StyleSheet.create({
   },
   dishMemorySummary: {
     alignItems: "center",
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: "row",
@@ -3784,8 +5292,8 @@ const styles = StyleSheet.create({
   },
   dishInputWrap: {
     alignItems: "center",
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flexDirection: "row",
@@ -3813,8 +5321,8 @@ const styles = StyleSheet.create({
   },
   dishCard: {
     alignItems: "flex-start",
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: "row",
@@ -3883,8 +5391,8 @@ const styles = StyleSheet.create({
   },
   personRow: {
     alignItems: "center",
-    backgroundColor: "#181411",
-    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: "row",
@@ -3946,7 +5454,7 @@ const styles = StyleSheet.create({
   },
   emptyIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
+    backgroundColor: ROOM_COLORS.coolDim,
     borderRadius: radius.pill,
     height: 58,
     justifyContent: "center",
@@ -3971,9 +5479,9 @@ const styles = StyleSheet.create({
   composerWrap: {
     alignSelf: "center",
     backgroundColor: "transparent",
-    borderLeftColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
-    borderRightColor: Platform.OS === "web" ? colors.dark.border : "transparent",
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
@@ -3986,14 +5494,14 @@ const styles = StyleSheet.create({
     paddingBottom: KEYBOARD_COMPOSER_BOTTOM_GAP
   },
   composer: {
-    alignItems: "center",
+    alignItems: "flex-end",
     flexDirection: "row",
     gap: spacing.sm
   },
   editingBanner: {
     alignItems: "center",
-    backgroundColor: "rgba(245,237,216,0.045)",
-    borderColor: "rgba(245,237,216,0.08)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flexDirection: "row",
@@ -4013,18 +5521,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 15
   },
-  messageBox: {
+  replyComposerBanner: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8
+  },
+  replyComposerCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  replyComposerLabel: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 12,
+    lineHeight: 15
+  },
+  replyComposerPreview: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2
+  },
+  messageBox: {
+    alignItems: "flex-end",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: 16,
     borderWidth: 1,
     flex: 1,
     flexDirection: "row",
     gap: 4,
     minHeight: Platform.OS === "web" ? 38 : 42,
-    paddingHorizontal: 4,
-    paddingVertical: 2
+    paddingHorizontal: Platform.OS === "web" ? 4 : 5,
+    paddingVertical: Platform.OS === "web" ? 2 : 3
   },
   attachButton: {
     alignItems: "center",
@@ -4039,30 +5575,26 @@ const styles = StyleSheet.create({
   },
   composerInput: {
     ...fontStyles.medium,
-    alignSelf: "center",
     color: colors.dark.cream,
     flex: 1,
-    fontSize: 14,
+    fontSize: COMPOSER_INPUT_FONT_SIZE,
     includeFontPadding: false,
-    maxHeight: Platform.OS === "web" ? 72 : 100,
+    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+    maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
     paddingHorizontal: 2,
-    textAlignVertical: "center"
+    textAlignVertical: "top"
   },
   composerInputNative: {
-    height: 28,
-    lineHeight: 20,
-    paddingBottom: 0,
-    paddingTop: 0
+    paddingBottom: 6,
+    paddingTop: 6
   },
   composerInputWeb: {
-    height: 30,
-    lineHeight: 18,
     paddingBottom: 6,
     paddingTop: 6
   },
   sendButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
     borderRadius: radius.pill,
     height: Platform.OS === "web" ? 36 : 40,
     justifyContent: "center",

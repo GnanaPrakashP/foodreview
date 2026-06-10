@@ -91,36 +91,7 @@ export type ProfilePageData = {
   displayName: string;
   stats: ProfileStats;
   circleCount: number;
-  reputation: UserProfileReputation;
   posts: ReviewPost[];
-};
-
-export type UserTier = {
-  tierName: string;
-  tierLevel: string | null;
-  displayName: string;
-  minScore: number;
-  maxScore: number | null;
-  nextTierName: string | null;
-  progressPercent: number;
-  isMaxTier: boolean;
-};
-
-export type PermanentBadge = {
-  badgeId: string;
-  badgeType: string;
-  badgeName: string;
-  badgeDescription: string;
-  badgeIcon: string;
-  badgeCategory: string;
-  earnedAt: string;
-  metadata?: Record<string, unknown>;
-};
-
-export type UserProfileReputation = {
-  tier: UserTier;
-  profileScore: number;
-  permanentBadges: PermanentBadge[];
 };
 
 export type AuthSnapshot = {
@@ -148,6 +119,12 @@ export type MemoryMessage = {
   createdAt: string;
   deliveryStatus?: "pending" | "sent" | "failed";
   editedAt: string | null;
+  replyToMessageId: string | null;
+  replyToMessage: {
+    id: string;
+    authorDisplayName: string;
+    body: string;
+  } | null;
 };
 
 export type MemoryDish = {

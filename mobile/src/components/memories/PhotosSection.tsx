@@ -19,10 +19,10 @@ export function PhotosSection({
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Photos</Text>
+        <Text style={styles.sectionTitle}>Media</Text>
         <Pressable disabled={mutation.isPending} onPress={onAddPhoto} style={styles.addPhotoButton}>
           <Ionicons name="image-outline" size={17} color={colors.dark.white} />
-          <Text style={styles.addPhotoText}>{mutation.isPending ? "Adding..." : "Add photo"}</Text>
+          <Text style={styles.addPhotoText}>{mutation.isPending ? "Adding..." : "Add media"}</Text>
         </Pressable>
       </View>
       {photos.length > 0 ? (
@@ -40,7 +40,7 @@ export function PhotosSection({
           showsHorizontalScrollIndicator={false}
         />
       ) : (
-        <Text style={styles.emptyInline}>No photos yet.</Text>
+        <Text style={styles.emptyInline}>No media yet.</Text>
       )}
       {photoError ? <Text style={styles.error}>{photoError}</Text> : null}
       {mutation.isError ? <Text style={styles.error}>{mutation.errorMessage}</Text> : null}

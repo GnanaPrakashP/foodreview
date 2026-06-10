@@ -3,21 +3,36 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 
 type MemoryRouteHeaderProps = {
-  kicker: string;
+  backButtonVariant?: "boxed" | "plain";
+  kicker?: string;
   onBack: () => void;
   subtitle?: string;
   title: string;
+  titleWeight?: "regular" | "bold" | "extraBold";
 };
 
-export function MemoryRouteHeader({ kicker, onBack, subtitle, title }: MemoryRouteHeaderProps) {
+export function MemoryRouteHeader({
+  backButtonVariant = "boxed",
+  kicker,
+  onBack,
+  subtitle,
+  title,
+  titleWeight = "extraBold"
+}: MemoryRouteHeaderProps) {
+  const titleStyle = titleWeight === "regular"
+    ? styles.titleRegular
+    : titleWeight === "bold"
+      ? styles.titleBold
+      : styles.title;
+
   return (
     <View style={styles.header}>
-      <Pressable onPress={onBack} style={styles.backButton}>
+      <Pressable onPress={onBack} style={[styles.backButton, backButtonVariant === "plain" && styles.backButtonPlain]}>
         <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
       </Pressable>
       <View style={styles.headerText}>
-        <Text style={styles.kicker}>{kicker}</Text>
-        <Text style={styles.title}>{title}</Text>
+        {kicker ? <Text style={styles.kicker}>{kicker}</Text> : null}
+        <Text style={titleStyle}>{title}</Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
     </View>
@@ -40,6 +55,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 44
   },
+  backButtonPlain: {
+    backgroundColor: "transparent",
+    borderWidth: 0
+  },
   headerText: {
     flex: 1
   },
@@ -54,6 +73,18 @@ const styles = StyleSheet.create({
     ...fontStyles.extraBold,
     color: colors.dark.cream,
     fontSize: typography.title
+  },
+  titleRegular: {
+    ...fontStyles.regular,
+    color: colors.dark.cream,
+    fontSize: 24,
+    lineHeight: 29
+  },
+  titleBold: {
+    ...fontStyles.bold,
+    color: colors.dark.cream,
+    fontSize: 24,
+    lineHeight: 29
   },
   subtitle: {
     ...fontStyles.semiBold,

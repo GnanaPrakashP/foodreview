@@ -7,6 +7,12 @@ type PushRegistrationResult =
   | { granted: true; token: string }
   | { granted: false; reason: string };
 
+export type NotificationPermissionSummary = {
+  canAskAgain: boolean;
+  granted: boolean;
+  status: Notifications.PermissionStatus;
+};
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: false,
@@ -36,6 +42,15 @@ async function ensureNotificationPermission() {
 
   const requested = await Notifications.requestPermissionsAsync();
   return requested.granted;
+}
+
+export async function getNotificationPermissionSummary(): Promise<NotificationPermissionSummary> {
+  const permission = await Notifications.getPermissionsAsync();
+  return {
+    canAskAgain: permission.canAskAgain,
+    granted: permission.granted,
+    status: permission.status
+  };
 }
 
 export async function registerForPushNotifications(username: string): Promise<PushRegistrationResult> {

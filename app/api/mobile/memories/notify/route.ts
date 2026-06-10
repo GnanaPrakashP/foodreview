@@ -32,7 +32,7 @@ function normalizeText(value: unknown, maxLength: number) {
 }
 
 function notificationBody(kind: MemoryNotificationKind, preview: string) {
-  if (kind === "media") return preview || "Added photos to the table memory.";
+  if (kind === "media") return preview || "Added media to the table memory.";
   if (kind === "dish") return preview ? `Added ${preview}` : "Added a dish to the table memory.";
   return preview || "Sent a message.";
 }

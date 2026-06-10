@@ -13,7 +13,7 @@ export function MemoryStatsGrid({
   return (
     <View style={styles.metaGrid}>
       <MemoryStatCard label="Participants" value={participantCount} />
-      <MemoryStatCard label="Photos" value={photoCount} />
+      <MemoryStatCard label="Media" value={photoCount} />
       <MemoryStatCard label="Messages" value={messageCount} />
     </View>
   );

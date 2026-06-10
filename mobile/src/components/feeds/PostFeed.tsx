@@ -5,21 +5,25 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import type { ReviewPost } from "@/types/models";
 
 type PostFeedProps = {
+  emptyActionLabel?: string;
   emptyMessage: string;
   emptyTitle: string;
   errorMessage?: string;
   isError?: boolean;
   isLoading?: boolean;
+  onEmptyAction?: () => void;
   onRetry?: () => void;
   posts?: ReviewPost[];
 };
 
 export function PostFeed({
+  emptyActionLabel,
   emptyMessage,
   emptyTitle,
   errorMessage,
   isError,
   isLoading,
+  onEmptyAction,
   onRetry,
   posts = []
 }: PostFeedProps) {
@@ -48,8 +52,10 @@ export function PostFeed({
     return (
       <View style={styles.stateWrap}>
         <EmptyState
+          actionLabel={emptyActionLabel}
           icon="restaurant-outline"
           message={emptyMessage}
+          onAction={onEmptyAction}
           title={emptyTitle}
         />
       </View>

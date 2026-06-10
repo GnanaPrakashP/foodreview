@@ -82,7 +82,7 @@ const messages = [
   { type: "text", user: "Rahul", text: "Add the fries bro, those disappeared in 2 minutes 😂", time: "7:44 PM" },
   { type: "mine", user: "You", text: "Done. I added Peri Peri Fries and Chicken Wings.", time: "7:46 PM" },
   { type: "dish", user: "Meera", text: "Mocktails were actually good. I'll rate 4.5.", time: "8:03 PM" },
-  { type: "photo", user: "Sana", text: "added 3 photos to the memory.", time: "8:15 PM" },
+  { type: "photo", user: "Sana", text: "added 3 media items to the memory.", time: "8:15 PM" },
   { type: "text", user: "Rahul", text: "Wings were okay only. Not worth the hype.", time: "8:24 PM" },
 ] as const;
 
@@ -314,7 +314,7 @@ function DishesTab() {
   );
 }
 
-function PhotosTab() {
+function MediaTab() {
   return (
     <div style={{ display: "grid", gap: "12px" }}>
       <button
@@ -334,27 +334,39 @@ function PhotosTab() {
         }}
       >
         <ImagePlus size={24} strokeWidth={2} />
-        <span style={{ fontSize: "13px", fontWeight: 950 }}>Upload/add photo</span>
+        <span style={{ fontSize: "13px", fontWeight: 950 }}>Upload/add media</span>
       </button>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" }}>
-        {photos.map((photo) => (
-          <div
-            key={`${photo.addedBy}-${photo.src}`}
-            style={{
-              minHeight: "176px",
-              borderRadius: "16px",
-              border: "1px solid var(--border)",
-              background: `linear-gradient(to top, rgba(14,11,8,0.78), rgba(14,11,8,0.08)), url('${photo.src}') center/cover, var(--card)`,
-              display: "flex",
-              alignItems: "flex-end",
-              padding: "10px",
-            }}
-          >
-            <span style={{ color: "white", fontSize: "11px", fontWeight: 900 }}>Added by {photo.addedBy}</span>
+      {photos.length === 0 ? (
+        <div style={{ border: "1px solid var(--border)", background: "var(--card)", borderRadius: "16px", padding: "24px 18px", textAlign: "center" }}>
+          <div style={{ width: "42px", height: "42px", borderRadius: "999px", background: "var(--orange-dim)", color: "var(--orange)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: "12px" }}>
+            <ImagePlus size={21} strokeWidth={2.2} />
           </div>
-        ))}
-      </div>
+          <p style={{ color: "var(--cream)", fontSize: "15px", fontWeight: 950 }}>No media shared yet</p>
+          <p style={{ color: "var(--muted)", fontSize: "12px", lineHeight: 1.45, fontWeight: 760, marginTop: "4px" }}>
+            Photos and videos from the table will appear here.
+          </p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px" }}>
+          {photos.map((photo) => (
+            <div
+              key={`${photo.addedBy}-${photo.src}`}
+              style={{
+                minHeight: "176px",
+                borderRadius: "16px",
+                border: "1px solid var(--border)",
+                background: `linear-gradient(to top, rgba(14,11,8,0.78), rgba(14,11,8,0.08)), url('${photo.src}') center/cover, var(--card)`,
+                display: "flex",
+                alignItems: "flex-end",
+                padding: "10px",
+              }}
+            >
+              <span style={{ color: "white", fontSize: "11px", fontWeight: 900 }}>Added by {photo.addedBy}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -375,7 +387,7 @@ function Composer() {
       <div className="hide-scrollbar" style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "9px" }}>
         {[
           { label: "Add dish", Icon: Utensils },
-          { label: "Add photo", Icon: Camera },
+          { label: "Add media", Icon: Camera },
           { label: "Rate", Icon: Star },
           { label: "Invite", Icon: Users },
         ].map(({ label, Icon }) => (
@@ -655,7 +667,7 @@ export default function SharedMemoryRoomPage() {
             {([
               { value: "chat", label: "Chat" },
               { value: "dishes", label: "Dishes" },
-              { value: "photos", label: "Photos" },
+              { value: "photos", label: "Media" },
             ] as { value: Tab; label: string }[]).map((tab) => {
               const active = activeTab === tab.value;
               return (
@@ -705,10 +717,10 @@ export default function SharedMemoryRoomPage() {
             <div style={{ border: "1px solid rgba(61,214,140,0.22)", background: "rgba(61,214,140,0.08)", borderRadius: "16px", padding: "13px", display: "flex", gap: "10px" }}>
               <MapPin size={17} strokeWidth={2} color="var(--green)" style={{ flexShrink: 0 }} />
               <p style={{ color: "var(--cream)", fontSize: "12px", lineHeight: 1.45, fontWeight: 780 }}>
-                Room photos stay private until this memory is published.
+                Room media stays private until this memory is published.
               </p>
             </div>
-            <PhotosTab />
+            <MediaTab />
           </>
         )}
       </main>
