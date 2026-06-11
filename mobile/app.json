@@ -14,7 +14,6 @@
         "NSCameraUsageDescription": "CircleBites uses the camera to capture food photos and short food videos for posts.",
         "NSMicrophoneUsageDescription": "CircleBites uses the microphone to record sound with food videos.",
         "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library so you can add food photos and videos to posts.",
-        "NSContactsUsageDescription": "CircleBites uses contacts only when you choose people to invite to a table memory.",
         "NSLocationWhenInUseUsageDescription": "CircleBites uses your location to show nearby restaurants and dishes.",
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -27,7 +26,6 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_CONTACTS",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.POST_NOTIFICATIONS",
@@ -41,7 +39,6 @@
       "expo-camera",
       "expo-secure-store",
       "expo-image-picker",
-      "expo-contacts",
       [
         "expo-media-library",
         {

@@ -25,6 +25,13 @@ export type CreateMemoryRoomInput = {
   sourcePostId?: string;
 };
 
+export type AddMemoryParticipantResult = {
+  added: string[];
+  alreadyMembers: string[];
+  invited: string[];
+  notFound: string[];
+};
+
 export type AddMemoryPhotoInput = {
   roomId: string;
   body?: string;
@@ -403,15 +410,35 @@ export async function markMemoryRoomRead(roomId: string) {
 export async function addMemoryParticipant(roomId: string, rawUsername: string) {
   const username = normalizeUsername(rawUsername);
   if (!username) throw new Error("Username is required");
-  const profile = await getProfileByUsername(username);
-  if (!profile) throw new Error(`No user found for @${username}`);
 
-  const { error } = await supabase
-    .from("shared_memory_members")
-    .insert({ room_id: roomId, user_name: profile.username, role: "participant" });
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before inviting people");
 
-  if (error && error.code !== "23505") throw memoryTablesError(error);
-  return { ok: true };
+  const response = await fetch(apiUrl(`/api/mobile/memories/${roomId}/participants`), {
+    body: JSON.stringify({ usernames: [username] }),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+  const payload = await response.json().catch(() => null) as (Partial<AddMemoryParticipantResult> & { error?: string }) | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Unable to invite this person");
+  }
+  if (payload?.notFound?.includes(username)) {
+    throw new Error(`No user found for @${username}`);
+  }
+
+  return {
+    added: payload?.added ?? [],
+    alreadyMembers: payload?.alreadyMembers ?? [],
+    invited: payload?.invited ?? [],
+    notFound: payload?.notFound ?? []
+  };
 }
 
 export async function leaveMemoryRoom(roomId: string) {

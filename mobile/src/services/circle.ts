@@ -14,6 +14,8 @@ export type MyCircleSummary = {
   members: CircleMemberSummary[];
 };
 
+export type CircleAccessStatus = "idle" | "pending" | "joined";
+
 function displayNameForRow(row: { first_name: string | null; last_name: string | null; username: string }) {
   return [row.first_name, row.last_name].filter(Boolean).join(" ").trim() || row.username;
 }
@@ -70,6 +72,46 @@ export async function listMyCircle(): Promise<MyCircleSummary> {
       username
     }))
   };
+}
+
+export async function listCircleAccessStatuses(usernames: string[]): Promise<Record<string, CircleAccessStatus>> {
+  const profile = await getCurrentUserProfile();
+  if (!profile) throw new Error("Log in to view circle status");
+
+  const names = Array.from(new Set(
+    usernames
+      .map((name) => name.trim())
+      .filter((name) => name && name.toLowerCase() !== profile.username.toLowerCase())
+  ));
+  const statuses = Object.fromEntries(names.map((name) => [name, "idle" as CircleAccessStatus]));
+  if (names.length === 0) return statuses;
+
+  const [membershipsResult, requestsResult] = await Promise.all([
+    supabase
+      .from("circle_memberships")
+      .select("user_name")
+      .eq("member_name", profile.username)
+      .in("user_name", names),
+    supabase
+      .from("circle_requests")
+      .select("receiver_name, status")
+      .eq("sender_name", profile.username)
+      .in("receiver_name", names)
+      .in("status", ["pending", "accepted"])
+  ]);
+
+  if (membershipsResult.error) throw new Error(membershipsResult.error.message);
+  if (requestsResult.error) throw new Error(requestsResult.error.message);
+
+  for (const request of requestsResult.data ?? []) {
+    if (request.status === "pending") statuses[request.receiver_name] = "pending";
+    if (request.status === "accepted") statuses[request.receiver_name] = "joined";
+  }
+  for (const membership of membershipsResult.data ?? []) {
+    statuses[membership.user_name] = "joined";
+  }
+
+  return statuses;
 }
 
 export async function removeMyCircleMember(otherName: string) {

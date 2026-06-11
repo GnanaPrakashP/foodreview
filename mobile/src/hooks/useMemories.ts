@@ -15,6 +15,7 @@ import {
   leaveMemoryRoom,
   listMemoryRooms,
   markMemoryRoomRead,
+  type AddMemoryParticipantResult,
   type AddMemoryPhotoInput,
   type AddMemoryDishInput,
   type CreateMemoryRoomInput
@@ -118,7 +119,7 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
 export function useAddMemoryParticipantMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (username: string) => addMemoryParticipant(roomId, username),
+    mutationFn: (username: string): Promise<AddMemoryParticipantResult> => addMemoryParticipant(roomId, username),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });

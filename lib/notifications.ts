@@ -13,7 +13,7 @@ type SupabaseLikeError = {
   details?: string | null;
 } | null | undefined;
 
-export type NotificationEntityType = "USER" | "POST" | "RESTAURANT" | "CIRCLE_REQUEST" | "SYSTEM";
+export type NotificationEntityType = "USER" | "POST" | "RESTAURANT" | "CIRCLE_REQUEST" | "TABLE_MEMORY" | "SYSTEM";
 
 export type NotificationType =
   | "CIRCLE_REQUEST_RECEIVED"
@@ -25,6 +25,7 @@ export type NotificationType =
   | "POST_COMMENTED"
   | "THREAD_REPLY"
   | "CIRCLE_POST_CREATED"
+  | "TABLE_MEMORY_INVITE"
   | "COMMON_RESTAURANT_SCORE_UPDATED"
   | "ACHIEVEMENT_UNLOCKED"
   | "SYSTEM_ANNOUNCEMENT";

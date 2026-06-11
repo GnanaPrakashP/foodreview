@@ -2,7 +2,7 @@ import { Image, type ImageSource } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { ArrowLeft, Bookmark, Camera, ChevronRight, Globe, Heart, ImagePlus, Lock, MapPin, MessageCircle, PenLine, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, X } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useCreatePostMutation } from "@/hooks/useCreatePost";
 import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
+import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import {
   imageFromRecentAsset,
   listRecentPostImages,
@@ -26,7 +27,6 @@ import {
   type PlaceSuggestion,
   type SelectedPlace
 } from "@/services/places";
-import { searchUserProfiles, type UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
@@ -121,13 +121,21 @@ export default function ShareScreen() {
   const [memoryParticipants, setMemoryParticipants] = useState("");
   const [memoryParticipantInput, setMemoryParticipantInput] = useState("");
   const [memoryFriendFocused, setMemoryFriendFocused] = useState(false);
-  const [memoryFriendSuggestions, setMemoryFriendSuggestions] = useState<UserSearchResult[]>([]);
-  const [memoryFriendsLoading, setMemoryFriendsLoading] = useState(false);
   const [recentImages, setRecentImages] = useState<RecentPostImage[]>([]);
   const [recentImagesLoading, setRecentImagesLoading] = useState(false);
 
   const firstDish = dishes.find((dish) => dish.name.trim()) ?? dishes[0];
-  const memoryParticipantNames = splitUsernames(memoryParticipants);
+  const memoryParticipantNames = useMemo(() => splitUsernames(memoryParticipants), [memoryParticipants]);
+  const memoryFriendExcludedUsernames = useMemo(() => ([
+    ...memoryParticipantNames,
+    actor?.username ?? ""
+  ].filter(Boolean)), [actor?.username, memoryParticipantNames]);
+  const memoryFriendSearch = useUserProfileSearch({
+    enabled: shareMode === "friends" && memoryFriendFocused,
+    excludedUsernames: memoryFriendExcludedUsernames,
+    limit: 8,
+    query: memoryParticipantInput
+  });
   const hasSelectedRestaurant = selectedPlaceMatches(restaurantName, restaurantPlace);
   const hasSelectedMemoryRestaurant = selectedPlaceMatches(memoryRestaurantName, memoryRestaurantPlace);
   const hasSoloDetails = Boolean(hasSelectedRestaurant && dishes.some((dish) => dish.name.trim() && dish.rating > 0));
@@ -172,41 +180,6 @@ export default function ShareScreen() {
       alive = false;
     };
   }, [shareMode, soloStep]);
-
-  useEffect(() => {
-    if (shareMode !== "friends") return;
-
-    const query = memoryParticipantInput.trim();
-    if (query.replace(/^@/, "").length < 2) {
-      setMemoryFriendsLoading(false);
-      setMemoryFriendSuggestions([]);
-      return;
-    }
-
-    let alive = true;
-    setMemoryFriendsLoading(true);
-    const timeout = setTimeout(async () => {
-      try {
-        const excludedUsernames = [
-          ...splitUsernames(memoryParticipants),
-          actor?.username ?? ""
-        ].filter(Boolean);
-        const suggestions = await searchUserProfiles(query, excludedUsernames);
-        if (!alive) return;
-        setMemoryFriendSuggestions(suggestions);
-      } catch {
-        if (!alive) return;
-        setMemoryFriendSuggestions([]);
-      } finally {
-        if (alive) setMemoryFriendsLoading(false);
-      }
-    }, 250);
-
-    return () => {
-      alive = false;
-      clearTimeout(timeout);
-    };
-  }, [actor?.username, memoryParticipantInput, memoryParticipants, shareMode]);
 
   function cancelShareMode() {
     setShareMode("choice");
@@ -327,7 +300,6 @@ export default function ShareScreen() {
     }
     setMemoryParticipants([...current, normalized].join(", "));
     setMemoryParticipantInput("");
-    setMemoryFriendSuggestions([]);
     setMemoryFriendFocused(false);
   }
 
@@ -748,35 +720,47 @@ export default function ShareScreen() {
                           value={memoryParticipantInput}
                         />
                       </View>
-                      {memoryFriendFocused && (memoryFriendsLoading || memoryFriendSuggestions.length > 0 || memoryParticipantInput.trim().replace(/^@/, "").length >= 2) ? (
+                      {memoryFriendFocused && (memoryFriendSearch.loading || memoryFriendSearch.results.length > 0 || memoryFriendSearch.normalizedQuery.length >= 2) ? (
                         <View style={styles.friendSuggestions}>
-                          {memoryFriendsLoading ? (
-                            <View style={styles.placeSuggestionLoading}>
-                              <ActivityIndicator color={colors.dark.orange} size="small" />
-                              <Text style={styles.placeSuggestionMuted}>Searching people</Text>
-                            </View>
-                          ) : null}
-                          {!memoryFriendsLoading && memoryFriendSuggestions.length === 0 ? (
-                            <View style={styles.placeSuggestionLoading}>
-                              <Text style={styles.placeSuggestionMuted}>No people found</Text>
-                            </View>
-                          ) : null}
-                          {memoryFriendSuggestions.map((friend) => (
-                            <Pressable
-                              key={friend.username}
-                              onPressIn={() => addMemoryParticipant(friend.username)}
-                              style={styles.friendSuggestionRow}
-                            >
-                              <View style={styles.friendSuggestionAvatar}>
-                                <Text style={styles.friendSuggestionAvatarText}>{initialsForUser(friend.displayName, friend.username)}</Text>
+                          <ScrollView
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                            showsVerticalScrollIndicator={memoryFriendSearch.results.length > 3}
+                            style={styles.friendSuggestionsScroll}
+                          >
+                            {memoryFriendSearch.loading ? (
+                              <View style={styles.placeSuggestionLoading}>
+                                <ActivityIndicator color={colors.dark.orange} size="small" />
+                                <Text style={styles.placeSuggestionMuted}>Searching people</Text>
                               </View>
-                              <View style={styles.placeSuggestionText}>
-                                <Text numberOfLines={1} style={styles.placeSuggestionTitle}>{friend.displayName}</Text>
-                                <Text numberOfLines={1} style={styles.placeSuggestionSub}>@{friend.username}</Text>
+                            ) : null}
+                            {!memoryFriendSearch.loading && memoryFriendSearch.error ? (
+                              <View style={styles.placeSuggestionLoading}>
+                                <Text style={styles.placeSuggestionError}>Could not search people</Text>
                               </View>
-                              <ChevronRight size={16} color={colors.dark.muted} strokeWidth={2.2} />
-                            </Pressable>
-                          ))}
+                            ) : null}
+                            {!memoryFriendSearch.loading && !memoryFriendSearch.error && memoryFriendSearch.results.length === 0 ? (
+                              <View style={styles.placeSuggestionLoading}>
+                                <Text style={styles.placeSuggestionMuted}>No people found</Text>
+                              </View>
+                            ) : null}
+                            {memoryFriendSearch.results.map((friend) => (
+                              <Pressable
+                                key={friend.username}
+                                onPressIn={() => addMemoryParticipant(friend.username)}
+                                style={styles.friendSuggestionRow}
+                              >
+                                <View style={styles.friendSuggestionAvatar}>
+                                  <Text style={styles.friendSuggestionAvatarText}>{initialsForUser(friend.displayName, friend.username)}</Text>
+                                </View>
+                                <View style={styles.placeSuggestionText}>
+                                  <Text numberOfLines={1} style={styles.placeSuggestionTitle}>{friend.displayName}</Text>
+                                  <Text numberOfLines={1} style={styles.placeSuggestionSub}>@{friend.username}</Text>
+                                </View>
+                                <ChevronRight size={17} color={colors.dark.muted} strokeWidth={2.2} />
+                              </Pressable>
+                            ))}
+                          </ScrollView>
                         </View>
                       ) : null}
                       {memoryParticipantNames.length > 0 ? (
@@ -1825,31 +1809,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: "hidden"
   },
+  friendSuggestionsScroll: {
+    maxHeight: 244
+  },
   friendSuggestionRow: {
     alignItems: "center",
     borderTopColor: colors.dark.border,
     borderTopWidth: 1,
     flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 60,
-    paddingHorizontal: spacing.md,
+    gap: 12,
+    minHeight: 62,
+    paddingHorizontal: 14,
     paddingVertical: 10
   },
   friendSuggestionAvatar: {
     alignItems: "center",
     backgroundColor: colors.dark.orangeDim,
     borderColor: colors.dark.orangeBorder,
-    borderRadius: 16,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    height: 32,
+    height: 38,
     justifyContent: "center",
-    width: 32
+    width: 38
   },
   friendSuggestionAvatarText: {
     ...fontStyles.extraBold,
     color: colors.dark.orange,
-    fontSize: 11,
-    lineHeight: 13
+    fontSize: 12,
+    lineHeight: 16
   },
   memoryFriendChips: {
     flexDirection: "row",

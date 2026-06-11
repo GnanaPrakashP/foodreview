@@ -47,8 +47,26 @@ export type UserSearchResult = {
   username: string;
 };
 
+type UserSearchRow = Pick<ProfileRow, "username" | "first_name" | "last_name">;
+
+export type UserProfileSearchOptions = {
+  excludedUsernames?: string[];
+  limit?: number;
+  signal?: AbortSignal;
+};
+
 function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
+}
+
+export function normalizeUserProfileSearchQuery(query: string) {
+  return query
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/[^a-zA-Z0-9_\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function assertValidProfileInput(input: ProfileSetupInput) {
@@ -217,24 +235,39 @@ export async function getProfileByUsername(username: string): Promise<Profile | 
   return data ? mapProfile(data) : null;
 }
 
-export async function searchUserProfiles(query: string, excludedUsernames: string[] = []): Promise<UserSearchResult[]> {
-  const trimmed = query.trim().replace(/^@/, "");
-  if (trimmed.length < 2) return [];
-
-  const search = trimmed.replace(/[^a-zA-Z0-9_\s]/g, " ").trim();
+export async function searchUserProfiles(
+  query: string,
+  optionsOrExcludedUsernames: UserProfileSearchOptions | string[] = {}
+): Promise<UserSearchResult[]> {
+  const options = Array.isArray(optionsOrExcludedUsernames)
+    ? { excludedUsernames: optionsOrExcludedUsernames }
+    : optionsOrExcludedUsernames;
+  const search = normalizeUserProfileSearchQuery(query);
   if (search.length < 2) return [];
-  const excluded = new Set(excludedUsernames.map((username) => username.toLowerCase()));
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("username, first_name, last_name")
-    .or(`username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`)
-    .limit(8)
-    .returns<Array<Pick<ProfileRow, "username" | "first_name" | "last_name">>>();
 
-  if (error) throw new Error(error.message);
+  const limit = Math.min(20, Math.max(1, options.limit ?? 8));
+  const excludedUsernames = Array.from(new Set((options.excludedUsernames ?? [])
+    .map(normalizeUsername)
+    .filter(Boolean)));
+  const excluded = new Set(excludedUsernames);
 
-  return (data ?? [])
+  const rows = await searchUserProfilesViaRpc(search, {
+    excludedUsernames,
+    limit,
+    signal: options.signal
+  }).catch(async (error: unknown) => {
+    if (isAbortError(error)) throw error;
+    if (!isMissingUserSearchRpcError(error)) throw error;
+    return searchUserProfilesDirect(search, {
+      excludedUsernames,
+      limit,
+      signal: options.signal
+    });
+  });
+
+  return rows
     .filter((profile) => profile.username && !excluded.has(profile.username.toLowerCase()))
+    .slice(0, limit)
     .map((profile) => ({
       displayName: displayNameForProfile({
         firstName: profile.first_name,
@@ -243,6 +276,54 @@ export async function searchUserProfiles(query: string, excludedUsernames: strin
       }),
       username: profile.username
     }));
+}
+
+async function searchUserProfilesViaRpc(
+  search: string,
+  options: Required<Pick<UserProfileSearchOptions, "excludedUsernames" | "limit">> & Pick<UserProfileSearchOptions, "signal">
+): Promise<UserSearchRow[]> {
+  let request = supabase
+    .rpc("search_user_profiles", {
+      p_excluded_usernames: options.excludedUsernames,
+      p_limit: options.limit,
+      p_query: search
+    });
+
+  if (options.signal) request = request.abortSignal(options.signal);
+
+  const { data, error } = await request;
+  if (error) throw error;
+  return (data ?? []) as UserSearchRow[];
+}
+
+async function searchUserProfilesDirect(
+  search: string,
+  options: Required<Pick<UserProfileSearchOptions, "excludedUsernames" | "limit">> & Pick<UserProfileSearchOptions, "signal">
+): Promise<UserSearchRow[]> {
+  let request = supabase
+    .from("profiles")
+    .select("username, first_name, last_name")
+    .or(`username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`)
+    .limit(options.limit + options.excludedUsernames.length)
+    .returns<UserSearchRow[]>();
+
+  if (options.signal) request = request.abortSignal(options.signal);
+  const { data, error } = await request;
+  if (error) throw error;
+  return data ?? [];
+}
+
+function isAbortError(error: unknown) {
+  return (
+    (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+function isMissingUserSearchRpcError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+  return code === "PGRST202" || message.includes("search_user_profiles");
 }
 
 function statsFromRows(rows: ReviewRow[]): ProfileStats {

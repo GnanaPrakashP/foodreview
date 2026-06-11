@@ -509,12 +509,13 @@ export interface Notification {
     | "POST_COMMENTED"
     | "THREAD_REPLY"
     | "CIRCLE_POST_CREATED"
+    | "TABLE_MEMORY_INVITE"
     | "COMMON_RESTAURANT_SCORE_UPDATED"
     | "ACHIEVEMENT_UNLOCKED"
     | "SYSTEM_ANNOUNCEMENT";
   title: string | null;
   message: string | null;
-  entity_type: "USER" | "POST" | "RESTAURANT" | "CIRCLE_REQUEST" | "SYSTEM" | null;
+  entity_type: "USER" | "POST" | "RESTAURANT" | "CIRCLE_REQUEST" | "TABLE_MEMORY" | "SYSTEM" | null;
   entity_id: string | null;
   metadata: Json;
   is_read: boolean;

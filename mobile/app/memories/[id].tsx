@@ -1,20 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Camera, CameraView } from "expo-camera";
-import * as Contacts from "expo-contacts";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { memo, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  BackHandler,
   Dimensions,
+  Easing,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
   type KeyboardEvent,
   type LayoutChangeEvent,
-  Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type TextInputContentSizeChangeEventData,
@@ -23,7 +23,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  Share,
   type StyleProp,
   StyleSheet,
   Text,
@@ -37,6 +36,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
+import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
+import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
+import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
@@ -49,18 +51,21 @@ import {
   useMemoryRoomQuery,
   useMemoryRoomRealtime
 } from "@/hooks/useMemories";
+import type { CircleAccessStatus } from "@/services/circle";
 import {
   pickMemoryMediaFromGallery,
   type MemoryMediaPickerResult
 } from "@/services/mediaPicker";
 import { compactPlaceLocation } from "@/services/places";
-import { searchUserProfiles, type UserSearchResult } from "@/services/profiles";
+import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
-type RoomMode = "chat" | "media" | "dishes" | "people";
+type RoomMode = "overview" | "chat" | "media" | "dishes" | "people";
+type RoomTabMode = Exclude<RoomMode, "people">;
+type MemberCircleStatus = CircleAccessStatus | "loading";
 type TimelineItem =
   | { id: string; createdAt: string; type: "message"; value: MemoryMessage }
   | { id: string; createdAt: string; type: "media"; value: MemoryPhoto };
@@ -100,14 +105,14 @@ type MemoryCaptureAsset = {
   uri: string;
   width?: number | null;
 };
-type ContactInvite = {
-  detail: string;
-  id: string;
-  kind: "email" | "phone";
-  name: string;
-};
 
 const ROOM_MAX_WIDTH = 640;
+const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mode: RoomTabMode }> = [
+  { icon: "home-outline", label: "Table", mode: "overview" },
+  { icon: "chatbubble-ellipses-outline", label: "Chat", mode: "chat" },
+  { icon: "images-outline", label: "Media", mode: "media" },
+  { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
+];
 const ROOM_COLORS = {
   bg: "#0B0E10",
   header: "#101316",
@@ -140,6 +145,13 @@ const SELECTION_ACTION_BUTTON_SIZE = 38;
 const SELECTION_SECONDARY_ICON_SIZE = 19;
 const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
 const REPLY_SWIPE_MAX_TRANSLATE = 58;
+const FLOATING_ADD_EDGE_OFFSET = spacing.lg + 6;
+const FLOATING_ADD_BUTTON_SIZE = 54;
+const FLOATING_ADD_ICON_SIZE = 26;
+const FLOATING_ADD_ACTION_ICON_SIZE = 48;
+const FLOATING_ADD_MENU_GAP = 14;
+const PEOPLE_PANEL_ENTER_DURATION = 230;
+const PEOPLE_PANEL_EXIT_DURATION = 190;
 type MediaPreviewSize = { height: number; width: number };
 type MediaTimestampPlacement = "bottom-left" | "bottom-right";
 type MessageGroupPosition = "single" | "first" | "middle" | "last";
@@ -252,6 +264,15 @@ function getMessageGroupPosition(startsGroup: boolean, endsGroup: boolean): Mess
   return "middle";
 }
 
+function formatRestaurantDisplayName(name: string) {
+  const normalized = name.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!normalized) return name;
+
+  return normalized.replace(/(^|[\s\-\/(\[])([a-z])/g, (_, prefix: string, letter: string) => (
+    `${prefix}${letter.toUpperCase()}`
+  ));
+}
+
 export default function MemoryDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
@@ -267,6 +288,7 @@ export default function MemoryDetailScreen() {
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
+  const requestCircleAccess = useRequestCircleAccessMutation();
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
   const { height: windowHeight } = useWindowDimensions();
   const peopleInputRef = useRef<TextInput>(null);
@@ -281,11 +303,12 @@ export default function MemoryDetailScreen() {
   const readMarkerRef = useRef<string | null>(null);
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [mode, setMode] = useState<RoomMode>("chat");
+  const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [mode, setMode] = useState<RoomMode>("overview");
+  const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
-  const [participantSuggestions, setParticipantSuggestions] = useState<UserSearchResult[]>([]);
-  const [participantsLoading, setParticipantsLoading] = useState(false);
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
+  const [peopleToastMessage, setPeopleToastMessage] = useState("");
   const [dishName, setDishName] = useState("");
   const [dishNote, setDishNote] = useState("");
   const [dishRating, setDishRating] = useState(0);
@@ -295,47 +318,73 @@ export default function MemoryDetailScreen() {
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [mediaError, setMediaError] = useState("");
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
+  const [attachmentInitialView, setAttachmentInitialView] = useState<AttachmentSheetView>("actions");
+  const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
+  const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [androidKeyboardHeight, setAndroidKeyboardHeight] = useState(0);
+  const [memberCircleStatusOverrides, setMemberCircleStatusOverrides] = useState<Record<string, MemberCircleStatus>>({});
+  const floatingAddMenuProgress = useRef(new Animated.Value(0)).current;
+  const excludedParticipantUsernames = useMemo(() => ([
+    myUsername,
+    ...(room.data?.participants ?? []).map((item) => item.username),
+    ...selectedParticipants.map((item) => item.username)
+  ].filter(Boolean)), [myUsername, room.data?.participants, selectedParticipants]);
+  const participantSearch = useUserProfileSearch({
+    enabled: mode === "people" && !peopleClosing,
+    excludedUsernames: excludedParticipantUsernames,
+    limit: 8,
+    query: participant
+  });
+  const memberCircleUsernames = useMemo(() => (
+    Array.from(new Set(
+      (room.data?.participants ?? [])
+        .map((participantItem) => participantItem.username)
+        .filter((username) => username && username.toLowerCase() !== myUsername.toLowerCase())
+    )).sort()
+  ), [myUsername, room.data?.participants]);
+  const memberCircleStatusQuery = useCircleAccessStatusesQuery(memberCircleUsernames, {
+    enabled: mode === "people" && memberCircleUsernames.length > 0
+  });
+  const memberCircleStatuses = useMemo<Record<string, MemberCircleStatus>>(() => ({
+    ...(memberCircleStatusQuery.data ?? {}),
+    ...memberCircleStatusOverrides
+  }), [memberCircleStatusOverrides, memberCircleStatusQuery.data]);
+  const finishPeopleClose = useCallback(() => {
+    setPeopleClosing(false);
+    setMode("overview");
+  }, []);
 
   useEffect(() => {
-    if (mode !== "people") return;
+    Animated.timing(floatingAddMenuProgress, {
+      duration: floatingAddMenuOpen ? 180 : 140,
+      easing: Easing.out(Easing.cubic),
+      toValue: floatingAddMenuOpen ? 1 : 0,
+      useNativeDriver: true
+    }).start();
+  }, [floatingAddMenuOpen, floatingAddMenuProgress]);
 
-    const query = participant.trim();
-    if (query.replace(/^@/, "").length < 2) {
-      setParticipantsLoading(false);
-      setParticipantSuggestions([]);
-      return;
-    }
+  useEffect(() => {
+    if (mode !== "overview") setFloatingAddMenuOpen(false);
+  }, [mode]);
 
-    let alive = true;
-    setParticipantsLoading(true);
-    const timeout = setTimeout(async () => {
-      try {
-        const excludedUsernames = [
-          myUsername,
-          ...(room.data?.participants ?? []).map((item) => item.username),
-          ...selectedParticipants.map((item) => item.username)
-        ].filter(Boolean);
-        const suggestions = await searchUserProfiles(query, excludedUsernames);
-        if (!alive) return;
-        setParticipantSuggestions(suggestions);
-      } catch {
-        if (!alive) return;
-        setParticipantSuggestions([]);
-      } finally {
-        if (alive) setParticipantsLoading(false);
-      }
-    }, 250);
+  useEffect(() => () => {
+    if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
+  }, []);
 
-    return () => {
-      alive = false;
-      clearTimeout(timeout);
-    };
-  }, [mode, myUsername, participant, room.data?.participants, selectedParticipants]);
+  useEffect(() => {
+    if (mode !== "people") return undefined;
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!peopleClosing) setPeopleClosing(true);
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [mode, peopleClosing]);
 
   function markLatestRoomRead() {
     if (!roomId || !room.data) return;
@@ -468,15 +517,67 @@ export default function MemoryDetailScreen() {
     });
   }
 
+  function showPeopleToast(message: string) {
+    if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
+    setPeopleToastMessage(message);
+    peopleToastTimeoutRef.current = setTimeout(() => {
+      peopleToastTimeoutRef.current = null;
+      setPeopleToastMessage("");
+    }, 2800);
+  }
+
+  function participantDisplayName(username: string, selectedNameMap: Map<string, string>) {
+    return selectedNameMap.get(username.toLowerCase()) ?? `@${username}`;
+  }
+
+  function buildParticipantInviteToast({
+    added,
+    alreadyMembers,
+    invited,
+    selectedNameMap
+  }: {
+    added: string[];
+    alreadyMembers: string[];
+    invited: string[];
+    selectedNameMap: Map<string, string>;
+  }) {
+    const parts = [];
+    if (added.length === 1) {
+      parts.push(`${participantDisplayName(added[0], selectedNameMap)} added`);
+    } else if (added.length > 1) {
+      parts.push(`${added.length} added to the table`);
+    }
+    if (invited.length === 1) {
+      parts.push(`Invite sent to ${participantDisplayName(invited[0], selectedNameMap)}`);
+    } else if (invited.length > 1) {
+      parts.push(`${invited.length} invites sent`);
+    }
+    if (alreadyMembers.length === 1) {
+      parts.push(`${participantDisplayName(alreadyMembers[0], selectedNameMap)} already at the table`);
+    } else if (alreadyMembers.length > 1) {
+      parts.push(`${alreadyMembers.length} already at the table`);
+    }
+    return parts.join(" · ");
+  }
+
   async function submitParticipants() {
     if (selectedParticipants.length === 0) return;
+    peopleInputRef.current?.blur();
+    Keyboard.dismiss();
+    const selectedNameMap = new Map(selectedParticipants.map((person) => [person.username.toLowerCase(), person.displayName]));
     try {
+      const results = [];
       for (const selected of selectedParticipants) {
-        await addParticipant.mutateAsync(selected.username);
+        results.push(await addParticipant.mutateAsync(selected.username));
       }
+      const added = Array.from(new Set(results.flatMap((result) => result.added)));
+      const invited = Array.from(new Set(results.flatMap((result) => result.invited)));
+      const alreadyMembers = Array.from(new Set(results.flatMap((result) => result.alreadyMembers)));
       setParticipant("");
       setSelectedParticipants([]);
-      setParticipantSuggestions([]);
+      if (added.length > 0 || invited.length > 0 || alreadyMembers.length > 0) {
+        showPeopleToast(buildParticipantInviteToast({ added, alreadyMembers, invited, selectedNameMap }));
+      }
     } catch {
       // Rendered from mutation state.
     }
@@ -488,7 +589,6 @@ export default function MemoryDetailScreen() {
       return [...current, person];
     });
     setParticipant("");
-    setParticipantSuggestions([]);
     requestAnimationFrame(() => peopleInputRef.current?.focus());
   }
 
@@ -606,8 +706,9 @@ export default function MemoryDetailScreen() {
       });
       setMessage("");
       setReplyingToMessage(null);
-      setMode("chat");
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+      const nextMode = attachmentOriginMode === "chat" ? "chat" : "media";
+      setMode(nextMode);
+      if (nextMode === "chat") requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     } catch {
       // Rendered from mutation state.
     }
@@ -650,20 +751,61 @@ export default function MemoryDetailScreen() {
     const didAdd = await submitDish();
     if (!didAdd) return;
     setAttachmentOptionsVisible(false);
-    setMode("chat");
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }
-
-  function focusPeopleInput() {
-    peopleInputRef.current?.focus();
+    const nextMode = attachmentOriginMode === "chat" ? "chat" : "dishes";
+    setMode(nextMode);
+    if (nextMode === "chat") requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }
 
   function openPeopleAdd() {
+    setPeopleClosing(false);
     setMode("people");
-    requestAnimationFrame(() => {
-      focusPeopleInput();
-      setTimeout(focusPeopleInput, Platform.OS === "web" ? 0 : 120);
-    });
+  }
+
+  function openPeopleList() {
+    setPeopleClosing(false);
+    setMode("people");
+  }
+
+  function closePeopleScreen() {
+    if (peopleClosing) return;
+    if (peopleToastTimeoutRef.current) {
+      clearTimeout(peopleToastTimeoutRef.current);
+      peopleToastTimeoutRef.current = null;
+    }
+    setPeopleToastMessage("");
+    setPeopleClosing(true);
+  }
+
+  function openMemberProfile(username: string) {
+    if (!username) return;
+    if (myUsername && username.toLowerCase() === myUsername.toLowerCase()) {
+      router.push("/profile");
+      return;
+    }
+    router.push({ pathname: "/people/[username]", params: { username } });
+  }
+
+  async function requestMemberCircle(username: string) {
+    if (!myUsername || !username || username.toLowerCase() === myUsername.toLowerCase()) return;
+    const currentStatus = memberCircleStatuses[username] ?? "idle";
+    if (currentStatus === "loading" || currentStatus === "pending" || currentStatus === "joined") return;
+
+    setMemberCircleStatusOverrides((current) => ({ ...current, [username]: "loading" }));
+    try {
+      const result = await requestCircleAccess.mutateAsync({ receiverName: username });
+      setMemberCircleStatusOverrides((current) => ({
+        ...current,
+        [username]: result === "joined" ? "joined" : "pending"
+      }));
+      void memberCircleStatusQuery.refetch();
+    } catch (error) {
+      setMemberCircleStatusOverrides((current) => {
+        const next = { ...current };
+        delete next[username];
+        return next;
+      });
+      Alert.alert("Could not request circle access", error instanceof Error ? error.message : "Please try again.");
+    }
   }
 
   function openMediaViewer(media: MemoryPhoto, group: MemoryPhoto[] = [media]) {
@@ -671,8 +813,30 @@ export default function MemoryDetailScreen() {
     setSelectedMedia({ index, items: group });
   }
 
-  function openAttachmentOptions() {
+  function openAttachmentOptions(initialView: AttachmentSheetView = "actions") {
+    setAttachmentOriginMode(mode);
+    setAttachmentInitialView(initialView);
     setAttachmentOptionsVisible(true);
+  }
+
+  function openAttachmentActions() {
+    openAttachmentOptions("actions");
+  }
+
+  function closeFloatingAddMenu() {
+    setFloatingAddMenuOpen(false);
+  }
+
+  function openFloatingAddMedia() {
+    setFloatingAddMenuOpen(false);
+    setAttachmentOriginMode(mode);
+    setAttachmentOptionsVisible(false);
+    setCameraVisible(true);
+  }
+
+  function openFloatingAddDish() {
+    setFloatingAddMenuOpen(false);
+    openAttachmentOptions("dish");
   }
 
   function openRoomActions() {
@@ -681,16 +845,6 @@ export default function MemoryDetailScreen() {
 
   function closeRoomActions() {
     setRoomActionsVisible(false);
-  }
-
-  function openPeopleFromRoomActions() {
-    closeRoomActions();
-    openPeopleAdd();
-  }
-
-  function viewPeopleFromRoomActions() {
-    closeRoomActions();
-    setMode("people");
   }
 
   function confirmLeaveRoom() {
@@ -751,6 +905,7 @@ export default function MemoryDetailScreen() {
   }
 
   const data = room.data;
+  const displayRestaurantName = formatRestaurantDisplayName(data.restaurantName);
   const selectedTargets = selectedItemKeys
     .map((key) => findMemoryActionTarget(data, key))
     .filter((target): target is MemoryActionTarget => Boolean(target));
@@ -774,15 +929,26 @@ export default function MemoryDetailScreen() {
   const androidKeyboardOffset = Platform.OS === "android" && keyboardVisible
     ? Math.max(0, androidKeyboardHeight - androidResizeAmount + ANDROID_KEYBOARD_SAFETY_LIFT)
     : 0;
+  const showFloatingAddButton =
+    mode === "overview" &&
+    !attachmentOptionsVisible &&
+    !cameraVisible &&
+    !selectedMedia;
+  const headerMode = mode === "people" ? "overview" : mode;
 
   return (
     <Screen padded={false} style={styles.screenContent}>
       <RoomHeader
         data={data}
-        mode={mode}
-        onBack={goBackToMemories}
+        displayRestaurantName={displayRestaurantName}
+        mode={headerMode}
+        myUsername={myUsername}
+        onAddPeople={openPeopleAdd}
+        onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
         onChangeMode={setMode}
         onOpenActions={openRoomActions}
+        onViewPeople={openPeopleList}
+        transitioning={mode === "people"}
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -792,18 +958,23 @@ export default function MemoryDetailScreen() {
         <View
           style={[
             styles.roomStage,
+            headerMode === "overview" && styles.roomStageTable,
             mode === "chat" && styles.roomStageChat,
             mode === "chat" && androidKeyboardOffset > 0 && { paddingBottom: androidKeyboardOffset }
           ]}
         >
           {mode === "chat" ? <FoodChatWallpaper /> : null}
           <View style={styles.body}>
-            {mode === "chat" ? (
+            <View
+              pointerEvents={mode === "chat" ? "auto" : "none"}
+              style={mode === "chat" ? styles.roomPaneActive : styles.roomPaneHidden}
+            >
               <ChatTimeline
+                active={mode === "chat"}
                 data={data}
                 myUsername={myUsername}
                 onAddDish={() => setMode("dishes")}
-                onAddMedia={openAttachmentOptions}
+                onAddMedia={openAttachmentActions}
                 onAddPeople={openPeopleAdd}
                 onBeginSelection={beginSelection}
                 onLayoutChange={handleChatTimelineLayout}
@@ -818,7 +989,8 @@ export default function MemoryDetailScreen() {
                 selectedItemKeys={selectedItemKeys}
                 selectionMode={selectedItemKeys.length > 0}
               />
-            ) : mode === "media" ? (
+            </View>
+            {mode === "media" ? (
               <MediaGallery
                 error={mediaError || addPhoto.error?.message}
                 onOpenMedia={openMediaViewer}
@@ -837,23 +1009,7 @@ export default function MemoryDetailScreen() {
                 onSubmitDish={submitDish}
                 pending={addDish.isPending}
               />
-            ) : (
-              <PeoplePanel
-                addParticipantError={addParticipant.error?.message}
-                addParticipantPending={addParticipant.isPending}
-                inputRef={peopleInputRef}
-                onChangeParticipant={setParticipant}
-                onRemoveSelectedParticipant={removeSelectedParticipant}
-                onSelectParticipant={selectParticipantSuggestion}
-                onSubmitParticipants={submitParticipants}
-                participantValue={participant}
-                participantsLoading={participantsLoading}
-                participantSuggestions={participantSuggestions}
-                participants={data.participants}
-                roomName={data.restaurantName}
-                selectedParticipants={selectedParticipants}
-              />
-            )}
+            ) : null}
           </View>
 
           {mode === "chat" && selectedItemKeys.length > 0 ? (
@@ -879,7 +1035,7 @@ export default function MemoryDetailScreen() {
               editingLabel={editingMessage ? `Editing message` : undefined}
               bottomInset={insets.bottom}
               keyboardOpen={keyboardVisible}
-              onAttach={openAttachmentOptions}
+              onAttach={openAttachmentActions}
               onCancelEdit={cancelEditMessage}
               onCancelReply={cancelReplyMessage}
               onChangeMessage={setMessage}
@@ -897,6 +1053,7 @@ export default function MemoryDetailScreen() {
           dishNote={dishNote}
           dishPending={addDish.isPending}
           dishRating={dishRating}
+          initialView={attachmentInitialView}
           onChangeDishName={setDishName}
           onChangeDishNote={setDishNote}
           onChangeDishRating={setDishRating}
@@ -909,10 +1066,8 @@ export default function MemoryDetailScreen() {
         />
         <RoomActionsSheet
           leavePending={leaveRoom.isPending}
-          onAddPeople={openPeopleFromRoomActions}
           onClose={closeRoomActions}
           onLeave={confirmLeaveRoom}
-          onViewPeople={viewPeopleFromRoomActions}
           visible={roomActionsVisible}
         />
         <MemoryCameraModal
@@ -922,54 +1077,339 @@ export default function MemoryDetailScreen() {
         />
         <MediaViewer selection={selectedMedia} onClose={() => setSelectedMedia(null)} />
       </KeyboardAvoidingView>
+      {showFloatingAddButton ? (
+        <FloatingAddMenu
+          bottomInset={insets.bottom}
+          open={floatingAddMenuOpen}
+          progress={floatingAddMenuProgress}
+          onClose={closeFloatingAddMenu}
+          onDish={openFloatingAddDish}
+          onMedia={openFloatingAddMedia}
+          onToggle={() => setFloatingAddMenuOpen((current) => !current)}
+        />
+      ) : null}
+      {mode === "people" ? (
+        <PeoplePanel
+          addParticipantError={addParticipant.error?.message}
+          addParticipantPending={addParticipant.isPending}
+          bottomInset={insets.bottom}
+          circleStatuses={memberCircleStatuses}
+          closing={peopleClosing}
+          inputRef={peopleInputRef}
+          myUsername={myUsername}
+          onBack={closePeopleScreen}
+          onChangeParticipant={setParticipant}
+          onCloseAnimationEnd={finishPeopleClose}
+          onOpenProfile={openMemberProfile}
+          onRemoveSelectedParticipant={removeSelectedParticipant}
+          onRequestCircle={requestMemberCircle}
+          onSelectParticipant={selectParticipantSuggestion}
+          onSubmitParticipants={submitParticipants}
+          participantSearchError={participantSearch.error}
+          participantValue={participant}
+          participantsLoading={participantSearch.loading}
+          participantSuggestions={participantSearch.results}
+          participants={data.participants}
+          selectedParticipants={selectedParticipants}
+          toastMessage={peopleToastMessage}
+        />
+      ) : null}
     </Screen>
   );
 }
 
 function RoomHeader({
   data,
+  displayRestaurantName,
   mode,
+  myUsername,
+  onAddPeople,
   onBack,
   onChangeMode,
-  onOpenActions
+  onOpenActions,
+  onViewPeople,
+  transitioning
 }: {
   data: MemoryRoom;
+  displayRestaurantName: string;
   mode: RoomMode;
+  myUsername: string;
+  onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
   onOpenActions: () => void;
+  onViewPeople: () => void;
+  transitioning: boolean;
 }) {
   const locationLabel = compactPlaceLocation({
     formattedAddress: data.area ?? "",
     shortFormattedAddress: data.area ?? ""
   });
+  const isMembersArea = mode === "people";
+  const isCompactHeader = mode !== "overview";
+  const compactTitle = isMembersArea ? "Members" : displayRestaurantName;
+  const visualTabMode: RoomTabMode = isMembersArea ? "overview" : mode;
+  const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
+  const hasActiveTab = activeTabIndex >= 0;
+  const tabIndicatorProgress = useRef(new Animated.Value(Math.max(0, activeTabIndex))).current;
+  const headerCollapseProgress = useRef(new Animated.Value(isCompactHeader ? 1 : 0)).current;
+  const membersHeaderProgress = useRef(new Animated.Value(isMembersArea ? 1 : 0)).current;
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const tabTrackWidth = Math.max(0, tabBarWidth - 4);
+  const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
+  const tabIndicatorTranslateX = tabIndicatorProgress.interpolate({
+    inputRange: ROOM_TABS.map((_, index) => index),
+    outputRange: ROOM_TABS.map((_, index) => 2 + tabWidth * index)
+  });
+  const compactHeaderOpacity = headerCollapseProgress;
+  const compactHeaderTranslateY = headerCollapseProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [5, 0]
+  });
+  const expandedHeaderOpacity = headerCollapseProgress.interpolate({
+    inputRange: [0, 0.55, 1],
+    outputRange: [1, 0.22, 0]
+  });
+  const expandedHeaderMaxHeight = headerCollapseProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [150, 0]
+  });
+  const expandedHeaderMarginTop = headerCollapseProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [spacing.sm, 0]
+  });
+  const addFriendSlotWidth = headerCollapseProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [34, 0]
+  });
+  const addFriendSlotMargin = headerCollapseProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [spacing.sm, 0]
+  });
+  const addFriendSlotOpacity = headerCollapseProgress.interpolate({
+    inputRange: [0, 0.7, 1],
+    outputRange: [1, 0.15, 0]
+  });
+  const tabBarOpacity = membersHeaderProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0]
+  });
+  const tabBarMaxHeight = membersHeaderProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [46, 0]
+  });
+  const tabBarMarginTop = membersHeaderProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [spacing.md, 0]
+  });
+  const orderedParticipants = [...data.participants].sort((first, second) => {
+    const firstIsMe = first.username.toLowerCase() === myUsername.toLowerCase();
+    const secondIsMe = second.username.toLowerCase() === myUsername.toLowerCase();
+    if (firstIsMe === secondIsMe) return 0;
+    return firstIsMe ? -1 : 1;
+  });
+  const visibleAvatars = orderedParticipants.slice(0, 4);
+  const hiddenAvatarCount = Math.max(0, orderedParticipants.length - visibleAvatars.length);
+  const friendNames = orderedParticipants.map((participant) => friendSummaryName(participant, myUsername));
+  const friendsLabel = friendNames.length > 0
+    ? friendNames.join(", ")
+    : "No friends yet";
+
+  useEffect(() => {
+    if (!hasActiveTab) return;
+    Animated.timing(tabIndicatorProgress, {
+      duration: 190,
+      easing: Easing.out(Easing.cubic),
+      toValue: activeTabIndex,
+      useNativeDriver: false
+    }).start();
+  }, [activeTabIndex, hasActiveTab, tabIndicatorProgress]);
+
+  useEffect(() => {
+    Animated.timing(headerCollapseProgress, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      toValue: isCompactHeader ? 1 : 0,
+      useNativeDriver: false
+    }).start();
+  }, [headerCollapseProgress, isCompactHeader]);
+
+  useEffect(() => {
+    Animated.timing(membersHeaderProgress, {
+      duration: isMembersArea ? PEOPLE_PANEL_ENTER_DURATION : PEOPLE_PANEL_EXIT_DURATION,
+      easing: isMembersArea ? Easing.out(Easing.cubic) : Easing.inOut(Easing.cubic),
+      toValue: isMembersArea ? 1 : 0,
+      useNativeDriver: false
+    }).start();
+  }, [isMembersArea, membersHeaderProgress]);
 
   return (
-    <View style={styles.header}>
+    <View
+      aria-hidden={transitioning ? true : undefined}
+      accessibilityElementsHidden={transitioning}
+      importantForAccessibility={transitioning ? "no-hide-descendants" : "auto"}
+      pointerEvents={transitioning ? "none" : "auto"}
+      style={styles.header}
+    >
       <View style={styles.headerTop}>
-        <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={onBack} style={styles.headerIconButton}>
+        <Pressable
+          accessibilityLabel={transitioning ? undefined : "Go back"}
+          accessibilityRole={transitioning ? undefined : "button"}
+          hitSlop={8}
+          onPress={onBack}
+          style={[styles.headerIconButton, styles.headerBackButton]}
+        >
           <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
         </Pressable>
-        <View style={styles.headerText}>
-          <Text numberOfLines={1} style={styles.roomTitle}>{data.restaurantName}</Text>
-          <View style={styles.roomSubtitleRow}>
-            <Ionicons name="location-outline" size={12} color={colors.dark.muted} />
-            <Text numberOfLines={1} style={styles.roomSubtitle}>{locationLabel || "Area not set"}</Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.compactRoomTitleWrap,
+            {
+              opacity: compactHeaderOpacity,
+              transform: [{ translateY: compactHeaderTranslateY }]
+            }
+          ]}
+        >
+          <Text numberOfLines={1} style={[styles.compactRoomTitle, isMembersArea && styles.membersCompactTitle]}>{compactTitle}</Text>
+        </Animated.View>
+        {isMembersArea ? null : (
+          <View style={styles.headerActions}>
+            <Animated.View
+              pointerEvents={isCompactHeader ? "none" : "auto"}
+              style={[
+                styles.headerAddFriendSlot,
+                {
+                  marginRight: addFriendSlotMargin,
+                  opacity: addFriendSlotOpacity,
+                  width: addFriendSlotWidth
+                }
+              ]}
+            >
+              <Pressable
+                accessibilityLabel={transitioning ? undefined : "Add friends"}
+                accessibilityRole={transitioning ? undefined : "button"}
+                hitSlop={8}
+                onPress={onAddPeople}
+                style={styles.headerIconButton}
+              >
+                <Ionicons name="person-add-outline" size={20} color={colors.dark.cream} />
+              </Pressable>
+            </Animated.View>
+            <Pressable
+              accessibilityLabel={transitioning ? undefined : "Room actions"}
+              accessibilityRole={transitioning ? undefined : "button"}
+              hitSlop={8}
+              onPress={onOpenActions}
+              style={styles.headerIconButton}
+            >
+              <Ionicons name="ellipsis-vertical" size={20} color={colors.dark.cream} />
+            </Pressable>
           </View>
-        </View>
-        <Pressable accessibilityLabel="Room actions" accessibilityRole="button" hitSlop={8} onPress={onOpenActions} style={styles.headerIconButton}>
-          <Ionicons name="ellipsis-vertical" size={20} color={colors.dark.cream} />
-        </Pressable>
+        )}
       </View>
 
-      <View style={styles.modeTabs}>
-        <ModeButton active={mode === "chat"} icon="chatbubble-ellipses-outline" label="Chat" onPress={() => onChangeMode("chat")} />
-        <ModeButton active={mode === "media"} icon="images-outline" label="Media" onPress={() => onChangeMode("media")} />
-        <ModeButton active={mode === "dishes"} icon="restaurant-outline" label="Dishes" onPress={() => onChangeMode("dishes")} />
-        <ModeButton active={mode === "people"} icon="people-outline" label="People" onPress={() => onChangeMode("people")} />
-      </View>
+      <Animated.View
+        pointerEvents={isCompactHeader ? "none" : "auto"}
+        style={[
+          styles.roomIdentityAnimated,
+          {
+            marginTop: expandedHeaderMarginTop,
+            maxHeight: expandedHeaderMaxHeight,
+            opacity: expandedHeaderOpacity
+          }
+        ]}
+      >
+        <View style={styles.roomIdentity}>
+          <Text numberOfLines={2} style={styles.roomTitle}>{displayRestaurantName}</Text>
+          <View style={styles.roomMetaRow}>
+            <View style={styles.roomMetaIconSlot}>
+              <Ionicons name="location-outline" size={13} color={colors.dark.muted} />
+            </View>
+            <Text numberOfLines={1} style={styles.roomMetaText}>{locationLabel || "Area not set"}</Text>
+          </View>
+          <View style={styles.roomMetaRow}>
+            <View style={styles.roomMetaIconSlot}>
+              <Ionicons name="calendar-outline" size={13} color={colors.dark.muted} />
+            </View>
+            <Text numberOfLines={1} style={styles.roomMetaText}>{formatDisplayDate(data.createdAt)}</Text>
+          </View>
+          <Pressable
+            accessibilityLabel={transitioning ? undefined : "View members"}
+            accessibilityRole={transitioning ? undefined : "button"}
+            onPress={onViewPeople}
+            style={styles.roomFriendsRow}
+          >
+            <View style={styles.roomFriendAvatars}>
+              {visibleAvatars.map((participant, index) => (
+                <View
+                  key={participant.id}
+                  style={[
+                    styles.roomFriendAvatar,
+                    index > 0 && styles.roomFriendAvatarOverlap,
+                    { backgroundColor: senderAccent(participant.displayName) }
+                  ]}
+                >
+                  <Text style={styles.roomFriendInitial}>{senderInitials(participant.displayName)}</Text>
+                </View>
+              ))}
+              {hiddenAvatarCount > 0 ? (
+                <View style={[styles.roomFriendAvatar, visibleAvatars.length > 0 && styles.roomFriendAvatarOverlap, styles.roomFriendMoreAvatar]}>
+                  <Text style={styles.roomFriendInitial}>+{hiddenAvatarCount}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text numberOfLines={1} style={styles.roomFriendsText}>{friendsLabel}</Text>
+            <Ionicons name="chevron-forward" size={15} color={colors.dark.muted} />
+          </Pressable>
+        </View>
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents={isMembersArea ? "none" : "auto"}
+        style={[
+          styles.modeTabsAnimated,
+          {
+            marginTop: tabBarMarginTop,
+            maxHeight: tabBarMaxHeight,
+            opacity: tabBarOpacity
+          }
+        ]}
+      >
+        <View
+          onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+          style={styles.modeTabs}
+        >
+          {tabWidth > 0 && hasActiveTab ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.modeTabIndicator,
+                {
+                  transform: [{ translateX: tabIndicatorTranslateX }],
+                  width: tabWidth
+                }
+              ]}
+            />
+          ) : null}
+          {ROOM_TABS.map((tab) => (
+            <ModeButton
+              active={visualTabMode === tab.mode}
+              icon={tab.icon}
+              key={tab.mode}
+              label={tab.label}
+              onPress={() => onChangeMode(tab.mode)}
+            />
+          ))}
+        </View>
+      </Animated.View>
     </View>
   );
+}
+
+function friendSummaryName(participant: MemoryParticipant, myUsername: string) {
+  if (participant.username.toLowerCase() === myUsername.toLowerCase()) return "You";
+  return participant.displayName.trim().split(/\s+/)[0] || participant.username;
 }
 
 function ModeButton({
@@ -983,6 +1423,8 @@ function ModeButton({
   label: string;
   onPress: () => void;
 }) {
+  const iconColor = active ? colors.dark.cream : "#A19B94";
+
   return (
     <Pressable
       accessibilityLabel={label}
@@ -991,13 +1433,127 @@ function ModeButton({
       onPress={onPress}
       style={[styles.modeButton, active && styles.modeButtonActive]}
     >
-      <Ionicons name={icon} size={15} color={active ? colors.dark.white : colors.dark.muted} />
+      <Ionicons name={icon} size={15} color={iconColor} />
       <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
     </Pressable>
   );
 }
 
+function FloatingAddMenu({
+  bottomInset,
+  onClose,
+  onDish,
+  onMedia,
+  onToggle,
+  open,
+  progress
+}: {
+  bottomInset: number;
+  onClose: () => void;
+  onDish: () => void;
+  onMedia: () => void;
+  onToggle: () => void;
+  open: boolean;
+  progress: Animated.Value;
+}) {
+  const buttonBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6);
+  const actionStackRight = FLOATING_ADD_EDGE_OFFSET + (FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2;
+  const menuOpacity = progress;
+  const menuTranslateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [16, 0]
+  });
+  const menuScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 1]
+  });
+  const iconRotate = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "45deg"]
+  });
+
+  return (
+    <>
+      {open ? (
+        <Pressable
+          accessibilityLabel="Close add menu"
+          accessibilityRole="button"
+          onPress={onClose}
+          style={styles.floatingAddBackdrop}
+        />
+      ) : null}
+      <Animated.View
+        pointerEvents={open ? "auto" : "none"}
+        style={[
+          styles.floatingAddActionStack,
+          {
+            bottom: buttonBottom + FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP,
+            opacity: menuOpacity,
+            right: actionStackRight,
+            transform: [{ translateY: menuTranslateY }, { scale: menuScale }]
+          }
+        ]}
+      >
+        <FloatingAddAction
+          accent="gold"
+          icon="restaurant-outline"
+          label="Dishes"
+          onPress={onDish}
+        />
+        <FloatingAddAction
+          accent="cool"
+          icon="camera-outline"
+          label="Media"
+          onPress={onMedia}
+        />
+      </Animated.View>
+      <Pressable
+        accessibilityLabel={open ? "Close add menu" : "Add to memory"}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={onToggle}
+        style={[styles.floatingAddButton, open && styles.floatingAddButtonOpen, { bottom: buttonBottom, right: FLOATING_ADD_EDGE_OFFSET }]}
+      >
+        <Animated.View style={[styles.floatingAddIconWrap, { transform: [{ rotate: iconRotate }] }]}>
+          <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={colors.dark.white} style={styles.floatingAddIcon} />
+        </Animated.View>
+      </Pressable>
+    </>
+  );
+}
+
+function FloatingAddAction({
+  accent,
+  icon,
+  label,
+  onPress
+}: {
+  accent: "cool" | "gold";
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  const iconColor = accent === "cool" ? ROOM_COLORS.cool : colors.dark.gold;
+
+  return (
+    <Pressable
+      accessibilityLabel={`Add ${label.toLowerCase()}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.floatingAddAction}
+    >
+      <View style={styles.floatingAddActionLabel}>
+        <Text style={styles.floatingAddActionText}>{label}</Text>
+      </View>
+      <View style={[styles.floatingAddActionIcon, accent === "gold" && styles.floatingAddActionIconGold]}>
+        <Ionicons name={icon} size={20} color={iconColor} />
+      </View>
+    </Pressable>
+  );
+}
+
 function ChatTimeline({
+  active,
   data,
   editingMessageId,
   myUsername,
@@ -1016,6 +1572,7 @@ function ChatTimeline({
   selectedItemKeys,
   selectionMode
 }: {
+  active: boolean;
   data: MemoryRoom;
   editingMessageId: string | null;
   myUsername: string;
@@ -1055,6 +1612,8 @@ function ChatTimeline({
     () => new Map(data.participants.map((participant) => [participant.username, participant.displayName])),
     [data.participants]
   );
+  const [initialAnchorReady, setInitialAnchorReady] = useState(false);
+  const initialAnchorReadyRef = useRef(false);
   const didScrollToUnreadRef = useRef(false);
   const didInitialBottomScrollRef = useRef(false);
   const listNearBottomRef = useRef(false);
@@ -1076,7 +1635,15 @@ function ChatTimeline({
   useEffect(() => {
     didInitialBottomScrollRef.current = false;
     listNearBottomRef.current = false;
+    initialAnchorReadyRef.current = false;
+    setInitialAnchorReady(false);
   }, [data.id]);
+
+  const revealInitialAnchor = useCallback(() => {
+    if (initialAnchorReadyRef.current) return;
+    initialAnchorReadyRef.current = true;
+    requestAnimationFrame(() => setInitialAnchorReady(true));
+  }, []);
 
   const timelineRows = useMemo(() => {
     const rows: ChatTimelineRow[] = [];
@@ -1145,6 +1712,12 @@ function ChatTimeline({
     () => timelineRows.findIndex((row) => row.type === "unread"),
     [timelineRows]
   );
+  const hideUntilAnchored = timelineRows.length > 0 && !initialAnchorReady;
+
+  useEffect(() => {
+    if (!active || !listNearBottomRef.current) return;
+    onNearBottomChange(true);
+  }, [active, onNearBottomChange]);
 
   useEffect(() => {
     if (firstUnreadRowIndex < 0 || didScrollToUnreadRef.current) return;
@@ -1155,10 +1728,21 @@ function ChatTimeline({
         index: firstUnreadRowIndex,
         viewPosition: 0.08
       });
+      revealInitialAnchor();
     }, 50);
 
     return () => clearTimeout(timeout);
-  }, [firstUnreadRowIndex, scrollRef]);
+  }, [firstUnreadRowIndex, revealInitialAnchor, scrollRef]);
+
+  useEffect(() => {
+    if (timelineRows.length === 0) {
+      revealInitialAnchor();
+      return;
+    }
+
+    const timeout = setTimeout(revealInitialAnchor, 320);
+    return () => clearTimeout(timeout);
+  }, [revealInitialAnchor, timelineRows.length]);
 
   function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" }>["rowSpacing"]) {
     if (rowSpacing === "break") return styles.chatMessageRowAfterBreak;
@@ -1216,7 +1800,7 @@ function ChatTimeline({
   }
 
   return (
-    <View onLayout={onLayoutChange} style={styles.chatTimelineWrap}>
+    <View onLayout={onLayoutChange} style={[styles.chatTimelineWrap, hideUntilAnchored && styles.chatTimelineHidden]}>
       <FlatList
         data={timelineRows}
         ref={scrollRef}
@@ -1241,6 +1825,7 @@ function ChatTimeline({
           </View>
         )}
         onScroll={(event) => {
+          if (!active) return;
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
           const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
           const isNearBottom = distanceFromBottom < 96;
@@ -1256,13 +1841,15 @@ function ChatTimeline({
             didInitialBottomScrollRef.current = true;
             scrollRef.current?.scrollToEnd({ animated: false });
             listNearBottomRef.current = true;
-            onNearBottomChange(true);
+            if (active) onNearBottomChange(true);
           }
+          if (!firstUnreadItemId) revealInitialAnchor();
         }}
         onScrollToIndexFailed={(info) => {
           const offset = Math.max(0, info.averageItemLength * info.index - 18);
           setTimeout(() => {
             scrollRef.current?.scrollToOffset({ animated: false, offset });
+            revealInitialAnchor();
           }, 50);
         }}
         renderItem={renderTimelineRow}
@@ -2647,285 +3234,236 @@ function DishesPanel({
 function PeoplePanel({
   addParticipantError,
   addParticipantPending,
+  bottomInset,
+  circleStatuses,
+  closing,
   inputRef,
+  myUsername,
+  onBack,
   onChangeParticipant,
+  onCloseAnimationEnd,
+  onOpenProfile,
   onRemoveSelectedParticipant,
+  onRequestCircle,
   onSelectParticipant,
   onSubmitParticipants,
+  participantSearchError,
   participantValue,
   participants,
   participantsLoading,
   participantSuggestions,
-  roomName,
-  selectedParticipants
+  selectedParticipants,
+  toastMessage
 }: {
   addParticipantError?: string;
   addParticipantPending: boolean;
+  bottomInset: number;
+  circleStatuses: Record<string, MemberCircleStatus>;
+  closing: boolean;
   inputRef: RefObject<TextInput | null>;
+  myUsername: string;
+  onBack: () => void;
   onChangeParticipant: (value: string) => void;
+  onCloseAnimationEnd: () => void;
+  onOpenProfile: (username: string) => void;
   onRemoveSelectedParticipant: (username: string) => void;
+  onRequestCircle: (username: string) => void;
   onSelectParticipant: (person: UserSearchResult) => void;
   onSubmitParticipants: () => void;
+  participantSearchError: string | null;
   participantValue: string;
   participants: MemoryParticipant[];
   participantsLoading: boolean;
   participantSuggestions: UserSearchResult[];
-  roomName: string;
   selectedParticipants: UserSearchResult[];
+  toastMessage: string;
 }) {
-  const [contactsError, setContactsError] = useState("");
-  const [contactsLoading, setContactsLoading] = useState(false);
-  const [contactsSearch, setContactsSearch] = useState("");
-  const [contactsVisible, setContactsVisible] = useState(false);
-  const [contactInvites, setContactInvites] = useState<ContactInvite[]>([]);
   const canAdd = selectedParticipants.length > 0 && !addParticipantPending;
   const showSuggestions = participantsLoading || participantSuggestions.length > 0 || participantValue.trim().replace(/^@/, "").length >= 2;
-  const filteredContacts = useMemo(() => {
-    const query = contactsSearch.trim().toLowerCase();
-    if (!query) return contactInvites;
-    return contactInvites.filter((contact) => `${contact.name} ${contact.detail}`.toLowerCase().includes(query));
-  }, [contactInvites, contactsSearch]);
+  const { width: screenWidth } = useWindowDimensions();
+  const enterProgress = useRef(new Animated.Value(0)).current;
+  const panelTranslateX = enterProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Math.min(screenWidth, ROOM_MAX_WIDTH), 0]
+  });
+  const panelOpacity = enterProgress.interpolate({
+    inputRange: [0, 0.35, 1],
+    outputRange: [0.92, 1, 1]
+  });
 
-  async function openContacts() {
-    setContactsVisible(true);
-    if (contactInvites.length > 0 || contactsLoading) return;
-    setContactsError("");
-    setContactsLoading(true);
-    try {
-      const permission = await Contacts.requestPermissionsAsync();
-      if (!permission.granted) {
-        setContactsError("Contacts permission was not granted.");
-        return;
-      }
-
-      const response = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.Emails, Contacts.Fields.PhoneNumbers],
-        pageSize: 400
-      });
-      const invites = response.data
-        .map((contact) => {
-          const phone = contact.phoneNumbers?.find((item) => item.number || item.digits);
-          const email = contact.emails?.find((item) => item.email);
-          const detail = phone?.number ?? phone?.digits ?? email?.email ?? "";
-          const kind: ContactInvite["kind"] = phone ? "phone" : "email";
-          const name = contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() || detail;
-          if (!name || !detail) return null;
-          return { detail, id: contact.id, kind, name };
-        })
-        .filter((contact): contact is ContactInvite => Boolean(contact))
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      setContactInvites(invites);
-      if (invites.length === 0) setContactsError("No contacts with phone or email found.");
-    } catch {
-      setContactsError("Could not load contacts right now.");
-    } finally {
-      setContactsLoading(false);
-    }
-  }
-
-  async function inviteContact(contact: ContactInvite) {
-    const message = `Join my Table Memory for ${roomName} on CircleBites. We can save the media, dishes, and notes from this place together.`;
-    try {
-      if (contact.kind === "phone") {
-        const separator = Platform.OS === "ios" ? "&" : "?";
-        const url = `sms:${encodeURIComponent(contact.detail)}${separator}body=${encodeURIComponent(message)}`;
-        const canOpen = await Linking.canOpenURL(url);
-        if (canOpen) {
-          await Linking.openURL(url);
-          return;
-        }
-      }
-
-      if (contact.kind === "email") {
-        const url = `mailto:${encodeURIComponent(contact.detail)}?subject=${encodeURIComponent(`Join my Table Memory at ${roomName}`)}&body=${encodeURIComponent(message)}`;
-        const canOpen = await Linking.canOpenURL(url);
-        if (canOpen) {
-          await Linking.openURL(url);
-          return;
-        }
-      }
-
-      await Share.share({
-        message,
-        title: `Join my Table Memory at ${roomName}`
-      });
-    } catch {
-      setContactsError(`Could not open invite for ${contact.name}.`);
-    }
-  }
+  useEffect(() => {
+    Animated.timing(enterProgress, {
+      duration: closing ? PEOPLE_PANEL_EXIT_DURATION : PEOPLE_PANEL_ENTER_DURATION,
+      easing: closing ? Easing.in(Easing.cubic) : Easing.out(Easing.cubic),
+      toValue: closing ? 0 : 1,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (finished && closing) onCloseAnimationEnd();
+    });
+  }, [closing, enterProgress, onCloseAnimationEnd]);
 
   return (
-    <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.peopleAddWrap}>
-        <View style={styles.peopleAddRow}>
-          <View style={styles.peopleAddInputWrap}>
-            <Ionicons name="person-add-outline" size={16} color={colors.dark.orange} />
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={onChangeParticipant}
-              placeholder="Add friend"
-              placeholderTextColor={colors.dark.muted}
-              ref={inputRef}
-              style={styles.peopleAddInput}
-              value={participantValue}
-            />
-          </View>
-          <Pressable disabled={!canAdd} onPress={onSubmitParticipants} style={[styles.peopleAddButton, !canAdd && styles.peopleAddButtonDisabled]}>
-            <Text style={styles.peopleAddButtonText}>{addParticipantPending ? "Adding" : "Add"}</Text>
+    <Animated.View
+      pointerEvents={closing ? "none" : "auto"}
+      style={[
+        styles.peoplePanelMotion,
+        {
+          opacity: panelOpacity,
+          transform: [{ translateX: panelTranslateX }]
+        }
+      ]}
+    >
+      <View style={[styles.header, styles.peopleScreenHeader]}>
+        <View style={styles.headerTop}>
+          <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={onBack} style={[styles.headerIconButton, styles.headerBackButton]}>
+            <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
           </Pressable>
+          <View style={styles.compactRoomTitleWrap}>
+            <Text numberOfLines={1} style={[styles.compactRoomTitle, styles.membersCompactTitle]}>Members</Text>
+          </View>
         </View>
-        <Pressable onPress={openContacts} style={styles.contactsImportButton}>
-          <Ionicons name="people-circle-outline" size={17} color={colors.dark.orange} />
-          <View style={styles.contactsImportText}>
-            <Text style={styles.contactsImportTitle}>Find friends from contacts</Text>
-            <Text numberOfLines={1} style={styles.contactsImportSubtitle}>Invite only the people you choose.</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.dark.muted} />
-        </Pressable>
-        {addParticipantError ? <Text style={styles.error}>{addParticipantError}</Text> : null}
-        {showSuggestions ? (
-          <View style={styles.peopleSuggestions}>
-            {participantsLoading ? (
-              <View style={styles.peopleSuggestionState}>
-                <Text style={styles.peopleSuggestionMuted}>Searching people</Text>
-              </View>
-            ) : null}
-            {!participantsLoading && participantSuggestions.length === 0 ? (
-              <View style={styles.peopleSuggestionState}>
-                <Text style={styles.peopleSuggestionMuted}>No people found</Text>
-              </View>
-            ) : null}
-            {participantSuggestions.map((person) => (
-              <Pressable key={person.username} onPress={() => onSelectParticipant(person)} style={styles.peopleSuggestionRow}>
-                <View style={[styles.peopleSuggestionAvatar, { backgroundColor: senderAccent(person.displayName) }]}>
-                  <Text style={styles.peopleSuggestionInitial}>{senderInitials(person.displayName || person.username)}</Text>
-                </View>
-                <View style={styles.peopleSuggestionText}>
-                  <Text numberOfLines={1} style={styles.peopleSuggestionName}>{person.displayName}</Text>
-                  <Text numberOfLines={1} style={styles.peopleSuggestionUsername}>@{person.username}</Text>
-                </View>
-                <Ionicons name="add" size={18} color={colors.dark.muted} />
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-        {selectedParticipants.length > 0 ? (
-          <View style={styles.selectedPeopleChips}>
-            {selectedParticipants.map((person) => (
-              <Pressable key={person.username} onPress={() => onRemoveSelectedParticipant(person.username)} style={styles.selectedPeopleChip}>
-                <Text numberOfLines={1} style={styles.selectedPeopleChipText}>@{person.username}</Text>
-                <Ionicons name="close" size={12} color={colors.dark.muted} />
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
       </View>
-
-      {participants.map((participant) => {
-        const accentColor = senderAccent(participant.displayName);
-
-        return (
-          <View key={participant.id} style={styles.personRow}>
-            <View style={[styles.personAvatar, { backgroundColor: accentColor }]}>
-              <Text style={styles.personInitial}>{senderInitials(participant.displayName)}</Text>
+      <ScrollView
+        contentContainerStyle={[styles.panelContent, styles.peoplePanelContent]}
+        keyboardShouldPersistTaps="handled"
+        style={styles.peoplePanelScroll}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.peopleAddWrap}>
+          <View style={styles.peopleAddRow}>
+            <View style={styles.peopleAddInputWrap}>
+              <Ionicons name="search-outline" size={17} color={ROOM_COLORS.muted} />
+              <TextInput
+                autoCapitalize="none"
+                onChangeText={onChangeParticipant}
+                placeholder="Search or invite friends..."
+                placeholderTextColor={colors.dark.muted}
+                ref={inputRef}
+                style={styles.peopleAddInput}
+                value={participantValue}
+              />
             </View>
-            <View style={styles.personText}>
-              <Text numberOfLines={1} style={styles.personName}>{participant.displayName}</Text>
-              <Text numberOfLines={1} style={styles.personMeta}>
-                @{participant.username} · {participant.role === "owner" ? "Owner" : "Participant"}
+            <Pressable
+              disabled={addParticipantPending}
+              onPress={canAdd ? onSubmitParticipants : () => inputRef.current?.focus()}
+              style={[
+                styles.peopleAddButton,
+                canAdd && styles.peopleAddButtonReady,
+                addParticipantPending && styles.peopleAddButtonDisabled
+              ]}
+            >
+              <Ionicons name="person-add-outline" size={16} color={canAdd ? colors.dark.cream : colors.dark.muted} />
+              <Text style={[styles.peopleAddButtonText, !canAdd && styles.peopleAddButtonTextIdle]}>
+                {addParticipantPending ? "Inviting" : "Invite"}
               </Text>
+            </Pressable>
+          </View>
+          {addParticipantError ? <Text style={styles.error}>{addParticipantError}</Text> : null}
+          {showSuggestions ? (
+            <View style={styles.peopleSuggestions}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={participantSuggestions.length > 3}
+                style={styles.peopleSuggestionsScroll}
+              >
+                {participantsLoading ? (
+                  <View style={styles.peopleSuggestionState}>
+                    <Text style={styles.peopleSuggestionMuted}>Searching people</Text>
+                  </View>
+                ) : null}
+                {!participantsLoading && participantSearchError ? (
+                  <View style={styles.peopleSuggestionState}>
+                    <Text style={styles.peopleSuggestionError}>Could not search people</Text>
+                  </View>
+                ) : null}
+                {!participantsLoading && !participantSearchError && participantSuggestions.length === 0 ? (
+                  <View style={styles.peopleSuggestionState}>
+                    <Text style={styles.peopleSuggestionMuted}>No people found</Text>
+                  </View>
+                ) : null}
+                {participantSuggestions.map((person) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={person.username}
+                    onPress={() => onSelectParticipant(person)}
+                    style={styles.peopleSuggestionRow}
+                  >
+                    <View style={[styles.peopleSuggestionAvatar, { backgroundColor: senderAccent(person.displayName) }]}>
+                      <Text style={styles.peopleSuggestionInitial}>{senderInitials(person.displayName || person.username)}</Text>
+                    </View>
+                    <View style={styles.peopleSuggestionText}>
+                      <Text numberOfLines={1} style={styles.peopleSuggestionName}>{person.displayName}</Text>
+                      <Text numberOfLines={1} style={styles.peopleSuggestionUsername}>@{person.username}</Text>
+                    </View>
+                    <Ionicons name="add" size={19} color={colors.dark.muted} />
+                  </Pressable>
+                ))}
+              </ScrollView>
             </View>
-          </View>
-        );
-      })}
-      <ContactsInviteModal
-        contacts={filteredContacts}
-        error={contactsError}
-        loading={contactsLoading}
-        onChangeSearch={setContactsSearch}
-        onClose={() => setContactsVisible(false)}
-        onInvite={inviteContact}
-        search={contactsSearch}
-        visible={contactsVisible}
-      />
-    </ScrollView>
-  );
-}
-
-function ContactsInviteModal({
-  contacts,
-  error,
-  loading,
-  onChangeSearch,
-  onClose,
-  onInvite,
-  search,
-  visible
-}: {
-  contacts: ContactInvite[];
-  error: string;
-  loading: boolean;
-  onChangeSearch: (value: string) => void;
-  onClose: () => void;
-  onInvite: (contact: ContactInvite) => void;
-  search: string;
-  visible: boolean;
-}) {
-  return (
-    <Modal animationType="slide" onRequestClose={onClose} visible={visible}>
-      <View style={styles.contactsModal}>
-        <View style={styles.contactsHeader}>
-          <View style={styles.contactsHeaderText}>
-            <Text style={styles.contactsTitle}>Invite from contacts</Text>
-            <Text style={styles.contactsSubtitle}>Contacts stay on this device unless you send an invite.</Text>
-          </View>
-          <Pressable accessibilityLabel="Close contacts" onPress={onClose} style={styles.contactsClose}>
-            <Ionicons name="close" size={21} color={colors.dark.cream} />
-          </Pressable>
-        </View>
-        <View style={styles.contactsSearchBox}>
-          <Ionicons name="search-outline" size={16} color={colors.dark.muted} />
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={onChangeSearch}
-            placeholder="Search contacts"
-            placeholderTextColor={colors.dark.muted}
-            style={styles.contactsSearchInput}
-            value={search}
-          />
-        </View>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {loading ? (
-          <View style={styles.contactsState}>
-            <Ionicons name="hourglass-outline" size={22} color={colors.dark.orange} />
-            <Text style={styles.contactsStateText}>Loading contacts</Text>
-          </View>
-        ) : contacts.length === 0 ? (
-          <View style={styles.contactsState}>
-            <Ionicons name="people-outline" size={24} color={colors.dark.orange} />
-            <Text style={styles.contactsStateText}>No contacts to show</Text>
-          </View>
-        ) : (
-          <ScrollView contentContainerStyle={styles.contactsList} showsVerticalScrollIndicator={false}>
-            {contacts.map((contact) => (
-              <View key={contact.id} style={styles.contactInviteRow}>
-                <View style={[styles.contactInviteAvatar, { backgroundColor: senderAccent(contact.name) }]}>
-                  <Text style={styles.contactInviteInitial}>{senderInitials(contact.name)}</Text>
-                </View>
-                <View style={styles.contactInviteText}>
-                  <Text numberOfLines={1} style={styles.contactInviteName}>{contact.name}</Text>
-                  <Text numberOfLines={1} style={styles.contactInviteDetail}>{contact.detail}</Text>
-                </View>
-                <Pressable onPress={() => onInvite(contact)} style={styles.contactInviteButton}>
-                  <Text style={styles.contactInviteButtonText}>Invite</Text>
+          ) : null}
+          {selectedParticipants.length > 0 ? (
+            <View style={styles.selectedPeopleChips}>
+              {selectedParticipants.map((person) => (
+                <Pressable key={person.username} onPress={() => onRemoveSelectedParticipant(person.username)} style={styles.selectedPeopleChip}>
+                  <Text numberOfLines={1} style={styles.selectedPeopleChipText}>@{person.username}</Text>
+                  <Ionicons name="close" size={12} color={colors.dark.muted} />
                 </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.personList}>
+          {participants.map((participant) => {
+            const accentColor = senderAccent(participant.displayName);
+            const isMe = participant.username.toLowerCase() === myUsername.toLowerCase();
+            const circleStatus = circleStatuses[participant.username] ?? "idle";
+            const showCircleRequest = Boolean(myUsername) && !isMe && circleStatus !== "joined";
+            const circleRequestDisabled = circleStatus === "loading" || circleStatus === "pending";
+
+            return (
+              <View key={participant.id} style={styles.personRow}>
+                <Pressable
+                  accessibilityLabel={`Open ${participant.displayName} profile`}
+                  accessibilityRole="button"
+                  onPress={() => onOpenProfile(participant.username)}
+                  style={styles.personProfilePress}
+                >
+                  <View style={[styles.personAvatar, { backgroundColor: accentColor }]}>
+                    <Text style={styles.personInitial}>{senderInitials(participant.displayName)}</Text>
+                  </View>
+                  <View style={styles.personText}>
+                    <Text numberOfLines={1} style={styles.personName}>{participant.displayName}</Text>
+                    <Text numberOfLines={1} style={styles.personMeta}>@{participant.username}</Text>
+                  </View>
+                </Pressable>
+                {showCircleRequest ? (
+                  <Pressable
+                    disabled={circleRequestDisabled}
+                    hitSlop={8}
+                    onPress={() => onRequestCircle(participant.username)}
+                    style={[styles.personRequestButton, circleRequestDisabled && styles.personRequestButtonMuted]}
+                  >
+                    <Text style={styles.personRequestButtonText}>
+                      {circleStatus === "loading" ? "Requesting" : circleStatus === "pending" ? "Requested" : "Request"}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
-            ))}
-          </ScrollView>
-        )}
-      </View>
-    </Modal>
+            );
+          })}
+        </View>
+      </ScrollView>
+      {toastMessage ? (
+        <View pointerEvents="none" style={[styles.peopleToastLayer, { bottom: Math.max(18, bottomInset + 18) }]}>
+          <View style={styles.peopleToast}>
+            <Ionicons name="checkmark-circle" size={17} color={ROOM_COLORS.cool} />
+            <Text numberOfLines={2} style={styles.peopleToastText}>{toastMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+    </Animated.View>
   );
 }
 
@@ -2935,6 +3473,7 @@ function AttachmentOptionsSheet({
   dishNote,
   dishPending,
   dishRating,
+  initialView,
   onChangeDishName,
   onChangeDishNote,
   onChangeDishRating,
@@ -2950,6 +3489,7 @@ function AttachmentOptionsSheet({
   dishNote: string;
   dishPending: boolean;
   dishRating: number;
+  initialView: AttachmentSheetView;
   onChangeDishName: (value: string) => void;
   onChangeDishNote: (value: string) => void;
   onChangeDishRating: (value: number) => void;
@@ -2960,19 +3500,19 @@ function AttachmentOptionsSheet({
   pending: boolean;
   visible: boolean;
 }) {
-  const [view, setView] = useState<AttachmentSheetView>("actions");
+  const [view, setView] = useState<AttachmentSheetView>(initialView);
   const canSubmitDish = Boolean(dishName.trim()) && !dishPending;
 
   useEffect(() => {
-    if (visible) setView("actions");
-  }, [visible]);
+    if (visible) setView(initialView);
+  }, [initialView, visible]);
 
   const title = view === "dish" ? "Add dish" : view === "media" ? "Add media" : "Add to memory";
   const subtitle = view === "dish"
     ? "Save a dish and your rating for this group."
     : view === "media"
-      ? "Share a photo or video in the chat."
-      : "Choose what you want to add to this chat.";
+      ? "Share a photo or video with this room."
+      : "Choose what you want to add to this memory.";
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
@@ -3078,48 +3618,25 @@ function AttachmentOptionsSheet({
 
 function RoomActionsSheet({
   leavePending,
-  onAddPeople,
   onClose,
   onLeave,
-  onViewPeople,
   visible
 }: {
   leavePending: boolean;
-  onAddPeople: () => void;
   onClose: () => void;
   onLeave: () => void;
-  onViewPeople: () => void;
   visible: boolean;
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
       <Pressable onPress={onClose} style={styles.roomActionsBackdrop}>
         <Pressable style={styles.roomActionsPopover} onPress={(event) => event.stopPropagation()}>
-          <Pressable onPress={onAddPeople} style={styles.roomActionOption}>
-            <View style={styles.roomActionIcon}>
-              <Ionicons name="person-add-outline" size={19} color={colors.dark.orange} />
-            </View>
-            <View style={styles.roomActionText}>
-              <Text style={styles.roomActionTitle}>Add friends</Text>
-              <Text style={styles.roomActionSubtitle}>Invite more people to this room.</Text>
-            </View>
-          </Pressable>
-          <Pressable onPress={onViewPeople} style={styles.roomActionOption}>
-            <View style={[styles.roomActionIcon, styles.roomActionIconCool]}>
-              <Ionicons name="people-outline" size={19} color={ROOM_COLORS.cool} />
-            </View>
-            <View style={styles.roomActionText}>
-              <Text style={styles.roomActionTitle}>View friends</Text>
-              <Text style={styles.roomActionSubtitle}>See everyone in the room.</Text>
-            </View>
-          </Pressable>
           <Pressable disabled={leavePending} onPress={onLeave} style={[styles.roomActionOption, leavePending && styles.roomActionDisabled]}>
             <View style={[styles.roomActionIcon, styles.roomActionIconDanger]}>
               <Ionicons name="exit-outline" size={19} color={colors.dark.dangerSoft} />
             </View>
             <View style={styles.roomActionText}>
               <Text style={[styles.roomActionTitle, styles.roomActionDangerText]}>{leavePending ? "Leaving..." : "Leave room"}</Text>
-              <Text style={styles.roomActionSubtitle}>Remove this memory from your rooms.</Text>
             </View>
           </Pressable>
         </Pressable>
@@ -3726,10 +4243,14 @@ const styles = StyleSheet.create({
     flex: 1
   },
   screenContent: {
+    overflow: "hidden",
     paddingBottom: 0
   },
   roomStage: {
     flex: 1
+  },
+  roomStageTable: {
+    backgroundColor: "#0A0705"
   },
   roomStageChat: {
     backgroundColor: ROOM_COLORS.bg,
@@ -3744,17 +4265,21 @@ const styles = StyleSheet.create({
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
-    gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
+    paddingBottom: 14,
+    paddingHorizontal: 18,
+    paddingTop: spacing.sm,
     width: "100%"
   },
   headerTop: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.sm
+    justifyContent: "space-between"
+  },
+  headerActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    marginRight: -4
   },
   headerIconButton: {
     alignItems: "center",
@@ -3764,58 +4289,144 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 34
   },
-  headerIconSpacer: {
-    width: 34
+  headerBackButton: {
+    marginLeft: -8
   },
-  headerText: {
+  headerAddFriendSlot: {
+    overflow: "hidden"
+  },
+  compactRoomTitleWrap: {
     flex: 1,
+    marginHorizontal: spacing.sm,
     minWidth: 0
+  },
+  compactRoomTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 19,
+    lineHeight: 25
+  },
+  membersCompactTitle: {
+    fontSize: 19,
+    lineHeight: 25
+  },
+  roomIdentityAnimated: {
+    overflow: "hidden"
+  },
+  roomIdentity: {
+    gap: 6,
+    paddingHorizontal: 8
   },
   roomTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 19,
-    lineHeight: 24
+    fontSize: 21,
+    lineHeight: 29
   },
-  roomSubtitleRow: {
+  roomMetaRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 3,
-    marginTop: 1,
+    gap: 6,
     minWidth: 0
   },
-  roomSubtitle: {
+  roomMetaIconSlot: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 16
+  },
+  roomMetaText: {
     ...fontStyles.semiBold,
     color: colors.dark.muted,
     flex: 1,
     fontSize: 12,
     lineHeight: 16
   },
+  roomFriendsRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: 2,
+    minHeight: 32,
+    minWidth: 0
+  },
+  roomFriendAvatars: {
+    alignItems: "center",
+    flexDirection: "row"
+  },
+  roomFriendAvatar: {
+    alignItems: "center",
+    borderColor: ROOM_COLORS.header,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 30,
+    justifyContent: "center",
+    width: 30
+  },
+  roomFriendAvatarOverlap: {
+    marginLeft: -8
+  },
+  roomFriendMoreAvatar: {
+    backgroundColor: ROOM_COLORS.panelRaised
+  },
+  roomFriendInitial: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    fontSize: 10,
+    lineHeight: 13
+  },
+  roomFriendsText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    minWidth: 0
+  },
+  modeTabsAnimated: {
+    overflow: "hidden"
+  },
   modeTabs: {
     backgroundColor: ROOM_COLORS.panel,
     borderRadius: radius.input,
     flexDirection: "row",
-    padding: 2
+    marginHorizontal: 8,
+    overflow: "hidden",
+    padding: 2,
+    position: "relative"
+  },
+  modeTabIndicator: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    bottom: 2,
+    left: 0,
+    position: "absolute",
+    top: 2
   },
   modeButton: {
     alignItems: "center",
+    borderColor: "transparent",
     borderRadius: radius.md,
+    borderWidth: 1,
     flex: 1,
     flexDirection: "row",
     gap: 3,
     justifyContent: "center",
-    minHeight: 34
+    minHeight: 34,
+    zIndex: 1
   },
   modeButtonActive: {
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR
+    backgroundColor: "transparent",
+    borderColor: "transparent"
   },
   modeButtonText: {
     ...fontStyles.extraBold,
-    color: ROOM_COLORS.muted,
+    color: "#A19B94",
     fontSize: 10
   },
   modeButtonTextActive: {
-    color: colors.dark.white
+    color: colors.dark.cream
   },
   body: {
     alignSelf: "center",
@@ -3825,12 +4436,110 @@ const styles = StyleSheet.create({
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     flex: 1,
     maxWidth: ROOM_MAX_WIDTH,
+    position: "relative",
     width: "100%"
+  },
+  roomPaneActive: {
+    flex: 1,
+    zIndex: 1
+  },
+  roomPaneHidden: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
+    zIndex: 0
+  },
+  floatingAddBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    zIndex: 6
+  },
+  floatingAddActionStack: {
+    alignItems: "flex-end",
+    gap: spacing.sm,
+    position: "absolute",
+    right: spacing.lg,
+    zIndex: 7
+  },
+  floatingAddAction: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "flex-end",
+    minHeight: 48
+  },
+  floatingAddActionLabel: {
+    alignItems: "center",
+    backgroundColor: "rgba(21, 23, 25, 0.96)",
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: "center",
+    paddingHorizontal: spacing.base,
+    shadowColor: "#000",
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.20,
+    shadowRadius: 14
+  },
+  floatingAddActionText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    fontSize: 13
+  },
+  floatingAddActionIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(34, 199, 184, 0.14)",
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: FLOATING_ADD_ACTION_ICON_SIZE,
+    justifyContent: "center",
+    width: FLOATING_ADD_ACTION_ICON_SIZE
+  },
+  floatingAddActionIconGold: {
+    backgroundColor: "rgba(246, 173, 85, 0.13)",
+    borderColor: "rgba(246, 173, 85, 0.30)"
+  },
+  floatingAddButton: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orange,
+    borderColor: "rgba(255,255,255,0.22)",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: FLOATING_ADD_BUTTON_SIZE,
+    justifyContent: "center",
+    position: "absolute",
+    right: spacing.lg,
+    shadowColor: "#000",
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    width: FLOATING_ADD_BUTTON_SIZE,
+    zIndex: 8
+  },
+  floatingAddButtonOpen: {
+    backgroundColor: "#E64F27",
+    borderColor: "rgba(255,255,255,0.30)"
+  },
+  floatingAddIconWrap: {
+    alignItems: "center",
+    height: FLOATING_ADD_ICON_SIZE,
+    justifyContent: "center",
+    width: FLOATING_ADD_ICON_SIZE
+  },
+  floatingAddIcon: {
+    height: FLOATING_ADD_ICON_SIZE,
+    lineHeight: FLOATING_ADD_ICON_SIZE,
+    textAlign: "center",
+    width: FLOATING_ADD_ICON_SIZE
   },
   chatTimelineWrap: {
     backgroundColor: "transparent",
     flex: 1,
     overflow: "hidden"
+  },
+  chatTimelineHidden: {
+    opacity: 0
   },
   chatWallpaper: {
     ...StyleSheet.absoluteFillObject,
@@ -4573,7 +5282,7 @@ const styles = StyleSheet.create({
     lineHeight: 18
   },
   roomActionsBackdrop: {
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(0,0,0,0.58)",
     flex: 1
   },
   roomActionsPopover: {
@@ -4582,26 +5291,24 @@ const styles = StyleSheet.create({
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.input,
     borderWidth: 1,
-    gap: 2,
     marginRight: Platform.OS === "web" ? spacing.lg : spacing.md,
     marginTop: Platform.OS === "web" ? 58 : 54,
-    maxWidth: 292,
-    padding: spacing.sm,
+    padding: 4,
     shadowColor: colors.dark.black,
     shadowOffset: { height: 12, width: 0 },
     shadowOpacity: 0.28,
     shadowRadius: 20,
-    width: "74%",
+    width: 150,
     elevation: 10
   },
   roomActionOption: {
     alignItems: "center",
     borderRadius: radius.md,
     flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 54,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm
+    gap: 7,
+    minHeight: 38,
+    paddingHorizontal: 6,
+    paddingVertical: 4
   },
   roomActionDisabled: {
     opacity: 0.55
@@ -4610,9 +5317,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.dark.orangeDim,
     borderRadius: radius.pill,
-    height: 36,
+    height: 28,
     justifyContent: "center",
-    width: 36
+    width: 28
   },
   roomActionIconCool: {
     backgroundColor: ROOM_COLORS.coolDim,
@@ -4631,15 +5338,8 @@ const styles = StyleSheet.create({
   roomActionTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 13,
-    lineHeight: 17
-  },
-  roomActionSubtitle: {
-    ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14,
-    marginTop: 2
+    fontSize: 12,
+    lineHeight: 16
   },
   roomActionDangerText: {
     color: colors.dark.dangerSoft
@@ -4937,12 +5637,16 @@ const styles = StyleSheet.create({
   galleryContent: {
     gap: spacing.base,
     padding: spacing.lg,
-    paddingBottom: spacing.xl
+    paddingBottom: spacing.xl + 92
   },
   panelContent: {
     gap: spacing.sm,
     padding: spacing.lg,
-    paddingBottom: spacing.xl
+    paddingBottom: spacing.xl + 92
+  },
+  peoplePanelContent: {
+    gap: 0,
+    paddingTop: spacing.lg
   },
   panelActionRow: {
     alignItems: "center",
@@ -4967,9 +5671,62 @@ const styles = StyleSheet.create({
     color: colors.dark.white,
     fontSize: 13
   },
+  peoplePanelMotion: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#0A0705",
+    zIndex: 20
+  },
+  peopleScreenHeader: {
+    zIndex: 1
+  },
+  peoplePanelScroll: {
+    alignSelf: "center",
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
+    borderLeftWidth: Platform.OS === "web" ? 1 : 0,
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
+    borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    flex: 1,
+    maxWidth: ROOM_MAX_WIDTH,
+    width: "100%"
+  },
+  peopleToastLayer: {
+    alignItems: "center",
+    left: 0,
+    paddingHorizontal: spacing.lg,
+    position: "absolute",
+    right: 0,
+    zIndex: 4
+  },
+  peopleToast: {
+    alignItems: "center",
+    backgroundColor: "rgba(21, 25, 29, 0.97)",
+    borderColor: "rgba(34, 199, 184, 0.36)",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 8,
+    maxWidth: ROOM_MAX_WIDTH - spacing.lg * 2,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: "#000",
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    width: "100%"
+  },
+  peopleToastText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    minWidth: 0,
+    textAlign: "center"
+  },
   peopleAddWrap: {
-    gap: 6,
-    marginBottom: 2
+    gap: spacing.sm,
+    marginBottom: 0
   },
   peopleAddRow: {
     alignItems: "center",
@@ -4978,31 +5735,41 @@ const styles = StyleSheet.create({
   },
   peopleAddInputWrap: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
+    backgroundColor: "#15191D",
+    borderColor: "rgba(226, 232, 240, 0.08)",
+    borderRadius: radius.sm,
     borderWidth: 1,
     flex: 1,
     flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 42,
-    paddingHorizontal: spacing.md
+    gap: 9,
+    minHeight: 46,
+    paddingHorizontal: 13
   },
   peopleAddInput: {
     ...fontStyles.medium,
     color: colors.dark.cream,
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     includeFontPadding: false,
+    minWidth: 0,
     padding: 0
   },
   peopleAddButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    height: 42,
+    backgroundColor: "#171B1F",
+    borderColor: "rgba(226, 232, 240, 0.10)",
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    flexDirection: "row",
+    gap: 6,
+    height: 46,
     justifyContent: "center",
-    paddingHorizontal: spacing.base
+    minWidth: 88,
+    paddingHorizontal: 13
+  },
+  peopleAddButtonReady: {
+    backgroundColor: "#8F3A22",
+    borderColor: "rgba(255,255,255,0.12)"
   },
   peopleAddButtonDisabled: {
     opacity: 0.45
@@ -5012,34 +5779,8 @@ const styles = StyleSheet.create({
     color: colors.dark.white,
     fontSize: 13
   },
-  contactsImportButton: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  contactsImportText: {
-    flex: 1,
-    minWidth: 0
-  },
-  contactsImportTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 13,
-    lineHeight: 17
-  },
-  contactsImportSubtitle: {
-    ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14,
-    marginTop: 1
+  peopleAddButtonTextIdle: {
+    color: colors.dark.muted
   },
   peopleSuggestions: {
     backgroundColor: ROOM_COLORS.panel,
@@ -5048,13 +5789,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: "hidden"
   },
+  peopleSuggestionsScroll: {
+    maxHeight: 244
+  },
   peopleSuggestionState: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md
+    justifyContent: "center",
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 14
   },
   peopleSuggestionMuted: {
     ...fontStyles.semiBold,
     color: colors.dark.muted,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  peopleSuggestionError: {
+    ...fontStyles.semiBold,
+    color: colors.dark.dangerSoft,
     fontSize: 12,
     lineHeight: 16
   },
@@ -5063,22 +5815,23 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.05)",
     borderBottomWidth: 1,
     flexDirection: "row",
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
+    gap: 12,
+    minHeight: 62,
+    paddingHorizontal: 14,
+    paddingVertical: 10
   },
   peopleSuggestionAvatar: {
     alignItems: "center",
     borderRadius: radius.pill,
-    height: 34,
+    height: 38,
     justifyContent: "center",
-    width: 34
+    width: 38
   },
   peopleSuggestionInitial: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 11,
-    lineHeight: 14
+    fontSize: 12,
+    lineHeight: 16
   },
   peopleSuggestionText: {
     flex: 1,
@@ -5087,8 +5840,8 @@ const styles = StyleSheet.create({
   peopleSuggestionName: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 13,
-    lineHeight: 17
+    fontSize: 14,
+    lineHeight: 18
   },
   peopleSuggestionUsername: {
     ...fontStyles.semiBold,
@@ -5117,136 +5870,6 @@ const styles = StyleSheet.create({
   selectedPeopleChipText: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.cool,
-    fontSize: 12,
-    lineHeight: 15
-  },
-  contactsModal: {
-    backgroundColor: colors.dark.bg,
-    flex: 1,
-    paddingBottom: Platform.OS === "web" ? spacing.lg : 28,
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === "web" ? spacing.lg : 54
-  },
-  contactsHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    marginBottom: spacing.base
-  },
-  contactsHeaderText: {
-    flex: 1,
-    minWidth: 0
-  },
-  contactsTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 19,
-    lineHeight: 24
-  },
-  contactsSubtitle: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 2
-  },
-  contactsClose: {
-    alignItems: "center",
-    borderRadius: radius.pill,
-    height: 38,
-    justifyContent: "center",
-    width: 38
-  },
-  contactsSearchBox: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 44,
-    paddingHorizontal: spacing.md
-  },
-  contactsSearchInput: {
-    ...fontStyles.medium,
-    color: colors.dark.cream,
-    flex: 1,
-    fontSize: 14,
-    includeFontPadding: false,
-    padding: 0
-  },
-  contactsState: {
-    alignItems: "center",
-    flex: 1,
-    gap: spacing.sm,
-    justifyContent: "center",
-    padding: spacing.xl
-  },
-  contactsStateText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: "center"
-  },
-  contactsList: {
-    gap: spacing.sm,
-    paddingTop: spacing.base
-  },
-  contactInviteRow: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.md,
-    minHeight: 62,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  contactInviteAvatar: {
-    alignItems: "center",
-    borderRadius: radius.pill,
-    height: 38,
-    justifyContent: "center",
-    width: 38
-  },
-  contactInviteInitial: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 11,
-    lineHeight: 14
-  },
-  contactInviteText: {
-    flex: 1,
-    minWidth: 0
-  },
-  contactInviteName: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 14,
-    lineHeight: 18
-  },
-  contactInviteDetail: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 1
-  },
-  contactInviteButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    minHeight: 36,
-    justifyContent: "center",
-    paddingHorizontal: spacing.md
-  },
-  contactInviteButtonText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
     fontSize: 12,
     lineHeight: 15
   },
@@ -5391,13 +6014,27 @@ const styles = StyleSheet.create({
   },
   personRow: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderBottomColor: "rgba(226, 232, 240, 0.08)",
+    borderBottomWidth: 1,
     flexDirection: "row",
     gap: spacing.md,
-    padding: spacing.md
+    minHeight: 76,
+    paddingHorizontal: 2,
+    paddingVertical: 0
+  },
+  personList: {
+    borderTopColor: "rgba(226, 232, 240, 0.08)",
+    borderTopWidth: 1,
+    marginTop: spacing.lg
+  },
+  personProfilePress: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 75,
+    minWidth: 0
   },
   personAvatar: {
     alignItems: "center",
@@ -5428,6 +6065,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2
+  },
+  personRequestButton: {
+    alignItems: "center",
+    backgroundColor: colors.dark.orangeDim,
+    borderColor: "rgba(240, 96, 48, 0.35)",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexShrink: 0,
+    justifyContent: "center",
+    minHeight: 30,
+    minWidth: 76,
+    paddingHorizontal: 10
+  },
+  personRequestButtonMuted: {
+    opacity: 0.72
+  },
+  personRequestButtonText: {
+    ...fontStyles.extraBold,
+    color: colors.dark.orange,
+    fontSize: 11,
+    lineHeight: 14
   },
   galleryGrid: {
     flexDirection: "row",

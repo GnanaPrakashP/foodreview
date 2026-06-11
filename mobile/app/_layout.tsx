@@ -21,6 +21,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="auth/callback" />
+        <Stack.Screen name="people/[username]" />
         <Stack.Screen name="onboarding/profile" />
       </Stack>
     </AppProviders>

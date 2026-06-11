@@ -62,6 +62,7 @@ function notificationMessage(notification: Notification, profileMap: Record<stri
   if (notification.type === "CIRCLE_REQUEST_ACCEPTED" || notification.type === "circle_accepted") return `${actor} accepted your circle request`;
   if (notification.type === "ADDED_TO_CIRCLE" || notification.type === "MUTUAL_CIRCLE_CREATED" || notification.type === "circle_added") return `${actor} joined your circle`;
   if (notification.type === "CIRCLE_POST_CREATED" || notification.type === "circle_post") return `${actor} posted about ${notification.restaurant_name ?? "a restaurant"}`;
+  if (notification.type === "TABLE_MEMORY_INVITE") return storedMessage || `${actor} invited you to a table memory`;
   if (storedMessage) return storedMessage;
   return "You have a new notification";
 }
@@ -78,6 +79,9 @@ function notificationHref(notification: Notification): string {
   if (notification.entity_type === "RESTAURANT") {
     const restaurantName = typeof metadata.restaurantName === "string" ? metadata.restaurantName : notification.restaurant_name;
     return restaurantName ? `/trending/${encodeURIComponent(restaurantName)}` : "/explore";
+  }
+  if (notification.entity_type === "TABLE_MEMORY") {
+    return "/notifications";
   }
   if (notification.actor_name) return `/people/${encodeURIComponent(notification.actor_name)}`;
   return "/notifications";
