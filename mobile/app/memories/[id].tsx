@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Camera, CameraView } from "expo-camera";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -8,12 +7,10 @@ import {
   Alert,
   Animated,
   BackHandler,
-  Dimensions,
   Easing,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
-  type KeyboardEvent,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -33,7 +30,22 @@ import {
   type ViewStyle
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming
+} from "react-native-reanimated";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
+import {
+  FOOD_WALLPAPER_LINE_COLOR,
+  FOOD_WALLPAPER_OPACITY,
+  FOOD_WALLPAPER_TILE_SIZE,
+  buildFoodWallpaperPlacements,
+  type DoodlePrimitive
+} from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
@@ -48,6 +60,8 @@ import {
   useEditMemoryMessageMutation,
   useLeaveMemoryRoomMutation,
   useMarkMemoryRoomReadMutation,
+  useMemoryMediaPagesQuery,
+  useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime
 } from "@/hooks/useMemories";
@@ -56,6 +70,7 @@ import {
   pickMemoryMediaFromGallery,
   type MemoryMediaPickerResult
 } from "@/services/mediaPicker";
+import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
 import { compactPlaceLocation } from "@/services/places";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -114,26 +129,26 @@ const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mo
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
 const ROOM_COLORS = {
-  bg: "#0B0E10",
-  header: "#101316",
-  panel: "#151719",
-  panelRaised: "#1B1E21",
-  mediaPanel: "#111416",
-  border: "rgba(226, 232, 240, 0.09)",
-  borderStrong: "rgba(226, 232, 240, 0.14)",
-  muted: "#8B929C",
+  bg: "#0E0B08",
+  header: "#1A1410",
+  panel: "#211C17",
+  panelRaised: "#2B241D",
+  mediaPanel: "#15100C",
+  border: "rgba(245, 237, 216, 0.08)",
+  borderStrong: "rgba(245, 237, 216, 0.14)",
+  muted: "#94897C",
   cool: "#22C7B8",
   coolDim: "rgba(34, 199, 184, 0.12)",
   coolBorder: "rgba(34, 199, 184, 0.30)",
+  onCool: "#0E0B08",
   selection: "rgba(34, 199, 184, 0.15)"
 } as const;
-const CHAT_OWN_BUBBLE_COLOR = "#005C4B";
-const CHAT_OTHER_BUBBLE_COLOR = "#1B2022";
+const CHAT_OWN_BUBBLE_COLOR = "#143B36";
+const CHAT_OTHER_BUBBLE_COLOR = "#211C17";
 const CHAT_ACCENTS = ["#22C7B8", "#8B6CFF", "#F06030", "#E8A830", "#38BDF8", "#F472B6", "#3DD68C"] as const;
 const COMPOSER_TOP_GAP = 8;
-const CLOSED_COMPOSER_BOTTOM_GAP = 16;
-const KEYBOARD_COMPOSER_BOTTOM_GAP = 6;
-const ANDROID_KEYBOARD_SAFETY_LIFT = 28;
+const COMPOSER_KEYBOARD_OPEN_GAP = 6;
+const COMPOSER_CLOSED_SAFE_GAP = 6;
 const MEDIA_GRID_GAP = 4;
 const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.lg;
 const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
@@ -150,20 +165,25 @@ const FLOATING_ADD_BUTTON_SIZE = 54;
 const FLOATING_ADD_ICON_SIZE = 26;
 const FLOATING_ADD_ACTION_ICON_SIZE = 48;
 const FLOATING_ADD_MENU_GAP = 14;
+const CHAT_HEADER_CLEARANCE = 112;
+const CHAT_COMPOSER_CLEARANCE = 88;
+const MEDIA_GALLERY_GAP = 2;
+const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
+const COMPACT_ROOM_HEADER_HEIGHT = 106;
+const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
+const HEADER_MODE_TRANSITION_DURATION = 220;
 type MediaPreviewSize = { height: number; width: number };
 type MediaTimestampPlacement = "bottom-left" | "bottom-right";
 type MessageGroupPosition = "single" | "first" | "middle" | "last";
 type AttachmentSheetView = "actions" | "dish" | "media";
-type TypingScrollOptions = {
-  animated?: boolean;
-  delays?: number[];
-  force?: boolean;
-};
 
-function getAndroidKeyboardHeight(event: KeyboardEvent) {
-  return Math.max(0, Math.round(event.endCoordinates.height));
+function roomModeFromTabParam(tab?: string | string[] | null): RoomTabMode | null {
+  const value = Array.isArray(tab) ? tab[0] : tab;
+  if (value === "table" || value === "overview") return "overview";
+  if (value === "chat" || value === "media" || value === "dishes") return value;
+  return null;
 }
 
 function memoryActionKey(target: MemoryActionTarget) {
@@ -184,6 +204,50 @@ function findMemoryActionTarget(data: MemoryRoom, key: string): MemoryActionTarg
   }
 
   return null;
+}
+
+function timeValue(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeMemoryMessages(...groups: MemoryMessage[][]) {
+  const byId = new Map<string, MemoryMessage>();
+  for (const group of groups) {
+    for (const message of group) byId.set(message.id, message);
+  }
+  return Array.from(byId.values()).sort((a, b) => timeValue(a.createdAt) - timeValue(b.createdAt));
+}
+
+function photosFromMessages(messages: MemoryMessage[]) {
+  return messages.flatMap((message) => message.attachments);
+}
+
+function mergeMemoryPhotos(...groups: MemoryPhoto[][]) {
+  const byId = new Map<string, MemoryPhoto>();
+  for (const group of groups) {
+    for (const photo of group) byId.set(photo.id, photo);
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const dateSort = timeValue(b.createdAt) - timeValue(a.createdAt);
+    return dateSort || a.position - b.position;
+  });
+}
+
+function mergeRoomMessages(room: MemoryRoom, olderMessages: MemoryMessage[]): MemoryRoom {
+  if (olderMessages.length === 0) return room;
+  const messages = mergeMemoryMessages(olderMessages, room.messages);
+  return {
+    ...room,
+    messages,
+    photos: mergeMemoryPhotos(room.photos, photosFromMessages(olderMessages))
+  };
+}
+
+function errorMessage(error: unknown) {
+  if (!error) return undefined;
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function getSingleMediaPreviewSize({
@@ -275,7 +339,7 @@ function formatRestaurantDisplayName(name: string) {
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; tab?: string }>();
   const roomId = params.id ?? "";
   const insets = useSafeAreaInsets();
   const room = useMemoryRoomQuery(roomId);
@@ -290,21 +354,27 @@ export default function MemoryDetailScreen() {
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
-  const { height: windowHeight } = useWindowDimensions();
   const peopleInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
-  const initialWindowHeightRef = useRef(Dimensions.get("window").height);
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
   const chatTimelineHeightRef = useRef(0);
-  const keepChatPinnedDuringKeyboardRef = useRef(false);
-  const keyboardTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const typingScrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const chatContentHeightRef = useRef(0);
+  // Fabric's scrollToEnd lands short of the content end by the container's bottom
+  // padding, leaving the newest message under the composer bar — scroll to the exact
+  // end offset computed from measured sizes instead.
+  const scrollChatToBottom = useCallback((animated: boolean) => {
+    const offset = Math.max(0, chatContentHeightRef.current - chatTimelineHeightRef.current);
+    scrollRef.current?.scrollToOffset({ animated, offset });
+  }, []);
   const readMarkerRef = useRef<string | null>(null);
+  const markReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatOpenMarkedRef = useRef(false);
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [mode, setMode] = useState<RoomMode>("overview");
+  const initialMode = roomModeFromTabParam(params.tab) ?? "overview";
+  const [mode, setMode] = useState<RoomMode>(initialMode);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -322,10 +392,8 @@ export default function MemoryDetailScreen() {
   const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
   const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
-  const [cameraVisible, setCameraVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [androidKeyboardHeight, setAndroidKeyboardHeight] = useState(0);
+  const [chatBottomClearance, setChatBottomClearance] = useState(CHAT_COMPOSER_CLEARANCE);
   const [memberCircleStatusOverrides, setMemberCircleStatusOverrides] = useState<Record<string, MemberCircleStatus>>({});
   const floatingAddMenuProgress = useRef(new Animated.Value(0)).current;
   const excludedParticipantUsernames = useMemo(() => ([
@@ -359,6 +427,11 @@ export default function MemoryDetailScreen() {
   }, []);
 
   useEffect(() => {
+    const nextMode = roomModeFromTabParam(params.tab);
+    if (nextMode) setMode(nextMode);
+  }, [params.tab]);
+
+  useEffect(() => {
     Animated.timing(floatingAddMenuProgress, {
       duration: floatingAddMenuOpen ? 180 : 140,
       easing: Easing.out(Easing.cubic),
@@ -369,6 +442,18 @@ export default function MemoryDetailScreen() {
 
   useEffect(() => {
     if (mode !== "overview") setFloatingAddMenuOpen(false);
+  }, [mode]);
+
+  const previousModeRef = useRef<RoomMode>("overview");
+  const paneTabMode: RoomTabMode = mode === "people" ? "overview" : mode;
+  const previousTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === previousModeRef.current);
+  const activePaneTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === paneTabMode);
+  const paneDirection = previousTabIndex >= 0 && activePaneTabIndex >= 0
+    ? Math.sign(activePaneTabIndex - previousTabIndex)
+    : 0;
+
+  useEffect(() => {
+    if (mode !== "people") previousModeRef.current = mode;
   }, [mode]);
 
   useEffect(() => () => {
@@ -386,135 +471,126 @@ export default function MemoryDetailScreen() {
     return () => subscription.remove();
   }, [mode, peopleClosing]);
 
+  // Deferred so the mutation's cache writes (and the re-renders they trigger) stay out
+  // of the tab-transition window; competing commits stall the header collapse animation.
   function markLatestRoomRead() {
     if (!roomId || !room.data) return;
     const latestMessage = room.data.messages[room.data.messages.length - 1];
     const marker = latestMessage?.createdAt ?? room.data.createdAt;
     if (readMarkerRef.current === marker) return;
     readMarkerRef.current = marker;
-    markRead.mutate(undefined, {
-      onError: () => {
-        readMarkerRef.current = null;
-      }
-    });
+    if (markReadTimeoutRef.current) clearTimeout(markReadTimeoutRef.current);
+    markReadTimeoutRef.current = setTimeout(() => {
+      markReadTimeoutRef.current = null;
+      markRead.mutate(undefined, {
+        onError: () => {
+          readMarkerRef.current = null;
+        }
+      });
+    }, 400);
   }
+
+  useEffect(() => () => {
+    if (!markReadTimeoutRef.current) return;
+    clearTimeout(markReadTimeoutRef.current);
+    markReadTimeoutRef.current = null;
+    markRead.mutate(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Opening the chat tab counts as reading the room, no matter where the list is
+  // anchored. Requiring "near bottom" here left rooms permanently unread whenever the
+  // entry anchored at the unread divider, so every entry re-anchored to stale unread.
+  useEffect(() => {
+    if (mode !== "chat") {
+      chatOpenMarkedRef.current = false;
+      return;
+    }
+    if (chatOpenMarkedRef.current) return;
+    chatOpenMarkedRef.current = true;
+    markLatestRoomRead();
+  }, [markRead, mode, roomId]);
 
   useEffect(() => {
     if (mode !== "chat" || !nearBottomRef.current) return;
     markLatestRoomRead();
   }, [markRead, mode, room.data, roomId]);
 
-  useEffect(() => {
-    if (!keyboardVisible) initialWindowHeightRef.current = windowHeight;
-  }, [keyboardVisible, windowHeight]);
-
-  useEffect(() => {
-    const showSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", (event: KeyboardEvent) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      setKeyboardVisible(true);
-      if (Platform.OS === "android") setAndroidKeyboardHeight(getAndroidKeyboardHeight(event));
-      beginKeyboardTransitionPin();
-      scrollToLatestForTyping({
-        animated: true,
-        delays: Platform.OS === "ios" ? [16, 64, 120, 220, 340] : [16, 48, 96, 180]
-      });
-    });
-    const hideSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", (event: KeyboardEvent) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      keepChatPinnedDuringKeyboardRef.current = false;
-      setKeyboardVisible(false);
-      setAndroidKeyboardHeight(0);
-    });
-
-    return () => {
-      clearTypingScrollTimers();
-      clearKeyboardTransitionTimer();
-      showSubscription.remove();
-      hideSubscription.remove();
+  // Keyboard handling is driven per-frame by react-native-keyboard-controller's
+  // native animation values — synced with the OS keyboard animation, including
+  // emoji-panel height changes and interactive dismissal — instead of discrete
+  // show/hide events with a separate hand-rolled animation.
+  // keyboardPosition runs 0 → -keyboardHeight, ready for translateY.
+  const { height: keyboardPosition } = useReanimatedKeyboardAnimation();
+  const isChatMode = mode === "chat";
+  // The whole chat stage (list + composer overlay) rides the keyboard as one
+  // transform, so the input bar and the pinned latest message move together
+  // frame-by-frame with zero per-frame relayout. The stage clips the overflow.
+  // Clamped at 0 so a glitched positive keyboard value (seen after back-button
+  // dismiss on misconfigured Android) can never push the bar below its rest spot.
+  const stageKeyboardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: isChatMode ? Math.min(0, keyboardPosition.value) : 0 }]
+  }), [isChatMode]);
+  const closedComposerBottomPadding = Math.max(insets.bottom + COMPOSER_CLOSED_SAFE_GAP, 12);
+  // Single source of truth for the bar's bottom offset, per-frame:
+  //   keyboard open   → keyboardHeight + COMPOSER_KEYBOARD_OPEN_GAP
+  //   keyboard closed → bottom safe-area inset + COMPOSER_CLOSED_SAFE_GAP
+  // (the stage translate supplies keyboardHeight; this padding supplies the gap,
+  // blending between the two ends so every transition follows the keyboard curve)
+  const composerInsetStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(
+      closedComposerBottomPadding + keyboardPosition.value,
+      COMPOSER_KEYBOARD_OPEN_GAP
+    )
+  }), [closedComposerBottomPadding]);
+  // The list's bottom clearance is frozen at the closed-state bar height (it is NOT
+  // re-measured during keyboard transitions). As the bar's safe-area padding melts
+  // away, this shifts the list down by exactly the amount the bar shrank — same
+  // shared value, same frame — so the last message keeps its 8px gap with no
+  // JS-lagged re-measure/repin bounce when the keyboard collapses.
+  const chatListKeyboardStyle = useAnimatedStyle(() => {
+    const keyboardHeight = Math.max(0, -keyboardPosition.value);
+    const barShrink = Math.min(keyboardHeight, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
+    return {
+      transform: [{ translateY: isChatMode ? barShrink : 0 }]
     };
-  }, []);
+  }, [closedComposerBottomPadding, isChatMode]);
 
-  function clearKeyboardTransitionTimer() {
-    if (!keyboardTransitionTimeoutRef.current) return;
-    clearTimeout(keyboardTransitionTimeoutRef.current);
-    keyboardTransitionTimeoutRef.current = null;
-  }
-
-  function beginKeyboardTransitionPin() {
-    keepChatPinnedDuringKeyboardRef.current = nearBottomRef.current;
-    clearKeyboardTransitionTimer();
-    keyboardTransitionTimeoutRef.current = setTimeout(() => {
-      keyboardTransitionTimeoutRef.current = null;
-    }, 520);
-  }
-
-  function clearTypingScrollTimers() {
-    typingScrollTimeoutsRef.current.forEach(clearTimeout);
-    typingScrollTimeoutsRef.current = [];
-  }
-
-  function scrollToLatestForTyping({
-    animated = true,
-    delays = [48, 120, 240],
-    force = false
-  }: TypingScrollOptions = {}) {
-    if (!force && !keepChatPinnedDuringKeyboardRef.current && !nearBottomRef.current) return;
-    clearTypingScrollTimers();
-    scrollRef.current?.scrollToEnd({ animated: false });
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
-    delays.forEach((delay, index) => {
-      const timeout = setTimeout(() => {
-        scrollRef.current?.scrollToEnd({ animated: index === 0 && animated });
-      }, delay);
-      typingScrollTimeoutsRef.current.push(timeout);
-    });
+  function repinChatToBottom() {
+    if (!nearBottomRef.current) return;
+    requestAnimationFrame(() => scrollChatToBottom(false));
   }
 
   function handleComposerLayout(event: LayoutChangeEvent) {
     const nextHeight = Math.round(event.nativeEvent.layout.height);
     if (Math.abs(nextHeight - composerHeightRef.current) < 1) return;
     composerHeightRef.current = nextHeight;
-    scrollToLatestForTyping({
-      animated: false,
-      delays: [32, 96, 180, 300],
-      force: keepChatPinnedDuringKeyboardRef.current
-    });
+    // nextHeight is the bar's CONTENT height (excludes the animated safe-area
+    // padding), so this only changes for real content growth (multiline input,
+    // banners) — never during keyboard transitions. Closed-state padding is added
+    // statically; the open-state difference is compensated by chatListKeyboardStyle.
+    setChatBottomClearance(nextHeight + closedComposerBottomPadding + 8);
+    repinChatToBottom();
   }
 
   function handleChatTimelineLayout(event: LayoutChangeEvent) {
     const nextHeight = Math.round(event.nativeEvent.layout.height);
     if (Math.abs(nextHeight - chatTimelineHeightRef.current) < 1) return;
     chatTimelineHeightRef.current = nextHeight;
-    scrollToLatestForTyping({
-      animated: false,
-      delays: [32, 96, 180, 300],
-      force: keepChatPinnedDuringKeyboardRef.current
-    });
+    repinChatToBottom();
   }
 
   function handleChatNearBottomChange(isNearBottom: boolean) {
-    if (!isNearBottom && keepChatPinnedDuringKeyboardRef.current && keyboardTransitionTimeoutRef.current) return;
     nearBottomRef.current = isNearBottom;
-    if (isNearBottom) {
-      if (keyboardVisible) keepChatPinnedDuringKeyboardRef.current = true;
-      markLatestRoomRead();
-    } else if (!keyboardTransitionTimeoutRef.current) {
-      keepChatPinnedDuringKeyboardRef.current = false;
-    }
+    if (isNearBottom) markLatestRoomRead();
   }
 
   function handleChatScrollBeginDrag() {
-    keepChatPinnedDuringKeyboardRef.current = false;
-    clearTypingScrollTimers();
+    // Bottom-follow release is handled inside ChatTimeline's drag handler.
   }
 
   function handleComposerFocus() {
-    beginKeyboardTransitionPin();
-    scrollToLatestForTyping({
-      animated: true,
-      delays: Platform.OS === "ios" ? [16, 64, 120, 220, 340] : [16, 48, 96, 180],
-      force: keepChatPinnedDuringKeyboardRef.current
-    });
+    repinChatToBottom();
   }
 
   function showPeopleToast(message: string) {
@@ -606,7 +682,7 @@ export default function MemoryDetailScreen() {
       }
       setMessage("");
       setReplyingToMessage(null);
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+      requestAnimationFrame(() => scrollChatToBottom(true));
     } catch {
       // Rendered from mutation state.
     }
@@ -708,7 +784,7 @@ export default function MemoryDetailScreen() {
       setReplyingToMessage(null);
       const nextMode = attachmentOriginMode === "chat" ? "chat" : "media";
       setMode(nextMode);
-      if (nextMode === "chat") requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+      if (nextMode === "chat") requestAnimationFrame(() => scrollChatToBottom(true));
     } catch {
       // Rendered from mutation state.
     }
@@ -723,11 +799,6 @@ export default function MemoryDetailScreen() {
       return;
     }
     await sendMediaAssets(result.assets ?? (result.asset ? [result.asset] : []));
-  }
-
-  async function submitCameraCapture(asset: MemoryCaptureAsset) {
-    setCameraVisible(false);
-    await sendMediaAssets([asset]);
   }
 
   async function submitDish() {
@@ -753,7 +824,7 @@ export default function MemoryDetailScreen() {
     setAttachmentOptionsVisible(false);
     const nextMode = attachmentOriginMode === "chat" ? "chat" : "dishes";
     setMode(nextMode);
-    if (nextMode === "chat") requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    if (nextMode === "chat") requestAnimationFrame(() => scrollChatToBottom(true));
   }
 
   function openPeopleAdd() {
@@ -829,9 +900,11 @@ export default function MemoryDetailScreen() {
 
   function openFloatingAddMedia() {
     setFloatingAddMenuOpen(false);
-    setAttachmentOriginMode(mode);
     setAttachmentOptionsVisible(false);
-    setCameraVisible(true);
+    router.push({
+      pathname: "/memories/[id]/camera",
+      params: { id: roomId }
+    });
   }
 
   function openFloatingAddDish() {
@@ -872,7 +945,10 @@ export default function MemoryDetailScreen() {
 
   function openCamera() {
     setAttachmentOptionsVisible(false);
-    setCameraVisible(true);
+    router.push({
+      pathname: "/memories/[id]/camera",
+      params: { id: roomId }
+    });
   }
 
   function goBackToMemories() {
@@ -882,6 +958,35 @@ export default function MemoryDetailScreen() {
     }
     router.replace("/profile");
   }
+
+  const olderMessagesCursor = room.data?.messages[0]?.createdAt ?? null;
+  const olderMessages = useMemoryMessagePagesQuery(roomId, olderMessagesCursor);
+  const olderMessageItems = useMemo(() => (
+    olderMessages.data?.pages.flatMap((page) => page.messages) ?? []
+  ), [olderMessages.data]);
+  const mergedRoomData = useMemo(() => (
+    room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
+  ), [olderMessageItems, room.data]);
+  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
+  const pagedMediaPhotos = useMemo(() => (
+    mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
+  ), [mediaPages.data]);
+  const galleryPhotos = useMemo(() => (
+    mergedRoomData ? mergeMemoryPhotos(pagedMediaPhotos, mergedRoomData.photos) : []
+  ), [mergedRoomData, pagedMediaPhotos]);
+  const hasLoadedOlderMessagePages = Boolean(olderMessages.data?.pages.length);
+  const initialMessageSliceMayHaveOlder = (room.data?.messages.length ?? 0) >= MEMORY_CHAT_PRELOAD_LIMIT;
+  const canLoadOlderMessages = initialMessageSliceMayHaveOlder && Boolean(olderMessagesCursor) && (
+    !hasLoadedOlderMessagePages || Boolean(olderMessages.hasNextPage)
+  );
+  const loadOlderMessages = useCallback(() => {
+    if (!canLoadOlderMessages || olderMessages.isFetchingNextPage) return;
+    void olderMessages.fetchNextPage();
+  }, [canLoadOlderMessages, olderMessages]);
+  const loadMoreMedia = useCallback(() => {
+    if (!mediaPages.hasNextPage || mediaPages.isFetchingNextPage) return;
+    void mediaPages.fetchNextPage();
+  }, [mediaPages]);
 
   if (room.isLoading) {
     return (
@@ -904,7 +1009,7 @@ export default function MemoryDetailScreen() {
     );
   }
 
-  const data = room.data;
+  const data = mergedRoomData ?? room.data;
   const displayRestaurantName = formatRestaurantDisplayName(data.restaurantName);
   const selectedTargets = selectedItemKeys
     .map((key) => findMemoryActionTarget(data, key))
@@ -923,17 +1028,8 @@ export default function MemoryDetailScreen() {
     selectedTargets[0].value.attachments.length === 0
       ? selectedTargets[0].value
       : null;
-  const androidResizeAmount = Platform.OS === "android" && keyboardVisible
-    ? Math.max(0, Math.round(initialWindowHeightRef.current - windowHeight))
-    : 0;
-  const androidKeyboardOffset = Platform.OS === "android" && keyboardVisible
-    ? Math.max(0, androidKeyboardHeight - androidResizeAmount + ANDROID_KEYBOARD_SAFETY_LIFT)
-    : 0;
-  const showFloatingAddButton =
-    mode === "overview" &&
-    !attachmentOptionsVisible &&
-    !cameraVisible &&
-    !selectedMedia;
+  const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
+  const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
 
   return (
@@ -951,7 +1047,7 @@ export default function MemoryDetailScreen() {
         transitioning={mode === "people"}
       />
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" && mode !== "chat" ? "padding" : undefined}
         keyboardVerticalOffset={0}
         style={styles.keyboard}
       >
@@ -959,92 +1055,118 @@ export default function MemoryDetailScreen() {
           style={[
             styles.roomStage,
             headerMode === "overview" && styles.roomStageTable,
-            mode === "chat" && styles.roomStageChat,
-            mode === "chat" && androidKeyboardOffset > 0 && { paddingBottom: androidKeyboardOffset }
+            mode === "chat" && styles.roomStageChat
           ]}
         >
-          {mode === "chat" ? <FoodChatWallpaper /> : null}
+          <FoodChatWallpaper visible />
+          <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
           <View style={styles.body}>
-            <View
+            <PaneReveal
+              active={mode === "chat"}
               pointerEvents={mode === "chat" ? "auto" : "none"}
               style={mode === "chat" ? styles.roomPaneActive : styles.roomPaneHidden}
             >
+              <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
               <ChatTimeline
                 active={mode === "chat"}
+                bottomClearance={chatBottomClearance}
                 data={data}
+                hasOlderMessages={canLoadOlderMessages}
+                loadingOlderMessages={olderMessages.isFetchingNextPage}
                 myUsername={myUsername}
                 onAddDish={() => setMode("dishes")}
                 onAddMedia={openAttachmentActions}
                 onAddPeople={openPeopleAdd}
                 onBeginSelection={beginSelection}
+                onContentHeightChange={(height) => {
+                  chatContentHeightRef.current = height;
+                }}
                 onLayoutChange={handleChatTimelineLayout}
+                onLoadOlderMessages={loadOlderMessages}
                 onNearBottomChange={handleChatNearBottomChange}
                 onOpenMedia={openMediaViewer}
                 onReplyMessage={beginReplyMessage}
                 onScrollBeginDrag={handleChatScrollBeginDrag}
                 onToggleSelection={toggleSelectedItem}
+                scrollToBottom={scrollChatToBottom}
                 editingMessageId={editingMessage?.id ?? null}
                 lastReadAt={data.lastReadAt}
+                olderMessagesError={errorMessage(olderMessages.error)}
                 scrollRef={scrollRef}
                 selectedItemKeys={selectedItemKeys}
                 selectionMode={selectedItemKeys.length > 0}
               />
-            </View>
+              </Reanimated.View>
+            </PaneReveal>
             {mode === "media" ? (
-              <MediaGallery
-                error={mediaError || addPhoto.error?.message}
-                onOpenMedia={openMediaViewer}
-                photos={data.photos}
-              />
+              <RoomPane direction={paneDirection} key="media">
+                <MediaGallery
+                  error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
+                  hasMore={Boolean(mediaPages.hasNextPage)}
+                  loading={mediaPages.isLoading && galleryPhotos.length === 0}
+                  loadingMore={mediaPages.isFetchingNextPage}
+                  onLoadMore={loadMoreMedia}
+                  onOpenMedia={openMediaViewer}
+                  photos={galleryPhotos}
+                />
+              </RoomPane>
             ) : mode === "dishes" ? (
-              <DishesPanel
-                dishName={dishName}
-                dishNote={dishNote}
-                dishRating={dishRating}
-                dishes={data.dishes}
-                error={addDish.error?.message}
-                onChangeDishName={setDishName}
-                onChangeDishNote={setDishNote}
-                onChangeDishRating={setDishRating}
-                onSubmitDish={submitDish}
-                pending={addDish.isPending}
-              />
+              <RoomPane direction={paneDirection} key="dishes">
+                <DishesPanel
+                  dishName={dishName}
+                  dishNote={dishNote}
+                  dishRating={dishRating}
+                  dishes={data.dishes}
+                  error={addDish.error?.message}
+                  onChangeDishName={setDishName}
+                  onChangeDishNote={setDishNote}
+                  onChangeDishRating={setDishRating}
+                  onSubmitDish={submitDish}
+                  pending={addDish.isPending}
+                />
+              </RoomPane>
             ) : null}
           </View>
 
-          {mode === "chat" && selectedItemKeys.length > 0 ? (
-            <SelectionActionBar
-              canDelete={canDeleteSelected}
-              count={selectedItemKeys.length}
-              bottomInset={insets.bottom}
-              deleteError={deleteItems.error?.message}
-              deleting={deleteItems.isPending}
-              editableMessage={editableSelectedMessage}
-              onCancel={cancelSelection}
-              onDelete={removeSelectedItems}
-              onEdit={beginEditMessage}
-            />
-          ) : mode === "chat" ? (
-            <Composer
-              mediaError={mediaError}
-              mediaPending={addPhoto.isPending}
-              mediaMutationError={addPhoto.error?.message}
-              message={message}
-              messageError={addMessage.error?.message || editMessage.error?.message}
-              messagePending={addMessage.isPending || editMessage.isPending}
-              editingLabel={editingMessage ? `Editing message` : undefined}
-              bottomInset={insets.bottom}
-              keyboardOpen={keyboardVisible}
-              onAttach={openAttachmentActions}
-              onCancelEdit={cancelEditMessage}
-              onCancelReply={cancelReplyMessage}
-              onChangeMessage={setMessage}
-              onLayoutChange={handleComposerLayout}
-              onInputFocus={handleComposerFocus}
-              replyingToMessage={replyingToMessage}
-              onSend={submitMessage}
-            />
-          ) : null}
+          <PaneReveal
+            active={mode === "chat"}
+            pointerEvents={mode === "chat" ? "auto" : "none"}
+            style={styles.chatBottomOverlay}
+          >
+              {selectedItemKeys.length > 0 ? (
+                <SelectionActionBar
+                  canDelete={canDeleteSelected}
+                  count={selectedItemKeys.length}
+                  insetStyle={composerInsetStyle}
+                  deleteError={deleteItems.error?.message}
+                  deleting={deleteItems.isPending}
+                  editableMessage={editableSelectedMessage}
+                  onCancel={cancelSelection}
+                  onDelete={removeSelectedItems}
+                  onEdit={beginEditMessage}
+                />
+              ) : (
+                <Composer
+                  mediaError={mediaError}
+                  mediaPending={addPhoto.isPending}
+                  mediaMutationError={addPhoto.error?.message}
+                  message={message}
+                  messageError={addMessage.error?.message || editMessage.error?.message}
+                  messagePending={addMessage.isPending || editMessage.isPending}
+                  editingLabel={editingMessage ? `Editing message` : undefined}
+                  insetStyle={composerInsetStyle}
+                  onAttach={openAttachmentActions}
+                  onCancelEdit={cancelEditMessage}
+                  onCancelReply={cancelReplyMessage}
+                  onChangeMessage={setMessage}
+                  onLayoutChange={handleComposerLayout}
+                  onInputFocus={handleComposerFocus}
+                  replyingToMessage={replyingToMessage}
+                  onSend={submitMessage}
+                />
+              )}
+          </PaneReveal>
+          </Reanimated.View>
         </View>
 
         <AttachmentOptionsSheet
@@ -1070,16 +1192,12 @@ export default function MemoryDetailScreen() {
           onLeave={confirmLeaveRoom}
           visible={roomActionsVisible}
         />
-        <MemoryCameraModal
-          onCapture={submitCameraCapture}
-          onClose={() => setCameraVisible(false)}
-          visible={cameraVisible}
-        />
         <MediaViewer selection={selectedMedia} onClose={() => setSelectedMedia(null)} />
       </KeyboardAvoidingView>
-      {showFloatingAddButton ? (
+      {floatingAddAvailable ? (
         <FloatingAddMenu
           bottomInset={insets.bottom}
+          visible={floatingAddVisible}
           open={floatingAddMenuOpen}
           progress={floatingAddMenuProgress}
           onClose={closeFloatingAddMenu}
@@ -1152,8 +1270,10 @@ function RoomHeader({
   const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
   const hasActiveTab = activeTabIndex >= 0;
   const tabIndicatorProgress = useRef(new Animated.Value(Math.max(0, activeTabIndex))).current;
-  const headerCollapseProgress = useRef(new Animated.Value(isCompactHeader ? 1 : 0)).current;
-  const membersHeaderProgress = useRef(new Animated.Value(isMembersArea ? 1 : 0)).current;
+  // Collapse runs through Reanimated so the layout props (maxHeight, margins, width)
+  // animate on the UI thread, in lockstep with the tab indicator, even when the JS
+  // thread is busy mounting the chat timeline.
+  const collapseProgress = useSharedValue(isCompactHeader ? 1 : 0);
   const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabTrackWidth = Math.max(0, tabBarWidth - 4);
   const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
@@ -1161,47 +1281,28 @@ function RoomHeader({
     inputRange: ROOM_TABS.map((_, index) => index),
     outputRange: ROOM_TABS.map((_, index) => 2 + tabWidth * index)
   });
-  const compactHeaderOpacity = headerCollapseProgress;
-  const compactHeaderTranslateY = headerCollapseProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [5, 0]
-  });
-  const expandedHeaderOpacity = headerCollapseProgress.interpolate({
-    inputRange: [0, 0.55, 1],
-    outputRange: [1, 0.22, 0]
-  });
-  const expandedHeaderMaxHeight = headerCollapseProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [150, 0]
-  });
-  const expandedHeaderMarginTop = headerCollapseProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [spacing.sm, 0]
-  });
-  const addFriendSlotWidth = headerCollapseProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [34, 0]
-  });
-  const addFriendSlotMargin = headerCollapseProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [spacing.sm, 0]
-  });
-  const addFriendSlotOpacity = headerCollapseProgress.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [1, 0.15, 0]
-  });
-  const tabBarOpacity = membersHeaderProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0]
-  });
-  const tabBarMaxHeight = membersHeaderProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [46, 0]
-  });
-  const tabBarMarginTop = membersHeaderProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [spacing.md, 0]
-  });
+  const titleStyle = useAnimatedStyle(() => ({
+    fontSize: interpolate(collapseProgress.value, [0, 1], [21, 19]),
+    left: interpolate(collapseProgress.value, [0, 1], [26, 56]),
+    lineHeight: interpolate(collapseProgress.value, [0, 1], [29, 25]),
+    right: interpolate(collapseProgress.value, [0, 1], [26, 58]),
+    top: interpolate(collapseProgress.value, [0, 1], [52, 12])
+  }));
+  const expandedDetailsStyle = useAnimatedStyle(() => ({
+    marginTop: interpolate(collapseProgress.value, [0, 1], [42, 0]),
+    maxHeight: interpolate(collapseProgress.value, [0, 1], [100, 0]),
+    opacity: interpolate(collapseProgress.value, [0, 0.55, 1], [1, 0.22, 0]),
+    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -8]) }]
+  }));
+  const addFriendSlotStyle = useAnimatedStyle(() => ({
+    marginRight: interpolate(collapseProgress.value, [0, 1], [spacing.sm, 0]),
+    opacity: interpolate(collapseProgress.value, [0, 0.7, 1], [1, 0.15, 0]),
+    transform: [{ translateX: interpolate(collapseProgress.value, [0, 1], [0, 24]) }],
+    width: interpolate(collapseProgress.value, [0, 1], [34, 0])
+  }));
+  const tabBarStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -4]) }]
+  }));
   const orderedParticipants = [...data.participants].sort((first, second) => {
     const firstIsMe = first.username.toLowerCase() === myUsername.toLowerCase();
     const secondIsMe = second.username.toLowerCase() === myUsername.toLowerCase();
@@ -1218,30 +1319,19 @@ function RoomHeader({
   useEffect(() => {
     if (!hasActiveTab) return;
     Animated.timing(tabIndicatorProgress, {
-      duration: 190,
+      duration: HEADER_MODE_TRANSITION_DURATION,
       easing: Easing.out(Easing.cubic),
       toValue: activeTabIndex,
-      useNativeDriver: false
+      useNativeDriver: true
     }).start();
   }, [activeTabIndex, hasActiveTab, tabIndicatorProgress]);
 
   useEffect(() => {
-    Animated.timing(headerCollapseProgress, {
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      toValue: isCompactHeader ? 1 : 0,
-      useNativeDriver: false
-    }).start();
-  }, [headerCollapseProgress, isCompactHeader]);
-
-  useEffect(() => {
-    Animated.timing(membersHeaderProgress, {
-      duration: isMembersArea ? PEOPLE_PANEL_ENTER_DURATION : PEOPLE_PANEL_EXIT_DURATION,
-      easing: isMembersArea ? Easing.out(Easing.cubic) : Easing.inOut(Easing.cubic),
-      toValue: isMembersArea ? 1 : 0,
-      useNativeDriver: false
-    }).start();
-  }, [isMembersArea, membersHeaderProgress]);
+    collapseProgress.value = withTiming(isCompactHeader ? 1 : 0, {
+      duration: HEADER_MODE_TRANSITION_DURATION,
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic)
+    });
+  }, [collapseProgress, isCompactHeader]);
 
   return (
     <View
@@ -1251,6 +1341,17 @@ function RoomHeader({
       pointerEvents={transitioning ? "none" : "auto"}
       style={styles.header}
     >
+      <View pointerEvents="none" style={styles.sharedRoomTitleLayer}>
+        <Reanimated.Text
+          adjustsFontSizeToFit
+          maxFontSizeMultiplier={1}
+          minimumFontScale={0.78}
+          numberOfLines={1}
+          style={[styles.sharedRoomTitle, titleStyle]}
+        >
+          {compactTitle}
+        </Reanimated.Text>
+      </View>
       <View style={styles.headerTop}>
         <Pressable
           accessibilityLabel={transitioning ? undefined : "Go back"}
@@ -1261,30 +1362,12 @@ function RoomHeader({
         >
           <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
         </Pressable>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.compactRoomTitleWrap,
-            {
-              opacity: compactHeaderOpacity,
-              transform: [{ translateY: compactHeaderTranslateY }]
-            }
-          ]}
-        >
-          <Text numberOfLines={1} style={[styles.compactRoomTitle, isMembersArea && styles.membersCompactTitle]}>{compactTitle}</Text>
-        </Animated.View>
+        <View pointerEvents="none" style={styles.compactRoomTitleWrap} />
         {isMembersArea ? null : (
           <View style={styles.headerActions}>
-            <Animated.View
+            <Reanimated.View
               pointerEvents={isCompactHeader ? "none" : "auto"}
-              style={[
-                styles.headerAddFriendSlot,
-                {
-                  marginRight: addFriendSlotMargin,
-                  opacity: addFriendSlotOpacity,
-                  width: addFriendSlotWidth
-                }
-              ]}
+              style={[styles.headerAddFriendSlot, addFriendSlotStyle]}
             >
               <Pressable
                 accessibilityLabel={transitioning ? undefined : "Add friends"}
@@ -1295,7 +1378,7 @@ function RoomHeader({
               >
                 <Ionicons name="person-add-outline" size={20} color={colors.dark.cream} />
               </Pressable>
-            </Animated.View>
+            </Reanimated.View>
             <Pressable
               accessibilityLabel={transitioning ? undefined : "Room actions"}
               accessibilityRole={transitioning ? undefined : "button"}
@@ -1309,19 +1392,11 @@ function RoomHeader({
         )}
       </View>
 
-      <Animated.View
+      <Reanimated.View
         pointerEvents={isCompactHeader ? "none" : "auto"}
-        style={[
-          styles.roomIdentityAnimated,
-          {
-            marginTop: expandedHeaderMarginTop,
-            maxHeight: expandedHeaderMaxHeight,
-            opacity: expandedHeaderOpacity
-          }
-        ]}
+        style={[styles.roomIdentityAnimated, expandedDetailsStyle]}
       >
         <View style={styles.roomIdentity}>
-          <Text numberOfLines={2} style={styles.roomTitle}>{displayRestaurantName}</Text>
           <View style={styles.roomMetaRow}>
             <View style={styles.roomMetaIconSlot}>
               <Ionicons name="location-outline" size={13} color={colors.dark.muted} />
@@ -1363,18 +1438,11 @@ function RoomHeader({
             <Ionicons name="chevron-forward" size={15} color={colors.dark.muted} />
           </Pressable>
         </View>
-      </Animated.View>
+      </Reanimated.View>
 
-      <Animated.View
+      <Reanimated.View
         pointerEvents={isMembersArea ? "none" : "auto"}
-        style={[
-          styles.modeTabsAnimated,
-          {
-            marginTop: tabBarMarginTop,
-            maxHeight: tabBarMaxHeight,
-            opacity: tabBarOpacity
-          }
-        ]}
+        style={[styles.modeTabsAnimated, tabBarStyle]}
       >
         <View
           onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
@@ -1402,7 +1470,7 @@ function RoomHeader({
             />
           ))}
         </View>
-      </Animated.View>
+      </Reanimated.View>
     </View>
   );
 }
@@ -1431,11 +1499,77 @@ function ModeButton({
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       onPress={onPress}
-      style={[styles.modeButton, active && styles.modeButtonActive]}
+      style={({ pressed }) => [
+        styles.modeButton,
+        active && styles.modeButtonActive,
+        pressed && !active && styles.modeButtonPressed
+      ]}
     >
       <Ionicons name={icon} size={15} color={iconColor} />
       <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
     </Pressable>
+  );
+}
+
+function PaneReveal({
+  active,
+  children,
+  pointerEvents,
+  style
+}: {
+  active: boolean;
+  children: ReactNode;
+  pointerEvents?: "auto" | "none";
+  style?: StyleProp<ViewStyle>;
+}) {
+  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      duration: active ? 180 : 120,
+      easing: Easing.out(Easing.cubic),
+      toValue: active ? 1 : 0,
+      useNativeDriver: true
+    }).start();
+  }, [active, progress]);
+
+  return (
+    <Animated.View pointerEvents={pointerEvents} style={[style, { opacity: progress }]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+function RoomPane({
+  children,
+  direction,
+  style
+}: {
+  children: ReactNode;
+  direction: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const directionRef = useRef(direction);
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true
+    }).start();
+  }, [progress]);
+
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [directionRef.current * 26, 0]
+  });
+
+  return (
+    <Animated.View style={[style ?? styles.roomPane, { opacity: progress, transform: [{ translateX }] }]}>
+      {children}
+    </Animated.View>
   );
 }
 
@@ -1445,6 +1579,7 @@ function FloatingAddMenu({
   onDish,
   onMedia,
   onToggle,
+  visible,
   open,
   progress
 }: {
@@ -1453,9 +1588,11 @@ function FloatingAddMenu({
   onDish: () => void;
   onMedia: () => void;
   onToggle: () => void;
+  visible: boolean;
   open: boolean;
   progress: Animated.Value;
 }) {
+  const visibilityProgress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const buttonBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6);
   const actionStackRight = FLOATING_ADD_EDGE_OFFSET + (FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2;
   const menuOpacity = progress;
@@ -1471,10 +1608,28 @@ function FloatingAddMenu({
     inputRange: [0, 1],
     outputRange: ["0deg", "45deg"]
   });
+  const buttonOpacity = visibilityProgress;
+  const buttonTranslateX = visibilityProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [86, 0]
+  });
+  const buttonScale = visibilityProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.92, 1]
+  });
+
+  useEffect(() => {
+    Animated.timing(visibilityProgress, {
+      duration: visible ? 180 : 150,
+      easing: Easing.out(Easing.cubic),
+      toValue: visible ? 1 : 0,
+      useNativeDriver: true
+    }).start();
+  }, [visibilityProgress, visible]);
 
   return (
     <>
-      {open ? (
+      {open && visible ? (
         <Pressable
           accessibilityLabel="Close add menu"
           accessibilityRole="button"
@@ -1483,7 +1638,7 @@ function FloatingAddMenu({
         />
       ) : null}
       <Animated.View
-        pointerEvents={open ? "auto" : "none"}
+        pointerEvents={open && visible ? "auto" : "none"}
         style={[
           styles.floatingAddActionStack,
           {
@@ -1507,17 +1662,30 @@ function FloatingAddMenu({
           onPress={onMedia}
         />
       </Animated.View>
-      <Pressable
-        accessibilityLabel={open ? "Close add menu" : "Add to memory"}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        onPress={onToggle}
-        style={[styles.floatingAddButton, open && styles.floatingAddButtonOpen, { bottom: buttonBottom, right: FLOATING_ADD_EDGE_OFFSET }]}
+      <Animated.View
+        pointerEvents={visible ? "auto" : "none"}
+        style={[
+          styles.floatingAddButtonFrame,
+          {
+            bottom: buttonBottom,
+            opacity: buttonOpacity,
+            right: FLOATING_ADD_EDGE_OFFSET,
+            transform: [{ translateX: buttonTranslateX }, { scale: buttonScale }]
+          }
+        ]}
       >
-        <Animated.View style={[styles.floatingAddIconWrap, { transform: [{ rotate: iconRotate }] }]}>
-          <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={colors.dark.white} style={styles.floatingAddIcon} />
-        </Animated.View>
-      </Pressable>
+        <Pressable
+          accessibilityLabel={open ? "Close add menu" : "Add to memory"}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          onPress={onToggle}
+          style={[styles.floatingAddButton, open && styles.floatingAddButtonOpen]}
+        >
+          <Animated.View style={[styles.floatingAddIconWrap, { transform: [{ rotate: iconRotate }] }]}>
+            <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={ROOM_COLORS.onCool} style={styles.floatingAddIcon} />
+          </Animated.View>
+        </Pressable>
+      </Animated.View>
     </>
   );
 }
@@ -1552,42 +1720,98 @@ function FloatingAddAction({
   );
 }
 
+function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" }>["rowSpacing"]) {
+  if (rowSpacing === "break") return styles.chatMessageRowAfterBreak;
+  if (rowSpacing === "group-start") return styles.chatMessageRowGroupStart;
+  return styles.chatMessageRowGrouped;
+}
+
+function ChatHistoryHeader({
+  error,
+  hasMore,
+  loading,
+  onLoad
+}: {
+  error?: string;
+  hasMore: boolean;
+  loading: boolean;
+  onLoad: () => void;
+}) {
+  if (loading) {
+    return (
+      <View style={styles.timelineHistoryStatus}>
+        <Text style={styles.timelineHistoryText}>Loading earlier messages...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <Pressable accessibilityRole="button" onPress={onLoad} style={styles.timelineHistoryStatus}>
+        <Text style={styles.timelineHistoryText}>Could not load earlier messages</Text>
+      </Pressable>
+    );
+  }
+
+  if (!hasMore) return null;
+
+  return (
+    <Pressable accessibilityRole="button" onPress={onLoad} style={styles.timelineHistoryStatus}>
+      <Text style={styles.timelineHistoryText}>Load earlier messages</Text>
+    </Pressable>
+  );
+}
+
 function ChatTimeline({
   active,
+  bottomClearance,
   data,
   editingMessageId,
+  hasOlderMessages,
   myUsername,
+  loadingOlderMessages,
   onAddDish,
   onAddMedia,
   onAddPeople,
   onBeginSelection,
+  onContentHeightChange,
   onLayoutChange,
+  onLoadOlderMessages,
   onNearBottomChange,
   onOpenMedia,
   onReplyMessage,
   onScrollBeginDrag,
   onToggleSelection,
   lastReadAt,
+  olderMessagesError,
   scrollRef,
+  scrollToBottom,
   selectedItemKeys,
   selectionMode
 }: {
   active: boolean;
+  bottomClearance: number;
   data: MemoryRoom;
   editingMessageId: string | null;
+  hasOlderMessages: boolean;
+  loadingOlderMessages: boolean;
   myUsername: string;
   onAddDish: () => void;
   onAddMedia: () => void;
   onAddPeople: () => void;
   onBeginSelection: (target: MemoryActionTarget) => void;
+  onContentHeightChange: (height: number) => void;
   onLayoutChange: (event: LayoutChangeEvent) => void;
+  onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenMedia: OpenMediaHandler;
   onReplyMessage: (message: MemoryMessage) => void;
   onScrollBeginDrag: () => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
   lastReadAt: string | null;
+  olderMessagesError?: string;
   scrollRef: React.RefObject<FlatList<ChatTimelineRow> | null>;
+  scrollToBottom: (animated: boolean) => void;
   selectedItemKeys: string[];
   selectionMode: boolean;
 }) {
@@ -1613,20 +1837,41 @@ function ChatTimeline({
     [data.participants]
   );
   const [initialAnchorReady, setInitialAnchorReady] = useState(false);
+  const wasActiveRef = useRef(active);
   const initialAnchorReadyRef = useRef(false);
   const didScrollToUnreadRef = useRef(false);
   const didInitialBottomScrollRef = useRef(false);
   const listNearBottomRef = useRef(false);
-  const firstUnreadItemId = useMemo(() => {
-    const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
-    return timeline.find((item) => {
+  // While true, the list self-corrects to the exact content end (latest message sitting
+  // just above the composer) on every scroll/content-size event — late-mounting rows,
+  // the header collapse resize, and media loads all land short otherwise. Released only
+  // when the user drags away from the bottom.
+  const followBottomRef = useRef(false);
+  const isDraggingRef = useRef(false);
+  const computeFirstUnreadItemId = useCallback((items: TimelineItem[], lastReadValue: string | null) => {
+    const lastReadTime = lastReadValue ? new Date(lastReadValue).getTime() : 0;
+    return items.find((item) => {
       const itemTime = new Date(item.createdAt).getTime();
       if (!Number.isFinite(itemTime) || itemTime <= lastReadTime) return false;
       return item.type === "message"
         ? item.value.authorName !== myUsername
         : item.value.uploaderName !== myUsername;
     })?.id ?? null;
-  }, [lastReadAt, myUsername, timeline]);
+  }, [myUsername]);
+  // The unread anchor is frozen per visit: lastReadAt cache updates (markRead, the
+  // periodic room refetch) must not move or remove the divider while the tab is open.
+  // It is recomputed each time the chat tab becomes active.
+  const [firstUnreadItemId, setFirstUnreadItemId] = useState<string | null>(() => (
+    computeFirstUnreadItemId(timeline, lastReadAt)
+  ));
+  const lastActiveRenderRef = useRef(active);
+  if (lastActiveRenderRef.current !== active) {
+    lastActiveRenderRef.current = active;
+    if (active) {
+      const nextFirstUnreadItemId = computeFirstUnreadItemId(timeline, lastReadAt);
+      if (nextFirstUnreadItemId !== firstUnreadItemId) setFirstUnreadItemId(nextFirstUnreadItemId);
+    }
+  }
 
   useEffect(() => {
     didScrollToUnreadRef.current = false;
@@ -1635,6 +1880,7 @@ function ChatTimeline({
   useEffect(() => {
     didInitialBottomScrollRef.current = false;
     listNearBottomRef.current = false;
+    followBottomRef.current = false;
     initialAnchorReadyRef.current = false;
     setInitialAnchorReady(false);
   }, [data.id]);
@@ -1719,6 +1965,64 @@ function ChatTimeline({
     onNearBottomChange(true);
   }, [active, onNearBottomChange]);
 
+  const anchorStateRef = useRef({
+    firstUnreadRowIndex,
+    onNearBottomChange,
+    rowCount: timelineRows.length,
+    scrollToBottom
+  });
+  anchorStateRef.current = {
+    firstUnreadRowIndex,
+    onNearBottomChange,
+    rowCount: timelineRows.length,
+    scrollToBottom
+  };
+
+  // Anchors once per activation. Live values come from anchorStateRef so that
+  // mid-transition re-renders (mark-read cache writes, row mounts) cannot re-run
+  // this effect and cancel the pending retry timers.
+  useEffect(() => {
+    if (!active) {
+      wasActiveRef.current = false;
+      return undefined;
+    }
+    if (wasActiveRef.current) return undefined;
+    wasActiveRef.current = true;
+
+    const anchorList = (animated: boolean) => {
+      const anchor = anchorStateRef.current;
+      if (anchor.rowCount === 0) {
+        revealInitialAnchor();
+        return;
+      }
+      if (anchor.firstUnreadRowIndex >= 0) {
+        followBottomRef.current = false;
+        listNearBottomRef.current = false;
+        anchor.onNearBottomChange(false);
+        scrollRef.current?.scrollToIndex({
+          animated,
+          index: anchor.firstUnreadRowIndex,
+          viewPosition: 0.12
+        });
+      } else {
+        followBottomRef.current = true;
+        listNearBottomRef.current = true;
+        anchor.onNearBottomChange(true);
+        anchor.scrollToBottom(animated);
+      }
+    };
+
+    const frame = requestAnimationFrame(() => anchorList(false));
+    const timeouts = [64, 240, 450, 700].map((delay) => (
+      setTimeout(() => anchorList(false), delay)
+    ));
+
+    return () => {
+      cancelAnimationFrame(frame);
+      timeouts.forEach(clearTimeout);
+    };
+  }, [active, revealInitialAnchor, scrollRef]);
+
   useEffect(() => {
     if (firstUnreadRowIndex < 0 || didScrollToUnreadRef.current) return;
     const timeout = setTimeout(() => {
@@ -1744,19 +2048,20 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" }>["rowSpacing"]) {
-    if (rowSpacing === "break") return styles.chatMessageRowAfterBreak;
-    if (rowSpacing === "group-start") return styles.chatMessageRowGroupStart;
-    return styles.chatMessageRowGrouped;
-  }
+  const rowHandlersRef = useRef({ onBeginSelection, onOpenMedia, onReplyMessage, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onOpenMedia, onReplyMessage, onToggleSelection };
+  const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
+  const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
+  const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
+  const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
 
-  function renderTimelineRow({ item }: { item: ChatTimelineRow }) {
+  const renderTimelineRow = useCallback(({ item }: { item: ChatTimelineRow }) => {
     if (item.type === "date") return <DateDivider label={item.label} />;
 
     if (item.type === "unread") {
       return (
         <UnreadDivider
-          onJumpToLatest={() => scrollRef.current?.scrollToEnd({ animated: true })}
+          onJumpToLatest={() => scrollToBottom(true)}
         />
       );
     }
@@ -1768,10 +2073,10 @@ function ChatTimeline({
         <MessageBubble
           message={item.value}
           mine={item.mine}
-          onBeginSelection={() => onBeginSelection({ type: "message", value: item.value })}
-          onOpenMedia={onOpenMedia}
-          onReply={() => onReplyMessage(item.value)}
-          onToggleSelection={() => onToggleSelection({ type: "message", value: item.value })}
+          onBeginSelection={() => beginRowSelection({ type: "message", value: item.value })}
+          onOpenMedia={openRowMedia}
+          onReply={() => replyToRow(item.value)}
+          onToggleSelection={() => toggleRowSelection({ type: "message", value: item.value })}
           editing={editingMessageId === item.value.id}
           groupPosition={item.groupPosition}
           rowStyle={rowStyle}
@@ -1785,9 +2090,9 @@ function ChatTimeline({
     return (
       <MediaBubble
         mine={item.mine}
-        onBeginSelection={() => onBeginSelection({ type: "photo", value: item.value })}
-        onOpenMedia={onOpenMedia}
-        onToggleSelection={() => onToggleSelection({ type: "photo", value: item.value })}
+        onBeginSelection={() => beginRowSelection({ type: "photo", value: item.value })}
+        onOpenMedia={openRowMedia}
+        onToggleSelection={() => toggleRowSelection({ type: "photo", value: item.value })}
         photo={item.value}
         groupPosition={item.groupPosition}
         rowStyle={rowStyle}
@@ -1797,7 +2102,17 @@ function ChatTimeline({
         uploaderDisplayName={participantNames.get(item.value.uploaderName) ?? item.value.uploaderName}
       />
     );
-  }
+  }, [
+    beginRowSelection,
+    editingMessageId,
+    openRowMedia,
+    participantNames,
+    replyToRow,
+    scrollToBottom,
+    selectedItemKeys,
+    selectionMode,
+    toggleRowSelection
+  ]);
 
   return (
     <View onLayout={onLayoutChange} style={[styles.chatTimelineWrap, hideUntilAnchored && styles.chatTimelineHidden]}>
@@ -1806,10 +2121,19 @@ function ChatTimeline({
         ref={scrollRef}
         contentContainerStyle={[
           styles.timelineContent,
+          { paddingBottom: bottomClearance },
           timelineRows.length === 0 && styles.timelineContentEmpty
         ]}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={timelineRows.length > 0 ? (
+          <ChatHistoryHeader
+            error={olderMessagesError}
+            hasMore={hasOlderMessages}
+            loading={loadingOlderMessages}
+            onLoad={onLoadOlderMessages}
+          />
+        ) : null}
         ListEmptyComponent={(
           <View style={styles.emptyChat}>
             <View style={styles.emptyIcon}>
@@ -1824,6 +2148,7 @@ function ChatTimeline({
             </View>
           </View>
         )}
+        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         onScroll={(event) => {
           if (!active) return;
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -1831,15 +2156,38 @@ function ChatTimeline({
           const isNearBottom = distanceFromBottom < 96;
           listNearBottomRef.current = isNearBottom;
           onNearBottomChange(isNearBottom);
+          if (!isDraggingRef.current) {
+            if (distanceFromBottom < 4) {
+              followBottomRef.current = true;
+            } else if (followBottomRef.current) {
+              scrollToBottom(false);
+            }
+          }
+          if (
+            initialAnchorReadyRef.current &&
+            contentOffset.y < 96 &&
+            hasOlderMessages &&
+            !loadingOlderMessages
+          ) {
+            onLoadOlderMessages();
+          }
         }}
-        onScrollBeginDrag={onScrollBeginDrag}
-        onContentSizeChange={() => {
-          const shouldScrollToBottom = !firstUnreadItemId && (
-            !didInitialBottomScrollRef.current || listNearBottomRef.current
-          );
+        onScrollBeginDrag={() => {
+          isDraggingRef.current = true;
+          followBottomRef.current = false;
+          onScrollBeginDrag();
+        }}
+        onScrollEndDrag={() => {
+          isDraggingRef.current = false;
+        }}
+        onContentSizeChange={(_contentWidth, contentHeight) => {
+          onContentHeightChange(contentHeight);
+          const initialBottomScroll = !firstUnreadItemId && !didInitialBottomScrollRef.current;
+          const shouldScrollToBottom = followBottomRef.current || listNearBottomRef.current || initialBottomScroll;
           if (shouldScrollToBottom) {
             didInitialBottomScrollRef.current = true;
-            scrollRef.current?.scrollToEnd({ animated: false });
+            if (initialBottomScroll) followBottomRef.current = true;
+            scrollToBottom(false);
             listNearBottomRef.current = true;
             if (active) onNearBottomChange(true);
           }
@@ -1851,6 +2199,15 @@ function ChatTimeline({
             scrollRef.current?.scrollToOffset({ animated: false, offset });
             revealInitialAnchor();
           }, 50);
+          // The estimated offset mounts rows near the target; retry the exact index once
+          // they exist so the entry never strands mid-history.
+          setTimeout(() => {
+            scrollRef.current?.scrollToIndex({
+              animated: false,
+              index: info.index,
+              viewPosition: 0.12
+            });
+          }, 220);
         }}
         renderItem={renderTimelineRow}
         scrollEventThrottle={16}
@@ -1861,272 +2218,35 @@ function ChatTimeline({
   );
 }
 
-type DoodleProps = {
-  children: ReactNode;
-  opacity?: number;
-  transform: string;
-};
+const FOOD_WALLPAPER_PLACEMENTS = buildFoodWallpaperPlacements();
 
-const FOOD_WALLPAPER_TILE_SIZE = 260;
-const FOOD_WALLPAPER_LINE_COLOR = "#D7CAB9";
-const FOOD_WALLPAPER_OPACITY = 0.34;
-
-function Doodle({ children, opacity = 1, transform }: DoodleProps) {
-  return (
-    <G opacity={opacity} transform={transform}>
-      {children}
-    </G>
-  );
+function WallpaperPrimitive({ primitive }: { primitive: DoodlePrimitive }) {
+  switch (primitive.type) {
+    case "path":
+      return <Path d={primitive.d} />;
+    case "circle":
+      return <Circle cx={primitive.cx} cy={primitive.cy} r={primitive.r} />;
+    case "ellipse":
+      return <Ellipse cx={primitive.cx} cy={primitive.cy} rx={primitive.rx} ry={primitive.ry} />;
+    case "line":
+      return <Line x1={primitive.x1} x2={primitive.x2} y1={primitive.y1} y2={primitive.y2} />;
+  }
 }
 
-function Pizza({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M0 0l42 14-32 32z" />
-      <Path d="M7 8c9 4 20 8 31 10" />
-      <Circle cx={14} cy={15} r={2} />
-      <Circle cx={24} cy={19} r={1.8} />
-      <Circle cx={17} cy={27} r={1.5} />
-      <Path d="M9 38c4 2 8 1 11-2" />
-    </Doodle>
-  );
-}
+const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible: boolean }) {
+  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
 
-function Burger({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M2 20h38" />
-      <Path d="M7 20c0-10 8-17 17-17s17 7 17 17" />
-      <Path d="M5 28h36" />
-      <Path d="M9 36h28" />
-      <Path d="M11 14h2" />
-      <Path d="M19 10h2" />
-      <Path d="M28 13h2" />
-    </Doodle>
-  );
-}
+  useEffect(() => {
+    Animated.timing(opacity, {
+      duration: visible ? 180 : 120,
+      easing: Easing.out(Easing.cubic),
+      toValue: visible ? 1 : 0,
+      useNativeDriver: true
+    }).start();
+  }, [opacity, visible]);
 
-function Fries({ transform }: { transform: string }) {
   return (
-    <Doodle transform={transform}>
-      <Path d="M7 14h31l-5 34H12z" />
-      <Path d="M3 14h39" />
-      <Line x1={13} x2={12} y1={2} y2={34} />
-      <Line x1={21} x2={21} y1={0} y2={35} />
-      <Line x1={30} x2={33} y1={3} y2={34} />
-      <Path d="M18 30c4 3 9 3 14 0" />
-    </Doodle>
-  );
-}
-
-function CoffeeCup({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M7 9h29l-5 36H12z" />
-      <Path d="M3 9h37" />
-      <Path d="M13 45h18" />
-      <Path d="M13 24c5 3 12 3 17 0" />
-      <Path d="M18 2c3-4 9-4 12 0" />
-    </Doodle>
-  );
-}
-
-function BubbleTea({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M8 10h31l-5 42H13z" />
-      <Path d="M3 10h41" />
-      <Line x1={28} x2={22} y1={0} y2={31} />
-      <Circle cx={18} cy={42} r={1.6} />
-      <Circle cx={25} cy={43} r={1.6} />
-      <Circle cx={31} cy={39} r={1.5} />
-      <Circle cx={21} cy={35} r={1.4} />
-      <Path d="M13 27c6 4 15 4 21 0" />
-    </Doodle>
-  );
-}
-
-function Donut({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Circle cx={18} cy={18} r={16} />
-      <Circle cx={18} cy={18} r={7} />
-      <Circle cx={10} cy={12} r={1} />
-      <Circle cx={26} cy={13} r={1} />
-      <Circle cx={12} cy={25} r={1} />
-      <Circle cx={25} cy={25} r={1} />
-      <Path d="M7 18c4-3 7-3 11 0s7 3 11 0" />
-    </Doodle>
-  );
-}
-
-function Ramen({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M0 27h48c-2 12-11 19-24 19S2 39 0 27z" />
-      <Path d="M7 22c9-7 25-7 34 0" />
-      <Path d="M9 31c4-3 7-3 11 0s7 3 11 0 7-3 10 0" />
-      <Path d="M11 37c4-2 7-2 10 0s7 2 11 0" />
-      <Circle cx={28} cy={24} r={4} />
-      <Line x1={35} x2={47} y1={2} y2={25} />
-      <Line x1={42} x2={49} y1={1} y2={21} />
-    </Doodle>
-  );
-}
-
-function Taco({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M2 28c3-14 13-23 25-23s22 9 25 23z" />
-      <Path d="M5 29h45" />
-      <Path d="M12 23c4-4 8-4 12 0s8 4 12 0 7-4 10 0" />
-      <Circle cx={17} cy={17} r={1.4} />
-      <Circle cx={30} cy={15} r={1.4} />
-      <Circle cx={39} cy={19} r={1.4} />
-    </Doodle>
-  );
-}
-
-function Sushi({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Ellipse cx={18} cy={14} rx={17} ry={11} />
-      <Ellipse cx={18} cy={14} rx={8} ry={5} />
-      <Path d="M11 14c4-3 10-3 14 0" />
-      <Path d="M8 25h20" />
-    </Doodle>
-  );
-}
-
-function IceCream({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M11 20c0-7 6-13 14-13s14 6 14 13c0 4-2 7-5 9H16c-3-2-5-5-5-9z" />
-      <Path d="M16 29l9 28 9-28z" />
-      <Path d="M19 37h12" />
-      <Path d="M21 45h8" />
-      <Circle cx={25} cy={4} r={2} />
-    </Doodle>
-  );
-}
-
-function Cocktail({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M1 1h43L23 26z" />
-      <Line x1={23} x2={23} y1={26} y2={51} />
-      <Path d="M10 51h26" />
-      <Circle cx={36} cy={8} r={5} />
-      <Line x1={36} x2={36} y1={3} y2={13} />
-      <Line x1={31} x2={41} y1={8} y2={8} />
-    </Doodle>
-  );
-}
-
-function Cake({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M2 14l37-10v34H2z" />
-      <Path d="M2 14h37" />
-      <Path d="M2 25h37" />
-      <Path d="M13 9c2-5 8-5 10 0" />
-      <Circle cx={18} cy={6} r={2} />
-    </Doodle>
-  );
-}
-
-function Croissant({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M2 23c5-13 18-21 32-17" />
-      <Path d="M34 6c10 3 16 10 18 21" />
-      <Path d="M2 23c10 8 38 8 50 4" />
-      <Path d="M15 14c3 6 3 11 0 17" />
-      <Path d="M30 8c3 8 3 16 0 24" />
-      <Path d="M43 15c-3 6-3 10 0 15" />
-    </Doodle>
-  );
-}
-
-function Cookie({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M30 12c4 3 7 8 7 14 0 10-8 18-18 18S1 36 1 26 9 8 19 8c3 0 5 1 7 2" />
-      <Path d="M29 6c-3 3-2 8 3 9" />
-      <Circle cx={13} cy={20} r={1.5} />
-      <Circle cx={22} cy={18} r={1.4} />
-      <Circle cx={16} cy={31} r={1.5} />
-      <Circle cx={27} cy={29} r={1.3} />
-    </Doodle>
-  );
-}
-
-function Egg({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M2 21c0-9 8-16 17-16 7 0 12 4 14 10 5 1 8 5 8 10 0 9-9 16-21 16S2 33 2 21z" />
-      <Circle cx={22} cy={23} r={6} />
-    </Doodle>
-  );
-}
-
-function Leaf({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M0 10c8-8 20-8 28 0-8 8-20 8-28 0z" />
-      <Path d="M3 10h22" />
-    </Doodle>
-  );
-}
-
-function Sparkle({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M10 0l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" />
-    </Doodle>
-  );
-}
-
-function Heart({ transform }: { transform: string }) {
-  return (
-    <Doodle transform={transform}>
-      <Path d="M12 21C5 15 1 11 1 6c0-3 2-5 5-5 3 0 5 2 6 4 1-2 3-4 6-4 3 0 5 2 5 5 0 5-4 9-11 15z" />
-    </Doodle>
-  );
-}
-
-function TinyMarks() {
-  return (
-    <>
-      <Circle cx={28} cy={52} r={1.2} />
-      <Circle cx={98} cy={34} r={1.2} />
-      <Circle cx={202} cy={26} r={1.2} />
-      <Circle cx={226} cy={88} r={1.2} />
-      <Circle cx={64} cy={128} r={1.2} />
-      <Circle cx={150} cy={116} r={1.2} />
-      <Circle cx={238} cy={168} r={1.2} />
-      <Circle cx={116} cy={224} r={1.2} />
-      <Circle cx={190} cy={236} r={1.2} />
-      <Path d="M74 66c5-3 10-1 12 4" />
-      <Path d="M182 54c-4 2-8 1-11-3" />
-      <Path d="M38 178c4 3 9 3 13 0" />
-      <Path d="M132 188c5-3 10-1 12 4" />
-      <Path d="M214 214c-4 2-8 1-11-3" />
-      <Line x1={40} x2={49} y1={222} y2={231} />
-      <Line x1={49} x2={40} y1={222} y2={231} />
-      <Line x1={168} x2={177} y1={76} y2={85} />
-      <Line x1={177} x2={168} y1={76} y2={85} />
-      <Path d="M18 112h10" />
-      <Path d="M23 107v10" />
-      <Path d="M222 128h10" />
-      <Path d="M227 123v10" />
-    </>
-  );
-}
-
-const FoodChatWallpaper = memo(function FoodChatWallpaper() {
-  return (
-    <View pointerEvents="none" style={styles.chatWallpaper}>
+    <Animated.View pointerEvents="none" style={[styles.chatWallpaper, { opacity }]}>
       <Svg height="100%" style={StyleSheet.absoluteFill} width="100%">
         <Defs>
           <Pattern
@@ -2144,59 +2264,14 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper() {
               stroke={FOOD_WALLPAPER_LINE_COLOR}
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={1.25}
             >
-              <Pizza transform="translate(18 22) rotate(-18) scale(0.75)" />
-              <BubbleTea transform="translate(188 14) rotate(10) scale(0.62)" />
-              <Donut transform="translate(104 26) rotate(14) scale(0.55)" />
-              <Croissant transform="translate(42 86) rotate(12) scale(0.48)" />
-              <Ramen transform="translate(158 78) rotate(-8) scale(0.55)" />
-              <CoffeeCup transform="translate(20 150) rotate(-12) scale(0.58)" />
-              <Taco transform="translate(80 132) rotate(15) scale(0.48)" />
-              <Cocktail transform="translate(176 162) rotate(14) scale(0.48)" />
-              <Burger transform="translate(20 214) rotate(-8) scale(0.55)" />
-              <Cake transform="translate(112 198) rotate(12) scale(0.5)" />
-              <IceCream transform="translate(214 210) rotate(-16) scale(0.42)" />
-            </G>
-            <G
-              fill="none"
-              opacity={FOOD_WALLPAPER_OPACITY * 0.78}
-              stroke={FOOD_WALLPAPER_LINE_COLOR}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.05}
-            >
-              <Fries transform="translate(90 80) rotate(-7) scale(0.42)" />
-              <Sushi transform="translate(218 62) rotate(19) scale(0.4)" />
-              <Cookie transform="translate(132 142) rotate(-20) scale(0.4)" />
-              <Egg transform="translate(60 188) rotate(18) scale(0.36)" />
-              <CoffeeCup transform="translate(224 120) rotate(18) scale(0.34)" />
-              <Pizza transform="translate(144 232) rotate(-18) scale(0.38)" />
-              <Donut transform="translate(62 30) rotate(-12) scale(0.32)" />
-              <BubbleTea transform="translate(6 72) rotate(18) scale(0.32)" />
-              <Taco transform="translate(202 244) rotate(10) scale(0.34)" />
-            </G>
-            <G
-              fill="none"
-              opacity={FOOD_WALLPAPER_OPACITY * 0.65}
-              stroke={FOOD_WALLPAPER_LINE_COLOR}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={0.95}
-            >
-              <Sparkle transform="translate(150 18) scale(0.55)" />
-              <Sparkle transform="translate(228 44) rotate(18) scale(0.42)" />
-              <Sparkle transform="translate(32 132) rotate(-12) scale(0.45)" />
-              <Sparkle transform="translate(150 176) rotate(8) scale(0.38)" />
-              <Sparkle transform="translate(88 232) rotate(-16) scale(0.42)" />
-              <Heart transform="translate(70 54) rotate(-8) scale(0.42)" />
-              <Heart transform="translate(216 190) rotate(16) scale(0.34)" />
-              <Heart transform="translate(8 238) rotate(-18) scale(0.34)" />
-              <Leaf transform="translate(132 68) rotate(-22) scale(0.38)" />
-              <Leaf transform="translate(238 98) rotate(28) scale(0.32)" />
-              <Leaf transform="translate(104 166) rotate(12) scale(0.34)" />
-              <Leaf transform="translate(170 226) rotate(-24) scale(0.32)" />
-              <TinyMarks />
+              {FOOD_WALLPAPER_PLACEMENTS.map((placement, placementIndex) => (
+                <G key={placementIndex} strokeWidth={placement.strokeWidth} transform={placement.transform}>
+                  {placement.shape.primitives.map((primitive, primitiveIndex) => (
+                    <WallpaperPrimitive key={primitiveIndex} primitive={primitive} />
+                  ))}
+                </G>
+              ))}
             </G>
           </Pattern>
         </Defs>
@@ -2204,7 +2279,7 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper() {
         <Rect fill="url(#foodChatDoodlePattern)" height="100%" width="100%" x={0} y={0} />
       </Svg>
       <View style={styles.chatWallpaperOverlay} />
-    </View>
+    </Animated.View>
   );
 });
 
@@ -2428,7 +2503,7 @@ function MessageRow({
     return (
       <View style={styles.swipeReplyWrap}>
         <Animated.View style={[styles.swipeReplyIndicator, { opacity: swipeIndicatorOpacity }]}>
-          <Ionicons name="arrow-undo-outline" size={17} color={colors.dark.white} />
+          <Ionicons name="arrow-undo-outline" size={17} color={ROOM_COLORS.onCool} />
         </Animated.View>
         <Animated.View
           {...panResponder.panHandlers}
@@ -3072,41 +3147,74 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
 
 function MediaGallery({
   error,
+  hasMore,
+  loading,
+  loadingMore,
+  onLoadMore,
   onOpenMedia,
   photos
 }: {
   error?: string;
+  hasMore: boolean;
+  loading: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   onOpenMedia: OpenMediaHandler;
   photos: MemoryPhoto[];
 }) {
+  const hasMedia = photos.length > 0;
+
   return (
-    <ScrollView contentContainerStyle={styles.galleryContent} showsVerticalScrollIndicator={false}>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {photos.length === 0 ? (
+    <FlatList
+      columnWrapperStyle={styles.galleryRow}
+      contentContainerStyle={[
+        styles.galleryContent,
+        hasMedia ? styles.galleryContentFilled : styles.galleryContentEmpty
+      ]}
+      data={photos}
+      initialNumToRender={6}
+      keyExtractor={(item) => item.id}
+      ListEmptyComponent={(
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
-            <Ionicons name="images-outline" size={26} color={colors.dark.orange} />
+            <Ionicons name={loading ? "hourglass-outline" : "images-outline"} size={26} color={ROOM_COLORS.cool} />
           </View>
-          <Text style={styles.emptyTitle}>No media shared yet</Text>
-          <Text style={styles.emptyText}>Photos and videos from the table will appear here.</Text>
-        </View>
-      ) : (
-        <View style={styles.galleryGrid}>
-          {photos.map((photo) => (
-            <View key={photo.id} style={styles.galleryItem}>
-              <Pressable
-                accessibilityLabel={photo.mediaType === "video" ? "Open video" : "Open photo"}
-                accessibilityRole="imagebutton"
-                onPress={() => onOpenMedia(photo, [photo])}
-                style={styles.galleryMediaButton}
-              >
-                <MediaPreview media={photo} style={styles.mediaPreviewFlush} />
-              </Pressable>
-            </View>
-          ))}
+          <Text style={styles.emptyTitle}>{loading ? "Loading media" : "No media shared yet"}</Text>
+          <Text style={styles.emptyText}>
+            {loading ? "Fetching photos and videos from this table." : "Photos and videos from the table will appear here."}
+          </Text>
         </View>
       )}
-    </ScrollView>
+      ListFooterComponent={loadingMore ? (
+        <View style={styles.galleryFooterStatus}>
+          <Text style={styles.timelineHistoryText}>Loading more media...</Text>
+        </View>
+      ) : null}
+      ListHeaderComponent={error ? <Text style={styles.error}>{error}</Text> : null}
+      numColumns={2}
+      onEndReached={hasMore && !loadingMore ? onLoadMore : undefined}
+      onEndReachedThreshold={0.6}
+      renderItem={({ index, item: photo }) => (
+        <View
+          style={[
+            styles.galleryItem,
+            index % 2 === 0 ? styles.galleryItemLeft : styles.galleryItemRight
+          ]}
+        >
+          <Pressable
+            accessibilityLabel={photo.mediaType === "video" ? "Open video" : "Open photo"}
+            accessibilityRole="imagebutton"
+            onPress={() => onOpenMedia(photo, [photo])}
+            style={styles.galleryMediaButton}
+          >
+            <MediaPreview media={photo} style={styles.mediaPreviewFlush} />
+          </Pressable>
+        </View>
+      )}
+      showsVerticalScrollIndicator={false}
+      style={styles.galleryList}
+      windowSize={7}
+    />
   );
 }
 
@@ -3163,7 +3271,7 @@ function DishesPanel({
 
       <View style={styles.dishAddWrap}>
         <View style={styles.dishInputWrap}>
-          <Ionicons name="restaurant-outline" size={16} color={colors.dark.orange} />
+          <Ionicons name="restaurant-outline" size={16} color={colors.dark.gold} />
           <TextInput
             onChangeText={onChangeDishName}
             placeholder="Dish name"
@@ -3200,7 +3308,7 @@ function DishesPanel({
       {dishes.length === 0 ? (
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
-            <Ionicons name="restaurant-outline" size={26} color={colors.dark.orange} />
+            <Ionicons name="restaurant-outline" size={26} color={ROOM_COLORS.cool} />
           </View>
           <Text style={styles.emptyTitle}>No table favorites yet</Text>
           <Text style={styles.emptyText}>Add the dishes everyone tried so the group remembers what to order again.</Text>
@@ -3352,8 +3460,8 @@ function PeoplePanel({
                 addParticipantPending && styles.peopleAddButtonDisabled
               ]}
             >
-              <Ionicons name="person-add-outline" size={16} color={canAdd ? colors.dark.cream : colors.dark.muted} />
-              <Text style={[styles.peopleAddButtonText, !canAdd && styles.peopleAddButtonTextIdle]}>
+              <Ionicons name="person-add-outline" size={16} color={canAdd ? ROOM_COLORS.onCool : colors.dark.muted} />
+              <Text style={[styles.peopleAddButtonText, canAdd ? styles.peopleAddButtonTextReady : styles.peopleAddButtonTextIdle]}>
                 {addParticipantPending ? "Inviting" : "Invite"}
               </Text>
             </Pressable>
@@ -3646,33 +3754,28 @@ function RoomActionsSheet({
 }
 
 function SelectionActionBar({
-  bottomInset,
   canDelete,
   count,
   deleteError,
   deleting,
   editableMessage,
+  insetStyle,
   onCancel,
   onDelete,
   onEdit
 }: {
-  bottomInset: number;
   canDelete: boolean;
   count: number;
   deleteError?: string;
   deleting: boolean;
   editableMessage: MemoryMessage | null;
+  insetStyle: StyleProp<ViewStyle>;
   onCancel: () => void;
   onDelete: () => void;
   onEdit: (message: MemoryMessage) => void;
 }) {
   return (
-    <View
-      style={[
-        styles.selectionBarWrap,
-        { paddingBottom: Math.max(CLOSED_COMPOSER_BOTTOM_GAP, bottomInset + spacing.sm) }
-      ]}
-    >
+    <Reanimated.View style={[styles.selectionBarWrap, insetStyle]}>
       {deleteError ? <Text style={styles.error}>{deleteError}</Text> : null}
       <View style={styles.selectionBar}>
         <Pressable accessibilityLabel="Cancel selection" onPress={onCancel} style={styles.selectionBarButton}>
@@ -3688,7 +3791,7 @@ function SelectionActionBar({
             onPress={() => onEdit(editableMessage)}
             style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
           >
-            <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={colors.dark.white} />
+            <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onCool} />
           </Pressable>
         ) : null}
         {canDelete ? (
@@ -3702,194 +3805,7 @@ function SelectionActionBar({
           </Pressable>
         ) : null}
       </View>
-    </View>
-  );
-}
-
-function MemoryCameraModal({
-  onCapture,
-  onClose,
-  visible
-}: {
-  onCapture: (asset: MemoryCaptureAsset) => Promise<void>;
-  onClose: () => void;
-  visible: boolean;
-}) {
-  const insets = useSafeAreaInsets();
-  const cameraRef = useRef<CameraView>(null);
-  const [cameraMode, setCameraMode] = useState<"picture" | "video">("picture");
-  const [facing, setFacing] = useState<"back" | "front">("back");
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraGranted, setCameraGranted] = useState(false);
-  const [microphoneGranted, setMicrophoneGranted] = useState(false);
-  const [cameraError, setCameraError] = useState("");
-  const [capturing, setCapturing] = useState(false);
-  const [recording, setRecording] = useState(false);
-
-  useEffect(() => {
-    if (!visible) return;
-
-    let alive = true;
-    setCameraError("");
-    setCameraReady(false);
-    setRecording(false);
-    setCapturing(false);
-
-    async function requestPermissions() {
-      const cameraPermission = await Camera.requestCameraPermissionsAsync();
-      const microphonePermission = await Camera.requestMicrophonePermissionsAsync();
-      if (!alive) return;
-      setCameraGranted(cameraPermission.granted);
-      setMicrophoneGranted(microphonePermission.granted);
-      if (!cameraPermission.granted) {
-        setCameraError("Camera permission was not granted.");
-      }
-    }
-
-    requestPermissions().catch(() => {
-      if (alive) setCameraError("Could not open camera.");
-    });
-
-    return () => {
-      alive = false;
-    };
-  }, [visible]);
-
-  async function closeCamera() {
-    if (recording) cameraRef.current?.stopRecording();
-    onClose();
-  }
-
-  async function capturePhoto() {
-    if (!cameraReady || capturing || recording) return;
-    setCapturing(true);
-    setCameraError("");
-    try {
-      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.9 });
-      if (photo?.uri) {
-        await onCapture({ height: photo.height, mimeType: "image/jpeg", type: "image", uri: photo.uri, width: photo.width });
-      }
-    } catch {
-      setCameraError("Could not capture photo.");
-    } finally {
-      setCapturing(false);
-    }
-  }
-
-  async function toggleVideoRecording() {
-    if (!cameraReady || capturing) return;
-    if (!microphoneGranted) {
-      setCameraError("Microphone permission is needed to record video.");
-      return;
-    }
-    if (recording) {
-      cameraRef.current?.stopRecording();
-      return;
-    }
-
-    setCapturing(true);
-    setRecording(true);
-    setCameraError("");
-    try {
-      const video = await cameraRef.current?.recordAsync({ maxDuration: 90 });
-      if (video?.uri) {
-        await onCapture({ mimeType: "video/mp4", type: "video", uri: video.uri });
-      }
-    } catch {
-      setCameraError("Could not record video.");
-    } finally {
-      setRecording(false);
-      setCapturing(false);
-    }
-  }
-
-  function capture() {
-    if (cameraMode === "video") {
-      void toggleVideoRecording();
-      return;
-    }
-    void capturePhoto();
-  }
-
-  return (
-    <Modal animationType="slide" onRequestClose={closeCamera} visible={visible}>
-      <View style={styles.cameraModal}>
-        {cameraGranted ? (
-          <CameraView
-            active={visible}
-            facing={facing}
-            mode={cameraMode}
-            onCameraReady={() => setCameraReady(true)}
-            ref={cameraRef}
-            style={styles.cameraPreview}
-          />
-        ) : (
-          <View style={styles.cameraPermissionState}>
-            <Ionicons name="camera-outline" size={34} color={colors.dark.orange} />
-            <Text style={styles.cameraPermissionTitle}>Camera unavailable</Text>
-            <Text style={styles.cameraPermissionText}>{cameraError || "Camera permission is required."}</Text>
-          </View>
-        )}
-
-        <View
-          style={[
-            styles.cameraTopControls,
-            { paddingTop: Platform.OS === "web" ? spacing.lg : Math.max(54, insets.top + spacing.sm) }
-          ]}
-        >
-          <Pressable accessibilityLabel="Close camera" onPress={closeCamera} style={styles.cameraIconButton}>
-            <Ionicons name="close" size={22} color={colors.dark.white} />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Flip camera"
-            disabled={recording}
-            onPress={() => setFacing((current) => current === "back" ? "front" : "back")}
-            style={[styles.cameraIconButton, recording && styles.cameraControlDisabled]}
-          >
-            <Ionicons name="camera-reverse-outline" size={22} color={colors.dark.white} />
-          </Pressable>
-        </View>
-
-        <View
-          style={[
-            styles.cameraBottomControls,
-            { paddingBottom: Platform.OS === "web" ? spacing.xl : Math.max(42, insets.bottom + spacing.lg) }
-          ]}
-        >
-          {cameraError && cameraGranted ? <Text style={styles.cameraError}>{cameraError}</Text> : null}
-          <View style={styles.cameraModeSwitch}>
-            <Pressable
-              disabled={recording}
-              onPress={() => setCameraMode("picture")}
-              style={[styles.cameraModeButton, cameraMode === "picture" && styles.cameraModeButtonActive]}
-            >
-              <Text style={[styles.cameraModeText, cameraMode === "picture" && styles.cameraModeTextActive]}>Photo</Text>
-            </Pressable>
-            <Pressable
-              disabled={recording}
-              onPress={() => setCameraMode("video")}
-              style={[styles.cameraModeButton, cameraMode === "video" && styles.cameraModeButtonActive]}
-            >
-              <Text style={[styles.cameraModeText, cameraMode === "video" && styles.cameraModeTextActive]}>Video</Text>
-            </Pressable>
-          </View>
-
-          <Pressable
-            accessibilityLabel={cameraMode === "video" ? recording ? "Stop recording" : "Record video" : "Take photo"}
-            disabled={!cameraGranted || !cameraReady || capturing && !recording}
-            onPress={capture}
-            style={[
-              styles.cameraCaptureButton,
-              cameraMode === "video" && styles.cameraCaptureButtonVideo,
-              recording && styles.cameraCaptureButtonRecording,
-              (!cameraGranted || !cameraReady || capturing && !recording) && styles.cameraControlDisabled
-            ]}
-          >
-            <View style={[styles.cameraCaptureInner, recording && styles.cameraCaptureInnerRecording]} />
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
+    </Reanimated.View>
   );
 }
 
@@ -4109,9 +4025,8 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
 }
 
 function Composer({
-  bottomInset,
   editingLabel,
-  keyboardOpen,
+  insetStyle,
   mediaError,
   mediaMutationError,
   mediaPending,
@@ -4127,9 +4042,8 @@ function Composer({
   replyingToMessage,
   onSend
 }: {
-  bottomInset: number;
   editingLabel?: string;
-  keyboardOpen: boolean;
+  insetStyle: StyleProp<ViewStyle>;
   mediaError?: string;
   mediaMutationError?: string;
   mediaPending: boolean;
@@ -4148,9 +4062,6 @@ function Composer({
   const canSend = Boolean(message.trim()) && !messagePending && !mediaPending;
   const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
   const composerCanScroll = composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT;
-  const bottomPadding = keyboardOpen
-    ? KEYBOARD_COMPOSER_BOTTOM_GAP
-    : Math.max(CLOSED_COMPOSER_BOTTOM_GAP, bottomInset + spacing.xs);
 
   useEffect(() => {
     if (message.length === 0 && composerInputHeight !== COMPOSER_INPUT_MIN_HEIGHT) {
@@ -4167,10 +4078,8 @@ function Composer({
   }
 
   return (
-    <View
-      onLayout={onLayoutChange}
-      style={[styles.composerWrap, keyboardOpen && styles.composerWrapKeyboardOpen, { paddingBottom: bottomPadding }]}
-    >
+    <Reanimated.View style={[styles.composerWrap, insetStyle]}>
+      <View onLayout={onLayoutChange} style={styles.composerContent}>
       {messageError || mediaError || mediaMutationError ? (
         <Text style={styles.error}>{messageError || mediaError || mediaMutationError}</Text>
       ) : null}
@@ -4231,10 +4140,11 @@ function Composer({
           onPress={onSend}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
         >
-          <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={colors.dark.white} />
+          <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={ROOM_COLORS.onCool} />
         </Pressable>
       </View>
-    </View>
+      </View>
+    </Reanimated.View>
   );
 }
 
@@ -4244,13 +4154,21 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     overflow: "hidden",
-    paddingBottom: 0
+    paddingBottom: 0,
+    position: "relative"
   },
   roomStage: {
+    flex: 1,
+    position: "relative"
+  },
+  roomStageShift: {
+    flex: 1
+  },
+  chatListShiftWrap: {
     flex: 1
   },
   roomStageTable: {
-    backgroundColor: "#0A0705"
+    backgroundColor: ROOM_COLORS.bg
   },
   roomStageChat: {
     backgroundColor: ROOM_COLORS.bg,
@@ -4265,16 +4183,27 @@ const styles = StyleSheet.create({
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    left: 0,
     maxWidth: ROOM_MAX_WIDTH,
     paddingBottom: 14,
     paddingHorizontal: 18,
     paddingTop: spacing.sm,
-    width: "100%"
+    position: "absolute",
+    right: 0,
+    shadowColor: "#000",
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    top: 0,
+    width: "100%",
+    zIndex: 20
   },
   headerTop: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between"
+    justifyContent: "space-between",
+    minHeight: 34,
+    zIndex: 2
   },
   headerActions: {
     alignItems: "center",
@@ -4300,6 +4229,15 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.sm,
     minWidth: 0
   },
+  sharedRoomTitleLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1
+  },
+  sharedRoomTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.cream,
+    position: "absolute"
+  },
   compactRoomTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
@@ -4316,12 +4254,6 @@ const styles = StyleSheet.create({
   roomIdentity: {
     gap: 6,
     paddingHorizontal: 8
-  },
-  roomTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 21,
-    lineHeight: 29
   },
   roomMetaRow: {
     alignItems: "center",
@@ -4383,6 +4315,7 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   modeTabsAnimated: {
+    marginTop: spacing.md,
     overflow: "hidden"
   },
   modeTabs: {
@@ -4420,6 +4353,9 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     borderColor: "transparent"
   },
+  modeButtonPressed: {
+    opacity: 0.55
+  },
   modeButtonText: {
     ...fontStyles.extraBold,
     color: "#A19B94",
@@ -4437,7 +4373,8 @@ const styles = StyleSheet.create({
     flex: 1,
     maxWidth: ROOM_MAX_WIDTH,
     position: "relative",
-    width: "100%"
+    width: "100%",
+    zIndex: 1
   },
   roomPaneActive: {
     flex: 1,
@@ -4447,6 +4384,16 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     opacity: 0,
     zIndex: 0
+  },
+  roomPane: {
+    flex: 1
+  },
+  chatBottomOverlay: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    zIndex: 6
   },
   floatingAddBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -4469,7 +4416,7 @@ const styles = StyleSheet.create({
   },
   floatingAddActionLabel: {
     alignItems: "center",
-    backgroundColor: "rgba(21, 23, 25, 0.96)",
+    backgroundColor: "rgba(33, 28, 23, 0.96)",
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -4500,25 +4447,27 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(246, 173, 85, 0.13)",
     borderColor: "rgba(246, 173, 85, 0.30)"
   },
+  floatingAddButtonFrame: {
+    position: "absolute",
+    shadowColor: "#000",
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    zIndex: 8
+  },
   floatingAddButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: ROOM_COLORS.cool,
     borderColor: "rgba(255,255,255,0.22)",
     borderRadius: radius.pill,
     borderWidth: 1,
     height: FLOATING_ADD_BUTTON_SIZE,
     justifyContent: "center",
-    position: "absolute",
-    right: spacing.lg,
-    shadowColor: "#000",
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.28,
-    shadowRadius: 16,
     width: FLOATING_ADD_BUTTON_SIZE,
-    zIndex: 8
+    overflow: "hidden"
   },
   floatingAddButtonOpen: {
-    backgroundColor: "#E64F27",
+    backgroundColor: "#1FB3A5",
     borderColor: "rgba(255,255,255,0.30)"
   },
   floatingAddIconWrap: {
@@ -4558,11 +4507,23 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 0,
     justifyContent: "flex-end",
-    paddingTop: spacing.base,
-    paddingBottom: 0
+    paddingTop: CHAT_HEADER_CLEARANCE
   },
   timelineContentEmpty: {
     flexGrow: 1
+  },
+  timelineHistoryStatus: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    paddingVertical: 12
+  },
+  timelineHistoryText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: "center"
   },
   dateDividerRow: {
     alignItems: "center",
@@ -4572,7 +4533,7 @@ const styles = StyleSheet.create({
   },
   dateDividerText: {
     ...fontStyles.extraBold,
-    backgroundColor: "rgba(21,23,25,0.92)",
+    backgroundColor: "rgba(33,28,23,0.92)",
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -4929,7 +4890,7 @@ const styles = StyleSheet.create({
     gap: MEDIA_GRID_GAP
   },
   mediaGridTile: {
-    backgroundColor: "#0B0D0F",
+    backgroundColor: "#0D0A08",
     position: "relative",
     overflow: "hidden"
   },
@@ -4940,7 +4901,7 @@ const styles = StyleSheet.create({
   },
   gridVideoPreview: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#0B0D0F",
+    backgroundColor: "#0D0A08",
     height: "100%",
     overflow: "hidden",
     width: "100%"
@@ -5265,7 +5226,7 @@ const styles = StyleSheet.create({
   },
   attachDishSubmit: {
     alignItems: "center",
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
     minHeight: 38,
     minWidth: 84,
@@ -5277,7 +5238,7 @@ const styles = StyleSheet.create({
   },
   attachDishSubmitText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.onCool,
     fontSize: 14,
     lineHeight: 18
   },
@@ -5315,7 +5276,7 @@ const styles = StyleSheet.create({
   },
   roomActionIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
+    backgroundColor: ROOM_COLORS.coolDim,
     borderRadius: radius.pill,
     height: 28,
     justifyContent: "center",
@@ -5346,14 +5307,15 @@ const styles = StyleSheet.create({
   },
   selectionBarWrap: {
     alignSelf: "center",
-    backgroundColor: "transparent",
+    backgroundColor: ROOM_COLORS.bg,
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: 1,
     borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: CLOSED_COMPOSER_BOTTOM_GAP,
     paddingHorizontal: Platform.OS === "web" ? spacing.md : spacing.lg,
     paddingTop: 4,
     width: "100%"
@@ -5394,7 +5356,7 @@ const styles = StyleSheet.create({
   },
   selectionEditButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
     height: SELECTION_ACTION_BUTTON_SIZE,
     justifyContent: "center",
@@ -5402,130 +5364,6 @@ const styles = StyleSheet.create({
   },
   selectionDeleteButtonDisabled: {
     opacity: 0.5
-  },
-  cameraModal: {
-    backgroundColor: colors.dark.black,
-    flex: 1
-  },
-  cameraPreview: {
-    flex: 1
-  },
-  cameraPermissionState: {
-    alignItems: "center",
-    backgroundColor: colors.dark.black,
-    flex: 1,
-    gap: spacing.sm,
-    justifyContent: "center",
-    padding: spacing.xl
-  },
-  cameraPermissionTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 18,
-    lineHeight: 23
-  },
-  cameraPermissionText: {
-    ...fontStyles.medium,
-    color: colors.dark.muted,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center"
-  },
-  cameraTopControls: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    left: 0,
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === "web" ? spacing.lg : 54,
-    position: "absolute",
-    right: 0,
-    top: 0
-  },
-  cameraIconButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.42)",
-    borderRadius: radius.pill,
-    height: 44,
-    justifyContent: "center",
-    width: 44
-  },
-  cameraBottomControls: {
-    alignItems: "center",
-    bottom: 0,
-    gap: spacing.base,
-    left: 0,
-    paddingBottom: Platform.OS === "web" ? spacing.xl : 42,
-    paddingHorizontal: spacing.lg,
-    position: "absolute",
-    right: 0
-  },
-  cameraError: {
-    ...fontStyles.semiBold,
-    backgroundColor: "rgba(0,0,0,0.52)",
-    borderRadius: radius.input,
-    color: colors.dark.cream,
-    fontSize: 12,
-    lineHeight: 16,
-    overflow: "hidden",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    textAlign: "center"
-  },
-  cameraModeSwitch: {
-    backgroundColor: "rgba(0,0,0,0.48)",
-    borderRadius: radius.pill,
-    flexDirection: "row",
-    padding: 4
-  },
-  cameraModeButton: {
-    alignItems: "center",
-    borderRadius: radius.pill,
-    minWidth: 78,
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm
-  },
-  cameraModeButtonActive: {
-    backgroundColor: colors.dark.white
-  },
-  cameraModeText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 12,
-    lineHeight: 16
-  },
-  cameraModeTextActive: {
-    color: colors.dark.black
-  },
-  cameraCaptureButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.3)",
-    borderColor: colors.dark.white,
-    borderRadius: radius.pill,
-    borderWidth: 4,
-    height: 76,
-    justifyContent: "center",
-    width: 76
-  },
-  cameraCaptureButtonVideo: {
-    borderColor: "#FF4D4D"
-  },
-  cameraCaptureButtonRecording: {
-    borderColor: "#FF4D4D"
-  },
-  cameraCaptureInner: {
-    backgroundColor: colors.dark.white,
-    borderRadius: radius.pill,
-    height: 56,
-    width: 56
-  },
-  cameraCaptureInnerRecording: {
-    backgroundColor: "#FF4D4D",
-    borderRadius: 10,
-    height: 28,
-    width: 28
-  },
-  cameraControlDisabled: {
-    opacity: 0.45
   },
   viewerBackdrop: {
     backgroundColor: "rgba(0,0,0,0.94)",
@@ -5620,7 +5458,7 @@ const styles = StyleSheet.create({
     width: 54
   },
   viewerThumbnailActive: {
-    borderColor: colors.dark.orange,
+    borderColor: ROOM_COLORS.cool,
     borderWidth: 2
   },
   viewerThumbnailImage: {
@@ -5634,14 +5472,34 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: "100%"
   },
+  galleryList: {
+    flex: 1
+  },
   galleryContent: {
-    gap: spacing.base,
-    padding: spacing.lg,
+    paddingTop: CHAT_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
+  },
+  galleryContentEmpty: {
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg
+  },
+  galleryContentFilled: {
+    gap: 0,
+    paddingHorizontal: 0,
+    paddingTop: MEDIA_GALLERY_TOP_CLEARANCE
+  },
+  galleryFooterStatus: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.md
+  },
+  galleryRow: {
+    gap: 0
   },
   panelContent: {
     gap: spacing.sm,
     padding: spacing.lg,
+    paddingTop: CHAT_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
   },
   peoplePanelContent: {
@@ -5655,7 +5513,7 @@ const styles = StyleSheet.create({
   },
   panelPrimaryButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.input,
     flexDirection: "row",
     gap: 6,
@@ -5668,12 +5526,12 @@ const styles = StyleSheet.create({
   },
   panelPrimaryButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.onCool,
     fontSize: 13
   },
   peoplePanelMotion: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#0A0705",
+    backgroundColor: ROOM_COLORS.bg,
     zIndex: 20
   },
   peopleScreenHeader: {
@@ -5699,7 +5557,7 @@ const styles = StyleSheet.create({
   },
   peopleToast: {
     alignItems: "center",
-    backgroundColor: "rgba(21, 25, 29, 0.97)",
+    backgroundColor: "rgba(33, 28, 23, 0.97)",
     borderColor: "rgba(34, 199, 184, 0.36)",
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -5735,8 +5593,8 @@ const styles = StyleSheet.create({
   },
   peopleAddInputWrap: {
     alignItems: "center",
-    backgroundColor: "#15191D",
-    borderColor: "rgba(226, 232, 240, 0.08)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderRadius: radius.sm,
     borderWidth: 1,
     flex: 1,
@@ -5756,8 +5614,8 @@ const styles = StyleSheet.create({
   },
   peopleAddButton: {
     alignItems: "center",
-    backgroundColor: "#171B1F",
-    borderColor: "rgba(226, 232, 240, 0.10)",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
     borderWidth: 1,
     borderRadius: radius.sm,
     flexDirection: "row",
@@ -5768,7 +5626,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13
   },
   peopleAddButtonReady: {
-    backgroundColor: "#8F3A22",
+    backgroundColor: ROOM_COLORS.cool,
     borderColor: "rgba(255,255,255,0.12)"
   },
   peopleAddButtonDisabled: {
@@ -5778,6 +5636,9 @@ const styles = StyleSheet.create({
     ...fontStyles.extraBold,
     color: colors.dark.white,
     fontSize: 13
+  },
+  peopleAddButtonTextReady: {
+    color: ROOM_COLORS.onCool
   },
   peopleAddButtonTextIdle: {
     color: colors.dark.muted
@@ -6014,7 +5875,7 @@ const styles = StyleSheet.create({
   },
   personRow: {
     alignItems: "center",
-    borderBottomColor: "rgba(226, 232, 240, 0.08)",
+    borderBottomColor: ROOM_COLORS.border,
     borderBottomWidth: 1,
     flexDirection: "row",
     gap: spacing.md,
@@ -6023,7 +5884,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0
   },
   personList: {
-    borderTopColor: "rgba(226, 232, 240, 0.08)",
+    borderTopColor: ROOM_COLORS.border,
     borderTopWidth: 1,
     marginTop: spacing.lg
   },
@@ -6068,8 +5929,8 @@ const styles = StyleSheet.create({
   },
   personRequestButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: "rgba(240, 96, 48, 0.35)",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexShrink: 0,
@@ -6083,17 +5944,19 @@ const styles = StyleSheet.create({
   },
   personRequestButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: ROOM_COLORS.cool,
     fontSize: 11,
     lineHeight: 14
   },
-  galleryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
   galleryItem: {
-    width: "48%"
+    paddingVertical: MEDIA_GALLERY_HALF_GAP,
+    width: "50%"
+  },
+  galleryItemLeft: {
+    paddingRight: MEDIA_GALLERY_HALF_GAP
+  },
+  galleryItemRight: {
+    paddingLeft: MEDIA_GALLERY_HALF_GAP
   },
   galleryMediaButton: {
     borderRadius: 0,
@@ -6136,20 +5999,20 @@ const styles = StyleSheet.create({
   },
   composerWrap: {
     alignSelf: "center",
-    backgroundColor: "transparent",
+    backgroundColor: ROOM_COLORS.bg,
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: 1,
     borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
-    gap: 6,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: 30,
     paddingHorizontal: Platform.OS === "web" ? spacing.md : spacing.lg,
-    paddingTop: COMPOSER_TOP_GAP,
     width: "100%"
   },
-  composerWrapKeyboardOpen: {
-    paddingBottom: KEYBOARD_COMPOSER_BOTTOM_GAP
+  composerContent: {
+    gap: 6,
+    paddingTop: COMPOSER_TOP_GAP
   },
   composer: {
     alignItems: "flex-end",
@@ -6175,7 +6038,7 @@ const styles = StyleSheet.create({
   },
   editingCancelText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: ROOM_COLORS.cool,
     fontSize: 12,
     lineHeight: 15
   },
@@ -6252,7 +6115,7 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     alignItems: "center",
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
     height: Platform.OS === "web" ? 36 : 40,
     justifyContent: "center",

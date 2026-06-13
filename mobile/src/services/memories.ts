@@ -1,6 +1,6 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
-import { mapMemoryRoom, mapMemorySummary } from "@/services/memoryMapper";
+import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemorySummary } from "@/services/memoryMapper";
 import {
   memoryTablesError,
   normalizeUsername,
@@ -14,7 +14,18 @@ import {
 } from "@/services/memoryShared";
 import { uploadMemoryPhoto } from "@/services/memoryStorage";
 import { getCurrentUserProfile, getProfileByUsername } from "@/services/profiles";
-import type { MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+
+export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
+export const MEMORY_CHAT_PAGE_SIZE = 50;
+export const MEMORY_MEDIA_PAGE_SIZE = 30;
+
+const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
+const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, room_id, author_name, body, created_at, edited_at";
+const MEMORY_MESSAGE_SELECT_LEGACY = "id, room_id, author_name, body, created_at";
+const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
+const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
+const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
 
 export type CreateMemoryRoomInput = {
   restaurantName: string;
@@ -67,6 +78,16 @@ type MemoryActivityNotificationInput = {
   kind: "message" | "media" | "dish";
   preview?: string;
   roomId: string;
+};
+
+export type MemoryMessagesPage = {
+  messages: MemoryMessage[];
+  nextCursor: string | null;
+};
+
+export type MemoryMediaPage = {
+  photos: MemoryPhoto[];
+  nextCursor: string | null;
 };
 
 async function displayNameMap(usernames: string[]) {
@@ -215,6 +236,229 @@ function isMissingMemoryReadsTable(error: { message?: string; code?: string } | 
     /shared_memory_reads|schema cache|could not find .*shared_memory_reads|relation .*shared_memory_reads.* does not exist/i.test(message);
 }
 
+async function fetchMemoryMessageRowsPage({
+  before,
+  limit,
+  roomId
+}: {
+  before?: string | null;
+  limit: number;
+  roomId: string;
+}): Promise<{ nextCursor: string | null; rows: MemoryMessageRow[] }> {
+  const pageLimit = limit + 1;
+  let messagesQuery = supabase
+    .from("shared_memory_messages")
+    .select(MEMORY_MESSAGE_SELECT)
+    .eq("room_id", roomId);
+
+  if (before) messagesQuery = messagesQuery.lt("created_at", before);
+
+  let messagesResult = await messagesQuery
+    .order("created_at", { ascending: false })
+    .limit(pageLimit)
+    .returns<MemoryMessageRow[]>();
+  let messages = messagesResult.data ?? [];
+  let messagesError = messagesResult.error;
+
+  if (isMissingMemoryMessageReplyColumn(messagesError)) {
+    let fallbackQuery = supabase
+      .from("shared_memory_messages")
+      .select(MEMORY_MESSAGE_SELECT_WITHOUT_REPLY)
+      .eq("room_id", roomId);
+
+    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+
+    const fallback = await fallbackQuery
+      .order("created_at", { ascending: false })
+      .limit(pageLimit)
+      .returns<Array<Omit<MemoryMessageRow, "reply_to_message_id">>>();
+    messages = (fallback.data ?? []).map((message) => ({ ...message, reply_to_message_id: null }));
+    messagesError = fallback.error;
+  }
+
+  if (isMissingMemoryMessageEditColumn(messagesError)) {
+    let fallbackQuery = supabase
+      .from("shared_memory_messages")
+      .select(MEMORY_MESSAGE_SELECT_LEGACY)
+      .eq("room_id", roomId);
+
+    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+
+    const fallback = await fallbackQuery
+      .order("created_at", { ascending: false })
+      .limit(pageLimit)
+      .returns<Array<Omit<MemoryMessageRow, "edited_at" | "reply_to_message_id">>>();
+    messages = (fallback.data ?? []).map((message) => ({ ...message, edited_at: null, reply_to_message_id: null }));
+    messagesError = fallback.error;
+  }
+
+  if (messagesError) throw memoryTablesError(messagesError);
+
+  const selected = messages.slice(0, limit);
+  const rows = [...selected].reverse();
+  return {
+    nextCursor: messages.length > limit ? rows[0]?.created_at ?? null : null,
+    rows
+  };
+}
+
+async function fetchMemoryMessageRowsByIds(roomId: string, messageIds: string[]): Promise<MemoryMessageRow[]> {
+  const uniqueIds = Array.from(new Set(messageIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+
+  let messagesResult = await supabase
+    .from("shared_memory_messages")
+    .select(MEMORY_MESSAGE_SELECT)
+    .eq("room_id", roomId)
+    .in("id", uniqueIds)
+    .returns<MemoryMessageRow[]>();
+  let messages = messagesResult.data ?? [];
+  let messagesError = messagesResult.error;
+
+  if (isMissingMemoryMessageReplyColumn(messagesError)) {
+    const fallback = await supabase
+      .from("shared_memory_messages")
+      .select(MEMORY_MESSAGE_SELECT_WITHOUT_REPLY)
+      .eq("room_id", roomId)
+      .in("id", uniqueIds)
+      .returns<Array<Omit<MemoryMessageRow, "reply_to_message_id">>>();
+    messages = (fallback.data ?? []).map((message) => ({ ...message, reply_to_message_id: null }));
+    messagesError = fallback.error;
+  }
+
+  if (isMissingMemoryMessageEditColumn(messagesError)) {
+    const fallback = await supabase
+      .from("shared_memory_messages")
+      .select(MEMORY_MESSAGE_SELECT_LEGACY)
+      .eq("room_id", roomId)
+      .in("id", uniqueIds)
+      .returns<Array<Omit<MemoryMessageRow, "edited_at" | "reply_to_message_id">>>();
+    messages = (fallback.data ?? []).map((message) => ({ ...message, edited_at: null, reply_to_message_id: null }));
+    messagesError = fallback.error;
+  }
+
+  if (messagesError) throw memoryTablesError(messagesError);
+  return messages;
+}
+
+async function fetchMissingReplyRows(roomId: string, messages: MemoryMessageRow[]) {
+  const loadedIds = new Set(messages.map((message) => message.id));
+  const missingReplyIds = messages
+    .map((message) => message.reply_to_message_id)
+    .filter((id): id is string => typeof id === "string" && !loadedIds.has(id));
+  return fetchMemoryMessageRowsByIds(roomId, missingReplyIds);
+}
+
+async function fetchMemoryPhotosForMessages(roomId: string, messageIds: string[]): Promise<MemoryPhotoRow[]> {
+  const uniqueMessageIds = Array.from(new Set(messageIds.filter(Boolean)));
+  if (uniqueMessageIds.length === 0) return [];
+
+  let photosResult = await supabase
+    .from("shared_memory_photos")
+    .select(MEMORY_PHOTO_SELECT)
+    .eq("room_id", roomId)
+    .in("message_id", uniqueMessageIds)
+    .order("created_at", { ascending: false })
+    .returns<MemoryPhotoRow[]>();
+  let photos = photosResult.data ?? [];
+  let photosError = photosResult.error;
+
+  if (isMissingMemoryPhotoDimensionColumn(photosError)) {
+    const fallback = await supabase
+      .from("shared_memory_photos")
+      .select(MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS)
+      .eq("room_id", roomId)
+      .in("message_id", uniqueMessageIds)
+      .order("created_at", { ascending: false })
+      .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width">>>();
+    photos = (fallback.data ?? []).map((photo) => ({
+      ...photo,
+      image_height: null,
+      image_width: null
+    }));
+    photosError = fallback.error;
+  } else if (isMissingMemoryPhotoColumn(photosError)) {
+    return [];
+  }
+
+  if (photosError) throw memoryTablesError(photosError);
+  return photos;
+}
+
+async function fetchMemoryMediaRowsPage({
+  before,
+  limit,
+  roomId
+}: {
+  before?: string | null;
+  limit: number;
+  roomId: string;
+}): Promise<{ nextCursor: string | null; rows: MemoryPhotoRow[] }> {
+  const pageLimit = limit + 1;
+  let photosQuery = supabase
+    .from("shared_memory_photos")
+    .select(MEMORY_PHOTO_SELECT)
+    .eq("room_id", roomId);
+
+  if (before) photosQuery = photosQuery.lt("created_at", before);
+
+  let photosResult = await photosQuery
+    .order("created_at", { ascending: false })
+    .limit(pageLimit)
+    .returns<MemoryPhotoRow[]>();
+  let photos = photosResult.data ?? [];
+  let photosError = photosResult.error;
+
+  if (isMissingMemoryPhotoDimensionColumn(photosError)) {
+    let fallbackQuery = supabase
+      .from("shared_memory_photos")
+      .select(MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS)
+      .eq("room_id", roomId);
+
+    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+
+    const fallback = await fallbackQuery
+      .order("created_at", { ascending: false })
+      .limit(pageLimit)
+      .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width">>>();
+    photos = (fallback.data ?? []).map((photo) => ({
+      ...photo,
+      image_height: null,
+      image_width: null
+    }));
+    photosError = fallback.error;
+  } else if (isMissingMemoryPhotoColumn(photosError)) {
+    let fallbackQuery = supabase
+      .from("shared_memory_photos")
+      .select(MEMORY_PHOTO_SELECT_LEGACY)
+      .eq("room_id", roomId);
+
+    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+
+    const fallback = await fallbackQuery
+      .order("created_at", { ascending: false })
+      .limit(pageLimit)
+      .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width" | "media_type" | "message_id" | "position">>>();
+    photos = (fallback.data ?? []).map((photo) => ({
+      ...photo,
+      image_height: null,
+      image_width: null,
+      media_type: "image" as const,
+      message_id: null,
+      position: 0
+    }));
+    photosError = fallback.error;
+  }
+
+  if (photosError) throw memoryTablesError(photosError);
+
+  const rows = photos.slice(0, limit);
+  return {
+    nextCursor: photos.length > limit ? rows[rows.length - 1]?.created_at ?? null : null,
+    rows
+  };
+}
+
 export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ id: string }> {
   await myUsername();
   const participants = await validateParticipants(input.participantUsernames);
@@ -257,29 +501,16 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
 }
 
 async function fetchRoomParts(roomId: string, username: string) {
-  const photosWithMediaType = supabase
-    .from("shared_memory_photos")
-    .select("id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at")
-    .eq("room_id", roomId)
-    .order("created_at", { ascending: false })
-    .returns<MemoryPhotoRow[]>();
-
-  const [roomResult, membersResult, messagesResult, dishesResult, photosResult, readResult] = await Promise.all([
+  const [roomResult, membersResult, messagesPage, dishesResult, readResult] = await Promise.all([
     supabase.from("shared_memory_rooms").select(ROOM_SELECT).eq("id", roomId).maybeSingle<MemoryRoomRow>(),
     supabase.from("shared_memory_members").select("id, room_id, user_name, role, created_at").eq("room_id", roomId).returns<MemoryMemberRow[]>(),
-    supabase
-      .from("shared_memory_messages")
-      .select("id, room_id, author_name, body, reply_to_message_id, created_at, edited_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<MemoryMessageRow[]>(),
+    fetchMemoryMessageRowsPage({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
     supabase
       .from("shared_memory_dishes")
       .select("id, room_id, added_by, dish_name, rating, note, created_at")
       .eq("room_id", roomId)
       .order("created_at", { ascending: true })
       .returns<MemoryDishRow[]>(),
-    photosWithMediaType,
     supabase
       .from("shared_memory_reads")
       .select("room_id, user_name, last_read_at, updated_at")
@@ -287,68 +518,12 @@ async function fetchRoomParts(roomId: string, username: string) {
       .eq("user_name", username)
       .maybeSingle<MemoryReadRow>()
   ]);
-
-  let messages = messagesResult.data ?? [];
-  let messagesError = messagesResult.error;
-  if (isMissingMemoryMessageReplyColumn(messagesError)) {
-    const fallback = await supabase
-      .from("shared_memory_messages")
-      .select("id, room_id, author_name, body, created_at, edited_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<Array<Omit<MemoryMessageRow, "reply_to_message_id">>>();
-    messages = (fallback.data ?? []).map((message) => ({ ...message, reply_to_message_id: null }));
-    messagesError = fallback.error;
-  }
-  if (isMissingMemoryMessageEditColumn(messagesError)) {
-    const fallback = await supabase
-      .from("shared_memory_messages")
-      .select("id, room_id, author_name, body, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<Array<Omit<MemoryMessageRow, "edited_at" | "reply_to_message_id">>>();
-    messages = (fallback.data ?? []).map((message) => ({ ...message, edited_at: null, reply_to_message_id: null }));
-    messagesError = fallback.error;
-  }
-
-  let photos = photosResult.data ?? [];
-  let photosError = photosResult.error;
-  if (isMissingMemoryPhotoDimensionColumn(photosError)) {
-    const fallback = await supabase
-      .from("shared_memory_photos")
-      .select("id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: false })
-      .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width">>>();
-    photos = (fallback.data ?? []).map((photo) => ({
-      ...photo,
-      image_height: null,
-      image_width: null
-    }));
-    photosError = fallback.error;
-  } else if (isMissingMemoryPhotoColumn(photosError)) {
-    const fallback = await supabase
-      .from("shared_memory_photos")
-      .select("id, room_id, uploader_name, public_url, storage_path, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: false })
-      .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width" | "media_type" | "message_id" | "position">>>();
-    photos = (fallback.data ?? []).map((photo) => ({
-      ...photo,
-      image_height: null,
-      image_width: null,
-      media_type: "image" as const,
-      message_id: null,
-      position: 0
-    }));
-    photosError = fallback.error;
-  }
+  const photos = await fetchMemoryPhotosForMessages(roomId, messagesPage.rows.map((message) => message.id));
+  const replyMessages = await fetchMissingReplyRows(roomId, messagesPage.rows);
 
   if (roomResult.error) throw memoryTablesError(roomResult.error);
   if (membersResult.error) throw memoryTablesError(membersResult.error);
-  if (messagesError) throw memoryTablesError(messagesError);
   if (dishesResult.error) throw memoryTablesError(dishesResult.error);
-  if (photosError) throw memoryTablesError(photosError);
   if (readResult.error && !isMissingMemoryReadsTable(readResult.error) && readResult.error.code !== "PGRST116") {
     throw memoryTablesError(readResult.error);
   }
@@ -359,8 +534,9 @@ async function fetchRoomParts(roomId: string, username: string) {
     dishes: dishesResult.data ?? [],
     lastReadAt: readResult.error ? null : readResult.data?.last_read_at ?? null,
     members: membersResult.data ?? [],
-    messages,
-    photos
+    messages: messagesPage.rows,
+    photos,
+    replyMessages
   };
 }
 
@@ -371,6 +547,7 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
     ...parts.members.map((member) => member.user_name),
     ...parts.dishes.map((dish) => dish.added_by),
     ...parts.messages.map((message) => message.author_name),
+    ...parts.replyMessages.map((message) => message.author_name),
     ...parts.photos.map((photo) => photo.uploader_name)
   ];
   const namesByUsername = await displayNameMap(names);
@@ -382,8 +559,57 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
     messages: parts.messages,
     namesByUsername,
     photos: parts.photos,
+    replyMessages: parts.replyMessages,
     room: parts.room
   });
+}
+
+export async function getMemoryMessagesPage(
+  roomId: string,
+  input: { before?: string | null; limit?: number } = {}
+): Promise<MemoryMessagesPage> {
+  await myUsername();
+  const messagePage = await fetchMemoryMessageRowsPage({
+    before: input.before,
+    limit: input.limit ?? MEMORY_CHAT_PAGE_SIZE,
+    roomId
+  });
+  const photos = await fetchMemoryPhotosForMessages(roomId, messagePage.rows.map((message) => message.id));
+  const replyMessages = await fetchMissingReplyRows(roomId, messagePage.rows);
+  const namesByUsername = await displayNameMap([
+    ...messagePage.rows.map((message) => message.author_name),
+    ...replyMessages.map((message) => message.author_name),
+    ...photos.map((photo) => photo.uploader_name)
+  ]);
+  const mappedPhotos = mapMemoryPhotos({ namesByUsername, photos });
+
+  return {
+    messages: mapMemoryMessages({
+      messages: messagePage.rows,
+      namesByUsername,
+      photos: mappedPhotos,
+      replyMessages
+    }),
+    nextCursor: messagePage.nextCursor
+  };
+}
+
+export async function getMemoryMediaPage(
+  roomId: string,
+  input: { before?: string | null; limit?: number } = {}
+): Promise<MemoryMediaPage> {
+  await myUsername();
+  const mediaPage = await fetchMemoryMediaRowsPage({
+    before: input.before,
+    limit: input.limit ?? MEMORY_MEDIA_PAGE_SIZE,
+    roomId
+  });
+  const namesByUsername = await displayNameMap(mediaPage.rows.map((photo) => photo.uploader_name));
+
+  return {
+    nextCursor: mediaPage.nextCursor,
+    photos: mapMemoryPhotos({ namesByUsername, photos: mediaPage.rows })
+  };
 }
 
 export async function markMemoryRoomRead(roomId: string) {

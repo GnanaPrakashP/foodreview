@@ -9,7 +9,7 @@ import {
 } from "@/services/memoryShared";
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 
-function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, string>): MemoryPhoto {
+export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, string>): MemoryPhoto {
   return {
     id: photo.id,
     roomId: photo.room_id,
@@ -24,6 +24,59 @@ function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, s
     position: photo.position ?? 0,
     createdAt: photo.created_at
   };
+}
+
+export function mapMemoryPhotos({
+  namesByUsername,
+  photos
+}: {
+  namesByUsername: Record<string, string>;
+  photos: MemoryPhotoRow[];
+}): MemoryPhoto[] {
+  return photos.map((photo) => mapMemoryPhoto(photo, namesByUsername));
+}
+
+export function mapMemoryMessages({
+  messages,
+  namesByUsername,
+  photos,
+  replyMessages = []
+}: {
+  messages: MemoryMessageRow[];
+  namesByUsername: Record<string, string>;
+  photos: MemoryPhoto[];
+  replyMessages?: MemoryMessageRow[];
+}): MemoryMessage[] {
+  const photosByMessageId = photos.reduce<Record<string, MemoryPhoto[]>>((groups, photo) => {
+    if (!photo.messageId) return groups;
+    groups[photo.messageId] = [...(groups[photo.messageId] ?? []), photo];
+    return groups;
+  }, {});
+
+  for (const group of Object.values(photosByMessageId)) {
+    group.sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  const messageRowsById = new Map([...replyMessages, ...messages].map((message) => [message.id, message]));
+
+  return messages.map((message): MemoryMessage => ({
+    id: message.id,
+    roomId: message.room_id,
+    authorName: message.author_name,
+    authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
+    body: message.body,
+    attachments: photosByMessageId[message.id] ?? [],
+    createdAt: message.created_at,
+    editedAt: message.edited_at ?? null,
+    replyToMessageId: message.reply_to_message_id ?? null,
+    replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
+      ? {
+        id: message.reply_to_message_id,
+        authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
+        body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
+      }
+      : null
+  }));
 }
 
 export function mapMemorySummary({
@@ -78,6 +131,7 @@ export function mapMemoryRoom({
   messages,
   namesByUsername,
   photos,
+  replyMessages,
   room
 }: {
   dishes: MemoryDishRow[];
@@ -86,20 +140,10 @@ export function mapMemoryRoom({
   messages: MemoryMessageRow[];
   namesByUsername: Record<string, string>;
   photos: MemoryPhotoRow[];
+  replyMessages?: MemoryMessageRow[];
   room: MemoryRoomRow;
 }): MemoryRoom {
-  const mappedPhotos = photos.map((photo) => mapMemoryPhoto(photo, namesByUsername));
-  const photosByMessageId = mappedPhotos.reduce<Record<string, MemoryPhoto[]>>((groups, photo) => {
-    if (!photo.messageId) return groups;
-    groups[photo.messageId] = [...(groups[photo.messageId] ?? []), photo];
-    return groups;
-  }, {});
-
-  for (const group of Object.values(photosByMessageId)) {
-    group.sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }
-
-  const messageRowsById = new Map(messages.map((message) => [message.id, message]));
+  const mappedPhotos = mapMemoryPhotos({ namesByUsername, photos });
 
   return {
     id: room.id,
@@ -130,24 +174,7 @@ export function mapMemoryRoom({
       note: dish.note,
       createdAt: dish.created_at
     })),
-    messages: messages.map((message): MemoryMessage => ({
-      id: message.id,
-      roomId: message.room_id,
-      authorName: message.author_name,
-      authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
-      body: message.body,
-      attachments: photosByMessageId[message.id] ?? [],
-      createdAt: message.created_at,
-      editedAt: message.edited_at ?? null,
-      replyToMessageId: message.reply_to_message_id ?? null,
-      replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
-        ? {
-          id: message.reply_to_message_id,
-          authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
-          body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
-        }
-        : null
-    })),
+    messages: mapMemoryMessages({ messages, namesByUsername, photos: mappedPhotos, replyMessages }),
     photos: mappedPhotos
   };
 }

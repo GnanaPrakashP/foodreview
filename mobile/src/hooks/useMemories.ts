@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/api/supabase";
 import {
   addMemoryDish,
@@ -11,6 +11,8 @@ import {
   deleteMemoryMessage,
   deleteMemoryPhoto,
   editMemoryMessage,
+  getMemoryMediaPage,
+  getMemoryMessagesPage,
   getMemoryRoom,
   leaveMemoryRoom,
   listMemoryRooms,
@@ -20,12 +22,15 @@ import {
   type AddMemoryDishInput,
   type CreateMemoryRoomInput
 } from "@/services/memories";
+import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 
 export const memoryKeys = {
+  chat: (roomId: string) => ["memories", roomId, "chat"] as const,
   list: ["memories"] as const,
-  detail: (roomId: string) => ["memories", roomId] as const
+  detail: (roomId: string) => ["memories", roomId] as const,
+  media: (roomId: string) => ["memories", roomId, "media"] as const
 };
 
 export function useMemoryRoomsQuery() {
@@ -42,6 +47,30 @@ export function useMemoryRoomQuery(roomId: string) {
     enabled: Boolean(roomId),
     refetchInterval: 8_000,
     refetchIntervalInBackground: false
+  });
+}
+
+export function useMemoryMessagePagesQuery(roomId: string, before: string | null) {
+  return useInfiniteQuery({
+    queryKey: [...memoryKeys.chat(roomId), before ?? "initial"] as const,
+    queryFn: ({ pageParam }) => getMemoryMessagesPage(roomId, {
+      before: typeof pageParam === "string" && pageParam ? pageParam : before
+    }),
+    initialPageParam: before ?? "",
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: false
+  });
+}
+
+export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: memoryKeys.media(roomId),
+    queryFn: ({ pageParam }) => getMemoryMediaPage(roomId, {
+      before: typeof pageParam === "string" && pageParam ? pageParam : null
+    }),
+    initialPageParam: "",
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: Boolean(roomId) && enabled
   });
 }
 
@@ -65,12 +94,19 @@ export function useMemoryRoomRealtime(roomId: string) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_messages", filter: `room_id=eq.${roomId}` },
-        scheduleRefresh
+        () => {
+          queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+          scheduleRefresh();
+        }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_photos", filter: `room_id=eq.${roomId}` },
-        scheduleRefresh
+        () => {
+          queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+          queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
+          scheduleRefresh();
+        }
       )
       .on(
         "postgres_changes",
@@ -110,6 +146,39 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => markMemoryRoomRead(roomId),
+    onMutate: async () => {
+      const detailKey = memoryKeys.detail(roomId);
+      const now = new Date().toISOString();
+
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+
+      queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
+        current ? { ...current, lastReadAt: now } : current
+      ));
+
+      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+        if (!current) return current;
+        return current.map((memory) => (
+          memory.id === roomId && memory.unreadCount > 0 ? { ...memory, unreadCount: 0 } : memory
+        ));
+      });
+
+      return { previousList, previousRoom };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previousRoom) {
+        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+      }
+      if (context?.previousList) {
+        queryClient.setQueryData(memoryKeys.list, context.previousList);
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
@@ -133,6 +202,8 @@ export function useLeaveMemoryRoomMutation(roomId: string) {
     mutationFn: () => leaveMemoryRoom(roomId),
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.removeQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.removeQueries({ queryKey: memoryKeys.media(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -216,6 +287,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -227,6 +299,7 @@ export function useEditMemoryMessageMutation(roomId: string) {
     mutationFn: ({ body, messageId }: { body: string; messageId: string }) => editMemoryMessage(roomId, messageId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -238,6 +311,8 @@ export function useDeleteMemoryMessageMutation(roomId: string) {
     mutationFn: (messageId: string) => deleteMemoryMessage(roomId, messageId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -249,6 +324,8 @@ export function useDeleteMemoryItemsMutation(roomId: string) {
     mutationFn: (input: { messageIds?: string[]; photoIds?: string[] }) => deleteMemoryItems(roomId, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -260,6 +337,8 @@ export function useDeleteMemoryPhotoMutation(roomId: string) {
     mutationFn: (photoId: string) => deleteMemoryPhoto(roomId, photoId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -387,6 +466,21 @@ export function useAddMemoryPhotoMutation(roomId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function usePostMemoryRoomMediaMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<PostMemoryRoomMediaInput, "roomId">) => postMemoryRoomMedia({ ...input, roomId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });

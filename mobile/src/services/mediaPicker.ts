@@ -69,6 +69,37 @@ export async function pickMemoryMediaFromGallery(): Promise<MemoryMediaPickerRes
   };
 }
 
+export async function pickSingleMemoryMediaFromGallery(): Promise<MemoryMediaPickerResult> {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    return {
+      asset: null,
+      assets: [],
+      error: "Photo library permission was not granted."
+    };
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsEditing: false,
+    allowsMultipleSelection: false,
+    mediaTypes: ImagePicker.MediaTypeOptions.All,
+    quality: 0.9,
+    selectionLimit: 1,
+    videoMaxDuration: 30
+  });
+
+  if (result.canceled) {
+    return { asset: null, assets: [], error: null };
+  }
+
+  const asset = result.assets[0] ?? null;
+  return {
+    asset,
+    assets: asset ? [asset] : [],
+    error: null
+  };
+}
+
 export async function pickMemoryMediaFromCamera(): Promise<MemoryMediaPickerResult> {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) {
