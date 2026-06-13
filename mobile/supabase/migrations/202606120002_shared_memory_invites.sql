@@ -6,6 +6,7 @@ create table if not exists public.shared_memory_invites (
   room_id uuid not null references public.shared_memory_rooms(id) on delete cascade,
   sender_name text not null,
   receiver_name text not null,  
+  
   status text not null default 'pending',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

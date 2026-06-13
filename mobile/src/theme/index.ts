@@ -1,4 +1,15 @@
 export { fontFamilies, fontStyles, useCircleBitesFonts } from "@/theme/fonts";
+export {
+  teal,
+  telegramBlue,
+  telegramNavy,
+  neutral,
+  onDark,
+  elevation,
+  dark as darkTokens,
+  avatarAccents,
+  type DarkTokens
+} from "@/theme/tokens";
 
 export const colors = {
   dark: {

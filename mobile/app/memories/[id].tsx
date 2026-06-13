@@ -74,7 +74,7 @@ import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
 import { compactPlaceLocation } from "@/services/places";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { avatarAccents, darkTokens, fontStyles, radius, spacing } from "@/theme";
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
@@ -128,24 +128,63 @@ const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mo
   { icon: "images-outline", label: "Media", mode: "media" },
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
+// Room palette mapped onto the shared dark tokens (see src/theme/tokens.ts).
+// Key names are kept stable so styles read clearly; values now use a cool
+// navy room base with Telegram-like blue as the single primary accent.
 const ROOM_COLORS = {
-  bg: "#0E0B08",
-  header: "#1A1410",
-  panel: "#211C17",
-  panelRaised: "#2B241D",
-  mediaPanel: "#15100C",
-  border: "rgba(245, 237, 216, 0.08)",
-  borderStrong: "rgba(245, 237, 216, 0.14)",
-  muted: "#94897C",
-  cool: "#22C7B8",
-  coolDim: "rgba(34, 199, 184, 0.12)",
-  coolBorder: "rgba(34, 199, 184, 0.30)",
-  onCool: "#0E0B08",
-  selection: "rgba(34, 199, 184, 0.15)"
+  // Surfaces / layered elevation
+  bg: darkTokens.background,
+  wallpaperBg: darkTokens.wallpaperBackground,
+  header: darkTokens.surfaceRaised, // app bar (level 2)
+  panel: darkTokens.surface, // cards & panels (level 1)
+  panelRaised: darkTokens.surfaceRaised, // raised cards, message box (level 2)
+  surfaceHigh: darkTokens.surfaceHigh, // sheets, popovers, selection bar (level 3)
+  mediaPanel: darkTokens.surfaceDim, // media wells
+  // Lines
+  border: darkTokens.divider,
+  borderStrong: darkTokens.outline,
+  // Text / icons (white opacity tiers)
+  onSurface: darkTokens.onSurface,
+  muted: darkTokens.onSurfaceVariant,
+  faint: darkTokens.onSurfaceDisabled,
+  timestamp: darkTokens.messageTimestamp,
+  sentBubble: darkTokens.sentBubble,
+  sentBubbleBorder: darkTokens.sentBubbleOutline,
+  onSentBubble: darkTokens.onSentBubble,
+  receivedBubble: darkTokens.receivedBubble,
+  onReceivedBubble: darkTokens.onReceivedBubble,
+  // Accent (sparingly)
+  cool: darkTokens.primary,
+  coolPressed: darkTokens.primaryPressed,
+  coolDim: darkTokens.primaryContainer,
+  coolBorder: darkTokens.primaryOutline,
+  coolOnContainer: darkTokens.onPrimaryContainer,
+  onCool: darkTokens.onPrimary,
+  selection: darkTokens.selection,
+  // Status / tertiary
+  gold: darkTokens.gold,
+  goldDim: darkTokens.goldContainer,
+  goldBorder: darkTokens.goldOutline,
+  danger: darkTokens.error,
+  dangerSoft: darkTokens.error,
+  dangerDim: darkTokens.errorContainer,
+  dangerBorder: darkTokens.errorOutline,
+  // Scrims & glass
+  scrim: darkTokens.scrim,
+  scrimStrong: darkTokens.scrimStrong,
+  scrimSoft: darkTokens.scrimSoft,
+  scrimMedium: darkTokens.scrimMedium,
+  glass: darkTokens.glass,
+  glassDim: darkTokens.glassDim,
+  outlineStrong: darkTokens.outlineStrong,
+  white: darkTokens.white,
+  black: darkTokens.black
 } as const;
-const CHAT_OWN_BUBBLE_COLOR = "#143B36";
-const CHAT_OTHER_BUBBLE_COLOR = "#211C17";
-const CHAT_ACCENTS = ["#22C7B8", "#8B6CFF", "#F06030", "#E8A830", "#38BDF8", "#F472B6", "#3DD68C"] as const;
+// Chat bubbles: own carries the Telegram-like blue identity, other sits on a
+// neutral raised surface so both read clearly above the doodle wallpaper.
+const CHAT_OWN_BUBBLE_COLOR = ROOM_COLORS.sentBubble;
+const CHAT_OTHER_BUBBLE_COLOR = ROOM_COLORS.receivedBubble;
+const CHAT_ACCENTS = avatarAccents;
 const COMPOSER_TOP_GAP = 8;
 const COMPOSER_KEYBOARD_OPEN_GAP = 6;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
@@ -170,6 +209,7 @@ const CHAT_COMPOSER_CLEARANCE = 88;
 const MEDIA_GALLERY_GAP = 2;
 const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
 const COMPACT_ROOM_HEADER_HEIGHT = 106;
+const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
@@ -355,6 +395,7 @@ export default function MemoryDetailScreen() {
   const requestCircleAccess = useRequestCircleAccessMutation();
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
   const peopleInputRef = useRef<TextInput>(null);
+  const messageInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
@@ -701,6 +742,9 @@ export default function MemoryDetailScreen() {
     setEditingMessage(null);
     setReplyingToMessage(target);
     setMode("chat");
+    requestAnimationFrame(() => {
+      setTimeout(() => messageInputRef.current?.focus(), 80);
+    });
   }
 
   function cancelEditMessage() {
@@ -1155,7 +1199,7 @@ export default function MemoryDetailScreen() {
                   messagePending={addMessage.isPending || editMessage.isPending}
                   editingLabel={editingMessage ? `Editing message` : undefined}
                   insetStyle={composerInsetStyle}
-                  onAttach={openAttachmentActions}
+                  inputRef={messageInputRef}
                   onCancelEdit={cancelEditMessage}
                   onCancelReply={cancelReplyMessage}
                   onChangeMessage={setMessage}
@@ -1360,7 +1404,7 @@ function RoomHeader({
           onPress={onBack}
           style={[styles.headerIconButton, styles.headerBackButton]}
         >
-          <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
+          <Ionicons name="arrow-back" size={20} color={ROOM_COLORS.onSurface} />
         </Pressable>
         <View pointerEvents="none" style={styles.compactRoomTitleWrap} />
         {isMembersArea ? null : (
@@ -1376,7 +1420,7 @@ function RoomHeader({
                 onPress={onAddPeople}
                 style={styles.headerIconButton}
               >
-                <Ionicons name="person-add-outline" size={20} color={colors.dark.cream} />
+                <Ionicons name="person-add-outline" size={20} color={ROOM_COLORS.onSurface} />
               </Pressable>
             </Reanimated.View>
             <Pressable
@@ -1386,7 +1430,7 @@ function RoomHeader({
               onPress={onOpenActions}
               style={styles.headerIconButton}
             >
-              <Ionicons name="ellipsis-vertical" size={20} color={colors.dark.cream} />
+              <Ionicons name="ellipsis-vertical" size={20} color={ROOM_COLORS.onSurface} />
             </Pressable>
           </View>
         )}
@@ -1399,13 +1443,13 @@ function RoomHeader({
         <View style={styles.roomIdentity}>
           <View style={styles.roomMetaRow}>
             <View style={styles.roomMetaIconSlot}>
-              <Ionicons name="location-outline" size={13} color={colors.dark.muted} />
+              <Ionicons name="location-outline" size={13} color={ROOM_COLORS.muted} />
             </View>
             <Text numberOfLines={1} style={styles.roomMetaText}>{locationLabel || "Area not set"}</Text>
           </View>
           <View style={styles.roomMetaRow}>
             <View style={styles.roomMetaIconSlot}>
-              <Ionicons name="calendar-outline" size={13} color={colors.dark.muted} />
+              <Ionicons name="calendar-outline" size={13} color={ROOM_COLORS.muted} />
             </View>
             <Text numberOfLines={1} style={styles.roomMetaText}>{formatDisplayDate(data.createdAt)}</Text>
           </View>
@@ -1435,7 +1479,7 @@ function RoomHeader({
               ) : null}
             </View>
             <Text numberOfLines={1} style={styles.roomFriendsText}>{friendsLabel}</Text>
-            <Ionicons name="chevron-forward" size={15} color={colors.dark.muted} />
+            <Ionicons name="chevron-forward" size={15} color={ROOM_COLORS.muted} />
           </Pressable>
         </View>
       </Reanimated.View>
@@ -1491,7 +1535,7 @@ function ModeButton({
   label: string;
   onPress: () => void;
 }) {
-  const iconColor = active ? colors.dark.cream : "#A19B94";
+  const iconColor = active ? ROOM_COLORS.onSurface : ROOM_COLORS.muted;
 
   return (
     <Pressable
@@ -1701,7 +1745,7 @@ function FloatingAddAction({
   label: string;
   onPress: () => void;
 }) {
-  const iconColor = accent === "cool" ? ROOM_COLORS.cool : colors.dark.gold;
+  const iconColor = accent === "cool" ? ROOM_COLORS.cool : ROOM_COLORS.gold;
 
   return (
     <Pressable
@@ -1864,6 +1908,9 @@ function ChatTimeline({
   const [firstUnreadItemId, setFirstUnreadItemId] = useState<string | null>(() => (
     computeFirstUnreadItemId(timeline, lastReadAt)
   ));
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingReplyJumpRef = useRef<string | null>(null);
   const lastActiveRenderRef = useRef(active);
   if (lastActiveRenderRef.current !== active) {
     lastActiveRenderRef.current = active;
@@ -1958,7 +2005,64 @@ function ChatTimeline({
     () => timelineRows.findIndex((row) => row.type === "unread"),
     [timelineRows]
   );
+  const messageRowIndexById = useMemo(() => {
+    const byId = new Map<string, number>();
+    timelineRows.forEach((row, index) => {
+      if (row.type === "message") byId.set(row.value.id, index);
+    });
+    return byId;
+  }, [timelineRows]);
   const hideUntilAnchored = timelineRows.length > 0 && !initialAnchorReady;
+
+  useEffect(() => () => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+  }, []);
+
+  const highlightMessage = useCallback((messageId: string) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setHighlightedMessageId(messageId);
+    highlightTimeoutRef.current = setTimeout(() => {
+      highlightTimeoutRef.current = null;
+      setHighlightedMessageId((current) => (current === messageId ? null : current));
+    }, 1000);
+  }, []);
+
+  const scrollToMessage = useCallback((messageId: string, animated: boolean) => {
+    const rowIndex = messageRowIndexById.get(messageId);
+    if (rowIndex == null) return false;
+    followBottomRef.current = false;
+    listNearBottomRef.current = false;
+    onNearBottomChange(false);
+    scrollRef.current?.scrollToIndex({
+      animated,
+      index: rowIndex,
+      viewPosition: 0.45
+    });
+    highlightMessage(messageId);
+    return true;
+  }, [highlightMessage, messageRowIndexById, onNearBottomChange, scrollRef]);
+
+  const jumpToRepliedMessage = useCallback((messageId: string) => {
+    if (scrollToMessage(messageId, true)) return;
+    pendingReplyJumpRef.current = messageId;
+    if (hasOlderMessages && !loadingOlderMessages) onLoadOlderMessages();
+  }, [hasOlderMessages, loadingOlderMessages, onLoadOlderMessages, scrollToMessage]);
+
+  useEffect(() => {
+    const pendingMessageId = pendingReplyJumpRef.current;
+    if (!pendingMessageId) return;
+    if (scrollToMessage(pendingMessageId, true)) {
+      pendingReplyJumpRef.current = null;
+      return;
+    }
+    if (hasOlderMessages && !loadingOlderMessages) {
+      onLoadOlderMessages();
+      return;
+    }
+    if (!hasOlderMessages && !loadingOlderMessages) {
+      pendingReplyJumpRef.current = null;
+    }
+  }, [hasOlderMessages, loadingOlderMessages, onLoadOlderMessages, scrollToMessage, timelineRows.length]);
 
   useEffect(() => {
     if (!active || !listNearBottomRef.current) return;
@@ -2075,10 +2179,12 @@ function ChatTimeline({
           mine={item.mine}
           onBeginSelection={() => beginRowSelection({ type: "message", value: item.value })}
           onOpenMedia={openRowMedia}
+          onJumpToMessage={jumpToRepliedMessage}
           onReply={() => replyToRow(item.value)}
           onToggleSelection={() => toggleRowSelection({ type: "message", value: item.value })}
           editing={editingMessageId === item.value.id}
           groupPosition={item.groupPosition}
+          highlighted={highlightedMessageId === item.value.id}
           rowStyle={rowStyle}
           selected={selectedItemKeys.includes(`message:${item.value.id}`)}
           selectionMode={selectionMode}
@@ -2105,6 +2211,8 @@ function ChatTimeline({
   }, [
     beginRowSelection,
     editingMessageId,
+    highlightedMessageId,
+    jumpToRepliedMessage,
     openRowMedia,
     participantNames,
     replyToRow,
@@ -2257,7 +2365,7 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible
             x={0}
             y={0}
           >
-            <Rect fill={ROOM_COLORS.bg} height={FOOD_WALLPAPER_TILE_SIZE} width={FOOD_WALLPAPER_TILE_SIZE} x={0} y={0} />
+            <Rect fill={ROOM_COLORS.wallpaperBg} height={FOOD_WALLPAPER_TILE_SIZE} width={FOOD_WALLPAPER_TILE_SIZE} x={0} y={0} />
             <G
               fill="none"
               opacity={FOOD_WALLPAPER_OPACITY}
@@ -2275,7 +2383,7 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible
             </G>
           </Pattern>
         </Defs>
-        <Rect fill={ROOM_COLORS.bg} height="100%" width="100%" x={0} y={0} />
+        <Rect fill={ROOM_COLORS.wallpaperBg} height="100%" width="100%" x={0} y={0} />
         <Rect fill="url(#foodChatDoodlePattern)" height="100%" width="100%" x={0} y={0} />
       </Svg>
       <View style={styles.chatWallpaperOverlay} />
@@ -2311,7 +2419,7 @@ function DateDivider({ label }: { label: string }) {
 function MemoryQuickAction({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
   return (
     <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.quickAction}>
-      <Ionicons name={icon} size={16} color={colors.dark.cream} />
+      <Ionicons name={icon} size={16} color={ROOM_COLORS.onSurface} />
       <Text numberOfLines={1} style={styles.quickActionText}>{label}</Text>
     </Pressable>
   );
@@ -2341,16 +2449,41 @@ function memoryMessageReplyPreview(message: Pick<MemoryMessage, "attachments" | 
 function ReplyPreviewBlock({
   author,
   body,
-  mine
+  mine,
+  onPress
 }: {
   author: string;
   body: string;
   mine?: boolean;
+  onPress?: () => void;
 }) {
-  return (
-    <View style={[styles.replyPreviewBlock, mine && styles.replyPreviewBlockMine]}>
+  const content = (
+    <>
       <Text numberOfLines={1} style={styles.replyPreviewAuthor}>{author}</Text>
       <Text numberOfLines={2} style={styles.replyPreviewText}>{body}</Text>
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityLabel={`Jump to ${author}'s replied message`}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.replyPreviewBlock,
+          mine && styles.replyPreviewBlockMine,
+          pressed && styles.replyPreviewBlockPressed
+        ]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={[styles.replyPreviewBlock, mine && styles.replyPreviewBlockMine]}>
+      {content}
     </View>
   );
 }
@@ -2403,6 +2536,7 @@ function getMessageTimestampLabel(message: MemoryMessage) {
 function MessageRow({
   children,
   editing = false,
+  highlighted = false,
   mine,
   onPress,
   onLongPress,
@@ -2414,6 +2548,7 @@ function MessageRow({
 }: {
   children: ReactNode;
   editing?: boolean;
+  highlighted?: boolean;
   mine: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
@@ -2428,6 +2563,11 @@ function MessageRow({
   const swipeIndicatorOpacity = swipeTranslateX.interpolate({
     inputRange: [0, REPLY_SWIPE_TRIGGER_DISTANCE],
     outputRange: [0, 1],
+    extrapolate: "clamp"
+  });
+  const swipeIndicatorScale = swipeTranslateX.interpolate({
+    inputRange: [0, REPLY_SWIPE_TRIGGER_DISTANCE],
+    outputRange: [0.86, 1],
     extrapolate: "clamp"
   });
   const panResponder = useMemo(() => PanResponder.create({
@@ -2477,6 +2617,7 @@ function MessageRow({
     styles.chatMessageRow,
     rowStyle,
     mine && styles.chatMessageRowMine,
+    highlighted && styles.chatMessageRowReplyHighlight,
     selected && styles.chatMessageRowSelected,
     editing && styles.chatMessageRowEditing
   ];
@@ -2502,8 +2643,14 @@ function MessageRow({
   if (onSwipeRight) {
     return (
       <View style={styles.swipeReplyWrap}>
-        <Animated.View style={[styles.swipeReplyIndicator, { opacity: swipeIndicatorOpacity }]}>
-          <Ionicons name="arrow-undo-outline" size={17} color={ROOM_COLORS.onCool} />
+        <Animated.View style={[
+          styles.swipeReplyIndicator,
+          {
+            opacity: swipeIndicatorOpacity,
+            transform: [{ scale: swipeIndicatorScale }]
+          }
+        ]}>
+          <Ionicons name="arrow-undo-outline" size={17} color={ROOM_COLORS.cool} />
         </Animated.View>
         <Animated.View
           {...panResponder.panHandlers}
@@ -2559,6 +2706,7 @@ function InlineTimestampText({
   fill = false,
   minWidth,
   nativeAvailableWidth,
+  reserveTextColor,
   text,
   textStyle,
   time,
@@ -2567,6 +2715,7 @@ function InlineTimestampText({
   fill?: boolean;
   minWidth?: number;
   nativeAvailableWidth?: number;
+  reserveTextColor?: string;
   text: string;
   textStyle?: StyleProp<TextStyle>;
   time: string;
@@ -2588,7 +2737,7 @@ function InlineTimestampText({
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[timeStyle, styles.inlineTimestampReserve]}
+          style={[timeStyle, styles.inlineTimestampReserve, reserveTextColor ? { color: reserveTextColor } : null]}
         >
           {`  ${time}`}
         </Text>
@@ -2616,9 +2765,11 @@ function MediaSenderHeader({ name }: { name: string }) {
 function MessageBubble({
   editing,
   groupPosition,
+  highlighted,
   message,
   mine,
   onBeginSelection,
+  onJumpToMessage,
   onOpenMedia,
   onReply,
   rowStyle,
@@ -2629,9 +2780,11 @@ function MessageBubble({
 }: {
   editing: boolean;
   groupPosition: MessageGroupPosition;
+  highlighted: boolean;
   message: MemoryMessage;
   mine: boolean;
   onBeginSelection: () => void;
+  onJumpToMessage: (messageId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onReply: () => void;
   rowStyle?: StyleProp<ViewStyle>;
@@ -2666,6 +2819,7 @@ function MessageBubble({
         author={message.replyToMessage.authorDisplayName}
         body={message.replyToMessage.body || "Message"}
         mine={mine}
+        onPress={!selectionMode ? () => onJumpToMessage(message.replyToMessage!.id) : undefined}
       />
     ) : null;
   }
@@ -2681,6 +2835,7 @@ function MessageBubble({
     return (
       <MessageRow
         editing={editing}
+        highlighted={highlighted}
         mine={mine}
         onLongPress={!selectionMode ? onBeginSelection : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
@@ -2711,8 +2866,9 @@ function MessageBubble({
               fill={shouldFillTextTimestamp}
               minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
               nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
+              reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
               text={body}
-              textStyle={styles.textOnlyBubbleText}
+              textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
               time={timestampLabel}
             />
           </View>
@@ -2737,6 +2893,7 @@ function MessageBubble({
     return (
       <MessageRow
         editing={editing}
+        highlighted={highlighted}
         mine={mine}
         onLongPress={!selectionMode ? onBeginSelection : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
@@ -2783,8 +2940,9 @@ function MessageBubble({
                 <InlineTimestampText
                   fill
                   nativeAvailableWidth={Math.max(0, previewSize.width - 24)}
+                  reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
                   text={body}
-                  textStyle={styles.mediaCaptionText}
+                  textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
                   time={timestampLabel}
                 />
               </View>
@@ -2801,6 +2959,7 @@ function MessageBubble({
     return (
       <MessageRow
         editing={editing}
+        highlighted={highlighted}
         mine={mine}
         onLongPress={!selectionMode ? onBeginSelection : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
@@ -2841,8 +3000,9 @@ function MessageBubble({
                 <InlineTimestampText
                   fill
                   nativeAvailableWidth={Math.max(0, multiMediaCardWidth - 24)}
+                  reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
                   text={body}
-                  textStyle={styles.mediaCaptionText}
+                  textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
                   time={timestampLabel}
                 />
               </View>
@@ -3120,15 +3280,15 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
         <View style={styles.gridVideoOverlay}>
           {isOptimisticMemoryMedia(media) ? (
             <View style={styles.mediaPendingOverlay}>
-              <Ionicons name="cloud-upload-outline" size={17} color={colors.dark.white} />
+              <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
               <Text style={styles.mediaPendingText}>Sending</Text>
             </View>
           ) : null}
           <View style={styles.gridPlayBadge}>
-            <Ionicons name="play" size={18} color={colors.dark.white} />
+            <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
           </View>
           <View style={styles.gridMediaTypeBadge}>
-            <Ionicons name="videocam" size={11} color={colors.dark.white} />
+            <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
             <Text style={styles.mediaTypeBadgeText}>Video</Text>
           </View>
         </View>
@@ -3271,21 +3431,21 @@ function DishesPanel({
 
       <View style={styles.dishAddWrap}>
         <View style={styles.dishInputWrap}>
-          <Ionicons name="restaurant-outline" size={16} color={colors.dark.gold} />
+          <Ionicons name="restaurant-outline" size={16} color={ROOM_COLORS.gold} />
           <TextInput
             onChangeText={onChangeDishName}
             placeholder="Dish name"
-            placeholderTextColor={colors.dark.muted}
+            placeholderTextColor={ROOM_COLORS.muted}
             style={styles.dishInput}
             value={dishName}
           />
         </View>
         <View style={styles.dishInputWrap}>
-          <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.dark.muted} />
+          <Ionicons name="chatbubble-ellipses-outline" size={16} color={ROOM_COLORS.muted} />
           <TextInput
             onChangeText={onChangeDishNote}
             placeholder="What should friends remember?"
-            placeholderTextColor={colors.dark.muted}
+            placeholderTextColor={ROOM_COLORS.muted}
             style={styles.dishInput}
             value={dishNote}
           />
@@ -3294,7 +3454,7 @@ function DishesPanel({
           <View style={styles.dishStars}>
             {[1, 2, 3, 4, 5].map((star) => (
               <Pressable key={star} hitSlop={6} onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}>
-                <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={20} color={colors.dark.gold} />
+                <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={20} color={ROOM_COLORS.gold} />
               </Pressable>
             ))}
           </View>
@@ -3324,7 +3484,7 @@ function DishesPanel({
                 <Text numberOfLines={1} style={styles.dishName}>{dish.dishName}</Text>
                 {dish.rating ? (
                   <View style={styles.dishRatingPill}>
-                    <Ionicons name="star" size={11} color={colors.dark.gold} />
+                    <Ionicons name="star" size={11} color={ROOM_COLORS.gold} />
                     <Text style={styles.dishRating}>{Number(dish.rating).toFixed(1).replace(/\.0$/, "")}</Text>
                   </View>
                 ) : null}
@@ -3424,7 +3584,7 @@ function PeoplePanel({
       <View style={[styles.header, styles.peopleScreenHeader]}>
         <View style={styles.headerTop}>
           <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={onBack} style={[styles.headerIconButton, styles.headerBackButton]}>
-            <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
+            <Ionicons name="arrow-back" size={20} color={ROOM_COLORS.onSurface} />
           </Pressable>
           <View style={styles.compactRoomTitleWrap}>
             <Text numberOfLines={1} style={[styles.compactRoomTitle, styles.membersCompactTitle]}>Members</Text>
@@ -3445,7 +3605,7 @@ function PeoplePanel({
                 autoCapitalize="none"
                 onChangeText={onChangeParticipant}
                 placeholder="Search or invite friends..."
-                placeholderTextColor={colors.dark.muted}
+                placeholderTextColor={ROOM_COLORS.muted}
                 ref={inputRef}
                 style={styles.peopleAddInput}
                 value={participantValue}
@@ -3460,7 +3620,7 @@ function PeoplePanel({
                 addParticipantPending && styles.peopleAddButtonDisabled
               ]}
             >
-              <Ionicons name="person-add-outline" size={16} color={canAdd ? ROOM_COLORS.onCool : colors.dark.muted} />
+              <Ionicons name="person-add-outline" size={16} color={canAdd ? ROOM_COLORS.onCool : ROOM_COLORS.muted} />
               <Text style={[styles.peopleAddButtonText, canAdd ? styles.peopleAddButtonTextReady : styles.peopleAddButtonTextIdle]}>
                 {addParticipantPending ? "Inviting" : "Invite"}
               </Text>
@@ -3504,7 +3664,7 @@ function PeoplePanel({
                       <Text numberOfLines={1} style={styles.peopleSuggestionName}>{person.displayName}</Text>
                       <Text numberOfLines={1} style={styles.peopleSuggestionUsername}>@{person.username}</Text>
                     </View>
-                    <Ionicons name="add" size={19} color={colors.dark.muted} />
+                    <Ionicons name="add" size={19} color={ROOM_COLORS.muted} />
                   </Pressable>
                 ))}
               </ScrollView>
@@ -3515,7 +3675,7 @@ function PeoplePanel({
               {selectedParticipants.map((person) => (
                 <Pressable key={person.username} onPress={() => onRemoveSelectedParticipant(person.username)} style={styles.selectedPeopleChip}>
                   <Text numberOfLines={1} style={styles.selectedPeopleChipText}>@{person.username}</Text>
-                  <Ionicons name="close" size={12} color={colors.dark.muted} />
+                  <Ionicons name="close" size={12} color={ROOM_COLORS.muted} />
                 </Pressable>
               ))}
             </View>
@@ -3638,7 +3798,7 @@ function AttachmentOptionsSheet({
                 <Text numberOfLines={1} style={styles.attachSheetSubtitle}>{subtitle}</Text>
               </View>
               <Pressable accessibilityLabel="Close" hitSlop={8} onPress={onClose} style={styles.attachSheetHeaderButton}>
-                <Ionicons name="close" size={18} color={colors.dark.muted} />
+                <Ionicons name="close" size={18} color={ROOM_COLORS.muted} />
               </Pressable>
             </View>
 
@@ -3653,7 +3813,7 @@ function AttachmentOptionsSheet({
                 </Pressable>
                 <Pressable disabled={dishPending} onPress={() => setView("dish")} style={[styles.attachActionCard, dishPending && styles.attachActionCardDisabled]}>
                   <View style={[styles.attachActionIcon, styles.attachActionIconDish]}>
-                    <Ionicons name="restaurant-outline" size={22} color={colors.dark.gold} />
+                    <Ionicons name="restaurant-outline" size={22} color={ROOM_COLORS.gold} />
                   </View>
                   <Text style={styles.attachActionTitle}>Dish</Text>
                   <Text numberOfLines={2} style={styles.attachActionSubtitle}>Name, note and rating</Text>
@@ -3682,38 +3842,60 @@ function AttachmentOptionsSheet({
               </View>
             ) : (
               <View style={styles.attachDishForm}>
-                <View style={styles.attachDishInputWrap}>
-                  <Ionicons name="restaurant-outline" size={16} color={colors.dark.gold} />
-                  <TextInput
-                    onChangeText={onChangeDishName}
-                    placeholder="Dish name"
-                    placeholderTextColor={colors.dark.muted}
-                    style={styles.attachDishInput}
-                    value={dishName}
-                  />
+                <View style={styles.attachDishHero}>
+                  <View style={styles.attachDishHeroIcon}>
+                    <Ionicons name="restaurant-outline" size={22} color={ROOM_COLORS.gold} />
+                  </View>
+                  <View style={styles.attachDishHeroCopy}>
+                    <Text style={styles.attachDishFieldLabel}>Dish</Text>
+                    <TextInput
+                      onChangeText={onChangeDishName}
+                      placeholder="Dish name"
+                      placeholderTextColor={ROOM_COLORS.faint}
+                      returnKeyType="next"
+                      style={styles.attachDishNameInput}
+                      value={dishName}
+                    />
+                  </View>
                 </View>
-                <View style={styles.attachDishInputWrap}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.dark.muted} />
+                <View style={styles.attachDishNoteWrap}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={17} color={ROOM_COLORS.muted} style={styles.attachDishNoteIcon} />
                   <TextInput
+                    multiline
+                    numberOfLines={3}
                     onChangeText={onChangeDishNote}
                     placeholder="Note for the group"
-                    placeholderTextColor={colors.dark.muted}
-                    style={styles.attachDishInput}
+                    placeholderTextColor={ROOM_COLORS.muted}
+                    style={[styles.attachDishInput, styles.attachDishNoteInput]}
+                    textAlignVertical="top"
                     value={dishNote}
                   />
                 </View>
-                <View style={styles.attachDishFooter}>
+                <View style={styles.attachDishRatingCard}>
+                  <View style={styles.attachDishRatingHeader}>
+                    <Text style={styles.attachDishRatingTitle}>Rating</Text>
+                    <Text style={styles.attachDishRatingValue}>{dishRating ? `${dishRating}/5` : "Optional"}</Text>
+                  </View>
                   <View style={styles.attachDishStars}>
                     {[1, 2, 3, 4, 5].map((star) => (
-                      <Pressable key={star} hitSlop={6} onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}>
-                        <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={22} color={colors.dark.gold} />
+                      <Pressable
+                        accessibilityLabel={`Rate ${star} out of 5`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: star <= dishRating }}
+                        key={star}
+                        hitSlop={6}
+                        onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}
+                        style={[styles.attachDishStarButton, star <= dishRating && styles.attachDishStarButtonActive]}
+                      >
+                        <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={21} color={ROOM_COLORS.gold} />
                       </Pressable>
                     ))}
                   </View>
-                  <Pressable disabled={!canSubmitDish} onPress={onDishSubmit} style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}>
-                    <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding" : "Add"}</Text>
-                  </Pressable>
                 </View>
+                <Pressable disabled={!canSubmitDish} onPress={onDishSubmit} style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}>
+                  <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding..." : "Save dish"}</Text>
+                  <Ionicons name="arrow-forward" size={17} color={ROOM_COLORS.onCool} />
+                </Pressable>
                 {dishError ? <Text style={styles.error}>{dishError}</Text> : null}
               </View>
             )}
@@ -3741,7 +3923,7 @@ function RoomActionsSheet({
         <Pressable style={styles.roomActionsPopover} onPress={(event) => event.stopPropagation()}>
           <Pressable disabled={leavePending} onPress={onLeave} style={[styles.roomActionOption, leavePending && styles.roomActionDisabled]}>
             <View style={[styles.roomActionIcon, styles.roomActionIconDanger]}>
-              <Ionicons name="exit-outline" size={19} color={colors.dark.dangerSoft} />
+              <Ionicons name="exit-outline" size={19} color={ROOM_COLORS.danger} />
             </View>
             <View style={styles.roomActionText}>
               <Text style={[styles.roomActionTitle, styles.roomActionDangerText]}>{leavePending ? "Leaving..." : "Leave room"}</Text>
@@ -3779,7 +3961,7 @@ function SelectionActionBar({
       {deleteError ? <Text style={styles.error}>{deleteError}</Text> : null}
       <View style={styles.selectionBar}>
         <Pressable accessibilityLabel="Cancel selection" onPress={onCancel} style={styles.selectionBarButton}>
-          <Ionicons name="close" size={22} color={colors.dark.cream} />
+          <Ionicons name="close" size={22} color={ROOM_COLORS.onSurface} />
         </Pressable>
         <Text style={styles.selectionBarTitle}>
           {count} selected
@@ -3801,7 +3983,7 @@ function SelectionActionBar({
             onPress={onDelete}
             style={[styles.selectionDeleteButton, (deleting || count === 0) && styles.selectionDeleteButtonDisabled]}
           >
-            <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={colors.dark.white} />
+            <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.white} />
           </Pressable>
         ) : null}
       </View>
@@ -3857,7 +4039,7 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
             </Text>
           </View>
           <Pressable accessibilityLabel="Close media viewer" onPress={onClose} style={styles.viewerClose}>
-            <Ionicons name="close" size={22} color={colors.dark.white} />
+            <Ionicons name="close" size={22} color={ROOM_COLORS.white} />
           </Pressable>
         </View>
         <View
@@ -3901,7 +4083,7 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
                 >
                   {media.mediaType === "video" ? (
                     <View style={styles.viewerThumbnailVideo}>
-                      <Ionicons name="play" size={14} color={colors.dark.white} />
+                      <Ionicons name="play" size={14} color={ROOM_COLORS.white} />
                     </View>
                   ) : (
                     <Image contentFit="cover" source={{ uri: media.publicUrl }} style={styles.viewerThumbnailImage} />
@@ -3992,16 +4174,16 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
         {isOptimisticMemoryMedia(media) ? (
           <View style={styles.mediaPendingOverlay}>
-            <Ionicons name="cloud-upload-outline" size={17} color={colors.dark.white} />
+            <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
             <Text style={styles.mediaPendingText}>Sending</Text>
           </View>
         ) : null}
         <View style={styles.mediaTypeBadge}>
-          <Ionicons name="videocam" size={11} color={colors.dark.white} />
+          <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
           <Text style={styles.mediaTypeBadgeText}>Video</Text>
         </View>
         <View style={styles.playBadge}>
-          <Ionicons name="play" size={18} color={colors.dark.white} />
+          <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
         </View>
       </View>
     );
@@ -4016,7 +4198,7 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
       />
       {isOptimisticMemoryMedia(media) ? (
         <View style={styles.mediaPendingOverlay}>
-          <Ionicons name="cloud-upload-outline" size={17} color={colors.dark.white} />
+          <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
           <Text style={styles.mediaPendingText}>Sending</Text>
         </View>
       ) : null}
@@ -4027,13 +4209,13 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
 function Composer({
   editingLabel,
   insetStyle,
+  inputRef,
   mediaError,
   mediaMutationError,
   mediaPending,
   message,
   messageError,
   messagePending,
-  onAttach,
   onCancelEdit,
   onCancelReply,
   onChangeMessage,
@@ -4044,13 +4226,13 @@ function Composer({
 }: {
   editingLabel?: string;
   insetStyle: StyleProp<ViewStyle>;
+  inputRef: RefObject<TextInput | null>;
   mediaError?: string;
   mediaMutationError?: string;
   mediaPending: boolean;
   message: string;
   messageError?: string;
   messagePending: boolean;
-  onAttach: () => void;
   onCancelEdit?: () => void;
   onCancelReply?: () => void;
   onChangeMessage: (value: string) => void;
@@ -4093,42 +4275,37 @@ function Composer({
       ) : null}
       {!editingLabel && replyingToMessage ? (
         <View style={styles.replyComposerBanner}>
+          <View style={styles.replyComposerAccent} />
+          <View style={styles.replyComposerIcon}>
+            <Ionicons name="arrow-undo-outline" size={14} color={ROOM_COLORS.cool} />
+          </View>
           <View style={styles.replyComposerCopy}>
-            <Text numberOfLines={1} style={styles.replyComposerLabel}>Replying to {replyingToMessage.authorDisplayName}</Text>
+            <Text numberOfLines={1} style={styles.replyComposerLabel}>{replyingToMessage.authorDisplayName}</Text>
             <Text numberOfLines={2} style={styles.replyComposerPreview}>
               {memoryMessageReplyPreview(replyingToMessage)}
             </Text>
           </View>
-          <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply}>
-            <Ionicons name="close" size={18} color={colors.dark.muted} />
+          <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply} style={styles.replyComposerClose}>
+            <Ionicons name="close" size={15} color={ROOM_COLORS.muted} />
           </Pressable>
         </View>
       ) : null}
       <View style={styles.composer}>
         <View style={styles.messageBox}>
-          <Pressable
-            accessibilityLabel="Attach photo or video"
-            accessibilityRole="button"
-            accessibilityState={{ disabled: Boolean(editingLabel) || mediaPending }}
-            disabled={Boolean(editingLabel) || mediaPending}
-            onPress={onAttach}
-            style={[styles.attachButton, (editingLabel || mediaPending) && styles.attachButtonDisabled]}
-          >
-            <Ionicons name={mediaPending ? "hourglass-outline" : "add"} size={Platform.OS === "web" ? 19 : 21} color={ROOM_COLORS.cool} />
-          </Pressable>
           <TextInput
             multiline
             onContentSizeChange={handleComposerContentSizeChange}
             onChangeText={onChangeMessage}
             onFocus={onInputFocus}
             placeholder="Message..."
-            placeholderTextColor={colors.dark.muted}
+            placeholderTextColor={ROOM_COLORS.muted}
             scrollEnabled={composerCanScroll}
             style={[
               styles.composerInput,
               Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative,
               { height: composerInputHeight }
             ]}
+            ref={inputRef}
             value={message}
           />
         </View>
@@ -4190,7 +4367,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     position: "absolute",
     right: 0,
-    shadowColor: "#000",
+    shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 6, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 14,
@@ -4235,12 +4412,12 @@ const styles = StyleSheet.create({
   },
   sharedRoomTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     position: "absolute"
   },
   compactRoomTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 19,
     lineHeight: 25
   },
@@ -4268,7 +4445,7 @@ const styles = StyleSheet.create({
   },
   roomMetaText: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     flex: 1,
     fontSize: 12,
     lineHeight: 16
@@ -4302,13 +4479,13 @@ const styles = StyleSheet.create({
   },
   roomFriendInitial: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 10,
     lineHeight: 13
   },
   roomFriendsText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 12,
     lineHeight: 16,
@@ -4329,7 +4506,7 @@ const styles = StyleSheet.create({
   },
   modeTabIndicator: {
     backgroundColor: ROOM_COLORS.coolDim,
-    borderColor: ROOM_COLORS.coolBorder,
+    borderColor: ROOM_COLORS.cool,
     borderRadius: radius.md,
     borderWidth: 1,
     bottom: 2,
@@ -4358,11 +4535,11 @@ const styles = StyleSheet.create({
   },
   modeButtonText: {
     ...fontStyles.extraBold,
-    color: "#A19B94",
+    color: ROOM_COLORS.muted,
     fontSize: 10
   },
   modeButtonTextActive: {
-    color: colors.dark.cream
+    color: ROOM_COLORS.onSurface
   },
   body: {
     alignSelf: "center",
@@ -4397,7 +4574,7 @@ const styles = StyleSheet.create({
   },
   floatingAddBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: ROOM_COLORS.scrim,
     zIndex: 6
   },
   floatingAddActionStack: {
@@ -4416,26 +4593,26 @@ const styles = StyleSheet.create({
   },
   floatingAddActionLabel: {
     alignItems: "center",
-    backgroundColor: "rgba(33, 28, 23, 0.96)",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: 38,
     justifyContent: "center",
     paddingHorizontal: spacing.base,
-    shadowColor: "#000",
+    shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 6, width: 0 },
     shadowOpacity: 0.20,
     shadowRadius: 14
   },
   floatingAddActionText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 13
   },
   floatingAddActionIcon: {
     alignItems: "center",
-    backgroundColor: "rgba(34, 199, 184, 0.14)",
+    backgroundColor: ROOM_COLORS.coolDim,
     borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -4444,12 +4621,12 @@ const styles = StyleSheet.create({
     width: FLOATING_ADD_ACTION_ICON_SIZE
   },
   floatingAddActionIconGold: {
-    backgroundColor: "rgba(246, 173, 85, 0.13)",
-    borderColor: "rgba(246, 173, 85, 0.30)"
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder
   },
   floatingAddButtonFrame: {
     position: "absolute",
-    shadowColor: "#000",
+    shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 8, width: 0 },
     shadowOpacity: 0.28,
     shadowRadius: 16,
@@ -4458,7 +4635,7 @@ const styles = StyleSheet.create({
   floatingAddButton: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.cool,
-    borderColor: "rgba(255,255,255,0.22)",
+    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: FLOATING_ADD_BUTTON_SIZE,
@@ -4467,8 +4644,8 @@ const styles = StyleSheet.create({
     overflow: "hidden"
   },
   floatingAddButtonOpen: {
-    backgroundColor: "#1FB3A5",
-    borderColor: "rgba(255,255,255,0.30)"
+    backgroundColor: ROOM_COLORS.coolPressed,
+    borderColor: ROOM_COLORS.outlineStrong
   },
   floatingAddIconWrap: {
     alignItems: "center",
@@ -4492,7 +4669,7 @@ const styles = StyleSheet.create({
   },
   chatWallpaper: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: ROOM_COLORS.bg
+    backgroundColor: ROOM_COLORS.wallpaperBg
   },
   chatWallpaperOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -4533,7 +4710,7 @@ const styles = StyleSheet.create({
   },
   dateDividerText: {
     ...fontStyles.extraBold,
-    backgroundColor: "rgba(33,28,23,0.92)",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -4580,7 +4757,7 @@ const styles = StyleSheet.create({
   },
   quickAction: {
     alignItems: "center",
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.input,
     flex: 1,
     flexDirection: "row",
@@ -4591,7 +4768,7 @@ const styles = StyleSheet.create({
   },
   quickActionText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     flexShrink: 1,
     fontSize: 11,
     lineHeight: 14
@@ -4625,13 +4802,17 @@ const styles = StyleSheet.create({
   chatMessageRowMine: {
     justifyContent: "flex-end"
   },
+  chatMessageRowReplyHighlight: {
+    backgroundColor: ROOM_COLORS.selection,
+    borderRadius: 0
+  },
   chatMessageRowSelected: {
     backgroundColor: ROOM_COLORS.selection,
     borderRadius: 0
   },
   chatMessageRowEditing: {
-    backgroundColor: "rgba(232,168,48,0.10)",
-    borderLeftColor: colors.dark.gold,
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderLeftColor: ROOM_COLORS.gold,
     borderLeftWidth: 3,
     paddingVertical: 3
   },
@@ -4645,15 +4826,21 @@ const styles = StyleSheet.create({
   },
   swipeReplyIndicator: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.cool,
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderWidth: 1,
     borderRadius: radius.pill,
-    height: 34,
+    height: 32,
     justifyContent: "center",
     left: CHAT_ROW_SIDE_PADDING,
-    marginTop: -17,
+    marginTop: -16,
     position: "absolute",
+    shadowColor: ROOM_COLORS.black,
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
     top: "50%",
-    width: 34
+    width: 32
   },
   messageBubbleFrame: {
     flexShrink: 1,
@@ -4678,7 +4865,7 @@ const styles = StyleSheet.create({
   textMessageBubbleMine: {
     alignSelf: "flex-end",
     backgroundColor: CHAT_OWN_BUBBLE_COLOR,
-    borderColor: ROOM_COLORS.coolBorder,
+    borderColor: ROOM_COLORS.sentBubbleBorder,
     minWidth: 64
   },
   textMessageBubbleOther: {
@@ -4693,7 +4880,7 @@ const styles = StyleSheet.create({
   },
   singleMediaMessageCard: {
     backgroundColor: ROOM_COLORS.panel,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: ROOM_COLORS.border,
     borderWidth: 1,
     borderRadius: 16,
     overflow: "hidden",
@@ -4703,7 +4890,7 @@ const styles = StyleSheet.create({
   },
   multiMediaMessageCard: {
     backgroundColor: ROOM_COLORS.panel,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: ROOM_COLORS.border,
     borderWidth: 1,
     borderRadius: 16,
     overflow: "hidden",
@@ -4713,11 +4900,11 @@ const styles = StyleSheet.create({
   },
   mediaMessageCardMine: {
     backgroundColor: CHAT_OWN_BUBBLE_COLOR,
-    borderColor: "rgba(34, 199, 184, 0.18)"
+    borderColor: ROOM_COLORS.sentBubbleBorder
   },
   mediaMessageCardOther: {
     backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
-    borderColor: "rgba(255,255,255,0.08)"
+    borderColor: ROOM_COLORS.border
   },
   messageMediaCardFill: {
     width: "100%"
@@ -4735,8 +4922,11 @@ const styles = StyleSheet.create({
     paddingVertical: 7
   },
   replyPreviewBlockMine: {
-    backgroundColor: "rgba(14,11,8,0.18)",
-    borderLeftColor: colors.dark.gold
+    backgroundColor: ROOM_COLORS.scrimSoft,
+    borderLeftColor: ROOM_COLORS.gold
+  },
+  replyPreviewBlockPressed: {
+    opacity: 0.72
   },
   replyPreviewAuthor: {
     ...fontStyles.extraBold,
@@ -4768,7 +4958,7 @@ const styles = StyleSheet.create({
   },
   senderInitial: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 10,
     lineHeight: 12
   },
@@ -4809,21 +4999,21 @@ const styles = StyleSheet.create({
   },
   inlineTimestampMessageText: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flexShrink: 1,
     flexWrap: "wrap",
     includeFontPadding: false
   },
   inlineTimestampText: {
     ...fontStyles.semiBold,
-    color: "rgba(255,255,255,0.55)",
+    color: ROOM_COLORS.timestamp,
     fontSize: 11,
     includeFontPadding: false,
     lineHeight: 13
   },
   inlineTimestampReserve: {
     ...fontStyles.semiBold,
-    color: "rgba(255,255,255,0)",
+    color: "transparent",
     fontSize: 11,
     includeFontPadding: false,
     lineHeight: 13,
@@ -4843,6 +5033,12 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     lineHeight: 22,
     maxWidth: "100%"
+  },
+  messageTextMine: {
+    color: ROOM_COLORS.onSentBubble
+  },
+  messageTextOther: {
+    color: ROOM_COLORS.onReceivedBubble
   },
   singleMediaContainer: {
     alignSelf: "flex-start",
@@ -4890,7 +5086,7 @@ const styles = StyleSheet.create({
     gap: MEDIA_GRID_GAP
   },
   mediaGridTile: {
-    backgroundColor: "#0D0A08",
+    backgroundColor: ROOM_COLORS.mediaPanel,
     position: "relative",
     overflow: "hidden"
   },
@@ -4901,7 +5097,7 @@ const styles = StyleSheet.create({
   },
   gridVideoPreview: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#0D0A08",
+    backgroundColor: ROOM_COLORS.mediaPanel,
     height: "100%",
     overflow: "hidden",
     width: "100%"
@@ -4913,7 +5109,7 @@ const styles = StyleSheet.create({
   },
   gridPlayBadge: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: ROOM_COLORS.glass,
     borderRadius: radius.pill,
     height: 44,
     justifyContent: "center",
@@ -4921,7 +5117,7 @@ const styles = StyleSheet.create({
   },
   gridMediaTypeBadge: {
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: ROOM_COLORS.scrim,
     borderRadius: radius.pill,
     flexDirection: "row",
     gap: 4,
@@ -4932,7 +5128,7 @@ const styles = StyleSheet.create({
     top: 8
   },
   mediaTimestampOverlay: {
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: ROOM_COLORS.scrimMedium,
     borderRadius: 10,
     bottom: 8,
     paddingHorizontal: 6,
@@ -4948,14 +5144,14 @@ const styles = StyleSheet.create({
   },
   mediaTimestampText: {
     ...fontStyles.semiBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.muted,
     fontSize: 11,
     includeFontPadding: false,
     lineHeight: 13
   },
   attachmentMoreOverlay: {
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: ROOM_COLORS.scrim,
     bottom: 0,
     justifyContent: "center",
     left: 0,
@@ -4965,7 +5161,7 @@ const styles = StyleSheet.create({
   },
   attachmentMoreText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 18,
     lineHeight: 23
   },
@@ -4997,7 +5193,7 @@ const styles = StyleSheet.create({
   videoPreview: {
     alignItems: "center",
     aspectRatio: 1,
-    backgroundColor: colors.dark.black,
+    backgroundColor: ROOM_COLORS.black,
     borderRadius: radius.md,
     justifyContent: "center",
     overflow: "hidden",
@@ -5006,7 +5202,7 @@ const styles = StyleSheet.create({
   },
   mediaPendingOverlay: {
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.38)",
+    backgroundColor: ROOM_COLORS.scrimMedium,
     bottom: 0,
     gap: 5,
     justifyContent: "center",
@@ -5017,13 +5213,13 @@ const styles = StyleSheet.create({
   },
   mediaPendingText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 11,
     lineHeight: 14
   },
   mediaTypeBadge: {
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: ROOM_COLORS.scrim,
     borderRadius: radius.pill,
     flexDirection: "row",
     gap: 4,
@@ -5035,13 +5231,13 @@ const styles = StyleSheet.create({
   },
   mediaTypeBadgeText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 10,
     lineHeight: 12
   },
   playBadge: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: ROOM_COLORS.glass,
     borderRadius: radius.pill,
     height: 48,
     justifyContent: "center",
@@ -5051,7 +5247,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   attachSheetBackdrop: {
-    backgroundColor: "rgba(0,0,0,0.20)",
+    backgroundColor: ROOM_COLORS.scrimSoft,
     flex: 1,
     justifyContent: "flex-end"
   },
@@ -5089,7 +5285,7 @@ const styles = StyleSheet.create({
   },
   attachSheetTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 14,
     lineHeight: 18
   },
@@ -5127,12 +5323,12 @@ const styles = StyleSheet.create({
     width: 42
   },
   attachActionIconDish: {
-    backgroundColor: "rgba(232, 168, 48, 0.12)",
-    borderColor: "rgba(232, 168, 48, 0.24)"
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder
   },
   attachActionTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 14,
     lineHeight: 18
   },
@@ -5168,13 +5364,13 @@ const styles = StyleSheet.create({
     width: 38
   },
   deleteSheetIcon: {
-    backgroundColor: colors.dark.dangerDim,
-    borderColor: colors.dark.dangerBorder,
+    backgroundColor: ROOM_COLORS.dangerDim,
+    borderColor: ROOM_COLORS.dangerBorder,
     borderWidth: 1
   },
   attachSheetOptionText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 14,
     lineHeight: 18
   },
@@ -5190,46 +5386,135 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   deleteSheetText: {
-    color: colors.dark.dangerSoft
+    color: ROOM_COLORS.danger
   },
   attachDishForm: {
     gap: spacing.sm
   },
-  attachDishInputWrap: {
+  attachDishHero: {
     alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    minHeight: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  attachDishHeroIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: "center",
+    width: 44
+  },
+  attachDishHeroCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  attachDishFieldLabel: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.gold,
+    fontSize: 11,
+    lineHeight: 14,
+    marginBottom: 3,
+    textTransform: "uppercase"
+  },
+  attachDishNameInput: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    flex: 1,
+    fontSize: 18,
+    includeFontPadding: false,
+    lineHeight: 23,
+    minHeight: 28,
+    padding: 0,
+    paddingVertical: Platform.OS === "web" ? 2 : 0
+  },
+  attachDishNoteWrap: {
+    alignItems: "flex-start",
     backgroundColor: ROOM_COLORS.panelRaised,
     borderColor: ROOM_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 46,
-    paddingHorizontal: spacing.md
+    minHeight: 86,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10
+  },
+  attachDishNoteIcon: {
+    marginTop: 1
   },
   attachDishInput: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 14,
     lineHeight: 19,
+    minWidth: 0,
+    padding: 0,
     paddingVertical: Platform.OS === "web" ? 8 : 0
   },
-  attachDishFooter: {
+  attachDishNoteInput: {
+    minHeight: 56,
+    paddingTop: 0
+  },
+  attachDishRatingCard: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    gap: 10,
+    padding: spacing.md
+  },
+  attachDishRatingHeader: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.sm,
     justifyContent: "space-between"
+  },
+  attachDishRatingTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 13,
+    lineHeight: 17
+  },
+  attachDishRatingValue: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16
   },
   attachDishStars: {
     flexDirection: "row",
     gap: spacing.xs
   },
+  attachDishStarButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flex: 1,
+    height: 40,
+    justifyContent: "center"
+  },
+  attachDishStarButtonActive: {
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder
+  },
   attachDishSubmit: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
-    minHeight: 38,
-    minWidth: 84,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: 46,
     justifyContent: "center",
     paddingHorizontal: spacing.md
   },
@@ -5243,7 +5528,7 @@ const styles = StyleSheet.create({
     lineHeight: 18
   },
   roomActionsBackdrop: {
-    backgroundColor: "rgba(0,0,0,0.58)",
+    backgroundColor: ROOM_COLORS.scrim,
     flex: 1
   },
   roomActionsPopover: {
@@ -5255,7 +5540,7 @@ const styles = StyleSheet.create({
     marginRight: Platform.OS === "web" ? spacing.lg : spacing.md,
     marginTop: Platform.OS === "web" ? 58 : 54,
     padding: 4,
-    shadowColor: colors.dark.black,
+    shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 12, width: 0 },
     shadowOpacity: 0.28,
     shadowRadius: 20,
@@ -5288,8 +5573,8 @@ const styles = StyleSheet.create({
     borderWidth: 1
   },
   roomActionIconDanger: {
-    backgroundColor: colors.dark.dangerDim,
-    borderColor: colors.dark.dangerBorder,
+    backgroundColor: ROOM_COLORS.dangerDim,
+    borderColor: ROOM_COLORS.dangerBorder,
     borderWidth: 1
   },
   roomActionText: {
@@ -5298,12 +5583,12 @@ const styles = StyleSheet.create({
   },
   roomActionTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 12,
     lineHeight: 16
   },
   roomActionDangerText: {
-    color: colors.dark.dangerSoft
+    color: ROOM_COLORS.danger
   },
   selectionBarWrap: {
     alignSelf: "center",
@@ -5340,7 +5625,7 @@ const styles = StyleSheet.create({
   },
   selectionBarTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 14,
     lineHeight: 18,
@@ -5348,7 +5633,7 @@ const styles = StyleSheet.create({
   },
   selectionDeleteButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.dangerSoft,
+    backgroundColor: ROOM_COLORS.danger,
     borderRadius: radius.pill,
     height: SELECTION_ACTION_BUTTON_SIZE,
     justifyContent: "center",
@@ -5366,7 +5651,7 @@ const styles = StyleSheet.create({
     opacity: 0.5
   },
   viewerBackdrop: {
-    backgroundColor: "rgba(0,0,0,0.94)",
+    backgroundColor: ROOM_COLORS.scrimStrong,
     flex: 1,
     padding: spacing.lg
   },
@@ -5383,20 +5668,20 @@ const styles = StyleSheet.create({
   },
   viewerTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 14,
     lineHeight: 18
   },
   viewerSubtitle: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2
   },
   viewerClose: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.12)",
+    backgroundColor: ROOM_COLORS.glassDim,
     borderRadius: radius.pill,
     height: 40,
     justifyContent: "center",
@@ -5436,7 +5721,7 @@ const styles = StyleSheet.create({
   },
   viewerCount: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     textAlign: "center"
@@ -5467,7 +5752,7 @@ const styles = StyleSheet.create({
   },
   viewerThumbnailVideo: {
     alignItems: "center",
-    backgroundColor: colors.dark.black,
+    backgroundColor: ROOM_COLORS.black,
     height: "100%",
     justifyContent: "center",
     width: "100%"
@@ -5504,7 +5789,7 @@ const styles = StyleSheet.create({
   },
   peoplePanelContent: {
     gap: 0,
-    paddingTop: spacing.lg
+    paddingTop: MEMBERS_HEADER_CLEARANCE + spacing.lg
   },
   panelActionRow: {
     alignItems: "center",
@@ -5557,8 +5842,8 @@ const styles = StyleSheet.create({
   },
   peopleToast: {
     alignItems: "center",
-    backgroundColor: "rgba(33, 28, 23, 0.97)",
-    borderColor: "rgba(34, 199, 184, 0.36)",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -5567,7 +5852,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    shadowColor: "#000",
+    shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 8, width: 0 },
     shadowOpacity: 0.28,
     shadowRadius: 18,
@@ -5575,7 +5860,7 @@ const styles = StyleSheet.create({
   },
   peopleToastText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 12,
     lineHeight: 16,
@@ -5605,7 +5890,7 @@ const styles = StyleSheet.create({
   },
   peopleAddInput: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 13,
     includeFontPadding: false,
@@ -5627,21 +5912,21 @@ const styles = StyleSheet.create({
   },
   peopleAddButtonReady: {
     backgroundColor: ROOM_COLORS.cool,
-    borderColor: "rgba(255,255,255,0.12)"
+    borderColor: ROOM_COLORS.glassDim
   },
   peopleAddButtonDisabled: {
     opacity: 0.45
   },
   peopleAddButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 13
   },
   peopleAddButtonTextReady: {
     color: ROOM_COLORS.onCool
   },
   peopleAddButtonTextIdle: {
-    color: colors.dark.muted
+    color: ROOM_COLORS.muted
   },
   peopleSuggestions: {
     backgroundColor: ROOM_COLORS.panel,
@@ -5661,19 +5946,19 @@ const styles = StyleSheet.create({
   },
   peopleSuggestionMuted: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16
   },
   peopleSuggestionError: {
     ...fontStyles.semiBold,
-    color: colors.dark.dangerSoft,
+    color: ROOM_COLORS.danger,
     fontSize: 12,
     lineHeight: 16
   },
   peopleSuggestionRow: {
     alignItems: "center",
-    borderBottomColor: "rgba(255,255,255,0.05)",
+    borderBottomColor: ROOM_COLORS.border,
     borderBottomWidth: 1,
     flexDirection: "row",
     gap: 12,
@@ -5690,7 +5975,7 @@ const styles = StyleSheet.create({
   },
   peopleSuggestionInitial: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 12,
     lineHeight: 16
   },
@@ -5700,13 +5985,13 @@ const styles = StyleSheet.create({
   },
   peopleSuggestionName: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 14,
     lineHeight: 18
   },
   peopleSuggestionUsername: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 1
@@ -5759,18 +6044,18 @@ const styles = StyleSheet.create({
   },
   dishSummaryValue: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 18,
     lineHeight: 22
   },
   dishSummaryLabel: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 11,
     lineHeight: 14
   },
   dishSummaryDivider: {
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: ROOM_COLORS.border,
     height: 34,
     width: 1
   },
@@ -5787,7 +6072,7 @@ const styles = StyleSheet.create({
   },
   dishInput: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 14,
     includeFontPadding: false,
@@ -5822,7 +6107,7 @@ const styles = StyleSheet.create({
   },
   dishIconText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 13,
     lineHeight: 16
   },
@@ -5837,15 +6122,15 @@ const styles = StyleSheet.create({
   },
   dishName: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: 15,
     lineHeight: 19
   },
   dishRatingPill: {
     alignItems: "center",
-    backgroundColor: "rgba(232,168,48,0.13)",
-    borderColor: "rgba(232,168,48,0.22)",
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -5855,20 +6140,20 @@ const styles = StyleSheet.create({
   },
   dishRating: {
     ...fontStyles.extraBold,
-    color: colors.dark.gold,
+    color: ROOM_COLORS.gold,
     fontSize: 12,
     lineHeight: 15
   },
   dishMeta: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2
   },
   dishNote: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 13,
     lineHeight: 18,
     marginTop: spacing.sm
@@ -5906,7 +6191,7 @@ const styles = StyleSheet.create({
   },
   personInitial: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: ROOM_COLORS.white,
     fontSize: 12,
     lineHeight: 15
   },
@@ -5916,13 +6201,13 @@ const styles = StyleSheet.create({
   },
   personName: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 15,
     lineHeight: 19
   },
   personMeta: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2
@@ -5984,14 +6269,14 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 18,
     lineHeight: 23,
     textAlign: "center"
   },
   emptyText: {
     ...fontStyles.regular,
-    color: colors.dark.muted,
+    color: ROOM_COLORS.muted,
     fontSize: 14,
     lineHeight: 20,
     marginTop: 6,
@@ -6032,7 +6317,7 @@ const styles = StyleSheet.create({
   },
   editingBannerText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     fontSize: 12,
     lineHeight: 15
   },
@@ -6044,14 +6329,32 @@ const styles = StyleSheet.create({
   },
   replyComposerBanner: {
     alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: 9,
+    marginHorizontal: -2,
+    minHeight: 54,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  replyComposerAccent: {
+    alignSelf: "stretch",
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    width: 3
+  },
+  replyComposerIcon: {
+    alignItems: "center",
     backgroundColor: ROOM_COLORS.coolDim,
     borderColor: ROOM_COLORS.coolBorder,
-    borderRadius: radius.input,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8
+    height: 28,
+    justifyContent: "center",
+    width: 28
   },
   replyComposerCopy: {
     flex: 1,
@@ -6059,7 +6362,7 @@ const styles = StyleSheet.create({
   },
   replyComposerLabel: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.cool,
     fontSize: 12,
     lineHeight: 15
   },
@@ -6070,6 +6373,14 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 2
   },
+  replyComposerClose: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderRadius: radius.pill,
+    height: 30,
+    justifyContent: "center",
+    width: 30
+  },
   messageBox: {
     alignItems: "flex-end",
     backgroundColor: ROOM_COLORS.panelRaised,
@@ -6078,25 +6389,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     flexDirection: "row",
-    gap: 4,
     minHeight: Platform.OS === "web" ? 38 : 42,
-    paddingHorizontal: Platform.OS === "web" ? 4 : 5,
+    paddingHorizontal: Platform.OS === "web" ? 12 : 13,
     paddingVertical: Platform.OS === "web" ? 2 : 3
-  },
-  attachButton: {
-    alignItems: "center",
-    backgroundColor: "transparent",
-    borderRadius: radius.pill,
-    height: Platform.OS === "web" ? 30 : 34,
-    justifyContent: "center",
-    width: Platform.OS === "web" ? 30 : 34
-  },
-  attachButtonDisabled: {
-    opacity: 0.35
   },
   composerInput: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: ROOM_COLORS.onSurface,
     flex: 1,
     fontSize: COMPOSER_INPUT_FONT_SIZE,
     includeFontPadding: false,
@@ -6126,7 +6425,7 @@ const styles = StyleSheet.create({
   },
   error: {
     ...fontStyles.regular,
-    color: colors.dark.dangerSoft,
+    color: ROOM_COLORS.danger,
     fontSize: 12,
     lineHeight: 17
   }

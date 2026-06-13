@@ -22,3 +22,6 @@ expo-env.d.ts
 # @end expo-cli
 # Generated food wallpaper previews
 scripts/food-wallpaper-*
+
+# Generated room theme previews
+scripts/room-theme-*
