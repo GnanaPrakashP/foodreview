@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Image } from "expo-image";
+import { useMemo } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, type Edge, useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, fontStyles, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, spacing } from "@/theme";
 
 const logoSource = require("../../../assets/circlebites-logo.png");
 
@@ -24,6 +26,8 @@ export function AuthShell({
   showHero = true
 }: AuthShellProps) {
   const insets = useSafeAreaInsets();
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const topPadding = contentTopPadding ?? spacing.xl;
   const horizontalPadding = contentHorizontalPadding ?? spacing.lg;
 
@@ -58,6 +62,8 @@ export function AuthShell({
 }
 
 export function AuthHero() {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
     <View style={styles.hero}>
       <View style={styles.logo}>
@@ -69,61 +75,63 @@ export function AuthHero() {
   );
 }
 
-const styles = StyleSheet.create({
-  shell: {
-    backgroundColor: colors.dark.bg,
-    flex: 1
-  },
-  keyboardView: {
-    flex: 1
-  },
-  topGlow: {
-    alignSelf: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderBottomLeftRadius: 260,
-    borderBottomRightRadius: 260,
-    height: 210,
-    opacity: 0.86,
-    position: "absolute",
-    top: 0,
-    width: "130%"
-  },
-  content: {
-    alignItems: "center",
-    flexGrow: 1,
-    gap: 24,
-    justifyContent: "center"
-  },
-  hero: {
-    alignItems: "center",
-    maxWidth: 400,
-    width: "100%"
-  },
-  logo: {
-    alignItems: "center",
-    height: 86,
-    justifyContent: "center",
-    marginBottom: 18,
-    width: 86
-  },
-  logoImage: {
-    borderRadius: 16,
-    height: 72,
-    width: 72
-  },
-  wordmark: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 34,
-    letterSpacing: -0.5,
-    lineHeight: 34,
-    marginBottom: 6
-  },
-  tagline: {
-    ...fontStyles.semiBoldItalic,
-    color: colors.dark.orange,
-    fontSize: 18,
-    letterSpacing: 0.1,
-    lineHeight: 23
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    shell: {
+      backgroundColor: c.bg,
+      flex: 1
+    },
+    keyboardView: {
+      flex: 1
+    },
+    topGlow: {
+      alignSelf: "center",
+      backgroundColor: c.orangeDim,
+      borderBottomLeftRadius: 260,
+      borderBottomRightRadius: 260,
+      height: 210,
+      opacity: 0.86,
+      position: "absolute",
+      top: 0,
+      width: "130%"
+    },
+    content: {
+      alignItems: "center",
+      flexGrow: 1,
+      gap: 24,
+      justifyContent: "center"
+    },
+    hero: {
+      alignItems: "center",
+      maxWidth: 400,
+      width: "100%"
+    },
+    logo: {
+      alignItems: "center",
+      height: 86,
+      justifyContent: "center",
+      marginBottom: 18,
+      width: 86
+    },
+    logoImage: {
+      borderRadius: 16,
+      height: 72,
+      width: 72
+    },
+    wordmark: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 34,
+      letterSpacing: -0.5,
+      lineHeight: 34,
+      marginBottom: 6
+    },
+    tagline: {
+      ...fontStyles.semiBoldItalic,
+      color: c.orange,
+      fontSize: 18,
+      letterSpacing: 0.1,
+      lineHeight: 23
+    }
+  });
+}

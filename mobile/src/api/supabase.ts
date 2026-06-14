@@ -57,6 +57,9 @@ export const isSupabaseConfigured =
   !supabaseUrl.includes("your-project-ref") &&
   !supabaseAnonKey.includes("replace-with-your-supabase-anon-key");
 
+export const resolvedSupabaseUrl = isSupabaseConfigured ? supabaseUrl : fallbackSupabaseUrl;
+export const resolvedSupabaseAnonKey = isSupabaseConfigured ? supabaseAnonKey : fallbackSupabaseAnonKey;
+
 export function assertSupabaseConfigured() {
   if (!isSupabaseConfigured) {
     throw new Error("auth_unavailable");
@@ -64,8 +67,8 @@ export function assertSupabaseConfigured() {
 }
 
 export const supabase = createClient(
-  isSupabaseConfigured ? supabaseUrl : fallbackSupabaseUrl,
-  isSupabaseConfigured ? supabaseAnonKey : fallbackSupabaseAnonKey,
+  resolvedSupabaseUrl,
+  resolvedSupabaseAnonKey,
   {
     auth: {
       autoRefreshToken: true,

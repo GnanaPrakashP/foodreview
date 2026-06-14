@@ -1,11 +1,13 @@
 import { Users } from "lucide-react-native";
 import { useRouter } from "expo-router";
+import { useMemo } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMyCircleQuery, useRemoveCircleMemberMutation } from "@/hooks/useCircle";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 
 function accountTypeLabel(value: "private" | "public") {
   return value === "public" ? "Public account" : "Private account";
@@ -22,6 +24,8 @@ function initialsForName(displayName: string, username: string) {
 
 export default function ProfileCircleScreen() {
   const router = useRouter();
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const circle = useMyCircleQuery();
   const removeMember = useRemoveCircleMemberMutation();
   const members = circle.data?.members ?? [];
@@ -51,6 +55,7 @@ export default function ProfileCircleScreen() {
           kicker="Profile"
           onBack={() => router.back()}
           subtitle={circle.data ? `${accountTypeLabel(circle.data.accountType)} · ${members.length} ${members.length === 1 ? "person" : "people"}` : undefined}
+          themeColors={themeColors}
           title="My Circle"
         />
 
@@ -81,7 +86,7 @@ export default function ProfileCircleScreen() {
                   <Text numberOfLines={1} style={styles.memberHandle}>@{member.username}</Text>
                 </View>
                 <View style={styles.memberPlaces}>
-                  <Users size={13} color={colors.dark.orange} strokeWidth={2.2} />
+                  <Users size={13} color={themeColors.orange} strokeWidth={2.2} />
                   <Text style={styles.memberPlacesText}>
                     {member.placeCount} place{member.placeCount === 1 ? "" : "s"}
                   </Text>
@@ -102,93 +107,95 @@ export default function ProfileCircleScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  content: {
-    gap: spacing.lg,
-    padding: spacing.lg
-  },
-  memberList: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    overflow: "hidden"
-  },
-  memberRow: {
-    alignItems: "center",
-    borderBottomColor: colors.dark.border,
-    borderBottomWidth: 1,
-    flexDirection: "row",
-    gap: spacing.md,
-    minHeight: 72,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12
-  },
-  memberAvatar: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: 19,
-    height: 38,
-    justifyContent: "center",
-    width: 38
-  },
-  memberAvatarText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 12,
-    lineHeight: 14
-  },
-  memberCopy: {
-    flex: 1,
-    minWidth: 0
-  },
-  memberName: {
-    ...fontStyles.bold,
-    color: colors.dark.cream,
-    fontSize: 15,
-    lineHeight: 19
-  },
-  memberHandle: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 3
-  },
-  memberPlaces: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 6
-  },
-  memberPlacesText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.orange,
-    fontSize: 11,
-    lineHeight: 13
-  },
-  removeButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.dangerDim,
-    borderColor: colors.dark.dangerBorder,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    justifyContent: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 7
-  },
-  removeButtonDisabled: {
-    opacity: 0.6
-  },
-  removeButtonText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.dangerSoft,
-    fontSize: 11,
-    lineHeight: 13
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    content: {
+      gap: spacing.lg,
+      padding: spacing.lg
+    },
+    memberList: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      overflow: "hidden"
+    },
+    memberRow: {
+      alignItems: "center",
+      borderBottomColor: c.border,
+      borderBottomWidth: 1,
+      flexDirection: "row",
+      gap: spacing.md,
+      minHeight: 72,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 12
+    },
+    memberAvatar: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: 19,
+      height: 38,
+      justifyContent: "center",
+      width: 38
+    },
+    memberAvatarText: {
+      ...fontStyles.extraBold,
+      color: "#FFFFFF",
+      fontSize: 12,
+      lineHeight: 14
+    },
+    memberCopy: {
+      flex: 1,
+      minWidth: 0
+    },
+    memberName: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 15,
+      lineHeight: 19
+    },
+    memberHandle: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 12,
+      lineHeight: 16,
+      marginTop: 3
+    },
+    memberPlaces: {
+      alignItems: "center",
+      backgroundColor: c.orangeDim,
+      borderColor: c.orangeBorder,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 6
+    },
+    memberPlacesText: {
+      ...fontStyles.extraBold,
+      color: c.orange,
+      fontSize: 11,
+      lineHeight: 13
+    },
+    removeButton: {
+      alignItems: "center",
+      backgroundColor: c.dangerDim,
+      borderColor: c.dangerBorder,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      justifyContent: "center",
+      paddingHorizontal: 10,
+      paddingVertical: 7
+    },
+    removeButtonDisabled: {
+      opacity: 0.6
+    },
+    removeButtonText: {
+      ...fontStyles.extraBold,
+      color: c.dangerSoft,
+      fontSize: 11,
+      lineHeight: 13
+    }
+  });
+}

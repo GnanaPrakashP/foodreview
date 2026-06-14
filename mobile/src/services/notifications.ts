@@ -96,3 +96,15 @@ export async function registerForPushNotifications(username: string): Promise<Pu
 
   return { granted: true, token: token.data };
 }
+
+export async function removePushTokensForUser(username: string): Promise<void> {
+  if (!username) return;
+  const { error } = await supabase
+    .from("push_tokens")
+    .delete()
+    .eq("user_name", username);
+
+  if (error && !isMissingPushTokensTable(error)) {
+    throw new Error(error.message);
+  }
+}

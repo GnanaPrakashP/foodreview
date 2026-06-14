@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 
 type AuthInputProps = {
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
@@ -32,10 +33,12 @@ export function AuthInput({
   value
 }: AuthInputProps) {
   const [focused, setFocused] = useState(false);
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
-      <Ionicons name={icon} size={16} color={colors.dark.muted} />
+      <Ionicons name={icon} size={16} color={themeColors.muted} />
       <TextInput
         autoCapitalize={autoCapitalize}
         autoComplete={autoComplete}
@@ -47,7 +50,7 @@ export function AuthInput({
           onFocus?.();
         }}
         placeholder={placeholder}
-        placeholderTextColor={colors.dark.muted}
+        placeholderTextColor={themeColors.muted}
         style={styles.input}
         value={value}
       />
@@ -65,10 +68,12 @@ export function PasswordInput({
   value
 }: PasswordInputProps) {
   const [focused, setFocused] = useState(false);
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
-      <Ionicons name="lock-closed-outline" size={16} color={colors.dark.muted} />
+      <Ionicons name="lock-closed-outline" size={16} color={themeColors.muted} />
       <TextInput
         autoCapitalize="none"
         autoComplete="password"
@@ -79,7 +84,7 @@ export function PasswordInput({
           onFocus?.();
         }}
         placeholder={placeholder}
-        placeholderTextColor={colors.dark.muted}
+        placeholderTextColor={themeColors.muted}
         secureTextEntry={!show}
         style={styles.input}
         value={value}
@@ -91,40 +96,42 @@ export function PasswordInput({
   );
 }
 
-const styles = StyleSheet.create({
-  inputWrap: {
-    alignItems: "center",
-    backgroundColor: colors.dark.authField,
-    borderColor: colors.dark.authBorder,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.s,
-    marginBottom: spacing.s,
-    paddingHorizontal: 14,
-    paddingVertical: 13
-  },
-  inputWrapFocused: {
-    borderColor: colors.dark.orangeBorder
-  },
-  inputWrapError: {
-    borderColor: colors.dark.danger
-  },
-  input: {
-    ...fontStyles.medium,
-    color: colors.dark.cream,
-    flex: 1,
-    fontSize: 15,
-    minWidth: 0,
-    outlineColor: "transparent",
-    outlineWidth: 0,
-    padding: 0
-  },
-  toggleText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 12,
-    letterSpacing: 0.3,
-    lineHeight: 14
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    inputWrap: {
+      alignItems: "center",
+      backgroundColor: c.authField,
+      borderColor: c.authBorder,
+      borderRadius: radius.input,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: spacing.s,
+      marginBottom: spacing.s,
+      paddingHorizontal: 14,
+      paddingVertical: 13
+    },
+    inputWrapFocused: {
+      borderColor: c.orangeBorder
+    },
+    inputWrapError: {
+      borderColor: c.danger
+    },
+    input: {
+      ...fontStyles.medium,
+      color: c.cream,
+      flex: 1,
+      fontSize: 15,
+      minWidth: 0,
+      outlineColor: "transparent",
+      outlineWidth: 0,
+      padding: 0
+    },
+    toggleText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 12,
+      letterSpacing: 0.3,
+      lineHeight: 14
+    }
+  });
+}

@@ -4,14 +4,16 @@ import { PostFeed } from "@/components/feeds/PostFeed";
 import { SectionLabel } from "@/components/display";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { usePublicFeedQuery } from "@/hooks/useFeeds";
-import { colors, spacing } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { spacing } from "@/theme";
 
 export default function HungryScreen() {
   const feed = usePublicFeedQuery();
+  const { themeColors } = useThemePreference();
 
   return (
     <Screen
-      rightAccessory={<MapPin size={20} color={colors.dark.cream} strokeWidth={2} />}
+      rightAccessory={<MapPin size={20} color={themeColors.cream} strokeWidth={2} />}
       scroll
       title="Hungry"
     >

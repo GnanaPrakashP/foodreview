@@ -12,7 +12,12 @@ import {
   type MemoryReadRow,
   type MemoryRoomRow
 } from "@/services/memoryShared";
-import { uploadMemoryPhoto } from "@/services/memoryStorage";
+import {
+  createSignedMemoryMediaUrls,
+  isPrivateMemoryMediaPath,
+  removeMemoryMediaFiles,
+  uploadMemoryPhoto
+} from "@/services/memoryStorage";
 import { getCurrentUserProfile, getProfileByUsername } from "@/services/profiles";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 
@@ -47,6 +52,7 @@ export type AddMemoryPhotoInput = {
   roomId: string;
   body?: string;
   replyToMessageId?: string | null;
+  uploadBatchId?: string;
   imageUri?: string;
   imageMimeType?: string | null;
   imageWidth?: number | null;
@@ -58,6 +64,7 @@ export type AddMemoryPhotoInput = {
 };
 
 export type AddMemoryMediaAsset = {
+  clientId?: string;
   imageUri?: string;
   imageMimeType?: string | null;
   mediaUri?: string;
@@ -65,6 +72,12 @@ export type AddMemoryMediaAsset = {
   mediaType?: "image" | "video";
   imageWidth?: number | null;
   imageHeight?: number | null;
+  onUploadProgress?: (progress: number) => void;
+};
+
+export type AddMemoryPhotoResult = {
+  message: MemoryMessageRow;
+  photos: MemoryPhotoRow[];
 };
 
 export type AddMemoryDishInput = {
@@ -113,6 +126,48 @@ async function myUsername() {
   const profile = await getCurrentUserProfile();
   if (!profile) throw new Error("Log in to use memories");
   return profile.username;
+}
+
+function memoryRoomNotFoundError() {
+  return new Error("Memory room not found");
+}
+
+function usernameMatches(first: string, second: string) {
+  return first.toLowerCase() === second.toLowerCase();
+}
+
+async function assertMemoryRoomMember(roomId: string, username: string) {
+  if (!roomId) throw memoryRoomNotFoundError();
+
+  const { data, error } = await supabase
+    .from("shared_memory_members")
+    .select("id")
+    .eq("room_id", roomId)
+    .eq("user_name", username)
+    .maybeSingle<{ id: string }>();
+
+  if (error) throw memoryTablesError(error);
+  if (!data) throw memoryRoomNotFoundError();
+}
+
+function assertLoadedMemoryRoomMember(members: MemoryMemberRow[], username: string) {
+  if (!members.some((member) => usernameMatches(member.user_name, username))) {
+    throw memoryRoomNotFoundError();
+  }
+}
+
+async function signMemoryPhotoRows(rows: MemoryPhotoRow[]) {
+  const privatePaths = rows
+    .map((row) => row.storage_path)
+    .filter(isPrivateMemoryMediaPath);
+
+  if (privatePaths.length === 0) return rows;
+
+  const urls = await createSignedMemoryMediaUrls(privatePaths);
+  return rows.map((row) => {
+    const signedUrl = urls.get(row.storage_path);
+    return signedUrl ? { ...row, public_url: signedUrl } : row;
+  });
 }
 
 async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) {
@@ -518,7 +573,9 @@ async function fetchRoomParts(roomId: string, username: string) {
       .eq("user_name", username)
       .maybeSingle<MemoryReadRow>()
   ]);
-  const photos = await fetchMemoryPhotosForMessages(roomId, messagesPage.rows.map((message) => message.id));
+  const photos = await signMemoryPhotoRows(
+    await fetchMemoryPhotosForMessages(roomId, messagesPage.rows.map((message) => message.id))
+  );
   const replyMessages = await fetchMissingReplyRows(roomId, messagesPage.rows);
 
   if (roomResult.error) throw memoryTablesError(roomResult.error);
@@ -542,7 +599,9 @@ async function fetchRoomParts(roomId: string, username: string) {
 
 export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
   const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
   const parts = await fetchRoomParts(roomId, username);
+  assertLoadedMemoryRoomMember(parts.members, username);
   const names = [
     ...parts.members.map((member) => member.user_name),
     ...parts.dishes.map((dish) => dish.added_by),
@@ -568,13 +627,16 @@ export async function getMemoryMessagesPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMessagesPage> {
-  await myUsername();
+  const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
   const messagePage = await fetchMemoryMessageRowsPage({
     before: input.before,
     limit: input.limit ?? MEMORY_CHAT_PAGE_SIZE,
     roomId
   });
-  const photos = await fetchMemoryPhotosForMessages(roomId, messagePage.rows.map((message) => message.id));
+  const photos = await signMemoryPhotoRows(
+    await fetchMemoryPhotosForMessages(roomId, messagePage.rows.map((message) => message.id))
+  );
   const replyMessages = await fetchMissingReplyRows(roomId, messagePage.rows);
   const namesByUsername = await displayNameMap([
     ...messagePage.rows.map((message) => message.author_name),
@@ -598,22 +660,25 @@ export async function getMemoryMediaPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMediaPage> {
-  await myUsername();
+  const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
   const mediaPage = await fetchMemoryMediaRowsPage({
     before: input.before,
     limit: input.limit ?? MEMORY_MEDIA_PAGE_SIZE,
     roomId
   });
-  const namesByUsername = await displayNameMap(mediaPage.rows.map((photo) => photo.uploader_name));
+  const rows = await signMemoryPhotoRows(mediaPage.rows);
+  const namesByUsername = await displayNameMap(rows.map((photo) => photo.uploader_name));
 
   return {
     nextCursor: mediaPage.nextCursor,
-    photos: mapMemoryPhotos({ namesByUsername, photos: mediaPage.rows })
+    photos: mapMemoryPhotos({ namesByUsername, photos: rows })
   };
 }
 
 export async function markMemoryRoomRead(roomId: string) {
   const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
   const now = new Date().toISOString();
 
   const { error } = await supabase
@@ -669,6 +734,7 @@ export async function addMemoryParticipant(roomId: string, rawUsername: string) 
 
 export async function leaveMemoryRoom(roomId: string) {
   const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
 
   const { error } = await supabase
     .from("shared_memory_members")
@@ -691,6 +757,7 @@ export async function leaveMemoryRoom(roomId: string) {
 
 export async function addMemoryMessage(roomId: string, body: string, replyToMessageId?: string | null) {
   const authorName = await myUsername();
+  await assertMemoryRoomMember(roomId, authorName);
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
   const messageInsert = {
@@ -718,6 +785,7 @@ export async function addMemoryMessage(roomId: string, body: string, replyToMess
 
 export async function editMemoryMessage(roomId: string, messageId: string, body: string) {
   const authorName = await myUsername();
+  await assertMemoryRoomMember(roomId, authorName);
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
 
@@ -734,6 +802,7 @@ export async function editMemoryMessage(roomId: string, messageId: string, body:
 
 export async function deleteMemoryMessage(roomId: string, messageId: string) {
   const authorName = await myUsername();
+  await assertMemoryRoomMember(roomId, authorName);
   const { data: photos, error: photosError } = await supabase
     .from("shared_memory_photos")
     .select("storage_path")
@@ -755,7 +824,7 @@ export async function deleteMemoryMessage(roomId: string, messageId: string) {
 
   const paths = (photos ?? []).map((photo) => photo.storage_path).filter(Boolean);
   if (paths.length > 0) {
-    await supabase.storage.from("review-photos").remove(paths);
+    await removeMemoryMediaFiles(paths);
   }
 
   return { ok: true };
@@ -766,6 +835,7 @@ export async function deleteMemoryItems(
   input: { messageIds?: string[]; photoIds?: string[] }
 ) {
   const authorName = await myUsername();
+  await assertMemoryRoomMember(roomId, authorName);
   const messageIds = Array.from(new Set(input.messageIds ?? [])).filter(Boolean);
   const photoIds = Array.from(new Set(input.photoIds ?? [])).filter(Boolean);
 
@@ -821,7 +891,7 @@ export async function deleteMemoryItems(
 
   const uniquePaths = Array.from(new Set(storagePaths));
   if (uniquePaths.length > 0) {
-    await supabase.storage.from("review-photos").remove(uniquePaths);
+    await removeMemoryMediaFiles(uniquePaths);
   }
 
   return { ok: true };
@@ -829,6 +899,7 @@ export async function deleteMemoryItems(
 
 export async function deleteMemoryPhoto(roomId: string, photoId: string) {
   const uploaderName = await myUsername();
+  await assertMemoryRoomMember(roomId, uploaderName);
   const { data: photo, error: fetchError } = await supabase
     .from("shared_memory_photos")
     .select("storage_path")
@@ -848,7 +919,7 @@ export async function deleteMemoryPhoto(roomId: string, photoId: string) {
 
   if (error) throw memoryTablesError(error);
   if (photo?.storage_path) {
-    await supabase.storage.from("review-photos").remove([photo.storage_path]);
+    await removeMemoryMediaFiles([photo.storage_path]);
   }
 
   return { ok: true };
@@ -856,6 +927,7 @@ export async function deleteMemoryPhoto(roomId: string, photoId: string) {
 
 export async function addMemoryDish(input: AddMemoryDishInput) {
   const addedBy = await myUsername();
+  await assertMemoryRoomMember(input.roomId, addedBy);
   const dishName = input.dishName.trim();
   const note = input.note?.trim() || null;
   const rating = input.rating && input.rating > 0 ? input.rating : null;
@@ -884,8 +956,9 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
   return { ok: true };
 }
 
-export async function addMemoryPhoto(input: AddMemoryPhotoInput) {
+export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMemoryPhotoResult> {
   const uploaderName = await myUsername();
+  await assertMemoryRoomMember(input.roomId, uploaderName);
   const { error: schemaError } = await supabase
     .from("shared_memory_photos")
     .select("media_type, message_id, image_width, image_height, position")
@@ -925,15 +998,15 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput) {
   const { data: message, error: messageError } = await supabase
     .from("shared_memory_messages")
     .insert(messageInsert)
-    .select("id")
-    .single<{ id: string }>();
+    .select(MEMORY_MESSAGE_SELECT)
+    .single<MemoryMessageRow>();
 
   if (isMissingMemoryMessageReplyColumn(messageError)) {
     throw new Error("Run mobile/supabase/migrations/202606090004_shared_memory_message_replies.sql before replying to messages.");
   }
   if (messageError) throw memoryTablesError(messageError);
 
-  const { error } = await supabase
+  const { data: insertedPhotos, error } = await supabase
     .from("shared_memory_photos")
     .insert(uploaded.map((media, position) => ({
       media_type: media.mediaType,
@@ -941,11 +1014,13 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput) {
       image_height: media.imageHeight,
       image_width: media.imageWidth,
       position,
-      public_url: media.publicUrl,
+      public_url: media.storagePath,
       room_id: input.roomId,
       storage_path: media.storagePath,
       uploader_name: uploaderName,
-    })));
+    })))
+    .select(MEMORY_PHOTO_SELECT)
+    .returns<MemoryPhotoRow[]>();
 
   if (isMissingMemoryPhotoDimensionColumn(error)) {
     throw new Error("Run mobile/supabase/migrations/202606090001_shared_memory_media_dimensions.sql before sending media in memory rooms.");
@@ -954,10 +1029,12 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput) {
     throw new Error("Run mobile/supabase/migrations/202606070001_shared_memory_photo_message_groups.sql before sending grouped media in memory rooms.");
   }
   if (error) throw memoryTablesError(error);
+  const signedPhotos = await signMemoryPhotoRows(insertedPhotos ?? []);
+  assets.forEach((asset) => asset.onUploadProgress?.(1));
   void notifyMemoryRoomActivity({
     kind: "media",
     preview: input.body?.trim() || `${uploaded.length} media item${uploaded.length === 1 ? "" : "s"}`,
     roomId: input.roomId
   }).catch(() => {});
-  return { ok: true };
+  return { message, photos: signedPhotos };
 }

@@ -92,8 +92,26 @@ export function actorFromProfile(profile: Profile): ActorProfile {
   };
 }
 
+function isUsernameTakenError(error: { code?: string; message?: string } | null | undefined) {
+  return error?.code === "23505" || /profiles_username_unique|duplicate key/i.test(error?.message ?? "");
+}
+
 export async function createProfile(input: SignupProfileInput): Promise<Profile> {
   assertValidProfileInput(input);
+  const username = normalizeUsername(input.username);
+
+  // Match the Edit Profile flow: report a taken username with a friendly message
+  // instead of letting the DB unique constraint surface a raw Postgres error.
+  const { data: existing, error: existingError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("username", username)
+    .maybeSingle<{ id: string }>();
+
+  if (existingError) throw new Error(existingError.message);
+  if (existing && existing.id !== input.userId) {
+    throw new Error("Username is already taken");
+  }
 
   const { data, error } = await supabase
     .from("profiles")
@@ -101,12 +119,16 @@ export async function createProfile(input: SignupProfileInput): Promise<Profile>
       id: input.userId,
       first_name: input.firstName.trim(),
       last_name: input.lastName.trim(),
-      username: normalizeUsername(input.username)
+      username
     }, { onConflict: "id" })
     .select(PROFILE_SELECT)
     .single<ProfileRow>();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Guards the race between the check above and the insert.
+    if (isUsernameTakenError(error)) throw new Error("Username is already taken");
+    throw new Error(error.message);
+  }
   return mapProfile(data);
 }
 
@@ -118,12 +140,22 @@ export async function setupCurrentUserProfile(input: ProfileSetupInput): Promise
   const user = userData.user;
   if (!user) throw new Error("Log in before setting up your profile");
 
-  return createProfile({
+  const profile = await createProfile({
     userId: user.id,
     firstName: input.firstName,
     lastName: input.lastName,
     username: input.username
   });
+
+  // Keep auth metadata in sync with the profile, matching the Edit Profile flow.
+  await supabase.auth.updateUser({
+    data: {
+      full_name: `${input.firstName.trim()} ${input.lastName.trim()}`.trim(),
+      username: profile.username
+    }
+  }).catch(() => {});
+
+  return profile;
 }
 
 export async function getCurrentUserProfile(): Promise<Profile | null> {
@@ -140,6 +172,55 @@ export async function getCurrentUserProfile(): Promise<Profile | null> {
 
   if (error) throw new Error(error.message);
   return data ? mapProfile(data) : null;
+}
+
+export type AvatarUploadInput = {
+  uri: string;
+  mimeType?: string | null;
+};
+
+function avatarExtension(uri: string, mimeType?: string | null): string {
+  if (mimeType?.includes("png")) return "png";
+  if (mimeType?.includes("webp")) return "webp";
+  const ext = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1]?.toLowerCase();
+  if (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg") return ext === "jpeg" ? "jpg" : ext;
+  return "jpg";
+}
+
+export async function updateCurrentUserAvatar(input: AvatarUploadInput): Promise<Profile> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw new Error(userError.message);
+  const user = userData.user;
+  if (!user) throw new Error("Log in before updating your photo");
+
+  const ext = avatarExtension(input.uri, input.mimeType);
+  const contentType = input.mimeType || (ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg");
+  const path = `public/avatars/${user.id}/${Date.now()}.${ext}`;
+
+  const response = await fetch(input.uri);
+  if (!response.ok) throw new Error("Could not read the selected image");
+  const blob = await response.blob();
+
+  const { error: uploadError } = await supabase.storage
+    .from("review-photos")
+    .upload(path, blob, { contentType, upsert: false });
+  if (uploadError) throw new Error(uploadError.message);
+
+  const { data: publicUrlData } = supabase.storage.from("review-photos").getPublicUrl(path);
+  const avatarUrl = publicUrlData.publicUrl;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ avatar_url: avatarUrl })
+    .eq("id", user.id)
+    .select(PROFILE_SELECT)
+    .single<ProfileRow>();
+
+  if (error) throw new Error(error.message);
+
+  await supabase.auth.updateUser({ data: { avatar_url: avatarUrl } }).catch(() => {});
+
+  return mapProfile(data);
 }
 
 export async function updateCurrentAccountType(accountType: AccountType): Promise<Profile> {

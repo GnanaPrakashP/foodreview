@@ -151,6 +151,7 @@ export type MemoryPhoto = {
   imageHeight: number | null;
   position: number;
   createdAt: string;
+  uploadProgress?: number | null;
 };
 
 export type MemoryRoom = {

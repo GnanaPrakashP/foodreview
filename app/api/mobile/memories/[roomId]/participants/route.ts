@@ -4,7 +4,6 @@ import { createNotificationForNames } from "@/lib/notifications";
 import { getRouteActor } from "@/lib/server/route-supabase";
 
 type RoomRow = {
-  created_by: string;
   id: string;
   restaurant_name: string;
 };
@@ -69,7 +68,7 @@ export async function POST(
 
     const { data: room, error: roomError } = await admin
       .from("shared_memory_rooms")
-      .select("id, restaurant_name, created_by")
+      .select("id, restaurant_name")
       .eq("id", roomId)
       .maybeSingle<RoomRow>();
 
@@ -84,8 +83,8 @@ export async function POST(
       .limit(1);
 
     if (membershipError) return NextResponse.json({ error: membershipError.message }, { status: 500 });
-    if (room.created_by !== inviter && (membershipRows ?? []).length === 0) {
-      return NextResponse.json({ error: "Only room members can invite people" }, { status: 403 });
+    if ((membershipRows ?? []).length === 0) {
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
     const { data: profiles, error: profileError } = await admin

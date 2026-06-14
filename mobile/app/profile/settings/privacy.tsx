@@ -1,8 +1,15 @@
-import { useRouter } from "expo-router";
+import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { colors, fontStyles, spacing } from "@/theme";
+import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, spacing } from "@/theme";
+
+type ThemeColors = ReturnType<typeof themeColorsFor>;
+
+const LAST_UPDATED = "Last updated: June 2026";
 
 const sections = [
   {
@@ -19,16 +26,31 @@ const sections = [
   },
   {
     title: "Contact",
-    body: "Questions? Email us at privacy@foodcircle.app"
+    body: "Questions? Email us at privacy@circlebites.app"
   }
 ];
 
 export default function PrivacyPolicyScreen() {
-  const router = useRouter();
+  const { themeColors } = useThemePreference();
+  const { slideStyle, close } = useSlideOverScreen();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
-    <Screen padded={false} scroll style={{ gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>
-      <MemoryRouteHeader backButtonVariant="plain" onBack={() => router.back()} title="Privacy Policy" titleWeight="regular" subtitle="Last updated: May 2025" />
+    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
+    <Screen
+      backgroundColor={themeColors.bg}
+      padded={false}
+      scroll
+      style={{ backgroundColor: themeColors.bg, gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    >
+      <MemoryRouteHeader
+        backButtonVariant="plain"
+        onBack={close}
+        subtitle={LAST_UPDATED}
+        themeColors={themeColors}
+        title="Privacy Policy"
+        titleWeight="regular"
+      />
       <View style={styles.content}>
         {sections.map((section) => (
           <View key={section.title} style={styles.section}>
@@ -38,26 +60,29 @@ export default function PrivacyPolicyScreen() {
         ))}
       </View>
     </Screen>
+    </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
-  content: {
-    gap: spacing.lg
-  },
-  section: {
-    gap: spacing.sm
-  },
-  heading: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 15,
-    lineHeight: 19
-  },
-  body: {
-    ...fontStyles.medium,
-    color: colors.dark.muted,
-    fontSize: 14,
-    lineHeight: 22
-  }
-});
+function createStyles(themeColors: ThemeColors) {
+  return StyleSheet.create({
+    content: {
+      gap: spacing.lg
+    },
+    section: {
+      gap: spacing.sm
+    },
+    heading: {
+      ...fontStyles.extraBold,
+      color: themeColors.cream,
+      fontSize: 15,
+      lineHeight: 19
+    },
+    body: {
+      ...fontStyles.medium,
+      color: themeColors.muted,
+      fontSize: 14,
+      lineHeight: 22
+    }
+  });
+}

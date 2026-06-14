@@ -10,7 +10,8 @@ import {
 } from "@/components/auth/AuthUi";
 import { useCurrentUserProfileQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, spacing } from "@/theme";
 
 function cleanUsername(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20);
@@ -26,6 +27,8 @@ function nameParts(fullName: string | undefined) {
 
 export default function ProfileOnboardingScreen() {
   const router = useRouter();
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const session = useSessionStore((state) => state.session);
   const isReady = useSessionStore((state) => state.isReady);
   const setup = useSetupCurrentProfileMutation();
@@ -116,29 +119,31 @@ export default function ProfileOnboardingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  headerBlock: {
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-    marginTop: spacing.md
-  },
-  cardTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 20
-  },
-  cardText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 20
-  },
-  nameRow: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  nameField: {
-    flex: 1,
-    minWidth: 0
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    headerBlock: {
+      gap: spacing.sm,
+      marginBottom: spacing.lg,
+      marginTop: spacing.md
+    },
+    cardTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 20
+    },
+    cardText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 20
+    },
+    nameRow: {
+      flexDirection: "row",
+      gap: spacing.sm
+    },
+    nameField: {
+      flex: 1,
+      minWidth: 0
+    }
+  });
+}

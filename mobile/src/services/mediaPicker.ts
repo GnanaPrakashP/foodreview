@@ -39,6 +39,33 @@ export async function pickPostImageFromGallery() {
   };
 }
 
+export async function pickAvatarFromGallery() {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    return {
+      asset: null,
+      error: "Photo library permission was not granted."
+    };
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsEditing: true,
+    aspect: [1, 1],
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 0.85,
+    selectionLimit: 1
+  });
+
+  if (result.canceled) {
+    return { asset: null, error: null };
+  }
+
+  return {
+    asset: result.assets[0] ?? null,
+    error: null
+  };
+}
+
 export async function pickMemoryMediaFromGallery(): Promise<MemoryMediaPickerResult> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {

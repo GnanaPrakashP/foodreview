@@ -1,0 +1,1155 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>CircleBites — Screens</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400;1,9..40,600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#0a0a0a;color:#fff}
+@page{size:Letter portrait;margin:0}
+.page{width:8.5in;height:11in;padding:0.42in;background:#fbf9f4;position:relative;page-break-after:always;overflow:hidden}
+.page:last-child{page-break-after:auto}
+/* cover */
+.cover{background:#0E0B08;color:#F5EDD8;display:flex;flex-direction:column;justify-content:center;padding:0.9in}
+.cover-brand{font-size:62px;font-weight:800;letter-spacing:-1px}
+.cover-sub{font-size:20px;color:#7A6E65;font-weight:600;margin-top:6px}
+.cover-line{height:3px;width:80px;background:#F06030;margin:26px 0;border-radius:2px}
+.cover-meta{display:flex;gap:26px;font-size:14px;color:#F5EDD8;opacity:.8}
+.cover-meta b{color:#F06030;font-size:18px}
+.cover-note{margin-top:22px;max-width:5.2in;font-size:13.5px;line-height:1.7;color:#7A6E65}
+.cover-legend{margin-top:40px;display:flex;flex-direction:column;gap:10px;font-size:13px;color:#F5EDD8}
+.leg{display:flex;align-items:center;gap:10px}.sw{width:14px;height:14px;border-radius:4px;display:inline-block}
+/* board */
+.board{background:#fbf9f4;color:#1a1a1a}
+.board-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1.5px solid #e6e0d4;padding-bottom:10px;margin-bottom:18px}
+.board-num{font-size:22px;font-weight:800;color:#F06030}
+.board-brand{font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#9a9388}
+.board-grid{display:flex;gap:0.42in;justify-content:center;align-items:flex-start}
+.phone-wrap{width:300px;display:flex;flex-direction:column;align-items:center}
+.phone{width:300px;height:600px;border-radius:34px;border:7px solid #15110d;overflow:hidden;position:relative;box-shadow:0 12px 30px rgba(0,0,0,0.28);display:flex;flex-direction:column}
+.phone-body{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.caption{margin-top:14px;text-align:center;width:300px}
+.cap-title{font-size:13.5px;font-weight:800;color:#1a1a1a}
+.cap-text{font-size:11px;line-height:1.5;color:#6b655c;margin-top:3px}
+
+/* status bar */
+.sbar{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 22px;font-size:13px;font-weight:700;flex-shrink:0}
+.sb-right{display:flex;align-items:center;gap:5px}
+.sb-dots{display:flex;gap:2px;align-items:flex-end}
+.sb-dots i{width:3px;height:3px;border-radius:50%;background:currentColor;display:block}
+
+/* tab bar */
+.tabbar{height:54px;display:flex;border-top:1px solid #2E2720;background:#1A1410;flex-shrink:0}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+.tab-lbl{font-size:9px;letter-spacing:.2px}
+
+/* generic warm-theme */
+.warm-theme{color:#F5EDD8}
+.screen-pad{display:flex;flex-direction:column;padding:16px 20px;flex:1;overflow:hidden}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 10px}
+.hdr-col{padding:18px 20px 6px}
+.hdr-title{font-size:26px;color:#F5EDD8;line-height:1.15}
+.hdr-sub{font-size:14px;color:rgba(245,237,216,0.62);font-weight:600;margin-top:5px}
+.hdr-x{width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;margin-left:-6px}
+.hdr-next,.hdr-post{background:#F06030;color:#fff;font-weight:700;font-size:14px;padding:9px 18px;border-radius:999px}
+.feed{flex:1;overflow:hidden}
+.row-wrap{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:10px;border-radius:999px;padding:3px 8px;font-weight:600;white-space:nowrap}
+.rpill{display:inline-flex;align-items:center;gap:2px;background:rgba(232,168,48,0.15);border:1px solid rgba(232,168,48,0.25);border-radius:5px;padding:1px 5px;color:#E8A830;font-size:10px;font-weight:700}
+.dish{display:inline-flex;align-items:center;gap:5px;background:rgba(245,237,216,0.055);border:1px solid rgba(245,237,216,0.10);border-radius:8px;padding:4px 7px;color:#F5EDD8;font-size:11px}
+
+/* avatars */
+.av{width:38px;height:38px;border-radius:19px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0;border:1px solid rgba(245,237,216,0.14)}
+.av.lg{width:48px;height:48px;border-radius:24px;font-size:15px}
+.av.xl{width:72px;height:72px;border-radius:22px;font-size:22px}
+.av.sm{width:30px;height:30px;border-radius:10px;font-size:10px}
+
+/* post card */
+.pcard{border-bottom:1px solid rgba(46,39,32,0.78);background:#0E0B08}
+.pc-head{display:flex;align-items:center;gap:10px;padding:14px 8px 12px 20px}
+.pc-meta{flex:1;min-width:0}
+.pc-row{display:flex;align-items:center;gap:7px}
+.pc-author{font-size:13px;font-weight:600;color:#F5EDD8}
+.pc-dot{color:#7A6E65;font-weight:700}
+.pc-time{font-size:13px;color:#7A6E65}
+.pc-sub{font-size:12px;color:#7A6E65}
+.req-btn{background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.35);color:#F06030;font-weight:800;font-size:11px;padding:6px 11px;border-radius:999px;white-space:nowrap}
+.more{width:34px;height:34px;display:flex;align-items:center;justify-content:center}
+.pc-body{padding:0 20px 12px}
+.pc-rest{font-size:18px;font-weight:800;color:#F5EDD8;margin-bottom:5px}
+.pc-loc{display:flex;align-items:center;gap:4px;color:#7A6E65;font-size:11px}
+.pc-cap{font-size:13px;line-height:1.55;color:rgba(245,237,216,0.9);margin-top:10px}
+.photo{position:relative;width:100%;overflow:hidden}
+.photo-glow{position:absolute;inset:0;background:radial-gradient(120% 80% at 70% 20%,rgba(255,255,255,0.18),transparent 60%)}
+.photo-badge{position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.5);color:#fff;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px}
+.pc-actions{display:flex;align-items:center;gap:8px;padding:10px 20px 8px}
+.pc-acluster{flex:1;display:flex;align-items:center;gap:16px}
+.pc-act{display:flex;align-items:center;gap:5px;color:#7A6E65;font-size:13px;font-weight:600}
+.pc-act i{font-style:normal}
+.pc-act.liked{color:#E84040}
+.pc-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center}
+
+/* login */
+.login-hero{position:absolute;inset:0;z-index:0}
+.login-fade{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(14,11,8,0.08) 0%,rgba(14,11,8,0.48) 28%,rgba(14,11,8,0.86) 58%,#0E0B08 86%)}
+.login-content{position:relative;z-index:1;margin-top:auto;padding:0 22px 24px;text-align:center}
+.brand-wm{font-size:36px;font-weight:800;color:#fff}
+.brand-tag{font-size:14px;color:rgba(255,255,255,0.68);font-weight:600;margin-top:8px}
+.method{display:flex;align-items:center;justify-content:center;gap:14px;min-height:54px;border-radius:16px;border:1.5px solid rgba(245,237,216,0.18);background:rgba(245,237,216,0.06);color:#fff;font-weight:700;font-size:16px;margin-bottom:10px}
+.method.primary{background:#fff;color:#1F2933;border-color:#fff}
+.gmark{width:18px;height:18px;border-radius:50%;background:conic-gradient(#EA4335 0 25%,#FBBC05 0 50%,#34A853 0 75%,#4285F4 0 100%);display:inline-block}
+.auth-div{display:flex;align-items:center;gap:12px;margin:14px 0}
+.auth-div i{flex:1;height:1px;background:rgba(245,237,216,0.16)}
+.auth-div span{font-size:12px;color:rgba(245,237,216,0.55);font-weight:600}
+.terms{font-size:13px;line-height:1.6;color:rgba(255,255,255,0.56);font-weight:500;margin-top:24px}
+.terms b{color:#F06030}
+.back-link{display:flex;align-items:center;gap:4px;color:#F06030;font-size:13px;font-weight:700;margin-bottom:12px}
+.auth-h{text-align:center;margin:10px 0 18px}
+.auth-title{font-size:18px;font-weight:800;color:#F5EDD8}
+.auth-text{font-size:13px;color:#7A6E65;font-weight:600;line-height:1.5;margin-top:8px}
+.field{display:flex;align-items:center;gap:10px;background:rgba(14,11,8,0.55);border:1px solid rgba(46,39,32,0.9);border-radius:14px;padding:13px 14px;margin-bottom:10px}
+.field input{background:none;border:none;outline:none;color:#F5EDD8;font-size:15px;font-family:inherit;flex:1;font-weight:500}
+.field input::placeholder{color:#7A6E65}
+.field .show{color:#7A6E65;font-size:12px;font-weight:600}
+.btn-orange{background:#F06030;color:#fff;font-weight:700;font-size:15px;text-align:center;padding:14px;border-radius:14px;margin-top:4px}
+.auth-card{background:rgba(33,28,23,0.92);border:1px solid rgba(46,39,32,0.9);border-radius:20px;padding:22px}
+
+/* explore */
+.loc-btn{display:flex;align-items:center;gap:6px;color:#F5EDD8;font-size:13px;font-weight:800}
+.srch{padding:4px 16px 8px}
+.srch-box{display:flex;align-items:center;gap:8px;background:#211C17;border:1px solid #2E2720;border-radius:16px;padding:10px 16px}
+.ph{color:#7A6E65;font-size:14px}
+.ex-tabs{display:flex;padding:0 16px 10px}
+.ex-tab{flex:1;text-align:center;padding:10px 0 9px;font-size:12px;font-weight:600;color:#7A6E65;border-bottom:2px solid #2E2720}
+.ex-tab.on{color:#F06030;border-bottom-color:#F06030}
+.cat-grid{display:flex;gap:6px;padding:0 16px 12px}
+.cat{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px}
+.cat-img{width:62px;height:62px;border-radius:14px}
+.cat span{font-size:11px;font-weight:800;color:rgba(255,255,255,0.72)}
+.disc-h{display:flex;align-items:center;gap:8px;padding:8px 16px}
+.disc-h b{font-size:14px;font-weight:800;color:#F5EDD8}
+.spot{display:flex;background:#211C17;border:1px solid #2E2720;border-radius:14px;overflow:hidden;height:152px;margin:0 16px 10px}
+.spot-media{width:122px;flex-shrink:0}
+.spot-body{flex:1;padding:14px;min-width:0}
+.spot-top{display:flex;justify-content:space-between;gap:12px;margin-bottom:8px}
+.spot-name{font-size:17px;font-weight:700;color:#F5EDD8}
+.spot-meta{display:flex;align-items:center;gap:4px;color:rgba(255,255,255,0.72);font-size:11px;margin-top:2px}
+.rscore{display:inline-flex;align-items:center;gap:3px;background:rgba(232,168,48,0.14);border:1px solid rgba(232,168,48,0.24);border-radius:999px;padding:4px 7px;color:#E8A830;font-size:11px;font-weight:800;height:fit-content}
+.spot-visit{font-size:11px;color:rgba(255,255,255,0.72);margin-bottom:8px}
+.spot-proof{font-size:11px;color:rgba(255,255,255,0.74);border-top:1px solid rgba(255,255,255,0.16);padding-top:9px;margin-top:9px}
+.person{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2E2720}
+.person-txt{flex:1;min-width:0}
+.person-name{font-size:16px;font-weight:700;color:#F5EDD8}
+.person-meta{font-size:11px;color:rgba(255,255,255,0.72);margin-top:2px}
+
+/* create */
+.action-card{border:1px solid;border-radius:24px;padding:18px;position:relative;overflow:hidden;min-height:180px}
+.ac-ico{width:48px;height:48px;border-radius:999px;border:1px solid;display:flex;align-items:center;justify-content:center;margin-bottom:13px}
+.ac-title{font-size:24px;font-weight:800;color:#F5EDD8;margin-bottom:8px}
+.ac-desc{font-size:13px;font-weight:600;color:rgba(245,237,216,0.7);margin-bottom:12px;max-width:62%}
+.ac-chip{font-size:10px;font-weight:800;border:1px solid;border-radius:999px;padding:5px 9px}
+.ac-cta{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:800}
+.attach{display:flex;align-items:center;gap:12px;background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:14px}
+.attach.loc{padding:10px 14px;background:transparent;border:none}
+.aval{color:#F5EDD8;font-size:15px;font-weight:500}
+.cap-box{background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:14px;min-height:64px}
+.dishrow{background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.dish-in{display:flex;align-items:center;gap:12px}
+.dish-rate{display:flex;align-items:center;justify-content:space-between}
+.rate-lbl{font-size:12px;color:#E8A830;font-weight:700}
+.stars{display:flex;gap:4px}
+.add-dish{display:flex;align-items:center;gap:6px;color:#3DD68C;font-size:13px;font-weight:700}
+.tag-in{display:flex;align-items:center;gap:12px;background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:14px}
+.tagpill{display:inline-flex;align-items:center;gap:5px;background:#211C17;border:1px solid #2E2720;border-radius:999px;padding:6px 10px;color:#7A6E65;font-size:11px;font-weight:600}
+.photo-req{border:1px dashed rgba(240,96,48,0.30);border-radius:12px;min-height:176px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px;background:rgba(14,11,8,0.4)}
+.req-ico{width:58px;height:58px;border-radius:999px;background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.30);display:flex;align-items:center;justify-content:center}
+.req-title{font-size:16px;font-weight:800;color:#F5EDD8;display:flex;align-items:center;gap:7px}
+.req-pill{font-size:10px;font-weight:800;background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.30);color:#F06030;padding:4px 8px;border-radius:999px}
+.req-text{font-size:12px;color:#7A6E65;font-weight:500;max-width:230px}
+.gallery{background:#1A1410;border-top:1px solid #2E2720;border-radius:18px 18px 0 0;padding:8px 20px 12px;margin-top:auto}
+.g-handle{width:36px;height:4px;border-radius:999px;background:#2E2720;margin:0 auto 10px}
+.g-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.g-head b{color:#F5EDD8;font-size:14px}
+.g-strip{display:flex;gap:8px;overflow:hidden}
+.g-cam{width:72px;height:72px;border-radius:10px;background:#211C17;border:1px solid #2E2720;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#F5EDD8;font-size:11px;font-weight:600;flex-shrink:0}
+.g-tile{width:72px;height:72px;border-radius:10px;overflow:hidden;flex-shrink:0}
+.g-tile .photo{height:72px;border-radius:10px}
+.vis-grid{display:flex;gap:8px;padding:14px 20px}
+.vis{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid #2E2720;border-radius:12px;padding:10px;color:#7A6E65;font-size:12px}
+.vis.on{border-color:#F06030;background:rgba(240,96,48,0.12)}
+.fchip{display:inline-flex;align-items:center;gap:6px;background:#211C17;border:1px solid #2E2720;border-radius:999px;padding:6px 11px;color:#F5EDD8;font-size:12px;font-weight:600}
+.priv-note{display:flex;align-items:center;gap:6px;color:#3DD68C;font-size:12px;font-weight:600}
+
+/* profile */
+.prof-hero{position:relative}
+.prof-settings{position:absolute;right:0;top:0;width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+.prof-id{display:flex;align-items:center;gap:12px;padding-right:52px}
+.prof-name{font-size:23px;font-weight:700;color:#F5EDD8}
+.prof-handle{font-size:13px;font-weight:600;color:#F5EDD8;opacity:.62;margin-top:2px}
+.prof-joined{display:flex;align-items:center;gap:5px;color:#7A6E65;font-size:12px;font-weight:600;margin-top:5px}
+.prof-bio{font-size:14px;color:#F5EDD8;opacity:.82;margin-top:12px;font-weight:500}
+.stats{display:flex;padding:8px 0}
+.stat{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0}
+.stat.div{border-left:1px solid rgba(245,237,216,0.08)}
+.stat-v{font-size:24px;font-weight:800;color:#F5EDD8}
+.stat-l{font-size:11px;font-weight:700;color:#7A6E65}
+.prof-tabs{display:flex;padding-top:4px}
+.ptab{flex:1;text-align:center;font-size:12px;font-weight:700;color:#7A6E65;display:flex;flex-direction:column;gap:10px}
+.ptab i{height:2px;background:#2E2720;display:block}
+.ptab.on{color:#F06030}
+.ptab.on i{background:#F06030}
+.mem-row{display:flex;align-items:center;gap:12px;background:#211C17;border:1px solid #2E2720;border-radius:12px;padding:12px;min-height:80px}
+.mem-row.unread{border-color:rgba(240,96,48,0.45)}
+.mem-date{width:38px;text-align:center}
+.mem-day{font-size:14px;font-weight:800;color:#F06030}
+.mem-mon{font-size:10px;font-weight:700;color:#7A6E65;margin-top:2px}
+.mem-divider{width:1px;align-self:stretch;background:#2E2720}
+.mem-copy{flex:1;min-width:0}
+.mem-title{font-size:15px;font-weight:800;color:#F5EDD8}
+.mem-meta{font-size:12px;font-weight:600;color:#7A6E65;margin-top:3px}
+.mem-counts{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+.mem-unread{background:#F06030;color:#fff;font-size:10px;font-weight:800;border-radius:999px;padding:3px 7px}
+.mem-c{display:flex;align-items:center;gap:4px;color:#7A6E65;font-size:11px;font-weight:800}
+
+/* trust sheet */
+.sheet-scrim{position:absolute;inset:0;background:rgba(0,0,0,0.6)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#211C17;border:1px solid rgba(245,237,216,0.09);border-radius:20px 20px 0 0;max-height:88%}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;padding:18px;border-bottom:1px solid rgba(245,237,216,0.06)}
+.sheet-head b{font-size:16px;font-weight:800;color:#F5EDD8}
+.sheet-x{width:30px;height:30px;border-radius:999px;background:rgba(245,237,216,0.07);display:flex;align-items:center;justify-content:center}
+.trust-score{width:112px;background:rgba(240,96,48,0.12);border:1.5px solid rgba(240,96,48,0.3);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;min-height:118px}
+.ts-val{font-size:40px;font-weight:800;color:#F5EDD8;line-height:1}
+.ts-max{font-size:11px;font-weight:800;color:#F06030;margin-top:3px}
+.trust-lvl{flex:1;background:rgba(245,237,216,0.03);border:1px solid rgba(245,237,216,0.07);border-radius:18px;padding:14px;display:flex;flex-direction:column;justify-content:center}
+.tl-row{display:flex;align-items:center;gap:8px}
+.tl-row b{color:#F5EDD8;font-size:14px;font-weight:800}
+.tl-ico{width:28px;height:28px;border-radius:999px;background:rgba(245,237,216,0.06);display:flex;align-items:center;justify-content:center}
+.tl-desc{font-size:12px;color:#7A6E65;font-weight:700;margin-top:12px;line-height:1.4}
+.tmetric{flex:1;background:rgba(245,237,216,0.035);border:1px solid rgba(245,237,216,0.08);border-radius:14px;padding:11px 10px}
+.tm-top{display:flex;align-items:center;justify-content:space-between}
+.tm-top b{font-size:17px;font-weight:800;color:#F5EDD8}
+.tm-lbl{font-size:10px;font-weight:800;color:#7A6E65;margin-top:9px}
+.trust-unlock{display:flex;align-items:center;gap:7px;color:#7A6E65;font-size:11px;font-weight:800}
+.trust-grow{background:rgba(245,237,216,0.035);border:1px solid rgba(245,237,216,0.08);border-radius:16px;padding:14px}
+.tg-eyebrow{font-size:10px;font-weight:800;letter-spacing:.8px;color:#7A6E65}
+.tg-steps{display:flex;align-items:center;gap:4px;margin-top:13px}
+.tg-step{flex:1;display:flex;flex-direction:column;align-items:center;gap:7px}
+.tg-step span{font-size:11px;font-weight:800;color:#F5EDD8}
+.tg-ico{width:38px;height:38px;border-radius:12px;background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.30);display:flex;align-items:center;justify-content:center}
+.tg-note{font-size:12px;font-weight:800;color:#7A6E65;text-align:center;margin-top:13px}
+
+/* route header / settings / forms */
+.route-hdr{display:flex;align-items:center;gap:12px;padding:18px 20px 6px}
+.rh-back{width:34px;height:34px;display:flex;align-items:center;justify-content:center;margin-left:-6px}
+.rh-kicker{font-size:11px;font-weight:800;letter-spacing:1px;color:#F06030;text-transform:uppercase}
+.rh-title{font-size:20px;font-weight:800;color:#F5EDD8}
+.rh-sub{font-size:12px;color:#7A6E65;font-weight:600;margin-top:2px}
+.set-section{display:flex;flex-direction:column}
+.set-title{font-size:11px;font-weight:800;letter-spacing:.9px;color:#7A6E65;text-transform:uppercase;margin-bottom:6px}
+.set-divider{height:1px;background:rgba(245,237,216,0.1);margin-bottom:2px}
+.set-row{display:flex;align-items:center;gap:12px;min-height:56px;padding:12px 0}
+.set-row.sep{border-top:1px solid rgba(245,237,216,0.08)}
+.set-ico{width:34px;height:34px;border-radius:12px;background:rgba(245,237,216,0.055);display:flex;align-items:center;justify-content:center}
+.set-ico.danger{background:rgba(232,64,64,0.10)}
+.set-lbl{flex:1;font-size:14px;color:#F5EDD8;font-weight:500}
+.set-lbl.danger,.danger{color:#F87171}
+.segmented{display:flex;gap:2px;background:#1A1410;border:1px solid #2E2720;border-radius:12px;padding:3px}
+.seg{font-size:11px;font-weight:800;color:#7A6E65;padding:6px 9px;border-radius:9px}
+.seg.on{background:#F06030;color:#fff}
+.efield{display:flex;flex-direction:column;gap:8px}
+.efield label{font-size:10px;font-weight:800;letter-spacing:1px;color:#7A6E65}
+.einput{background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:14px;font-size:14px;color:#F5EDD8;font-weight:500}
+.einput.tall{min-height:90px}
+.ehint{font-size:11px;color:#7A6E65;font-weight:600}
+.ecount{font-size:11px;color:#7A6E65;font-weight:600;text-align:right}
+.member-list{background:#211C17;border:1px solid #2E2720;border-radius:16px;overflow:hidden}
+.member{display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid #2E2720}
+.member-copy{flex:1;min-width:0}
+.member-name{font-size:15px;font-weight:700;color:#F5EDD8}
+.member-handle{font-size:12px;font-weight:600;color:#7A6E65;margin-top:3px}
+.member-places{display:flex;align-items:center;gap:5px;background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.30);border-radius:999px;padding:6px 9px;color:#F06030;font-size:11px;font-weight:800}
+.remove-btn{background:rgba(232,64,64,0.10);border:1px solid rgba(232,64,64,0.25);color:#F87171;font-size:11px;font-weight:800;padding:7px 10px;border-radius:12px}
+.pp-hero{display:flex;align-items:center;gap:12px}
+.pp-handle{font-size:13px;font-weight:600;color:#7A6E65;margin-top:2px}
+.cmt{display:flex;gap:9px}
+.cmt-body{flex:1}
+.cmt-text{font-size:13px;color:#F5EDD8;line-height:1.5}
+.cmt-text b{font-weight:800}
+.cmt-time{font-size:11px;color:#7A6E65;margin-top:3px}
+.composer{display:flex;align-items:center;gap:10px;border:1px solid #2E2720;border-radius:12px;padding:10px;margin-top:16px}
+.send-sm{width:38px;height:38px;border-radius:12px;background:#F06030;display:flex;align-items:center;justify-content:center}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 36px;gap:12px}
+.empty-ico{width:64px;height:64px;border-radius:999px;background:#211C17;border:1px solid #2E2720;display:flex;align-items:center;justify-content:center}
+.empty-title{font-size:17px;font-weight:800;color:#F5EDD8}
+.empty-text{font-size:13px;color:#7A6E65;line-height:1.5}
+.help-card{background:#211C17;border:1px solid #2E2720;border-radius:16px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.help-title{font-size:18px;font-weight:800;color:#F5EDD8}
+.help-body{font-size:14px;color:#7A6E65;line-height:1.5}
+.info-card{background:#211C17;border:1px solid #2E2720;border-radius:16px;padding:12px}
+.info-t{font-size:11px;font-weight:800;letter-spacing:.8px;color:#7A6E65}
+.info-v{font-size:14px;font-weight:600;color:#F5EDD8;margin-top:4px}
+.legal-h{font-size:15px;font-weight:800;color:#F5EDD8;margin-bottom:8px}
+.legal-b{font-size:14px;color:#7A6E65;line-height:1.6}
+.seg-lg{flex:1;text-align:center;background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:13px;font-size:14px;font-weight:800;color:#7A6E65}
+.seg-lg.on{background:rgba(240,96,48,0.12);border-color:#F06030;color:#F06030}
+.minput{background:#211C17;border:1px solid #2E2720;border-radius:14px;padding:14px;font-size:14px;color:#F5EDD8;font-weight:500}
+.minput.ph{color:#7A6E65}
+.minput.tall{min-height:80px}
+
+/* chat room */
+.chat-theme{color:rgba(255,255,255,0.87)}
+.troom-hdr{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#162332;border-bottom:1px solid rgba(255,255,255,0.08)}
+.tr-av{width:38px;height:38px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff}
+.tr-id{flex:1}
+.tr-name{font-size:15px;font-weight:700;color:rgba(255,255,255,0.87)}
+.tr-sub{font-size:12px;color:rgba(255,255,255,0.60);margin-top:1px}
+.troom-body{flex:1;overflow:hidden;background:#111B25;background-image:radial-gradient(circle at 20% 30%,rgba(51,144,236,0.05),transparent 25%),radial-gradient(circle at 80% 70%,rgba(98,90,214,0.05),transparent 25%);padding:12px 12px 4px;display:flex;flex-direction:column;gap:8px}
+.t-date{align-self:center;background:rgba(0,0,0,0.4);color:rgba(255,255,255,0.60);font-size:11px;font-weight:700;padding:4px 12px;border-radius:999px;letter-spacing:.5px}
+.t-rowL{display:flex;gap:8px;align-items:flex-end;max-width:82%}
+.t-rowR{display:flex;justify-content:flex-end}
+.t-sav{width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;flex-shrink:0}
+.bub{border-radius:14px;padding:8px 11px;font-size:13.5px;line-height:1.4;position:relative;max-width:100%}
+.bub.recv{background:#1F2123;color:rgba(255,255,255,0.87);border-bottom-left-radius:5px}
+.bub.sent{background:#625AD6;color:#fff;max-width:82%;border-bottom-right-radius:5px}
+.bub.media{padding:4px}.bub.media .photo{border-radius:11px;width:180px}
+.bub-name{font-size:12px;font-weight:800;margin-bottom:2px}
+.t-time{display:block;font-size:10px;color:rgba(255,255,255,0.38);text-align:right;margin-top:3px}
+.bub.sent .t-time{color:rgba(255,255,255,0.7)}
+.t-time.over{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,0.45);color:#fff;padding:1px 6px;border-radius:8px;margin:0}
+.dish-card{display:flex;align-items:center;gap:8px;background:rgba(232,168,48,0.1);border:1px solid rgba(232,168,48,0.24);border-radius:10px;padding:8px 10px;margin-top:2px;min-width:170px}
+.dish-card b{font-size:13px;color:rgba(255,255,255,0.87)}
+.troom-input{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#162332;border-top:1px solid rgba(255,255,255,0.08)}
+.ti-ph{flex:1;color:rgba(255,255,255,0.60);font-size:14px}
+.ti-send{width:38px;height:38px;border-radius:999px;background:rgba(51,144,236,0.16);display:flex;align-items:center;justify-content:center}
+</style></head><body><section class="page cover">
+  <div class="cover-brand">Circle<span style="color:#F06030">Bites</span></div>
+  <div class="cover-sub">Mobile App — Design Review</div>
+  <div class="cover-line"></div>
+  <div class="cover-meta">
+    <div><b>25</b> screens</div>
+    <div><b>2</b> design systems</div>
+    <div>Generated June 14, 2026</div>
+  </div>
+  <div class="cover-note">Static HTML mockups recreated from the React Native (Expo) source — colours, type (DM Sans), spacing and copy mirror the live screens. For review only; not interactive.</div>
+  <div class="cover-legend">
+    <div class="leg"><span class="sw" style="background:#F06030"></span> Warm “food” theme — feed, explore, create, profile</div>
+    <div class="leg"><span class="sw" style="background:#3390EC"></span> Telegram-blue theme — Table Memory chat room</div>
+  </div>
+</section><section class="page board">
+    <div class="board-head"><span class="board-num">01</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#FFFFFF">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#FFFFFF"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#FFFFFF" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#FFFFFF"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#FFFFFF"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad" style="padding:0;justify-content:flex-end">
+    <div class="login-hero"><div class="photo" style="height:560px;background:linear-gradient(135deg,#3a2418,#7a3a1f 45%,#caa14a)">
+    <div class="photo-glow"></div></div><div class="login-fade"></div></div>
+    <div class="login-content">
+      <div class="brand-wm">Circle<span style="color:#F06030">Bites</span></div>
+      <div class="brand-tag">Food picks from people you trust</div>
+      <div style="height:34px"></div>
+      <div class="method primary"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg><span class="gmark"></span>Continue with Google</div>
+      <div class="auth-div"><i></i><span>OR</span><i></i></div>
+      <div class="method"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>Continue with Email</div>
+      <div class="terms">By continuing, you agree to our<br><b>Terms of Service</b> and <b>Privacy Policy</b>.</div>
+    </div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Sign in — entry</div><div class="cap-text">First launch. Google one-tap, or continue with email. Full-bleed food hero with gradient fade.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad">
+    <div class="back-link"><span style="display:inline-flex;transform:scaleX(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></span><b>Back</b></div>
+    <div class="auth-h"><div class="auth-title">Welcome back</div><div class="auth-text">Enter your password to sign in.</div></div>
+    <div class="field"><span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg></span><input value="aarav@email.com"></div>
+    <div class="field"><span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span><input value="••••••••" style="letter-spacing:2px"><b class="show">Show</b></div>
+    <div style="text-align:right;margin:-2px 0 14px"><b style="color:#F06030;font-size:12px">Forgot password?</b></div>
+    <div class="btn-orange">Sign In</div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Sign in — password</div><div class="cap-text">After entering a known email. Email + password with show/hide and forgot-password.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">02</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad">
+    <div class="back-link"><span style="transform:scaleX(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></span><b>Back</b></div>
+    <div class="auth-h"><div class="auth-title">Create your account</div><div class="auth-text">Set your name and password. You'll choose a username next.</div></div>
+    <div style="display:flex;gap:8px">
+      <div class="field" style="flex:1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><input placeholder="First name" value="Aarav"></div>
+      <div class="field" style="flex:1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><input placeholder="Last name" value="Mehta"></div>
+    </div>
+    <div class="field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg><input value="aarav@email.com"></div>
+    <div class="field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><input placeholder="Password (min. 8 chars)" value="••••••••" style="letter-spacing:2px"><b class="show">Show</b></div>
+    <div class="field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><input placeholder="Confirm password" value="••••••••" style="letter-spacing:2px"></div>
+    <div class="btn-orange">Create Account</div>
+    <div class="terms" style="font-size:12px;margin-top:6px">By creating an account, you agree to our <b>Terms</b> and <b>Privacy Policy</b>.</div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Create account</div><div class="cap-text">New email path. Name, email, password + confirm. Validates 8-char minimum and match.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad" style="justify-content:center">
+    <div class="auth-card">
+      <div class="auth-title" style="text-align:left;font-size:20px">Choose your username</div>
+      <div class="auth-text" style="text-align:left;margin-bottom:18px">This is how friends find your food reviews on CircleBites.</div>
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><input value="Aarav"></div>
+        <div class="field" style="flex:1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><input value="Mehta"></div>
+      </div>
+      <div class="field"><b style="color:#7A6E65">@</b><input placeholder="username" value="aaraveats"></div>
+      <div class="btn-orange">Finish Setup →</div>
+    </div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Onboarding — username</div><div class="cap-text">Post-signup. Confirms name and picks the @handle friends use to find your reviews.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">03</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr">
+    <div class="hdr-title" style="font-weight:400">What they're <span style="font-style:italic;color:#F06030">eating</span></div>
+    <span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span>
+  </div>
+  <div class="feed"><div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#22C55E">AM</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">Aarav Mehta</b><span class="pc-dot">•</span><span class="pc-time">2h ago</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Bombay Brasserie</div>
+      <div class="pc-loc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Indiranagar, Bengaluru</span></div>
+      <div class="pc-cap">The butter chicken here is unreal — easily the best in the area.</div>
+      <div class="row-wrap" style="margin-top:10px"><span class="chip" style="background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.20);color:#F06030;font-weight:800">Must try</span><span class="chip" style="background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.20);color:#F06030;font-weight:800">Worth the hype</span></div>
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Butter Chicken<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span><span class="dish">Garlic Naan<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>4</b></span></span></div>
+    </div>
+    <div class="photo" style="height:230px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div><span class="photo-badge">1/3</span></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act liked"><svg width="19" height="19" viewBox="0 0 24 24" fill="#E84040" stroke="#E84040" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>24</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>6</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>2</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div><div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#D4821A">SK</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">Sara Khan</b><span class="pc-dot">•</span><span class="pc-time">5h ago</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Truffles</div>
+      <div class="pc-loc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Koramangala</span></div>
+      
+      <div class="row-wrap" style="margin-top:10px"><span class="chip" style="background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.20);color:#F06030;font-weight:800">Big portions</span></div>
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Mexican Burger<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span></div>
+    </div>
+    <div class="photo" style="height:150px;background:linear-gradient(135deg,#3a2418,#7a3a1f 45%,#caa14a)">
+    <div class="photo-glow"></div></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act "><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>41</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>12</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>1</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="#F06030" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div></div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Circle — home feed</div><div class="cap-text">The landing tab. Trusted food posts from people in your circle. Bell opens notifications.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><div class="hdr-title" style="font-weight:400;font-size:24px">Explore</div>
+    <span class="loc-btn">🧭 <b>Nearby</b> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 9l6 6 6-6"/></svg></span></div>
+  <div class="srch"><div class="srch-box"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg><span class="ph">Search people, dishes or places...</span></div></div>
+  <div class="ex-tabs"><span class="ex-tab on">Places</span><span class="ex-tab">Dishes</span><span class="ex-tab">People</span></div>
+  <div class="cat-grid"><div class="cat"><div class="cat-img" style="background:#2f5a37"></div><span>Veg</span></div><div class="cat"><div class="cat-img" style="background:#7a3a1f"></div><span>Biryani</span></div><div class="cat"><div class="cat-img" style="background:#3a3550"></div><span>Cafe</span></div><div class="cat"><div class="cat-img" style="background:#caa14a"></div><span>Bakery</span></div></div>
+  <div class="disc-h"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 7l2-4h16l2 4"/><path d="M4 7v13h16V7"/><path d="M2 7h20"/><path d="M9 20v-6h6v6"/></svg><b>Top places near you</b></div>
+  <div class="spot">
+      <div class="spot-media"><div class="photo" style="height:152px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div></div>
+      <div class="spot-body"><div class="spot-top"><div><div class="spot-name">Bombay Brasserie</div><div class="spot-meta"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Indiranagar</span></div></div><span class="rscore"><svg width="10" height="10" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>4.6</b></span></div>
+        <div class="spot-visit">5 visits</div><div class="row-wrap"><span class="chip" style="background:#1A1410;border:1px solid #2E2720;color:#F5EDD8">Butter Chicken</span><span class="chip" style="background:#1A1410;border:1px solid #2E2720;color:#F5EDD8">Naan</span></div>
+        <div class="spot-proof">Aarav + 4 others have been here</div></div></div><div class="spot">
+      <div class="spot-media"><div class="photo" style="height:152px;background:linear-gradient(135deg,#3a2418,#7a3a1f 45%,#caa14a)">
+    <div class="photo-glow"></div></div></div>
+      <div class="spot-body"><div class="spot-top"><div><div class="spot-name">Truffles</div><div class="spot-meta"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Koramangala</span></div></div><span class="rscore"><svg width="10" height="10" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>4.4</b></span></div>
+        <div class="spot-visit">8 visits</div><div class="row-wrap"><span class="chip" style="background:#1A1410;border:1px solid #2E2720;color:#F5EDD8">Mexican Burger</span></div>
+        <div class="spot-proof">Sara + 7 others have been here</div></div></div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Explore</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Explore — Places</div><div class="cap-text">Discovery tab. Search + category grid; ranked places aggregated from public posts with social proof.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">04</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><div class="hdr-title" style="font-weight:400;font-size:24px">Explore</div>
+    <span class="loc-btn">🧭 <b>Nearby</b> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 9l6 6 6-6"/></svg></span></div>
+  <div class="srch"><div class="srch-box"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg><span class="ph">Search people, dishes or places...</span></div></div>
+  <div class="ex-tabs"><span class="ex-tab">Places</span><span class="ex-tab">Dishes</span><span class="ex-tab on">People</span></div>
+  <div class="disc-h" style="padding-left:16px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>People to discover</b></div>
+  <div class="person">
+      <div class="av lg" style="background:#22C55E">AM</div>
+      <div class="person-txt"><div class="person-name">Aarav Mehta</div><div class="person-meta">@aaraveats · 12 places</div></div>
+      <span class="req-btn">Request</span></div><div class="person">
+      <div class="av lg" style="background:#D4821A">SK</div>
+      <div class="person-txt"><div class="person-name">Sara Khan</div><div class="person-meta">@sarak · 9 places</div></div>
+      <span class="req-btn">Request</span></div><div class="person">
+      <div class="av lg" style="background:#BE185D">DL</div>
+      <div class="person-txt"><div class="person-name">Diego Lopez</div><div class="person-meta">@diegol · 7 places</div></div>
+      <span class="req-btn">Request</span></div><div class="person">
+      <div class="av lg" style="background:#22C55E">ML</div>
+      <div class="person-txt"><div class="person-name">Mei Lin</div><div class="person-meta">@meilin · 5 places</div></div>
+      <span class="req-btn">Request</span></div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Explore</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Explore — People</div><div class="cap-text">People-discovery tab. Reviewers ranked by places shared, with a one-tap circle Request.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr-col"><div class="hdr-title" style="font-weight:400;font-size:24px">Create</div>
+    <div class="hdr-sub">Choose how you want to capture this meal.</div></div>
+  <div class="screen-pad" style="padding-top:8px;gap:18px">
+    <div class="action-card" style="border-color:rgba(240,96,48,0.42);background:linear-gradient(135deg,rgba(240,96,48,0.22),rgba(232,168,48,0.06),rgba(33,28,23,0.98))">
+    <div class="ac-ico" style="background:rgba(240,96,48,0.16);border-color:#F06030"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+    <div class="ac-title">Post a Bite</div><div class="ac-desc">Share the dish worth talking about.</div>
+    <div class="row-wrap" style="margin:6px 0 12px"><span class="ac-chip" style="color:#F06030;border-color:rgba(240,96,48,0.24);background:rgba(240,96,48,0.10)">Photo</span><span class="ac-chip" style="color:#F06030;border-color:rgba(240,96,48,0.24);background:rgba(240,96,48,0.10)">Rating</span></div>
+    <div class="ac-cta" style="color:#F06030"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><b>Capture Dish</b></div>
+  </div>
+    <div class="action-card" style="border-color:rgba(61,214,140,0.34);background:linear-gradient(135deg,rgba(61,214,140,0.18),rgba(20,184,166,0.06),rgba(33,28,23,0.98))">
+    <div class="ac-ico" style="background:rgba(61,214,140,0.14);border-color:#3DD68C"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></div>
+    <div class="ac-title">Table Memory</div><div class="ac-desc">Remember the places you visit with friends.</div>
+    <div class="row-wrap" style="margin:6px 0 12px"><span class="ac-chip" style="color:#3DD68C;border-color:rgba(61,214,140,0.22);background:rgba(61,214,140,0.10)">Private</span><span class="ac-chip" style="color:#3DD68C;border-color:rgba(61,214,140,0.22);background:rgba(61,214,140,0.10)">With friends</span><span class="ac-chip" style="color:#3DD68C;border-color:rgba(61,214,140,0.22);background:rgba(61,214,140,0.10)">Photos + dishes</span></div>
+    <div class="ac-cta" style="color:#3DD68C"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M19 8v6M22 11h-6"/></svg><b>Create memory</b></div>
+  </div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Create — choose mode</div><div class="cap-text">The + tab. Two paths: a public/circle Bite post, or a private Table Memory with friends.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">05</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><span class="hdr-x"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span><div style="flex:1"></div><span class="hdr-next">Next</span></div>
+  <div class="screen-pad" style="gap:14px;padding-top:6px">
+    <div class="attach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 7l2-4h16l2 4"/><path d="M4 7v13h16V7"/><path d="M2 7h20"/><path d="M9 20v-6h6v6"/></svg><span class="aval">Bombay Brasserie</span></div>
+    <div class="attach loc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span class="ph">Indiranagar, Bengaluru</span></div>
+    <div class="cap-box"><span class="ph">Write something about the restaurant?</span></div>
+    <div class="dishrow"><div class="dish-in"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><span class="aval">Butter Chicken</span></div>
+      <div class="dish-rate"><span class="rate-lbl">5/5</span><span class="stars"><svg width="18" height="18" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><svg width="18" height="18" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><svg width="18" height="18" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><svg width="18" height="18" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><svg width="18" height="18" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg></span></div></div>
+    <div class="add-dish"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg><b>Add another dish</b></div>
+    <div class="tag-in"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg><span class="ph">Add your own tag</span></div>
+    <div class="row-wrap"><span class="tagpill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>Hidden gem</span><span class="tagpill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>Worth the hype</span><span class="tagpill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>Must try</span><span class="tagpill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>Budget friendly</span><span class="tagpill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7.6-7.6V3h7l10.6 10.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>Spicy</span></div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Post a Bite — details</div><div class="cap-text">Step 1 of 3. Place autocomplete, free-text note, rated dishes, and up to five tags.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><span class="hdr-x"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div style="flex:1"></div><span class="hdr-next">Next</span></div>
+  <div class="screen-pad" style="padding-top:6px">
+    <div class="photo-req">
+      <div class="req-ico"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/><path d="M19 16v6M16 19h6"/></svg></div>
+      <div class="req-title">Add food photo <span class="req-pill">Required</span></div>
+      <div class="req-text">Add a photo, then tap Next to preview your post.</div>
+    </div>
+  </div>
+  <div class="gallery">
+    <div class="g-handle"></div>
+    <div class="g-head"><b>Recent photos</b><b style="color:#F06030;font-size:12px">Open library</b></div>
+    <div class="g-strip"><div class="g-cam"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg><span>Camera</span></div>
+      <div class="g-tile"><div class="photo" style="height:72px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div></div><div class="g-tile"><div class="photo" style="height:72px;background:linear-gradient(135deg,#3a2418,#7a3a1f 45%,#caa14a)">
+    <div class="photo-glow"></div></div></div><div class="g-tile"><div class="photo" style="height:72px;background:linear-gradient(135deg,#1c2b1f,#2f5a37 50%,#7fae5a)">
+    <div class="photo-glow"></div></div></div><div class="g-tile"><div class="photo" style="height:72px;background:linear-gradient(135deg,#1c2230,#3a3550 55%,#7a6fb0)">
+    <div class="photo-glow"></div></div></div></div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Post a Bite — photo</div><div class="cap-text">Step 2 of 3. A photo is required; a recent-photos sheet and camera tile sit above the fold.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">06</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><span class="hdr-x"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div style="flex:1"></div><span class="hdr-post">Post</span></div>
+  <div style="padding:0 4px">
+    <div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#4F46E5">Y</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">You</b><span class="pc-dot">•</span><span class="pc-time">just now</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Bombay Brasserie</div>
+      
+      <div class="pc-cap">The butter chicken here is unreal.</div>
+      <div class="row-wrap" style="margin-top:10px"><span class="chip" style="background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.20);color:#F06030;font-weight:800">Must try</span></div>
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Butter Chicken<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span></div>
+    </div>
+    <div class="photo" style="height:200px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act "><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>0</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>0</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>1</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div>
+  </div>
+  <div class="vis-grid">
+    <div class="vis on"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/></svg><b style="color:#F06030">Public</b></div>
+    <div class="vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>Circle</b></div>
+    <div class="vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><b>Just me</b></div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Post a Bite — preview</div><div class="cap-text">Step 3 of 3. Exact feed-card preview, then choose visibility: Public, Circle, or Just me.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="hdr"><span class="hdr-x"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span>
+    <div class="hdr-col" style="flex:1"><div class="hdr-title" style="font-size:22px">Table Memory</div><div class="hdr-sub">Save the place you visited with friends.</div></div>
+    <span class="hdr-next">Create</span></div>
+  <div class="screen-pad" style="gap:14px;padding-top:10px">
+    <div class="attach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M2 7l2-4h16l2 4"/><path d="M4 7v13h16V7"/><path d="M2 7h20"/><path d="M9 20v-6h6v6"/></svg><span class="aval">Bombay Brasserie</span></div>
+    <div class="attach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M19 8v6M22 11h-6"/></svg><span class="ph">Who is at the table?</span></div>
+    <div class="row-wrap"><span class="fchip">@sarak <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span><span class="fchip">@diegol <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span><span class="fchip">@meilin <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span></div>
+    <div class="priv-note"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Private to invited friends.</span></div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Create</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Table Memory — setup</div><div class="cap-text">The friends path. Pick the place and invite friends by @username; private to the table.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">07</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad" style="padding-top:16px;gap:12px">
+    <div class="prof-hero">
+      <span class="prof-settings"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+      <div class="prof-id"><div class="av xl" style="background:#F06030">AM</div>
+        <div><div class="prof-name">Aarav Mehta</div><div class="prof-handle">@aaraveats · 23 visits</div>
+          <div class="prof-joined"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span>Joined Jan 2026</span></div></div></div>
+      <div class="prof-bio">Always chasing the best biryani in town. 🍛</div>
+    </div>
+    <div class="stats"><div class="stat"><div class="stat-v">28.4</div><div class="stat-l">Trust</div></div><div class="stat div"><div class="stat-v">19</div><div class="stat-l">Places</div></div><div class="stat div"><div class="stat-v">34</div><div class="stat-l">Dishes</div></div><div class="stat div"><div class="stat-v">12</div><div class="stat-l">Circle</div></div></div>
+    <div class="prof-tabs"><div class="ptab on">Posts<i></i></div><div class="ptab">Memories<i></i></div></div>
+  </div>
+  <div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#22C55E">AM</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">Aarav Mehta</b><span class="pc-dot">•</span><span class="pc-time">2h ago</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Bombay Brasserie</div>
+      <div class="pc-loc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Indiranagar</span></div>
+      
+      <div class="row-wrap" style="margin-top:10px"><span class="chip" style="background:rgba(240,96,48,0.12);border:1px solid rgba(240,96,48,0.20);color:#F06030;font-weight:800">Must try</span></div>
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Butter Chicken<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span></div>
+    </div>
+    <div class="photo" style="height:150px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act "><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>24</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>6</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>1</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Create</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Profile — posts</div><div class="cap-text">Your profile. Avatar, stats (Trust / Places / Dishes / Circle), and your post grid.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad" style="padding-top:16px;gap:12px">
+    <div class="prof-hero">
+      <span class="prof-settings"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+      <div class="prof-id"><div class="av xl" style="background:#F06030">AM</div>
+        <div><div class="prof-name">Aarav Mehta</div><div class="prof-handle">@aaraveats · 23 visits</div></div></div>
+    </div>
+    <div class="stats"><div class="stat"><div class="stat-v">28.4</div><div class="stat-l">Trust</div></div><div class="stat div"><div class="stat-v">19</div><div class="stat-l">Places</div></div><div class="stat div"><div class="stat-v">34</div><div class="stat-l">Dishes</div></div><div class="stat div"><div class="stat-v">12</div><div class="stat-l">Circle</div></div></div>
+    <div class="prof-tabs"><div class="ptab">Posts<i></i></div><div class="ptab on">Memories<i></i></div></div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+      <div class="mem-row unread">
+        <div class="mem-date"><div class="mem-day">14</div><div class="mem-mon">JUN</div></div><div class="mem-divider"></div>
+        <div class="mem-copy"><div class="mem-title">Bombay Brasserie</div><div class="mem-meta">Indiranagar, Bengaluru</div></div>
+        <div class="mem-counts"><span class="mem-unread">2</span><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg>3</span><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>24</span></div></div><div class="mem-row">
+        <div class="mem-date"><div class="mem-day">02</div><div class="mem-mon">JUN</div></div><div class="mem-divider"></div>
+        <div class="mem-copy"><div class="mem-title">Truffles Night</div><div class="mem-meta">Koramangala</div></div>
+        <div class="mem-counts"><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg>4</span><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>51</span></div></div><div class="mem-row">
+        <div class="mem-date"><div class="mem-day">28</div><div class="mem-mon">MAY</div></div><div class="mem-divider"></div>
+        <div class="mem-copy"><div class="mem-title">Sunday Brunch Club</div><div class="mem-meta">MG Road</div></div>
+        <div class="mem-counts"><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg>5</span><span class="mem-c"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>12</span></div></div>
+    </div>
+  </div></div>
+      <div class="tabbar"><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Circle</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Explore</span></div><div class="tab"><span style="color:#7A6E65"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 5v14M5 12h14"/></svg></span><span class="tab-lbl" style="color:#7A6E65;font-weight:700">Create</span></div><div class="tab"><span style="color:#F06030"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M6.2 18.8a6 6 0 0 1 11.6 0"/></svg></span><span class="tab-lbl" style="color:#F06030;font-weight:800">Profile</span></div></div>
+    </div>
+    <div class="caption"><div class="cap-title">Profile — memories</div><div class="cap-text">The Memories tab: a timeline of private rooms with date, place, and unread / participant counts.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">08</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="sheet-scrim"></div>
+  <div class="sheet">
+    <div class="sheet-head"><b>Trust Score</b><span class="sheet-x"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></span></div>
+    <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;gap:14px">
+        <div class="trust-score"><div class="ts-val">28.4</div><div class="ts-max">/100</div></div>
+        <div class="trust-lvl"><div class="tl-row"><span class="tl-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg></span><b>Trusted Reviewer</b></div><div class="tl-desc">Earn trust when others try and confirm your posts.</div></div>
+      </div>
+      <div style="display:flex;gap:8px"><div class="tmetric"><div class="tm-top"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg><b>12</b></div><div class="tm-lbl">Posts</div></div><div class="tmetric"><div class="tm-top"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><b>9</b></div><div class="tm-lbl">Confirmed</div></div><div class="tmetric"><div class="tm-top"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>82%</b></div><div class="tm-lbl">Match</div></div></div>
+      <div class="trust-unlock"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><span>Level unlocked at 5 confirmations</span></div>
+      <div class="trust-grow"><div class="tg-eyebrow">HOW IT GROWS</div>
+        <div class="tg-steps"><div class="tg-step"><div class="tg-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div><span>Post</span></div><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg><div class="tg-step"><div class="tg-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><span>Confirm</span></div><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg><div class="tg-step"><div class="tg-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg></div><span>Grow</span></div></div>
+        <div class="tg-note">Confirmations strengthen trust.</div></div>
+    </div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Trust score sheet</div><div class="cap-text">Bottom sheet from the profile stat. Score /100, level, post/confirm/match metrics, how it grows.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div class="rh-title">Settings</div></div>
+  <div class="screen-pad" style="gap:14px;padding-top:6px">
+    <div class="set-section"><div class="set-title">PROFILE</div><div class="set-divider"></div><div class="set-row"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="set-lbl">Edit Profile</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div></div>
+    <div class="set-section"><div class="set-title">ACTIVITY</div><div class="set-divider"></div><div class="set-row"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg></span><span class="set-lbl">Liked Posts</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span><span class="set-lbl">Saved Posts</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span><span class="set-lbl">My Comments</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div></div>
+    <div class="set-section"><div class="set-title">PREFERENCES</div><div class="set-divider"></div><div class="set-row"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span><span class="set-lbl">Account Type</span><span class="segmented"><b class="seg">Private</b><b class="seg on">Public</b></span></div></div>
+    <div class="set-section"><div class="set-title">SUPPORT & ACCOUNT</div><div class="set-divider"></div><div class="set-row"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><path d="M4.9 4.9l4.2 4.2M14.9 14.9l4.2 4.2M14.9 9.1l4.2-4.2M9.1 14.9l-4.2 4.2"/></svg></span><span class="set-lbl">Help & Contact</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico danger"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg></span><span class="set-lbl danger">Log out</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span><span class="set-lbl">Privacy Policy</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg></span><span class="set-lbl">Terms of Service</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div><div class="set-row sep"><span class="set-ico danger"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span><span class="set-lbl danger">Delete account</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg></div></div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Settings</div><div class="cap-text">From the profile gear. Grouped rows: profile, activity, preferences (account type), support & account.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">09</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div class="rh-title">Edit Profile</div></div>
+  <div class="screen-pad" style="gap:16px;padding-top:8px">
+    <div class="efield"><label>NAME</label><div class="einput">Aarav Mehta</div></div>
+    <div class="efield"><label>USERNAME</label><div class="einput">aaraveats</div><span class="ehint">3-20 characters, lowercase letters, numbers, or underscore.</span></div>
+    <div class="efield"><label>BIO</label><div class="einput tall">Always chasing the best biryani in town. 🍛</div><span class="ecount">38/160</span></div>
+    <div class="btn-orange">Save</div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Edit profile</div><div class="cap-text">Editable name, @username (validated 3–20 chars), and a 160-char bio with live counter.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><div><div class="rh-kicker">PROFILE</div><div class="rh-title">My Circle</div><div class="rh-sub">Public account · 4 people</div></div></div>
+  <div class="screen-pad" style="padding-top:8px">
+    <div class="member-list"><div class="member">
+      <div class="av" style="background:#D4821A">SK</div>
+      <div class="member-copy"><div class="member-name">Sara Khan</div><div class="member-handle">@sarak</div></div>
+      <span class="member-places"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>8 places</b></span>
+      <span class="remove-btn">Remove</span></div><div class="member">
+      <div class="av" style="background:#BE185D">DL</div>
+      <div class="member-copy"><div class="member-name">Diego Lopez</div><div class="member-handle">@diegol</div></div>
+      <span class="member-places"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>5 places</b></span>
+      <span class="remove-btn">Remove</span></div><div class="member">
+      <div class="av" style="background:#22C55E">ML</div>
+      <div class="member-copy"><div class="member-name">Mei Lin</div><div class="member-handle">@meilin</div></div>
+      <span class="member-places"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>11 places</b></span>
+      <span class="remove-btn">Remove</span></div><div class="member">
+      <div class="av" style="background:#BE185D">TR</div>
+      <div class="member-copy"><div class="member-name">Tom Reed</div><div class="member-handle">@tomr</div></div>
+      <span class="member-places"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/></svg><b>3 places</b></span>
+      <span class="remove-btn">Remove</span></div></div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">My Circle</div><div class="cap-text">Your trusted circle: avatars, handles, places shared, and a Remove control per member.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">10</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="screen-pad" style="padding-top:8px;gap:16px">
+    <div class="route-hdr" style="padding:0"><span class="rh-back"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div class="rh-title" style="font-size:16px">Profile</div><div style="width:28px"></div></div>
+    <div class="pp-hero"><div class="av" style="width:74px;height:74px;border-radius:999px;font-size:22px;background:#D4821A">SK</div>
+      <div><div class="prof-name">Sara Khan</div><div class="pp-handle">@sarak</div><div class="prof-bio" style="margin-top:8px">Dessert first, always.</div></div></div>
+    <div class="stats" style="border-top:1px solid rgba(245,237,216,0.08);border-bottom:1px solid rgba(245,237,216,0.08)"><div class="stat"><div class="stat-v" style="font-size:22px">24.1</div><div class="stat-l">Trust</div></div><div class="stat"><div class="stat-v" style="font-size:22px">15</div><div class="stat-l">Places</div></div><div class="stat"><div class="stat-v" style="font-size:22px">28</div><div class="stat-l">Dishes</div></div><div class="stat"><div class="stat-v" style="font-size:22px">9</div><div class="stat-l">Circle</div></div></div>
+  </div>
+  <div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#D4821A">SK</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">Sara Khan</b><span class="pc-dot">•</span><span class="pc-time">1d ago</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Truffles</div>
+      <div class="pc-loc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Koramangala</span></div>
+      
+      
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Mexican Burger<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span></div>
+    </div>
+    <div class="photo" style="height:150px;background:linear-gradient(135deg,#3a2418,#7a3a1f 45%,#caa14a)">
+    <div class="photo-glow"></div></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act "><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>41</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>12</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>1</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Person profile</div><div class="cap-text">Another reviewer, opened from Explore or a post. Same stats layout with their public posts.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr" style="padding:12px 20px 0"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div><div class="rh-kicker">CIRCLE</div><div class="rh-title">Post</div></div></div>
+  <div class="pcard">
+    <div class="pc-head">
+      <div class="av" style="background:#22C55E">AM</div>
+      <div class="pc-meta">
+        <div class="pc-row"><b class="pc-author">Aarav Mehta</b><span class="pc-dot">•</span><span class="pc-time">2h ago</span></div>
+        <div class="pc-sub">shared a spot</div>
+      </div>
+      
+      <span class="more"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+    </div>
+    <div class="pc-body">
+      <div class="pc-rest">Bombay Brasserie</div>
+      
+      
+      
+      <div class="row-wrap" style="margin-top:10px"><span class="dish">Butter Chicken<span class="rpill"><svg width="8" height="8" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></span></div>
+    </div>
+    <div class="photo" style="height:120px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div>
+    <div class="pc-actions">
+      <div class="pc-acluster">
+        <span class="pc-act "><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.9z"/></svg><i>24</i></span>
+        <span class="pc-act"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg><i>2</i></span>
+        <span class="pc-act"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><i>1</i></span>
+      </div>
+      <span class="pc-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="pc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+    </div>
+  </div>
+  <div style="padding:14px 20px 0"><b style="color:#F5EDD8;font-size:16px">Comments</b>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+      <div class="cmt"><div class="av sm" style="background:#D4821A">SK</div><div class="cmt-body"><div class="cmt-text"><b>Sara Khan</b> Adding this to my list!</div><div class="cmt-time">1h ago</div></div></div><div class="cmt"><div class="av sm" style="background:#BE185D">DL</div><div class="cmt-body"><div class="cmt-text"><b>Diego Lopez</b> Their naan is unreal too 🔥</div><div class="cmt-time">45m ago</div></div></div>
+    </div>
+    <div class="composer"><div class="av sm" style="background:#C04020">A</div><span class="ph" style="flex:1">Add a comment...</span><span class="send-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg></span></div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Post detail + comments</div><div class="cap-text">A post opened full-screen with its comment thread and an inline composer.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">11</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div><div class="rh-kicker">CIRCLE</div><div class="rh-title">Notifications</div></div></div>
+  <div class="empty"><div class="empty-ico"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#7A6E65" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div><div class="empty-title">No notifications yet</div><div class="empty-text">Likes, comments, and circle activity will appear here.</div></div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Notifications</div><div class="cap-text">Reached from the bell. Empty state today — likes, comments, and circle activity will land here.</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div class="rh-title">Help & Contact</div></div>
+  <div class="screen-pad" style="gap:12px;padding-top:6px">
+    <div class="help-card"><div class="req-ico" style="width:58px;height:58px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F06030" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></div>
+      <div class="help-title">Need help?</div>
+      <div class="help-body">Tell us what went wrong or what you need help with. Include your username if the issue is account-specific.</div>
+      <div class="btn-orange" style="min-height:46px;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>Contact support</div></div>
+    <div class="info-card"><div class="info-t">SUPPORT EMAIL</div><div class="info-v">hello@foodcircle.app</div></div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Help & Contact</div><div class="cap-text">Support entry from settings. A contact card that opens email, plus the support address.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">12</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div><div class="rh-title">Privacy Policy</div><div class="rh-sub">Last updated: May 2025</div></div></div>
+  <div class="screen-pad" style="gap:18px;padding-top:6px">
+    <div><div class="legal-h">What we collect</div><div class="legal-b">We collect your name, email address, and the food reviews you post. Photos you upload are stored securely. We do not sell your data to any third party.</div></div><div><div class="legal-h">How we use it</div><div class="legal-b">Your data is used solely to power the CircleBites experience, showing your reviews to your circle and letting you discover what friends are eating.</div></div><div><div class="legal-h">Deleting your data</div><div class="legal-b">You can delete your account at any time from settings. This permanently removes your profile and all your reviews from our systems.</div></div><div><div class="legal-h">Contact</div><div class="legal-b">Questions? Email us at privacy@foodcircle.app</div></div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Privacy Policy</div><div class="cap-text">Static legal page from settings, broken into short sections (collect / use / delete / contact).</div></div>
+  </div><div class="phone-wrap">
+    <div class="phone warm-theme" style="background:#0E0B08">
+      <div class="sbar" style="color:#F5EDD8">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5EDD8"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="#F5EDD8" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="#F5EDD8"/><rect x="21" y="4" width="2" height="4" rx="1" fill="#F5EDD8"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="route-hdr"><span class="rh-back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5EDD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span><div><div class="rh-kicker">CREATE</div><div class="rh-title">Table Memory</div></div></div>
+  <div class="screen-pad" style="gap:12px;padding-top:6px">
+    <div style="display:flex;gap:8px"><b class="seg-lg on">Manual</b><b class="seg-lg">From post</b></div>
+    <div class="minput">Bombay Brasserie</div>
+    <div class="minput ph">Area or location</div>
+    <div class="minput ph">Visit date, e.g. 2026-06-03</div>
+    <div class="minput ph tall">Friends by username, comma separated</div>
+    <div class="btn-orange" style="min-height:52px;display:flex;align-items:center;justify-content:center">Create table memory</div>
+  </div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Create Memory — form</div><div class="cap-text">Direct memory builder (also reachable from a post's share). Manual or from-post, with details.</div></div>
+  </div></div>
+  </section><section class="page board">
+    <div class="board-head"><span class="board-num">13</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-grid"><div class="phone-wrap">
+    <div class="phone chat-theme" style="background:#111B25">
+      <div class="sbar" style="color:rgba(255,255,255,0.87)">
+    <span class="sb-time">9:41</span>
+    <span class="sb-right">
+      <span class="sb-dots"><i></i><i></i><i></i><i style="opacity:.4"></i></span>
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="rgba(255,255,255,0.87)"><path d="M1 4h2v6H1zM5 2.5h2V10H5zM9 1h2v9H9zM13 0h2v10h-2z" opacity="1"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="rgba(255,255,255,0.87)" stroke-width="1"><rect x="1" y="1.5" width="19" height="9" rx="2.5"/><rect x="2.5" y="3" width="14" height="6" rx="1" fill="rgba(255,255,255,0.87)"/><rect x="21" y="4" width="2" height="4" rx="1" fill="rgba(255,255,255,0.87)"/></svg>
+    </span>
+  </div>
+      <div class="phone-body"><div class="troom-hdr">
+    <span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.87)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
+    <div class="tr-av" style="background:#F06030">BB</div>
+    <div class="tr-id"><div class="tr-name">Bombay Brasserie</div><div class="tr-sub">3 members · Indiranagar</div></div>
+    <span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.87)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+  </div>
+  <div class="troom-body">
+    <div class="t-date">JUNE 14</div>
+    <div class="t-rowL"><div class="t-sav" style="background:#5CA8E0">SK</div><div class="bub recv"><div class="bub-name" style="color:#5CA8E0">Sara Khan</div>This place was incredible 😍<span class="t-time">7:02 PM</span></div></div>
+    <div class="t-rowL"><div class="t-sav" style="background:#5CA8E0">SK</div><div class="bub recv media"><div class="photo" style="height:150px;background:linear-gradient(135deg,#2a1c14,#5a3a28 40%,#b07a4a 80%,#e0b070)">
+    <div class="photo-glow"></div></div><span class="t-time over">7:03 PM</span></div></div>
+    <div class="t-rowR"><div class="bub sent">Best butter chicken I've had all year<span class="t-time">7:05 PM ✓✓</span></div></div>
+    <div class="t-rowL"><div class="t-sav" style="background:#E08050">DL</div><div class="bub recv"><div class="bub-name" style="color:#E08050">Diego Lopez</div>Adding the naan to the dishes list<span class="t-time">7:08 PM</span></div></div>
+    <div class="t-rowL"><div class="t-sav" style="background:#E08050">DL</div><div class="bub recv dish-bub"><div class="bub-name" style="color:#E08050">Diego Lopez</div><div class="dish-card"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E8A830" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 2v7a2 2 0 0 0 2 2 2 2 0 0 0 2-2V2"/><path d="M5 11v11"/><path d="M21 15V2a5 5 0 0 0-5 5v6h5zm0 0v7"/></svg><b>Butter Chicken</b><span class="rscore" style="margin-left:auto"><svg width="10" height="10" viewBox="0 0 24 24" fill="#E8A830" stroke="#E8A830" stroke-width="0" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 18l-6.2 3.3L7 14.4 2 9.5l6.9-1z"/></svg><b>5</b></span></div><span class="t-time">7:09 PM</span></div></div>
+    <div class="t-rowR"><div class="bub sent">Same time next week?<span class="t-time">7:11 PM ✓✓</span></div></div>
+  </div>
+  <div class="troom-input"><span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.60)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21.4 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg></span><span class="ti-ph">Message this memory...</span><span class="ti-send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3390EC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg></span></div></div>
+      
+    </div>
+    <div class="caption"><div class="cap-title">Table Memory — chat room</div><div class="cap-text">The memory room: Telegram-style chat over a food wallpaper. Sent (indigo) vs received bubbles, media, dishes/people panels, blue composer.</div></div>
+  </div></div>
+  </section></body></html>

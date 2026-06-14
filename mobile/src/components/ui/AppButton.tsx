@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, type ViewStyle } from "react-native";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 import { AppText } from "@/components/ui/AppText";
 
 type AppButtonTone = "primary" | "secondary" | "ghost";
@@ -25,20 +26,27 @@ export function AppButton({
   style,
   tone = "primary"
 }: AppButtonProps) {
+  const { themeColors } = useThemePreference();
   const primary = tone === "primary";
   const textTone = primary ? "white" : tone === "secondary" ? "cream" : "muted";
+  const toneStyle: ViewStyle = primary
+    ? { backgroundColor: themeColors.orange }
+    : tone === "secondary"
+      ? { backgroundColor: themeColors.surface, borderColor: themeColors.border, borderWidth: 1 }
+      : { backgroundColor: "transparent", borderColor: themeColors.border, borderWidth: 1 };
+  const iconColor = primary ? themeColors.white : themeColors.cream;
 
   return (
     <Pressable
       disabled={disabled || loading}
       onPress={onPress}
-      style={[styles.button, styles[tone], (disabled || loading) && styles.disabled, style]}
+      style={[styles.button, toneStyle, (disabled || loading) && styles.disabled, style]}
     >
       {loading ? (
-        <ActivityIndicator color={primary ? "white" : colors.dark.cream} />
+        <ActivityIndicator color={iconColor} />
       ) : (
         <>
-          {icon ? <Ionicons name={icon} size={18} color={primary ? "white" : colors.dark.cream} /> : null}
+          {icon ? <Ionicons name={icon} size={18} color={iconColor} /> : null}
           <AppText tone={textTone} variant="caption" style={styles.label}>
             {children}
           </AppText>
@@ -58,19 +66,6 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md
-  },
-  primary: {
-    backgroundColor: colors.dark.orange
-  },
-  secondary: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
-    borderWidth: 1
-  },
-  ghost: {
-    backgroundColor: "transparent",
-    borderColor: colors.dark.border,
-    borderWidth: 1
   },
   disabled: {
     opacity: 0.65

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  type GestureResponderEvent,
   Linking,
   Platform,
   Pressable,
@@ -26,6 +27,14 @@ const MAX_VIDEO_MS = 30_000;
 const SHUTTER_SIZE = 88;
 const SHUTTER_RING_RADIUS = 41;
 const SHUTTER_RING_CIRCUMFERENCE = 2 * Math.PI * SHUTTER_RING_RADIUS;
+const MAX_CAMERA_ZOOM = 0.85;
+const ZOOM_DRAG_DISTANCE = 260;
+const SHUTTER_PRESS_RETENTION_OFFSET = {
+  bottom: 220,
+  left: 140,
+  right: 140,
+  top: 620
+};
 
 type Facing = "back" | "front";
 
@@ -42,6 +51,9 @@ export function CameraScreen({ roomId }: { roomId: string }) {
   const appActiveRef = useRef(AppState.currentState === "active");
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingStartRef = useRef(0);
+  const zoomRef = useRef(0);
+  const gestureStartZoomRef = useRef(0);
+  const gestureStartYRef = useRef<number | null>(null);
   const [facing, setFacing] = useState<Facing>("back");
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [captureMode, setCaptureMode] = useState<"picture" | "video">("picture");
@@ -49,6 +61,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
   const [pictureSize, setPictureSize] = useState<string | undefined>();
   const [capturing, setCapturing] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [zoom, setZoom] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [appActive, setAppActive] = useState(appActiveRef.current);
   const [cameraError, setCameraError] = useState("");
@@ -104,6 +117,12 @@ export function CameraScreen({ roomId }: { roomId: string }) {
         cameraRef.current?.stopRecording();
       }
     }, 100);
+  }
+
+  function setCameraZoom(nextZoom: number) {
+    const clampedZoom = Math.min(MAX_CAMERA_ZOOM, Math.max(0, nextZoom));
+    zoomRef.current = clampedZoom;
+    setZoom(clampedZoom);
   }
 
   function openPreview(asset: MemoryCapturedMediaInput) {
@@ -245,8 +264,11 @@ export function CameraScreen({ roomId }: { roomId: string }) {
     }
   }
 
-  function handleShutterPressIn() {
+  function handleShutterPressIn(event?: GestureResponderEvent) {
     if (!cameraReady || !cameraPermission.granted || capturing) return;
+    if (longPressTimeoutRef.current || holdActiveRef.current) return;
+    gestureStartYRef.current = event?.nativeEvent.pageY ?? null;
+    gestureStartZoomRef.current = zoomRef.current;
     holdActiveRef.current = true;
     stopWhenReadyRef.current = false;
     videoStartRequestedRef.current = false;
@@ -257,6 +279,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
   }
 
   function handleShutterPressOut() {
+    gestureStartYRef.current = null;
     holdActiveRef.current = false;
     if (longPressTimeoutRef.current) {
       clearTimeout(longPressTimeoutRef.current);
@@ -273,6 +296,18 @@ export function CameraScreen({ roomId }: { roomId: string }) {
     if (videoStartRequestedRef.current) {
       stopWhenReadyRef.current = true;
     }
+  }
+
+  function handleShutterTouchMove(event: GestureResponderEvent) {
+    if (!holdActiveRef.current && !recordingRef.current && !videoStartRequestedRef.current) return;
+    const pageY = event.nativeEvent.pageY;
+    if (gestureStartYRef.current === null) {
+      gestureStartYRef.current = pageY;
+      gestureStartZoomRef.current = zoomRef.current;
+      return;
+    }
+    const dy = pageY - gestureStartYRef.current;
+    setCameraZoom(gestureStartZoomRef.current + (-dy / ZOOM_DRAG_DISTANCE));
   }
 
   async function openGallery() {
@@ -360,6 +395,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
         style={styles.cameraPreview}
         videoBitrate={8_000_000}
         videoQuality="1080p"
+        zoom={zoom}
       />
 
       <View style={[styles.topControls, { paddingTop: topInset }]}>
@@ -378,7 +414,10 @@ export function CameraScreen({ roomId }: { roomId: string }) {
           <Pressable
             accessibilityLabel="Flip camera"
             disabled={recording}
-            onPress={() => setFacing((current) => current === "back" ? "front" : "back")}
+            onPress={() => {
+              setCameraZoom(0);
+              setFacing((current) => current === "back" ? "front" : "back");
+            }}
             style={[styles.iconButton, recording && styles.disabledControl]}
           >
             <Ionicons name="camera-reverse-outline" size={23} color={colors.dark.white} />
@@ -409,6 +448,8 @@ export function CameraScreen({ roomId }: { roomId: string }) {
             accessibilityLabel={recording ? "Stop recording" : "Capture media"}
             onPressIn={handleShutterPressIn}
             onPressOut={handleShutterPressOut}
+            onTouchMove={handleShutterTouchMove}
+            pressRetentionOffset={SHUTTER_PRESS_RETENTION_OFFSET}
             style={[styles.shutterButton, shutterUnavailable && !recording && styles.disabledControl]}
           >
             <RecordingRing elapsedMs={elapsedMs} recording={recording} />

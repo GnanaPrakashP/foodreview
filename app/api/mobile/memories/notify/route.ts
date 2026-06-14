@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
     if (recipients.length === 0) return mobileJson({ sent: 0 });
 
     const admin = createAdminClient();
-    const [{ data: room }, { data: tokens, error: tokensError }] = await Promise.all([
+    const [{ data: room }, { data: tokens, error: tokensError }, { data: prefs }] = await Promise.all([
       admin
         .from("shared_memory_rooms")
         .select("restaurant_name")
@@ -92,10 +92,22 @@ export async function POST(req: NextRequest) {
       admin
         .from("push_tokens")
         .select("expo_push_token, user_name")
+        .in("user_name", recipients),
+      admin
+        .from("notification_settings")
+        .select("user_name, push_enabled, memory_activity")
         .in("user_name", recipients)
     ]);
 
     if (tokensError) throw tokensError;
+
+    // Respect each recipient's notification preferences. Missing rows default to
+    // enabled, so users who never opened settings still receive notifications.
+    const mutedRecipients = new Set(
+      ((prefs ?? []) as Array<{ user_name: string; push_enabled: boolean; memory_activity: boolean }>)
+        .filter((pref) => !pref.push_enabled || !pref.memory_activity)
+        .map((pref) => pref.user_name)
+    );
 
     const restaurantName = room?.restaurant_name?.trim();
     const title = restaurantName
@@ -103,6 +115,7 @@ export async function POST(req: NextRequest) {
       : `${actor.displayName} shared a table memory`;
 
     const pushMessages = (tokens ?? [])
+      .filter((token: { expo_push_token: string; user_name: string }) => !mutedRecipients.has(token.user_name))
       .map((token: { expo_push_token: string; user_name: string }) => token.expo_push_token)
       .filter(Boolean)
       .map((to: string) => ({

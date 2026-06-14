@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, VideoView, type VideoThumbnail } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -120,7 +120,6 @@ type MemoryCaptureAsset = {
   uri: string;
   width?: number | null;
 };
-
 const ROOM_MAX_WIDTH = 640;
 const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mode: RoomTabMode }> = [
   { icon: "home-outline", label: "Table", mode: "overview" },
@@ -195,7 +194,9 @@ const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
 const COMPOSER_INPUT_VERTICAL_PADDING = 12;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING;
-const SELECTION_ACTION_BUTTON_SIZE = 38;
+const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? 38 : 42;
+const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
+const SELECTION_INLINE_BUTTON_SIZE = Platform.OS === "web" ? 30 : 32;
 const SELECTION_SECONDARY_ICON_SIZE = 19;
 const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
 const REPLY_SWIPE_MAX_TRANSLATE = 58;
@@ -394,6 +395,8 @@ export default function MemoryDetailScreen() {
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
+  const addMessageMutateAsyncRef = useRef(addMessage.mutateAsync);
+  addMessageMutateAsyncRef.current = addMessage.mutateAsync;
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
@@ -401,16 +404,19 @@ export default function MemoryDetailScreen() {
   const composerHeightRef = useRef(0);
   const chatTimelineHeightRef = useRef(0);
   const chatContentHeightRef = useRef(0);
-  // Fabric's scrollToEnd lands short of the content end by the container's bottom
-  // padding, leaving the newest message under the composer bar — scroll to the exact
-  // end offset computed from measured sizes instead.
+  // While a just-sent message settles in, animate the bottom pin so the existing
+  // chat glides up to make room instead of snapping.
+  // The chat list is inverted (bottom-anchored), so the newest message lives at
+  // scroll offset 0. Scrolling there is exact and never lands short of a padding.
   const scrollChatToBottom = useCallback((animated: boolean) => {
-    const offset = Math.max(0, chatContentHeightRef.current - chatTimelineHeightRef.current);
-    scrollRef.current?.scrollToOffset({ animated, offset });
+    scrollRef.current?.scrollToOffset({ animated, offset: 0 });
   }, []);
   const readMarkerRef = useRef<string | null>(null);
   const markReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatOpenMarkedRef = useRef(false);
+  const deletingItemKeysRef = useRef<Set<string>>(new Set());
+  const selectedItemKeysRef = useRef<string[]>([]);
+  const sendSequenceRef = useRef(0);
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -499,6 +505,7 @@ export default function MemoryDetailScreen() {
 
   useEffect(() => () => {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
+    if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
   }, []);
 
   useEffect(() => {
@@ -719,7 +726,31 @@ export default function MemoryDetailScreen() {
         await editMessage.mutateAsync({ body: message, messageId: editingMessage.id });
         setEditingMessage(null);
       } else {
-        await addMessage.mutateAsync({ body: message, replyToMessageId: replyingToMessage?.id ?? null });
+        const outgoingBody = message;
+        const trimmedBody = outgoingBody.trim();
+        if (!trimmedBody) return;
+        const outgoingReply = replyingToMessage;
+        const clientId = `text:${Date.now()}:${sendSequenceRef.current}`;
+        sendSequenceRef.current += 1;
+        // WhatsApp-style: the message just appears at the bottom (optimistic),
+        // no entry animation. Clear the input and pin to the newest message.
+        setMessage("");
+        setReplyingToMessage(null);
+        void addMessageMutateAsyncRef.current({
+          body: outgoingBody,
+          clientId,
+          replyToMessageId: outgoingReply?.id ?? null
+        }).catch(() => {
+          setMessage((current) => (current.trim().length > 0 ? current : outgoingBody));
+          setReplyingToMessage((current) => current ?? outgoingReply);
+        });
+        // The list pins to the new message from onContentSizeChange (which has the
+        // correct post-layout height) — scrolling here too would use a stale height
+        // and make the bubble appear low, then jump up.
+        requestAnimationFrame(() => {
+          messageInputRef.current?.focus();
+        });
+        return;
       }
       setMessage("");
       setReplyingToMessage(null);
@@ -730,6 +761,7 @@ export default function MemoryDetailScreen() {
   }
 
   function beginEditMessage(target: MemoryMessage) {
+    selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
     setReplyingToMessage(null);
     setEditingMessage(target);
@@ -738,6 +770,7 @@ export default function MemoryDetailScreen() {
   }
 
   function beginReplyMessage(target: MemoryMessage) {
+    selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
     setEditingMessage(null);
     setReplyingToMessage(target);
@@ -761,13 +794,22 @@ export default function MemoryDetailScreen() {
     setEditingMessage(null);
     setReplyingToMessage(null);
     setMessage("");
+    selectedItemKeysRef.current = [key];
     setSelectedItemKeys([key]);
     suppressSelectionToggleRef.current = key;
     if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
+    suppressSelectionToggleTimeoutRef.current = null;
+    setMode("chat");
+  }
+
+  function finishSelectionPress(target: MemoryActionTarget) {
+    const key = memoryActionKey(target);
+    if (suppressSelectionToggleRef.current !== key) return;
+    if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
     suppressSelectionToggleTimeoutRef.current = setTimeout(() => {
       if (suppressSelectionToggleRef.current === key) suppressSelectionToggleRef.current = null;
-    }, 450);
-    setMode("chat");
+      suppressSelectionToggleTimeoutRef.current = null;
+    }, 700);
   }
 
   function toggleSelectedItem(target: MemoryActionTarget) {
@@ -781,29 +823,46 @@ export default function MemoryDetailScreen() {
       return;
     }
     setSelectedItemKeys((current) => {
-      if (current.includes(key)) return current.filter((item) => item !== key);
-      return [...current, key];
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+      selectedItemKeysRef.current = next;
+      return next;
     });
   }
 
   function cancelSelection() {
+    selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
   }
 
-  async function removeSelectedItems() {
-    const messageIds = selectedItemKeys
+  function removeSelectedItems() {
+    const keysToDelete = selectedItemKeysRef.current.length > 0 ? selectedItemKeysRef.current : selectedItemKeys;
+    const queuedKeys = keysToDelete.filter((key) => !deletingItemKeysRef.current.has(key));
+    if (queuedKeys.length === 0) return;
+    queuedKeys.forEach((key) => deletingItemKeysRef.current.add(key));
+    const messageIds = queuedKeys
       .filter((key) => key.startsWith("message:"))
       .map((key) => key.replace("message:", ""));
-    const photoIds = selectedItemKeys
+    const photoIds = queuedKeys
       .filter((key) => key.startsWith("photo:"))
       .map((key) => key.replace("photo:", ""));
 
     try {
-      await deleteItems.mutateAsync({ messageIds, photoIds });
       if (editingMessage && messageIds.includes(editingMessage.id)) cancelEditMessage();
+      if (replyingToMessage && messageIds.includes(replyingToMessage.id)) setReplyingToMessage(null);
+      selectedItemKeysRef.current = [];
       setSelectedItemKeys([]);
-    } catch {
-      // Rendered from mutation state.
+      void deleteItems.mutateAsync({ messageIds, photoIds }).catch((error) => {
+        if (selectedItemKeysRef.current.length === 0) {
+          selectedItemKeysRef.current = queuedKeys;
+          setSelectedItemKeys(queuedKeys);
+        }
+        Alert.alert("Could not delete", errorMessage(error) ?? "The selected items were restored. Try again.");
+      }).finally(() => {
+        queuedKeys.forEach((key) => deletingItemKeysRef.current.delete(key));
+      });
+    } catch (error) {
+      queuedKeys.forEach((key) => deletingItemKeysRef.current.delete(key));
+      Alert.alert("Could not delete", errorMessage(error) ?? "Try again.");
     }
   }
 
@@ -975,7 +1034,7 @@ export default function MemoryDetailScreen() {
           onPress: async () => {
             try {
               await leaveRoom.mutateAsync();
-              router.replace("/profile");
+              router.replace({ pathname: "/profile", params: { tab: "memories" } });
             } catch (error) {
               Alert.alert("Could not leave room", error instanceof Error ? error.message : "Please try again.");
             }
@@ -996,11 +1055,7 @@ export default function MemoryDetailScreen() {
   }
 
   function goBackToMemories() {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace("/profile");
+    router.dismissTo({ pathname: "/profile", params: { tab: "memories" } });
   }
 
   const olderMessagesCursor = room.data?.messages[0]?.createdAt ?? null;
@@ -1031,7 +1086,6 @@ export default function MemoryDetailScreen() {
     if (!mediaPages.hasNextPage || mediaPages.isFetchingNextPage) return;
     void mediaPages.fetchNextPage();
   }, [mediaPages]);
-
   if (room.isLoading) {
     return (
       <Screen>
@@ -1131,6 +1185,7 @@ export default function MemoryDetailScreen() {
                 onOpenMedia={openMediaViewer}
                 onReplyMessage={beginReplyMessage}
                 onScrollBeginDrag={handleChatScrollBeginDrag}
+                onSelectionPressOut={finishSelectionPress}
                 onToggleSelection={toggleSelectedItem}
                 scrollToBottom={scrollChatToBottom}
                 editingMessageId={editingMessage?.id ?? null}
@@ -1182,12 +1237,12 @@ export default function MemoryDetailScreen() {
                   canDelete={canDeleteSelected}
                   count={selectedItemKeys.length}
                   insetStyle={composerInsetStyle}
-                  deleteError={deleteItems.error?.message}
-                  deleting={deleteItems.isPending}
+                  deleting={false}
                   editableMessage={editableSelectedMessage}
                   onCancel={cancelSelection}
                   onDelete={removeSelectedItems}
                   onEdit={beginEditMessage}
+                  onLayoutChange={handleComposerLayout}
                 />
               ) : (
                 <Composer
@@ -1639,14 +1694,34 @@ function FloatingAddMenu({
   const visibilityProgress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const buttonBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6);
   const actionStackRight = FLOATING_ADD_EDGE_OFFSET + (FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2;
-  const menuOpacity = progress;
-  const menuTranslateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [16, 0]
+  const mediaActionOpacity = progress.interpolate({
+    inputRange: [0, 0.18, 1],
+    outputRange: [0, 1, 1],
+    extrapolate: "clamp"
   });
-  const menuScale = progress.interpolate({
+  const mediaActionTranslateY = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.94, 1]
+    outputRange: [FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP, 0]
+  });
+  const mediaActionScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.88, 1]
+  });
+  const dishActionOpacity = progress.interpolate({
+    inputRange: [0, 0.32, 1],
+    outputRange: [0, 0, 1],
+    extrapolate: "clamp"
+  });
+  const dishActionTranslateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [
+      FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_ACTION_ICON_SIZE + FLOATING_ADD_MENU_GAP + spacing.sm,
+      0
+    ]
+  });
+  const dishActionScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.84, 1]
   });
   const iconRotate = progress.interpolate({
     inputRange: [0, 1],
@@ -1687,24 +1762,36 @@ function FloatingAddMenu({
           styles.floatingAddActionStack,
           {
             bottom: buttonBottom + FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP,
-            opacity: menuOpacity,
-            right: actionStackRight,
-            transform: [{ translateY: menuTranslateY }, { scale: menuScale }]
+            right: actionStackRight
           }
         ]}
       >
-        <FloatingAddAction
-          accent="gold"
-          icon="restaurant-outline"
-          label="Dishes"
-          onPress={onDish}
-        />
-        <FloatingAddAction
-          accent="cool"
-          icon="camera-outline"
-          label="Media"
-          onPress={onMedia}
-        />
+        <Animated.View
+          style={{
+            opacity: dishActionOpacity,
+            transform: [{ translateY: dishActionTranslateY }, { scale: dishActionScale }]
+          }}
+        >
+          <FloatingAddAction
+            accent="gold"
+            icon="restaurant-outline"
+            label="Dishes"
+            onPress={onDish}
+          />
+        </Animated.View>
+        <Animated.View
+          style={{
+            opacity: mediaActionOpacity,
+            transform: [{ translateY: mediaActionTranslateY }, { scale: mediaActionScale }]
+          }}
+        >
+          <FloatingAddAction
+            accent="cool"
+            icon="camera-outline"
+            label="Media"
+            onPress={onMedia}
+          />
+        </Animated.View>
       </Animated.View>
       <Animated.View
         pointerEvents={visible ? "auto" : "none"}
@@ -1825,6 +1912,7 @@ function ChatTimeline({
   onOpenMedia,
   onReplyMessage,
   onScrollBeginDrag,
+  onSelectionPressOut,
   onToggleSelection,
   lastReadAt,
   olderMessagesError,
@@ -1851,6 +1939,7 @@ function ChatTimeline({
   onOpenMedia: OpenMediaHandler;
   onReplyMessage: (message: MemoryMessage) => void;
   onScrollBeginDrag: () => void;
+  onSelectionPressOut: (target: MemoryActionTarget) => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
   lastReadAt: string | null;
   olderMessagesError?: string;
@@ -1880,18 +1969,38 @@ function ChatTimeline({
     () => new Map(data.participants.map((participant) => [participant.username, participant.displayName])),
     [data.participants]
   );
+  const latestTimelineItem = timeline[timeline.length - 1] ?? null;
+  const latestTimelineItemId = latestTimelineItem?.id ?? null;
+  const latestTimelineItemMine = latestTimelineItem ? getTimelineSenderUsername(latestTimelineItem) === myUsername : false;
   const [initialAnchorReady, setInitialAnchorReady] = useState(false);
   const wasActiveRef = useRef(active);
   const initialAnchorReadyRef = useRef(false);
   const didScrollToUnreadRef = useRef(false);
   const didInitialBottomScrollRef = useRef(false);
   const listNearBottomRef = useRef(false);
+  const latestTimelineItemIdRef = useRef(latestTimelineItemId);
   // While true, the list self-corrects to the exact content end (latest message sitting
   // just above the composer) on every scroll/content-size event — late-mounting rows,
   // the header collapse resize, and media loads all land short otherwise. Released only
   // when the user drags away from the bottom.
   const followBottomRef = useRef(false);
   const isDraggingRef = useRef(false);
+  // Set the follow-bottom intent DURING render (before layout/onContentSizeChange),
+  // so the new message is pinned in the same layout pass. If we only set it in an
+  // effect (which runs after onContentSizeChange), the content-size scroll sees
+  // stale flags and skips, leaving the new bubble parked behind the composer until
+  // a deferred scroll drags it up.
+  const renderPinnedForIdRef = useRef<string | null>(latestTimelineItemId);
+  if (
+    active &&
+    latestTimelineItemId &&
+    latestTimelineItemId !== renderPinnedForIdRef.current &&
+    (latestTimelineItemMine || listNearBottomRef.current || followBottomRef.current)
+  ) {
+    renderPinnedForIdRef.current = latestTimelineItemId;
+    followBottomRef.current = true;
+    listNearBottomRef.current = true;
+  }
   const computeFirstUnreadItemId = useCallback((items: TimelineItem[], lastReadValue: string | null) => {
     const lastReadTime = lastReadValue ? new Date(lastReadValue).getTime() : 0;
     return items.find((item) => {
@@ -2001,17 +2110,20 @@ function ChatTimeline({
 
     return rows;
   }, [firstUnreadItemId, myUsername, timeline]);
+  // Inverted list: data is rendered newest-first (index 0 = newest, at the bottom).
+  // All scroll-to-index lookups must use this reversed array's indices.
+  const invertedRows = useMemo(() => timelineRows.slice().reverse(), [timelineRows]);
   const firstUnreadRowIndex = useMemo(
-    () => timelineRows.findIndex((row) => row.type === "unread"),
-    [timelineRows]
+    () => invertedRows.findIndex((row) => row.type === "unread"),
+    [invertedRows]
   );
   const messageRowIndexById = useMemo(() => {
     const byId = new Map<string, number>();
-    timelineRows.forEach((row, index) => {
+    invertedRows.forEach((row, index) => {
       if (row.type === "message") byId.set(row.value.id, index);
     });
     return byId;
-  }, [timelineRows]);
+  }, [invertedRows]);
   const hideUntilAnchored = timelineRows.length > 0 && !initialAnchorReady;
 
   useEffect(() => () => {
@@ -2068,6 +2180,30 @@ function ChatTimeline({
     if (!active || !listNearBottomRef.current) return;
     onNearBottomChange(true);
   }, [active, onNearBottomChange]);
+
+  useEffect(() => {
+    const previousLatestId = latestTimelineItemIdRef.current;
+    latestTimelineItemIdRef.current = latestTimelineItemId;
+    if (!active || !latestTimelineItemId || previousLatestId === latestTimelineItemId) return undefined;
+    if (!latestTimelineItemMine && !listNearBottomRef.current && !followBottomRef.current) return undefined;
+
+    // The primary scroll is done by onContentSizeChange, which fires once the new
+    // row has laid out and so uses the correct content height — scrolling here with
+    // a stale height is what parked the message below the composer then jumped it
+    // up. We only set the follow flags, plus one deferred safety-net scroll (next
+    // tick, after the height ref is fresh) for the case the user had scrolled up.
+    followBottomRef.current = true;
+    listNearBottomRef.current = true;
+    onNearBottomChange(true);
+    const timeout = setTimeout(() => scrollToBottom(false), 0);
+    return () => clearTimeout(timeout);
+  }, [
+    active,
+    latestTimelineItemId,
+    latestTimelineItemMine,
+    onNearBottomChange,
+    scrollToBottom
+  ]);
 
   const anchorStateRef = useRef({
     firstUnreadRowIndex,
@@ -2152,9 +2288,10 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  const rowHandlersRef = useRef({ onBeginSelection, onOpenMedia, onReplyMessage, onToggleSelection });
-  rowHandlersRef.current = { onBeginSelection, onOpenMedia, onReplyMessage, onToggleSelection };
+  const rowHandlersRef = useRef({ onBeginSelection, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection };
   const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
+  const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
   const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
@@ -2181,6 +2318,7 @@ function ChatTimeline({
           onOpenMedia={openRowMedia}
           onJumpToMessage={jumpToRepliedMessage}
           onReply={() => replyToRow(item.value)}
+          onSelectionPressOut={() => finishRowSelectionPress({ type: "message", value: item.value })}
           onToggleSelection={() => toggleRowSelection({ type: "message", value: item.value })}
           editing={editingMessageId === item.value.id}
           groupPosition={item.groupPosition}
@@ -2198,6 +2336,7 @@ function ChatTimeline({
         mine={item.mine}
         onBeginSelection={() => beginRowSelection({ type: "photo", value: item.value })}
         onOpenMedia={openRowMedia}
+        onSelectionPressOut={() => finishRowSelectionPress({ type: "photo", value: item.value })}
         onToggleSelection={() => toggleRowSelection({ type: "photo", value: item.value })}
         photo={item.value}
         groupPosition={item.groupPosition}
@@ -2211,6 +2350,7 @@ function ChatTimeline({
   }, [
     beginRowSelection,
     editingMessageId,
+    finishRowSelectionPress,
     highlightedMessageId,
     jumpToRepliedMessage,
     openRowMedia,
@@ -2225,25 +2365,30 @@ function ChatTimeline({
   return (
     <View onLayout={onLayoutChange} style={[styles.chatTimelineWrap, hideUntilAnchored && styles.chatTimelineHidden]}>
       <FlatList
-        data={timelineRows}
+        data={invertedRows}
         ref={scrollRef}
+        inverted
         contentContainerStyle={[
           styles.timelineContent,
-          { paddingBottom: bottomClearance },
+          { paddingTop: bottomClearance },
           timelineRows.length === 0 && styles.timelineContentEmpty
         ]}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
-        ListHeaderComponent={timelineRows.length > 0 ? (
-          <ChatHistoryHeader
-            error={olderMessagesError}
-            hasMore={hasOlderMessages}
-            loading={loadingOlderMessages}
-            onLoad={onLoadOlderMessages}
-          />
+        ListFooterComponent={timelineRows.length > 0 ? (
+          // Inverted: the footer renders at the visual TOP (oldest end), where the
+          // "load older history" affordance belongs. Counter-flip it so it's upright.
+          <View style={styles.invertedListEdge}>
+            <ChatHistoryHeader
+              error={olderMessagesError}
+              hasMore={hasOlderMessages}
+              loading={loadingOlderMessages}
+              onLoad={onLoadOlderMessages}
+            />
+          </View>
         ) : null}
         ListEmptyComponent={(
-          <View style={styles.emptyChat}>
+          <View style={[styles.emptyChat, styles.invertedListEdge]}>
             <View style={styles.emptyIcon}>
               <Ionicons name="sparkles-outline" size={26} color={ROOM_COLORS.cool} />
             </View>
@@ -2256,11 +2401,17 @@ function ChatTimeline({
             </View>
           </View>
         )}
-        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
+        onEndReached={() => {
+          if (initialAnchorReadyRef.current && hasOlderMessages && !loadingOlderMessages) {
+            onLoadOlderMessages();
+          }
+        }}
+        onEndReachedThreshold={0.4}
         onScroll={(event) => {
           if (!active) return;
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          const { contentOffset } = event.nativeEvent;
+          // Inverted: the bottom (newest) is at offset 0.
+          const distanceFromBottom = contentOffset.y;
           const isNearBottom = distanceFromBottom < 96;
           listNearBottomRef.current = isNearBottom;
           onNearBottomChange(isNearBottom);
@@ -2270,14 +2421,6 @@ function ChatTimeline({
             } else if (followBottomRef.current) {
               scrollToBottom(false);
             }
-          }
-          if (
-            initialAnchorReadyRef.current &&
-            contentOffset.y < 96 &&
-            hasOlderMessages &&
-            !loadingOlderMessages
-          ) {
-            onLoadOlderMessages();
           }
         }}
         onScrollBeginDrag={() => {
@@ -2440,6 +2583,129 @@ function isOptimisticMemoryMedia(media: MemoryPhoto) {
   return media.id.startsWith("optimistic-media:");
 }
 
+const VIDEO_THUMBNAIL_TIME_SECONDS = 0.1;
+const VIDEO_THUMBNAIL_MAX_WIDTH = 720;
+const VIDEO_THUMBNAIL_CACHE_LIMIT = 80;
+const videoThumbnailCache = new Map<string, VideoThumbnail>();
+
+function cacheVideoThumbnail(uri: string, thumbnail: VideoThumbnail) {
+  if (videoThumbnailCache.has(uri)) {
+    videoThumbnailCache.delete(uri);
+  }
+  videoThumbnailCache.set(uri, thumbnail);
+
+  if (videoThumbnailCache.size > VIDEO_THUMBNAIL_CACHE_LIMIT) {
+    const oldestUri = videoThumbnailCache.keys().next().value;
+    if (typeof oldestUri === "string") {
+      videoThumbnailCache.delete(oldestUri);
+    }
+  }
+}
+
+function VideoThumbnailLayer({ uri }: { uri: string }) {
+  const [thumbnail, setThumbnail] = useState<VideoThumbnail | null>(() => videoThumbnailCache.get(uri) ?? null);
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.muted = true;
+    instance.volume = 0;
+  });
+
+  useEffect(() => {
+    const cachedThumbnail = videoThumbnailCache.get(uri);
+    if (cachedThumbnail) {
+      setThumbnail(cachedThumbnail);
+      return undefined;
+    }
+
+    setThumbnail(null);
+
+    if (Platform.OS === "web") {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    void player
+      .generateThumbnailsAsync(VIDEO_THUMBNAIL_TIME_SECONDS, { maxWidth: VIDEO_THUMBNAIL_MAX_WIDTH })
+      .then((thumbnails) => {
+        const nextThumbnail = thumbnails[0] ?? null;
+        if (nextThumbnail) {
+          cacheVideoThumbnail(uri, nextThumbnail);
+        }
+        if (!cancelled) {
+          setThumbnail(nextThumbnail);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setThumbnail(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [player, uri]);
+
+  if (Platform.OS === "web") {
+    return (
+      <VideoView
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
+        contentFit="cover"
+        nativeControls={false}
+        player={player}
+        playsInline
+        pointerEvents="none"
+        style={styles.videoThumbnailImage}
+      />
+    );
+  }
+
+  if (!thumbnail) return null;
+
+  return <Image contentFit="cover" source={thumbnail} style={styles.videoThumbnailImage} />;
+}
+
+function UploadProgressOverlay({ progress }: { progress?: number | null }) {
+  const normalizedProgress = Math.max(0, Math.min(progress ?? 0, 1));
+  const progressPercent = Math.round(normalizedProgress * 100);
+  const ringSize = 44;
+  const ringStroke = 3;
+  const ringRadius = (ringSize - ringStroke) / 2;
+  const circumference = 2 * Math.PI * ringRadius;
+
+  return (
+    <View style={styles.mediaPendingOverlay}>
+      <View style={styles.uploadProgressCircle}>
+        <Svg height={ringSize} width={ringSize} viewBox={`0 0 ${ringSize} ${ringSize}`}>
+          <Circle
+            cx={ringSize / 2}
+            cy={ringSize / 2}
+            fill="none"
+            r={ringRadius}
+            stroke={ROOM_COLORS.glass}
+            strokeWidth={ringStroke}
+          />
+          <Circle
+            cx={ringSize / 2}
+            cy={ringSize / 2}
+            fill="none"
+            r={ringRadius}
+            stroke={ROOM_COLORS.cool}
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeDashoffset={circumference * (1 - normalizedProgress)}
+            strokeLinecap="round"
+            strokeWidth={ringStroke}
+            transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
+          />
+        </Svg>
+        <Text style={styles.uploadProgressText}>{progressPercent}%</Text>
+      </View>
+      <Text style={styles.mediaPendingText}>Uploading</Text>
+    </View>
+  );
+}
+
 function memoryMessageReplyPreview(message: Pick<MemoryMessage, "attachments" | "body">) {
   const body = message.body.trim();
   if (body) return body;
@@ -2506,26 +2772,39 @@ function useMediaOpenGuard(onBeginSelection: () => void) {
     if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
   }, []);
 
+  function clearIgnoreOpenTimeout() {
+    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
+    ignoreOpenTimeoutRef.current = null;
+  }
+
+  function handleMediaPressIn() {
+    clearIgnoreOpenTimeout();
+    ignoreOpenAfterLongPressRef.current = false;
+  }
+
   function handleMediaLongPress() {
     ignoreOpenAfterLongPressRef.current = true;
-    if (ignoreOpenTimeoutRef.current) clearTimeout(ignoreOpenTimeoutRef.current);
+    clearIgnoreOpenTimeout();
+    onBeginSelection();
+  }
+
+  function handleMediaPressOut() {
+    if (!ignoreOpenAfterLongPressRef.current) return;
+    clearIgnoreOpenTimeout();
     ignoreOpenTimeoutRef.current = setTimeout(() => {
       ignoreOpenAfterLongPressRef.current = false;
-    }, 450);
-    onBeginSelection();
+      ignoreOpenTimeoutRef.current = null;
+    }, 700);
   }
 
   function shouldIgnoreMediaOpen() {
     if (!ignoreOpenAfterLongPressRef.current) return false;
     ignoreOpenAfterLongPressRef.current = false;
-    if (ignoreOpenTimeoutRef.current) {
-      clearTimeout(ignoreOpenTimeoutRef.current);
-      ignoreOpenTimeoutRef.current = null;
-    }
+    clearIgnoreOpenTimeout();
     return true;
   }
 
-  return { handleMediaLongPress, shouldIgnoreMediaOpen };
+  return { handleMediaLongPress, handleMediaPressIn, handleMediaPressOut, shouldIgnoreMediaOpen };
 }
 
 function getMessageTimestampLabel(message: MemoryMessage) {
@@ -2538,25 +2817,33 @@ function MessageRow({
   editing = false,
   highlighted = false,
   mine,
+  onLayout,
   onPress,
+  onPressIn,
+  onPressOut,
   onLongPress,
   onSwipeRight,
   rowStyle,
   selected,
   senderName,
-  showSenderDetails = true
+  showSenderDetails = true,
+  swipeEnabled = true
 }: {
   children: ReactNode;
   editing?: boolean;
   highlighted?: boolean;
   mine: boolean;
+  onLayout?: (event: LayoutChangeEvent) => void;
   onPress?: () => void;
+  onPressIn?: () => void;
+  onPressOut?: () => void;
   onLongPress?: () => void;
   onSwipeRight?: () => void;
   rowStyle?: StyleProp<ViewStyle>;
   selected?: boolean;
   senderName: string;
   showSenderDetails?: boolean;
+  swipeEnabled?: boolean;
 }) {
   const accentColor = senderAccent(senderName);
   const swipeTranslateX = useRef(new Animated.Value(0)).current;
@@ -2572,16 +2859,22 @@ function MessageRow({
   });
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_event, gesture) => (
+      swipeEnabled &&
       Boolean(onSwipeRight) &&
       gesture.dx > 8 &&
       Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35
     ),
     onPanResponderMove: (_event, gesture) => {
-      if (!onSwipeRight) return;
+      if (!swipeEnabled || !onSwipeRight) return;
       swipeTranslateX.setValue(Math.min(REPLY_SWIPE_MAX_TRANSLATE, Math.max(0, gesture.dx)));
     },
     onPanResponderRelease: (_event, gesture) => {
-      if (onSwipeRight && gesture.dx >= REPLY_SWIPE_TRIGGER_DISTANCE && Math.abs(gesture.dy) < 42) {
+      if (
+        swipeEnabled &&
+        onSwipeRight &&
+        gesture.dx >= REPLY_SWIPE_TRIGGER_DISTANCE &&
+        Math.abs(gesture.dy) < 42
+      ) {
         onSwipeRight();
       }
       Animated.spring(swipeTranslateX, {
@@ -2599,7 +2892,7 @@ function MessageRow({
         useNativeDriver: true
       }).start();
     }
-  }), [onSwipeRight, swipeTranslateX]);
+  }), [onSwipeRight, swipeEnabled, swipeTranslateX]);
 
   const rowContent = mine ? (
     <>
@@ -2628,14 +2921,17 @@ function MessageRow({
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityState={onPress ? { selected: Boolean(selected) } : undefined}
       delayLongPress={280}
+      onLayout={onLayout}
       onLongPress={onLongPress}
       onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       style={resolvedRowStyle}
     >
       {rowContent}
     </Pressable>
   ) : (
-    <View style={resolvedRowStyle}>
+    <View onLayout={onLayout} style={resolvedRowStyle}>
       {rowContent}
     </View>
   );
@@ -2772,6 +3068,7 @@ function MessageBubble({
   onJumpToMessage,
   onOpenMedia,
   onReply,
+  onSelectionPressOut,
   rowStyle,
   onToggleSelection,
   selected,
@@ -2787,6 +3084,7 @@ function MessageBubble({
   onJumpToMessage: (messageId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onReply: () => void;
+  onSelectionPressOut: () => void;
   rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
   selected: boolean;
@@ -2805,7 +3103,12 @@ function MessageBubble({
   const isMediaOnly = hasMedia && !hasText;
   const isMediaWithCaption = hasMedia && hasText;
   const timestampLabel = getMessageTimestampLabel(message);
-  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
+  const {
+    handleMediaLongPress,
+    handleMediaPressIn,
+    handleMediaPressOut,
+    shouldIgnoreMediaOpen
+  } = useMediaOpenGuard(onBeginSelection);
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
   const textBubbleContentMinWidth = Math.max(0, (mine ? 64 : 88) - 22);
   const textBubbleMeasuredContentWidth = textBubbleWidth > 0 ? Math.max(0, textBubbleWidth - 22) : undefined;
@@ -2832,6 +3135,36 @@ function MessageBubble({
   }
 
   function renderTextMessage() {
+    const bubble = (
+      <MessageBubbleFrame
+        style={styles.textMessageFrame}
+      >
+        <View
+          onLayout={message.replyToMessage ? handleTextBubbleLayout : undefined}
+          style={[
+            styles.textMessageBubble,
+            mine ? styles.textMessageBubbleMine : styles.textMessageBubbleOther,
+            bubbleCornerStyle
+          ]}
+        >
+          {!mine && showSenderDetails ? (
+            <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(message.authorDisplayName) }]}>
+              {message.authorDisplayName}
+            </Text>
+          ) : null}
+          {renderReplyPreview()}
+          <InlineTimestampText
+            fill={shouldFillTextTimestamp}
+            minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
+            nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
+            reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
+            text={body}
+            textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
+            time={timestampLabel}
+          />
+        </View>
+      </MessageBubbleFrame>
+    );
     return (
       <MessageRow
         editing={editing}
@@ -2839,40 +3172,15 @@ function MessageBubble({
         mine={mine}
         onLongPress={!selectionMode ? onBeginSelection : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
-        onSwipeRight={!selectionMode ? onReply : undefined}
+        onPressOut={onSelectionPressOut}
+        onSwipeRight={onReply}
         rowStyle={rowStyle}
         selected={selected}
         senderName={message.authorDisplayName}
         showSenderDetails={showSenderDetails}
+        swipeEnabled={!selectionMode}
       >
-        <MessageBubbleFrame
-          style={styles.textMessageFrame}
-        >
-          <View
-            onLayout={message.replyToMessage ? handleTextBubbleLayout : undefined}
-            style={[
-              styles.textMessageBubble,
-              mine ? styles.textMessageBubbleMine : styles.textMessageBubbleOther,
-              bubbleCornerStyle
-            ]}
-          >
-            {!mine && showSenderDetails ? (
-              <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(message.authorDisplayName) }]}>
-                {message.authorDisplayName}
-              </Text>
-            ) : null}
-            {renderReplyPreview()}
-            <InlineTimestampText
-              fill={shouldFillTextTimestamp}
-              minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
-              nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
-              reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
-              text={body}
-              textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
-              time={timestampLabel}
-            />
-          </View>
-        </MessageBubbleFrame>
+        {bubble}
       </MessageRow>
     );
   }
@@ -2895,13 +3203,19 @@ function MessageBubble({
         editing={editing}
         highlighted={highlighted}
         mine={mine}
-        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onLongPress={!selectionMode ? handleMediaLongPress : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
-        onSwipeRight={!selectionMode ? onReply : undefined}
+        onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+        onPressOut={() => {
+          handleMediaPressOut();
+          onSelectionPressOut();
+        }}
+        onSwipeRight={onReply}
         rowStyle={[rowStyle, styles.chatMessageRowMedia]}
         selected={selected}
         senderName={message.authorDisplayName}
         showSenderDetails={showSenderDetails}
+        swipeEnabled={!selectionMode}
       >
         <MessageBubbleFrame
           style={{ width: previewSize.width }}
@@ -2925,13 +3239,18 @@ function MessageBubble({
               disabled={selectionMode}
               onLongPress={!selectionMode ? handleMediaLongPress : undefined}
               onPress={handleOpenMedia}
+              onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+              onPressOut={() => {
+                handleMediaPressOut();
+                onSelectionPressOut();
+              }}
               style={styles.mediaMessageContent}
             >
               <SingleMediaPreview
                 media={media}
                 sizeOverride={previewSize}
                 timestamp={isMediaOnly ? timestampLabel : undefined}
-                timestampPlacement={media.mediaType === "video" ? "bottom-left" : "bottom-right"}
+                timestampPlacement="bottom-right"
               />
             </Pressable>
             {isMediaWithCaption ? (
@@ -2961,13 +3280,19 @@ function MessageBubble({
         editing={editing}
         highlighted={highlighted}
         mine={mine}
-        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onLongPress={!selectionMode ? handleMediaLongPress : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
-        onSwipeRight={!selectionMode ? onReply : undefined}
+        onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+        onPressOut={() => {
+          handleMediaPressOut();
+          onSelectionPressOut();
+        }}
+        onSwipeRight={onReply}
         rowStyle={[rowStyle, styles.chatMessageRowMedia]}
         selected={selected}
         senderName={message.authorDisplayName}
         showSenderDetails={showSenderDetails}
+        swipeEnabled={!selectionMode}
       >
         <MessageBubbleFrame
           style={{ width: multiMediaCardWidth }}
@@ -2988,10 +3313,16 @@ function MessageBubble({
             ) : null}
             <MediaAttachmentGrid
               gridWidth={multiMediaCardWidth}
+              onMediaLongPress={handleMediaLongPress}
+              onMediaPressIn={handleMediaPressIn}
+              onMediaPressOut={() => {
+                handleMediaPressOut();
+                onSelectionPressOut();
+              }}
               media={message.attachments}
-              onBeginSelection={onBeginSelection}
               onOpenMedia={onOpenMedia}
               selectionMode={selectionMode}
+              shouldIgnoreMediaOpen={shouldIgnoreMediaOpen}
               timestamp={isMediaOnly ? timestampLabel : undefined}
             />
             {isMediaWithCaption ? (
@@ -3025,6 +3356,7 @@ function MediaBubble({
   mine,
   onBeginSelection,
   onOpenMedia,
+  onSelectionPressOut,
   rowStyle,
   onToggleSelection,
   photo,
@@ -3037,6 +3369,7 @@ function MediaBubble({
   mine: boolean;
   onBeginSelection: () => void;
   onOpenMedia: OpenMediaHandler;
+  onSelectionPressOut: () => void;
   rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
   photo: MemoryPhoto;
@@ -3051,7 +3384,12 @@ function MediaBubble({
     imageWidth: photo.imageWidth,
     screenWidth
   });
-  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
+  const {
+    handleMediaLongPress,
+    handleMediaPressIn,
+    handleMediaPressOut,
+    shouldIgnoreMediaOpen
+  } = useMediaOpenGuard(onBeginSelection);
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
 
   function handleOpenMedia() {
@@ -3062,8 +3400,13 @@ function MediaBubble({
   return (
     <MessageRow
       mine={mine}
-      onLongPress={!selectionMode ? onBeginSelection : undefined}
+      onLongPress={!selectionMode ? handleMediaLongPress : undefined}
       onPress={selectionMode ? onToggleSelection : undefined}
+      onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+      onPressOut={() => {
+        handleMediaPressOut();
+        onSelectionPressOut();
+      }}
       rowStyle={[rowStyle, styles.chatMessageRowMedia]}
       selected={selected}
       senderName={uploaderDisplayName}
@@ -3086,13 +3429,18 @@ function MediaBubble({
             delayLongPress={280}
             onLongPress={!selectionMode ? handleMediaLongPress : undefined}
             onPress={handleOpenMedia}
+            onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+            onPressOut={() => {
+              handleMediaPressOut();
+              onSelectionPressOut();
+            }}
             style={styles.mediaMessageContent}
           >
             <SingleMediaPreview
               media={photo}
               sizeOverride={singleMediaPreviewSize}
               timestamp={formatDisplayTime(photo.createdAt)}
-              timestampPlacement={photo.mediaType === "video" ? "bottom-left" : "bottom-right"}
+              timestampPlacement="bottom-right"
             />
           </Pressable>
         </View>
@@ -3104,19 +3452,24 @@ function MediaBubble({
 function MediaAttachmentGrid({
   gridWidth,
   media,
-  onBeginSelection,
+  onMediaLongPress,
+  onMediaPressIn,
+  onMediaPressOut,
   onOpenMedia,
   selectionMode,
+  shouldIgnoreMediaOpen,
   timestamp
 }: {
   gridWidth: number;
   media: MemoryPhoto[];
-  onBeginSelection: () => void;
+  onMediaLongPress: () => void;
+  onMediaPressIn?: () => void;
+  onMediaPressOut?: () => void;
   onOpenMedia: OpenMediaHandler;
   selectionMode?: boolean;
+  shouldIgnoreMediaOpen: () => boolean;
   timestamp?: string;
 }) {
-  const { handleMediaLongPress, shouldIgnoreMediaOpen } = useMediaOpenGuard(onBeginSelection);
   const visible = media.slice(0, 4);
   const hiddenCount = Math.max(0, media.length - visible.length);
 
@@ -3137,8 +3490,10 @@ function MediaAttachmentGrid({
               hiddenCount={0}
               key={item.id}
               media={item}
-              onLongPress={handleMediaLongPress}
+              onLongPress={onMediaLongPress}
               onPress={() => handleOpenMedia(item)}
+              onPressIn={onMediaPressIn}
+              onPressOut={onMediaPressOut}
               selectionMode={selectionMode}
               style={tileSize}
             />
@@ -3166,8 +3521,10 @@ function MediaAttachmentGrid({
           <MediaGridTile
             hiddenCount={0}
             media={visible[0]}
-            onLongPress={handleMediaLongPress}
+            onLongPress={onMediaLongPress}
             onPress={() => handleOpenMedia(visible[0])}
+            onPressIn={onMediaPressIn}
+            onPressOut={onMediaPressOut}
             selectionMode={selectionMode}
             style={{ height: gridHeight, width: leftWidth }}
           />
@@ -3177,8 +3534,10 @@ function MediaAttachmentGrid({
                 hiddenCount={0}
                 key={item.id}
                 media={item}
-                onLongPress={handleMediaLongPress}
+                onLongPress={onMediaLongPress}
                 onPress={() => handleOpenMedia(item)}
+                onPressIn={onMediaPressIn}
+                onPressOut={onMediaPressOut}
                 selectionMode={selectionMode}
                 style={{ height: rightTileHeight, width: rightWidth }}
               />
@@ -3209,8 +3568,10 @@ function MediaAttachmentGrid({
               hiddenCount={showHiddenCount ? hiddenCount : 0}
               key={item.id}
               media={item}
-              onLongPress={handleMediaLongPress}
+              onLongPress={onMediaLongPress}
               onPress={() => handleOpenMedia(item)}
+              onPressIn={onMediaPressIn}
+              onPressOut={onMediaPressOut}
               selectionMode={selectionMode}
               style={{ height: tileHeight, width: tileWidth }}
             />
@@ -3228,10 +3589,8 @@ function MediaAttachmentGrid({
 }
 
 function getMediaGridTimestampPlacement(media: MemoryPhoto[]): MediaTimestampPlacement {
-  const visible = media.slice(0, 4);
-  const bottomRightMedia = media.length === 3 ? visible[2] : visible[Math.min(visible.length - 1, 3)];
   const hasMoreOverlay = media.length > 4;
-  if (hasMoreOverlay || bottomRightMedia?.mediaType === "video") return "bottom-left";
+  if (hasMoreOverlay) return "bottom-left";
   return "bottom-right";
 }
 
@@ -3240,6 +3599,8 @@ function MediaGridTile({
   media,
   onLongPress,
   onPress,
+  onPressIn,
+  onPressOut,
   selectionMode,
   style
 }: {
@@ -3247,6 +3608,8 @@ function MediaGridTile({
   media: MemoryPhoto;
   onLongPress: () => void;
   onPress: () => void;
+  onPressIn?: () => void;
+  onPressOut?: () => void;
   selectionMode?: boolean;
   style: MediaPreviewSize;
 }) {
@@ -3261,6 +3624,8 @@ function MediaGridTile({
       disabled={selectionMode}
       onLongPress={!selectionMode ? onLongPress : undefined}
       onPress={onPress}
+      onPressIn={!selectionMode ? onPressIn : undefined}
+      onPressOut={!selectionMode ? onPressOut : undefined}
       style={[styles.mediaGridTile, style]}
     >
       <GridMediaPreview media={media} />
@@ -3274,34 +3639,38 @@ function MediaGridTile({
 }
 
 function GridMediaPreview({ media }: { media: MemoryPhoto }) {
+  const uploading = isOptimisticMemoryMedia(media);
+
   if (media.mediaType === "video") {
     return (
       <View style={styles.gridVideoPreview}>
+        <VideoThumbnailLayer uri={media.publicUrl} />
+        <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
-          {isOptimisticMemoryMedia(media) ? (
-            <View style={styles.mediaPendingOverlay}>
-              <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
-              <Text style={styles.mediaPendingText}>Sending</Text>
+          {!uploading ? (
+            <View style={styles.gridPlayBadge}>
+              <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
             </View>
           ) : null}
-          <View style={styles.gridPlayBadge}>
-            <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
-          </View>
           <View style={styles.gridMediaTypeBadge}>
             <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
             <Text style={styles.mediaTypeBadgeText}>Video</Text>
           </View>
+          {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
         </View>
       </View>
     );
   }
 
   return (
-    <Image
-      contentFit="cover"
-      source={{ uri: media.publicUrl }}
-      style={styles.gridMediaFill}
-    />
+    <View style={styles.gridMediaFill}>
+      <Image
+        contentFit="cover"
+        source={media.publicUrl}
+        style={styles.gridMediaFill}
+      />
+      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+    </View>
   );
 }
 
@@ -3944,7 +4313,8 @@ function SelectionActionBar({
   insetStyle,
   onCancel,
   onDelete,
-  onEdit
+  onEdit,
+  onLayoutChange
 }: {
   canDelete: boolean;
   count: number;
@@ -3955,37 +4325,42 @@ function SelectionActionBar({
   onCancel: () => void;
   onDelete: () => void;
   onEdit: (message: MemoryMessage) => void;
+  onLayoutChange: (event: LayoutChangeEvent) => void;
 }) {
   return (
-    <Reanimated.View style={[styles.selectionBarWrap, insetStyle]}>
-      {deleteError ? <Text style={styles.error}>{deleteError}</Text> : null}
-      <View style={styles.selectionBar}>
-        <Pressable accessibilityLabel="Cancel selection" onPress={onCancel} style={styles.selectionBarButton}>
-          <Ionicons name="close" size={22} color={ROOM_COLORS.onSurface} />
-        </Pressable>
-        <Text style={styles.selectionBarTitle}>
-          {count} selected
-        </Text>
-        {editableMessage ? (
-          <Pressable
-            accessibilityLabel="Edit selected message"
-            disabled={deleting}
-            onPress={() => onEdit(editableMessage)}
-            style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
-          >
-            <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onCool} />
-          </Pressable>
-        ) : null}
-        {canDelete ? (
-          <Pressable
-            accessibilityLabel="Delete selected items"
-            disabled={deleting || count === 0}
-            onPress={onDelete}
-            style={[styles.selectionDeleteButton, (deleting || count === 0) && styles.selectionDeleteButtonDisabled]}
-          >
-            <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.white} />
-          </Pressable>
-        ) : null}
+    <Reanimated.View style={[styles.composerWrap, insetStyle]}>
+      <View onLayout={onLayoutChange} style={styles.composerContent}>
+        {deleteError ? <Text style={styles.error}>{deleteError}</Text> : null}
+        <View style={styles.composer}>
+          <View style={[styles.messageBox, styles.selectionMessageBox]}>
+            <Pressable accessibilityLabel="Cancel selection" onPress={onCancel} style={styles.selectionInlineButton}>
+              <Ionicons name="close" size={20} color={ROOM_COLORS.onSurface} />
+            </Pressable>
+            <Text numberOfLines={1} style={styles.selectionBarTitle}>
+              {count} selected
+            </Text>
+          </View>
+          {editableMessage ? (
+            <Pressable
+              accessibilityLabel="Edit selected message"
+              disabled={deleting}
+              onPress={() => onEdit(editableMessage)}
+              style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onCool} />
+            </Pressable>
+          ) : null}
+          {canDelete ? (
+            <Pressable
+              accessibilityLabel="Delete selected items"
+              disabled={deleting || count === 0}
+              onPress={onDelete}
+              style={[styles.selectionDeleteButton, (deleting || count === 0) && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.white} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
     </Reanimated.View>
   );
@@ -4059,7 +4434,7 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
                 {media.mediaType === "video" ? (
                   <ViewerVideo media={media} />
                 ) : (
-                  <Image contentFit="contain" source={{ uri: media.publicUrl }} style={styles.viewerImage} />
+                  <Image contentFit="contain" source={media.publicUrl} style={styles.viewerImage} />
                 )}
               </View>
             ))}
@@ -4083,10 +4458,12 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
                 >
                   {media.mediaType === "video" ? (
                     <View style={styles.viewerThumbnailVideo}>
+                      <VideoThumbnailLayer uri={media.publicUrl} />
+                      <View pointerEvents="none" style={styles.videoThumbnailScrim} />
                       <Ionicons name="play" size={14} color={ROOM_COLORS.white} />
                     </View>
                   ) : (
-                    <Image contentFit="cover" source={{ uri: media.publicUrl }} style={styles.viewerThumbnailImage} />
+                    <Image contentFit="cover" source={media.publicUrl} style={styles.viewerThumbnailImage} />
                   )}
                 </Pressable>
               ))}
@@ -4169,22 +4546,23 @@ function MediaTimestampOverlay({
 }
 
 function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<ViewStyle> }) {
+  const uploading = isOptimisticMemoryMedia(media);
+
   if (media.mediaType === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        {isOptimisticMemoryMedia(media) ? (
-          <View style={styles.mediaPendingOverlay}>
-            <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
-            <Text style={styles.mediaPendingText}>Sending</Text>
-          </View>
-        ) : null}
+        <VideoThumbnailLayer uri={media.publicUrl} />
+        <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
           <Text style={styles.mediaTypeBadgeText}>Video</Text>
         </View>
-        <View style={styles.playBadge}>
-          <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
-        </View>
+        {!uploading ? (
+          <View style={styles.playBadge}>
+            <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
+          </View>
+        ) : null}
+        {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
       </View>
     );
   }
@@ -4193,15 +4571,10 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
     <View style={[styles.mediaImageWrap, style as StyleProp<ViewStyle>]}>
       <Image
         contentFit="cover"
-        source={{ uri: media.publicUrl }}
+        source={media.publicUrl}
         style={styles.mediaImage}
       />
-      {isOptimisticMemoryMedia(media) ? (
-        <View style={styles.mediaPendingOverlay}>
-          <Ionicons name="cloud-upload-outline" size={17} color={ROOM_COLORS.white} />
-          <Text style={styles.mediaPendingText}>Sending</Text>
-        </View>
-      ) : null}
+      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
     </View>
   );
 }
@@ -4262,64 +4635,64 @@ function Composer({
   return (
     <Reanimated.View style={[styles.composerWrap, insetStyle]}>
       <View onLayout={onLayoutChange} style={styles.composerContent}>
-      {messageError || mediaError || mediaMutationError ? (
-        <Text style={styles.error}>{messageError || mediaError || mediaMutationError}</Text>
-      ) : null}
-      {editingLabel ? (
-        <View style={styles.editingBanner}>
-          <Text style={styles.editingBannerText}>{editingLabel}</Text>
-          <Pressable hitSlop={8} onPress={onCancelEdit}>
-            <Text style={styles.editingCancelText}>Cancel</Text>
+        {messageError || mediaError || mediaMutationError ? (
+          <Text style={styles.error}>{messageError || mediaError || mediaMutationError}</Text>
+        ) : null}
+        {editingLabel ? (
+          <View style={styles.editingBanner}>
+            <Text style={styles.editingBannerText}>{editingLabel}</Text>
+            <Pressable hitSlop={8} onPress={onCancelEdit}>
+              <Text style={styles.editingCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {!editingLabel && replyingToMessage ? (
+          <View style={styles.replyComposerBanner}>
+            <View style={styles.replyComposerAccent} />
+            <View style={styles.replyComposerIcon}>
+              <Ionicons name="arrow-undo-outline" size={14} color={ROOM_COLORS.cool} />
+            </View>
+            <View style={styles.replyComposerCopy}>
+              <Text numberOfLines={1} style={styles.replyComposerLabel}>{replyingToMessage.authorDisplayName}</Text>
+              <Text numberOfLines={2} style={styles.replyComposerPreview}>
+                {memoryMessageReplyPreview(replyingToMessage)}
+              </Text>
+            </View>
+            <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply} style={styles.replyComposerClose}>
+              <Ionicons name="close" size={15} color={ROOM_COLORS.muted} />
+            </Pressable>
+          </View>
+        ) : null}
+        <View style={styles.composer}>
+          <View style={styles.messageBox}>
+            <TextInput
+              multiline
+              onContentSizeChange={handleComposerContentSizeChange}
+              onChangeText={onChangeMessage}
+              onFocus={onInputFocus}
+              placeholder="Message..."
+              placeholderTextColor={ROOM_COLORS.muted}
+              scrollEnabled={composerCanScroll}
+              style={[
+                styles.composerInput,
+                Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative,
+                { height: composerInputHeight }
+              ]}
+              ref={inputRef}
+              value={message}
+            />
+          </View>
+          <Pressable
+            accessibilityLabel={editingLabel ? "Save message" : "Send message"}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canSend }}
+            disabled={!canSend}
+            onPress={onSend}
+            style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+          >
+            <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={ROOM_COLORS.onCool} />
           </Pressable>
         </View>
-      ) : null}
-      {!editingLabel && replyingToMessage ? (
-        <View style={styles.replyComposerBanner}>
-          <View style={styles.replyComposerAccent} />
-          <View style={styles.replyComposerIcon}>
-            <Ionicons name="arrow-undo-outline" size={14} color={ROOM_COLORS.cool} />
-          </View>
-          <View style={styles.replyComposerCopy}>
-            <Text numberOfLines={1} style={styles.replyComposerLabel}>{replyingToMessage.authorDisplayName}</Text>
-            <Text numberOfLines={2} style={styles.replyComposerPreview}>
-              {memoryMessageReplyPreview(replyingToMessage)}
-            </Text>
-          </View>
-          <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply} style={styles.replyComposerClose}>
-            <Ionicons name="close" size={15} color={ROOM_COLORS.muted} />
-          </Pressable>
-        </View>
-      ) : null}
-      <View style={styles.composer}>
-        <View style={styles.messageBox}>
-          <TextInput
-            multiline
-            onContentSizeChange={handleComposerContentSizeChange}
-            onChangeText={onChangeMessage}
-            onFocus={onInputFocus}
-            placeholder="Message..."
-            placeholderTextColor={ROOM_COLORS.muted}
-            scrollEnabled={composerCanScroll}
-            style={[
-              styles.composerInput,
-              Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative,
-              { height: composerInputHeight }
-            ]}
-            ref={inputRef}
-            value={message}
-          />
-        </View>
-        <Pressable
-          accessibilityLabel={editingLabel ? "Save message" : "Send message"}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !canSend }}
-          disabled={!canSend}
-          onPress={onSend}
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-        >
-          <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={ROOM_COLORS.onCool} />
-        </Pressable>
-      </View>
       </View>
     </Reanimated.View>
   );
@@ -4475,7 +4848,8 @@ const styles = StyleSheet.create({
     marginLeft: -8
   },
   roomFriendMoreAvatar: {
-    backgroundColor: ROOM_COLORS.panelRaised
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.coolBorder
   },
   roomFriendInitial: {
     ...fontStyles.extraBold,
@@ -4683,8 +5057,16 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     flexGrow: 1,
     gap: 0,
-    justifyContent: "flex-end",
-    paddingTop: CHAT_HEADER_CLEARANCE
+    // Inverted list: the container is flipped, so flex-start packs content to the
+    // visual bottom (above the composer) and paddingBottom guards the visual top
+    // (under the floating header). The composer clearance is applied inline as
+    // paddingTop (the inline complement of this flip).
+    justifyContent: "flex-start",
+    paddingBottom: CHAT_HEADER_CLEARANCE
+  },
+  invertedListEdge: {
+    // Counter-flip header/footer/empty content (inverted lists flip these upside down).
+    transform: [{ scaleY: -1 }]
   },
   timelineContentEmpty: {
     flexGrow: 1
@@ -5102,6 +5484,15 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     width: "100%"
   },
+  videoThumbnailImage: {
+    ...StyleSheet.absoluteFillObject,
+    height: "100%",
+    width: "100%"
+  },
+  videoThumbnailScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: ROOM_COLORS.scrimSoft
+  },
   gridVideoOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
@@ -5204,12 +5595,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: ROOM_COLORS.scrimMedium,
     bottom: 0,
-    gap: 5,
+    gap: 6,
     justifyContent: "center",
     left: 0,
     position: "absolute",
     right: 0,
     top: 0
+  },
+  uploadProgressCircle: {
+    alignItems: "center",
+    height: 44,
+    justifyContent: "center",
+    width: 44
+  },
+  uploadProgressText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.white,
+    fontSize: 10,
+    includeFontPadding: false,
+    lineHeight: 12,
+    position: "absolute",
+    textAlign: "center"
   },
   mediaPendingText: {
     ...fontStyles.extraBold,
@@ -5590,38 +5996,17 @@ const styles = StyleSheet.create({
   roomActionDangerText: {
     color: ROOM_COLORS.danger
   },
-  selectionBarWrap: {
-    alignSelf: "center",
-    backgroundColor: ROOM_COLORS.bg,
-    borderTopColor: ROOM_COLORS.border,
-    borderTopWidth: 1,
-    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
-    borderLeftWidth: Platform.OS === "web" ? 1 : 0,
-    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
-    borderRightWidth: Platform.OS === "web" ? 1 : 0,
-    gap: 6,
-    maxWidth: ROOM_MAX_WIDTH,
-    paddingHorizontal: Platform.OS === "web" ? spacing.md : spacing.lg,
-    paddingTop: 4,
-    width: "100%"
-  },
-  selectionBar: {
+  selectionMessageBox: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.coolBorder,
-    borderRadius: 16,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 48,
-    paddingHorizontal: spacing.sm
+    gap: spacing.sm
   },
-  selectionBarButton: {
+  selectionInlineButton: {
     alignItems: "center",
+    backgroundColor: ROOM_COLORS.glassDim,
     borderRadius: radius.pill,
-    height: 38,
+    height: SELECTION_INLINE_BUTTON_SIZE,
     justifyContent: "center",
-    width: 38
+    width: SELECTION_INLINE_BUTTON_SIZE
   },
   selectionBarTitle: {
     ...fontStyles.extraBold,
@@ -5629,23 +6014,24 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 18,
-    textAlign: "center"
+    minWidth: 0,
+    textAlign: "left"
   },
   selectionDeleteButton: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.danger,
     borderRadius: radius.pill,
-    height: SELECTION_ACTION_BUTTON_SIZE,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
     justifyContent: "center",
-    width: SELECTION_ACTION_BUTTON_SIZE
+    width: COMPOSER_ACTION_BUTTON_SIZE
   },
   selectionEditButton: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
-    height: SELECTION_ACTION_BUTTON_SIZE,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
     justifyContent: "center",
-    width: SELECTION_ACTION_BUTTON_SIZE
+    width: COMPOSER_ACTION_BUTTON_SIZE
   },
   selectionDeleteButtonDisabled: {
     opacity: 0.5
@@ -5755,6 +6141,8 @@ const styles = StyleSheet.create({
     backgroundColor: ROOM_COLORS.black,
     height: "100%",
     justifyContent: "center",
+    overflow: "hidden",
+    position: "relative",
     width: "100%"
   },
   galleryList: {
@@ -6297,7 +6685,8 @@ const styles = StyleSheet.create({
   },
   composerContent: {
     gap: 6,
-    paddingTop: COMPOSER_TOP_GAP
+    paddingTop: COMPOSER_TOP_GAP,
+    position: "relative"
   },
   composer: {
     alignItems: "flex-end",
@@ -6389,7 +6778,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     flexDirection: "row",
-    minHeight: Platform.OS === "web" ? 38 : 42,
+    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
     paddingHorizontal: Platform.OS === "web" ? 12 : 13,
     paddingVertical: Platform.OS === "web" ? 2 : 3
   },
@@ -6416,9 +6805,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: ROOM_COLORS.cool,
     borderRadius: radius.pill,
-    height: Platform.OS === "web" ? 36 : 40,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
     justifyContent: "center",
-    width: Platform.OS === "web" ? 36 : 40
+    width: COMPOSER_ACTION_BUTTON_SIZE
   },
   sendButtonDisabled: {
     opacity: 0.45

@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   AuthButton,
@@ -25,13 +25,17 @@ import {
   useSignupMutation
 } from "@/hooks/useAuth";
 import { userFacingAuthError } from "@/services/auth";
-import { colors, fontStyles, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, spacing } from "@/theme";
 
 type AuthMode = "entry" | "email" | "sign_in" | "sign_up" | "forgot";
+type AuthStyles = ReturnType<typeof createStyles>;
 const heroSource = require("../../assets/onboarding/food-decision-hero.webp");
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const login = useLoginMutation();
   const googleLogin = useGoogleLoginMutation();
   const resolveEmail = useResolveEmailAuthModeMutation();
@@ -152,13 +156,13 @@ export default function LoginScreen() {
               "rgba(14, 11, 8, 0.08)",
               "rgba(14, 11, 8, 0.48)",
               "rgba(14, 11, 8, 0.86)",
-              colors.dark.bg
+              themeColors.bg
             ]}
             locations={[0, 0.28, 0.58, 0.86]}
             style={styles.screenFade}
           />
         </View>
-        <EntryHero compact={shouldCompactHero} />
+        <EntryHero compact={shouldCompactHero} styles={styles} />
         <View style={[styles.entryBody, mode !== "entry" && styles.flowBody, shouldCompactHero && styles.flowBodyKeyboard]}>
           {mode === "entry" ? (
             <>
@@ -184,9 +188,9 @@ export default function LoginScreen() {
           ) : null}
 
         {mode === "email" ? (
-          <AuthFlowPane>
-            <BackLink onPress={() => changeMode("entry")}>Back</BackLink>
-            <AuthHeader title="Continue with email" text="Enter your email and we'll take you to the right next step." />
+          <AuthFlowPane styles={styles}>
+            <BackLink onPress={() => changeMode("entry")} styles={styles} themeColors={themeColors}>Back</BackLink>
+            <AuthHeader title="Continue with email" text="Enter your email and we'll take you to the right next step." styles={styles} />
 
             <AuthInput
               autoComplete="email"
@@ -212,9 +216,9 @@ export default function LoginScreen() {
         ) : null}
 
         {mode === "sign_in" ? (
-          <AuthFlowPane>
-            <BackLink onPress={() => changeMode("email")}>Back</BackLink>
-            <AuthHeader title="Welcome back" text="Enter your password to sign in." />
+          <AuthFlowPane styles={styles}>
+            <BackLink onPress={() => changeMode("email")} styles={styles} themeColors={themeColors}>Back</BackLink>
+            <AuthHeader title="Welcome back" text="Enter your password to sign in." styles={styles} />
 
             <AuthInput
               autoComplete="email"
@@ -255,9 +259,9 @@ export default function LoginScreen() {
         ) : null}
 
         {mode === "sign_up" ? (
-          <AuthFlowPane>
-            <BackLink onPress={() => changeMode("email")}>Back</BackLink>
-            <AuthHeader title="Create your account" text="Set your name and password. You'll choose a username next." />
+          <AuthFlowPane styles={styles}>
+            <BackLink onPress={() => changeMode("email")} styles={styles} themeColors={themeColors}>Back</BackLink>
+            <AuthHeader title="Create your account" text="Set your name and password. You'll choose a username next." styles={styles} />
 
             <View style={styles.nameRow}>
               <View style={styles.nameField}>
@@ -325,14 +329,14 @@ export default function LoginScreen() {
             >
               Create Account
             </AuthButton>
-            <SignupTermsBlock />
+            <SignupTermsBlock styles={styles} />
           </AuthFlowPane>
         ) : null}
 
         {mode === "forgot" ? (
-          <AuthFlowPane>
-            <BackLink onPress={() => changeMode("sign_in")}>Back to Sign In</BackLink>
-            <AuthHeader title="Reset password" text="Enter your email and we'll send a reset link." />
+          <AuthFlowPane styles={styles}>
+            <BackLink onPress={() => changeMode("sign_in")} styles={styles} themeColors={themeColors}>Back to Sign In</BackLink>
+            <AuthHeader title="Reset password" text="Enter your email and we'll send a reset link." styles={styles} />
 
             <AuthInput
               autoComplete="email"
@@ -360,7 +364,7 @@ export default function LoginScreen() {
         </View>
         {mode === "entry" ? (
           <View style={styles.termsWrap}>
-            <TermsBlock />
+            <TermsBlock styles={styles} />
           </View>
         ) : null}
       </View>
@@ -368,7 +372,7 @@ export default function LoginScreen() {
   );
 }
 
-function AuthFlowPane({ children }: { children: ReactNode }) {
+function AuthFlowPane({ children, styles }: { children: ReactNode; styles: AuthStyles }) {
   return (
     <View style={styles.entryForm}>
       {children}
@@ -376,16 +380,16 @@ function AuthFlowPane({ children }: { children: ReactNode }) {
   );
 }
 
-function BackLink({ children, onPress }: { children: ReactNode; onPress: () => void }) {
+function BackLink({ children, onPress, styles, themeColors }: { children: ReactNode; onPress: () => void; styles: AuthStyles; themeColors: ReturnType<typeof themeColorsFor> }) {
   return (
     <Pressable hitSlop={10} onPress={onPress} style={styles.backLink}>
-      <Ionicons name="chevron-back" size={16} color={colors.dark.orange} />
+      <Ionicons name="chevron-back" size={16} color={themeColors.orange} />
       <Text style={styles.backLinkText}>{children}</Text>
     </Pressable>
   );
 }
 
-function EntryHero({ compact }: { compact: boolean }) {
+function EntryHero({ compact, styles }: { compact: boolean; styles: AuthStyles }) {
   return (
     <View style={[styles.entryHero, compact && styles.entryHeroCompact]}>
       <View style={styles.entryHeroContent}>
@@ -398,7 +402,7 @@ function EntryHero({ compact }: { compact: boolean }) {
   );
 }
 
-function TermsBlock() {
+function TermsBlock({ styles }: { styles: AuthStyles }) {
   return (
     <Text style={styles.termsText}>
       By continuing, you agree to our{"\n"}
@@ -407,7 +411,7 @@ function TermsBlock() {
   );
 }
 
-function SignupTermsBlock() {
+function SignupTermsBlock({ styles }: { styles: AuthStyles }) {
   return (
     <Text style={styles.signupTermsText}>
       By creating an account, you agree to our <Text style={styles.termsLink}>Terms of Service</Text> and{" "}
@@ -416,7 +420,7 @@ function SignupTermsBlock() {
   );
 }
 
-function AuthHeader({ title, text }: { title: string; text: string }) {
+function AuthHeader({ title, text, styles }: { title: string; text: string; styles: AuthStyles }) {
   return (
     <View style={styles.headerBlock}>
       <Text style={styles.cardTitle}>{title}</Text>
@@ -425,176 +429,178 @@ function AuthHeader({ title, text }: { title: string; text: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  headerBlock: {
-    alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.base,
-    marginTop: spacing.sm
-  },
-  cardTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 18,
-    textAlign: "center"
-  },
-  cardText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center"
-  },
-  nameRow: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  nameField: {
-    flex: 1,
-    minWidth: 0
-  },
-  forgotRow: {
-    alignItems: "flex-end",
-    marginBottom: 14,
-    marginTop: -2
-  },
-  forgotText: {
-    ...fontStyles.bold,
-    color: colors.dark.orange,
-    fontSize: 12
-  },
-  entryPanel: {
-    alignSelf: "center",
-    flexGrow: 1,
-    justifyContent: "space-between",
-    minHeight: "100%",
-    overflow: "hidden",
-    paddingBottom: 24,
-    paddingTop: 0,
-    position: "relative",
-    width: "100%"
-  },
-  backgroundVisual: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0
-  },
-  backgroundImage: {
-    height: 560,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0
-  },
-  screenFade: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0
-  },
-  entryHero: {
-    alignItems: "center",
-    paddingHorizontal: 22,
-    paddingTop: 270,
-    width: "100%",
-    zIndex: 1
-  },
-  entryHeroCompact: {
-    paddingTop: 92
-  },
-  entryHeroContent: {
-    alignItems: "center",
-    maxWidth: 430,
-    width: "100%"
-  },
-  entryBody: {
-    alignSelf: "center",
-    marginTop: 34,
-    maxWidth: 430,
-    paddingHorizontal: 22,
-    width: "100%",
-    zIndex: 1
-  },
-  flowBody: {
-    marginTop: 24
-  },
-  flowBodyKeyboard: {
-    marginTop: 18
-  },
-  entryWordmark: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 36,
-    lineHeight: 40,
-    marginTop: 0,
-    textAlign: "center"
-  },
-  entryWordmarkAccent: {
-    color: colors.dark.orange
-  },
-  entryTaglineText: {
-    ...fontStyles.semiBold,
-    color: "rgba(255, 255, 255, 0.68)",
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
-    textAlign: "center"
-  },
-  entryActions: {
-    gap: 10
-  },
-  entryForm: {
-    alignSelf: "center",
-    gap: 12,
-    maxWidth: 360,
-    width: "100%"
-  },
-  entryMethodButton: {
-    alignSelf: "center",
-    maxWidth: 360,
-    width: "100%"
-  },
-  backLink: {
-    alignItems: "center",
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    gap: 2,
-    marginBottom: spacing.xs
-  },
-  backLinkText: {
-    ...fontStyles.bold,
-    color: colors.dark.orange,
-    fontSize: 13
-  },
-  termsWrap: {
-    alignSelf: "center",
-    maxWidth: 360,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    width: "100%",
-    zIndex: 1
-  },
-  termsText: {
-    ...fontStyles.medium,
-    color: "rgba(255, 255, 255, 0.56)",
-    fontSize: 13,
-    lineHeight: 21,
-    marginTop: 0,
-    textAlign: "center"
-  },
-  termsLink: {
-    ...fontStyles.bold,
-    color: colors.dark.orange
-  },
-  signupTermsText: {
-    ...fontStyles.medium,
-    color: "rgba(255, 255, 255, 0.52)",
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: spacing.xs,
-    textAlign: "center"
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    headerBlock: {
+      alignItems: "center",
+      gap: spacing.sm,
+      marginBottom: spacing.base,
+      marginTop: spacing.sm
+    },
+    cardTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 18,
+      textAlign: "center"
+    },
+    cardText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: "center"
+    },
+    nameRow: {
+      flexDirection: "row",
+      gap: spacing.sm
+    },
+    nameField: {
+      flex: 1,
+      minWidth: 0
+    },
+    forgotRow: {
+      alignItems: "flex-end",
+      marginBottom: 14,
+      marginTop: -2
+    },
+    forgotText: {
+      ...fontStyles.bold,
+      color: c.orange,
+      fontSize: 12
+    },
+    entryPanel: {
+      alignSelf: "center",
+      flexGrow: 1,
+      justifyContent: "space-between",
+      minHeight: "100%",
+      overflow: "hidden",
+      paddingBottom: 24,
+      paddingTop: 0,
+      position: "relative",
+      width: "100%"
+    },
+    backgroundVisual: {
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      top: 0
+    },
+    backgroundImage: {
+      height: 560,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      top: 0
+    },
+    screenFade: {
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      top: 0
+    },
+    entryHero: {
+      alignItems: "center",
+      paddingHorizontal: 22,
+      paddingTop: 270,
+      width: "100%",
+      zIndex: 1
+    },
+    entryHeroCompact: {
+      paddingTop: 92
+    },
+    entryHeroContent: {
+      alignItems: "center",
+      maxWidth: 430,
+      width: "100%"
+    },
+    entryBody: {
+      alignSelf: "center",
+      marginTop: 34,
+      maxWidth: 430,
+      paddingHorizontal: 22,
+      width: "100%",
+      zIndex: 1
+    },
+    flowBody: {
+      marginTop: 24
+    },
+    flowBodyKeyboard: {
+      marginTop: 18
+    },
+    entryWordmark: {
+      ...fontStyles.extraBold,
+      color: "#FFFFFF",
+      fontSize: 36,
+      lineHeight: 40,
+      marginTop: 0,
+      textAlign: "center"
+    },
+    entryWordmarkAccent: {
+      color: c.orange
+    },
+    entryTaglineText: {
+      ...fontStyles.semiBold,
+      color: "rgba(255, 255, 255, 0.68)",
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 8,
+      textAlign: "center"
+    },
+    entryActions: {
+      gap: 10
+    },
+    entryForm: {
+      alignSelf: "center",
+      gap: 12,
+      maxWidth: 360,
+      width: "100%"
+    },
+    entryMethodButton: {
+      alignSelf: "center",
+      maxWidth: 360,
+      width: "100%"
+    },
+    backLink: {
+      alignItems: "center",
+      alignSelf: "flex-start",
+      flexDirection: "row",
+      gap: 2,
+      marginBottom: spacing.xs
+    },
+    backLinkText: {
+      ...fontStyles.bold,
+      color: c.orange,
+      fontSize: 13
+    },
+    termsWrap: {
+      alignSelf: "center",
+      maxWidth: 360,
+      paddingHorizontal: 22,
+      paddingTop: 28,
+      width: "100%",
+      zIndex: 1
+    },
+    termsText: {
+      ...fontStyles.medium,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 21,
+      marginTop: 0,
+      textAlign: "center"
+    },
+    termsLink: {
+      ...fontStyles.bold,
+      color: c.orange
+    },
+    signupTermsText: {
+      ...fontStyles.medium,
+      color: c.muted,
+      fontSize: 12,
+      lineHeight: 18,
+      marginTop: spacing.xs,
+      textAlign: "center"
+    }
+  });
+}

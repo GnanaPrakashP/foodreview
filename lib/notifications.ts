@@ -5,6 +5,7 @@ import type { Json, Notification, Review } from "@/lib/types";
 
 type NotificationDb = {
   from: (table: string) => any;
+  rpc?: (fn: string, args?: Record<string, unknown>) => any;
 };
 
 type SupabaseLikeError = {
@@ -137,6 +138,35 @@ export function notificationUrl(notification: Pick<Notification, "entity_type" |
   return "/notifications";
 }
 
+// Maps a notification type to the preference category that gates it. Returns
+// null for types that are always delivered (e.g. system announcements).
+function notificationCategoryForType(type: string): "circle_activity" | "post_engagement" | null {
+  const value = type.toLowerCase();
+  if (value.includes("circle")) return "circle_activity";
+  if (value.includes("like") || value.includes("comment") || value.includes("reply") || value.includes("thread")) {
+    return "post_engagement";
+  }
+  return null;
+}
+
+// Returns false only when the recipient has explicitly disabled the category.
+// Any error (e.g. the helper not deployed yet) defaults to enabled so we never
+// silently drop notifications because of a backend gap.
+async function isNotificationCategoryEnabled(db: NotificationDb, recipientName: string, type: string): Promise<boolean> {
+  const category = notificationCategoryForType(type);
+  if (!category || !db.rpc) return true;
+  try {
+    const { data, error } = await db.rpc("notification_category_enabled", {
+      p_user_name: recipientName,
+      p_category: category,
+    });
+    if (error) return true;
+    return data !== false;
+  } catch {
+    return true;
+  }
+}
+
 export async function createNotificationForNames(
   db: NotificationDb,
   input: CreateNotificationInput
@@ -144,6 +174,7 @@ export async function createNotificationForNames(
   const recipientName = input.recipientName.trim();
   const actorName = input.actorName?.trim() || null;
   if (!recipientName || (actorName && recipientName === actorName)) return null;
+  if (!(await isNotificationCategoryEnabled(db, recipientName, input.type))) return null;
 
   const profiles = await resolveProfiles(db, [recipientName, actorName ?? ""]);
   const recipientProfile = profiles.get(recipientName);
@@ -269,6 +300,8 @@ export async function upsertCircleRequestNotification(
     requestId: string | null;
   }
 ): Promise<void> {
+  if (!(await isNotificationCategoryEnabled(db, input.recipientName, "CIRCLE_REQUEST_RECEIVED"))) return;
+
   const now = new Date().toISOString();
   const metadata = {
     senderName: input.actorName,

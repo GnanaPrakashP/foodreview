@@ -4,9 +4,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,7 +16,8 @@ import {
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePostMemoryRoomMediaMutation } from "@/hooks/useMemories";
+import { memoryKeys, useAddMemoryPhotoMutation } from "@/hooks/useMemories";
+import { addMemoryDish } from "@/services/memories";
 import { removeMemoryCapture } from "@/services/memoryCaptureSession";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
@@ -29,31 +30,52 @@ export function MediaPreviewScreen({
   roomId: string;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const [captionOpen, setCaptionOpen] = useState(false);
   const [dishOpen, setDishOpen] = useState(false);
   const [caption, setCaption] = useState("");
   const [dishName, setDishName] = useState("");
-  const postMedia = usePostMemoryRoomMediaMutation(roomId);
+  const [posting, setPosting] = useState(false);
+  const [videoMuted, setVideoMuted] = useState(false);
+  const addPhoto = useAddMemoryPhotoMutation(roomId);
   const bottomInset = Platform.OS === "web" ? spacing.xl : Math.max(insets.bottom + spacing.lg, 28);
   const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, 42);
 
-  async function postToRoom() {
-    if (postMedia.isPending) return;
-    try {
-      await postMedia.mutateAsync({
-        asset,
-        caption,
-        dishName
-      });
-      removeMemoryCapture(asset.id);
-      router.dismissTo({
-        pathname: "/memories/[id]",
-        params: { id: roomId, tab: "media" }
-      });
-    } catch {
-      // Rendered below.
-    }
+  function postToRoom() {
+    if (posting || addPhoto.isPending) return;
+    setPosting(true);
+
+    const trimmedCaption = caption.trim();
+    const trimmedDishName = dishName.trim();
+    const mimeType = asset.mimeType ?? (asset.mediaType === "video" ? "video/mp4" : "image/jpeg");
+
+    const uploadInput = {
+      assets: [{
+        imageHeight: asset.height ?? null,
+        imageWidth: asset.width ?? null,
+        mediaMimeType: mimeType,
+        mediaType: asset.mediaType,
+        mediaUri: asset.uri
+      }],
+      body: trimmedCaption || undefined,
+      roomId
+    };
+
+    void addPhoto.mutateAsync(uploadInput)
+      .then(async () => {
+        removeMemoryCapture(asset.id);
+        if (!trimmedDishName) return;
+        await addMemoryDish({ dishName: trimmedDishName, roomId });
+        queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+      })
+      .catch(() => {});
+
+    router.dismissTo({
+      pathname: "/memories/[id]",
+      params: { id: roomId, tab: "chat" }
+    });
   }
 
   return (
@@ -61,7 +83,7 @@ export function MediaPreviewScreen({
       <StatusBar hidden />
       <View style={styles.mediaLayer}>
         {asset.mediaType === "video" ? (
-          <CapturedVideo uri={asset.uri} />
+          <CapturedVideo muted={videoMuted} uri={asset.uri} />
         ) : (
           <Image contentFit="contain" source={{ uri: asset.uri }} style={styles.imagePreview} />
         )}
@@ -76,6 +98,15 @@ export function MediaPreviewScreen({
         <Pressable accessibilityLabel="Retake media" onPress={() => router.back()} style={styles.iconButton}>
           <Ionicons name="chevron-back" size={24} color={colors.dark.white} />
         </Pressable>
+        {asset.mediaType === "video" ? (
+          <Pressable
+            accessibilityLabel={videoMuted ? "Unmute preview video" : "Mute preview video"}
+            onPress={() => setVideoMuted((current) => !current)}
+            style={styles.iconButton}
+          >
+            <Ionicons name={videoMuted ? "volume-mute-outline" : "volume-high-outline"} size={21} color={colors.dark.white} />
+          </Pressable>
+        ) : null}
       </View>
 
       <KeyboardAvoidingView
@@ -130,21 +161,13 @@ export function MediaPreviewScreen({
             />
           ) : null}
 
-          {postMedia.error ? (
-            <View style={styles.errorBox}>
-              <Ionicons name="alert-circle-outline" size={16} color={colors.dark.dangerSoft} />
-              <Text numberOfLines={2} style={styles.errorText}>{postMedia.error.message}</Text>
-            </View>
-          ) : null}
-
           <Pressable
             accessibilityLabel="Post media to room"
-            disabled={postMedia.isPending}
+            disabled={posting}
             onPress={postToRoom}
-            style={[styles.postButton, postMedia.isPending && styles.postButtonDisabled]}
+            style={[styles.postButton, posting && styles.postButtonDisabled]}
           >
-            {postMedia.isPending ? <ActivityIndicator color={colors.dark.bg} size="small" /> : null}
-            <Text style={styles.postButtonText}>{postMedia.isPending ? "Posting" : "Post to Room"}</Text>
+            <Text style={styles.postButtonText}>Post to Room</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -152,11 +175,16 @@ export function MediaPreviewScreen({
   );
 }
 
-function CapturedVideo({ uri }: { uri: string }) {
+function CapturedVideo({ muted, uri }: { muted: boolean; uri: string }) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
+    instance.muted = muted;
     instance.play();
   });
+
+  useEffect(() => {
+    player.muted = muted;
+  }, [muted, player]);
 
   return (
     <VideoView
@@ -196,6 +224,8 @@ const styles = StyleSheet.create({
     top: 0
   },
   topControls: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     left: 0,
     paddingHorizontal: spacing.base,
     position: "absolute",
@@ -266,24 +296,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     minHeight: 48,
     paddingHorizontal: spacing.base
-  },
-  errorBox: {
-    alignItems: "center",
-    backgroundColor: "rgba(232,64,64,0.12)",
-    borderColor: "rgba(232,64,64,0.25)",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    padding: spacing.md
-  },
-  errorText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.dangerSoft,
-    flex: 1,
-    fontSize: 12,
-    letterSpacing: 0,
-    lineHeight: 17
   },
   postButton: {
     alignItems: "center",

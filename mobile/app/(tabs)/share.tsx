@@ -27,9 +27,18 @@ import {
   type PlaceSuggestion,
   type SelectedPlace
 } from "@/services/places";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
+
+type ThemeColors = ReturnType<typeof themeColorsFor>;
+
+function useShareTheme() {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  return { themeColors, styles };
+}
 
 const POST_BITE_IMAGE = require("../../assets/create/post-bite-card-bg.png");
 const TABLE_MEMORY_IMAGE = require("../../assets/create/table-memory-card-bg.png");
@@ -97,6 +106,7 @@ function initialsForUser(displayName: string, username: string) {
 }
 
 export default function ShareScreen() {
+  const { themeColors: c, styles } = useShareTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isReady = useSessionStore((state) => state.isReady);
@@ -389,9 +399,9 @@ export default function ShareScreen() {
               style={styles.headerCancelButton}
             >
               {shareMode === "solo" && soloStep !== "details" ? (
-                <ArrowLeft size={20} color={colors.dark.cream} strokeWidth={2.4} />
+                <ArrowLeft size={20} color={c.cream} strokeWidth={2.4} />
               ) : (
-                <X size={20} color={colors.dark.cream} strokeWidth={2.4} />
+                <X size={20} color={c.cream} strokeWidth={2.4} />
               )}
             </Pressable>
           ) : null}
@@ -477,7 +487,7 @@ export default function ShareScreen() {
                           multiline
                           onChangeText={setCaption}
                           placeholder="Write something about the restaurant?"
-                          placeholderTextColor={colors.dark.muted}
+                          placeholderTextColor={c.muted}
                           style={styles.captionInput}
                           textAlignVertical="top"
                           value={caption}
@@ -496,20 +506,20 @@ export default function ShareScreen() {
                         ))}
                       </View>
                       <Pressable onPress={() => setDishes((current) => [...current, emptyDish()])} style={styles.addDishButton}>
-                        <Plus size={14} color={colors.dark.green} strokeWidth={2.4} />
+                        <Plus size={14} color={c.green} strokeWidth={2.4} />
                         <Text style={styles.addDishText}>Add another dish</Text>
                       </Pressable>
 
                       <View style={styles.tagGrid}>
                         <View style={styles.customTagRow}>
-                          <Tag size={20} color={colors.dark.orange} strokeWidth={2} />
+                          <Tag size={20} color={c.orange} strokeWidth={2} />
                           <TextInput
                             autoCapitalize="none"
                             editable={selectedTags.length < 5}
                             onChangeText={setCustomTag}
                             onSubmitEditing={addCustomTag}
                             placeholder={selectedTags.length >= 5 ? "Max 5 tags reached" : "Add your own tag"}
-                            placeholderTextColor={colors.dark.muted}
+                            placeholderTextColor={c.muted}
                             returnKeyType="done"
                             style={styles.customTagInput}
                             value={customTag}
@@ -521,9 +531,9 @@ export default function ShareScreen() {
                           <View style={styles.selectedTagGrid}>
                             {selectedTags.map((tag) => (
                               <Pressable key={tag} onPress={() => removeTag(tag)} style={styles.selectedTagPill}>
-                                <Tag size={10} color={colors.dark.orange} strokeWidth={2.2} />
+                                <Tag size={10} color={c.orange} strokeWidth={2.2} />
                                 <Text style={styles.selectedTagText}>{tag}</Text>
-                                <X size={11} color={colors.dark.orange} strokeWidth={2.4} />
+                                <X size={11} color={c.orange} strokeWidth={2.4} />
                               </Pressable>
                             ))}
                           </View>
@@ -537,7 +547,7 @@ export default function ShareScreen() {
                               onPress={() => addTag(tag.label)}
                               style={styles.tagPill}
                             >
-                              <Tag size={10} color={colors.dark.muted} strokeWidth={2.2} />
+                              <Tag size={10} color={c.muted} strokeWidth={2.2} />
                               <Text style={styles.tagText}>{tag.label}</Text>
                             </Pressable>
                           )) : null}
@@ -554,17 +564,17 @@ export default function ShareScreen() {
                               <Text style={styles.requiredPhotoBadgeText}>Required photo</Text>
                             </View>
                             <View style={styles.requiredPhotoAction}>
-                              <ImagePlus size={14} color={colors.dark.white} strokeWidth={2.1} />
+                              <ImagePlus size={14} color={c.white} strokeWidth={2.1} />
                               <Text style={styles.requiredPhotoActionText}>Change</Text>
                             </View>
                             <Pressable onPress={() => setImage(null)} style={styles.requiredPhotoRemove}>
-                              <X size={15} color={colors.dark.white} strokeWidth={2.2} />
+                              <X size={15} color={c.white} strokeWidth={2.2} />
                             </Pressable>
                           </>
                         ) : (
                           <View style={styles.requiredPhotoEmpty}>
                             <View style={styles.requiredPhotoIcon}>
-                              <ImagePlus size={28} color={colors.dark.orange} strokeWidth={2} />
+                              <ImagePlus size={28} color={c.orange} strokeWidth={2} />
                             </View>
                             <View style={styles.requiredPhotoTextBlock}>
                               <View style={styles.requiredPhotoTitleRow}>
@@ -621,7 +631,7 @@ export default function ShareScreen() {
                                     <Text numberOfLines={1} style={styles.previewFeedDishName}>{dish.name.trim()}</Text>
                                     {dish.rating > 0 ? (
                                       <View style={styles.previewRatingPill}>
-                                        <Star size={8} color={colors.dark.gold} fill={colors.dark.gold} strokeWidth={0} />
+                                        <Star size={8} color={c.gold} fill={c.gold} strokeWidth={0} />
                                         <Text style={styles.previewRatingText}>{dish.rating}</Text>
                                       </View>
                                     ) : null}
@@ -640,23 +650,23 @@ export default function ShareScreen() {
                         <View style={styles.previewActions}>
                           <View style={styles.previewActionCluster}>
                             <View style={styles.previewAction}>
-                              <Heart size={19} color={colors.dark.muted} strokeWidth={2} />
+                              <Heart size={19} color={c.muted} strokeWidth={2} />
                               <Text style={styles.previewActionText}>0</Text>
                             </View>
                             <View style={styles.previewAction}>
-                              <MessageCircle size={18} color={colors.dark.muted} strokeWidth={2} />
+                              <MessageCircle size={18} color={c.muted} strokeWidth={2} />
                               <Text style={styles.previewActionText}>0</Text>
                             </View>
                             <View style={styles.previewAction}>
-                              <Utensils size={17} color={colors.dark.muted} strokeWidth={2} />
+                              <Utensils size={17} color={c.muted} strokeWidth={2} />
                               <Text style={styles.previewActionText}>{dishes.filter((dish) => dish.name.trim()).length}</Text>
                             </View>
                           </View>
                           <View style={styles.previewIconButton}>
-                            <Bookmark size={19} color={colors.dark.muted} strokeWidth={2} />
+                            <Bookmark size={19} color={c.muted} strokeWidth={2} />
                           </View>
                           <View style={styles.previewIconButton}>
-                            <Share2 size={18} color={colors.dark.muted} strokeWidth={2} />
+                            <Share2 size={18} color={c.muted} strokeWidth={2} />
                           </View>
                         </View>
                       </View>
@@ -671,7 +681,7 @@ export default function ShareScreen() {
                                 onPress={() => setVisibility(value)}
                                 style={[styles.visibilityOption, active && styles.visibilityOptionActive]}
                               >
-                                <Icon size={14} color={active ? colors.dark.orange : colors.dark.muted} strokeWidth={2} />
+                                <Icon size={14} color={active ? c.orange : c.muted} strokeWidth={2} />
                                 <Text style={[styles.visibilityLabel, active && styles.visibilityLabelActive]}>{label}</Text>
                               </Pressable>
                             );
@@ -704,7 +714,7 @@ export default function ShareScreen() {
 
                     <View style={styles.memoryFriendSection}>
                       <View style={styles.restaurantAttachment}>
-                        <UserPlus size={20} color={colors.dark.orange} strokeWidth={1.9} />
+                        <UserPlus size={20} color={c.orange} strokeWidth={1.9} />
                         <TextInput
                           autoCapitalize="none"
                           onChangeText={setMemoryParticipantInput}
@@ -714,7 +724,7 @@ export default function ShareScreen() {
                           onFocus={() => setMemoryFriendFocused(true)}
                           onSubmitEditing={() => addMemoryParticipant()}
                           placeholder="Who is at the table?"
-                          placeholderTextColor={colors.dark.muted}
+                          placeholderTextColor={c.muted}
                           returnKeyType="done"
                           style={styles.fieldInput}
                           value={memoryParticipantInput}
@@ -730,7 +740,7 @@ export default function ShareScreen() {
                           >
                             {memoryFriendSearch.loading ? (
                               <View style={styles.placeSuggestionLoading}>
-                                <ActivityIndicator color={colors.dark.orange} size="small" />
+                                <ActivityIndicator color={c.orange} size="small" />
                                 <Text style={styles.placeSuggestionMuted}>Searching people</Text>
                               </View>
                             ) : null}
@@ -757,7 +767,7 @@ export default function ShareScreen() {
                                   <Text numberOfLines={1} style={styles.placeSuggestionTitle}>{friend.displayName}</Text>
                                   <Text numberOfLines={1} style={styles.placeSuggestionSub}>@{friend.username}</Text>
                                 </View>
-                                <ChevronRight size={17} color={colors.dark.muted} strokeWidth={2.2} />
+                                <ChevronRight size={17} color={c.muted} strokeWidth={2.2} />
                               </Pressable>
                             ))}
                           </ScrollView>
@@ -768,14 +778,14 @@ export default function ShareScreen() {
                           {memoryParticipantNames.map((friend) => (
                             <Pressable key={friend} onPress={() => removeMemoryParticipant(friend)} style={styles.memoryFriendChip}>
                               <Text style={styles.memoryFriendChipText}>@{friend}</Text>
-                              <X size={12} color={colors.dark.muted} strokeWidth={2.4} />
+                              <X size={12} color={c.muted} strokeWidth={2.4} />
                             </Pressable>
                           ))}
                         </View>
                       ) : null}
                     </View>
                     <View style={styles.memoryPrivacyNote}>
-                      <Lock size={13} color={colors.dark.green} strokeWidth={2.1} />
+                      <Lock size={13} color={c.green} strokeWidth={2.1} />
                       <Text style={styles.memoryPrivacyNoteText}>Private to invited friends.</Text>
                     </View>
                   </View>
@@ -800,7 +810,7 @@ export default function ShareScreen() {
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryStrip}>
             <Pressable onPress={pickCameraImage} style={styles.cameraTile}>
-              <Camera size={24} color={colors.dark.cream} strokeWidth={2.2} />
+              <Camera size={24} color={c.cream} strokeWidth={2.2} />
               <Text style={styles.cameraTileText}>Camera</Text>
             </Pressable>
             {recentImages.map((asset) => (
@@ -846,8 +856,9 @@ function ActionCard({
   tags: string[];
   title: string;
 }) {
+  const { themeColors: c, styles } = useShareTheme();
   const isGreen = accent === "green";
-  const accentColor = isGreen ? colors.dark.green : colors.dark.orange;
+  const accentColor = isGreen ? c.green : c.orange;
   const gradientColors: readonly [string, string, string] = isGreen
     ? ["rgba(61, 214, 140, 0.18)", "rgba(20, 184, 166, 0.08)", "rgba(33, 28, 23, 0.98)"]
     : ["rgba(240, 96, 48, 0.22)", "rgba(232, 168, 48, 0.08)", "rgba(33, 28, 23, 0.98)"];
@@ -881,10 +892,11 @@ function ActionCard({
 }
 
 function ChoiceChip({ accent, label }: { accent: "green" | "orange"; label: string }) {
+  const { themeColors: c, styles } = useShareTheme();
   const isGreen = accent === "green";
   return (
     <View style={[styles.actionChip, isGreen ? styles.actionChipGreen : styles.actionChipOrange]}>
-      <Text style={[styles.actionChipText, { color: isGreen ? colors.dark.green : colors.dark.orange }]}>
+      <Text style={[styles.actionChipText, { color: isGreen ? c.green : c.orange }]}>
         {label}
       </Text>
     </View>
@@ -904,6 +916,7 @@ function PlaceField({
   selectedPlace: SelectedPlace | null;
   value: string;
 }) {
+  const { themeColors: c, styles } = useShareTheme();
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
@@ -974,7 +987,7 @@ function PlaceField({
   return (
     <View style={styles.placeField}>
       <View style={styles.restaurantAttachment}>
-        <Store size={20} color={selectedPlaceMatches(value, selectedPlace) ? colors.dark.green : colors.dark.orange} strokeWidth={1.9} />
+        <Store size={20} color={selectedPlaceMatches(value, selectedPlace) ? c.green : c.orange} strokeWidth={1.9} />
         <TextInput
           onBlur={() => setFocused(false)}
           onChangeText={(text) => {
@@ -983,14 +996,14 @@ function PlaceField({
           }}
           onFocus={() => setFocused(true)}
           placeholder={placeholder}
-          placeholderTextColor={colors.dark.muted}
+          placeholderTextColor={c.muted}
           style={styles.fieldInput}
           value={value}
         />
       </View>
       {selectedLocationLabel ? (
         <View style={styles.selectedPlaceLocation}>
-          <MapPin size={15} color={colors.dark.muted} strokeWidth={2} />
+          <MapPin size={15} color={c.muted} strokeWidth={2} />
           <Text numberOfLines={2} style={styles.selectedPlaceLocationText}>{selectedLocationLabel}</Text>
         </View>
       ) : null}
@@ -998,7 +1011,7 @@ function PlaceField({
         <View style={styles.placeSuggestions}>
           {loading ? (
             <View style={styles.placeSuggestionLoading}>
-              <ActivityIndicator color={colors.dark.orange} size="small" />
+              <ActivityIndicator color={c.orange} size="small" />
               <Text style={styles.placeSuggestionMuted}>Searching places</Text>
             </View>
           ) : null}
@@ -1025,9 +1038,9 @@ function PlaceField({
                 ) : null}
               </View>
               {selectingPlaceId === suggestion.placeId ? (
-                <ActivityIndicator color={colors.dark.orange} size="small" />
+                <ActivityIndicator color={c.orange} size="small" />
               ) : (
-                <ChevronRight size={16} color={colors.dark.muted} strokeWidth={2.2} />
+                <ChevronRight size={16} color={c.muted} strokeWidth={2.2} />
               )}
             </Pressable>
           ))}
@@ -1048,20 +1061,21 @@ function DishRow({
   onRemove: () => void;
   showRemove: boolean;
 }) {
+  const { themeColors: c, styles } = useShareTheme();
   return (
     <View style={styles.dishRow}>
       <View style={styles.dishInputRow}>
-        <Utensils size={20} color={colors.dark.green} strokeWidth={1.9} />
+        <Utensils size={20} color={c.green} strokeWidth={1.9} />
         <TextInput
           onChangeText={(name) => onChange({ name })}
           placeholder="Chicken Biriyani"
-          placeholderTextColor={colors.dark.muted}
+          placeholderTextColor={c.muted}
           style={styles.dishInput}
           value={dish.name}
         />
         {showRemove ? (
           <Pressable onPress={onRemove} style={styles.removeDishButton}>
-            <X size={14} color={colors.dark.muted} strokeWidth={2.1} />
+            <X size={14} color={c.muted} strokeWidth={2.1} />
           </Pressable>
         ) : null}
       </View>
@@ -1076,8 +1090,8 @@ function DishRow({
             >
               <Star
                 size={18}
-                color={colors.dark.gold}
-                fill={star <= dish.rating ? colors.dark.gold : "transparent"}
+                color={c.gold}
+                fill={star <= dish.rating ? c.gold : "transparent"}
                 strokeWidth={1.8}
               />
             </Pressable>
@@ -1089,10 +1103,12 @@ function DishRow({
 }
 
 function InlineError({ message }: { message: string }) {
+  const { styles } = useShareTheme();
   return <Text style={styles.inlineError}>{message}</Text>;
 }
 
-const styles = StyleSheet.create({
+function createStyles(c: ThemeColors) {
+  return StyleSheet.create({
   screenContent: {
     paddingBottom: 0
   },
@@ -1124,7 +1140,7 @@ const styles = StyleSheet.create({
   },
   headerSubmitButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: c.orange,
     borderRadius: radius.pill,
     justifyContent: "center",
     marginLeft: spacing.md,
@@ -1135,20 +1151,20 @@ const styles = StyleSheet.create({
   },
   headerSubmitText: {
     ...fontStyles.bold,
-    color: colors.dark.white,
+    color: c.white,
     fontSize: 14,
     lineHeight: 17
   },
   title: {
     ...fontStyles.regular,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: Platform.OS === "web" ? typography.webTitle : 24,
     letterSpacing: 0,
     lineHeight: Platform.OS === "web" ? 32 : 29
   },
   subtitle: {
     ...fontStyles.semiBold,
-    color: "rgba(245, 237, 216, 0.62)",
+    color: c.muted,
     fontSize: 14,
     lineHeight: 20,
     marginTop: 5,
@@ -1163,7 +1179,7 @@ const styles = StyleSheet.create({
     paddingTop: 8
   },
   actionCard: {
-    backgroundColor: colors.dark.card,
+    backgroundColor: c.card,
     borderRadius: 24,
     borderWidth: 1,
     flexDirection: "row",
@@ -1174,7 +1190,7 @@ const styles = StyleSheet.create({
   },
   actionCardOrange: {
     borderColor: "rgba(240, 96, 48, 0.42)",
-    shadowColor: colors.dark.orange,
+    shadowColor: c.orange,
     shadowOpacity: 0.18,
     shadowRadius: 18,
     shadowOffset: { height: 10, width: 0 },
@@ -1182,7 +1198,7 @@ const styles = StyleSheet.create({
   },
   actionCardGreen: {
     borderColor: "rgba(61, 214, 140, 0.34)",
-    shadowColor: colors.dark.green,
+    shadowColor: c.green,
     shadowOpacity: 0.16,
     shadowRadius: 18,
     shadowOffset: { height: 10, width: 0 },
@@ -1216,7 +1232,7 @@ const styles = StyleSheet.create({
   },
   actionTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: "#FFFFFF",
     fontSize: 24,
     letterSpacing: 0,
     lineHeight: 28,
@@ -1271,8 +1287,8 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   requiredPhotoBox: {
-    backgroundColor: "rgba(14, 11, 8, 0.40)",
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: c.surface,
+    borderColor: c.orangeBorder,
     borderRadius: radius.md,
     borderStyle: "dashed",
     borderWidth: 1,
@@ -1280,12 +1296,12 @@ const styles = StyleSheet.create({
     overflow: "hidden"
   },
   requiredPhotoBoxFilled: {
-    borderColor: "rgba(245, 237, 216, 0.12)",
+    borderColor: c.border,
     borderStyle: "solid"
   },
   requiredPhotoPreview: {
     aspectRatio: 4 / 3,
-    backgroundColor: colors.dark.surface,
+    backgroundColor: c.surface,
     width: "100%"
   },
   requiredPhotoEmpty: {
@@ -1297,8 +1313,8 @@ const styles = StyleSheet.create({
   },
   requiredPhotoIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: c.orangeDim,
+    borderColor: c.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: 58,
@@ -1318,18 +1334,18 @@ const styles = StyleSheet.create({
   },
   requiredPhotoTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 16,
     lineHeight: 20,
     textAlign: "center"
   },
   requiredPill: {
     ...fontStyles.extraBold,
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: c.orangeDim,
+    borderColor: c.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: 8,
@@ -1337,7 +1353,7 @@ const styles = StyleSheet.create({
   },
   requiredPhotoText: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 17,
     maxWidth: 230,
@@ -1356,7 +1372,7 @@ const styles = StyleSheet.create({
   },
   requiredPhotoBadgeText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: "#FFFFFF",
     fontSize: 11,
     lineHeight: 13
   },
@@ -1376,7 +1392,7 @@ const styles = StyleSheet.create({
   },
   requiredPhotoActionText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: c.white,
     fontSize: 12,
     lineHeight: 14
   },
@@ -1397,8 +1413,8 @@ const styles = StyleSheet.create({
     gap: spacing.lg
   },
   previewFeedCard: {
-    backgroundColor: colors.dark.bg,
-    borderBottomColor: "rgba(46, 39, 32, 0.78)",
+    backgroundColor: c.bg,
+    borderBottomColor: c.border,
     borderBottomWidth: 1
   },
   previewFeedHeader: {
@@ -1411,7 +1427,7 @@ const styles = StyleSheet.create({
   },
   previewAvatar: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: c.orange,
     borderColor: "rgba(245, 237, 216, 0.14)",
     borderRadius: 17,
     borderWidth: 1,
@@ -1421,7 +1437,7 @@ const styles = StyleSheet.create({
   },
   previewAvatarText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: c.white,
     fontSize: 12,
     lineHeight: 14,
     textAlign: "center"
@@ -1441,26 +1457,26 @@ const styles = StyleSheet.create({
   },
   previewAuthor: {
     ...fontStyles.semiBold,
-    color: colors.dark.cream,
+    color: c.cream,
     flexShrink: 1,
     fontSize: 13,
     lineHeight: 18
   },
   previewHeaderDot: {
     ...fontStyles.bold,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 15,
     lineHeight: 18
   },
   previewHeaderMeta: {
     ...fontStyles.regular,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 13,
     lineHeight: 18
   },
   previewSharedContext: {
     ...fontStyles.regular,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 15
   },
@@ -1473,7 +1489,7 @@ const styles = StyleSheet.create({
   },
   previewRestaurantName: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 18,
     lineHeight: 21,
     marginBottom: 5
@@ -1484,12 +1500,12 @@ const styles = StyleSheet.create({
   },
   previewImage: {
     aspectRatio: 4 / 5,
-    backgroundColor: colors.dark.surface,
+    backgroundColor: c.surface,
     width: "100%"
   },
   previewCaption: {
     ...fontStyles.regular,
-    color: "rgba(245, 237, 216, 0.90)",
+    color: c.cream,
     fontSize: 13,
     lineHeight: 20,
     marginBottom: 10
@@ -1510,7 +1526,7 @@ const styles = StyleSheet.create({
   },
   previewFeedTagText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 10,
     lineHeight: 11
   },
@@ -1521,8 +1537,8 @@ const styles = StyleSheet.create({
   },
   previewFeedDish: {
     alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.055)",
-    borderColor: "rgba(245, 237, 216, 0.10)",
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.sm,
     borderWidth: 1,
     flexDirection: "row",
@@ -1533,7 +1549,7 @@ const styles = StyleSheet.create({
   },
   previewFeedDishName: {
     ...fontStyles.regular,
-    color: colors.dark.cream,
+    color: c.cream,
     flexShrink: 1,
     fontSize: 11,
     lineHeight: 14
@@ -1551,7 +1567,7 @@ const styles = StyleSheet.create({
   },
   previewRatingText: {
     ...fontStyles.bold,
-    color: colors.dark.gold,
+    color: c.gold,
     fontSize: 10,
     lineHeight: 11
   },
@@ -1578,7 +1594,7 @@ const styles = StyleSheet.create({
   },
   previewActionText: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 13
   },
   previewIconButton: {
@@ -1592,8 +1608,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm
   },
   gallerySheet: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderTopWidth: 1,
@@ -1607,7 +1623,7 @@ const styles = StyleSheet.create({
   },
   galleryHandle: {
     alignSelf: "center",
-    backgroundColor: colors.dark.border,
+    backgroundColor: c.border,
     borderRadius: radius.pill,
     height: 4,
     width: 36
@@ -1619,13 +1635,13 @@ const styles = StyleSheet.create({
   },
   galleryTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 14,
     lineHeight: 18
   },
   galleryLibraryAction: {
     ...fontStyles.bold,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 12,
     lineHeight: 16
   },
@@ -1636,8 +1652,8 @@ const styles = StyleSheet.create({
   cameraTile: {
     alignItems: "center",
     aspectRatio: 1,
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: c.card,
+    borderColor: c.border,
     borderRadius: radius.md,
     borderWidth: 1,
     gap: 6,
@@ -1646,13 +1662,13 @@ const styles = StyleSheet.create({
   },
   cameraTileText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 11,
     lineHeight: 13
   },
   galleryTile: {
     aspectRatio: 1,
-    backgroundColor: colors.dark.card,
+    backgroundColor: c.card,
     borderRadius: radius.md,
     overflow: "hidden",
     width: 86
@@ -1672,14 +1688,14 @@ const styles = StyleSheet.create({
   },
   gallerySelectedText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: c.white,
     fontSize: 9,
     lineHeight: 11
   },
   galleryEmptyTile: {
     alignItems: "center",
     aspectRatio: 1,
-    borderColor: colors.dark.border,
+    borderColor: c.border,
     borderRadius: radius.md,
     borderWidth: 1,
     justifyContent: "center",
@@ -1687,7 +1703,7 @@ const styles = StyleSheet.create({
   },
   galleryEmptyText: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 11,
     lineHeight: 14,
     textAlign: "center"
@@ -1701,7 +1717,7 @@ const styles = StyleSheet.create({
   },
   restaurantAttachment: {
     alignItems: "center",
-    borderBottomColor: colors.dark.border,
+    borderBottomColor: c.border,
     borderBottomWidth: 1,
     flexDirection: "row",
     gap: spacing.s,
@@ -1710,7 +1726,7 @@ const styles = StyleSheet.create({
   },
   fieldInput: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
+    color: c.cream,
     flex: 1,
     fontSize: 14,
     minWidth: 0,
@@ -1725,14 +1741,14 @@ const styles = StyleSheet.create({
   },
   selectedPlaceLocationText: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     flex: 1,
     fontSize: 12,
     lineHeight: 16
   },
   placeSuggestions: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: 8,
@@ -1747,19 +1763,19 @@ const styles = StyleSheet.create({
   },
   placeSuggestionMuted: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 16
   },
   placeSuggestionError: {
     ...fontStyles.semiBold,
-    color: colors.dark.dangerSoft,
+    color: c.dangerSoft,
     fontSize: 12,
     lineHeight: 16
   },
   placeSuggestionRow: {
     alignItems: "center",
-    borderTopColor: colors.dark.border,
+    borderTopColor: c.border,
     borderTopWidth: 1,
     flexDirection: "row",
     gap: spacing.sm,
@@ -1774,13 +1790,13 @@ const styles = StyleSheet.create({
   },
   placeSuggestionTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 13,
     lineHeight: 17
   },
   placeSuggestionSub: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 11,
     lineHeight: 15
   },
@@ -1798,13 +1814,13 @@ const styles = StyleSheet.create({
   },
   memoryPrivacyNoteText: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 12,
     lineHeight: 16
   },
   friendSuggestions: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.md,
     borderWidth: 1,
     overflow: "hidden"
@@ -1814,7 +1830,7 @@ const styles = StyleSheet.create({
   },
   friendSuggestionRow: {
     alignItems: "center",
-    borderTopColor: colors.dark.border,
+    borderTopColor: c.border,
     borderTopWidth: 1,
     flexDirection: "row",
     gap: 12,
@@ -1824,8 +1840,8 @@ const styles = StyleSheet.create({
   },
   friendSuggestionAvatar: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: c.orangeDim,
+    borderColor: c.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: 38,
@@ -1834,7 +1850,7 @@ const styles = StyleSheet.create({
   },
   friendSuggestionAvatarText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 12,
     lineHeight: 16
   },
@@ -1845,8 +1861,8 @@ const styles = StyleSheet.create({
   },
   memoryFriendChip: {
     alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.055)",
-    borderColor: "rgba(245, 237, 216, 0.12)",
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -1856,7 +1872,7 @@ const styles = StyleSheet.create({
   },
   memoryFriendChipText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 12,
     lineHeight: 14
   },
@@ -1865,7 +1881,7 @@ const styles = StyleSheet.create({
   },
   dishRow: {
     alignItems: "stretch",
-    borderBottomColor: colors.dark.border,
+    borderBottomColor: c.border,
     borderBottomWidth: 1,
     gap: 10,
     paddingBottom: 14,
@@ -1873,7 +1889,7 @@ const styles = StyleSheet.create({
   },
   dishInput: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: c.cream,
     flex: 1,
     fontSize: 14,
     lineHeight: 18,
@@ -1893,7 +1909,7 @@ const styles = StyleSheet.create({
   },
   ratingLabel: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 11,
     lineHeight: 14
   },
@@ -1917,12 +1933,12 @@ const styles = StyleSheet.create({
   },
   addDishText: {
     ...fontStyles.medium,
-    color: colors.dark.green,
+    color: c.green,
     fontSize: 13,
     lineHeight: 17
   },
   captionRow: {
-    borderBottomColor: colors.dark.border,
+    borderBottomColor: c.border,
     borderBottomWidth: 1,
     paddingBottom: 14,
     paddingTop: 2
@@ -1930,7 +1946,7 @@ const styles = StyleSheet.create({
   captionInput: {
     ...fontStyles.regular,
     backgroundColor: "transparent",
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 15,
     lineHeight: 21,
     minHeight: 72,
@@ -1944,7 +1960,7 @@ const styles = StyleSheet.create({
   },
   customTagRow: {
     alignItems: "center",
-    borderBottomColor: colors.dark.border,
+    borderBottomColor: c.border,
     borderBottomWidth: 1,
     flexBasis: "100%",
     flexDirection: "row",
@@ -1955,7 +1971,7 @@ const styles = StyleSheet.create({
   },
   customTagInput: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
+    color: c.cream,
     flex: 1,
     fontSize: 13,
     minWidth: 0,
@@ -1963,7 +1979,7 @@ const styles = StyleSheet.create({
   },
   tagCount: {
     ...fontStyles.medium,
-    color: colors.dark.muted,
+    color: c.muted,
     fontSize: 10,
     lineHeight: 13
   },
@@ -1975,8 +1991,8 @@ const styles = StyleSheet.create({
   },
   selectedTagPill: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: c.orangeDim,
+    borderColor: c.orangeBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -1986,14 +2002,14 @@ const styles = StyleSheet.create({
   },
   selectedTagText: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 11,
     lineHeight: 13
   },
   tagPill: {
     alignItems: "center",
-    backgroundColor: "rgba(14, 11, 8, 0.36)",
-    borderColor: "rgba(245, 237, 216, 0.10)",
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -2003,7 +2019,7 @@ const styles = StyleSheet.create({
   },
   tagText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 11,
     lineHeight: 13
   },
@@ -2014,8 +2030,8 @@ const styles = StyleSheet.create({
   },
   visibilityOption: {
     alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.04)",
-    borderColor: colors.dark.border,
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.pill,
     borderWidth: 1,
     flex: 1,
@@ -2026,21 +2042,21 @@ const styles = StyleSheet.create({
     paddingVertical: 10
   },
   visibilityOptionActive: {
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orange
+    backgroundColor: c.orangeDim,
+    borderColor: c.orange
   },
   visibilityLabel: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 11,
     lineHeight: 14
   },
   visibilityLabelActive: {
-    color: colors.dark.orange
+    color: c.orange
   },
   successBanner: {
-    backgroundColor: colors.dark.greenDim,
-    borderColor: colors.dark.greenBorder,
+    backgroundColor: c.greenDim,
+    borderColor: c.greenBorder,
     borderRadius: radius.md,
     borderWidth: 1,
     gap: 3,
@@ -2048,19 +2064,19 @@ const styles = StyleSheet.create({
   },
   successTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.green,
+    color: c.green,
     fontSize: 13,
     lineHeight: 17
   },
   successText: {
     ...fontStyles.regular,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 12,
     lineHeight: 17
   },
   submitButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: c.orange,
     borderRadius: radius.pill,
     justifyContent: "center",
     minWidth: 104,
@@ -2068,26 +2084,26 @@ const styles = StyleSheet.create({
     paddingVertical: 13
   },
   submitButtonDisabled: {
-    backgroundColor: colors.dark.muted,
+    backgroundColor: c.muted,
     opacity: 0.8
   },
   submitText: {
     ...fontStyles.bold,
-    color: colors.dark.white,
+    color: c.white,
     fontSize: 15,
     letterSpacing: 0.3,
     lineHeight: 18
   },
   inlineError: {
     ...fontStyles.medium,
-    color: colors.dark.dangerSoft,
+    color: c.dangerSoft,
     fontSize: 12,
     lineHeight: 17
   },
   photoAttachment: {
     alignItems: "center",
-    backgroundColor: "rgba(14, 11, 8, 0.34)",
-    borderColor: "rgba(245, 237, 216, 0.08)",
+    backgroundColor: c.surface,
+    borderColor: c.border,
     borderRadius: radius.md,
     borderWidth: 1,
     flexDirection: "row",
@@ -2095,7 +2111,7 @@ const styles = StyleSheet.create({
     padding: 8
   },
   photoThumb: {
-    backgroundColor: colors.dark.surface,
+    backgroundColor: c.surface,
     borderRadius: radius.sm,
     height: 58,
     width: 58
@@ -2107,17 +2123,18 @@ const styles = StyleSheet.create({
   },
   photoAttachmentTitle: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
+    color: c.cream,
     fontSize: 13,
     lineHeight: 17
   },
   photoAttachmentAction: {
     ...fontStyles.semiBold,
-    color: colors.dark.orange,
+    color: c.orange,
     fontSize: 12,
     lineHeight: 16
   },
   removePhotoButton: {
     padding: 6
   }
-});
+  });
+}

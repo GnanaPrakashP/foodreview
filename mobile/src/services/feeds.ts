@@ -155,6 +155,20 @@ async function getPendingSentRequests(viewerName: string): Promise<string[]> {
   return Array.from(new Set((data ?? []).map((row) => row.receiver_name).filter(Boolean)));
 }
 
+// Usernames the viewer has blocked. RLS only exposes the viewer's own block
+// rows, so this is the "I don't want to see them" direction. Errors (e.g. the
+// table not yet deployed) degrade gracefully to "nobody blocked".
+export async function getBlockedUsernames(viewerName: string): Promise<string[]> {
+  if (!viewerName) return [];
+  const { data, error } = await supabase
+    .from("blocked_users")
+    .select("blocked_name")
+    .eq("blocker_name", viewerName);
+
+  if (error) return [];
+  return Array.from(new Set((data ?? []).map((row) => row.blocked_name).filter(Boolean)));
+}
+
 function interleaveCircleAndPublicPosts(circlePosts: ReviewRow[], publicPosts: ReviewRow[]) {
   if (circlePosts.length === 0) return publicPosts;
   if (publicPosts.length === 0) return circlePosts;
@@ -185,17 +199,20 @@ function interleaveCircleAndPublicPosts(circlePosts: ReviewRow[], publicPosts: R
 
 export async function getCircleFeed(): Promise<FeedPage> {
   const viewerName = await getViewerName();
-  const [joinedCircleOwners, pendingSentOwners] = await Promise.all([
+  const [joinedCircleOwners, pendingSentOwners, blockedNames] = await Promise.all([
     getJoinedCircleOwners(viewerName),
-    getPendingSentRequests(viewerName)
+    getPendingSentRequests(viewerName),
+    getBlockedUsernames(viewerName)
   ]);
-  const reviewerNames = Array.from(new Set([viewerName, ...joinedCircleOwners].filter(Boolean)));
+  const blockedSet = new Set(blockedNames);
+  const reviewerNames = Array.from(new Set([viewerName, ...joinedCircleOwners].filter(Boolean)))
+    .filter((name) => name === viewerName || !blockedSet.has(name));
 
   if (!viewerName || reviewerNames.length === 0) {
     return { posts: [], viewerName };
   }
 
-  const excludedPublicReviewers = Array.from(new Set([...reviewerNames, ...pendingSentOwners]));
+  const excludedPublicReviewers = Array.from(new Set([...reviewerNames, ...pendingSentOwners, ...blockedNames]));
   const [circleResult, publicResult] = await Promise.all([
     supabase
       .from("reviews")
@@ -266,15 +283,22 @@ export async function getReviewPostById(postId: string): Promise<ReviewPost | nu
 
 export async function getPublicFeed(): Promise<FeedPage> {
   const viewerName = await getViewerName();
+  const blockedNames = await getBlockedUsernames(viewerName);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("reviews")
     .select(REVIEW_SELECT)
     .eq("visibility", "public")
     .is("deleted_at", null)
     .is("hidden_at", null)
     .is("reported_at", null)
-    .eq("status", "active")
+    .eq("status", "active");
+
+  if (blockedNames.length > 0) {
+    query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
+  }
+
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(PAGE_SIZE)

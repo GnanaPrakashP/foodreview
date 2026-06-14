@@ -2,11 +2,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 
+type HeaderThemeColors = {
+  card: string;
+  border: string;
+  cream: string;
+  orange: string;
+  muted: string;
+};
+
 type MemoryRouteHeaderProps = {
   backButtonVariant?: "boxed" | "plain";
   kicker?: string;
   onBack: () => void;
   subtitle?: string;
+  themeColors?: HeaderThemeColors;
   title: string;
   titleWeight?: "regular" | "bold" | "extraBold";
 };
@@ -16,6 +25,7 @@ export function MemoryRouteHeader({
   kicker,
   onBack,
   subtitle,
+  themeColors = colors.dark,
   title,
   titleWeight = "extraBold"
 }: MemoryRouteHeaderProps) {
@@ -27,13 +37,24 @@ export function MemoryRouteHeader({
 
   return (
     <View style={styles.header}>
-      <Pressable onPress={onBack} style={[styles.backButton, backButtonVariant === "plain" && styles.backButtonPlain]}>
-        <Ionicons name="arrow-back" size={20} color={colors.dark.cream} />
+      <Pressable
+        accessibilityLabel="Go back"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onBack}
+        style={({ pressed }) => [
+          styles.backButton,
+          backButtonVariant === "boxed" && { backgroundColor: themeColors.card, borderColor: themeColors.border },
+          backButtonVariant === "plain" && styles.backButtonPlain,
+          pressed && styles.pressed
+        ]}
+      >
+        <Ionicons name="arrow-back" size={20} color={themeColors.cream} />
       </Pressable>
       <View style={styles.headerText}>
-        {kicker ? <Text style={styles.kicker}>{kicker}</Text> : null}
-        <Text style={titleStyle}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        {kicker ? <Text style={[styles.kicker, { color: themeColors.orange }]}>{kicker}</Text> : null}
+        <Text style={[titleStyle, { color: themeColors.cream }]}>{title}</Text>
+        {subtitle ? <Text style={[styles.subtitle, { color: themeColors.muted }]}>{subtitle}</Text> : null}
       </View>
     </View>
   );
@@ -47,8 +68,6 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
     borderRadius: radius.input,
     borderWidth: 1,
     height: 44,
@@ -57,38 +76,39 @@ const styles = StyleSheet.create({
   },
   backButtonPlain: {
     backgroundColor: "transparent",
-    borderWidth: 0
+    borderWidth: 0,
+    // Pull the centered icon flush to the content's left edge so the back arrow
+    // lines up with the screen body (e.g. the comment text) below it.
+    marginLeft: -12
+  },
+  pressed: {
+    opacity: 0.6
   },
   headerText: {
     flex: 1
   },
   kicker: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
     fontSize: typography.caption,
     letterSpacing: 1.2,
     textTransform: "uppercase"
   },
   title: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
     fontSize: typography.title
   },
   titleRegular: {
     ...fontStyles.regular,
-    color: colors.dark.cream,
     fontSize: 24,
     lineHeight: 29
   },
   titleBold: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
     fontSize: 24,
     lineHeight: 29
   },
   subtitle: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
     fontSize: 13,
     marginTop: 3
   }

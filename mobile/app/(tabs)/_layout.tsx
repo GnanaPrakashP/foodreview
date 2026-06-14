@@ -2,7 +2,8 @@ import { Tabs } from "expo-router";
 import { CircleUserRound, Plus, Search, Users, type LucideIcon } from "lucide-react-native";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, fontStyles, typography } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, typography } from "@/theme";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
   index: { title: "Circle", icon: Users },
@@ -13,6 +14,7 @@ const tabs: Record<string, { title: string; icon: LucideIcon }> = {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { themeColors } = useThemePreference();
 
   return (
     <Tabs
@@ -21,11 +23,11 @@ export default function TabLayout() {
         return {
           title: tab.title,
           headerShown: false,
-          tabBarActiveTintColor: colors.dark.orange,
-          tabBarInactiveTintColor: colors.dark.muted,
+          tabBarActiveTintColor: themeColors.orange,
+          tabBarInactiveTintColor: themeColors.muted,
           tabBarStyle: {
-            backgroundColor: colors.dark.surface,
-            borderTopColor: colors.dark.border,
+            backgroundColor: themeColors.surface,
+            borderTopColor: themeColors.border,
             borderTopWidth: 1,
             height: 58 + Math.max(insets.bottom, 8),
             paddingBottom: Math.max(insets.bottom, 8),

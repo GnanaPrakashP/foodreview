@@ -1,7 +1,8 @@
 import { PropsWithChildren, ReactNode } from "react";
 import { ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 type AppHeaderProps = {
   eyebrow?: string;
@@ -12,12 +13,14 @@ type AppHeaderProps = {
 };
 
 type AppScreenProps = PropsWithChildren<AppHeaderProps & {
+  backgroundColor?: string;
   padded?: boolean;
   scroll?: boolean;
   style?: ViewStyle | ViewStyle[];
 }>;
 
 export function AppHeader({ eyebrow, italicTitlePart, rightAccessory, subtitle, title }: AppHeaderProps) {
+  const { themeColors } = useThemePreference();
   const hasHeader = Boolean(title || eyebrow || subtitle || rightAccessory);
   if (!hasHeader) return null;
 
@@ -28,24 +31,25 @@ export function AppHeader({ eyebrow, italicTitlePart, rightAccessory, subtitle, 
   return (
     <View style={styles.header}>
       <View style={styles.headerText}>
-        {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
+        {eyebrow ? <Text style={[styles.eyebrow, { color: themeColors.orange }]}>{eyebrow}</Text> : null}
         {titleParts ? (
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: themeColors.cream }]}>
             {titleParts[0]}
-            <Text style={styles.titleAccent}>{italicTitlePart}</Text>
+            <Text style={[styles.titleAccent, { color: themeColors.orange }]}>{italicTitlePart}</Text>
             {titleParts.slice(1).join(italicTitlePart)}
           </Text>
         ) : title ? (
-          <Text style={styles.title}>{title}</Text>
+          <Text style={[styles.title, { color: themeColors.cream }]}>{title}</Text>
         ) : null}
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        {subtitle ? <Text style={[styles.subtitle, { color: themeColors.muted }]}>{subtitle}</Text> : null}
       </View>
-      {rightAccessory ? <View style={styles.accessory}>{rightAccessory}</View> : null}
+      {rightAccessory ? <View style={[styles.accessory, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>{rightAccessory}</View> : null}
     </View>
   );
 }
 
 export function AppScreen({
+  backgroundColor,
   children,
   eyebrow,
   italicTitlePart,
@@ -57,6 +61,8 @@ export function AppScreen({
   title
 }: AppScreenProps) {
   const insets = useSafeAreaInsets();
+  const { themeColors } = useThemePreference();
+  const screenBg = { backgroundColor: backgroundColor ?? themeColors.bg };
   const contentStyle = [
     padded && styles.padded,
     { paddingBottom: spacing.xl + insets.bottom },
@@ -74,7 +80,7 @@ export function AppScreen({
 
   if (scroll) {
     return (
-      <SafeAreaView edges={["top"]} style={styles.screen}>
+      <SafeAreaView edges={["top"]} style={[styles.screen, screenBg]}>
         <ScrollView
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="handled"
@@ -88,7 +94,7 @@ export function AppScreen({
   }
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.screen}>
+    <SafeAreaView edges={["top"]} style={[styles.screen, backgroundColor ? { backgroundColor } : null]}>
       <View style={[styles.fill, contentStyle]}>
         {header}
         {children}
@@ -99,7 +105,6 @@ export function AppScreen({
 
 const styles = StyleSheet.create({
   screen: {
-    backgroundColor: colors.dark.bg,
     flex: 1
   },
   fill: {
@@ -122,8 +127,6 @@ const styles = StyleSheet.create({
   },
   accessory: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
     borderRadius: radius.md,
     borderWidth: 1,
     height: 40,
@@ -132,25 +135,21 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
     fontSize: typography.eyebrow,
     letterSpacing: 1,
     textTransform: "uppercase"
   },
   title: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
     fontSize: typography.webTitle,
     letterSpacing: 0,
     lineHeight: 33
   },
   titleAccent: {
-    color: colors.dark.orange,
     ...fontStyles.semiBoldItalic
   },
   subtitle: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
     fontSize: 13,
     lineHeight: 19,
     marginTop: 2

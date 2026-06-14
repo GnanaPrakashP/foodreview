@@ -1,7 +1,8 @@
 import { supabase } from "@/api/supabase";
 import { addEngagementToRows } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
-import { REVIEW_SELECT, type ReviewRow } from "@/services/reviewMapper";
+import { removePushTokensForUser } from "@/services/notifications";
+import { displayNameForProfile, REVIEW_SELECT, type ReviewRow } from "@/services/reviewMapper";
 import type { ReviewPost } from "@/types/models";
 
 type EngagementPostRow = {
@@ -39,6 +40,39 @@ export type SettingsCommentItem = {
   content: string;
   createdAt: string;
   post: ReviewPost | null;
+};
+
+export type NotificationSettings = {
+  pushEnabled: boolean;
+  memoryActivity: boolean;
+  circleActivity: boolean;
+  postEngagement: boolean;
+};
+
+export type BlockedUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+};
+
+export const defaultNotificationSettings: NotificationSettings = {
+  pushEnabled: true,
+  memoryActivity: true,
+  circleActivity: true,
+  postEngagement: true
+};
+
+type NotificationSettingsRow = {
+  push_enabled: boolean;
+  memory_activity: boolean;
+  circle_activity: boolean;
+  post_engagement: boolean;
+};
+
+type BlockedUserRow = {
+  id: string;
+  blocked_name: string;
 };
 
 async function getViewerProfile() {
@@ -134,8 +168,11 @@ export async function getSavedSettingsItems(): Promise<SavedSettingsList> {
   const reviewRows = rows
     .map((row) => row.post_id ? reviewMap.get(row.post_id) ?? null : null)
     .filter((row): row is ReviewRow => Boolean(row));
+  // Only genuine place-only saves (no post_id) count as "places". A bookmarked
+  // post whose review is no longer visible is a dead bookmark, not a saved
+  // place, so it is dropped rather than shown as a bare restaurant name.
   const places = rows
-    .filter((row) => !row.post_id || !reviewMap.has(row.post_id))
+    .filter((row) => !row.post_id)
     .map((row) => ({
       id: row.id,
       restaurantName: row.restaurant_name
@@ -175,23 +212,130 @@ export async function getSettingsComments(): Promise<SettingsCommentItem[]> {
   }));
 }
 
-export async function deleteCurrentAccount() {
+function isMissingRelation(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42P01" ||
+    error?.code === "PGRST202" ||
+    error?.code === "PGRST205" ||
+    /schema cache|does not exist|could not find/i.test(message);
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
   const viewer = await getViewerProfile();
+  const { data, error } = await supabase
+    .from("notification_settings")
+    .select("push_enabled, memory_activity, circle_activity, post_engagement")
+    .eq("user_name", viewer.username)
+    .maybeSingle<NotificationSettingsRow>();
 
-  const { error: reviewError } = await supabase
-    .from("reviews")
-    .delete()
-    .eq("reviewer_name", viewer.username);
+  if (error) {
+    if (isMissingRelation(error)) return defaultNotificationSettings;
+    throw new Error(error.message);
+  }
+  if (!data) return defaultNotificationSettings;
 
-  if (reviewError) throw new Error(reviewError.message);
+  return {
+    pushEnabled: data.push_enabled,
+    memoryActivity: data.memory_activity,
+    circleActivity: data.circle_activity,
+    postEngagement: data.post_engagement
+  };
+}
 
-  const { error: profileError } = await supabase
+export async function updateNotificationSettings(next: NotificationSettings): Promise<NotificationSettings> {
+  const viewer = await getViewerProfile();
+  const { error } = await supabase
+    .from("notification_settings")
+    .upsert({
+      user_name: viewer.username,
+      push_enabled: next.pushEnabled,
+      memory_activity: next.memoryActivity,
+      circle_activity: next.circleActivity,
+      post_engagement: next.postEngagement,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "user_name" });
+
+  if (error) throw new Error(error.message);
+
+  // When the user turns push off entirely, stop sending to their devices.
+  if (!next.pushEnabled) {
+    await removePushTokensForUser(viewer.username).catch(() => {});
+  }
+
+  return next;
+}
+
+export async function getBlockedUsers(): Promise<BlockedUser[]> {
+  const viewer = await getViewerProfile();
+  const { data, error } = await supabase
+    .from("blocked_users")
+    .select("id, blocked_name")
+    .eq("blocker_name", viewer.username)
+    .order("created_at", { ascending: false })
+    .returns<BlockedUserRow[]>();
+
+  if (error) {
+    if (isMissingRelation(error)) return [];
+    throw new Error(error.message);
+  }
+
+  const rows = data ?? [];
+  const usernames = rows.map((row) => row.blocked_name);
+  if (usernames.length === 0) return [];
+
+  const { data: profiles, error: profilesError } = await supabase
     .from("profiles")
+    .select("username, first_name, last_name, avatar_url")
+    .in("username", usernames)
+    .returns<Array<{ username: string; first_name: string; last_name: string; avatar_url: string | null }>>();
+
+  if (profilesError) throw new Error(profilesError.message);
+
+  const profileMap = new Map((profiles ?? []).map((profile) => [profile.username, profile]));
+
+  return rows.map((row) => {
+    const profile = profileMap.get(row.blocked_name);
+    return {
+      id: row.id,
+      username: row.blocked_name,
+      avatarUrl: profile?.avatar_url ?? null,
+      displayName: profile
+        ? displayNameForProfile({ firstName: profile.first_name, lastName: profile.last_name, username: profile.username })
+        : row.blocked_name
+    };
+  });
+}
+
+export async function blockUser(username: string): Promise<void> {
+  const viewer = await getViewerProfile();
+  const target = username.trim().toLowerCase().replace(/^@/, "");
+  if (!target) throw new Error("Choose someone to block");
+  if (target === viewer.username) throw new Error("You can't block yourself");
+
+  const { error } = await supabase
+    .from("blocked_users")
+    .upsert({ blocker_name: viewer.username, blocked_name: target }, { onConflict: "blocker_name,blocked_name" });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function unblockUser(username: string): Promise<void> {
+  const viewer = await getViewerProfile();
+  const { error } = await supabase
+    .from("blocked_users")
     .delete()
-    .eq("id", viewer.id);
+    .eq("blocker_name", viewer.username)
+    .eq("blocked_name", username);
 
-  if (profileError) throw new Error(profileError.message);
+  if (error) throw new Error(error.message);
+}
 
-  const { error: signOutError } = await supabase.auth.signOut();
-  if (signOutError) throw new Error(signOutError.message);
+export async function deleteCurrentAccount() {
+  await getViewerProfile();
+
+  const { error } = await supabase.rpc("delete_current_account");
+  if (error) throw new Error(error.message);
+
+  // The RPC removes the auth user; clear the local session regardless.
+  await supabase.auth.signOut().catch(() => {});
 }

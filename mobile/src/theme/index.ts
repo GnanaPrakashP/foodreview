@@ -21,6 +21,8 @@ export const colors = {
     orangeDim: "rgba(240, 96, 48, 0.12)",
     orangeBorder: "rgba(240, 96, 48, 0.24)",
     gold: "#E8A830",
+    goldDim: "rgba(232, 168, 48, 0.15)",
+    goldBorder: "rgba(232, 168, 48, 0.25)",
     cream: "#F5EDD8",
     muted: "#7A6E65",
     green: "#3DD68C",

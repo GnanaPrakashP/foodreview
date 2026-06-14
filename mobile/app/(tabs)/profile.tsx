@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, ChevronRight, FileText, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, X } from "lucide-react-native";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
@@ -12,14 +12,53 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { compactPlaceLocation } from "@/services/places";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData } from "@/types/models";
 
 type ProfileTab = "posts" | "memories";
 
 const TASTE_TRUST_MIN_CONFIRMATIONS = 5;
+
+type ThemeColors = ReturnType<typeof themeColorsFor>;
+type ProfilePalette = ReturnType<typeof profilePalette>;
+
+function profilePalette(c: ThemeColors) {
+  return {
+    accent: c.orange,
+    accentDim: c.orangeDim,
+    accentBorder: c.orangeBorder,
+    bg: c.bg,
+    border: c.border,
+    borderStrong: c.border,
+    card: c.card,
+    cardRaised: c.surface,
+    danger: c.dangerSoft,
+    muted: c.muted,
+    mutedLow: c.muted,
+    onAccent: c.white,
+    surface: c.surface,
+    text: c.cream,
+    textStrong: c.white
+  } as const;
+}
+
+// Shadows the module-level `PROFILE_COLORS`/`styles` names per render so every
+// component body can stay unchanged while colors follow the active theme.
+function useProfileTheme() {
+  const { themeColors } = useThemePreference();
+  return useMemo(() => {
+    const PROFILE_COLORS = profilePalette(themeColors);
+    return { PROFILE_COLORS, styles: createStyles(PROFILE_COLORS) };
+  }, [themeColors]);
+}
+
+function profileTabFromParam(tab?: string | string[] | null): ProfileTab {
+  const value = Array.isArray(tab) ? tab[0] : tab;
+  return value === "memories" ? "memories" : "posts";
+}
 
 function formatTrustScore(score: number | string | null | undefined) {
   const value = typeof score === "number" ? score : Number(score);
@@ -28,12 +67,13 @@ function formatTrustScore(score: number | string | null | undefined) {
 }
 
 export default function ProfileScreen() {
+  const { styles } = useProfileTheme();
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const page = useCurrentProfilePageQuery({ enabled: isReady && isAuthenticated });
 
   return (
-    <Screen padded={false} scroll>
+    <Screen padded={false} scroll style={styles.screenContent}>
       <View style={styles.stack}>
         {!isReady ? (
           <LoadingState message="Restoring your session." title="Loading profile" />
@@ -59,20 +99,40 @@ export default function ProfileScreen() {
 }
 
 function ProfileContent({ page }: { page: ProfilePageData }) {
+  const { styles } = useProfileTheme();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<ProfileTab>("posts");
+  const params = useLocalSearchParams<{ tab?: string }>();
+  const [activeTab, setActiveTab] = useState<ProfileTab>(() => profileTabFromParam(params.tab));
   const [showTrustSheet, setShowTrustSheet] = useState(false);
   const memories = useMemoryRoomsQuery();
 
+  useEffect(() => {
+    setActiveTab(profileTabFromParam(params.tab));
+  }, [params.tab]);
+
+  function changeProfileTab(tab: ProfileTab) {
+    setActiveTab(tab);
+    router.setParams({ tab });
+  }
+
+  // Guard against a fast double-tap pushing the settings route twice.
+  const openingSettingsRef = useRef(false);
+  const openSettings = useCallback(() => {
+    if (openingSettingsRef.current) return;
+    openingSettingsRef.current = true;
+    router.push("/profile/settings");
+    setTimeout(() => { openingSettingsRef.current = false; }, 500);
+  }, [router]);
+
   return (
       <View style={styles.profileStack}>
-        <ProfileHero page={page} onSettingsPress={() => router.push("/profile/settings")} />
+        <ProfileHero page={page} onSettingsPress={openSettings} />
         <ProfileStats
           page={page}
           onCirclePress={() => router.push("/profile/circle")}
           onTrustPress={() => setShowTrustSheet(true)}
         />
-        <ProfileTabs activeTab={activeTab} onChange={setActiveTab} />
+        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} />
 
       {activeTab === "posts" ? (
         <View style={styles.postsFeedBleed}>
@@ -99,6 +159,7 @@ function ProfileContent({ page }: { page: ProfilePageData }) {
 }
 
 function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; page: ProfilePageData }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   const profile = page.profile;
   const initials = initialsForName(page.displayName, profile.username);
   const joinedAt = joinedLabel(profile.createdAt);
@@ -106,7 +167,7 @@ function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; p
   return (
     <View style={styles.hero}>
       <Pressable accessibilityLabel="Open settings" onPress={onSettingsPress} style={styles.settingsButton}>
-        <Settings size={21} color={colors.dark.cream} strokeWidth={2.1} />
+        <Settings size={21} color={PROFILE_COLORS.text} strokeWidth={2.1} />
       </Pressable>
 
       <View style={styles.heroIdentityRow}>
@@ -125,7 +186,7 @@ function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; p
           </Text>
           {joinedAt ? (
             <View style={styles.joinedRow}>
-              <CalendarDays size={13} color={colors.dark.muted} strokeWidth={2} />
+              <CalendarDays size={13} color={PROFILE_COLORS.mutedLow} strokeWidth={2} />
               <Text style={styles.joinedText}>{joinedAt}</Text>
             </View>
           ) : null}
@@ -146,6 +207,7 @@ function ProfileStats({
   onTrustPress: () => void;
   page: ProfilePageData;
 }) {
+  const { styles } = useProfileTheme();
   const stats = [
     { value: formatTrustScore(page.profile.trustScore), label: "Trust", onPress: onTrustPress },
     { value: String(page.stats.uniquePlaces), label: "Places" },
@@ -179,6 +241,7 @@ function TrustScoreSheet({
   page: ProfilePageData;
   visible: boolean;
 }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   const insets = useSafeAreaInsets();
   const profile = page.profile;
   const scoreLabel = formatTrustScore(profile.trustScore);
@@ -197,7 +260,7 @@ function TrustScoreSheet({
           <View style={styles.trustSheetHeader}>
             <Text style={styles.trustSheetTitle}>Trust Score</Text>
             <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.trustCloseButton}>
-              <X size={16} color={colors.dark.muted} strokeWidth={2.5} />
+              <X size={16} color={PROFILE_COLORS.muted} strokeWidth={2.5} />
             </Pressable>
           </View>
 
@@ -210,7 +273,7 @@ function TrustScoreSheet({
               <View style={styles.trustLevelCard}>
                 <View style={styles.trustLevelRow}>
                   <View style={styles.trustLevelIcon}>
-                    <User size={15} color={colors.dark.orange} strokeWidth={2.3} />
+                    <User size={15} color={PROFILE_COLORS.accent} strokeWidth={2.3} />
                   </View>
                   <Text numberOfLines={1} style={styles.trustLevelText}>{publicTrustLevel}</Text>
                 </View>
@@ -225,7 +288,7 @@ function TrustScoreSheet({
             </View>
 
             <View style={styles.trustUnlockRow}>
-              <ShieldCheck size={13} color={colors.dark.orange} strokeWidth={2.3} />
+              <ShieldCheck size={13} color={PROFILE_COLORS.accent} strokeWidth={2.3} />
               <Text style={styles.trustUnlockText}>
                 {confirmationsUntilLevel > 0
                   ? `${confirmationsUntilLevel} more confirmation${confirmationsUntilLevel !== 1 ? "s" : ""} to unlock level`
@@ -237,9 +300,9 @@ function TrustScoreSheet({
               <Text style={styles.trustGrowthEyebrow}>How it grows</Text>
               <View style={styles.trustGrowthSteps}>
                 <TrustGrowthStep Icon={Pencil} label="Post" />
-                <ChevronRight size={15} color={colors.dark.muted} strokeWidth={2.4} />
+                <ChevronRight size={15} color={PROFILE_COLORS.mutedLow} strokeWidth={2.4} />
                 <TrustGrowthStep Icon={Shield} label="Confirm" />
-                <ChevronRight size={15} color={colors.dark.muted} strokeWidth={2.4} />
+                <ChevronRight size={15} color={PROFILE_COLORS.mutedLow} strokeWidth={2.4} />
                 <TrustGrowthStep Icon={TrendingUp} label="Grow" />
               </View>
               <Text style={styles.trustGrowthNote}>Confirmations strengthen trust.</Text>
@@ -252,10 +315,11 @@ function TrustScoreSheet({
 }
 
 function TrustMetric({ Icon, label, value }: { Icon: typeof Users; label: string; value: string }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   return (
     <View style={styles.trustMetricCard}>
       <View style={styles.trustMetricTop}>
-        <Icon size={15} color={colors.dark.orange} strokeWidth={2.2} />
+        <Icon size={15} color={PROFILE_COLORS.accent} strokeWidth={2.2} />
         <Text numberOfLines={1} style={styles.trustMetricValue}>{value}</Text>
       </View>
       <Text numberOfLines={1} style={styles.trustMetricLabel}>{label}</Text>
@@ -264,10 +328,11 @@ function TrustMetric({ Icon, label, value }: { Icon: typeof Users; label: string
 }
 
 function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   return (
     <View style={styles.trustGrowthStep}>
       <View style={styles.trustGrowthIcon}>
-        <Icon size={16} color={colors.dark.orange} strokeWidth={2.3} />
+        <Icon size={16} color={PROFILE_COLORS.accent} strokeWidth={2.3} />
       </View>
       <Text style={styles.trustGrowthLabel}>{label}</Text>
     </View>
@@ -275,6 +340,7 @@ function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string })
 }
 
 function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
+  const { styles } = useProfileTheme();
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "posts", label: "Posts" },
     { id: "memories", label: "Memories" }
@@ -308,6 +374,7 @@ function MemoriesTab({
   memories: MemoryRoomSummary[];
   onRetry: () => void;
 }) {
+  const { styles } = useProfileTheme();
   const router = useRouter();
 
   if (isLoading) {
@@ -351,6 +418,7 @@ function MemoriesTab({
 }
 
 function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: () => void }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   const locationLabel = compactPlaceLocation({
     formattedAddress: memory.area ?? "",
     shortFormattedAddress: memory.area ?? ""
@@ -378,11 +446,11 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
           </View>
         ) : null}
         <View style={styles.memoryCountRow}>
-          <Users size={12} color={colors.dark.muted} strokeWidth={2.2} />
+          <Users size={12} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
           <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
         </View>
         <View style={styles.memoryCountRow}>
-          <MessageCircle size={12} color={colors.dark.muted} strokeWidth={2.2} />
+          <MessageCircle size={12} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
           <Text style={styles.memoryCountText}>{memory.messageCount}</Text>
         </View>
       </View>
@@ -391,6 +459,7 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
 }
 
 function ProfileSetupCard() {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   const setup = useSetupCurrentProfileMutation();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -408,7 +477,7 @@ function ProfileSetupCard() {
     <AppCard style={styles.setupCard}>
       <View style={styles.setupHeader}>
         <View style={styles.setupIcon}>
-          <UserPlus size={24} color={colors.dark.orange} strokeWidth={2} />
+          <UserPlus size={24} color={PROFILE_COLORS.accent} strokeWidth={2} />
         </View>
         <AppText variant="section" style={styles.centered}>Set up your profile</AppText>
         <AppText tone="muted" variant="muted" style={styles.centered}>
@@ -443,10 +512,11 @@ function ProfileInput(props: {
   placeholder: string;
   value: string;
 }) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
   return (
     <TextInput
       {...props}
-      placeholderTextColor={colors.dark.muted}
+      placeholderTextColor={PROFILE_COLORS.mutedLow}
       style={styles.input}
     />
   );
@@ -476,7 +546,12 @@ function timelineDateParts(value: string): { day: string; month: string } {
   };
 }
 
-const styles = StyleSheet.create({
+function createStyles(PROFILE_COLORS: ProfilePalette) {
+  return StyleSheet.create({
+  screenContent: {
+    backgroundColor: PROFILE_COLORS.bg,
+    flexGrow: 1
+  },
   stack: {
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
@@ -489,7 +564,7 @@ const styles = StyleSheet.create({
     marginHorizontal: -spacing.lg
   },
   hero: {
-    backgroundColor: colors.dark.bg,
+    backgroundColor: PROFILE_COLORS.bg,
     position: "relative"
   },
   settingsButton: {
@@ -510,7 +585,7 @@ const styles = StyleSheet.create({
   },
   avatar: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: PROFILE_COLORS.accent,
     borderRadius: radius.avatar,
     height: 72,
     justifyContent: "center",
@@ -523,7 +598,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: PROFILE_COLORS.onAccent,
     fontSize: 22
   },
   identity: {
@@ -532,13 +607,13 @@ const styles = StyleSheet.create({
   },
   name: {
     ...fontStyles.bold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 23,
     lineHeight: 29
   },
   handle: {
     ...fontStyles.semiBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.muted,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 2,
@@ -552,13 +627,13 @@ const styles = StyleSheet.create({
   },
   joinedText: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.mutedLow,
     fontSize: 12,
     lineHeight: 16
   },
   bio: {
     ...fontStyles.medium,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 14,
     lineHeight: 20,
     marginTop: spacing.md,
@@ -576,30 +651,30 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm
   },
   statItemDivider: {
-    borderLeftColor: "rgba(245, 237, 216, 0.08)",
+    borderLeftColor: PROFILE_COLORS.border,
     borderLeftWidth: 1
   },
   statValue: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 24,
     letterSpacing: 0,
     lineHeight: 29
   },
   statLabel: {
     ...fontStyles.bold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 11,
     lineHeight: 14
   },
   trustModalRoot: {
-    backgroundColor: "rgba(0, 0, 0, 0.60)",
+    backgroundColor: "rgba(0, 0, 0, 0.62)",
     flex: 1,
     justifyContent: "flex-end"
   },
   trustSheet: {
-    backgroundColor: colors.dark.card,
-    borderColor: "rgba(245, 237, 216, 0.09)",
+    backgroundColor: PROFILE_COLORS.card,
+    borderColor: PROFILE_COLORS.borderStrong,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 1,
@@ -608,7 +683,7 @@ const styles = StyleSheet.create({
   },
   trustSheetHeader: {
     alignItems: "center",
-    borderBottomColor: "rgba(245, 237, 216, 0.06)",
+    borderBottomColor: PROFILE_COLORS.border,
     borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -618,13 +693,13 @@ const styles = StyleSheet.create({
   },
   trustSheetTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 16,
     lineHeight: 20
   },
   trustCloseButton: {
     alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.07)",
+    backgroundColor: PROFILE_COLORS.surface,
     borderRadius: radius.pill,
     height: 30,
     justifyContent: "center",
@@ -642,8 +717,8 @@ const styles = StyleSheet.create({
   },
   trustScoreCard: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: "rgba(240, 96, 48, 0.30)",
+    backgroundColor: PROFILE_COLORS.accentDim,
+    borderColor: PROFILE_COLORS.accentBorder,
     borderRadius: 18,
     borderWidth: 1.5,
     justifyContent: "center",
@@ -653,7 +728,7 @@ const styles = StyleSheet.create({
   },
   trustScoreValue: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 40,
     letterSpacing: 0,
     lineHeight: 42,
@@ -661,14 +736,14 @@ const styles = StyleSheet.create({
   },
   trustScoreMax: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: PROFILE_COLORS.accent,
     fontSize: 11,
     lineHeight: 13,
     marginTop: 3
   },
   trustLevelCard: {
-    backgroundColor: "rgba(245, 237, 216, 0.03)",
-    borderColor: "rgba(245, 237, 216, 0.07)",
+    backgroundColor: PROFILE_COLORS.surface,
+    borderColor: PROFILE_COLORS.border,
     borderRadius: 18,
     borderWidth: 1,
     flex: 1,
@@ -683,7 +758,7 @@ const styles = StyleSheet.create({
   },
   trustLevelIcon: {
     alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.06)",
+    backgroundColor: PROFILE_COLORS.cardRaised,
     borderRadius: radius.pill,
     height: 28,
     justifyContent: "center",
@@ -691,14 +766,14 @@ const styles = StyleSheet.create({
   },
   trustLevelText: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     flex: 1,
     fontSize: 14,
     lineHeight: 18
   },
   trustLevelDescription: {
     ...fontStyles.bold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 12,
     lineHeight: 17,
     marginTop: 12
@@ -708,8 +783,8 @@ const styles = StyleSheet.create({
     gap: 8
   },
   trustMetricCard: {
-    backgroundColor: "rgba(245, 237, 216, 0.035)",
-    borderColor: "rgba(245, 237, 216, 0.08)",
+    backgroundColor: PROFILE_COLORS.surface,
+    borderColor: PROFILE_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
     flex: 1,
@@ -725,14 +800,14 @@ const styles = StyleSheet.create({
   },
   trustMetricValue: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     flexShrink: 1,
     fontSize: 17,
     lineHeight: 19
   },
   trustMetricLabel: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 10,
     lineHeight: 13,
     marginTop: 9
@@ -745,21 +820,21 @@ const styles = StyleSheet.create({
   },
   trustUnlockText: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     flex: 1,
     fontSize: 11,
     lineHeight: 14
   },
   trustGrowthCard: {
-    backgroundColor: "rgba(245, 237, 216, 0.035)",
-    borderColor: "rgba(245, 237, 216, 0.08)",
+    backgroundColor: PROFILE_COLORS.surface,
+    borderColor: PROFILE_COLORS.border,
     borderRadius: radius.card,
     borderWidth: 1,
     padding: 14
   },
   trustGrowthEyebrow: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 10,
     letterSpacing: 0.8,
     lineHeight: 13,
@@ -779,8 +854,8 @@ const styles = StyleSheet.create({
   },
   trustGrowthIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
+    backgroundColor: PROFILE_COLORS.accentDim,
+    borderColor: PROFILE_COLORS.accentBorder,
     borderRadius: radius.md,
     borderWidth: 1,
     height: 38,
@@ -789,13 +864,13 @@ const styles = StyleSheet.create({
   },
   trustGrowthLabel: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 11,
     lineHeight: 13
   },
   trustGrowthNote: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 12,
     lineHeight: 15,
     marginTop: 13,
@@ -812,28 +887,28 @@ const styles = StyleSheet.create({
   },
   tabText: {
     ...fontStyles.bold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 12,
     lineHeight: 15
   },
   tabTextActive: {
-    color: colors.dark.orange
+    color: PROFILE_COLORS.accent
   },
   tabUnderline: {
-    backgroundColor: colors.dark.border,
+    backgroundColor: PROFILE_COLORS.border,
     height: 2,
     width: "100%"
   },
   tabUnderlineActive: {
-    backgroundColor: colors.dark.orange
+    backgroundColor: PROFILE_COLORS.accent
   },
   memoryList: {
     gap: spacing.sm
   },
   memoryRow: {
     alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
+    backgroundColor: PROFILE_COLORS.card,
+    borderColor: PROFILE_COLORS.border,
     borderRadius: radius.md,
     borderWidth: 1,
     flexDirection: "row",
@@ -843,7 +918,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12
   },
   memoryRowUnread: {
-    borderColor: "rgba(240,96,48,0.45)"
+    borderColor: PROFILE_COLORS.accentBorder
   },
   memoryDate: {
     alignItems: "center",
@@ -851,13 +926,13 @@ const styles = StyleSheet.create({
   },
   memoryDay: {
     ...fontStyles.extraBold,
-    color: colors.dark.orange,
+    color: PROFILE_COLORS.accent,
     fontSize: 14,
     lineHeight: 16
   },
   memoryMonthShort: {
     ...fontStyles.bold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 10,
     lineHeight: 13,
     marginTop: 2,
@@ -865,7 +940,7 @@ const styles = StyleSheet.create({
   },
   memoryDivider: {
     alignSelf: "stretch",
-    backgroundColor: colors.dark.border,
+    backgroundColor: PROFILE_COLORS.border,
     width: 1
   },
   memoryCopy: {
@@ -874,16 +949,16 @@ const styles = StyleSheet.create({
   },
   memoryTitle: {
     ...fontStyles.extraBold,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 15,
     lineHeight: 19
   },
   memoryTitleUnread: {
-    color: colors.dark.white
+    color: PROFILE_COLORS.textStrong
   },
   memoryMeta: {
     ...fontStyles.semiBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 3
@@ -894,7 +969,7 @@ const styles = StyleSheet.create({
   },
   memoryUnreadBadge: {
     alignItems: "center",
-    backgroundColor: colors.dark.orange,
+    backgroundColor: PROFILE_COLORS.accent,
     borderRadius: radius.pill,
     minWidth: 22,
     paddingHorizontal: 7,
@@ -902,7 +977,7 @@ const styles = StyleSheet.create({
   },
   memoryUnreadText: {
     ...fontStyles.extraBold,
-    color: colors.dark.white,
+    color: PROFILE_COLORS.onAccent,
     fontSize: 10,
     lineHeight: 12
   },
@@ -915,7 +990,7 @@ const styles = StyleSheet.create({
   },
   memoryCountText: {
     ...fontStyles.extraBold,
-    color: colors.dark.muted,
+    color: PROFILE_COLORS.muted,
     fontSize: 11,
     lineHeight: 14
   },
@@ -928,7 +1003,7 @@ const styles = StyleSheet.create({
   },
   setupIcon: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
+    backgroundColor: PROFILE_COLORS.accentDim,
     borderRadius: radius.pill,
     height: 52,
     justifyContent: "center",
@@ -942,19 +1017,20 @@ const styles = StyleSheet.create({
   },
   input: {
     ...fontStyles.medium,
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
+    backgroundColor: PROFILE_COLORS.surface,
+    borderColor: PROFILE_COLORS.border,
     borderRadius: radius.input,
     borderWidth: 1,
-    color: colors.dark.cream,
+    color: PROFILE_COLORS.text,
     fontSize: 15,
     paddingHorizontal: spacing.md,
     paddingVertical: 12
   },
   error: {
     ...fontStyles.regular,
-    color: colors.dark.dangerSoft,
+    color: PROFILE_COLORS.danger,
     fontSize: 13,
     lineHeight: 19
   }
-});
+  });
+}

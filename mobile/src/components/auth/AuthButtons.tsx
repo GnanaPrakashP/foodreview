@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 
 type AuthButtonProps = {
   children: ReactNode;
@@ -21,6 +23,8 @@ type AuthMethodButtonProps = {
 };
 
 export function AuthButton({ children, disabled, loading, onPress }: AuthButtonProps) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
     <Pressable
       disabled={disabled || loading}
@@ -28,7 +32,7 @@ export function AuthButton({ children, disabled, loading, onPress }: AuthButtonP
       style={[styles.orangeButton, (disabled || loading) && styles.orangeButtonDisabled]}
     >
       {loading ? (
-        <ActivityIndicator color={colors.dark.white} />
+        <ActivityIndicator color={themeColors.white} />
       ) : (
         <Text style={[styles.orangeButtonText, disabled && styles.orangeButtonTextDisabled]}>{children}</Text>
       )}
@@ -37,6 +41,8 @@ export function AuthButton({ children, disabled, loading, onPress }: AuthButtonP
 }
 
 export function GhostButton({ children, onPress }: { children: ReactNode; onPress: () => void }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
     <Pressable onPress={onPress} style={styles.ghostButton}>
       <Text style={styles.ghostButtonText}>{children}</Text>
@@ -81,10 +87,11 @@ function GoogleMark() {
 }
 
 export function EmailAuthButton({ disabled, loading, onPress }: Omit<AuthButtonProps, "children">) {
+  const { themeColors } = useThemePreference();
   return (
     <AuthMethodButton
       disabled={disabled}
-      icon={<Ionicons name="mail-sharp" size={20} color={colors.dark.orange} />}
+      icon={<Ionicons name="mail-sharp" size={20} color={themeColors.orange} />}
       label="Continue with Email"
       loading={loading}
       onPress={onPress}
@@ -100,6 +107,8 @@ export function AuthMethodButton({
   onPress,
   variant = "secondary"
 }: AuthMethodButtonProps) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const isPrimary = variant === "primary";
 
   return (
@@ -113,7 +122,7 @@ export function AuthMethodButton({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={isPrimary ? colors.dark.bg : colors.dark.cream} />
+        <ActivityIndicator color={isPrimary ? "#1F2933" : themeColors.cream} />
       ) : (
         <>
           <View style={styles.methodIcon}>{icon}</View>
@@ -125,6 +134,8 @@ export function AuthMethodButton({
 }
 
 export function AuthDivider() {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
     <View style={styles.dividerRow}>
       <View style={styles.dividerLine} />
@@ -134,98 +145,100 @@ export function AuthDivider() {
   );
 }
 
-const styles = StyleSheet.create({
-  orangeButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    justifyContent: "center",
-    marginTop: spacing.xs,
-    minHeight: 48,
-    paddingHorizontal: spacing.base,
-    paddingVertical: 14
-  },
-  orangeButtonDisabled: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
-    borderWidth: 1
-  },
-  orangeButtonText: {
-    ...fontStyles.bold,
-    color: colors.dark.white,
-    fontSize: 15,
-    letterSpacing: 0.2
-  },
-  orangeButtonTextDisabled: {
-    color: colors.dark.muted
-  },
-  ghostButton: {
-    alignItems: "center",
-    backgroundColor: "transparent",
-    borderColor: colors.dark.authBorder,
-    borderRadius: radius.input,
-    borderWidth: 1.5,
-    justifyContent: "center",
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md
-  },
-  ghostButtonText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 14
-  },
-  methodButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(245, 237, 216, 0.06)",
-    borderColor: "rgba(245, 237, 216, 0.18)",
-    borderRadius: 16,
-    borderWidth: 1.5,
-    flexDirection: "row",
-    gap: 15,
-    justifyContent: "center",
-    minHeight: 54,
-    paddingHorizontal: 18,
-    paddingVertical: 13
-  },
-  methodButtonPrimary: {
-    backgroundColor: colors.dark.white,
-    borderColor: "rgba(255, 255, 255, 0.92)",
-    shadowColor: "#000",
-    shadowOffset: { height: 10, width: 0 },
-    shadowOpacity: 0.22,
-    shadowRadius: 20
-  },
-  methodIcon: {
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  methodButtonText: {
-    ...fontStyles.bold,
-    color: colors.dark.white,
-    fontSize: 16,
-    textAlign: "center"
-  },
-  methodButtonTextPrimary: {
-    color: "#1F2933"
-  },
-  buttonDisabled: {
-    opacity: 0.72
-  },
-  dividerRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    marginVertical: spacing.md
-  },
-  dividerLine: {
-    backgroundColor: "rgba(245, 237, 216, 0.16)",
-    flex: 1,
-    height: 1
-  },
-  dividerText: {
-    ...fontStyles.semiBold,
-    color: "rgba(245, 237, 216, 0.55)",
-    fontSize: 12,
-    textTransform: "uppercase"
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    orangeButton: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: radius.input,
+      justifyContent: "center",
+      marginTop: spacing.xs,
+      minHeight: 48,
+      paddingHorizontal: spacing.base,
+      paddingVertical: 14
+    },
+    orangeButtonDisabled: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderWidth: 1
+    },
+    orangeButtonText: {
+      ...fontStyles.bold,
+      color: c.white,
+      fontSize: 15,
+      letterSpacing: 0.2
+    },
+    orangeButtonTextDisabled: {
+      color: c.muted
+    },
+    ghostButton: {
+      alignItems: "center",
+      backgroundColor: "transparent",
+      borderColor: c.authBorder,
+      borderRadius: radius.input,
+      borderWidth: 1.5,
+      justifyContent: "center",
+      paddingHorizontal: spacing.base,
+      paddingVertical: spacing.md
+    },
+    ghostButtonText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 14
+    },
+    methodButton: {
+      alignItems: "center",
+      backgroundColor: c.authField,
+      borderColor: c.authBorder,
+      borderRadius: 16,
+      borderWidth: 1.5,
+      flexDirection: "row",
+      gap: 15,
+      justifyContent: "center",
+      minHeight: 54,
+      paddingHorizontal: 18,
+      paddingVertical: 13
+    },
+    methodButtonPrimary: {
+      backgroundColor: "#FFFFFF",
+      borderColor: "rgba(255, 255, 255, 0.92)",
+      shadowColor: "#000",
+      shadowOffset: { height: 10, width: 0 },
+      shadowOpacity: 0.22,
+      shadowRadius: 20
+    },
+    methodIcon: {
+      alignItems: "center",
+      justifyContent: "center"
+    },
+    methodButtonText: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 16,
+      textAlign: "center"
+    },
+    methodButtonTextPrimary: {
+      color: "#1F2933"
+    },
+    buttonDisabled: {
+      opacity: 0.72
+    },
+    dividerRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.md,
+      marginVertical: spacing.md
+    },
+    dividerLine: {
+      backgroundColor: c.authDivider,
+      flex: 1,
+      height: 1
+    },
+    dividerText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 12,
+      textTransform: "uppercase"
+    }
+  });
+}

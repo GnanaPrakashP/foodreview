@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Send } from "lucide-react-native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { PostCard } from "@/components/posts/PostCard";
@@ -8,8 +8,9 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
 import { useReviewPostQuery } from "@/hooks/useFeeds";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing } from "@/theme";
 
 const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
 
@@ -31,6 +32,8 @@ function timeAgo(dateStr: string) {
 
 export default function ReviewDetailScreen() {
   const router = useRouter();
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const params = useLocalSearchParams<{ id?: string }>();
   const postId = params.id ?? "";
   const post = useReviewPostQuery(postId);
@@ -73,7 +76,7 @@ export default function ReviewDetailScreen() {
   return (
     <Screen padded={false} scroll>
       <View style={styles.headerWrap}>
-        <MemoryRouteHeader kicker="Circle" onBack={() => router.back()} title="Post" />
+        <MemoryRouteHeader kicker="Circle" onBack={() => router.back()} themeColors={themeColors} title="Post" />
       </View>
 
       {post.isLoading ? (
@@ -145,7 +148,7 @@ export default function ReviewDetailScreen() {
               onChangeText={setCommentText}
               onSubmitEditing={submitComment}
               placeholder={viewerName ? "Add a comment..." : "Log in to comment"}
-              placeholderTextColor={colors.dark.muted}
+              placeholderTextColor={themeColors.muted}
               returnKeyType="send"
               style={styles.commentInput}
               value={commentText}
@@ -156,7 +159,7 @@ export default function ReviewDetailScreen() {
               onPress={submitComment}
               style={[styles.sendButton, (!commentText.trim() || !viewerName || addComment.isPending) && styles.sendButtonDisabled]}
             >
-              <Send size={16} color={colors.dark.white} strokeWidth={2.2} />
+              <Send size={16} color={themeColors.white} strokeWidth={2.2} />
             </Pressable>
           </View>
         </>
@@ -165,134 +168,136 @@ export default function ReviewDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  headerWrap: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md
-  },
-  stateWrap: {
-    padding: spacing.lg
-  },
-  commentsSection: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.base
-  },
-  commentsTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 16,
-    lineHeight: 20,
-    marginBottom: 10
-  },
-  commentsMuted: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 19
-  },
-  retryComments: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    padding: spacing.md
-  },
-  retryCommentsText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: "center"
-  },
-  commentList: {
-    gap: 8
-  },
-  commentRow: {
-    alignItems: "flex-start",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 9,
-    padding: 10
-  },
-  commentAvatar: {
-    alignItems: "center",
-    borderRadius: 10,
-    height: 30,
-    justifyContent: "center",
-    width: 30
-  },
-  commentAvatarText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 10,
-    lineHeight: 12
-  },
-  commentBody: {
-    flex: 1,
-    minWidth: 0
-  },
-  commentText: {
-    ...fontStyles.regular,
-    color: colors.dark.cream,
-    fontSize: 13,
-    lineHeight: 19
-  },
-  commentAuthor: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream
-  },
-  commentTime: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 11,
-    lineHeight: 14,
-    marginTop: 3
-  },
-  composer: {
-    alignItems: "center",
-    borderColor: colors.dark.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 10,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.base,
-    padding: 10
-  },
-  composerAvatar: {
-    alignItems: "center",
-    borderRadius: 10,
-    height: 32,
-    justifyContent: "center",
-    width: 32
-  },
-  composerAvatarText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 11,
-    lineHeight: 13
-  },
-  commentInput: {
-    ...fontStyles.regular,
-    color: colors.dark.cream,
-    flex: 1,
-    fontSize: 13,
-    minHeight: 36,
-    minWidth: 0
-  },
-  sendButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: 12,
-    height: 38,
-    justifyContent: "center",
-    width: 38
-  },
-  sendButtonDisabled: {
-    backgroundColor: colors.dark.muted,
-    opacity: 0.7
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    headerWrap: {
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.md
+    },
+    stateWrap: {
+      padding: spacing.lg
+    },
+    commentsSection: {
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.base
+    },
+    commentsTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 16,
+      lineHeight: 20,
+      marginBottom: 10
+    },
+    commentsMuted: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    retryComments: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      padding: spacing.md
+    },
+    retryCommentsText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 18,
+      textAlign: "center"
+    },
+    commentList: {
+      gap: 8
+    },
+    commentRow: {
+      alignItems: "flex-start",
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: 9,
+      padding: 10
+    },
+    commentAvatar: {
+      alignItems: "center",
+      borderRadius: 10,
+      height: 30,
+      justifyContent: "center",
+      width: 30
+    },
+    commentAvatarText: {
+      ...fontStyles.extraBold,
+      color: "#FFFFFF",
+      fontSize: 10,
+      lineHeight: 12
+    },
+    commentBody: {
+      flex: 1,
+      minWidth: 0
+    },
+    commentText: {
+      ...fontStyles.regular,
+      color: c.cream,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    commentAuthor: {
+      ...fontStyles.extraBold,
+      color: c.cream
+    },
+    commentTime: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 11,
+      lineHeight: 14,
+      marginTop: 3
+    },
+    composer: {
+      alignItems: "center",
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: 10,
+      marginHorizontal: spacing.lg,
+      marginTop: spacing.base,
+      padding: 10
+    },
+    composerAvatar: {
+      alignItems: "center",
+      borderRadius: 10,
+      height: 32,
+      justifyContent: "center",
+      width: 32
+    },
+    composerAvatarText: {
+      ...fontStyles.extraBold,
+      color: "#FFFFFF",
+      fontSize: 11,
+      lineHeight: 13
+    },
+    commentInput: {
+      ...fontStyles.regular,
+      color: c.cream,
+      flex: 1,
+      fontSize: 13,
+      minHeight: 36,
+      minWidth: 0
+    },
+    sendButton: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: 12,
+      height: 38,
+      justifyContent: "center",
+      width: 38
+    },
+    sendButtonDisabled: {
+      backgroundColor: c.muted,
+      opacity: 0.7
+    }
+  });
+}

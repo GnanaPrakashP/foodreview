@@ -14,10 +14,12 @@ import {
   type PlaceCategoryId
 } from "@/constants/exploreCategories";
 import { usePublicFeedQuery } from "@/hooks/useFeeds";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { ReviewPost } from "@/types/models";
 
 type ExploreTab = "places" | "dishes" | "people";
+type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 type PlaceSpotlight = {
   key: string;
@@ -54,6 +56,12 @@ type PersonSpotlight = {
 const PLACE_CARD_HEIGHT = 152;
 const PLACE_MEDIA_WIDTH = PLACE_CARD_HEIGHT * 4 / 5;
 const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+
+function useExploreTheme() {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  return { themeColors, styles };
+}
 
 function initialsFor(name: string) {
   const parts = name.split(/[\s_]+/).filter(Boolean);
@@ -217,6 +225,7 @@ function buildPeople(posts: ReviewPost[]): PersonSpotlight[] {
 }
 
 export default function ExploreScreen() {
+  const { themeColors, styles } = useExploreTheme();
   const feed = usePublicFeedQuery();
   const [activeTab, setActiveTab] = useState<ExploreTab>("places");
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
@@ -245,25 +254,25 @@ export default function ExploreScreen() {
         <Pressable hitSlop={8} style={styles.locationButton}>
           <Text style={styles.locationCompass}>🧭</Text>
           <Text numberOfLines={1} style={styles.locationText}>Nearby</Text>
-          <ChevronDown size={14} color={colors.dark.muted} strokeWidth={2.2} />
+          <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
         </Pressable>
       </View>
 
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>
-          <Search size={17} color={colors.dark.muted} strokeWidth={2.2} />
+          <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setQuery}
             placeholder="Search people, dishes or places..."
-            placeholderTextColor={colors.dark.muted}
+            placeholderTextColor={themeColors.muted}
             style={styles.searchInput}
             value={query}
           />
           {query ? (
             <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-              <X size={13} color={colors.dark.muted} strokeWidth={2.4} />
+              <X size={13} color={themeColors.muted} strokeWidth={2.4} />
             </Pressable>
           ) : null}
         </View>
@@ -300,6 +309,7 @@ export default function ExploreScreen() {
 }
 
 function ExploreTabs({ activeTab, onChange }: { activeTab: ExploreTab; onChange: (tab: ExploreTab) => void }) {
+  const { styles } = useExploreTheme();
   const tabs: Array<{ id: ExploreTab; label: string }> = [
     { id: "places", label: "Places" },
     { id: "dishes", label: "Dishes" },
@@ -331,6 +341,7 @@ function CategoryGrid<T extends string>({
   onChange: (category: T) => void;
   selected: T;
 }) {
+  const { styles } = useExploreTheme();
   const { width } = useWindowDimensions();
   const columnCount = compact ? 5 : 4;
   const columnGap = Platform.OS === "web" ? 8 : 6;
@@ -374,16 +385,18 @@ function CategoryGrid<T extends string>({
 }
 
 function DiscoveryHeader({ icon, title }: { icon: "places" | "dishes" | "people"; title: string }) {
+  const { themeColors, styles } = useExploreTheme();
   const Icon = icon === "places" ? Store : icon === "dishes" ? Utensils : Users;
   return (
     <View style={styles.discoveryHeader}>
-      <Icon size={17} color={colors.dark.orange} strokeWidth={2.1} />
+      <Icon size={17} color={themeColors.orange} strokeWidth={2.1} />
       <Text style={styles.discoveryTitle}>{title}</Text>
     </View>
   );
 }
 
 function PlacesList({ places }: { places: PlaceSpotlight[] }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={styles.list}>
       <DiscoveryHeader icon="places" title="Top places near you" />
@@ -397,6 +410,7 @@ function PlacesList({ places }: { places: PlaceSpotlight[] }) {
 }
 
 function DishesList({ dishes }: { dishes: DishSpotlight[] }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={styles.list}>
       <DiscoveryHeader icon="dishes" title="Top dishes near you" />
@@ -410,6 +424,7 @@ function DishesList({ dishes }: { dishes: DishSpotlight[] }) {
 }
 
 function PeopleList({ people }: { people: PersonSpotlight[] }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={styles.peopleList}>
       <View style={styles.peopleDiscoveryHeader}>
@@ -425,15 +440,17 @@ function PeopleList({ people }: { people: PersonSpotlight[] }) {
 }
 
 function RatingScore({ rating }: { rating: number }) {
+  const { themeColors, styles } = useExploreTheme();
   return (
     <View style={styles.ratingScore}>
-      <Star size={10} color={colors.dark.gold} fill={colors.dark.gold} strokeWidth={0} />
+      <Star size={10} color={themeColors.gold} fill={themeColors.gold} strokeWidth={0} />
       <Text style={styles.ratingScoreText}>{displayRating(rating)}</Text>
     </View>
   );
 }
 
 function PlaceCard({ place }: { place: PlaceSpotlight }) {
+  const { themeColors, styles } = useExploreTheme();
   const proof = place.reviewers.length === 0
     ? ""
     : place.reviewers.length === 1
@@ -446,7 +463,7 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
         {place.photo ? (
           <Image source={{ uri: place.photo }} style={styles.spotlightImage} contentFit="cover" />
         ) : (
-          <Store size={24} color={colors.dark.orange} strokeWidth={2.1} />
+          <Store size={24} color={themeColors.orange} strokeWidth={2.1} />
         )}
       </View>
       <View style={styles.spotlightBody}>
@@ -454,7 +471,7 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
           <View style={styles.spotlightText}>
             <Text numberOfLines={1} style={styles.spotlightName}>{place.name}</Text>
             <View style={styles.spotlightMetaRow}>
-              <MapPin size={12} color="rgba(255, 255, 255, 0.72)" strokeWidth={2} />
+              <MapPin size={12} color={themeColors.muted} strokeWidth={2} />
               <Text numberOfLines={1} style={styles.spotlightMeta}>{place.area || "Nearby"}</Text>
             </View>
           </View>
@@ -469,13 +486,14 @@ function PlaceCard({ place }: { place: PlaceSpotlight }) {
 }
 
 function DishCard({ dish }: { dish: DishSpotlight }) {
+  const { themeColors, styles } = useExploreTheme();
   return (
     <View style={[styles.spotlightCard, styles.fixedSpotlightCard]}>
       <View style={[styles.spotlightMedia, styles.fixedSpotlightMedia, styles.dishMedia]}>
         {dish.photo ? (
           <Image source={{ uri: dish.photo }} style={styles.spotlightImage} contentFit="cover" />
         ) : (
-          <Utensils size={24} color={colors.dark.green} strokeWidth={2.1} />
+          <Utensils size={24} color={themeColors.green} strokeWidth={2.1} />
         )}
       </View>
       <View style={styles.spotlightBody}>
@@ -483,7 +501,7 @@ function DishCard({ dish }: { dish: DishSpotlight }) {
           <View style={styles.spotlightText}>
             <Text numberOfLines={2} style={styles.spotlightName}>{dish.name}</Text>
             <View style={styles.spotlightMetaRow}>
-              <MapPin size={12} color="rgba(255, 255, 255, 0.72)" strokeWidth={2} />
+              <MapPin size={12} color={themeColors.muted} strokeWidth={2} />
               <Text numberOfLines={1} style={styles.spotlightMeta}>{dish.topRestaurantName} · Nearby</Text>
             </View>
           </View>
@@ -498,6 +516,7 @@ function DishCard({ dish }: { dish: DishSpotlight }) {
 }
 
 function PersonCard({ person }: { person: PersonSpotlight }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={styles.personCardOuter}>
       <View style={styles.personCard}>
@@ -519,6 +538,7 @@ function PersonCard({ person }: { person: PersonSpotlight }) {
 }
 
 function ChipRow({ labels, singleLine = false }: { labels: string[]; singleLine?: boolean }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={[styles.chips, singleLine && styles.chipsSingleLine]}>
       {labels.map((label) => (
@@ -531,6 +551,7 @@ function ChipRow({ labels, singleLine = false }: { labels: string[]; singleLine?
 }
 
 function TagRow({ labels }: { labels: string[] }) {
+  const { styles } = useExploreTheme();
   return (
     <View style={styles.tags}>
       {labels.map((label) => (
@@ -542,378 +563,380 @@ function TagRow({ labels }: { labels: string[] }) {
   );
 }
 
-const styles = StyleSheet.create({
-  header: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: Platform.OS === "web" ? spacing.md : spacing.sm,
-    justifyContent: "space-between",
-    paddingBottom: 8,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
-  },
-  title: {
-    ...fontStyles.regular,
-    color: colors.dark.cream,
-    flex: 1,
-    fontSize: Platform.OS === "web" ? typography.webTitle : 24,
-    lineHeight: Platform.OS === "web" ? 32 : 29
-  },
-  locationButton: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: Platform.OS === "web" ? 8 : 6,
-    justifyContent: "flex-end",
-    maxWidth: "52%",
-    minWidth: 0,
-    paddingVertical: Platform.OS === "web" ? 9 : 7
-  },
-  locationCompass: {
-    fontSize: Platform.OS === "web" ? 22 : 18,
-    lineHeight: Platform.OS === "web" ? 24 : 20
-  },
-  locationText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    flexShrink: 1,
-    fontSize: 13,
-    minWidth: 0
-  },
-  searchWrap: {
-    paddingBottom: Platform.OS === "web" ? spacing.md : spacing.sm,
-    paddingHorizontal: spacing.base,
-    paddingTop: Platform.OS === "web" ? spacing.sm : 4
-  },
-  searchBox: {
-    alignItems: "center",
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: Platform.OS === "web" ? 10 : 8,
-    paddingHorizontal: spacing.base,
-    paddingVertical: Platform.OS === "web" ? 12 : 10
-  },
-  searchInput: {
-    ...fontStyles.regular,
-    color: colors.dark.cream,
-    flex: 1,
-    fontSize: 14,
-    minWidth: 0,
-    padding: 0
-  },
-  clearButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 24,
-    justifyContent: "center",
-    width: 24
-  },
-  tabs: {
-    flexDirection: "row",
-    paddingBottom: Platform.OS === "web" ? 14 : 10,
-    paddingHorizontal: spacing.base
-  },
-  categoryStaticWrap: {
-    paddingBottom: Platform.OS === "web" ? 14 : 10,
-    paddingHorizontal: spacing.base
-  },
-  categoryGrid: {
-    columnGap: Platform.OS === "web" ? 8 : 6,
-    flexDirection: "row",
-    minWidth: Platform.OS === "web" ? 344 : 0
-  },
-  categoryGridWrapped: {
-    columnGap: Platform.OS === "web" ? 8 : 6,
-    flexWrap: "wrap",
-    minWidth: 0,
-    rowGap: Platform.OS === "web" ? 12 : 10
-  },
-  categoryButton: {
-    alignItems: "center",
-    flexShrink: 0,
-    paddingTop: 2,
-    width: Platform.OS === "web" ? 78 : 68
-  },
-  categoryImage: {
-    height: Platform.OS === "web" ? 76 : 62,
-    marginBottom: Platform.OS === "web" ? 8 : 6,
-    width: Platform.OS === "web" ? 76 : 62
-  },
-  categoryImageActive: {
-    transform: [{ translateY: -2 }, { scale: 1.02 }]
-  },
-  categoryLabel: {
-    ...fontStyles.extraBold,
-    color: "rgba(255, 255, 255, 0.72)",
-    fontSize: Platform.OS === "web" ? 12 : 11,
-    lineHeight: Platform.OS === "web" ? 14 : 13,
-    minHeight: Platform.OS === "web" ? 28 : 26,
-    textAlign: "center",
-    width: "100%"
-  },
-  categoryLabelActive: {
-    color: colors.dark.orange,
-    textShadowColor: "rgba(240, 96, 48, 0.34)",
-    textShadowOffset: { height: 0, width: 0 },
-    textShadowRadius: 16
-  },
-  tab: {
-    alignItems: "center",
-    borderBottomColor: colors.dark.border,
-    borderBottomWidth: 2,
-    flex: 1,
-    paddingBottom: 9,
-    paddingTop: 10
-  },
-  tabActive: {
-    borderBottomColor: colors.dark.orange
-  },
-  tabText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.muted,
-    fontSize: 12
-  },
-  tabTextActive: {
-    color: colors.dark.orange
-  },
-  stateWrap: {
-    paddingHorizontal: spacing.base
-  },
-  list: {
-    gap: 10,
-    paddingBottom: 100,
-    paddingHorizontal: spacing.base
-  },
-  peopleList: {
-    paddingBottom: 100
-  },
-  peopleDiscoveryHeader: {
-    paddingHorizontal: spacing.base
-  },
-  discoveryHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.sm,
-    paddingVertical: spacing.sm
-  },
-  discoveryTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 14
-  },
-  spotlightCard: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: "row",
-    minHeight: 132,
-    overflow: "hidden"
-  },
-  fixedSpotlightCard: {
-    height: PLACE_CARD_HEIGHT,
-    minHeight: PLACE_CARD_HEIGHT
-  },
-  spotlightMedia: {
-    alignItems: "center",
-    backgroundColor: "rgba(240, 96, 48, 0.12)",
-    justifyContent: "center",
-    width: 104
-  },
-  fixedSpotlightMedia: {
-    height: PLACE_CARD_HEIGHT,
-    width: PLACE_MEDIA_WIDTH
-  },
-  dishMedia: {
-    backgroundColor: "rgba(61, 214, 140, 0.10)"
-  },
-  spotlightImage: {
-    height: "100%",
-    width: "100%"
-  },
-  spotlightBody: {
-    flex: 1,
-    minWidth: 0,
-    padding: 14
-  },
-  spotlightTop: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    gap: spacing.md,
-    justifyContent: "space-between",
-    marginBottom: spacing.sm
-  },
-  spotlightText: {
-    flex: 1,
-    minWidth: 0
-  },
-  spotlightName: {
-    ...fontStyles.bold,
-    color: colors.dark.cream,
-    fontSize: 17,
-    lineHeight: 20
-  },
-  spotlightMetaRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 4,
-    marginTop: 2,
-    minWidth: 0
-  },
-  spotlightMeta: {
-    ...fontStyles.regular,
-    color: "rgba(255, 255, 255, 0.72)",
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 14,
-    minWidth: 0
-  },
-  ratingScore: {
-    alignItems: "center",
-    backgroundColor: "rgba(232, 168, 48, 0.14)",
-    borderColor: "rgba(232, 168, 48, 0.24)",
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 4
-  },
-  ratingScoreText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.gold,
-    fontSize: 11,
-    lineHeight: 12
-  },
-  visitText: {
-    ...fontStyles.regular,
-    color: "rgba(255, 255, 255, 0.72)",
-    fontSize: 11,
-    lineHeight: 14,
-    marginBottom: spacing.sm
-  },
-  chips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 5,
-    marginBottom: spacing.sm
-  },
-  chipsSingleLine: {
-    flexWrap: "nowrap",
-    overflow: "hidden"
-  },
-  chip: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexShrink: 1,
-    maxWidth: "100%",
-    minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 3
-  },
-  chipText: {
-    ...fontStyles.regular,
-    color: colors.dark.cream,
-    flexShrink: 1,
-    fontSize: 10
-  },
-  tags: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 5,
-    marginBottom: spacing.sm
-  },
-  tag: {
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: colors.dark.orangeBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: 7,
-    paddingVertical: 3
-  },
-  tagText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.orange,
-    fontSize: 10
-  },
-  socialProof: {
-    ...fontStyles.regular,
-    borderTopColor: "rgba(255, 255, 255, 0.16)",
-    borderTopWidth: 1,
-    color: "rgba(255, 255, 255, 0.74)",
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 3,
-    paddingTop: 9
-  },
-  snippet: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 1
-  },
-  personCardOuter: {
-    borderBottomColor: colors.dark.border,
-    borderBottomWidth: 1,
-    marginHorizontal: spacing.base
-  },
-  personCard: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    paddingVertical: 12
-  },
-  personAvatar: {
-    alignItems: "center",
-    borderColor: "rgba(255, 255, 255, 0.14)",
-    borderRadius: 24,
-    borderWidth: 1,
-    height: 48,
-    justifyContent: "center",
-    width: 48
-  },
-  personAvatarText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 15,
-    lineHeight: 18
-  },
-  personText: {
-    flex: 1,
-    minWidth: 0
-  },
-  personName: {
-    ...fontStyles.bold,
-    color: colors.dark.cream,
-    fontSize: 16,
-    lineHeight: 20
-  },
-  personMeta: {
-    ...fontStyles.regular,
-    color: "rgba(255, 255, 255, 0.72)",
-    fontSize: 11,
-    lineHeight: 14,
-    marginTop: 2
-  },
-  addButton: {
-    backgroundColor: colors.dark.orangeDim,
-    borderColor: "rgba(240, 96, 48, 0.35)",
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 8
-  },
-  addButtonText: {
-    ...fontStyles.semiBold,
-    color: colors.dark.orange,
-    fontSize: 11
-  }
-});
+function createStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    header: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: Platform.OS === "web" ? spacing.md : spacing.sm,
+      justifyContent: "space-between",
+      paddingBottom: 8,
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.lg
+    },
+    title: {
+      ...fontStyles.regular,
+      color: c.cream,
+      flex: 1,
+      fontSize: Platform.OS === "web" ? typography.webTitle : 24,
+      lineHeight: Platform.OS === "web" ? 32 : 29
+    },
+    locationButton: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: Platform.OS === "web" ? 8 : 6,
+      justifyContent: "flex-end",
+      maxWidth: "52%",
+      minWidth: 0,
+      paddingVertical: Platform.OS === "web" ? 9 : 7
+    },
+    locationCompass: {
+      fontSize: Platform.OS === "web" ? 22 : 18,
+      lineHeight: Platform.OS === "web" ? 24 : 20
+    },
+    locationText: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      flexShrink: 1,
+      fontSize: 13,
+      minWidth: 0
+    },
+    searchWrap: {
+      paddingBottom: Platform.OS === "web" ? spacing.md : spacing.sm,
+      paddingHorizontal: spacing.base,
+      paddingTop: Platform.OS === "web" ? spacing.sm : 4
+    },
+    searchBox: {
+      alignItems: "center",
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: Platform.OS === "web" ? 10 : 8,
+      paddingHorizontal: spacing.base,
+      paddingVertical: Platform.OS === "web" ? 12 : 10
+    },
+    searchInput: {
+      ...fontStyles.regular,
+      color: c.cream,
+      flex: 1,
+      fontSize: 14,
+      minWidth: 0,
+      padding: 0
+    },
+    clearButton: {
+      alignItems: "center",
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      height: 24,
+      justifyContent: "center",
+      width: 24
+    },
+    tabs: {
+      flexDirection: "row",
+      paddingBottom: Platform.OS === "web" ? 14 : 10,
+      paddingHorizontal: spacing.base
+    },
+    categoryStaticWrap: {
+      paddingBottom: Platform.OS === "web" ? 14 : 10,
+      paddingHorizontal: spacing.base
+    },
+    categoryGrid: {
+      columnGap: Platform.OS === "web" ? 8 : 6,
+      flexDirection: "row",
+      minWidth: Platform.OS === "web" ? 344 : 0
+    },
+    categoryGridWrapped: {
+      columnGap: Platform.OS === "web" ? 8 : 6,
+      flexWrap: "wrap",
+      minWidth: 0,
+      rowGap: Platform.OS === "web" ? 12 : 10
+    },
+    categoryButton: {
+      alignItems: "center",
+      flexShrink: 0,
+      paddingTop: 2,
+      width: Platform.OS === "web" ? 78 : 68
+    },
+    categoryImage: {
+      height: Platform.OS === "web" ? 76 : 62,
+      marginBottom: Platform.OS === "web" ? 8 : 6,
+      width: Platform.OS === "web" ? 76 : 62
+    },
+    categoryImageActive: {
+      transform: [{ translateY: -2 }, { scale: 1.02 }]
+    },
+    categoryLabel: {
+      ...fontStyles.extraBold,
+      color: c.muted,
+      fontSize: Platform.OS === "web" ? 12 : 11,
+      lineHeight: Platform.OS === "web" ? 14 : 13,
+      minHeight: Platform.OS === "web" ? 28 : 26,
+      textAlign: "center",
+      width: "100%"
+    },
+    categoryLabelActive: {
+      color: c.orange,
+      textShadowColor: "rgba(240, 96, 48, 0.34)",
+      textShadowOffset: { height: 0, width: 0 },
+      textShadowRadius: 16
+    },
+    tab: {
+      alignItems: "center",
+      borderBottomColor: c.border,
+      borderBottomWidth: 2,
+      flex: 1,
+      paddingBottom: 9,
+      paddingTop: 10
+    },
+    tabActive: {
+      borderBottomColor: c.orange
+    },
+    tabText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 12
+    },
+    tabTextActive: {
+      color: c.orange
+    },
+    stateWrap: {
+      paddingHorizontal: spacing.base
+    },
+    list: {
+      gap: 10,
+      paddingBottom: 100,
+      paddingHorizontal: spacing.base
+    },
+    peopleList: {
+      paddingBottom: 100
+    },
+    peopleDiscoveryHeader: {
+      paddingHorizontal: spacing.base
+    },
+    discoveryHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.sm,
+      paddingVertical: spacing.sm
+    },
+    discoveryTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 14
+    },
+    spotlightCard: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: 14,
+      borderWidth: 1,
+      flexDirection: "row",
+      minHeight: 132,
+      overflow: "hidden"
+    },
+    fixedSpotlightCard: {
+      height: PLACE_CARD_HEIGHT,
+      minHeight: PLACE_CARD_HEIGHT
+    },
+    spotlightMedia: {
+      alignItems: "center",
+      backgroundColor: c.orangeDim,
+      justifyContent: "center",
+      width: 104
+    },
+    fixedSpotlightMedia: {
+      height: PLACE_CARD_HEIGHT,
+      width: PLACE_MEDIA_WIDTH
+    },
+    dishMedia: {
+      backgroundColor: c.greenDim
+    },
+    spotlightImage: {
+      height: "100%",
+      width: "100%"
+    },
+    spotlightBody: {
+      flex: 1,
+      minWidth: 0,
+      padding: 14
+    },
+    spotlightTop: {
+      alignItems: "flex-start",
+      flexDirection: "row",
+      gap: spacing.md,
+      justifyContent: "space-between",
+      marginBottom: spacing.sm
+    },
+    spotlightText: {
+      flex: 1,
+      minWidth: 0
+    },
+    spotlightName: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 17,
+      lineHeight: 20
+    },
+    spotlightMetaRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 4,
+      marginTop: 2,
+      minWidth: 0
+    },
+    spotlightMeta: {
+      ...fontStyles.regular,
+      color: c.muted,
+      flex: 1,
+      fontSize: 11,
+      lineHeight: 14,
+      minWidth: 0
+    },
+    ratingScore: {
+      alignItems: "center",
+      backgroundColor: c.goldDim,
+      borderColor: c.goldBorder,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: 3,
+      paddingHorizontal: 7,
+      paddingVertical: 4
+    },
+    ratingScoreText: {
+      ...fontStyles.extraBold,
+      color: c.gold,
+      fontSize: 11,
+      lineHeight: 12
+    },
+    visitText: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 11,
+      lineHeight: 14,
+      marginBottom: spacing.sm
+    },
+    chips: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 5,
+      marginBottom: spacing.sm
+    },
+    chipsSingleLine: {
+      flexWrap: "nowrap",
+      overflow: "hidden"
+    },
+    chip: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexShrink: 1,
+      maxWidth: "100%",
+      minWidth: 0,
+      paddingHorizontal: 8,
+      paddingVertical: 3
+    },
+    chipText: {
+      ...fontStyles.regular,
+      color: c.cream,
+      flexShrink: 1,
+      fontSize: 10
+    },
+    tags: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 5,
+      marginBottom: spacing.sm
+    },
+    tag: {
+      backgroundColor: c.orangeDim,
+      borderColor: c.orangeBorder,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: 7,
+      paddingVertical: 3
+    },
+    tagText: {
+      ...fontStyles.extraBold,
+      color: c.orange,
+      fontSize: 10
+    },
+    socialProof: {
+      ...fontStyles.regular,
+      borderTopColor: c.border,
+      borderTopWidth: 1,
+      color: c.muted,
+      fontSize: 11,
+      lineHeight: 15,
+      marginTop: 3,
+      paddingTop: 9
+    },
+    snippet: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 1
+    },
+    personCardOuter: {
+      borderBottomColor: c.border,
+      borderBottomWidth: 1,
+      marginHorizontal: spacing.base
+    },
+    personCard: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.md,
+      paddingVertical: 12
+    },
+    personAvatar: {
+      alignItems: "center",
+      borderColor: "rgba(255, 255, 255, 0.14)",
+      borderRadius: 24,
+      borderWidth: 1,
+      height: 48,
+      justifyContent: "center",
+      width: 48
+    },
+    personAvatarText: {
+      ...fontStyles.extraBold,
+      color: "#FFFFFF",
+      fontSize: 15,
+      lineHeight: 18
+    },
+    personText: {
+      flex: 1,
+      minWidth: 0
+    },
+    personName: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 16,
+      lineHeight: 20
+    },
+    personMeta: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 11,
+      lineHeight: 14,
+      marginTop: 2
+    },
+    addButton: {
+      backgroundColor: c.orangeDim,
+      borderColor: c.orangeBorder,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 8
+    },
+    addButtonText: {
+      ...fontStyles.semiBold,
+      color: c.orange,
+      fontSize: 11
+    }
+  });
+}

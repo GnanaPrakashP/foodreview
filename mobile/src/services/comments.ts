@@ -1,5 +1,5 @@
 import { supabase } from "@/api/supabase";
-import { fetchDisplayNames } from "@/services/feeds";
+import { fetchDisplayNames, getBlockedUsernames } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { PostComment } from "@/types/models";
 
@@ -39,17 +39,23 @@ async function viewerName() {
 export async function getPostComments(postId: string): Promise<PostComment[]> {
   if (!postId) return [];
 
-  const { data, error } = await supabase
-    .from("comments")
-    .select("id, post_id, user_name, content, created_at")
-    .eq("post_id", postId)
-    .order("created_at", { ascending: true })
-    .returns<CommentRow[]>();
+  const viewer = await getCurrentUserProfile();
+  const [{ data, error }, blockedNames] = await Promise.all([
+    supabase
+      .from("comments")
+      .select("id, post_id, user_name, content, created_at")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true })
+      .returns<CommentRow[]>(),
+    getBlockedUsernames(viewer?.username ?? "")
+  ]);
 
   if (error) throw new Error(error.message);
 
-  const displayNames = await fetchDisplayNames((data ?? []).map((row) => row.user_name));
-  return (data ?? []).map((row) => mapComment(row, displayNames[row.user_name] ?? row.user_name));
+  const blockedSet = new Set(blockedNames);
+  const rows = (data ?? []).filter((row) => !blockedSet.has(row.user_name));
+  const displayNames = await fetchDisplayNames(rows.map((row) => row.user_name));
+  return rows.map((row) => mapComment(row, displayNames[row.user_name] ?? row.user_name));
 }
 
 export async function addPostComment(input: { postId: string; content: string }): Promise<PostComment> {

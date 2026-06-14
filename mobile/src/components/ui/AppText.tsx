@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text, type TextStyle } from "react-native";
-import { colors, fontStyles, typography } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, typography } from "@/theme";
 
 type AppTextVariant = "title" | "section" | "body" | "caption" | "eyebrow" | "muted";
 type AppTextTone = "cream" | "muted" | "orange" | "gold" | "green" | "danger" | "white";
@@ -13,16 +14,6 @@ type AppTextProps = {
   variant?: AppTextVariant;
 };
 
-const toneColor: Record<AppTextTone, string> = {
-  cream: colors.dark.cream,
-  muted: colors.dark.muted,
-  orange: colors.dark.orange,
-  gold: colors.dark.gold,
-  green: colors.dark.green,
-  danger: colors.dark.danger,
-  white: "white"
-};
-
 export function AppText({
   children,
   numberOfLines,
@@ -30,6 +21,17 @@ export function AppText({
   tone = "cream",
   variant = "body"
 }: AppTextProps) {
+  const { themeColors } = useThemePreference();
+  const toneColor: Record<AppTextTone, string> = {
+    cream: themeColors.cream,
+    muted: themeColors.muted,
+    orange: themeColors.orange,
+    gold: themeColors.gold,
+    green: themeColors.green,
+    danger: themeColors.danger,
+    white: themeColors.white
+  };
+
   return (
     <Text numberOfLines={numberOfLines} style={[styles.base, styles[variant], { color: toneColor[tone] }, style]}>
       {children}

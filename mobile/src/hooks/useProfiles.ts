@@ -7,10 +7,12 @@ import {
   setupCurrentUserProfile,
   updateCurrentAccountType,
   updateCurrentProfileDetails,
+  updateCurrentUserAvatar,
+  type AvatarUploadInput,
   type ProfileDetailsInput,
   type ProfileSetupInput
 } from "@/services/profiles";
-import type { AccountType } from "@/types/models";
+import type { AccountType, Profile } from "@/types/models";
 import { useSessionStore } from "@/stores/sessionStore";
 
 export const profileKeys = {
@@ -63,12 +65,44 @@ export function useUpdateAccountTypeMutation() {
 
   return useMutation({
     mutationFn: (accountType: AccountType) => updateCurrentAccountType(accountType),
+    // Flip the segmented control immediately, then reconcile with the server.
+    onMutate: async (accountType) => {
+      await queryClient.cancelQueries({ queryKey: profileKeys.current });
+      const previous = queryClient.getQueryData<Profile>(profileKeys.current);
+      if (previous) {
+        queryClient.setQueryData<Profile>(profileKeys.current, { ...previous, accountType });
+      }
+      return { previous };
+    },
+    onError: (_error, _accountType, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(profileKeys.current, context.previous);
+      }
+    },
+    onSuccess: (profile) => {
+      setProfile(actorFromProfile(profile));
+      queryClient.setQueryData(profileKeys.current, profile);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: profileKeys.current });
+      queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+      queryClient.invalidateQueries({ queryKey: ["feed"] });
+      queryClient.invalidateQueries({ queryKey: ["circle"] });
+    }
+  });
+}
+
+export function useUpdateAvatarMutation() {
+  const queryClient = useQueryClient();
+  const setProfile = useSessionStore((state) => state.setProfile);
+
+  return useMutation({
+    mutationFn: (input: AvatarUploadInput) => updateCurrentUserAvatar(input),
     onSuccess: (profile) => {
       setProfile(actorFromProfile(profile));
       queryClient.invalidateQueries({ queryKey: profileKeys.current });
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
-      queryClient.invalidateQueries({ queryKey: ["circle"] });
     }
   });
 }

@@ -3,7 +3,8 @@ import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
-import { colors, radius, spacing } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { radius, spacing } from "@/theme";
 
 type StateProps = {
   actionLabel?: string;
@@ -14,13 +15,14 @@ type StateProps = {
 };
 
 function StateShell({ actionLabel, icon, message, onAction, title, loading }: StateProps & { loading?: boolean }) {
+  const { themeColors } = useThemePreference();
   return (
     <AppCard style={styles.card}>
-      <View style={styles.iconWrap}>
+      <View style={[styles.iconWrap, { backgroundColor: themeColors.orangeDim }]}>
         {loading ? (
-          <ActivityIndicator color={colors.dark.orange} />
+          <ActivityIndicator color={themeColors.orange} />
         ) : icon ? (
-          <Ionicons name={icon} size={24} color={colors.dark.orange} />
+          <Ionicons name={icon} size={24} color={themeColors.orange} />
         ) : null}
       </View>
       <AppText variant="section" style={styles.centered}>
@@ -71,7 +73,6 @@ const styles = StyleSheet.create({
   },
   iconWrap: {
     alignItems: "center",
-    backgroundColor: colors.dark.orangeDim,
     borderRadius: radius.pill,
     height: 52,
     justifyContent: "center",
