@@ -1,11 +1,12 @@
 import { Users } from "lucide-react-native";
-import { useRouter } from "expo-router";
 import { useMemo } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMyCircleQuery, useRemoveCircleMemberMutation } from "@/hooks/useCircle";
+import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing } from "@/theme";
 
@@ -23,8 +24,8 @@ function initialsForName(displayName: string, username: string) {
 }
 
 export default function ProfileCircleScreen() {
-  const router = useRouter();
   const { themeColors } = useThemePreference();
+  const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/profile" });
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const circle = useMyCircleQuery();
   const removeMember = useRemoveCircleMemberMutation();
@@ -49,11 +50,13 @@ export default function ProfileCircleScreen() {
   }
 
   return (
-    <Screen padded={false} scroll>
+    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
+    <Screen backgroundColor={themeColors.bg} padded={false} scroll style={{ backgroundColor: themeColors.bg }}>
       <View style={styles.content}>
         <MemoryRouteHeader
+          backButtonVariant="plain"
           kicker="Profile"
-          onBack={() => router.back()}
+          onBack={close}
           subtitle={circle.data ? `${accountTypeLabel(circle.data.accountType)} · ${members.length} ${members.length === 1 ? "person" : "people"}` : undefined}
           themeColors={themeColors}
           title="My Circle"
@@ -104,6 +107,7 @@ export default function ProfileCircleScreen() {
         )}
       </View>
     </Screen>
+    </Animated.View>
   );
 }
 

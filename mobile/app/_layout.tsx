@@ -16,10 +16,10 @@ const navigationTheme: Theme = {
   }
 };
 
-// Settings + every settings sub-screen present over the screen beneath them and
-// drive their own Reanimated slide (see useSlideOverScreen). Native animation is
-// disabled and the container is transparent so the screen underneath shows during
-// the slide.
+// The circle screen, settings, and every settings sub-screen present over the
+// screen beneath them and drive their own Reanimated slide (see
+// useSlideOverScreen). Native animation is disabled and the container is
+// transparent so the screen underneath shows during the slide.
 const SLIDE_OVER_OPTIONS = {
   presentation: "transparentModal",
   animation: "none",
@@ -27,7 +27,8 @@ const SLIDE_OVER_OPTIONS = {
   contentStyle: { backgroundColor: "transparent" }
 } as const;
 
-const SETTINGS_SLIDE_ROUTES = [
+const SLIDE_OVER_ROUTES = [
+  "profile/circle",
   "profile/settings",
   "profile/settings/edit",
   "profile/settings/security",
@@ -72,7 +73,7 @@ export default function RootLayout() {
                 animation is disabled because native transparentModal ignores
                 slide_from_right/animationDuration (especially on iOS); the
                 transparent container lets the screen underneath show during the slide. */}
-            {SETTINGS_SLIDE_ROUTES.map((name) => (
+            {SLIDE_OVER_ROUTES.map((name) => (
               <Stack.Screen key={name} name={name} options={SLIDE_OVER_OPTIONS} />
             ))}
           </Stack>
