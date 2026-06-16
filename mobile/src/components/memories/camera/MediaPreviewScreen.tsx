@@ -273,8 +273,8 @@ const styles = StyleSheet.create({
     paddingVertical: 9
   },
   secondaryActionActive: {
-    backgroundColor: "#22C7B8",
-    borderColor: "rgba(34,199,184,0.54)"
+    backgroundColor: colors.dark.memory,
+    borderColor: colors.dark.memoryBorder
   },
   secondaryActionText: {
     ...fontStyles.extraBold,
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   },
   secondaryActionTextActive: {
-    color: colors.dark.bg
+    color: colors.dark.white
   },
   textInput: {
     ...fontStyles.semiBold,
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   },
   postButton: {
     alignItems: "center",
-    backgroundColor: "#22C7B8",
+    backgroundColor: colors.dark.memory,
     borderRadius: radius.pill,
     flexDirection: "row",
     gap: spacing.sm,
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
   },
   postButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.bg,
+    color: colors.dark.white,
     fontSize: 15,
     letterSpacing: 0
   }

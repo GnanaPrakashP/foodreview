@@ -458,7 +458,7 @@ export default function ShareScreen() {
               />
               <ActionCard
                 Icon={Users}
-                accent="green"
+                accent="memory"
                 cta="Create memory"
                 CtaIcon={UserPlus}
                 description="Remember the places you visit with friends."
@@ -506,7 +506,7 @@ export default function ShareScreen() {
                         ))}
                       </View>
                       <Pressable onPress={() => setDishes((current) => [...current, emptyDish()])} style={styles.addDishButton}>
-                        <Plus size={14} color={c.green} strokeWidth={2.4} />
+                        <Plus size={14} color={c.gold} strokeWidth={2.4} />
                         <Text style={styles.addDishText}>Add another dish</Text>
                       </Pressable>
 
@@ -785,7 +785,7 @@ export default function ShareScreen() {
                       ) : null}
                     </View>
                     <View style={styles.memoryPrivacyNote}>
-                      <Lock size={13} color={c.green} strokeWidth={2.1} />
+                      <Lock size={13} color={c.memory} strokeWidth={2.1} />
                       <Text style={styles.memoryPrivacyNoteText}>Private to invited friends.</Text>
                     </View>
                   </View>
@@ -846,7 +846,7 @@ function ActionCard({
   tags,
   title
 }: {
-  accent: "green" | "orange";
+  accent: "memory" | "orange";
   cta: string;
   CtaIcon?: typeof Users;
   description: string;
@@ -857,14 +857,14 @@ function ActionCard({
   title: string;
 }) {
   const { themeColors: c, styles } = useShareTheme();
-  const isGreen = accent === "green";
-  const accentColor = isGreen ? c.green : c.orange;
-  const gradientColors: readonly [string, string, string] = isGreen
-    ? ["rgba(61, 214, 140, 0.18)", "rgba(20, 184, 166, 0.08)", "rgba(33, 28, 23, 0.98)"]
+  const isMemory = accent === "memory";
+  const accentColor = isMemory ? c.memory : c.orange;
+  const gradientColors: readonly [string, string, string] = isMemory
+    ? ["rgba(157, 91, 232, 0.20)", "rgba(124, 58, 237, 0.09)", "rgba(33, 28, 23, 0.98)"]
     : ["rgba(240, 96, 48, 0.22)", "rgba(232, 168, 48, 0.08)", "rgba(33, 28, 23, 0.98)"];
 
   return (
-    <Pressable onPress={onPress} style={[styles.actionCard, isGreen ? styles.actionCardGreen : styles.actionCardOrange]}>
+    <Pressable onPress={onPress} style={[styles.actionCard, isMemory ? styles.actionCardMemory : styles.actionCardOrange]}>
       <Image source={imageSource} style={styles.actionBackgroundImage} contentFit="cover" contentPosition="right center" />
       <LinearGradient colors={gradientColors} end={{ x: 1, y: 1 }} start={{ x: 0, y: 0 }} style={StyleSheet.absoluteFillObject} />
       <LinearGradient
@@ -874,7 +874,7 @@ function ActionCard({
         style={StyleSheet.absoluteFillObject}
       />
       <View style={styles.actionContent}>
-        <View style={[styles.actionIcon, isGreen ? styles.actionIconGreen : styles.actionIconOrange]}>
+        <View style={[styles.actionIcon, isMemory ? styles.actionIconMemory : styles.actionIconOrange]}>
           <Icon size={22} color={accentColor} strokeWidth={2.3} />
         </View>
         <Text style={styles.actionTitle}>{title}</Text>
@@ -891,12 +891,12 @@ function ActionCard({
   );
 }
 
-function ChoiceChip({ accent, label }: { accent: "green" | "orange"; label: string }) {
+function ChoiceChip({ accent, label }: { accent: "memory" | "orange"; label: string }) {
   const { themeColors: c, styles } = useShareTheme();
-  const isGreen = accent === "green";
+  const isMemory = accent === "memory";
   return (
-    <View style={[styles.actionChip, isGreen ? styles.actionChipGreen : styles.actionChipOrange]}>
-      <Text style={[styles.actionChipText, { color: isGreen ? c.green : c.orange }]}>
+    <View style={[styles.actionChip, isMemory ? styles.actionChipMemory : styles.actionChipOrange]}>
+      <Text style={[styles.actionChipText, { color: isMemory ? c.memory : c.orange }]}>
         {label}
       </Text>
     </View>
@@ -1065,7 +1065,7 @@ function DishRow({
   return (
     <View style={styles.dishRow}>
       <View style={styles.dishInputRow}>
-        <Utensils size={20} color={c.green} strokeWidth={1.9} />
+        <Utensils size={20} color={c.gold} strokeWidth={1.9} />
         <TextInput
           onChangeText={(name) => onChange({ name })}
           placeholder="Chicken Biriyani"
@@ -1196,9 +1196,9 @@ function createStyles(c: ThemeColors) {
     shadowOffset: { height: 10, width: 0 },
     elevation: 4
   },
-  actionCardGreen: {
-    borderColor: "rgba(61, 214, 140, 0.34)",
-    shadowColor: c.green,
+  actionCardMemory: {
+    borderColor: c.memoryBorder,
+    shadowColor: c.memory,
     shadowOpacity: 0.16,
     shadowRadius: 18,
     shadowOffset: { height: 10, width: 0 },
@@ -1226,9 +1226,9 @@ function createStyles(c: ThemeColors) {
     backgroundColor: "rgba(240, 96, 48, 0.16)",
     borderColor: "rgba(240, 96, 48, 0.34)"
   },
-  actionIconGreen: {
-    backgroundColor: "rgba(61, 214, 140, 0.14)",
-    borderColor: "rgba(61, 214, 140, 0.30)"
+  actionIconMemory: {
+    backgroundColor: c.memoryDim,
+    borderColor: c.memoryBorder
   },
   actionTitle: {
     ...fontStyles.extraBold,
@@ -1261,9 +1261,9 @@ function createStyles(c: ThemeColors) {
     backgroundColor: "rgba(240, 96, 48, 0.10)",
     borderColor: "rgba(240, 96, 48, 0.24)"
   },
-  actionChipGreen: {
-    backgroundColor: "rgba(61, 214, 140, 0.10)",
-    borderColor: "rgba(61, 214, 140, 0.22)"
+  actionChipMemory: {
+    backgroundColor: c.memoryDim,
+    borderColor: c.memoryBorder
   },
   actionChipText: {
     ...fontStyles.extraBold,
@@ -1933,7 +1933,7 @@ function createStyles(c: ThemeColors) {
   },
   addDishText: {
     ...fontStyles.medium,
-    color: c.green,
+    color: c.gold,
     fontSize: 13,
     lineHeight: 17
   },

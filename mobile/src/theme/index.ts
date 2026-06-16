@@ -1,14 +1,17 @@
 export { fontFamilies, fontStyles, useCircleBitesFonts } from "@/theme/fonts";
 export {
   teal,
-  telegramBlue,
-  telegramNavy,
+  memoryPurple,
+  memoryNight,
   neutral,
   onDark,
   elevation,
   dark as darkTokens,
+  light as lightRoomTokens,
+  memoryRoomTokens,
   avatarAccents,
-  type DarkTokens
+  type DarkTokens,
+  type MemoryRoomTokens
 } from "@/theme/tokens";
 
 export const colors = {
@@ -20,11 +23,16 @@ export const colors = {
     orange: "#F06030",
     orangeDim: "rgba(240, 96, 48, 0.12)",
     orangeBorder: "rgba(240, 96, 48, 0.24)",
+    memory: "#9D5BE8",
+    memoryPressed: "#B07CF0",
+    memoryDim: "rgba(157, 91, 232, 0.14)",
+    memoryBorder: "rgba(157, 91, 232, 0.30)",
     gold: "#E8A830",
     goldDim: "rgba(232, 168, 48, 0.15)",
     goldBorder: "rgba(232, 168, 48, 0.25)",
     cream: "#F5EDD8",
-    muted: "#7A6E65",
+    muted: "#9A8C80", // lifted to clear WCAG AA (~6:1 on bg)
+    mutedStrong: "#A19B94",
     green: "#3DD68C",
     greenDim: "rgba(61, 214, 140, 0.10)",
     greenBorder: "rgba(61, 214, 140, 0.28)",
@@ -48,9 +56,14 @@ export const colors = {
     border: "#D8D2C7",
     orange: "#C84A1C",
     orangeDim: "rgba(200, 74, 28, 0.10)",
+    memory: "#7C3AED",
+    memoryPressed: "#6D28D9",
+    memoryDim: "rgba(124, 58, 237, 0.10)",
+    memoryBorder: "rgba(124, 58, 237, 0.24)",
     gold: "#A96F04",
     cream: "#19140E",
     muted: "#665F57",
+    mutedStrong: "#514A42",
     green: "#0F7F52",
     onGreen: "#FFFFFF"
   }

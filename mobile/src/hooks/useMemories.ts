@@ -17,6 +17,7 @@ import {
   leaveMemoryRoom,
   listMemoryRooms,
   markMemoryRoomRead,
+  setMemoryDishRating,
   type AddMemoryParticipantResult,
   type AddMemoryMediaAsset,
   type AddMemoryPhotoInput,
@@ -24,7 +25,8 @@ import {
   type AddMemoryDishInput,
   type CreateMemoryRoomInput,
   type MemoryMediaPage,
-  type MemoryMessagesPage
+  type MemoryMessagesPage,
+  type SetMemoryDishRatingInput
 } from "@/services/memories";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -433,6 +435,11 @@ export function useMemoryRoomRealtime(roomId: string) {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_dish_ratings", filter: `room_id=eq.${roomId}` },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_members", filter: `room_id=eq.${roomId}` },
         scheduleRefresh
       )
@@ -735,6 +742,17 @@ export function useAddMemoryDishMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: Omit<AddMemoryDishInput, "roomId">) => addMemoryDish({ ...input, roomId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function useSetMemoryDishRatingMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<SetMemoryDishRatingInput, "roomId">) => setMemoryDishRating({ ...input, roomId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });

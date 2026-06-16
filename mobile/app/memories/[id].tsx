@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { PenLine, Star, Utensils } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView, type VideoThumbnail } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -30,18 +31,20 @@ import {
   type ViewStyle
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { useKeyboardHandler, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Reanimated, {
   Easing as ReanimatedEasing,
   interpolate,
+  runOnJS,
+  type SharedValue,
+  useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withTiming
 } from "react-native-reanimated";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import {
-  FOOD_WALLPAPER_LINE_COLOR,
-  FOOD_WALLPAPER_OPACITY,
   FOOD_WALLPAPER_TILE_SIZE,
   buildFoodWallpaperPlacements,
   type DoodlePrimitive
@@ -51,6 +54,7 @@ import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
+import { useThemePreference } from "@/hooks/useThemePreference";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
@@ -63,7 +67,8 @@ import {
   useMemoryMediaPagesQuery,
   useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
-  useMemoryRoomRealtime
+  useMemoryRoomRealtime,
+  useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
 import {
@@ -74,7 +79,7 @@ import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
 import { compactPlaceLocation } from "@/services/places";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
-import { avatarAccents, darkTokens, fontStyles, radius, spacing } from "@/theme";
+import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
@@ -83,7 +88,8 @@ type RoomTabMode = Exclude<RoomMode, "people">;
 type MemberCircleStatus = CircleAccessStatus | "loading";
 type TimelineItem =
   | { id: string; createdAt: string; type: "message"; value: MemoryMessage }
-  | { id: string; createdAt: string; type: "media"; value: MemoryPhoto };
+  | { id: string; createdAt: string; type: "media"; value: MemoryPhoto }
+  | { id: string; createdAt: string; type: "dish"; value: MemoryDish };
 type ChatTimelineRow =
   | { id: string; label: string; type: "date" }
   | { id: string; type: "unread" }
@@ -104,6 +110,15 @@ type ChatTimelineRow =
     showSenderDetails: boolean;
     type: "media";
     value: MemoryPhoto;
+  }
+  | {
+    groupPosition: MessageGroupPosition;
+    id: string;
+    mine: boolean;
+    rowSpacing: "break" | "group-start" | "grouped";
+    showSenderDetails: boolean;
+    type: "dish";
+    value: MemoryDish;
   };
 type MediaViewerState = {
   index: number;
@@ -122,70 +137,85 @@ type MemoryCaptureAsset = {
 };
 const ROOM_MAX_WIDTH = 640;
 const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mode: RoomTabMode }> = [
-  { icon: "home-outline", label: "Table", mode: "overview" },
+  { icon: "journal-outline", label: "Table", mode: "overview" },
   { icon: "chatbubble-ellipses-outline", label: "Chat", mode: "chat" },
   { icon: "images-outline", label: "Media", mode: "media" },
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
-// Room palette mapped onto the shared dark tokens (see src/theme/tokens.ts).
-// Key names are kept stable so styles read clearly; values now use a cool
-// navy room base with Telegram-like blue as the single primary accent.
-const ROOM_COLORS = {
-  // Surfaces / layered elevation
-  bg: darkTokens.background,
-  wallpaperBg: darkTokens.wallpaperBackground,
-  header: darkTokens.surfaceRaised, // app bar (level 2)
-  panel: darkTokens.surface, // cards & panels (level 1)
-  panelRaised: darkTokens.surfaceRaised, // raised cards, message box (level 2)
-  surfaceHigh: darkTokens.surfaceHigh, // sheets, popovers, selection bar (level 3)
-  mediaPanel: darkTokens.surfaceDim, // media wells
-  // Lines
-  border: darkTokens.divider,
-  borderStrong: darkTokens.outline,
-  // Text / icons (white opacity tiers)
-  onSurface: darkTokens.onSurface,
-  muted: darkTokens.onSurfaceVariant,
-  faint: darkTokens.onSurfaceDisabled,
-  timestamp: darkTokens.messageTimestamp,
-  sentBubble: darkTokens.sentBubble,
-  sentBubbleBorder: darkTokens.sentBubbleOutline,
-  onSentBubble: darkTokens.onSentBubble,
-  receivedBubble: darkTokens.receivedBubble,
-  onReceivedBubble: darkTokens.onReceivedBubble,
-  // Accent (sparingly)
-  cool: darkTokens.primary,
-  coolPressed: darkTokens.primaryPressed,
-  coolDim: darkTokens.primaryContainer,
-  coolBorder: darkTokens.primaryOutline,
-  coolOnContainer: darkTokens.onPrimaryContainer,
-  onCool: darkTokens.onPrimary,
-  selection: darkTokens.selection,
-  // Status / tertiary
-  gold: darkTokens.gold,
-  goldDim: darkTokens.goldContainer,
-  goldBorder: darkTokens.goldOutline,
-  danger: darkTokens.error,
-  dangerSoft: darkTokens.error,
-  dangerDim: darkTokens.errorContainer,
-  dangerBorder: darkTokens.errorOutline,
-  // Scrims & glass
-  scrim: darkTokens.scrim,
-  scrimStrong: darkTokens.scrimStrong,
-  scrimSoft: darkTokens.scrimSoft,
-  scrimMedium: darkTokens.scrimMedium,
-  glass: darkTokens.glass,
-  glassDim: darkTokens.glassDim,
-  outlineStrong: darkTokens.outlineStrong,
-  white: darkTokens.white,
-  black: darkTokens.black
-} as const;
-// Chat bubbles: own carries the Telegram-like blue identity, other sits on a
+// Room palette mapped onto the shared memory tokens (see src/theme/tokens.ts).
+// Key names are kept stable so styles read clearly; values follow the current
+// app appearance with purple as the single memory-room primary accent.
+function createRoomColors(tokens: MemoryRoomTokens) {
+  return {
+    // Surfaces / layered elevation
+    bg: tokens.background,
+    wallpaperBg: tokens.wallpaperBackground,
+    wallpaperLine: tokens.wallpaperLine,
+    wallpaperOpacity: tokens.wallpaperOpacity,
+    header: tokens.surface, // app bar — match cards (level 1) so the bar doesn't out-shine content
+    panel: tokens.surface, // cards & panels (level 1)
+    panelRaised: tokens.surfaceRaised, // raised cards, message box (level 2)
+    surfaceHigh: tokens.surfaceHigh, // sheets, popovers, selection bar (level 3)
+    mediaPanel: tokens.surfaceDim, // media wells
+    // Lines
+    border: tokens.divider,
+    borderStrong: tokens.outline,
+    // Text / icons
+    onSurface: tokens.onSurface,
+    muted: tokens.onSurfaceVariant,
+    faint: tokens.onSurfaceDisabled,
+    timestamp: tokens.messageTimestamp,
+    sentTimestamp: tokens.sentMessageTimestamp,
+    mediaTimestamp: tokens.mediaOverlayTimestamp,
+    sentBubble: tokens.sentBubble,
+    sentBubbleBorder: tokens.sentBubbleOutline,
+    onSentBubble: tokens.onSentBubble,
+    sentReplyBackground: tokens.sentReplyBackground,
+    sentReplyBorder: tokens.sentReplyBorder,
+    sentReplyText: tokens.sentReplyText,
+    receivedBubble: tokens.receivedBubble,
+    onReceivedBubble: tokens.onReceivedBubble,
+    // Accent (sparingly)
+    cool: tokens.primary,
+    coolPressed: tokens.primaryPressed,
+    coolDim: tokens.primaryContainer,
+    coolBorder: tokens.primaryOutline,
+    coolOnContainer: tokens.onPrimaryContainer,
+    onCool: tokens.onPrimary,
+    selection: tokens.selection,
+    // Status / tertiary
+    gold: tokens.gold,
+    goldDim: tokens.goldContainer,
+    goldBorder: tokens.goldOutline,
+    danger: tokens.error,
+    dangerSoft: tokens.error,
+    dangerDim: tokens.errorContainer,
+    dangerBorder: tokens.errorOutline,
+    // Scrims & glass
+    scrim: tokens.scrim,
+    scrimStrong: tokens.scrimStrong,
+    scrimSoft: tokens.scrimSoft,
+    scrimMedium: tokens.scrimMedium,
+    glass: tokens.glass,
+    glassDim: tokens.glassDim,
+    outlineStrong: tokens.outlineStrong,
+    white: tokens.white,
+    black: tokens.black
+  } as const;
+}
+
+type RoomColors = ReturnType<typeof createRoomColors>;
+
+let ROOM_COLORS: RoomColors = createRoomColors(memoryRoomTokens.dark);
+// Chat bubbles: own carries the memory-room purple identity, other sits on a
 // neutral raised surface so both read clearly above the doodle wallpaper.
-const CHAT_OWN_BUBBLE_COLOR = ROOM_COLORS.sentBubble;
-const CHAT_OTHER_BUBBLE_COLOR = ROOM_COLORS.receivedBubble;
+let CHAT_OWN_BUBBLE_COLOR = ROOM_COLORS.sentBubble;
+let CHAT_OTHER_BUBBLE_COLOR = ROOM_COLORS.receivedBubble;
 const CHAT_ACCENTS = avatarAccents;
 const COMPOSER_TOP_GAP = 8;
-const COMPOSER_KEYBOARD_OPEN_GAP = 6;
+// Matches COMPOSER_TOP_GAP so the message box sits with an equal gap above (to the
+// composer's opaque top edge) and below (to the keyboard) when the keyboard is open.
+const COMPOSER_KEYBOARD_OPEN_GAP = 8;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
 const MEDIA_GRID_GAP = 4;
 const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.lg;
@@ -355,7 +385,9 @@ function getMultiMediaGridWidth(screenWidth: number) {
 }
 
 function getTimelineSenderUsername(item: TimelineItem) {
-  return item.type === "message" ? item.value.authorName : item.value.uploaderName;
+  if (item.type === "message") return item.value.authorName;
+  if (item.type === "media") return item.value.uploaderName;
+  return item.value.addedBy;
 }
 
 function getTimelineDateKey(item: TimelineItem) {
@@ -378,17 +410,101 @@ function formatRestaurantDisplayName(name: string) {
   ));
 }
 
+// How long (ms) after a fresh open we keep clamping the keyboard height to the
+// default (alphabet) height. Long enough to cover Gboard's stage-2 correction
+// animation (emoji-height -> alphabet-height) on reopen.
+const KEYBOARD_OPEN_SETTLE_MS = 320;
+
+// Smoothed keyboard offset (0 closed -> -keyboardHeight open) that is immune to
+// Gboard's two-stage reopen animation on Android.
+//
+// Binding straight to useReanimatedKeyboardAnimation's raw height faithfully
+// echoes whatever the IME reports each frame. The nasty case: after the emoji
+// panel has grown the keyboard, you collapse it and reopen. Gboard does NOT
+// animate straight to the alphabet height — it first animates up to the cached
+// EMOJI height (stage 1), then runs a SECOND animation back down to the real
+// alphabet height (stage 2). Anything anchored to the raw height therefore
+// shoots up to the old emoji level and drops back down.
+//
+// The fix has three moving parts:
+//   1. On a closed -> open rise, aim the projected curve at the DEFAULT keyboard
+//      height (the smallest settled height we've seen, i.e. the alphabet
+//      keyboard) rather than the last-seen height (which may be the tall emoji).
+//   2. For ~KEYBOARD_OPEN_SETTLE_MS after that open settles, clamp the height to
+//      the default so stage 2's emoji-height transient can't drag the bar up.
+//   3. Once settled past that window, follow the raw height again so a
+//      DELIBERATE emoji expansion (or any genuine resize) still tracks smoothly.
+// Closing always projects from the current settled height so an emoji-height
+// keyboard slides down from where it actually was.
+function useSmoothedKeyboardOffset(): SharedValue<number> {
+  const { height, progress } = useReanimatedKeyboardAnimation();
+  // Last non-zero height the keyboard settled at (alphabet OR emoji).
+  const settledOpenHeight = useSharedValue(0);
+  // Smallest non-zero settled height seen == the plain alphabet keyboard, used as
+  // the destination for a fresh open so we never overshoot toward an emoji height.
+  const defaultOpenHeight = useSharedValue(0);
+  // 1 while we're inside a closed -> open transition (set when fully closed,
+  // cleared once that open's animation ends). Lets us pick the right destination
+  // and only arm the settle-clamp for genuine opens, not emoji resizes.
+  const openingFromClosed = useSharedValue(0);
+  // 1 immediately after a fresh open settles, eased to 0 over the settle window;
+  // while > 0 we clamp the height to the default to swallow stage 2's overshoot.
+  const settleClamp = useSharedValue(0);
+
+  // Mark the start of a fresh open the moment the keyboard is fully closed.
+  useAnimatedReaction(
+    () => progress.value,
+    (p) => { if (p < 0.01) openingFromClosed.value = 1; }
+  );
+
+  useKeyboardHandler({
+    onEnd: (event) => {
+      "worklet";
+      if (event.height <= 0) return; // a close settling; nothing to record
+      settledOpenHeight.value = event.height;
+      defaultOpenHeight.value = defaultOpenHeight.value === 0
+        ? event.height
+        : Math.min(defaultOpenHeight.value, event.height);
+      // Only arm the settle-clamp for an open that came from fully closed — NOT
+      // for an in-place emoji resize (which must be free to grow immediately).
+      if (openingFromClosed.value === 1) {
+        openingFromClosed.value = 0;
+        settleClamp.value = 1;
+        settleClamp.value = withTiming(0, { duration: KEYBOARD_OPEN_SETTLE_MS });
+      }
+    }
+  }, []);
+
+  return useDerivedValue(() => {
+    const raw = Math.max(0, -height.value);
+    const base = defaultOpenHeight.value || settledOpenHeight.value || raw;
+    if (progress.value < 0.999) {
+      // Opening or closing. Opening aims at the default (alphabet) height;
+      // closing slides down from wherever the keyboard actually was.
+      const destination = openingFromClosed.value === 1 ? base : (settledOpenHeight.value || base);
+      return -(destination * progress.value);
+    }
+    // Settled. During the post-open window, hold at the default so Gboard's
+    // stage-2 emoji-height transient can't bounce the bar; otherwise track raw.
+    if (settleClamp.value > 0) return -Math.min(raw, base);
+    return -raw;
+  });
+}
+
 export default function MemoryDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string; tab?: string }>();
   const roomId = params.id ?? "";
   const insets = useSafeAreaInsets();
+  const { resolvedTheme } = useThemePreference();
+  applyRoomTheme(resolvedTheme);
   const room = useMemoryRoomQuery(roomId);
   useMemoryRoomRealtime(roomId);
   const addParticipant = useAddMemoryParticipantMutation(roomId);
   const addMessage = useAddMemoryMessageMutation(roomId);
   const addDish = useAddMemoryDishMutation(roomId);
   const addPhoto = useAddMemoryPhotoMutation(roomId);
+  const rateDish = useSetMemoryDishRatingMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
@@ -429,6 +545,9 @@ export default function MemoryDetailScreen() {
   const [dishName, setDishName] = useState("");
   const [dishNote, setDishNote] = useState("");
   const [dishRating, setDishRating] = useState(0);
+  // Dish whose detail / "who rated" sheet is open (null = closed). Held by id so
+  // realtime rating updates flow into the open sheet via the live `data.dishes`.
+  const [detailDishId, setDetailDishId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [editingMessage, setEditingMessage] = useState<MemoryMessage | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<MemoryMessage | null>(null);
@@ -438,6 +557,12 @@ export default function MemoryDetailScreen() {
   const [attachmentInitialView, setAttachmentInitialView] = useState<AttachmentSheetView>("actions");
   const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
   const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
+  // When an option is launched from the speed-dial, re-open the speed-dial if
+  // that sub-flow is cancelled (so the user can pick the other option).
+  const [reopenAddMenuOnCancel, setReopenAddMenuOnCancel] = useState(false);
+  // Per-frame openness (0 closed -> 1 open) of the dish/media sheet's keyboard,
+  // written from inside the modal. Drives the header hide in exact lockstep.
+  const dishKeyboardProgress = useSharedValue(0);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
   const [chatBottomClearance, setChatBottomClearance] = useState(CHAT_COMPOSER_CLEARANCE);
@@ -490,6 +615,12 @@ export default function MemoryDetailScreen() {
   useEffect(() => {
     if (mode !== "overview") setFloatingAddMenuOpen(false);
   }, [mode]);
+
+  // Safety: if the sheet closes before the keyboard finishes dismissing, snap the
+  // header back.
+  useEffect(() => {
+    if (!attachmentOptionsVisible) dishKeyboardProgress.value = 0;
+  }, [attachmentOptionsVisible, dishKeyboardProgress]);
 
   const previousModeRef = useRef<RoomMode>("overview");
   const paneTabMode: RoomTabMode = mode === "people" ? "overview" : mode;
@@ -568,8 +699,9 @@ export default function MemoryDetailScreen() {
   // native animation values — synced with the OS keyboard animation, including
   // emoji-panel height changes and interactive dismissal — instead of discrete
   // show/hide events with a separate hand-rolled animation.
-  // keyboardPosition runs 0 → -keyboardHeight, ready for translateY.
-  const { height: keyboardPosition } = useReanimatedKeyboardAnimation();
+  // keyboardOffset runs 0 → -keyboardHeight, ready for translateY. Smoothed so
+  // Gboard's stale emoji-height frame on reopen never bounces the composer.
+  const keyboardOffset = useSmoothedKeyboardOffset();
   const isChatMode = mode === "chat";
   // The whole chat stage (list + composer overlay) rides the keyboard as one
   // transform, so the input bar and the pinned latest message move together
@@ -577,7 +709,7 @@ export default function MemoryDetailScreen() {
   // Clamped at 0 so a glitched positive keyboard value (seen after back-button
   // dismiss on misconfigured Android) can never push the bar below its rest spot.
   const stageKeyboardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: isChatMode ? Math.min(0, keyboardPosition.value) : 0 }]
+    transform: [{ translateY: isChatMode ? Math.min(0, keyboardOffset.value) : 0 }]
   }), [isChatMode]);
   const closedComposerBottomPadding = Math.max(insets.bottom + COMPOSER_CLOSED_SAFE_GAP, 12);
   // Single source of truth for the bar's bottom offset, per-frame:
@@ -587,7 +719,7 @@ export default function MemoryDetailScreen() {
   // blending between the two ends so every transition follows the keyboard curve)
   const composerInsetStyle = useAnimatedStyle(() => ({
     paddingBottom: Math.max(
-      closedComposerBottomPadding + keyboardPosition.value,
+      closedComposerBottomPadding + keyboardOffset.value,
       COMPOSER_KEYBOARD_OPEN_GAP
     )
   }), [closedComposerBottomPadding]);
@@ -597,7 +729,7 @@ export default function MemoryDetailScreen() {
   // shared value, same frame — so the last message keeps its 8px gap with no
   // JS-lagged re-measure/repin bounce when the keyboard collapses.
   const chatListKeyboardStyle = useAnimatedStyle(() => {
-    const keyboardHeight = Math.max(0, -keyboardPosition.value);
+    const keyboardHeight = Math.max(0, -keyboardOffset.value);
     const barShrink = Math.min(keyboardHeight, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
     return {
       transform: [{ translateY: isChatMode ? barShrink : 0 }]
@@ -994,7 +1126,19 @@ export default function MemoryDetailScreen() {
   }
 
   function openAttachmentActions() {
+    setReopenAddMenuOnCancel(false);
     openAttachmentOptions("actions");
+  }
+
+  // Cancel path for the attachment sheet. A successful dish add closes the sheet
+  // directly (and switches mode), so it never routes through here — only a real
+  // dismiss does, which is where we restore the speed-dial.
+  function cancelAttachmentOptions() {
+    setAttachmentOptionsVisible(false);
+    if (reopenAddMenuOnCancel) {
+      setReopenAddMenuOnCancel(false);
+      setFloatingAddMenuOpen(true);
+    }
   }
 
   function closeFloatingAddMenu() {
@@ -1002,7 +1146,11 @@ export default function MemoryDetailScreen() {
   }
 
   function openFloatingAddMedia() {
-    setFloatingAddMenuOpen(false);
+    // Keep the speed-dial open while the camera is pushed over the room. The only
+    // way back to the room in overview is cancel (closeCamera -> router.back), so
+    // the menu reappears on cancel. A successful capture posts and returns via
+    // dismissTo(tab: "chat"), which leaves overview and hides the menu (see the
+    // mode effect). So we don't need to close it here.
     setAttachmentOptionsVisible(false);
     router.push({
       pathname: "/memories/[id]/camera",
@@ -1012,6 +1160,7 @@ export default function MemoryDetailScreen() {
 
   function openFloatingAddDish() {
     setFloatingAddMenuOpen(false);
+    setReopenAddMenuOnCancel(true);
     openAttachmentOptions("dish");
   }
 
@@ -1108,6 +1257,7 @@ export default function MemoryDetailScreen() {
   }
 
   const data = mergedRoomData ?? room.data;
+  const detailDish = detailDishId ? data.dishes.find((dish) => dish.id === detailDishId) ?? null : null;
   const displayRestaurantName = formatRestaurantDisplayName(data.restaurantName);
   const selectedTargets = selectedItemKeys
     .map((key) => findMemoryActionTarget(data, key))
@@ -1135,6 +1285,7 @@ export default function MemoryDetailScreen() {
       <RoomHeader
         data={data}
         displayRestaurantName={displayRestaurantName}
+        keyboardProgress={dishKeyboardProgress}
         mode={headerMode}
         myUsername={myUsername}
         onAddPeople={openPeopleAdd}
@@ -1156,7 +1307,7 @@ export default function MemoryDetailScreen() {
             mode === "chat" && styles.roomStageChat
           ]}
         >
-          <FoodChatWallpaper visible />
+          <FoodChatWallpaper themeKey={resolvedTheme} visible />
           <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
           <View style={styles.body}>
             <PaneReveal
@@ -1182,6 +1333,7 @@ export default function MemoryDetailScreen() {
                 onLayoutChange={handleChatTimelineLayout}
                 onLoadOlderMessages={loadOlderMessages}
                 onNearBottomChange={handleChatNearBottomChange}
+                onOpenDish={setDetailDishId}
                 onOpenMedia={openMediaViewer}
                 onReplyMessage={beginReplyMessage}
                 onScrollBeginDrag={handleChatScrollBeginDrag}
@@ -1212,16 +1364,11 @@ export default function MemoryDetailScreen() {
             ) : mode === "dishes" ? (
               <RoomPane direction={paneDirection} key="dishes">
                 <DishesPanel
-                  dishName={dishName}
-                  dishNote={dishNote}
-                  dishRating={dishRating}
                   dishes={data.dishes}
-                  error={addDish.error?.message}
-                  onChangeDishName={setDishName}
-                  onChangeDishNote={setDishNote}
-                  onChangeDishRating={setDishRating}
-                  onSubmitDish={submitDish}
-                  pending={addDish.isPending}
+                  error={rateDish.error?.message}
+                  onOpenDish={setDetailDishId}
+                  onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                  pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                 />
               </RoomPane>
             ) : null}
@@ -1268,23 +1415,6 @@ export default function MemoryDetailScreen() {
           </Reanimated.View>
         </View>
 
-        <AttachmentOptionsSheet
-          dishError={addDish.error?.message}
-          dishName={dishName}
-          dishNote={dishNote}
-          dishPending={addDish.isPending}
-          dishRating={dishRating}
-          initialView={attachmentInitialView}
-          onChangeDishName={setDishName}
-          onChangeDishNote={setDishNote}
-          onChangeDishRating={setDishRating}
-          onCamera={openCamera}
-          onClose={() => setAttachmentOptionsVisible(false)}
-          onDishSubmit={submitDishFromAttachment}
-          onGallery={() => submitMedia(pickMemoryMediaFromGallery)}
-          pending={addPhoto.isPending}
-          visible={attachmentOptionsVisible}
-        />
         <RoomActionsSheet
           leavePending={leaveRoom.isPending}
           onClose={closeRoomActions}
@@ -1293,18 +1423,56 @@ export default function MemoryDetailScreen() {
         />
         <MediaViewer selection={selectedMedia} onClose={() => setSelectedMedia(null)} />
       </KeyboardAvoidingView>
+      {/* Scrim for the speed-dial only. The dish/media sheet carries its own
+          backdrop (attachSheetBackdrop) that fades in/out with its slide, so we
+          don't dim here for it — that would stack a second, abrupt black layer. */}
+      {floatingAddMenuOpen ? (
+        <Pressable
+          accessibilityLabel="Close add menu"
+          onPress={closeFloatingAddMenu}
+          style={styles.floatingAddBackdrop}
+        />
+      ) : null}
       {floatingAddAvailable ? (
         <FloatingAddMenu
           bottomInset={insets.bottom}
           visible={floatingAddVisible}
           open={floatingAddMenuOpen}
           progress={floatingAddMenuProgress}
-          onClose={closeFloatingAddMenu}
           onDish={openFloatingAddDish}
           onMedia={openFloatingAddMedia}
           onToggle={() => setFloatingAddMenuOpen((current) => !current)}
         />
       ) : null}
+      {/* Screen-level so the overlay covers the full screen (RN anchors absolute
+          children to their immediate parent); rendered after the speed-dial so it
+          stacks above the scrim. */}
+      <AttachmentOptionsSheet
+        dishError={addDish.error?.message}
+        dishName={dishName}
+        dishNote={dishNote}
+        dishPending={addDish.isPending}
+        dishRating={dishRating}
+        initialView={attachmentInitialView}
+        onChangeDishName={setDishName}
+        onChangeDishNote={setDishNote}
+        onChangeDishRating={setDishRating}
+        onCamera={openCamera}
+        onClose={cancelAttachmentOptions}
+        onDishSubmit={submitDishFromAttachment}
+        onGallery={() => submitMedia(pickMemoryMediaFromGallery)}
+        keyboardProgress={dishKeyboardProgress}
+        pending={addPhoto.isPending}
+        visible={attachmentOptionsVisible}
+      />
+      <DishDetailSheet
+        dish={detailDish}
+        error={rateDish.error?.message}
+        myUsername={myUsername}
+        onClose={() => setDetailDishId(null)}
+        onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+        pending={rateDish.isPending && rateDish.variables?.dishId === detailDishId}
+      />
       {mode === "people" ? (
         <PeoplePanel
           addParticipantError={addParticipant.error?.message}
@@ -1338,6 +1506,7 @@ export default function MemoryDetailScreen() {
 function RoomHeader({
   data,
   displayRestaurantName,
+  keyboardProgress,
   mode,
   myUsername,
   onAddPeople,
@@ -1349,6 +1518,7 @@ function RoomHeader({
 }: {
   data: MemoryRoom;
   displayRestaurantName: string;
+  keyboardProgress: SharedValue<number>;
   mode: RoomMode;
   myUsername: string;
   onAddPeople: () => void;
@@ -1373,6 +1543,12 @@ function RoomHeader({
   // animate on the UI thread, in lockstep with the tab indicator, even when the JS
   // thread is busy mounting the chat timeline.
   const collapseProgress = useSharedValue(isCompactHeader ? 1 : 0);
+  // Fully fades + slides the whole header out of the way while the dish/media
+  // sheet's keyboard is up, in exact lockstep with the keyboard (no own timing).
+  const headerHideStyle = useAnimatedStyle(() => ({
+    opacity: 1 - keyboardProgress.value,
+    transform: [{ translateY: -24 * keyboardProgress.value }]
+  }));
   const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabTrackWidth = Math.max(0, tabBarWidth - 4);
   const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
@@ -1385,7 +1561,7 @@ function RoomHeader({
     left: interpolate(collapseProgress.value, [0, 1], [26, 56]),
     lineHeight: interpolate(collapseProgress.value, [0, 1], [29, 25]),
     right: interpolate(collapseProgress.value, [0, 1], [26, 58]),
-    top: interpolate(collapseProgress.value, [0, 1], [52, 12])
+    top: interpolate(collapseProgress.value, [0, 1], [50, 12])
   }));
   const expandedDetailsStyle = useAnimatedStyle(() => ({
     marginTop: interpolate(collapseProgress.value, [0, 1], [42, 0]),
@@ -1432,13 +1608,14 @@ function RoomHeader({
     });
   }, [collapseProgress, isCompactHeader]);
 
+
   return (
-    <View
+    <Reanimated.View
       aria-hidden={transitioning ? true : undefined}
       accessibilityElementsHidden={transitioning}
       importantForAccessibility={transitioning ? "no-hide-descendants" : "auto"}
       pointerEvents={transitioning ? "none" : "auto"}
-      style={styles.header}
+      style={[styles.header, headerHideStyle]}
     >
       <View pointerEvents="none" style={styles.sharedRoomTitleLayer}>
         <Reanimated.Text
@@ -1570,7 +1747,7 @@ function RoomHeader({
           ))}
         </View>
       </Reanimated.View>
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -1674,7 +1851,6 @@ function RoomPane({
 
 function FloatingAddMenu({
   bottomInset,
-  onClose,
   onDish,
   onMedia,
   onToggle,
@@ -1683,7 +1859,6 @@ function FloatingAddMenu({
   progress
 }: {
   bottomInset: number;
-  onClose: () => void;
   onDish: () => void;
   onMedia: () => void;
   onToggle: () => void;
@@ -1737,6 +1912,16 @@ function FloatingAddMenu({
     outputRange: [0.92, 1]
   });
 
+  // The menu unmounts when the dish sheet / camera covers the room. With the
+  // native driver, an in-flight open/close animation never syncs its JS value
+  // back on unmount, so `progress` can survive as a stale 1. On (re)mount, snap
+  // it to the real `open` state — otherwise the speed-dial renders open while
+  // state says closed (backdrop tap is a no-op; the toggle needs two taps).
+  useEffect(() => {
+    progress.setValue(open ? 1 : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     Animated.timing(visibilityProgress, {
       duration: visible ? 180 : 150,
@@ -1748,14 +1933,8 @@ function FloatingAddMenu({
 
   return (
     <>
-      {open && visible ? (
-        <Pressable
-          accessibilityLabel="Close add menu"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.floatingAddBackdrop}
-        />
-      ) : null}
+      {/* The scrim is rendered once at the room level (shared with the dish/media
+          sheet) so the black is a single continuous layer — see the room render. */}
       <Animated.View
         pointerEvents={open && visible ? "auto" : "none"}
         style={[
@@ -1851,7 +2030,7 @@ function FloatingAddAction({
   );
 }
 
-function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" }>["rowSpacing"]) {
+function rowSpacingStyle(rowSpacing: Extract<ChatTimelineRow, { type: "message" | "media" | "dish" }>["rowSpacing"]) {
   if (rowSpacing === "break") return styles.chatMessageRowAfterBreak;
   if (rowSpacing === "group-start") return styles.chatMessageRowGroupStart;
   return styles.chatMessageRowGrouped;
@@ -1909,6 +2088,7 @@ function ChatTimeline({
   onLayoutChange,
   onLoadOlderMessages,
   onNearBottomChange,
+  onOpenDish,
   onOpenMedia,
   onReplyMessage,
   onScrollBeginDrag,
@@ -1936,6 +2116,7 @@ function ChatTimeline({
   onLayoutChange: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
+  onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onReplyMessage: (message: MemoryMessage) => void;
   onScrollBeginDrag: () => void;
@@ -1961,10 +2142,16 @@ function ChatTimeline({
         id: `media:${photo.id}`,
         type: "media",
         value: photo
+      })),
+      ...data.dishes.map((dish): TimelineItem => ({
+        createdAt: dish.createdAt,
+        id: `dish:${dish.id}`,
+        type: "dish",
+        value: dish
       }))
     ];
     return items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [data.messages, data.photos]);
+  }, [data.dishes, data.messages, data.photos]);
   const participantNames = useMemo(
     () => new Map(data.participants.map((participant) => [participant.username, participant.displayName])),
     [data.participants]
@@ -2006,9 +2193,9 @@ function ChatTimeline({
     return items.find((item) => {
       const itemTime = new Date(item.createdAt).getTime();
       if (!Number.isFinite(itemTime) || itemTime <= lastReadTime) return false;
-      return item.type === "message"
-        ? item.value.authorName !== myUsername
-        : item.value.uploaderName !== myUsername;
+      if (item.type === "message") return item.value.authorName !== myUsername;
+      if (item.type === "media") return item.value.uploaderName !== myUsername;
+      return false;
     })?.id ?? null;
   }, [myUsername]);
   // The unread anchor is frozen per visit: lastReadAt cache updates (markRead, the
@@ -2092,6 +2279,19 @@ function ChatTimeline({
           rowSpacing,
           showSenderDetails: !mine && startsGroup,
           type: "message",
+          value: item.value
+        });
+        return;
+      }
+
+      if (item.type === "dish") {
+        rows.push({
+          groupPosition: getMessageGroupPosition(startsGroup, endsGroup),
+          id: item.id,
+          mine,
+          rowSpacing,
+          showSenderDetails: !mine && startsGroup,
+          type: "dish",
           value: item.value
         });
         return;
@@ -2288,10 +2488,11 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  const rowHandlersRef = useRef({ onBeginSelection, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection });
-  rowHandlersRef.current = { onBeginSelection, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection };
+  const rowHandlersRef = useRef({ onBeginSelection, onOpenDish, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onOpenDish, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection };
   const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
   const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
+  const openRowDish = useCallback((dishId: string) => rowHandlersRef.current.onOpenDish(dishId), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
   const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
@@ -2331,6 +2532,19 @@ function ChatTimeline({
       );
     }
 
+    if (item.type === "dish") {
+      return (
+        <DishTimelineCard
+          dish={item.value}
+          groupPosition={item.groupPosition}
+          mine={item.mine}
+          onOpenDish={() => openRowDish(item.value.id)}
+          rowStyle={rowStyle}
+          showSenderDetails={item.showSenderDetails}
+        />
+      );
+    }
+
     return (
       <MediaBubble
         mine={item.mine}
@@ -2353,6 +2567,7 @@ function ChatTimeline({
     finishRowSelectionPress,
     highlightedMessageId,
     jumpToRepliedMessage,
+    openRowDish,
     openRowMedia,
     participantNames,
     replyToRow,
@@ -2484,8 +2699,9 @@ function WallpaperPrimitive({ primitive }: { primitive: DoodlePrimitive }) {
   }
 }
 
-const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible: boolean }) {
+const FoodChatWallpaper = memo(function FoodChatWallpaper({ themeKey, visible }: { themeKey: string; visible: boolean }) {
   const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const patternId = `foodChatDoodlePattern-${themeKey}`;
 
   useEffect(() => {
     Animated.timing(opacity, {
@@ -2502,7 +2718,7 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible
         <Defs>
           <Pattern
             height={FOOD_WALLPAPER_TILE_SIZE}
-            id="foodChatDoodlePattern"
+            id={patternId}
             patternUnits="userSpaceOnUse"
             width={FOOD_WALLPAPER_TILE_SIZE}
             x={0}
@@ -2511,8 +2727,8 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible
             <Rect fill={ROOM_COLORS.wallpaperBg} height={FOOD_WALLPAPER_TILE_SIZE} width={FOOD_WALLPAPER_TILE_SIZE} x={0} y={0} />
             <G
               fill="none"
-              opacity={FOOD_WALLPAPER_OPACITY}
-              stroke={FOOD_WALLPAPER_LINE_COLOR}
+              opacity={ROOM_COLORS.wallpaperOpacity}
+              stroke={ROOM_COLORS.wallpaperLine}
               strokeLinecap="round"
               strokeLinejoin="round"
             >
@@ -2527,7 +2743,7 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ visible }: { visible
           </Pattern>
         </Defs>
         <Rect fill={ROOM_COLORS.wallpaperBg} height="100%" width="100%" x={0} y={0} />
-        <Rect fill="url(#foodChatDoodlePattern)" height="100%" width="100%" x={0} y={0} />
+        <Rect fill={`url(#${patternId})`} height="100%" width="100%" x={0} y={0} />
       </Svg>
       <View style={styles.chatWallpaperOverlay} />
     </Animated.View>
@@ -2725,8 +2941,12 @@ function ReplyPreviewBlock({
 }) {
   const content = (
     <>
-      <Text numberOfLines={1} style={styles.replyPreviewAuthor}>{author}</Text>
-      <Text numberOfLines={2} style={styles.replyPreviewText}>{body}</Text>
+      <Text numberOfLines={1} style={[styles.replyPreviewAuthor, mine && styles.replyPreviewAuthorMine]}>
+        {author}
+      </Text>
+      <Text numberOfLines={2} style={[styles.replyPreviewText, mine && styles.replyPreviewTextMine]}>
+        {body}
+      </Text>
     </>
   );
 
@@ -3161,6 +3381,7 @@ function MessageBubble({
             text={body}
             textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
             time={timestampLabel}
+            timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
           />
         </View>
       </MessageBubbleFrame>
@@ -3263,6 +3484,7 @@ function MessageBubble({
                   text={body}
                   textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
                   time={timestampLabel}
+                  timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
                 />
               </View>
             ) : null}
@@ -3335,6 +3557,7 @@ function MessageBubble({
                   text={body}
                   textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
                   time={timestampLabel}
+                  timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
                 />
               </View>
             ) : null}
@@ -3349,6 +3572,86 @@ function MessageBubble({
   if (isMultiMedia) return renderMultiMediaMessage();
 
   return null;
+}
+
+function DishTimelineCard({
+  dish,
+  groupPosition,
+  mine,
+  onOpenDish,
+  rowStyle,
+  showSenderDetails
+}: {
+  dish: MemoryDish;
+  groupPosition: MessageGroupPosition;
+  mine: boolean;
+  onOpenDish: () => void;
+  rowStyle?: StyleProp<ViewStyle>;
+  showSenderDetails: boolean;
+}) {
+  const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
+  const ratingLabel = dish.averageRating === null
+    ? "Unrated"
+    : `${formatMemoryDishRating(dish.averageRating)} · ${dish.ratingCount}`;
+
+  return (
+    <MessageRow
+      mine={mine}
+      rowStyle={rowStyle}
+      senderName={dish.addedByDisplayName}
+      showSenderDetails={showSenderDetails}
+      swipeEnabled={false}
+    >
+      <MessageBubbleFrame style={styles.dishTimelineFrame}>
+        <Pressable
+          accessibilityHint="Opens dish details to rate and see who rated"
+          accessibilityLabel={`${dish.dishName}, ${dish.ratingCount === 0 ? "no ratings yet" : `rated ${formatMemoryDishRating(dish.averageRating)} by ${dish.ratingCount}`}`}
+          accessibilityRole="button"
+          onPress={onOpenDish}
+          style={[
+            styles.dishTimelineBubble,
+            mine ? styles.dishTimelineBubbleMine : styles.dishTimelineBubbleOther,
+            bubbleCornerStyle
+          ]}
+        >
+          {!mine && showSenderDetails ? (
+            <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(dish.addedByDisplayName) }]}>
+              {dish.addedByDisplayName}
+            </Text>
+          ) : null}
+          <View style={styles.dishTimelineHeader}>
+            <Text numberOfLines={1} style={[styles.dishTimelineKicker, mine && styles.dishTimelineKickerMine]}>
+              {mine ? "You added a dish" : "Added a dish"}
+            </Text>
+            <MessageMeta
+              textStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
+              time={formatDisplayTime(dish.createdAt)}
+            />
+          </View>
+          <View style={styles.dishTimelinePayload}>
+            <View style={styles.dishTimelineIcon}>
+              <Utensils size={16} color={ROOM_COLORS.gold} strokeWidth={1.9} />
+            </View>
+            <View style={styles.dishTimelineCopy}>
+              <Text numberOfLines={1} style={[styles.dishTimelineName, mine && styles.messageTextMine]}>
+                {dish.dishName}
+              </Text>
+              {dish.note ? (
+                <Text numberOfLines={1} style={[styles.dishTimelineNote, mine && styles.dishTimelineNoteMine]}>
+                  {dish.note}
+                </Text>
+              ) : null}
+            </View>
+            <View style={styles.dishTimelineRating}>
+              <Ionicons name={dish.averageRating === null ? "star-outline" : "star"} size={10} color={ROOM_COLORS.gold} />
+              <Text numberOfLines={1} style={styles.dishTimelineRatingText}>{ratingLabel}</Text>
+              <Ionicons name="chevron-forward" size={12} color={ROOM_COLORS.muted} style={styles.dishTimelineChevron} />
+            </View>
+          </View>
+        </Pressable>
+      </MessageBubbleFrame>
+    </MessageRow>
+  );
 }
 
 function MediaBubble({
@@ -3747,124 +4050,306 @@ function MediaGallery({
   );
 }
 
+function formatMemoryDishRating(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function memoryDishRaterSummary(dish: MemoryDish) {
+  const names = dish.ratings.map((rating) => rating.ratedByDisplayName);
+  if (names.length === 0) return "No ratings yet";
+  if (names.length === 1) return `Rated by ${names[0]}`;
+  if (names.length === 2) return `Rated by ${names[0]} and ${names[1]}`;
+  return `Rated by ${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
 function DishesPanel({
-  dishName,
-  dishNote,
-  dishRating,
   dishes,
   error,
-  onChangeDishName,
-  onChangeDishNote,
-  onChangeDishRating,
-  onSubmitDish,
-  pending
+  onOpenDish,
+  onRateDish,
+  pendingDishId
 }: {
-  dishName: string;
-  dishNote: string;
-  dishRating: number;
   dishes: MemoryDish[];
   error?: string;
-  onChangeDishName: (value: string) => void;
-  onChangeDishNote: (value: string) => void;
-  onChangeDishRating: (value: number) => void;
-  onSubmitDish: () => void;
-  pending: boolean;
+  onOpenDish: (dishId: string) => void;
+  onRateDish: (dishId: string, rating: number) => void;
+  pendingDishId?: string | null;
 }) {
-  const canAdd = Boolean(dishName.trim()) && !pending;
-  const ratedDishes = dishes.filter((dish) => dish.rating);
-  const averageRating = ratedDishes.length > 0
-    ? ratedDishes.reduce((total, dish) => total + Number(dish.rating ?? 0), 0) / ratedDishes.length
-    : null;
-  const friendCount = new Set(dishes.map((dish) => dish.addedByDisplayName)).size;
-
   return (
     <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
-      {dishes.length > 0 ? (
-        <View style={styles.dishMemorySummary}>
-          <View style={styles.dishSummaryItem}>
-            <Text style={styles.dishSummaryValue}>{dishes.length}</Text>
-            <Text style={styles.dishSummaryLabel}>Dishes</Text>
-          </View>
-          <View style={styles.dishSummaryDivider} />
-          <View style={styles.dishSummaryItem}>
-            <Text style={styles.dishSummaryValue}>{averageRating ? averageRating.toFixed(1) : "-"}</Text>
-            <Text style={styles.dishSummaryLabel}>Avg rating</Text>
-          </View>
-          <View style={styles.dishSummaryDivider} />
-          <View style={styles.dishSummaryItem}>
-            <Text style={styles.dishSummaryValue}>{friendCount}</Text>
-            <Text style={styles.dishSummaryLabel}>Friends</Text>
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.dishAddWrap}>
-        <View style={styles.dishInputWrap}>
-          <Ionicons name="restaurant-outline" size={16} color={ROOM_COLORS.gold} />
-          <TextInput
-            onChangeText={onChangeDishName}
-            placeholder="Dish name"
-            placeholderTextColor={ROOM_COLORS.muted}
-            style={styles.dishInput}
-            value={dishName}
-          />
-        </View>
-        <View style={styles.dishInputWrap}>
-          <Ionicons name="chatbubble-ellipses-outline" size={16} color={ROOM_COLORS.muted} />
-          <TextInput
-            onChangeText={onChangeDishNote}
-            placeholder="What should friends remember?"
-            placeholderTextColor={ROOM_COLORS.muted}
-            style={styles.dishInput}
-            value={dishNote}
-          />
-        </View>
-        <View style={styles.dishAddFooter}>
-          <View style={styles.dishStars}>
-            {[1, 2, 3, 4, 5].map((star) => (
-              <Pressable key={star} hitSlop={6} onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}>
-                <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={20} color={ROOM_COLORS.gold} />
-              </Pressable>
-            ))}
-          </View>
-          <Pressable disabled={!canAdd} onPress={onSubmitDish} style={[styles.panelPrimaryButton, !canAdd && styles.panelPrimaryButtonDisabled]}>
-            <Text style={styles.panelPrimaryButtonText}>{pending ? "Adding" : "Add"}</Text>
-          </Pressable>
-        </View>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-      </View>
-
       {dishes.length === 0 ? (
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
             <Ionicons name="restaurant-outline" size={26} color={ROOM_COLORS.cool} />
           </View>
           <Text style={styles.emptyTitle}>No table favorites yet</Text>
-          <Text style={styles.emptyText}>Add the dishes everyone tried so the group remembers what to order again.</Text>
+          <Text style={styles.emptyText}>Dishes added from the table will appear here.</Text>
         </View>
       ) : (
-        dishes.map((dish) => (
-          <View key={dish.id} style={styles.dishCard}>
-            <View style={[styles.dishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
-              <Text style={styles.dishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
+        dishes.map((dish) => {
+          const pending = pendingDishId === dish.id;
+          const ratingValue = dish.averageRating;
+          const raterAvatars = dish.ratings.slice(0, 4);
+          const extraRaterCount = Math.max(0, dish.ratingCount - raterAvatars.length);
+
+          return (
+            <View key={dish.id} style={styles.dishCard}>
+              <View style={styles.dishCardTop}>
+                <View style={[styles.dishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
+                  <Text style={styles.dishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
+                </View>
+                <View style={styles.dishText}>
+                  <Text numberOfLines={1} style={styles.dishName}>{dish.dishName}</Text>
+                  <Text numberOfLines={1} style={styles.dishMeta}>Added by {dish.addedByDisplayName}</Text>
+                </View>
+                <View style={[styles.dishRatingPill, ratingValue === null && styles.dishRatingPillEmpty]}>
+                  <Ionicons name={ratingValue === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
+                  <Text style={styles.dishRating}>{formatMemoryDishRating(ratingValue)}</Text>
+                </View>
+              </View>
+
+              {dish.note ? <Text style={styles.dishNote}>{dish.note}</Text> : null}
+
+              <View style={styles.dishRatingDetails}>
+                <Pressable
+                  accessibilityHint="Opens dish details to see everyone who rated"
+                  accessibilityLabel={`${dish.dishName}, ${memoryDishRaterSummary(dish)}`}
+                  accessibilityRole="button"
+                  onPress={() => onOpenDish(dish.id)}
+                  style={styles.dishRaters}
+                >
+                  {raterAvatars.length > 0 ? (
+                    <View style={styles.dishRaterAvatarStack}>
+                      {raterAvatars.map((rating, index) => (
+                        <View
+                          key={rating.id}
+                          style={[
+                            styles.dishRaterAvatar,
+                            { backgroundColor: senderAccent(rating.ratedByDisplayName) },
+                            index > 0 && styles.dishRaterAvatarOverlap
+                          ]}
+                        >
+                          <Text style={styles.dishRaterInitial}>{senderInitials(rating.ratedByDisplayName)}</Text>
+                        </View>
+                      ))}
+                      {extraRaterCount > 0 ? (
+                        <View style={[styles.dishRaterAvatar, styles.dishRaterAvatarMore, styles.dishRaterAvatarOverlap]}>
+                          <Text style={styles.dishRaterInitial}>+{extraRaterCount}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <View style={styles.dishNoRatersIcon}>
+                      <Ionicons name="star-outline" size={13} color={ROOM_COLORS.muted} />
+                    </View>
+                  )}
+                  <View style={styles.dishRaterCopy}>
+                    <Text numberOfLines={1} style={styles.dishRaterSummary}>{memoryDishRaterSummary(dish)}</Text>
+                    <Text style={styles.dishRaterCount}>
+                      {dish.ratingCount === 0 ? "Be the first to rate" : `${dish.ratingCount} rating${dish.ratingCount === 1 ? "" : "s"}`}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
+                </Pressable>
+
+                <View style={styles.dishYourRatingRow}>
+                  <Text style={styles.dishYourRatingLabel}>
+                    {dish.myRating ? `Your rating ${dish.myRating}/5` : "Your rating"}
+                  </Text>
+                  <View style={styles.dishYourStars}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Pressable
+                        accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: pending, selected: star <= (dish.myRating ?? 0) }}
+                        disabled={pending}
+                        hitSlop={6}
+                        key={star}
+                        onPress={() => onRateDish(dish.id, star)}
+                        style={[styles.dishYourStarButton, pending && styles.dishYourStarButtonDisabled]}
+                      >
+                        <Star
+                          size={19}
+                          color={ROOM_COLORS.gold}
+                          fill={star <= (dish.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
+                          strokeWidth={1.8}
+                        />
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            </View>
+          );
+        })
+      )}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </ScrollView>
+  );
+}
+
+// Shared dish detail / "who rated" sheet. Opened by tapping a dish in the chat
+// thread or the Dishes tab. Lets the viewer set their own rating (upsert, no
+// re-adding) and lists everyone who rated with the exact stars they gave.
+function DishDetailSheet({
+  dish,
+  error,
+  myUsername,
+  onClose,
+  onRateDish,
+  pending
+}: {
+  dish: MemoryDish | null;
+  error?: string;
+  myUsername: string;
+  onClose: () => void;
+  onRateDish: (dishId: string, rating: number) => void;
+  pending: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const visible = dish !== null;
+  const [mounted, setMounted] = useState(visible);
+  // Keep the last non-null dish so its content stays painted through the
+  // slide-out (the parent clears the id immediately on close).
+  const [renderedDish, setRenderedDish] = useState(dish);
+  const slide = useSharedValue(visible ? 1 : 0);
+  const sheetHeight = useSharedValue(0);
+
+  useEffect(() => {
+    if (dish) setRenderedDish(dish);
+  }, [dish]);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      slide.value = withTiming(1, { duration: 260, easing: ReanimatedEasing.out(ReanimatedEasing.cubic) });
+    } else {
+      slide.value = withTiming(
+        0,
+        { duration: 220, easing: ReanimatedEasing.in(ReanimatedEasing.cubic) },
+        (finished) => { if (finished) runOnJS(setMounted)(false); }
+      );
+    }
+  }, [slide, visible]);
+
+  useEffect(() => {
+    if (!mounted) return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [mounted, onClose]);
+
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: slide.value }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT) }]
+  }));
+
+  if (!mounted || !renderedDish) return null;
+
+  const dishData = renderedDish;
+  // Highest ratings first; the viewer's own rating is labelled "You" regardless.
+  const sortedRatings = [...dishData.ratings].sort((a, b) => b.rating - a.rating);
+
+  return (
+    <View style={styles.attachOverlay}>
+      <View style={styles.attachSheetKeyboard}>
+        <Reanimated.View pointerEvents="none" style={[styles.attachSheetBackdrop, backdropStyle]} />
+        <Pressable accessibilityLabel="Close dish details" onPress={onClose} style={StyleSheet.absoluteFill} />
+        <Reanimated.View
+          onLayout={(event) => { sheetHeight.value = event.nativeEvent.layout.height; }}
+          style={[styles.dishSheet, { paddingBottom: Math.max(insets.bottom, spacing.base) }, sheetStyle]}
+        >
+          <View style={styles.dishSheetHandle} />
+
+          <View style={styles.dishSheetHeader}>
+            <View style={[styles.dishIcon, { backgroundColor: senderAccent(dishData.dishName) }]}>
+              <Text style={styles.dishIconText}>{dishData.dishName.slice(0, 1).toUpperCase()}</Text>
             </View>
             <View style={styles.dishText}>
-              <View style={styles.dishTitleRow}>
-                <Text numberOfLines={1} style={styles.dishName}>{dish.dishName}</Text>
-                {dish.rating ? (
-                  <View style={styles.dishRatingPill}>
-                    <Ionicons name="star" size={11} color={ROOM_COLORS.gold} />
-                    <Text style={styles.dishRating}>{Number(dish.rating).toFixed(1).replace(/\.0$/, "")}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text numberOfLines={1} style={styles.dishMeta}>Added by {dish.addedByDisplayName}</Text>
-              {dish.note ? <Text style={styles.dishNote}>{dish.note}</Text> : null}
+              <Text numberOfLines={2} style={styles.dishSheetTitle}>{dishData.dishName}</Text>
+              <Text numberOfLines={1} style={styles.dishMeta}>Added by {dishData.addedByDisplayName}</Text>
+            </View>
+            <View style={[styles.dishRatingPill, dishData.averageRating === null && styles.dishRatingPillEmpty]}>
+              <Ionicons name={dishData.averageRating === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
+              <Text style={styles.dishRating}>{formatMemoryDishRating(dishData.averageRating)}</Text>
             </View>
           </View>
-        ))
-      )}
-    </ScrollView>
+
+          {dishData.note ? <Text style={styles.dishNote}>{dishData.note}</Text> : null}
+
+          <View style={styles.dishSheetRateBlock}>
+            <Text style={styles.dishSheetRateLabel}>
+              {dishData.myRating ? `Your rating · ${dishData.myRating}/5` : "Tap to rate"}
+            </Text>
+            <View style={styles.dishSheetStars}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable
+                  accessibilityLabel={`Rate ${dishData.dishName} ${star} out of 5`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: pending, selected: star <= (dishData.myRating ?? 0) }}
+                  disabled={pending}
+                  hitSlop={6}
+                  key={star}
+                  onPress={() => onRateDish(dishData.id, star)}
+                  style={[styles.dishSheetStarButton, pending && styles.dishYourStarButtonDisabled]}
+                >
+                  <Star
+                    size={30}
+                    color={ROOM_COLORS.gold}
+                    fill={star <= (dishData.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
+                    strokeWidth={1.7}
+                  />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <Text style={styles.dishSheetSectionTitle}>
+            {dishData.ratingCount === 0 ? "Who rated" : `Who rated (${dishData.ratingCount})`}
+          </Text>
+          {sortedRatings.length === 0 ? (
+            <Text style={styles.dishSheetEmpty}>No one has rated yet — be the first.</Text>
+          ) : (
+            <ScrollView
+              contentContainerStyle={styles.dishSheetRaterList}
+              showsVerticalScrollIndicator={false}
+              style={styles.dishSheetRaterScroll}
+            >
+              {sortedRatings.map((rating) => {
+                const isMe = rating.ratedBy === myUsername;
+                return (
+                  <View key={rating.id} style={styles.dishSheetRaterRow}>
+                    <View style={[styles.dishRaterAvatar, styles.dishSheetRaterAvatar, { backgroundColor: senderAccent(rating.ratedByDisplayName) }]}>
+                      <Text style={styles.dishRaterInitial}>{senderInitials(rating.ratedByDisplayName)}</Text>
+                    </View>
+                    <Text numberOfLines={1} style={styles.dishSheetRaterName}>
+                      {isMe ? "You" : rating.ratedByDisplayName}
+                    </Text>
+                    <View style={styles.dishSheetRaterStars}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          size={14}
+                          color={ROOM_COLORS.gold}
+                          fill={star <= rating.rating ? ROOM_COLORS.gold : "transparent"}
+                          strokeWidth={1.6}
+                        />
+                      ))}
+                      <Text style={styles.dishSheetRaterValue}>{rating.rating}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Reanimated.View>
+      </View>
+    </View>
   );
 }
 
@@ -4104,6 +4589,64 @@ function PeoplePanel({
   );
 }
 
+// Transparent gap the wrapper leaves between the sheet's bottom edge and the
+// keyboard when open. Kept small because the sheet already carries its own
+// paddingBottom below the button; a large value here reads as a big empty strip.
+const ATTACH_SHEET_KEYBOARD_GAP = 6;
+// Used for the slide travel before the sheet's real height is measured (first
+// open). Generous enough that the sheet starts fully off-screen, then onLayout
+// swaps in the exact height for every frame after.
+const ATTACH_SHEET_FALLBACK_HEIGHT = 520;
+
+// Lifts the bottom-anchored sheet above the keyboard, driven per-frame by
+// react-native-keyboard-controller — the same root provider the chat composer
+// uses (the sheet is an in-tree overlay, not a Modal, so no nested provider).
+// A transparent full-screen Pressable behind the sheet closes it.
+// `slide` (0 docked off-screen -> 1 open) drives both the sheet's translateY and
+// a dedicated backdrop's opacity, so the dim grows in and out with the sheet —
+// this is the only dimming layer for the sheet (the room scrim is for the + menu).
+function KeyboardAwareSheetSurface({ onClose, keyboardProgress, slide, sheetHeight, children }: { onClose: () => void; keyboardProgress: SharedValue<number>; slide: SharedValue<number>; sheetHeight: SharedValue<number>; children: ReactNode }) {
+  const insets = useSafeAreaInsets();
+  // Smoothed offset (0 -> -keyboardHeight) so the dish/media sheet hugs the keys
+  // without the Gboard emoji-height bounce the chat composer used to show.
+  const keyboardOffset = useSmoothedKeyboardOffset();
+  // Keyboard closed -> float the sheet above the gesture-nav / home-indicator
+  // inset, so the sheet's own bottom padding stays visible instead of being
+  // tucked under the system nav. Keyboard open -> hug the keyboard with a small
+  // gap. Blended along the keyboard curve so the transition is smooth.
+  const insetStyle = useAnimatedStyle(() => {
+    const open = keyboardProgress.value;
+    return {
+      paddingBottom: insets.bottom * (1 - open) + (-keyboardOffset.value + ATTACH_SHEET_KEYBOARD_GAP) * open
+    };
+  }, [insets.bottom]);
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: slide.value }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT) }]
+  }));
+  // The keyboard is tracked here (inside the modal's provider) reliably. Mirror
+  // its per-frame openness (0 closed -> 1 open) into a room-owned shared value so
+  // the room header can hide in exact lockstep with the keyboard — same motion,
+  // no separate timing/easing to drift out of sync.
+  useKeyboardHandler({
+    onStart: (event) => { "worklet"; keyboardProgress.value = event.progress; },
+    onMove: (event) => { "worklet"; keyboardProgress.value = event.progress; },
+    onEnd: (event) => { "worklet"; keyboardProgress.value = event.progress; }
+  }, []);
+  return (
+    <Reanimated.View style={[styles.attachSheetKeyboard, insetStyle]}>
+      <Reanimated.View pointerEvents="none" style={[styles.attachSheetBackdrop, backdropStyle]} />
+      <Pressable accessibilityLabel="Close" onPress={onClose} style={StyleSheet.absoluteFill} />
+      <Reanimated.View
+        onLayout={(event) => { sheetHeight.value = event.nativeEvent.layout.height; }}
+        style={sheetStyle}
+      >
+        {children}
+      </Reanimated.View>
+    </Reanimated.View>
+  );
+}
+
 function AttachmentOptionsSheet({
   dishError,
   dishName,
@@ -4118,6 +4661,7 @@ function AttachmentOptionsSheet({
   onClose,
   onDishSubmit,
   onGallery,
+  keyboardProgress,
   pending,
   visible
 }: {
@@ -4134,39 +4678,76 @@ function AttachmentOptionsSheet({
   onClose: () => void;
   onDishSubmit: () => void;
   onGallery: () => void;
+  keyboardProgress: SharedValue<number>;
   pending: boolean;
   visible: boolean;
 }) {
   const [view, setView] = useState<AttachmentSheetView>(initialView);
+  const dishNoteRef = useRef<TextInput>(null);
   const canSubmitDish = Boolean(dishName.trim()) && !dishPending;
+
+  // Keep the overlay mounted through the close so the slide-down is visible: the
+  // parent flips `visible` -> false immediately, we animate `slide` to 0, then
+  // unmount once the sheet has finished travelling off-screen.
+  const [mounted, setMounted] = useState(visible);
+  const slide = useSharedValue(visible ? 1 : 0); // 0 = docked off-screen, 1 = open
+  const sheetHeight = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      slide.value = withTiming(1, { duration: 260, easing: ReanimatedEasing.out(ReanimatedEasing.cubic) });
+    } else {
+      slide.value = withTiming(
+        0,
+        { duration: 220, easing: ReanimatedEasing.in(ReanimatedEasing.cubic) },
+        (finished) => { if (finished) runOnJS(setMounted)(false); }
+      );
+    }
+  }, [slide, visible]);
 
   useEffect(() => {
     if (visible) setView(initialView);
   }, [initialView, visible]);
 
+  // The sheet is a plain in-tree overlay (not a RN Modal), so wire up Android's
+  // hardware back ourselves to dismiss it while it's open.
+  useEffect(() => {
+    if (!mounted) return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [mounted, onClose]);
+
   const title = view === "dish" ? "Add dish" : view === "media" ? "Add media" : "Add to memory";
-  const subtitle = view === "dish"
-    ? "Save a dish and your rating for this group."
-    : view === "media"
-      ? "Share a photo or video with this room."
-      : "Choose what you want to add to this memory.";
+  // Back only makes sense when the sheet opened on the action list and the user
+  // drilled into a sub-view (the chat flow). When opened straight into dish/media
+  // (the speed-dial flow), there's nothing to go back to, so hide it.
+  const showBack = view !== "actions" && initialView === "actions";
+
+  if (!mounted) return null;
 
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.attachSheetKeyboard}>
-        <Pressable onPress={onClose} style={styles.attachSheetBackdrop}>
+    // Plain in-tree overlay under the app's single root KeyboardProvider (NOT a RN
+    // Modal with a nested provider). A nested provider both mis-measures the
+    // keyboard height and corrupts the root provider's listeners, which broke the
+    // chat composer's keyboard after this sheet was used. In-tree, the keyboard is
+    // tracked exactly like the composer, so the sheet hugs the keys the same way.
+    <View style={styles.attachOverlay}>
+        <KeyboardAwareSheetSurface onClose={onClose} keyboardProgress={keyboardProgress} slide={slide} sheetHeight={sheetHeight}>
           <Pressable style={styles.attachSheet} onPress={(event) => event.stopPropagation()}>
             <View style={styles.attachSheetHeaderRow}>
-              {view === "actions" ? <View style={styles.attachSheetHeaderSpacer} /> : (
-                <Pressable accessibilityLabel="Back" hitSlop={8} onPress={() => setView("actions")} style={styles.attachSheetHeaderButton}>
+              {showBack ? (
+                <Pressable accessibilityLabel="Back" hitSlop={8} onPress={() => setView("actions")} style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderBack]}>
                   <Ionicons name="chevron-back" size={18} color={ROOM_COLORS.cool} />
                 </Pressable>
-              )}
+              ) : <View style={styles.attachSheetHeaderSpacer} />}
               <View style={styles.attachSheetHeaderText}>
-                <Text style={styles.attachSheetTitle}>{title}</Text>
-                <Text numberOfLines={1} style={styles.attachSheetSubtitle}>{subtitle}</Text>
+                {view === "dish" ? null : <Text style={styles.attachSheetTitle}>{title}</Text>}
               </View>
-              <Pressable accessibilityLabel="Close" hitSlop={8} onPress={onClose} style={styles.attachSheetHeaderButton}>
+              <Pressable accessibilityLabel="Close" hitSlop={8} onPress={onClose} style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderClose]}>
                 <Ionicons name="close" size={18} color={ROOM_COLORS.muted} />
               </Pressable>
             </View>
@@ -4211,67 +4792,77 @@ function AttachmentOptionsSheet({
               </View>
             ) : (
               <View style={styles.attachDishForm}>
-                <View style={styles.attachDishHero}>
-                  <View style={styles.attachDishHeroIcon}>
-                    <Ionicons name="restaurant-outline" size={22} color={ROOM_COLORS.gold} />
-                  </View>
-                  <View style={styles.attachDishHeroCopy}>
-                    <Text style={styles.attachDishFieldLabel}>Dish</Text>
+                <View style={styles.attachDishCard}>
+                  <View style={styles.attachDishNameRow}>
+                    <View style={styles.attachDishIconSlot}>
+                      <Utensils size={20} color={ROOM_COLORS.gold} strokeWidth={1.9} />
+                    </View>
                     <TextInput
+                      blurOnSubmit={false}
                       onChangeText={onChangeDishName}
-                      placeholder="Dish name"
-                      placeholderTextColor={ROOM_COLORS.faint}
+                      onSubmitEditing={() => dishNoteRef.current?.focus()}
+                      placeholder="Chicken Biriyani"
+                      placeholderTextColor={ROOM_COLORS.muted}
                       returnKeyType="next"
                       style={styles.attachDishNameInput}
                       value={dishName}
                     />
                   </View>
-                </View>
-                <View style={styles.attachDishNoteWrap}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={17} color={ROOM_COLORS.muted} style={styles.attachDishNoteIcon} />
-                  <TextInput
-                    multiline
-                    numberOfLines={3}
-                    onChangeText={onChangeDishNote}
-                    placeholder="Note for the group"
-                    placeholderTextColor={ROOM_COLORS.muted}
-                    style={[styles.attachDishInput, styles.attachDishNoteInput]}
-                    textAlignVertical="top"
-                    value={dishNote}
-                  />
-                </View>
-                <View style={styles.attachDishRatingCard}>
-                  <View style={styles.attachDishRatingHeader}>
-                    <Text style={styles.attachDishRatingTitle}>Rating</Text>
-                    <Text style={styles.attachDishRatingValue}>{dishRating ? `${dishRating}/5` : "Optional"}</Text>
+
+                  <View style={styles.attachDishDivider} />
+
+                  <View style={styles.attachDishNoteRow}>
+                    <View style={[styles.attachDishIconSlot, styles.attachDishNoteIcon]}>
+                      <PenLine size={16} color={ROOM_COLORS.muted} strokeWidth={1.9} />
+                    </View>
+                    <TextInput
+                      ref={dishNoteRef}
+                      multiline
+                      numberOfLines={3}
+                      onChangeText={onChangeDishNote}
+                      placeholder="Note"
+                      placeholderTextColor={ROOM_COLORS.muted}
+                      style={[styles.attachDishInput, styles.attachDishNoteInput]}
+                      textAlignVertical="top"
+                      value={dishNote}
+                    />
                   </View>
-                  <View style={styles.attachDishStars}>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Pressable
-                        accessibilityLabel={`Rate ${star} out of 5`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: star <= dishRating }}
-                        key={star}
-                        hitSlop={6}
-                        onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}
-                        style={[styles.attachDishStarButton, star <= dishRating && styles.attachDishStarButtonActive]}
-                      >
-                        <Ionicons name={star <= dishRating ? "star" : "star-outline"} size={21} color={ROOM_COLORS.gold} />
-                      </Pressable>
-                    ))}
+
+                  <View style={styles.attachDishDivider} />
+
+                  <View style={styles.attachDishRatingRow}>
+                    <Text style={styles.attachDishRatingLabel}>{dishRating ? `${dishRating}/5` : "Rate dish"}</Text>
+                    <View style={styles.attachDishStars}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Pressable
+                          accessibilityLabel={`Rate ${star} out of 5`}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: star <= dishRating }}
+                          key={star}
+                          hitSlop={6}
+                          onPress={() => onChangeDishRating(dishRating === star ? 0 : star)}
+                          style={styles.attachDishStarButton}
+                        >
+                          <Star
+                            size={18}
+                            color={ROOM_COLORS.gold}
+                            fill={star <= dishRating ? ROOM_COLORS.gold : "transparent"}
+                            strokeWidth={1.8}
+                          />
+                        </Pressable>
+                      ))}
+                    </View>
                   </View>
                 </View>
                 <Pressable disabled={!canSubmitDish} onPress={onDishSubmit} style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}>
-                  <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding..." : "Save dish"}</Text>
-                  <Ionicons name="arrow-forward" size={17} color={ROOM_COLORS.onCool} />
+                  <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding..." : "Add dish"}</Text>
                 </Pressable>
                 {dishError ? <Text style={styles.error}>{dishError}</Text> : null}
               </View>
             )}
           </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+        </KeyboardAwareSheetSurface>
+    </View>
   );
 }
 
@@ -4698,7 +5289,8 @@ function Composer({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(ROOM_COLORS: RoomColors) {
+  return StyleSheet.create({
   keyboard: {
     flex: 1
   },
@@ -4992,6 +5584,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     height: FLOATING_ADD_ACTION_ICON_SIZE,
     justifyContent: "center",
+    shadowColor: ROOM_COLORS.black,
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.20,
+    shadowRadius: 14,
     width: FLOATING_ADD_ACTION_ICON_SIZE
   },
   floatingAddActionIconGold: {
@@ -5254,6 +5850,112 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     minWidth: 88
   },
+  dishTimelineFrame: {
+    maxWidth: Platform.OS === "web" ? "74%" : "78%"
+  },
+  dishTimelineBubble: {
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    maxWidth: "100%",
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    position: "relative",
+    zIndex: 1
+  },
+  dishTimelineBubbleMine: {
+    alignSelf: "flex-end",
+    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    borderColor: ROOM_COLORS.sentBubbleBorder,
+    minWidth: 190
+  },
+  dishTimelineBubbleOther: {
+    alignSelf: "flex-start",
+    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    borderColor: ROOM_COLORS.border,
+    minWidth: 210
+  },
+  dishTimelineHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "space-between"
+  },
+  dishTimelineKicker: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 14,
+    minWidth: 0
+  },
+  dishTimelineKickerMine: {
+    color: ROOM_COLORS.onSentBubble
+  },
+  dishTimelinePayload: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  dishTimelineIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 30,
+    justifyContent: "center",
+    width: 30
+  },
+  dishTimelineCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  dishTimelineName: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  dishTimelineNote: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 1
+  },
+  dishTimelineNoteMine: {
+    color: ROOM_COLORS.sentReplyText
+  },
+  dishTimelineRating: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.goldDim,
+    borderColor: ROOM_COLORS.goldBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 4
+  },
+  dishTimelineRatingText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.gold,
+    fontSize: 10,
+    lineHeight: 12
+  },
+  dishTimelineChevron: {
+    marginLeft: -1,
+    marginRight: -3
+  },
   messageBubbleGroupedMine: {
     borderTopRightRadius: 7
   },
@@ -5304,8 +6006,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7
   },
   replyPreviewBlockMine: {
-    backgroundColor: ROOM_COLORS.scrimSoft,
-    borderLeftColor: ROOM_COLORS.gold
+    backgroundColor: ROOM_COLORS.sentReplyBackground,
+    borderLeftColor: ROOM_COLORS.sentReplyBorder
   },
   replyPreviewBlockPressed: {
     opacity: 0.72
@@ -5316,12 +6018,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14
   },
+  replyPreviewAuthorMine: {
+    color: ROOM_COLORS.onSentBubble
+  },
   replyPreviewText: {
     ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2
+  },
+  replyPreviewTextMine: {
+    color: ROOM_COLORS.sentReplyText
   },
   senderAvatar: {
     alignItems: "center",
@@ -5392,6 +6100,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     includeFontPadding: false,
     lineHeight: 13
+  },
+  inlineTimestampMine: {
+    color: ROOM_COLORS.sentTimestamp
+  },
+  inlineTimestampOther: {
+    color: ROOM_COLORS.timestamp
   },
   inlineTimestampReserve: {
     ...fontStyles.semiBold,
@@ -5535,7 +6249,7 @@ const styles = StyleSheet.create({
   },
   mediaTimestampText: {
     ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
+    color: ROOM_COLORS.mediaTimestamp,
     fontSize: 11,
     includeFontPadding: false,
     lineHeight: 13
@@ -5649,25 +6363,36 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 48
   },
-  attachSheetKeyboard: {
-    flex: 1
+  attachOverlay: {
+    // Full-screen in-tree overlay (replaces the RN Modal). Sits above the
+    // speed-dial scrim (zIndex 6) and its action stack (zIndex 7).
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20
   },
-  attachSheetBackdrop: {
-    backgroundColor: ROOM_COLORS.scrimSoft,
+  attachSheetKeyboard: {
+    // Bottom-anchored; the animated paddingBottom (KeyboardAwareSheetSurface)
+    // lifts the sheet above the keyboard. The dim is the attachSheetBackdrop
+    // below, faded in/out with the sheet's slide.
     flex: 1,
     justifyContent: "flex-end"
+  },
+  attachSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: ROOM_COLORS.scrim
   },
   attachSheet: {
     alignSelf: "center",
     backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.borderStrong,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     gap: spacing.md,
-    marginBottom: Platform.OS === "web" ? 78 : 74,
     maxWidth: ROOM_MAX_WIDTH,
-    padding: spacing.md,
-    width: Platform.OS === "web" ? "88%" : "90%"
+    paddingHorizontal: spacing.base,
+    // Fixed, symmetric vertical padding in every state (not tied to the
+    // home-indicator inset). paddingBottom here also sets the button-to-edge gap.
+    paddingBottom: spacing.base,
+    paddingTop: spacing.md,
+    width: "100%"
   },
   attachSheetHeaderRow: {
     alignItems: "center",
@@ -5681,6 +6406,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 32
   },
+  attachSheetHeaderBack: {
+    // Pull the icon to the left edge so it lines up with the content below.
+    alignItems: "flex-start"
+  },
+  attachSheetHeaderClose: {
+    // Pull the X to the right edge so it lines up with the line ends below.
+    alignItems: "flex-end"
+  },
   attachSheetHeaderSpacer: {
     height: 32,
     width: 32
@@ -5693,7 +6426,8 @@ const styles = StyleSheet.create({
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
     fontSize: 14,
-    lineHeight: 18
+    lineHeight: 18,
+    textAlign: "center"
   },
   attachSheetSubtitle: {
     ...fontStyles.medium,
@@ -5795,67 +6529,46 @@ const styles = StyleSheet.create({
     color: ROOM_COLORS.danger
   },
   attachDishForm: {
+    // Fixed gap above the Add dish button; matches the sheet's paddingBottom
+    // below it so the button is symmetric top/bottom in every state.
+    gap: spacing.base
+  },
+  attachDishCard: {
+    // No box — name, note and rating are just stacked and split by lines.
+    gap: spacing.md
+  },
+  attachDishDivider: {
+    backgroundColor: ROOM_COLORS.border,
+    height: 1
+  },
+  attachDishNameRow: {
+    alignItems: "center",
+    flexDirection: "row",
     gap: spacing.sm
   },
-  attachDishHero: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.borderStrong,
-    borderRadius: 16,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 12,
-    minHeight: 72,
-    paddingHorizontal: 12,
-    paddingVertical: 10
-  },
-  attachDishHeroIcon: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.goldDim,
-    borderColor: ROOM_COLORS.goldBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 44,
-    justifyContent: "center",
-    width: 44
-  },
-  attachDishHeroCopy: {
-    flex: 1,
-    minWidth: 0
-  },
-  attachDishFieldLabel: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.gold,
-    fontSize: 11,
-    lineHeight: 14,
-    marginBottom: 3,
-    textTransform: "uppercase"
-  },
   attachDishNameInput: {
-    ...fontStyles.extraBold,
+    ...fontStyles.medium,
     color: ROOM_COLORS.onSurface,
     flex: 1,
-    fontSize: 18,
+    fontSize: 15,
     includeFontPadding: false,
-    lineHeight: 23,
-    minHeight: 28,
+    lineHeight: 20,
+    minHeight: 24,
     padding: 0,
-    paddingVertical: Platform.OS === "web" ? 2 : 0
+    paddingVertical: Platform.OS === "web" ? 4 : 0
   },
-  attachDishNoteWrap: {
+  attachDishIconSlot: {
+    alignItems: "center",
+    width: 22
+  },
+  attachDishNoteRow: {
     alignItems: "flex-start",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 86,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10
+    minHeight: 64
   },
   attachDishNoteIcon: {
-    marginTop: 1
+    marginTop: 2
   },
   attachDishInput: {
     ...fontStyles.medium,
@@ -5871,48 +6584,23 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingTop: 0
   },
-  attachDishRatingCard: {
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    gap: 10,
-    padding: spacing.md
-  },
-  attachDishRatingHeader: {
+  attachDishRatingRow: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between"
   },
-  attachDishRatingTitle: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onSurface,
-    fontSize: 13,
-    lineHeight: 17
-  },
-  attachDishRatingValue: {
+  attachDishRatingLabel: {
     ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
-    fontSize: 12,
-    lineHeight: 16
+    fontSize: 11,
+    lineHeight: 14
   },
   attachDishStars: {
     flexDirection: "row",
-    gap: spacing.xs
+    gap: 5
   },
   attachDishStarButton: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.surfaceHigh,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flex: 1,
-    height: 40,
-    justifyContent: "center"
-  },
-  attachDishStarButtonActive: {
-    backgroundColor: ROOM_COLORS.goldDim,
-    borderColor: ROOM_COLORS.goldBorder
+    padding: 2
   },
   attachDishSubmit: {
     alignItems: "center",
@@ -6179,35 +6867,17 @@ const styles = StyleSheet.create({
     gap: 0,
     paddingTop: MEMBERS_HEADER_CLEARANCE + spacing.lg
   },
-  panelActionRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "flex-end"
-  },
-  panelPrimaryButton: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.cool,
-    borderRadius: radius.input,
-    flexDirection: "row",
-    gap: 6,
-    justifyContent: "center",
-    minHeight: 42,
-    paddingHorizontal: spacing.base
-  },
-  panelPrimaryButtonDisabled: {
-    opacity: 0.45
-  },
-  panelPrimaryButtonText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onCool,
-    fontSize: 13
-  },
   peoplePanelMotion: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: ROOM_COLORS.bg,
     zIndex: 20
   },
   peopleScreenHeader: {
+    // Members header has only the title row, so balance the padding evenly
+    // (8+14 -> 11+11) to vertically center "Members". Total height is
+    // unchanged, so MEMBERS_HEADER_CLEARANCE stays valid.
+    paddingBottom: 11,
+    paddingTop: 11,
     zIndex: 1
   },
   peoplePanelScroll: {
@@ -6407,84 +7077,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 15
   },
-  dishAddWrap: {
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: spacing.sm,
-    padding: spacing.md
-  },
-  dishMemorySummary: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: "row",
-    minHeight: 74,
-    paddingHorizontal: spacing.md
-  },
-  dishSummaryItem: {
-    alignItems: "center",
-    flex: 1,
-    gap: 3
-  },
-  dishSummaryValue: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onSurface,
-    fontSize: 18,
-    lineHeight: 22
-  },
-  dishSummaryLabel: {
-    ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14
-  },
-  dishSummaryDivider: {
-    backgroundColor: ROOM_COLORS.border,
-    height: 34,
-    width: 1
-  },
-  dishInputWrap: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panelRaised,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 42,
-    paddingHorizontal: spacing.md
-  },
-  dishInput: {
-    ...fontStyles.medium,
-    color: ROOM_COLORS.onSurface,
-    flex: 1,
-    fontSize: 14,
-    includeFontPadding: false,
-    padding: 0
-  },
-  dishAddFooter: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    justifyContent: "space-between"
-  },
-  dishStars: {
-    flexDirection: "row",
-    gap: 3
-  },
   dishCard: {
-    alignItems: "flex-start",
     backgroundColor: ROOM_COLORS.panel,
     borderColor: ROOM_COLORS.border,
     borderRadius: 14,
     borderWidth: 1,
-    flexDirection: "row",
     gap: spacing.md,
     padding: spacing.md
+  },
+  dishCardTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+    minWidth: 0
   },
   dishIcon: {
     alignItems: "center",
@@ -6503,15 +7108,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0
   },
-  dishTitleRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.sm
-  },
   dishName: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
-    flex: 1,
     fontSize: 15,
     lineHeight: 19
   },
@@ -6525,6 +7124,10 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 4
+  },
+  dishRatingPillEmpty: {
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderColor: ROOM_COLORS.border
   },
   dishRating: {
     ...fontStyles.extraBold,
@@ -6544,7 +7147,199 @@ const styles = StyleSheet.create({
     color: ROOM_COLORS.onSurface,
     fontSize: 13,
     lineHeight: 18,
-    marginTop: spacing.sm
+    opacity: 0.9
+  },
+  dishRatingDetails: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    gap: spacing.md,
+    padding: spacing.md
+  },
+  dishRaters: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  dishRaterAvatarStack: {
+    flexDirection: "row",
+    flexShrink: 0,
+    minWidth: 34
+  },
+  dishRaterAvatar: {
+    alignItems: "center",
+    borderColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 28,
+    justifyContent: "center",
+    width: 28
+  },
+  dishRaterAvatarOverlap: {
+    marginLeft: -9
+  },
+  dishRaterAvatarMore: {
+    backgroundColor: ROOM_COLORS.surfaceHigh
+  },
+  dishRaterInitial: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.white,
+    fontSize: 9,
+    lineHeight: 11
+  },
+  dishNoRatersIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 28,
+    justifyContent: "center",
+    width: 28
+  },
+  dishRaterCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  dishRaterSummary: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 12,
+    lineHeight: 15
+  },
+  dishRaterCount: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 1
+  },
+  dishYourRatingRow: {
+    alignItems: "center",
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: spacing.sm
+  },
+  dishYourRatingLabel: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  dishYourStars: {
+    flexDirection: "row",
+    gap: 5
+  },
+  dishYourStarButton: {
+    padding: 2
+  },
+  dishYourStarButtonDisabled: {
+    opacity: 0.45
+  },
+  dishSheet: {
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    gap: spacing.md,
+    maxWidth: ROOM_MAX_WIDTH,
+    paddingHorizontal: spacing.base,
+    paddingTop: spacing.sm,
+    width: "100%"
+  },
+  dishSheetHandle: {
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    height: 4,
+    width: 38
+  },
+  dishSheetHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+    minWidth: 0
+  },
+  dishSheetTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 17,
+    lineHeight: 21
+  },
+  dishSheetRateBlock: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md
+  },
+  dishSheetRateLabel: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 15
+  },
+  dishSheetStars: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  dishSheetStarButton: {
+    padding: 3
+  },
+  dishSheetSectionTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  dishSheetEmpty: {
+    ...fontStyles.medium,
+    color: ROOM_COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    paddingBottom: spacing.sm
+  },
+  dishSheetRaterScroll: {
+    maxHeight: 240
+  },
+  dishSheetRaterList: {
+    gap: spacing.sm
+  },
+  dishSheetRaterRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minWidth: 0
+  },
+  dishSheetRaterAvatar: {
+    borderColor: ROOM_COLORS.panel
+  },
+  dishSheetRaterName: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 16,
+    minWidth: 0
+  },
+  dishSheetRaterStars: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: 2
+  },
+  dishSheetRaterValue: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.gold,
+    fontSize: 12,
+    lineHeight: 15,
+    marginLeft: 4
   },
   personRow: {
     alignItems: "center",
@@ -6819,3 +7614,25 @@ const styles = StyleSheet.create({
     lineHeight: 17
   }
 });
+}
+
+let styles = createStyles(ROOM_COLORS);
+const LIGHT_ROOM_COLORS = createRoomColors(memoryRoomTokens.light);
+const ROOM_THEME_CACHE = {
+  dark: {
+    colors: ROOM_COLORS,
+    styles
+  },
+  light: {
+    colors: LIGHT_ROOM_COLORS,
+    styles: createStyles(LIGHT_ROOM_COLORS)
+  }
+} as const;
+
+function applyRoomTheme(resolvedTheme: keyof typeof memoryRoomTokens) {
+  const theme = ROOM_THEME_CACHE[resolvedTheme];
+  ROOM_COLORS = theme.colors;
+  CHAT_OWN_BUBBLE_COLOR = theme.colors.sentBubble;
+  CHAT_OTHER_BUBBLE_COLOR = theme.colors.receivedBubble;
+  styles = theme.styles;
+}

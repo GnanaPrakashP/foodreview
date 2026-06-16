@@ -1,4 +1,5 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { Platform } from "react-native";
 
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import type { AddMemoryMediaAsset } from "@/services/memories";
@@ -8,6 +9,10 @@ import type { AddMemoryMediaAsset } from "@/services/memories";
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_COMPRESS_QUALITY = 0.7;
 const LEGACY_REVIEW_PHOTOS_BUCKET = "review-photos";
+
+// Video compression occupies the first half of the reported progress; the upload
+// then fills the second half. Images skip compression-progress and start near 0.
+const VIDEO_COMPRESS_PROGRESS_SPAN = 0.5;
 
 export const MEMORY_MEDIA_BUCKET = "memory-media";
 export const MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
@@ -76,10 +81,12 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
   let dimensions = normalizedDimensions(input.imageWidth, input.imageHeight);
   let ext = extensionFor(originalUri, mimeType, mediaType);
   let contentType = mimeType || contentTypeFor(ext, mediaType);
+  // Where the upload phase begins on the progress bar. Stays near 0 for images;
+  // a successful video compression pushes it to the halfway mark.
+  let uploadProgressFloor = 0.05;
 
-  // Videos are uploaded as-is here (image compression only). Photos are downscaled
-  // + re-encoded to JPEG, which strips EXIF and shrinks the file.
   if (mediaType === "image") {
+    // Photos are downscaled + re-encoded to JPEG, which strips EXIF and shrinks the file.
     const compressed = await compressImageForUpload(originalUri, input.imageWidth, input.imageHeight);
     uploadUri = compressed.uri;
     dimensions = normalizedDimensions(compressed.width, compressed.height);
@@ -89,18 +96,35 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
       ext = "jpg";
       contentType = "image/jpeg";
     }
+  } else if (mediaType === "video") {
+    // Transcode to a smaller H.264/MP4 (WhatsApp-style "auto" sizing) before upload.
+    const compressed = await compressVideoForUpload(originalUri, (progress) => {
+      input.onUploadProgress?.(Math.max(0, Math.min(progress, 1)) * VIDEO_COMPRESS_PROGRESS_SPAN);
+    });
+    if (compressed.encoded) {
+      uploadUri = compressed.uri;
+      ext = "mp4";
+      contentType = "video/mp4";
+      // Prefer the transcoded output's real dimensions over the source asset's.
+      if (compressed.width && compressed.height) {
+        dimensions = normalizedDimensions(compressed.width, compressed.height);
+      }
+      uploadProgressFloor = VIDEO_COMPRESS_PROGRESS_SPAN;
+    }
   }
 
   const path = `memories/${input.roomId}/${username}/${uniqueUploadName(ext)}`;
-  input.onUploadProgress?.(0.02);
+  // Nudge the bar off zero once compression (if any) is done and the read begins.
+  input.onUploadProgress?.(Math.max(0.02, uploadProgressFloor - 0.03));
   const fileBody = await fileBodyFromUri(uploadUri);
-  input.onUploadProgress?.(0.05);
+  input.onUploadProgress?.(uploadProgressFloor);
 
+  const uploadProgressSpan = 0.95 - uploadProgressFloor;
   await uploadFileBody({
     body: fileBody,
     contentType,
     onProgress: (uploadProgress) => {
-      input.onUploadProgress?.(0.05 + uploadProgress * 0.9);
+      input.onUploadProgress?.(uploadProgressFloor + uploadProgress * uploadProgressSpan);
     },
     path
   });
@@ -149,6 +173,37 @@ async function compressImageForUpload(
   } catch {
     // Never block a send on compression — fall back to the original file.
     return { encoded: false, height: height ?? null, uri, width: width ?? null };
+  }
+}
+
+async function compressVideoForUpload(
+  uri: string,
+  onProgress?: (progress: number) => void
+): Promise<{ encoded: boolean; height: number | null; uri: string; width: number | null }> {
+  // react-native-compressor is a native (Nitro) module with no web support, and
+  // it isn't present until the dev/EAS build includes it. Lazy-require + try/catch
+  // so web bundles and pre-rebuild clients fall back to uploading the original.
+  if (Platform.OS === "web") return { encoded: false, height: null, uri, width: null };
+  try {
+    const { Video, getVideoMetaData } = require("react-native-compressor") as typeof import("react-native-compressor");
+    // "auto" picks WhatsApp-like resolution/bitrate; small clips are skipped via
+    // the library's built-in minimum-size threshold.
+    const compressedUri = await Video.compress(uri, { compressionMethod: "auto" }, (progress) => {
+      onProgress?.(progress);
+    });
+    let width: number | null = null;
+    let height: number | null = null;
+    try {
+      const meta = await getVideoMetaData(compressedUri);
+      width = meta.width ?? null;
+      height = meta.height ?? null;
+    } catch {
+      // Metadata is best-effort; the source asset's dimensions remain the fallback.
+    }
+    return { encoded: true, height, uri: compressedUri, width };
+  } catch {
+    // Never block a send on compression — fall back to the original file.
+    return { encoded: false, height: null, uri, width: null };
   }
 }
 

@@ -7,10 +7,8 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { dark as T } from "../src/theme/tokens.ts";
+import { memoryRoomTokens, type MemoryRoomTokens } from "../src/theme/tokens.ts";
 import {
-  FOOD_WALLPAPER_LINE_COLOR,
-  FOOD_WALLPAPER_OPACITY,
   FOOD_WALLPAPER_TILE_SIZE,
   buildFoodWallpaperPlacements,
   type DoodlePrimitive
@@ -51,18 +49,29 @@ type Theme = {
   bg: string; appBar: string; card: string; raised: string; high: string;
   primary: string; onPrimary: string; onSurface: string; onVariant: string;
   divider: string; outline: string; coolDim: string; coolBorder: string;
-  ownBubble: string; ownBubbleBorder: string; otherBubble: string; gold: string; goldDim: string; goldBorder: string;
+  ownBubble: string; ownBubbleBorder: string; onSentBubble: string; sentTimestamp: string; sentReplyBackground: string;
+  sentReplyBorder: string; sentReplyText: string; otherBubble: string; messageTimestamp: string; mediaTimestamp: string;
+  gold: string; goldDim: string; goldBorder: string;
   modeInactive: string; wpBg: string; wpLine: string; wpOpacity: number; vignette: boolean;
 };
 
-const after: Theme = {
-  key: "after",
-  bg: T.background, appBar: T.surfaceRaised, card: T.surface, raised: T.surfaceRaised, high: T.surfaceHigh,
-  primary: T.primary, onPrimary: T.onPrimary, onSurface: T.onSurface, onVariant: T.onSurfaceVariant,
-  divider: T.divider, outline: T.outline, coolDim: T.primaryContainer, coolBorder: T.primaryOutline,
-  ownBubble: T.sentBubble, ownBubbleBorder: T.sentBubbleOutline, otherBubble: T.receivedBubble, gold: T.gold, goldDim: T.goldContainer, goldBorder: T.goldOutline,
-  modeInactive: T.onSurfaceVariant, wpBg: T.wallpaperBackground, wpLine: FOOD_WALLPAPER_LINE_COLOR, wpOpacity: FOOD_WALLPAPER_OPACITY, vignette: true
-};
+function themeFromTokens(key: string, T: MemoryRoomTokens): Theme {
+  return {
+    key,
+    bg: T.background, appBar: T.surfaceRaised, card: T.surface, raised: T.surfaceRaised, high: T.surfaceHigh,
+    primary: T.primary, onPrimary: T.onPrimary, onSurface: T.onSurface, onVariant: T.onSurfaceVariant,
+    divider: T.divider, outline: T.outline, coolDim: T.primaryContainer, coolBorder: T.primaryOutline,
+    ownBubble: T.sentBubble, ownBubbleBorder: T.sentBubbleOutline, onSentBubble: T.onSentBubble,
+    sentTimestamp: T.sentMessageTimestamp, sentReplyBackground: T.sentReplyBackground,
+    sentReplyBorder: T.sentReplyBorder, sentReplyText: T.sentReplyText,
+    otherBubble: T.receivedBubble, messageTimestamp: T.messageTimestamp, mediaTimestamp: T.mediaOverlayTimestamp,
+    gold: T.gold, goldDim: T.goldContainer, goldBorder: T.goldOutline,
+    modeInactive: T.onSurfaceVariant, wpBg: T.wallpaperBackground, wpLine: T.wallpaperLine, wpOpacity: T.wallpaperOpacity, vignette: key.includes("dark")
+  };
+}
+
+const afterDark = themeFromTokens("after-dark", memoryRoomTokens.dark);
+const afterLight = themeFromTokens("after-light", memoryRoomTokens.light);
 
 const before: Theme = {
   key: "before",
@@ -70,7 +79,11 @@ const before: Theme = {
   primary: "#22C7B8", onPrimary: "#0E0B08", onSurface: "#F5EDD8", onVariant: "#94897C",
   divider: "rgba(245,237,216,0.08)", outline: "rgba(245,237,216,0.14)",
   coolDim: "rgba(34,199,184,0.12)", coolBorder: "rgba(34,199,184,0.30)",
-  ownBubble: "#143B36", ownBubbleBorder: "rgba(34,199,184,0.30)", otherBubble: "#211C17", gold: "#E8A830",
+  ownBubble: "#143B36", ownBubbleBorder: "rgba(34,199,184,0.30)", onSentBubble: "#F5EDD8",
+  sentTimestamp: "rgba(255,255,255,.55)", sentReplyBackground: "rgba(0,0,0,.20)",
+  sentReplyBorder: "#E8A830", sentReplyText: "rgba(245,237,216,.70)",
+  otherBubble: "#211C17", messageTimestamp: "rgba(245,237,216,.38)", mediaTimestamp: "rgba(255,255,255,.72)",
+  gold: "#E8A830",
   goldDim: "rgba(232,168,48,0.12)", goldBorder: "rgba(232,168,48,0.24)",
   modeInactive: "#A19B94", wpBg: "#0E0B08", wpLine: "#D7CAB9", wpOpacity: 0.2, vignette: false
 };
@@ -122,6 +135,7 @@ function tableScreen(t: Theme): string {
 
 function chatScreen(t: Theme): string {
   const bubble = (cls: string, html: string) => `<div class="bubble ${cls}">${html}</div>`;
+  const ownReply = `<div class="replyPreview ownReply"><div class="replyAuthor">Jon</div><div class="replyText">Who’s in for tacos tonight?</div></div>`;
   return `<div class="phone" style="background:${t.bg}">
     ${wallpaper(t.wpBg, t.wpLine, t.wpOpacity, "wp-c-" + t.key)}
     ${t.vignette ? '<div class="vignette"></div>' : ""}
@@ -129,7 +143,7 @@ function chatScreen(t: Theme): string {
     <div class="chatBody">
       <div class="daySep">TODAY</div>
       ${bubble("other", '<div class="bName" style="color:' + AVATARS[1] + '">Jon</div>Who’s in for tacos tonight? <span class="ts">7:02</span>')}
-      ${bubble("own", "Count me in! 7pm works 🙌 <span class=\"ts own\">7:03</span>")}
+      ${bubble("own", ownReply + "Count me in! 7pm works <span class=\"ts own\">7:03</span>")}
       ${bubble("other", '<div class="bName" style="color:' + AVATARS[0] + '">Maya</div>The al pastor there is unreal <span class="ts">7:05</span>')}
       ${bubble("own", "Booking the table now <span class=\"ts own\">7:06</span>")}
     </div>
@@ -145,7 +159,10 @@ function css(t: Theme): string {
   .phone-${t.key} { --bg:${t.bg}; --appBar:${t.appBar}; --card:${t.card}; --raised:${t.raised}; --high:${t.high};
     --primary:${t.primary}; --onPrimary:${t.onPrimary}; --onSurface:${t.onSurface}; --onVariant:${t.onVariant};
     --divider:${t.divider}; --outline:${t.outline}; --coolDim:${t.coolDim}; --coolBorder:${t.coolBorder};
-    --ownBubble:${t.ownBubble}; --ownBubbleBorder:${t.ownBubbleBorder}; --otherBubble:${t.otherBubble}; --gold:${t.gold}; --goldDim:${t.goldDim};
+    --ownBubble:${t.ownBubble}; --ownBubbleBorder:${t.ownBubbleBorder}; --onSentBubble:${t.onSentBubble};
+    --sentTimestamp:${t.sentTimestamp}; --sentReplyBackground:${t.sentReplyBackground}; --sentReplyBorder:${t.sentReplyBorder};
+    --sentReplyText:${t.sentReplyText}; --otherBubble:${t.otherBubble}; --messageTimestamp:${t.messageTimestamp};
+    --mediaTimestamp:${t.mediaTimestamp}; --gold:${t.gold}; --goldDim:${t.goldDim};
     --goldBorder:${t.goldBorder}; --modeInactive:${t.modeInactive}; }`;
 }
 
@@ -188,20 +205,28 @@ const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
   .daySep { align-self:center; background:var(--high); color:var(--onVariant); font-size:10px; font-weight:800; letter-spacing:.08em; padding:5px 10px; border-radius:999px; border:1px solid var(--outline); margin-bottom:4px; }
   .bubble { max-width:74%; padding:8px 12px 7px; border-radius:16px; color:var(--onSurface); font-size:14px; line-height:1.35; position:relative; }
   .other { align-self:flex-start; background:var(--otherBubble); border:1px solid var(--divider); border-top-left-radius:7px; }
-  .own { align-self:flex-end; background:var(--ownBubble); border:1px solid var(--ownBubbleBorder); border-top-right-radius:7px; }
+  .own { align-self:flex-end; background:var(--ownBubble); border:1px solid var(--ownBubbleBorder); border-top-right-radius:7px; color:var(--onSentBubble); }
   .bName { font-size:11px; font-weight:800; margin-bottom:2px; }
-  .ts { font-size:10px; color:var(--onVariant); margin-left:6px; }
-  .ts.own { color:rgba(255,255,255,.55); }
+  .replyPreview { background:var(--coolDim); border-left:3px solid var(--primary); border-radius:9px; margin-bottom:7px; padding:7px 9px; }
+  .replyPreview.ownReply { background:var(--sentReplyBackground); border-left-color:var(--sentReplyBorder); }
+  .replyAuthor { color:var(--primary); font-size:11px; font-weight:800; line-height:14px; }
+  .ownReply .replyAuthor { color:var(--onSentBubble); }
+  .replyText { color:var(--onVariant); font-size:12px; font-weight:700; line-height:16px; margin-top:2px; }
+  .ownReply .replyText { color:var(--sentReplyText); }
+  .ts { font-size:10px; color:var(--messageTimestamp); margin-left:6px; }
+  .ts.own { color:var(--sentTimestamp); }
   .composer { position:relative; z-index:2; display:flex; align-items:center; gap:8px; padding:12px 16px 16px; background:var(--bg); border-top:1px solid var(--divider); }
   .inputBar { flex:1; min-height:42px; display:flex; align-items:center; padding:0 14px; border-radius:16px; background:var(--raised); border:1px solid var(--outline); }
   .inputPlaceholder { color:var(--onVariant); font-size:15px; }
   .sendBtn { width:40px; height:40px; border-radius:50%; background:var(--primary); color:var(--onPrimary); display:flex; align-items:center; justify-content:center; font-size:16px; }
-  ${css(before)} ${css(after)}
+  ${css(before)} ${css(afterDark)} ${css(afterLight)}
 </style></head><body>
   <div class="col"><div class="colLabel">TABLE · BEFORE</div><div class="phone-before">${tableScreen(before)}</div></div>
-  <div class="col"><div class="colLabel">TABLE · AFTER</div><div class="phone-after">${tableScreen(after)}</div></div>
+  <div class="col"><div class="colLabel">TABLE · AFTER DARK</div><div class="phone-after-dark">${tableScreen(afterDark)}</div></div>
+  <div class="col"><div class="colLabel">TABLE · AFTER LIGHT</div><div class="phone-after-light">${tableScreen(afterLight)}</div></div>
   <div class="col"><div class="colLabel">CHAT · BEFORE</div><div class="phone-before">${chatScreen(before)}</div></div>
-  <div class="col"><div class="colLabel">CHAT · AFTER</div><div class="phone-after">${chatScreen(after)}</div></div>
+  <div class="col"><div class="colLabel">CHAT · AFTER DARK</div><div class="phone-after-dark">${chatScreen(afterDark)}</div></div>
+  <div class="col"><div class="colLabel">CHAT · AFTER LIGHT</div><div class="phone-after-light">${chatScreen(afterLight)}</div></div>
 </body></html>`;
 
 function page(title: string, body: string): string {
@@ -210,10 +235,12 @@ function page(title: string, body: string): string {
 }
 const tablePair = `
   <div class="col"><div class="colLabel">TABLE · BEFORE</div><div class="phone-before">${tableScreen(before)}</div></div>
-  <div class="col"><div class="colLabel">TABLE · AFTER</div><div class="phone-after">${tableScreen(after)}</div></div>`;
+  <div class="col"><div class="colLabel">TABLE · AFTER DARK</div><div class="phone-after-dark">${tableScreen(afterDark)}</div></div>
+  <div class="col"><div class="colLabel">TABLE · AFTER LIGHT</div><div class="phone-after-light">${tableScreen(afterLight)}</div></div>`;
 const chatPair = `
   <div class="col"><div class="colLabel">CHAT · BEFORE</div><div class="phone-before">${chatScreen(before)}</div></div>
-  <div class="col"><div class="colLabel">CHAT · AFTER</div><div class="phone-after">${chatScreen(after)}</div></div>`;
+  <div class="col"><div class="colLabel">CHAT · AFTER DARK</div><div class="phone-after-dark">${chatScreen(afterDark)}</div></div>
+  <div class="col"><div class="colLabel">CHAT · AFTER LIGHT</div><div class="phone-after-light">${chatScreen(afterLight)}</div></div>`;
 
 const dir = import.meta.dirname ?? __dirname;
 writeFileSync(join(dir, "room-theme-preview.html"), html);

@@ -50,7 +50,8 @@
       "expo-notifications",
       "expo-font",
       "expo-web-browser",
-      "expo-video"
+      "expo-video",
+      "react-native-compressor"
     ],
     "experiments": {
       "typedRoutes": true

@@ -68,6 +68,9 @@ export default function RootLayout() {
             <Stack.Screen name="auth/callback" />
             <Stack.Screen name="people/[username]" />
             <Stack.Screen name="onboarding/profile" />
+            {/* Camera opens with a snappier fade than the global default so it
+                feels instant; a quick fade also hides the brief sensor warm-up. */}
+            <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
             {/* Settings and its sub-screens present over the screen beneath them and
                 drive their own Reanimated slide (useSlideOverScreen). Native
                 animation is disabled because native transparentModal ignores

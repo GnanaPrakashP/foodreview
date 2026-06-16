@@ -344,7 +344,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
           <Ionicons name="close" size={22} color={colors.dark.white} />
         </Pressable>
         <View style={styles.centerState}>
-          <ActivityIndicator color={CAMERA_COLORS.teal} />
+          <ActivityIndicator color={CAMERA_COLORS.memory} />
           <Text style={styles.centerText}>Opening camera</Text>
         </View>
       </CameraShell>
@@ -360,7 +360,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
         </Pressable>
         <View style={styles.permissionState}>
           <View style={styles.permissionIcon}>
-            <Ionicons name="camera-outline" size={32} color={CAMERA_COLORS.teal} />
+            <Ionicons name="camera-outline" size={32} color={CAMERA_COLORS.memory} />
           </View>
           <Text style={styles.permissionTitle}>Camera access needed</Text>
           <Text style={styles.permissionText}>
@@ -487,7 +487,7 @@ function RecordingRing({ elapsedMs, recording }: { elapsedMs: number; recording:
         r={SHUTTER_RING_RADIUS}
         rotation="-90"
         origin={`${SHUTTER_SIZE / 2}, ${SHUTTER_SIZE / 2}`}
-        stroke={recording ? CAMERA_COLORS.recording : CAMERA_COLORS.teal}
+        stroke={recording ? CAMERA_COLORS.recording : CAMERA_COLORS.memory}
         strokeDasharray={`${SHUTTER_RING_CIRCUMFERENCE} ${SHUTTER_RING_CIRCUMFERENCE}`}
         strokeDashoffset={dashOffset}
         strokeLinecap="round"
@@ -527,9 +527,12 @@ function nextAnimationFrame() {
 }
 
 const CAMERA_COLORS = {
+  memory: colors.dark.memory,
+  memoryBorder: colors.dark.memoryBorder,
+  memoryDim: colors.dark.memoryDim,
+  onMemory: colors.dark.white,
   overlay: "rgba(0,0,0,0.46)",
-  recording: "#FF3B30",
-  teal: "#22C7B8"
+  recording: "#FF3B30"
 } as const;
 
 const styles = StyleSheet.create({
@@ -684,8 +687,8 @@ const styles = StyleSheet.create({
   },
   permissionIcon: {
     alignItems: "center",
-    backgroundColor: "rgba(34,199,184,0.12)",
-    borderColor: "rgba(34,199,184,0.22)",
+    backgroundColor: CAMERA_COLORS.memoryDim,
+    borderColor: CAMERA_COLORS.memoryBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: 72,
@@ -712,7 +715,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     alignItems: "center",
-    backgroundColor: CAMERA_COLORS.teal,
+    backgroundColor: CAMERA_COLORS.memory,
     borderRadius: radius.pill,
     minWidth: 180,
     paddingHorizontal: spacing.lg,
@@ -720,7 +723,7 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     ...fontStyles.extraBold,
-    color: colors.dark.bg,
+    color: CAMERA_COLORS.onMemory,
     fontSize: 14,
     letterSpacing: 0
   },

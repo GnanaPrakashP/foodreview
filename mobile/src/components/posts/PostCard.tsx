@@ -21,7 +21,7 @@ type PostCardProps = {
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
-const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 
 function avatarColor(name: string) {
   let hash = 0;
@@ -204,7 +204,7 @@ export function PostCard({ post }: PostCardProps) {
           <Text numberOfLines={2} style={styles.restaurantName}>{post.restaurantName}</Text>
           {area ? (
             <View style={styles.locationRow}>
-              <MapPin size={12} color={themeColors.muted} strokeWidth={2} />
+              <MapPin size={12} color={themeColors.mutedStrong} strokeWidth={2} />
               <Text numberOfLines={1} style={styles.locationText}>{area}</Text>
             </View>
           ) : null}
@@ -374,13 +374,13 @@ function createStyles(c: ThemeColors) {
     },
     headerMeta: {
       ...fontStyles.regular,
-      color: c.muted,
+      color: c.mutedStrong,
       fontSize: 13,
       lineHeight: 18
     },
     sharedContext: {
       ...fontStyles.regular,
-      color: c.muted,
+      color: c.mutedStrong,
       fontSize: 12,
       lineHeight: 15,
       marginTop: 0
@@ -477,7 +477,7 @@ function createStyles(c: ThemeColors) {
     },
     locationText: {
       ...fontStyles.regular,
-      color: c.muted,
+      color: c.mutedStrong,
       flex: 1,
       fontSize: 11,
       lineHeight: 14

@@ -12,7 +12,7 @@ import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, spacing } from "@/theme";
 
-const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 
 function avatarColor(name: string) {
   let hash = 0;

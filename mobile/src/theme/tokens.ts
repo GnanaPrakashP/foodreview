@@ -1,16 +1,15 @@
 /**
- * Dark-theme color tokens (Material-3 style) tuned toward a Telegram-like room.
+ * Color tokens tuned toward the table memory room.
  *
- * Primary accent = Telegram blue (#3390EC) for the FAB, active tab, send
- * button, and selection states. Sent chat bubbles use a separate indigo/purple
- * tone sampled from the provided reference image instead of the control blue.
+ * The room follows the current app appearance for background, surfaces, text,
+ * and borders. Purple is the room-specific primary accent for the FAB, active
+ * tab, send button, selection states, and sent chat bubbles.
  *
- * Surfaces fake elevation with progressively lighter neutral greys instead of
- * heavy shadows. Text/icons are white at opacity tiers (87/60/38). The accent
- * is used sparingly so blue remains the only primary action color.
+ * The accent is used sparingly so the room feels social/private without making
+ * the whole room a separate purple theme.
  *
  * This is the single source of truth for the room/chat/table UI. Prefer the
- * semantic `dark` tokens in components; reach for raw palette tones
+ * semantic room tokens in components; reach for raw palette tones
  * only when defining new semantic roles here.
  */
 
@@ -28,28 +27,28 @@ export const teal = {
   900: "#133F3A"
 } as const;
 
-/** Telegram-like blue palette for the room's single primary accent. */
-export const telegramBlue = {
-  50: "#EAF5FF",
-  100: "#D4EAFF",
-  200: "#A8D8FF",
-  300: "#75C0FF",
-  400: "#4AA8F5",
-  500: "#3390EC",
-  600: "#2F7FD8",
-  700: "#286ABD",
-  800: "#215595",
-  900: "#193A64"
+/** Warm plum palette for the room's single primary accent. */
+export const memoryPurple = {
+  50: "#F8F0FF",
+  100: "#EEDBFF",
+  200: "#DDBBFF",
+  300: "#C895FF",
+  400: "#B36AF5",
+  500: "#A855F7",
+  600: "#933FE0",
+  700: "#7830B8",
+  800: "#5E268E",
+  900: "#3C185C"
 } as const;
 
-/** Cool navy ramp for the wallpaper/background, close to the reference image. */
-export const telegramNavy = {
-  700: "#203244",
-  750: "#1A2A3A",
-  800: "#162332",
-  850: "#121E2A",
-  900: "#111B25",
-  950: "#0F1821"
+/** CircleBites dark surface ramp for the room wallpaper/background. */
+export const memoryNight = {
+  700: "#3A3027",
+  750: "#2E2720",
+  800: "#2B241D",
+  850: "#211C17",
+  900: "#1A1410",
+  950: "#0E0B08"
 } as const;
 
 /** Neutral grey ramp — slightly cool (hue ~210°), no warm/brown cast. */
@@ -68,60 +67,67 @@ export const neutral = {
   900: "#101213" // base background (~#121212, true neutral)
 } as const;
 
-/** White-on-dark text/icon opacity tiers. */
+/** CircleBites-on-dark text/icon tiers. */
 export const onDark = {
-  high: "rgba(255, 255, 255, 0.87)", // primary text/icons
-  medium: "rgba(255, 255, 255, 0.60)", // secondary text/icons
-  disabled: "rgba(255, 255, 255, 0.38)" // disabled / faint
+  high: "#F5EDD8", // primary text/icons
+  medium: "#9A8C80", // secondary text/icons — lifted to clear WCAG AA (~5.2:1 on bg)
+  disabled: "rgba(245, 237, 216, 0.38)" // disabled / faint
 } as const;
 
 /**
- * Layered surfaces fake elevation: each level is a progressively lighter
- * neutral grey. Use the level that matches how "raised" an element reads.
+ * Layered surfaces fake elevation with the shared app dark palette. Use the
+ * level that matches how "raised" an element reads.
  */
 export const elevation = {
-  level0: telegramNavy[900], // base background
-  level1: "#141D27", // cards, chat panels, sheets bg
-  level2: telegramNavy[800], // app bar, FAB-adjacent, message input, raised cards
-  level3: telegramNavy[750], // bottom sheets, popovers, selection bar
-  level4: telegramNavy[700] // highest (menus floating above sheets)
+  level0: memoryNight[950], // base background       #0E0B08
+  level1: memoryNight[850], // cards, chat panels, sheets bg          #211C17
+  level2: memoryNight[800], // app bar, FAB-adjacent, message input   #2B241D
+  level3: memoryNight[750], // bottom sheets, popovers, selection bar #2E2720
+  level4: memoryNight[700] // highest (menus floating above sheets)   #3A3027
 } as const;
 
 /** Semantic dark-theme tokens. Components should reference these. */
 export const dark = {
   // Accent — used sparingly for truly active/primary actions.
-  primary: telegramBlue[500], // FAB, send, active tab, selected
+  primary: "#9D5BE8", // FAB, send, active tab, selected — calmed from the neon seed
   onPrimary: "#FFFFFF", // text/icons on the filled accent
-  primaryPressed: telegramBlue[400],
-  primaryContainer: "rgba(51, 144, 236, 0.18)", // tinted chips/selected wells
-  onPrimaryContainer: telegramBlue[200],
-  primaryOutline: "rgba(51, 144, 236, 0.42)",
+  primaryPressed: "#B07CF0", // lightened primary for pressed state
+  primaryContainer: "rgba(157, 91, 232, 0.18)", // tinted chips/selected wells
+  onPrimaryContainer: memoryPurple[200],
+  primaryOutline: "rgba(157, 91, 232, 0.42)",
+  wallpaperLine: "#D7CAB9",
+  wallpaperOpacity: 0.2,
 
   // Secondary — neutral, for quiet supporting accents.
   secondary: neutral[200],
   onSecondary: neutral[900],
 
   // Backgrounds & surfaces.
-  background: telegramNavy[900],
-  wallpaperBackground: telegramNavy[900],
+  background: memoryNight[950],
+  wallpaperBackground: memoryNight[950],
   onBackground: onDark.high,
   surface: elevation.level1,
   surfaceRaised: elevation.level2,
   surfaceHigh: elevation.level3,
   surfaceHighest: elevation.level4,
-  surfaceDim: telegramNavy[950], // media wells / inset thumbnails
+  surfaceDim: "#090604", // media wells / inset thumbnails
   onSurface: onDark.high,
   onSurfaceVariant: onDark.medium,
   onSurfaceDisabled: onDark.disabled,
   surfaceVariant: neutral[700],
 
   // Chat message surfaces.
-  sentBubble: "#625AD6",
-  sentBubbleOutline: "rgba(153, 123, 236, 0.42)",
+  sentBubble: "#6F3FC8",
+  sentBubbleOutline: "rgba(200, 149, 255, 0.38)",
   onSentBubble: onDark.high,
-  receivedBubble: telegramNavy[750],
+  sentMessageTimestamp: "rgba(255, 255, 255, 0.72)",
+  sentReplyBackground: "rgba(255, 255, 255, 0.14)",
+  sentReplyBorder: "rgba(255, 255, 255, 0.56)",
+  sentReplyText: "rgba(255, 255, 255, 0.78)",
+  receivedBubble: memoryNight[850],
   onReceivedBubble: onDark.high,
-  messageTimestamp: onDark.disabled,
+  messageTimestamp: "rgba(245, 237, 216, 0.48)",
+  mediaOverlayTimestamp: "rgba(255, 255, 255, 0.84)",
 
   // Status.
   error: "#F2746A",
@@ -135,23 +141,93 @@ export const dark = {
   goldOutline: "rgba(232, 168, 48, 0.24)",
 
   // Lines & scrims.
-  outline: "rgba(255, 255, 255, 0.16)",
-  divider: "rgba(255, 255, 255, 0.08)",
-  outlineStrong: "rgba(255, 255, 255, 0.24)",
+  outline: "rgba(245, 237, 216, 0.14)",
+  divider: "rgba(245, 237, 216, 0.08)",
+  outlineStrong: "rgba(245, 237, 216, 0.22)",
   scrim: "rgba(0, 0, 0, 0.58)",
   scrimStrong: "rgba(0, 0, 0, 0.94)",
   scrimSoft: "rgba(0, 0, 0, 0.20)",
   scrimMedium: "rgba(0, 0, 0, 0.45)",
   // Frosted-glass fills for badges/buttons floating over media.
-  glass: "rgba(255, 255, 255, 0.18)",
-  glassDim: "rgba(255, 255, 255, 0.12)",
+  glass: "rgba(245, 237, 216, 0.18)",
+  glassDim: "rgba(245, 237, 216, 0.12)",
 
   // Selection wash for highlighted rows.
-  selection: "rgba(51, 144, 236, 0.14)",
+  selection: "rgba(157, 91, 232, 0.14)",
 
   white: "#FFFFFF",
   black: "#000000"
 } as const;
+
+export const light = {
+  primary: "#7C3AED",
+  onPrimary: "#FFFFFF",
+  primaryPressed: "#6D28D9",
+  primaryContainer: "rgba(124, 58, 237, 0.10)",
+  onPrimaryContainer: "#5B21B6",
+  primaryOutline: "rgba(124, 58, 237, 0.24)",
+  wallpaperLine: "#8C7A6A",
+  wallpaperOpacity: 0.13,
+
+  secondary: "#665F57",
+  onSecondary: "#FFFFFF",
+
+  background: "#F7F5F0",
+  wallpaperBackground: "#F7F5F0",
+  onBackground: "#19140E",
+  surface: "#FFFFFF",
+  surfaceRaised: "#EEF0E9",
+  surfaceHigh: "#FFFFFF",
+  surfaceHighest: "#F3EFE7",
+  surfaceDim: "#E9E2D8",
+  onSurface: "#19140E",
+  onSurfaceVariant: "#665F57",
+  onSurfaceDisabled: "rgba(25, 20, 14, 0.38)",
+  surfaceVariant: "#E7E1D8",
+
+  sentBubble: "#7C3AED",
+  sentBubbleOutline: "rgba(124, 58, 237, 0.24)",
+  onSentBubble: "#FFFFFF",
+  sentMessageTimestamp: "rgba(255, 255, 255, 0.76)",
+  sentReplyBackground: "rgba(255, 255, 255, 0.20)",
+  sentReplyBorder: "rgba(255, 255, 255, 0.62)",
+  sentReplyText: "rgba(255, 255, 255, 0.82)",
+  receivedBubble: "#FFFFFF",
+  onReceivedBubble: "#19140E",
+  messageTimestamp: "rgba(25, 20, 14, 0.50)",
+  mediaOverlayTimestamp: "rgba(255, 255, 255, 0.86)",
+
+  error: "#B42318",
+  onError: "#FFFFFF",
+  errorContainer: "rgba(180, 35, 24, 0.08)",
+  errorOutline: "rgba(180, 35, 24, 0.24)",
+
+  gold: "#A96F04",
+  goldContainer: "rgba(169, 111, 4, 0.10)",
+  goldOutline: "rgba(169, 111, 4, 0.24)",
+
+  outline: "rgba(102, 95, 87, 0.20)",
+  divider: "rgba(102, 95, 87, 0.14)",
+  outlineStrong: "rgba(102, 95, 87, 0.30)",
+  scrim: "rgba(0, 0, 0, 0.40)",
+  scrimStrong: "rgba(0, 0, 0, 0.76)",
+  scrimSoft: "rgba(0, 0, 0, 0.08)",
+  scrimMedium: "rgba(0, 0, 0, 0.24)",
+  glass: "rgba(255, 255, 255, 0.82)",
+  glassDim: "rgba(25, 20, 14, 0.08)",
+
+  selection: "rgba(124, 58, 237, 0.10)",
+
+  white: "#FFFFFF",
+  black: "#000000"
+} as const;
+
+type WidenRoomTokenValue<T> = T extends number ? number : string;
+export type MemoryRoomTokens = {
+  readonly [K in keyof typeof dark]: WidenRoomTokenValue<(typeof dark)[K]>;
+};
+
+export const memoryRoomTokens: { readonly dark: MemoryRoomTokens; readonly light: MemoryRoomTokens } = { dark, light };
 
 /**
  * Identity colors for member avatars — desaturated for dark-theme harmony so
@@ -159,10 +235,10 @@ export const dark = {
  */
 export const avatarAccents = [
   teal[400],
-  "#8C7CF0",
+  "#A86AF2",
   "#E08050",
   "#D8A848",
-  "#5CA8E0",
+  "#B878D8",
   "#E08CB4",
   "#5CC894"
 ] as const;

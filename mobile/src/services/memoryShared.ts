@@ -41,6 +41,16 @@ export type MemoryDishRow = {
   created_at: string;
 };
 
+export type MemoryDishRatingRow = {
+  id: string;
+  room_id: string;
+  dish_id: string;
+  rated_by: string;
+  rating: number | string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MemoryPhotoRow = {
   id: string;
   room_id: string;

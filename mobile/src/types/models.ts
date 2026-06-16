@@ -133,9 +133,24 @@ export type MemoryDish = {
   addedBy: string;
   addedByDisplayName: string;
   dishName: string;
+  averageRating: number | null;
+  myRating: number | null;
   rating: number | null;
+  ratingCount: number;
+  ratings: MemoryDishRating[];
   note: string | null;
   createdAt: string;
+};
+
+export type MemoryDishRating = {
+  id: string;
+  roomId: string;
+  dishId: string;
+  ratedBy: string;
+  ratedByDisplayName: string;
+  rating: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type MemoryPhoto = {

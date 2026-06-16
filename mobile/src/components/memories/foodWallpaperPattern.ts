@@ -31,7 +31,7 @@ export type DoodlePlacement = {
 };
 
 export const FOOD_WALLPAPER_TILE_SIZE = 364;
-export const FOOD_WALLPAPER_LINE_COLOR = "#8FA4B8";
+export const FOOD_WALLPAPER_LINE_COLOR = "#D7CAB9";
 export const FOOD_WALLPAPER_OPACITY = 0.2;
 
 const GRID_COLS = 8;

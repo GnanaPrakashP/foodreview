@@ -5,6 +5,7 @@ import {
   memoryTablesError,
   normalizeUsername,
   ROOM_SELECT,
+  type MemoryDishRatingRow,
   type MemoryDishRow,
   type MemoryMemberRow,
   type MemoryMessageRow,
@@ -84,6 +85,12 @@ export type AddMemoryDishInput = {
   dishName: string;
   note?: string;
   rating?: number | null;
+  roomId: string;
+};
+
+export type SetMemoryDishRatingInput = {
+  dishId: string;
+  rating: number;
   roomId: string;
 };
 
@@ -289,6 +296,13 @@ function isMissingMemoryReadsTable(error: { message?: string; code?: string } | 
   return error?.code === "42P01" ||
     error?.code === "PGRST205" ||
     /shared_memory_reads|schema cache|could not find .*shared_memory_reads|relation .*shared_memory_reads.* does not exist/i.test(message);
+}
+
+function isMissingMemoryDishRatingsTable(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42P01" ||
+    error?.code === "PGRST205" ||
+    /shared_memory_dish_ratings|schema cache|could not find .*shared_memory_dish_ratings|relation .*shared_memory_dish_ratings.* does not exist/i.test(message);
 }
 
 async function fetchMemoryMessageRowsPage({
@@ -556,7 +570,7 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
 }
 
 async function fetchRoomParts(roomId: string, username: string) {
-  const [roomResult, membersResult, messagesPage, dishesResult, readResult] = await Promise.all([
+  const [roomResult, membersResult, messagesPage, dishesResult, dishRatingsResult, readResult] = await Promise.all([
     supabase.from("shared_memory_rooms").select(ROOM_SELECT).eq("id", roomId).maybeSingle<MemoryRoomRow>(),
     supabase.from("shared_memory_members").select("id, room_id, user_name, role, created_at").eq("room_id", roomId).returns<MemoryMemberRow[]>(),
     fetchMemoryMessageRowsPage({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
@@ -566,6 +580,12 @@ async function fetchRoomParts(roomId: string, username: string) {
       .eq("room_id", roomId)
       .order("created_at", { ascending: true })
       .returns<MemoryDishRow[]>(),
+    supabase
+      .from("shared_memory_dish_ratings")
+      .select("id, room_id, dish_id, rated_by, rating, created_at, updated_at")
+      .eq("room_id", roomId)
+      .order("created_at", { ascending: true })
+      .returns<MemoryDishRatingRow[]>(),
     supabase
       .from("shared_memory_reads")
       .select("room_id, user_name, last_read_at, updated_at")
@@ -581,6 +601,9 @@ async function fetchRoomParts(roomId: string, username: string) {
   if (roomResult.error) throw memoryTablesError(roomResult.error);
   if (membersResult.error) throw memoryTablesError(membersResult.error);
   if (dishesResult.error) throw memoryTablesError(dishesResult.error);
+  if (dishRatingsResult.error && !isMissingMemoryDishRatingsTable(dishRatingsResult.error)) {
+    throw memoryTablesError(dishRatingsResult.error);
+  }
   if (readResult.error && !isMissingMemoryReadsTable(readResult.error) && readResult.error.code !== "PGRST116") {
     throw memoryTablesError(readResult.error);
   }
@@ -589,6 +612,7 @@ async function fetchRoomParts(roomId: string, username: string) {
   return {
     room: roomResult.data,
     dishes: dishesResult.data ?? [],
+    dishRatings: dishRatingsResult.error ? [] : dishRatingsResult.data ?? [],
     lastReadAt: readResult.error ? null : readResult.data?.last_read_at ?? null,
     members: membersResult.data ?? [],
     messages: messagesPage.rows,
@@ -605,6 +629,7 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
   const names = [
     ...parts.members.map((member) => member.user_name),
     ...parts.dishes.map((dish) => dish.added_by),
+    ...parts.dishRatings.map((rating) => rating.rated_by),
     ...parts.messages.map((message) => message.author_name),
     ...parts.replyMessages.map((message) => message.author_name),
     ...parts.photos.map((photo) => photo.uploader_name)
@@ -613,12 +638,14 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
 
   return mapMemoryRoom({
     dishes: parts.dishes,
+    dishRatings: parts.dishRatings,
     lastReadAt: parts.lastReadAt,
     members: parts.members,
     messages: parts.messages,
     namesByUsername,
     photos: parts.photos,
     replyMessages: parts.replyMessages,
+    viewerName: username,
     room: parts.room
   });
 }
@@ -937,7 +964,7 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
     throw new Error("Rating must be from 1 to 5");
   }
 
-  const { error } = await supabase
+  const { data: dish, error } = await supabase
     .from("shared_memory_dishes")
     .insert({
       added_by: addedBy,
@@ -945,14 +972,60 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
       note,
       rating,
       room_id: input.roomId
-    });
+    })
+    .select("id")
+    .single<{ id: string }>();
 
   if (error) throw memoryTablesError(error);
+  if (rating !== null && dish?.id) {
+    const now = new Date().toISOString();
+    const { error: ratingError } = await supabase
+      .from("shared_memory_dish_ratings")
+      .upsert({
+        dish_id: dish.id,
+        rated_by: addedBy,
+        rating,
+        room_id: input.roomId,
+        updated_at: now
+      }, { onConflict: "dish_id,rated_by" });
+
+    if (ratingError && !isMissingMemoryDishRatingsTable(ratingError)) {
+      throw memoryTablesError(ratingError);
+    }
+  }
   void notifyMemoryRoomActivity({
     kind: "dish",
     preview: dishName,
     roomId: input.roomId
   }).catch(() => {});
+  return { ok: true };
+}
+
+export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
+  const ratedBy = await myUsername();
+  await assertMemoryRoomMember(input.roomId, ratedBy);
+  const rating = Number(input.rating);
+
+  if (!input.dishId) throw new Error("Dish is required");
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    throw new Error("Rating must be from 1 to 5");
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("shared_memory_dish_ratings")
+    .upsert({
+      dish_id: input.dishId,
+      rated_by: ratedBy,
+      rating,
+      room_id: input.roomId,
+      updated_at: now
+    }, { onConflict: "dish_id,rated_by" });
+
+  if (isMissingMemoryDishRatingsTable(error)) {
+    throw new Error("Run mobile/supabase/migrations/202606160001_shared_memory_dish_ratings.sql before rating memory dishes.");
+  }
+  if (error) throw memoryTablesError(error);
   return { ok: true };
 }
 

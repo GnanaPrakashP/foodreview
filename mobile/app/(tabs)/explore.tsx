@@ -55,7 +55,7 @@ type PersonSpotlight = {
 
 const PLACE_CARD_HEIGHT = 152;
 const PLACE_MEDIA_WIDTH = PLACE_CARD_HEIGHT * 4 / 5;
-const avatarColors = ["#C04020", "#4F46E5", "#22C55E", "#D4821A", "#BE185D", "#0F766E"];
+const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 
 function useExploreTheme() {
   const { themeColors } = useThemePreference();
