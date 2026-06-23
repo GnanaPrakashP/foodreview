@@ -1,8 +1,14 @@
 import type { MemoryRoomStatus } from "@/types/models";
+import { getOccasionTheme } from "@/features/occasions/occasionThemes";
+import { isOccasionType, type OccasionType } from "@/features/occasions/occasionTypes";
 
 export type MemoryRoomRow = {
   id: string;
   title: string | null;
+  occasion_type?: string | null;
+  occasion_confidence?: number | string | null;
+  occasion_confirmed_by_user?: boolean | null;
+  theme_key?: string | null;
   restaurant_name: string;
   restaurant_id: string | null;
   area: string | null;
@@ -31,9 +37,21 @@ export type MemoryMessageRow = {
   edited_at: string | null;
 };
 
+export type MemoryStopRow = {
+  id: string;
+  room_id: string;
+  stop_type: string;
+  name: string;
+  note: string | null;
+  position: number;
+  created_by: string;
+  created_at: string;
+};
+
 export type MemoryDishRow = {
   id: string;
   room_id: string;
+  stop_id: string | null;
   added_by: string;
   dish_name: string;
   rating: number | string | null;
@@ -54,13 +72,21 @@ export type MemoryDishRatingRow = {
 export type MemoryPhotoRow = {
   id: string;
   room_id: string;
+  stop_id?: string | null;
   message_id: string | null;
+  uploader_id: string | null;
   uploader_name: string;
-  public_url: string;
+  public_url: string | null;
   storage_path: string;
   media_type: "image" | "video" | null;
   image_width: number | null;
   image_height: number | null;
+  upload_intent_id: string | null;
+  moderation_status: "pending" | "approved" | "rejected" | null;
+  moderation_reason: string | null;
+  file_size_bytes: number | null;
+  mime_type: string | null;
+  duration_ms: number | null;
   position: number | null;
   created_at: string;
 };
@@ -75,6 +101,10 @@ export type MemoryReadRow = {
 export const ROOM_SELECT = [
   "id",
   "title",
+  "occasion_type",
+  "occasion_confidence",
+  "occasion_confirmed_by_user",
+  "theme_key",
   "restaurant_name",
   "restaurant_id",
   "area",
@@ -103,6 +133,24 @@ export function normalizeStatus(value: string | null): MemoryRoomStatus {
 
 export function titleForRoom(row: Pick<MemoryRoomRow, "title" | "restaurant_name">) {
   return row.title?.trim() || row.restaurant_name;
+}
+
+export function occasionTypeForRoom(row: Pick<MemoryRoomRow, "occasion_type">): OccasionType {
+  return isOccasionType(row.occasion_type) ? row.occasion_type : "unknown";
+}
+
+export function occasionConfidenceForRoom(row: Pick<MemoryRoomRow, "occasion_confidence">) {
+  const confidence = Number(row.occasion_confidence ?? 0);
+  if (!Number.isFinite(confidence)) return 0;
+  return Math.max(0, Math.min(confidence, 1));
+}
+
+export function occasionConfirmedForRoom(row: Pick<MemoryRoomRow, "occasion_confirmed_by_user">) {
+  return row.occasion_confirmed_by_user === true;
+}
+
+export function themeKeyForRoom(row: Pick<MemoryRoomRow, "theme_key" | "occasion_type">) {
+  return row.theme_key?.trim() || getOccasionTheme(occasionTypeForRoom(row)).id;
 }
 
 function isMissingMemoryTableError(error: { message?: string; code?: string } | null | undefined) {

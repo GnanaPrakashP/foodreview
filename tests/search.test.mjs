@@ -301,14 +301,14 @@ test("searchDishes: query with spaces matches dish names containing that substri
   const reviews = [makeReview("Alice", "Bawarchi", [{ name: "Mutton Biryani", rating: 5 }])];
   const results = searchDishes(reviews, "mutton biryani");
   assert.equal(results.length, 1);
-  assert.equal(results[0].dish_name, "Biryani");
+  assert.equal(results[0].dish_name, "Mutton Biryani");
 });
 
 test("searchDishes: partial space query matches dish name substring", () => {
   const reviews = [makeReview("Alice", "Bawarchi", [{ name: "Mutton Biryani", rating: 4 }])];
   const results = searchDishes(reviews, "mutton");
   assert.equal(results.length, 1);
-  assert.equal(results[0].dish_name, "Biryani");
+  assert.equal(results[0].dish_name, "Mutton Biryani");
 });
 
 test("searchDishes: apostrophe in dish name is matched correctly", () => {

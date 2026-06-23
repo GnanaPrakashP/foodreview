@@ -1,4 +1,5 @@
 import type { ImageSource } from "expo-image";
+import { normalizeDishInput, normalizeDishTokens } from "@/services/dishNormalizer";
 
 export type ExploreCategory<T extends string = string> = {
   id: T;
@@ -48,7 +49,7 @@ export const DISH_CATEGORIES: readonly ExploreCategory<DishClusterId>[] = [
   { id: "burger", label: "Burger", image: require("../../assets/categories/dishes/burger.png") },
   { id: "shawarma", label: "Shawarma", image: require("../../assets/categories/dishes/shawarma.png") },
   { id: "mandi", label: "Mandi", image: require("../../assets/categories/dishes/mandi.png") },
-  { id: "ice_cream", label: "Ice Cream", image: require("../../assets/categories/dishes/ice-cream.png") },
+  { id: "ice_cream", label: "Ice Cream", image: require("../../assets/categories/dishes/ice-cream-v2.png") },
   { id: "milkshake", label: "Milkshake", image: require("../../assets/categories/dishes/milkshake.png") },
   { id: "paneer", label: "Paneer", image: require("../../assets/categories/dishes/paneer.png") },
   { id: "desserts", label: "Desserts", image: require("../../assets/categories/dishes/desserts.png") },
@@ -133,12 +134,20 @@ export function placeMatchesCategory(place: PlaceCategoryInput, category: PlaceC
 
 export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
   const found = new Set<DishClusterId>();
-  const text = clean([dish.name, ...(dish.tags ?? [])].join(" "));
+  const normalization = normalizeDishInput(dish.name);
+  if (normalization.canonicalVariantId && normalization.dishFamilyId !== "other") {
+    return [normalization.dishFamilyId];
+  }
+
+  const text = clean([dish.name, normalization.canonicalVariantName ?? "", normalization.dishFamilyName, ...(dish.tags ?? [])].join(" "));
+  const tokens = new Set(normalizeDishTokens(text));
 
   for (const [cluster, keywords] of Object.entries(dishClusterKeywords) as Array<[Exclude<DishClusterId, "all" | "other">, string[]]>) {
     if (keywords.some((keyword) => text.includes(clean(keyword)))) found.add(cluster);
   }
 
+  if (normalization.dishFamilyId !== "other") found.add(normalization.dishFamilyId);
+  if (tokens.has("chicken")) found.add("chicken");
   return Array.from(found);
 }
 

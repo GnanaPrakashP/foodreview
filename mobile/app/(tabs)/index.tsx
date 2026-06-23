@@ -17,10 +17,13 @@ export default function CircleScreen() {
   const feed = useCircleFeedQuery({ enabled: isReady && isAuthenticated });
   const unreadNotificationCount = 0;
   const notificationBadge = unreadNotificationCount > 9 ? "9+" : String(unreadNotificationCount);
+  const canRefresh = isReady && isAuthenticated;
 
   return (
     <Screen
+      onRefresh={canRefresh ? () => { void feed.refetch(); } : undefined}
       padded={false}
+      refreshing={canRefresh && feed.isRefetching}
       scroll
     >
       <View style={styles.header}>

@@ -1,4 +1,4 @@
-import { normalizeDishName, normalizeDishTokens } from "@/lib/dish-normalizer";
+import { normalizeDishInput, normalizeDishName, normalizeDishTokens } from "@/lib/dish-normalizer";
 
 export type ExploreCategory<T extends string = string> = {
   id: T;
@@ -186,6 +186,11 @@ export function placeMatchesCategory(place: PlaceCategoryInput, category: PlaceC
 export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
   const found = new Set<DishClusterId>();
   const canonical = normalizeDishName(dish.name);
+  const normalization = normalizeDishInput(dish.name);
+  if (normalization.canonicalVariantId && normalization.dishFamilyId !== "other") {
+    return [normalization.dishFamilyId];
+  }
+
   const text = clean([dish.name, canonical?.displayName ?? "", ...(dish.tags ?? [])].join(" "));
   const tokens = new Set(normalizeDishTokens(text));
 
@@ -193,7 +198,7 @@ export function inferDishClusters(dish: DishCategoryInput): DishClusterId[] {
     if (keywords.some((keyword) => text.includes(clean(keyword)))) found.add(cluster);
   }
 
-  if (canonical?.id === "biryani") found.add("biryani");
+  if (normalization.dishFamilyId !== "other") found.add(normalization.dishFamilyId);
   if (canonical?.id === "burger") found.add("burger");
   if (canonical?.id === "pizza") found.add("pizza");
   if (canonical?.id === "shawarma") found.add("shawarma");

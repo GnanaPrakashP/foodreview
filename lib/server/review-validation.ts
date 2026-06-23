@@ -1,5 +1,5 @@
 import type { FoodItem, Visibility } from "@/lib/types";
-import { normalizeDishDisplayName } from "@/lib/dish-normalizer";
+import { normalizeDishInput } from "@/lib/dish-normalizer";
 
 const VALID_VISIBILITIES = new Set<Visibility>(["public", "circle", "me"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -32,8 +32,17 @@ export function normalizeReviewItems(items: unknown): { items?: FoodItem[]; erro
       return { error: "Rate every dish you add" };
     }
 
+    const dish = normalizeDishInput(name);
     normalized.push({
-      name: normalizeDishDisplayName(name),
+      name: dish.canonicalVariantName ?? dish.rawDishName,
+      rawDishName: dish.rawDishName,
+      canonicalDishId: dish.canonicalVariantId,
+      canonicalDishName: dish.canonicalVariantName,
+      canonicalDishSource: dish.canonicalSource,
+      dishClusterKey: dish.dishClusterKey,
+      dishFamilyId: dish.dishFamilyId,
+      dishFamilyName: dish.dishFamilyName,
+      dishNormalizationConfidence: dish.confidence,
       rating: item.rating,
     });
   }

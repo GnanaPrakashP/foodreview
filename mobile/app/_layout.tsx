@@ -1,25 +1,16 @@
-import { DarkTheme, ThemeProvider, type Theme } from "@react-navigation/native";
+import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useMemo } from "react";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AppProviders } from "@/providers/AppProviders";
-import { colors, useCircleBitesFonts } from "@/theme";
+import { useThemePreference } from "@/hooks/useThemePreference";
+import { useCircleBitesFonts } from "@/theme";
 
-// Dark navigation theme so the navigator/window background is never the default
-// white — otherwise a white frame flashes through during screen transitions.
-const navigationTheme: Theme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: colors.dark.bg,
-    card: colors.dark.bg
-  }
-};
-
-// The circle screen, settings, and every settings sub-screen present over the
-// screen beneath them and drive their own Reanimated slide (see
-// useSlideOverScreen). Native animation is disabled and the container is
-// transparent so the screen underneath shows during the slide.
+// The Explore detail screens, circle screen, settings, and every settings
+// sub-screen present over the screen beneath them and drive their own
+// Reanimated slide (see useSlideOverScreen). Native animation is disabled and
+// the container is transparent so the screen underneath shows during the slide.
 const SLIDE_OVER_OPTIONS = {
   presentation: "transparentModal",
   animation: "none",
@@ -28,6 +19,11 @@ const SLIDE_OVER_OPTIONS = {
 } as const;
 
 const SLIDE_OVER_ROUTES = [
+  "restaurants/[placeId]",
+  "restaurants/by-name/[restaurant]",
+  "dishes/[dish]",
+  "people/[username]",
+  "memories/[id]/dish/[dishId]",
   "profile/circle",
   "profile/settings",
   "profile/settings/edit",
@@ -45,6 +41,24 @@ const SLIDE_OVER_ROUTES = [
 
 export default function RootLayout() {
   const [fontsLoaded] = useCircleBitesFonts();
+  const { resolvedTheme, themeColors } = useThemePreference();
+  const navigationTheme = useMemo<Theme>(() => {
+    const baseTheme = resolvedTheme === "light" ? DefaultTheme : DarkTheme;
+
+    return {
+      ...baseTheme,
+      dark: resolvedTheme === "dark",
+      colors: {
+        ...baseTheme.colors,
+        background: themeColors.bg,
+        border: themeColors.border,
+        card: themeColors.bg,
+        notification: themeColors.orange,
+        primary: themeColors.orange,
+        text: themeColors.cream
+      }
+    };
+  }, [resolvedTheme, themeColors]);
 
   if (!fontsLoaded) return null;
 
@@ -54,19 +68,18 @@ export default function RootLayout() {
           reported keyboard height is offset by the navigation-bar height, which
           misplaces anything anchored to the keyboard (worst after back-button dismiss). */}
       <KeyboardProvider navigationBarTranslucent statusBarTranslucent>
-        <StatusBar backgroundColor={colors.dark.bg} style="light" />
+        <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
         <ThemeProvider value={navigationTheme}>
           <Stack
             screenOptions={{
               headerShown: false,
               animation: "fade",
-              contentStyle: { backgroundColor: colors.dark.bg }
+              contentStyle: { backgroundColor: themeColors.bg }
             }}
           >
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="auth/callback" />
-            <Stack.Screen name="people/[username]" />
             <Stack.Screen name="onboarding/profile" />
             {/* Camera opens with a snappier fade than the global default so it
                 feels instant; a quick fade also hides the brief sensor warm-up. */}

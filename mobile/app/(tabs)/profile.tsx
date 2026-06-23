@@ -71,9 +71,20 @@ export default function ProfileScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const page = useCurrentProfilePageQuery({ enabled: isReady && isAuthenticated });
+  const memories = useMemoryRoomsQuery({ enabled: isReady && isAuthenticated && Boolean(page.data) });
+  const canRefresh = isReady && isAuthenticated;
 
   return (
-    <Screen padded={false} scroll style={styles.screenContent}>
+    <Screen
+      onRefresh={canRefresh ? () => {
+        void page.refetch();
+        if (page.data) void memories.refetch();
+      } : undefined}
+      padded={false}
+      refreshing={canRefresh && (page.isRefetching || memories.isRefetching)}
+      scroll
+      style={styles.screenContent}
+    >
       <View style={styles.stack}>
         {!isReady ? (
           <LoadingState message="Restoring your session." title="Loading profile" />
@@ -91,20 +102,19 @@ export default function ProfileScreen() {
         ) : !page.data ? (
           <ProfileSetupCard />
         ) : (
-          <ProfileContent page={page.data} />
+          <ProfileContent memories={memories} page={page.data} />
         )}
       </View>
     </Screen>
   );
 }
 
-function ProfileContent({ page }: { page: ProfilePageData }) {
+function ProfileContent({ memories, page }: { memories: ReturnType<typeof useMemoryRoomsQuery>; page: ProfilePageData }) {
   const { styles } = useProfileTheme();
   const router = useRouter();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<ProfileTab>(() => profileTabFromParam(params.tab));
   const [showTrustSheet, setShowTrustSheet] = useState(false);
-  const memories = useMemoryRoomsQuery();
 
   useEffect(() => {
     setActiveTab(profileTabFromParam(params.tab));

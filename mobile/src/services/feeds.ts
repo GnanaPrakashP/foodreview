@@ -1,8 +1,13 @@
 import { supabase } from "@/api/supabase";
 import type { FeedPage, ReviewPost } from "@/types/models";
+import { dishSearchMatches, normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
 
 const PAGE_SIZE = 24;
+const DISH_SCAN_SIZE = 400;
+const PUBLIC_REVIEW_BATCH_SIZE = 1000;
+const EXPLORE_REVIEW_SCAN_LIMIT = 240;
+const RESTAURANT_SCAN_SIZE = 1000;
 
 type EngagementMaps = {
   likeCountMap: Record<string, number>;
@@ -16,25 +21,143 @@ type RequestStatusMaps = {
   pendingSent: Set<string>;
 };
 
-export async function fetchDisplayNames(names: string[]): Promise<Record<string, string>> {
-  const unique = Array.from(new Set(names.filter(Boolean)));
+type ReviewerIdentity = {
+  displayName: string;
+  username: string;
+};
+
+type ReviewerIdentityRow = Pick<ProfileRow, "first_name" | "last_name" | "username">;
+
+export type RestaurantFeedInput = {
+  placeId?: string | null;
+  restaurantAddress?: string | null;
+  restaurantName?: string | null;
+};
+
+export type ExploreFeedInput = {
+  location?: {
+    lat: number;
+    lng: number;
+  } | null;
+};
+
+type NearbyBounds = {
+  maxLat: number;
+  maxLng: number;
+  minLat: number;
+  minLng: number;
+};
+
+function displayNameForProfileRow(row: ReviewerIdentityRow) {
+  return displayNameForProfile({
+    firstName: row.first_name,
+    lastName: row.last_name,
+    username: row.username
+  });
+}
+
+function reviewerIdentityForProfileRow(row: ReviewerIdentityRow): ReviewerIdentity {
+  return {
+    displayName: displayNameForProfileRow(row),
+    username: row.username
+  };
+}
+
+function normalizeReviewerIdentityName(value: string) {
+  return value
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/[_\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function usernameCandidateForReviewerName(value: string) {
+  const username = value
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return /^[a-z0-9_]{3,20}$/.test(username) ? username : "";
+}
+
+function firstNameCandidates(value: string) {
+  const firstName = value.trim().replace(/^@+/, "").split(/\s+/)[0] ?? "";
+  if (!firstName) return [];
+  const lower = firstName.toLowerCase();
+  return Array.from(new Set([
+    firstName,
+    lower,
+    `${lower.slice(0, 1).toUpperCase()}${lower.slice(1)}`
+  ]));
+}
+
+export async function fetchReviewerIdentities(names: string[]): Promise<Record<string, ReviewerIdentity>> {
+  const unique = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
   if (unique.length === 0) return {};
+
+  const usernameCandidates = Array.from(new Set([
+    ...unique,
+    ...unique.map(usernameCandidateForReviewerName).filter(Boolean)
+  ]));
+  const identitiesByUsername = new Map<string, ReviewerIdentity>();
+  const identities: Record<string, ReviewerIdentity> = {};
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, first_name, last_name, username, avatar_url, bio, account_type, trust_score, trust_level, created_at")
-    .in("username", unique)
-    .returns<ProfileRow[]>();
+    .select("first_name, last_name, username")
+    .in("username", usernameCandidates)
+    .returns<ReviewerIdentityRow[]>();
 
   if (error) throw new Error(error.message);
 
-  const result: Record<string, string> = {};
   for (const row of data ?? []) {
-    result[row.username] = displayNameForProfile({
-      firstName: row.first_name,
-      lastName: row.last_name,
-      username: row.username
-    });
+    if (row.username) identitiesByUsername.set(row.username.toLowerCase(), reviewerIdentityForProfileRow(row));
+  }
+
+  for (const name of unique) {
+    const exact = identitiesByUsername.get(name.toLowerCase());
+    const candidate = usernameCandidateForReviewerName(name);
+    const guessed = candidate ? identitiesByUsername.get(candidate) : null;
+    const identity = exact ?? guessed;
+    if (identity) identities[name] = identity;
+  }
+
+  const unresolved = unique.filter((name) => !identities[name]);
+  if (unresolved.length === 0) return identities;
+
+  const firstNames = Array.from(new Set(unresolved.flatMap(firstNameCandidates)));
+  if (firstNames.length === 0) return identities;
+
+  const { data: candidateRows, error: candidateError } = await supabase
+    .from("profiles")
+    .select("first_name, last_name, username")
+    .in("first_name", firstNames)
+    .returns<ReviewerIdentityRow[]>();
+
+  if (candidateError) throw new Error(candidateError.message);
+
+  const identitiesByDisplayName = new Map<string, ReviewerIdentity>();
+  for (const row of candidateRows ?? []) {
+    const identity = reviewerIdentityForProfileRow(row);
+    identitiesByDisplayName.set(normalizeReviewerIdentityName(identity.displayName), identity);
+  }
+
+  for (const name of unresolved) {
+    const identity = identitiesByDisplayName.get(normalizeReviewerIdentityName(name));
+    if (identity) identities[name] = identity;
+  }
+
+  return identities;
+}
+
+export async function fetchDisplayNames(names: string[]): Promise<Record<string, string>> {
+  const identities = await fetchReviewerIdentities(names);
+  const result: Record<string, string> = {};
+  for (const [name, identity] of Object.entries(identities)) {
+    result[name] = identity.displayName;
   }
   return result;
 }
@@ -91,21 +214,26 @@ export async function addEngagementToRows(
     requestStatusMaps?: RequestStatusMaps;
   } = {}
 ): Promise<ReviewPost[]> {
-  const names = displayNames ?? await fetchDisplayNames(rows.map((row) => row.reviewer_name));
+  const identities = await fetchReviewerIdentities(rows.map((row) => row.reviewer_name));
+  const names = displayNames ?? Object.fromEntries(
+    Object.entries(identities).map(([name, identity]) => [name, identity.displayName])
+  );
   const engagement = await fetchEngagementMaps(rows.map((row) => row.id), viewerName);
 
   return rows.map((row) => {
+    const reviewerUsername = identities[row.reviewer_name]?.username ?? row.reviewer_name;
     const isPublicDiscovery = options.publicDiscoveryNames?.has(row.reviewer_name) ?? false;
     const requestStatus = isPublicDiscovery
-      ? options.requestStatusMaps?.joinedOwners.has(row.reviewer_name)
+      ? options.requestStatusMaps?.joinedOwners.has(reviewerUsername)
         ? "joined"
-        : options.requestStatusMaps?.pendingSent.has(row.reviewer_name)
+        : options.requestStatusMaps?.pendingSent.has(reviewerUsername)
           ? "pending"
           : "idle"
       : undefined;
 
     return mapReviewPost(row, {
-      displayName: names[row.reviewer_name],
+      displayName: names[row.reviewer_name] ?? identities[row.reviewer_name]?.displayName,
+      reviewerUsername,
       likeCount: engagement.likeCountMap[row.id] ?? 0,
       commentCount: engagement.commentCountMap[row.id] ?? 0,
       likedByMe: engagement.likedByMeMap[row.id] ?? false,
@@ -197,6 +325,123 @@ function interleaveCircleAndPublicPosts(circlePosts: ReviewRow[], publicPosts: R
   return result;
 }
 
+function normalizeEntityName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function nearbyBounds(lat: number, lng: number, radiusKm = 30): NearbyBounds | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return {
+    maxLat: lat + latDelta,
+    maxLng: lng + lngDelta,
+    minLat: lat - latDelta,
+    minLng: lng - lngDelta
+  };
+}
+
+function isSyntheticReviewRow(row: Pick<ReviewRow, "restaurant_name" | "reviewer_name">) {
+  return /^e2e_/i.test(row.reviewer_name)
+    || /^e2e\b/i.test(row.restaurant_name)
+    || /^smoke test eats\b/i.test(row.restaurant_name);
+}
+
+function rowHasDish(row: ReviewRow, dishName: string) {
+  const normalizedDishName = normalizeDishDisplayName(dishName);
+  if (!normalizedDishName || !Array.isArray(row.items)) return false;
+
+  return row.items.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const name = (item as { name?: unknown }).name;
+    return typeof name === "string" && dishSearchMatches(name, normalizedDishName);
+  });
+}
+
+async function publicReviewRows(viewerName: string, limit: number) {
+  const blockedNames = await getBlockedUsernames(viewerName);
+  let query = supabase
+    .from("reviews")
+    .select(REVIEW_SELECT)
+    .eq("visibility", "public")
+    .is("deleted_at", null)
+    .is("hidden_at", null)
+    .is("reported_at", null)
+    .eq("status", "active");
+
+  if (blockedNames.length > 0) {
+    query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
+  }
+
+  return query
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit)
+    .returns<ReviewRow[]>();
+}
+
+async function publicReviewRowsPage(
+  viewerName: string,
+  from: number,
+  to: number,
+  bounds?: NearbyBounds | null,
+  blockedNamesInput?: string[]
+) {
+  const blockedNames = blockedNamesInput ?? await getBlockedUsernames(viewerName);
+  let query = supabase
+    .from("reviews")
+    .select(REVIEW_SELECT)
+    .eq("visibility", "public")
+    .is("deleted_at", null)
+    .is("hidden_at", null)
+    .is("reported_at", null)
+    .eq("status", "active");
+
+  if (blockedNames.length > 0) {
+    query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
+  }
+
+  if (bounds) {
+    query = query
+      .gte("restaurant_lat", bounds.minLat)
+      .lte("restaurant_lat", bounds.maxLat)
+      .gte("restaurant_lng", bounds.minLng)
+      .lte("restaurant_lng", bounds.maxLng);
+  }
+
+  return query
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to)
+    .returns<ReviewRow[]>();
+}
+
+async function scanPublicReviewRows(
+  viewerName: string,
+  options: { excludeSynthetic?: boolean; limit?: number; location?: ExploreFeedInput["location"] } = {}
+) {
+  const rows: ReviewRow[] = [];
+  const bounds = options.location ? nearbyBounds(options.location.lat, options.location.lng) : null;
+  const limit = Math.max(1, options.limit ?? PUBLIC_REVIEW_BATCH_SIZE);
+  const blockedNames = await getBlockedUsernames(viewerName);
+
+  for (let from = 0; rows.length < limit; ) {
+    const batchSize = Math.min(PUBLIC_REVIEW_BATCH_SIZE, limit - rows.length);
+    const { data, error } = await publicReviewRowsPage(viewerName, from, from + batchSize - 1, bounds, blockedNames);
+    if (error) throw new Error(error.message);
+
+    const page = (data ?? []).filter((row) => !options.excludeSynthetic || !isSyntheticReviewRow(row));
+    rows.push(...page.slice(0, limit - rows.length));
+
+    if ((data ?? []).length < batchSize) break;
+    from += batchSize;
+  }
+
+  return rows;
+}
+
 export async function getCircleFeed(): Promise<FeedPage> {
   const viewerName = await getViewerName();
   const [joinedCircleOwners, pendingSentOwners, blockedNames] = await Promise.all([
@@ -283,8 +528,53 @@ export async function getReviewPostById(postId: string): Promise<ReviewPost | nu
 
 export async function getPublicFeed(): Promise<FeedPage> {
   const viewerName = await getViewerName();
-  const blockedNames = await getBlockedUsernames(viewerName);
+  const { data, error } = await publicReviewRows(viewerName, PAGE_SIZE);
 
+  if (error) throw new Error(error.message);
+
+  return {
+    posts: await addEngagementToRows(data ?? [], viewerName),
+    viewerName
+  };
+}
+
+export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<FeedPage> {
+  const viewerName = await getViewerName();
+  const [nearbyRows, joinedCircleOwners] = await Promise.all([
+    scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: EXPLORE_REVIEW_SCAN_LIMIT, location: input.location ?? null }),
+    getJoinedCircleOwners(viewerName)
+  ]);
+  const rows = input.location && nearbyRows.length === 0
+    ? await scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: EXPLORE_REVIEW_SCAN_LIMIT })
+    : nearbyRows;
+  const identities = await fetchReviewerIdentities(rows.map((row) => row.reviewer_name));
+  const joinedCircleOwnerSet = new Set(joinedCircleOwners);
+
+  return {
+    posts: rows.map((row) => {
+      const identity = identities[row.reviewer_name];
+      const reviewerUsername = identity?.username ?? row.reviewer_name;
+      return mapReviewPost(row, {
+        circleRequestStatus: joinedCircleOwnerSet.has(reviewerUsername) ? "joined" : undefined,
+        displayName: identity?.displayName,
+        reviewerUsername
+      });
+    }),
+    viewerName
+  };
+}
+
+export async function getRestaurantFeed(input: RestaurantFeedInput): Promise<FeedPage> {
+  const viewerName = await getViewerName();
+  const placeId = input.placeId?.trim() ?? "";
+  const restaurantAddress = input.restaurantAddress?.trim() ?? "";
+  const restaurantName = input.restaurantName?.trim() ?? "";
+
+  if (!placeId && !restaurantName) {
+    return { posts: [], viewerName };
+  }
+
+  const blockedNames = await getBlockedUsernames(viewerName);
   let query = supabase
     .from("reviews")
     .select(REVIEW_SELECT)
@@ -294,6 +584,10 @@ export async function getPublicFeed(): Promise<FeedPage> {
     .is("reported_at", null)
     .eq("status", "active");
 
+  query = placeId
+    ? query.eq("restaurant_id", placeId)
+    : query.eq("restaurant_name", restaurantName);
+
   if (blockedNames.length > 0) {
     query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
   }
@@ -301,13 +595,41 @@ export async function getPublicFeed(): Promise<FeedPage> {
   const { data, error } = await query
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(PAGE_SIZE)
+    .limit(RESTAURANT_SCAN_SIZE)
     .returns<ReviewRow[]>();
 
   if (error) throw new Error(error.message);
 
+  const rows = placeId || !restaurantAddress
+    ? data ?? []
+    : (data ?? []).filter((row) => {
+      const address = normalizeEntityName(restaurantAddress);
+      return normalizeEntityName(row.area ?? "") === address || normalizeEntityName(row.restaurant_address ?? "") === address;
+    });
+
   return {
-    posts: await addEngagementToRows(data ?? [], viewerName),
+    posts: await addEngagementToRows(rows, viewerName),
+    viewerName
+  };
+}
+
+export async function getDishFeed(dishName: string): Promise<FeedPage> {
+  const viewerName = await getViewerName();
+  const normalizedDishName = normalizeEntityName(dishName);
+
+  if (!normalizedDishName) {
+    return { posts: [], viewerName };
+  }
+
+  const { data, error } = await publicReviewRows(viewerName, DISH_SCAN_SIZE);
+  if (error) throw new Error(error.message);
+
+  const matchingRows = (data ?? [])
+    .filter((row) => rowHasDish(row, normalizedDishName))
+    .slice(0, PAGE_SIZE);
+
+  return {
+    posts: await addEngagementToRows(matchingRows, viewerName),
     viewerName
   };
 }

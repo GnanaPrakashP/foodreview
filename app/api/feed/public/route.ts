@@ -56,6 +56,12 @@ function nearbyBounds(lat: number, lng: number, radiusKm = 30) {
   };
 }
 
+function isSyntheticReview(review: { restaurant_name: string; reviewer_name: string }) {
+  return /^e2e_/i.test(review.reviewer_name)
+    || /^e2e\b/i.test(review.restaurant_name)
+    || /^smoke test eats\b/i.test(review.restaurant_name);
+}
+
 export async function GET(req: NextRequest) {
   const limit = Math.min(
     CIRCLE_FEED_MAX_PAGE_SIZE,
@@ -145,7 +151,7 @@ export async function GET(req: NextRequest) {
     const baseFiltered = ((rawRows ?? []) as unknown[])
       .map((r) => normalizeReview(r as Parameters<typeof normalizeReview>[0]))
       .filter((r) => !excludeSet.has(r.reviewer_name))
-      .filter((r) => !excludeSynthetic || !/^e2e_/i.test(r.reviewer_name) && !/^e2e\b/i.test(r.restaurant_name));
+      .filter((r) => !excludeSynthetic || !isSyntheticReview(r));
     const unseenFiltered = excludeSeenSet.size > 0
       ? baseFiltered.filter((r) => !excludeSeenSet.has(r.id))
       : baseFiltered;

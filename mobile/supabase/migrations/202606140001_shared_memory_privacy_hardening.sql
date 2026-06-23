@@ -49,7 +49,7 @@ values (
   'memory-media',
   'memory-media',
   false,
-  52428800,
+  26214400,
   array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime']
 )
 on conflict (id) do update

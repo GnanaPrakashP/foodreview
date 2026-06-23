@@ -1,5 +1,5 @@
 import { PropsWithChildren, ReactNode } from "react";
-import { ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing, typography } from "@/theme";
@@ -14,7 +14,9 @@ type AppHeaderProps = {
 
 type AppScreenProps = PropsWithChildren<AppHeaderProps & {
   backgroundColor?: string;
+  onRefresh?: () => void;
   padded?: boolean;
+  refreshing?: boolean;
   scroll?: boolean;
   style?: ViewStyle | ViewStyle[];
 }>;
@@ -53,7 +55,9 @@ export function AppScreen({
   children,
   eyebrow,
   italicTitlePart,
+  onRefresh,
   padded = true,
+  refreshing = false,
   rightAccessory,
   scroll = false,
   style,
@@ -84,6 +88,15 @@ export function AppScreen({
         <ScrollView
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="handled"
+          refreshControl={onRefresh ? (
+            <RefreshControl
+              colors={[themeColors.orange]}
+              onRefresh={onRefresh}
+              progressBackgroundColor={themeColors.card}
+              refreshing={refreshing}
+              tintColor={themeColors.orange}
+            />
+          ) : undefined}
           showsVerticalScrollIndicator={false}
         >
           {header}

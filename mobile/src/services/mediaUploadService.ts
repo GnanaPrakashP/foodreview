@@ -15,6 +15,8 @@ export async function postMemoryRoomMedia(input: PostMemoryRoomMediaInput) {
 
   await addMemoryPhoto({
     assets: [{
+      duration: input.asset.duration ?? null,
+      fileSize: input.asset.fileSize ?? null,
       imageHeight: input.asset.height ?? null,
       imageWidth: input.asset.width ?? null,
       mediaMimeType: mimeType,

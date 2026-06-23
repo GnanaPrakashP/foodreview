@@ -7,9 +7,11 @@ import {
   addMemoryParticipant,
   addMemoryPhoto,
   createMemoryRoom,
+  createMemoryStop,
   deleteMemoryItems,
   deleteMemoryMessage,
   deleteMemoryPhoto,
+  deleteMemoryStop,
   editMemoryMessage,
   getMemoryMediaPage,
   getMemoryMessagesPage,
@@ -18,15 +20,20 @@ import {
   listMemoryRooms,
   markMemoryRoomRead,
   setMemoryDishRating,
+  updateMemoryRoomOccasion,
+  updateMemoryStop,
   type AddMemoryParticipantResult,
   type AddMemoryMediaAsset,
   type AddMemoryPhotoInput,
   type AddMemoryPhotoResult,
   type AddMemoryDishInput,
   type CreateMemoryRoomInput,
+  type CreateMemoryStopInput,
   type MemoryMediaPage,
   type MemoryMessagesPage,
-  type SetMemoryDishRatingInput
+  type SetMemoryDishRatingInput,
+  type UpdateMemoryRoomOccasionInput,
+  type UpdateMemoryStopInput
 } from "@/services/memories";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -56,6 +63,8 @@ function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAss
   const assets = input.assets?.length
     ? input.assets
     : [{
+      duration: input.duration,
+      fileSize: input.fileSize,
       imageHeight: input.imageHeight,
       imageMimeType: input.imageMimeType,
       imageUri: input.imageUri,
@@ -94,10 +103,12 @@ function mapUploadedMemoryPhoto(
     imageWidth: photo.image_width ?? null,
     mediaType: photo.media_type === "video" ? "video" : "image",
     messageId: photo.message_id ?? null,
+    moderationStatus: photo.moderation_status ?? "approved",
     position: photo.position ?? 0,
-    publicUrl: photo.public_url,
+    publicUrl: photo.public_url || photo.storage_path,
     roomId: photo.room_id,
     storagePath: photo.storage_path,
+    uploaderId: photo.uploader_id ?? null,
     uploaderDisplayName,
     uploaderName: photo.uploader_name
   };
@@ -352,10 +363,11 @@ function applyOptimisticSummaryDelete(
   ));
 }
 
-export function useMemoryRoomsQuery() {
+export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: memoryKeys.list,
-    queryFn: listMemoryRooms
+    queryFn: listMemoryRooms,
+    enabled: options.enabled ?? true
   });
 }
 
@@ -462,6 +474,44 @@ export function useCreateMemoryRoomMutation() {
   return useMutation({
     mutationFn: (input: CreateMemoryRoomInput) => createMemoryRoom(input),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function useUpdateMemoryRoomOccasionMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateMemoryRoomOccasionInput) => updateMemoryRoomOccasion(roomId, input),
+    onMutate: async (input) => {
+      const detailKey = memoryKeys.detail(roomId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+
+      queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
+        current ? { ...current, ...input } : current
+      ));
+      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        current?.map((memory) => (memory.id === roomId ? { ...memory, ...input } : memory))
+      ));
+
+      return { previousList, previousRoom };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previousRoom) {
+        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+      }
+      if (context?.previousList) {
+        queryClient.setQueryData(memoryKeys.list, context.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -760,6 +810,38 @@ export function useSetMemoryDishRatingMutation(roomId: string) {
   });
 }
 
+export function useCreateMemoryStopMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<CreateMemoryStopInput, "roomId">) => createMemoryStop({ ...input, roomId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function useUpdateMemoryStopMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<UpdateMemoryStopInput, "roomId">) => updateMemoryStop({ ...input, roomId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+    }
+  });
+}
+
+export function useDeleteMemoryStopMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (stopId: string) => deleteMemoryStop(roomId, stopId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
 export function useAddMemoryPhotoMutation(roomId: string) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
@@ -792,6 +874,8 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           const clientId = asset.clientId;
           return {
             ...asset,
+            duration: asset.duration,
+            fileSize: asset.fileSize,
             onUploadProgress: clientId
               ? (progress) => updateOptimisticProgress(clientId, progress)
               : undefined
@@ -824,6 +908,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           imageWidth: asset.imageWidth ?? null,
           mediaType,
           messageId: optimisticMessageId,
+          moderationStatus: "pending",
           position: index,
           publicUrl: uri,
           roomId,

@@ -25,12 +25,18 @@ function loadDishNormalizerModule() {
 }
 
 test("normalizeDishName maps biryani spellings and aliases to canonical metadata", () => {
-  const { normalizeDishName } = loadDishNormalizerModule();
+  const { normalizeDishInput, normalizeDishName } = loadDishNormalizerModule();
 
   assert.equal(normalizeDishName("biriyani")?.id, "biryani");
-  assert.equal(normalizeDishName("ckn biryani")?.id, "biryani");
-  assert.equal(normalizeDishName("chicken biryani")?.id, "biryani");
-  assert.equal(normalizeDishName("hyderabadi boneless ckn briyani")?.id, "biryani");
+  assert.equal(normalizeDishName("ckn biryani")?.id, "chicken_biryani");
+  assert.equal(normalizeDishName("chicken biryani")?.id, "chicken_biryani");
+  assert.equal(normalizeDishName("chicken dum briyani")?.id, "chicken_dum_biryani");
+  assert.equal(normalizeDishName("hyderabadi boneless ckn briyani")?.id, "chicken_biryani");
+  assert.equal(normalizeDishInput("ckn biryani").canonicalVariantName, "Chicken Biryani");
+  assert.equal(normalizeDishInput("ckn biryani").dishFamilyId, "biryani");
+  assert.equal(normalizeDishInput("chicken dum briyani").canonicalVariantName, "Chicken Dum Biryani");
+  assert.equal(normalizeDishInput("mutton biriyani").canonicalVariantName, "Mutton Biryani");
+  assert.equal(normalizeDishInput("paneer biryani").dishFamilyName, "Biryani");
 });
 
 test("normalizeDishName maps milkshake and sushi aliases", () => {
@@ -70,6 +76,8 @@ test("enrichReview returns canonical fields, tags, and search tokens", () => {
   assert.equal(enriched.rawDishName, "oreo shake");
   assert.equal(enriched.canonicalDishId, "milkshake");
   assert.equal(enriched.canonicalDishName, "Milkshake");
+  assert.equal(enriched.dishFamilyId, "milkshake");
+  assert.equal(enriched.dishFamilyName, "Milkshake");
   assert.equal(enriched.category, "beverage");
   assert.equal(enriched.cuisine, "global");
   assert.ok(enriched.tags.includes("sweet"));
@@ -91,8 +99,13 @@ test("unknown dish keeps raw dish name and falls back to restaurant cuisine", ()
   });
 
   assert.equal(enriched.rawDishName, "chef secret bowl");
-  assert.equal(enriched.canonicalDishId, null);
-  assert.equal(enriched.canonicalDishName, null);
+  assert.equal(enriched.canonicalDishId, "generated:chef-secret-bowl");
+  assert.equal(enriched.canonicalDishName, "Chef Secret Bowl");
+  assert.equal(enriched.canonicalDishSource, "generated");
+  assert.equal(enriched.dishClusterKey, "generated:chef-secret-bowl");
+  assert.equal(enriched.dishFamilyId, "other");
+  assert.equal(enriched.dishFamilyName, "Other");
+  assert.equal(enriched.dishNormalizationConfidence, 0.45);
   assert.equal(enriched.category, "unknown");
   assert.equal(enriched.cuisine, "japanese");
   assert.ok(enriched.tags.includes("budget_friendly"));
@@ -100,10 +113,28 @@ test("unknown dish keeps raw dish name and falls back to restaurant cuisine", ()
   assert.ok(enriched.searchTokens.includes("budget_friendly"));
 });
 
+test("normalizeDishInput auto-generates stable canonical metadata for unknown dishes", () => {
+  const { normalizeDishInput } = loadDishNormalizerModule();
+
+  const generated = normalizeDishInput("chiken sixty five");
+  assert.equal(generated.rawDishName, "chiken sixty five");
+  assert.equal(generated.normalizedInput, "chicken 65");
+  assert.equal(generated.canonicalVariantId, "generated:chicken-65");
+  assert.equal(generated.canonicalVariantName, "Chicken 65");
+  assert.equal(generated.canonicalSource, "generated");
+  assert.equal(generated.dishClusterKey, "generated:chicken-65");
+  assert.equal(generated.dishFamilyId, "chicken");
+  assert.equal(generated.dishFamilyName, "Chicken");
+  assert.equal(generated.confidence, 0.65);
+});
+
 test("dishSearchMatches keeps modifier-aware search behavior", () => {
   const { dishSearchMatches } = loadDishNormalizerModule();
 
   assert.equal(dishSearchMatches("Chicken Biryani", "biryani"), true);
   assert.equal(dishSearchMatches("Chicken Biryani", "ckn briyani"), true);
+  assert.equal(dishSearchMatches("Chicken Dum Biryani", "biryani"), true);
+  assert.equal(dishSearchMatches("Chicken Dum Biryani", "chicken biryani"), false);
+  assert.equal(dishSearchMatches("Chicken Biryani", "chicken dum biryani"), false);
   assert.equal(dishSearchMatches("Mutton Biryani", "ckn briyani"), false);
 });

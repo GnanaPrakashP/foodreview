@@ -1,4 +1,5 @@
 import { supabase } from "@/api/supabase";
+import { normalizeDishInput } from "@/services/dishNormalizer";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { FoodItem, Visibility } from "@/types/models";
 
@@ -43,11 +44,22 @@ function normalizedDishes(input: CreatePostInput): FoodItem[] {
     : [{ name: input.dishName, rating: input.rating }];
 
   return dishes
-    .map((dish) => ({
-      name: dish.name.trim(),
-      rating: Number(dish.rating)
-    }))
-    .filter((dish) => dish.name);
+    .map((dish) => {
+      const normalization = normalizeDishInput(dish.name);
+      return {
+        name: normalization.canonicalVariantName ?? normalization.rawDishName,
+        rawDishName: normalization.rawDishName,
+        canonicalDishId: normalization.canonicalVariantId,
+        canonicalDishName: normalization.canonicalVariantName,
+        canonicalDishSource: normalization.canonicalSource,
+        dishClusterKey: normalization.dishClusterKey,
+        dishFamilyId: normalization.dishFamilyId,
+        dishFamilyName: normalization.dishFamilyName,
+        dishNormalizationConfidence: normalization.confidence,
+        rating: Number(dish.rating)
+      };
+    })
+    .filter((dish) => dish.rawDishName);
 }
 
 function extensionFor(uri: string, mimeType?: string | null) {

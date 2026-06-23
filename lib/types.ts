@@ -9,6 +9,14 @@ export type Json =
 export type FoodItem = {
   name: string;
   rating: number;
+  rawDishName?: string;
+  canonicalDishId?: string | null;
+  canonicalDishName?: string | null;
+  canonicalDishSource?: string | null;
+  dishClusterKey?: string | null;
+  dishFamilyId?: string | null;
+  dishFamilyName?: string | null;
+  dishNormalizationConfidence?: number | null;
 };
 
 export type AccountType = "private" | "public";

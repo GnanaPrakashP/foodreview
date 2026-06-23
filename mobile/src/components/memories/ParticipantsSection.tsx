@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { MemoryInput } from "@/components/memories/MemoryInput";
 import type { AsyncState } from "@/components/memories/types";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 import type { MemoryParticipant } from "@/types/models";
 
 export function ParticipantsSection({
@@ -18,6 +20,9 @@ export function ParticipantsSection({
   value: string;
   mutation: AsyncState;
 }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Participants</Text>
@@ -31,7 +36,7 @@ export function ParticipantsSection({
       <View style={styles.inlineForm}>
         <MemoryInput autoCapitalize="none" onChangeText={onChange} placeholder="Add username" surface="field" value={value} />
         <Pressable disabled={mutation.isPending} onPress={onSubmit} style={styles.iconButton}>
-          <Ionicons name="person-add-outline" size={18} color={colors.dark.white} />
+          <Ionicons name="person-add-outline" size={18} color={themeColors.white} />
         </Pressable>
       </View>
       {mutation.isError ? <Text style={styles.error}>{mutation.errorMessage}</Text> : null}
@@ -39,51 +44,53 @@ export function ParticipantsSection({
   );
 }
 
-const styles = StyleSheet.create({
-  section: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    gap: spacing.md,
-    padding: spacing.md
-  },
-  sectionTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 17
-  },
-  peopleWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  personChip: {
-    backgroundColor: colors.dark.orangeDim,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.s,
-    paddingVertical: 7
-  },
-  personText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.orange,
-    fontSize: 12
-  },
-  inlineForm: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  iconButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    justifyContent: "center",
-    width: 48
-  },
-  error: {
-    ...fontStyles.regular,
-    color: colors.dark.dangerSoft,
-    fontSize: 13,
-    lineHeight: 19
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    section: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      gap: spacing.md,
+      padding: spacing.md
+    },
+    sectionTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 17
+    },
+    peopleWrap: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: spacing.sm
+    },
+    personChip: {
+      backgroundColor: c.orangeDim,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.s,
+      paddingVertical: 7
+    },
+    personText: {
+      ...fontStyles.extraBold,
+      color: c.orange,
+      fontSize: 12
+    },
+    inlineForm: {
+      flexDirection: "row",
+      gap: spacing.sm
+    },
+    iconButton: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: radius.input,
+      justifyContent: "center",
+      width: 48
+    },
+    error: {
+      ...fontStyles.regular,
+      color: c.dangerSoft,
+      fontSize: 13,
+      lineHeight: 19
+    }
+  });
+}

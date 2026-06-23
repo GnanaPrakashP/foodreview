@@ -235,6 +235,7 @@ test("public feed: excludeSynthetic hides E2E fixture posts for discovery surfac
       data: [
         review({ reviewer_name: "e2e_alice", restaurant_name: "Good Real Cafe" }),
         review({ reviewer_name: "alice", restaurant_name: "E2E Smoke Test Eats" }),
+        review({ reviewer_name: "alice", restaurant_name: "Smoke Test Eats" }),
         review({ reviewer_name: "bob", restaurant_name: "Good Real Cafe" }),
       ],
       error: null,

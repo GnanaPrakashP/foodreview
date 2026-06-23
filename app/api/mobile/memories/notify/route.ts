@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type MemoryNotificationKind = "message" | "media" | "dish";
+type MemoryBlockRow = {
+  blocked_name: string;
+  blocker_name: string;
+};
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const MEMORY_NOTIFICATION_BODY = "You have a new memory update.";
+const MEMORY_NOTIFICATION_TITLE = "Table Memory";
 const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -31,10 +38,10 @@ function normalizeText(value: unknown, maxLength: number) {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
 }
 
-function notificationBody(kind: MemoryNotificationKind, preview: string) {
-  if (kind === "media") return preview || "Added media to the table memory.";
-  if (kind === "dish") return preview ? `Added ${preview}` : "Added a dish to the table memory.";
-  return preview || "Sent a message.";
+function blockedCounterpart(row: MemoryBlockRow, actorName: string) {
+  if (row.blocker_name === actorName) return row.blocked_name;
+  if (row.blocked_name === actorName) return row.blocker_name;
+  return "";
 }
 
 async function sendExpoPush(messages: Array<Record<string, unknown>>) {
@@ -53,6 +60,7 @@ async function sendExpoPush(messages: Array<Record<string, unknown>>) {
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const { actor, supabase } = await getRouteActor(req);
     if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
@@ -62,7 +70,7 @@ export async function POST(req: NextRequest) {
     if (!roomId) return mobileJson({ error: "roomId is required" }, { status: 400 });
 
     const kind = normalizeKind(body?.kind);
-    const preview = normalizeText(body?.preview, 140);
+    // Ignore preview text/captions; memory notifications stay generic by default.
 
     const { data: readableMembers, error: membersError } = await supabase
       .from("shared_memory_members")
@@ -74,21 +82,47 @@ export async function POST(req: NextRequest) {
       return mobileJson({ error: "Room not found" }, { status: 404 });
     }
 
-    const recipients = Array.from(new Set(
-      readableMembers
-        .map((member: { user_name: string }) => member.user_name)
-        .filter((username: string) => username && username !== actor.actorName)
+    const roomMemberNames = Array.from(new Set(
+      readableMembers.map((member: { user_name: string }) => member.user_name).filter(Boolean)
     ));
+    const roomMemberSet = new Set(roomMemberNames);
+    const recipients = roomMemberNames.filter((username) => username !== actor.actorName);
 
-    if (recipients.length === 0) return mobileJson({ sent: 0 });
+    if (recipients.length === 0) {
+      recordMemoryOperation("memory_notification.send", {
+        durationMs: memoryOperationDurationMs(startedAt),
+        sent: 0,
+        status: "no_recipients",
+        statusCode: 200
+      });
+      return mobileJson({ sent: 0 });
+    }
 
     const admin = createAdminClient();
-    const [{ data: room }, { data: tokens, error: tokensError }, { data: prefs }] = await Promise.all([
-      admin
-        .from("shared_memory_rooms")
-        .select("restaurant_name")
-        .eq("id", roomId)
-        .maybeSingle<{ restaurant_name: string | null }>(),
+    const { data: blockRows, error: blockError } = await admin
+      .from("blocked_users")
+      .select("blocker_name, blocked_name")
+      .or(`blocker_name.eq.${actor.actorName},blocked_name.eq.${actor.actorName}`)
+      .returns<MemoryBlockRow[]>();
+
+    if (blockError) throw blockError;
+
+    const hasBlockedRoomRelationship = (blockRows ?? []).some((row) => {
+      const counterpart = blockedCounterpart(row, actor.actorName);
+      return counterpart ? roomMemberSet.has(counterpart) : false;
+    });
+
+    if (hasBlockedRoomRelationship) {
+      recordMemoryOperation("memory_notification.send", {
+        durationMs: memoryOperationDurationMs(startedAt),
+        sent: 0,
+        status: "blocked_relationship",
+        statusCode: 200
+      });
+      return mobileJson({ sent: 0 });
+    }
+
+    const [{ data: tokens, error: tokensError }, { data: prefs, error: prefsError }] = await Promise.all([
       admin
         .from("push_tokens")
         .select("expo_push_token, user_name")
@@ -100,6 +134,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (tokensError) throw tokensError;
+    if (prefsError) throw prefsError;
 
     // Respect each recipient's notification preferences. Missing rows default to
     // enabled, so users who never opened settings still receive notifications.
@@ -109,31 +144,37 @@ export async function POST(req: NextRequest) {
         .map((pref) => pref.user_name)
     );
 
-    const restaurantName = room?.restaurant_name?.trim();
-    const title = restaurantName
-      ? `${actor.displayName} at ${restaurantName}`
-      : `${actor.displayName} shared a table memory`;
-
     const pushMessages = (tokens ?? [])
       .filter((token: { expo_push_token: string; user_name: string }) => !mutedRecipients.has(token.user_name))
       .map((token: { expo_push_token: string; user_name: string }) => token.expo_push_token)
       .filter(Boolean)
       .map((to: string) => ({
-        body: notificationBody(kind, preview),
+        body: MEMORY_NOTIFICATION_BODY,
         data: {
           kind,
           roomId,
           type: "table-memory"
         },
         sound: "default",
-        title,
+        title: MEMORY_NOTIFICATION_TITLE,
         to
       }));
 
     await sendExpoPush(pushMessages);
+    recordMemoryOperation("memory_notification.send", {
+      durationMs: memoryOperationDurationMs(startedAt),
+      sent: pushMessages.length,
+      status: "success",
+      statusCode: 200
+    });
     return mobileJson({ sent: pushMessages.length });
   } catch (error) {
-    console.error("[mobile memories notify] failed:", error);
+    recordMemoryOperation("memory_notification.send", {
+      durationMs: memoryOperationDurationMs(startedAt),
+      errorKind: memoryErrorKind(error),
+      status: "error",
+      statusCode: 500
+    });
     return mobileJson({ error: "Unable to send memory notification" }, { status: 500 });
   }
 }

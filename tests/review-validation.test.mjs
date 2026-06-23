@@ -58,12 +58,47 @@ test("isValidUuid rejects malformed ids", () => {
   assert.equal(isValidUuid("../not-a-review"), false);
 });
 
-test("normalizeReviewItems stores canonical dish names", () => {
+test("normalizeReviewItems stores raw, canonical, and family dish metadata", () => {
   const { normalizeReviewItems } = loadValidationModule();
 
   assert.equal(
     JSON.stringify(normalizeReviewItems([{ name: "ckn briyani", rating: 4 }])),
-    JSON.stringify({ items: [{ name: "Biryani", rating: 4 }] })
+    JSON.stringify({
+      items: [{
+        name: "Chicken Biryani",
+        rawDishName: "ckn briyani",
+        canonicalDishId: "chicken_biryani",
+        canonicalDishName: "Chicken Biryani",
+        canonicalDishSource: "known",
+        dishClusterKey: "known:chicken_biryani",
+        dishFamilyId: "biryani",
+        dishFamilyName: "Biryani",
+        dishNormalizationConfidence: 1,
+        rating: 4,
+      }]
+    })
+  );
+});
+
+test("normalizeReviewItems auto-generates canonical metadata for unknown dishes", () => {
+  const { normalizeReviewItems } = loadValidationModule();
+
+  assert.equal(
+    JSON.stringify(normalizeReviewItems([{ name: "chiken sixty five", rating: 5 }])),
+    JSON.stringify({
+      items: [{
+        name: "Chicken 65",
+        rawDishName: "chiken sixty five",
+        canonicalDishId: "generated:chicken-65",
+        canonicalDishName: "Chicken 65",
+        canonicalDishSource: "generated",
+        dishClusterKey: "generated:chicken-65",
+        dishFamilyId: "chicken",
+        dishFamilyName: "Chicken",
+        dishNormalizationConfidence: 0.65,
+        rating: 5,
+      }]
+    })
   );
 });
 

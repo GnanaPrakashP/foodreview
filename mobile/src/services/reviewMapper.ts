@@ -80,13 +80,36 @@ function normalizeStatus(value: string | null): ReviewStatus {
 function normalizeItems(value: unknown): FoodItem[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((item) => {
+    .map((item): FoodItem | null => {
       if (!item || typeof item !== "object") return null;
-      const candidate = item as { name?: unknown; rating?: unknown };
+      const candidate = item as {
+        canonicalDishId?: unknown;
+        canonicalDishName?: unknown;
+        canonicalDishSource?: unknown;
+        dishClusterKey?: unknown;
+        dishFamilyId?: unknown;
+        dishFamilyName?: unknown;
+        dishNormalizationConfidence?: unknown;
+        name?: unknown;
+        rawDishName?: unknown;
+        rating?: unknown;
+      };
       const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
       const rating = typeof candidate.rating === "number" ? candidate.rating : Number(candidate.rating);
       if (!name || !Number.isFinite(rating)) return null;
-      return { name, rating };
+      const normalized: FoodItem = {
+        name,
+        rating
+      };
+      if (typeof candidate.rawDishName === "string" && candidate.rawDishName.trim()) normalized.rawDishName = candidate.rawDishName.trim();
+      if (typeof candidate.canonicalDishId === "string") normalized.canonicalDishId = candidate.canonicalDishId;
+      if (typeof candidate.canonicalDishName === "string") normalized.canonicalDishName = candidate.canonicalDishName;
+      if (typeof candidate.canonicalDishSource === "string") normalized.canonicalDishSource = candidate.canonicalDishSource;
+      if (typeof candidate.dishClusterKey === "string") normalized.dishClusterKey = candidate.dishClusterKey;
+      if (typeof candidate.dishFamilyId === "string") normalized.dishFamilyId = candidate.dishFamilyId;
+      if (typeof candidate.dishFamilyName === "string") normalized.dishFamilyName = candidate.dishFamilyName;
+      if (typeof candidate.dishNormalizationConfidence === "number") normalized.dishNormalizationConfidence = candidate.dishNormalizationConfidence;
+      return normalized;
     })
     .filter((item): item is FoodItem => Boolean(item));
 }
@@ -151,6 +174,7 @@ export function mapReviewPost(
   row: ReviewRow,
   options: {
     displayName?: string;
+    reviewerUsername?: string;
     likeCount?: number;
     commentCount?: number;
     likedByMe?: boolean;
@@ -163,6 +187,7 @@ export function mapReviewPost(
   return {
     id: row.id,
     reviewerName: row.reviewer_name,
+    reviewerUsername: options.reviewerUsername ?? row.reviewer_name,
     authorName,
     authorInitials: initialsForName(authorName),
     restaurantId: row.restaurant_id,

@@ -241,6 +241,7 @@ export function CameraScreen({ roomId }: { roomId: string }) {
       const video = await recordingPromise;
       if (video?.uri && !closingRef.current && appActiveRef.current) {
         openPreview({
+          duration: Math.min(Date.now() - recordingStartRef.current, MAX_VIDEO_MS),
           mediaType: "video",
           mimeType: "video/mp4",
           source: "camera",
@@ -321,6 +322,8 @@ export function CameraScreen({ roomId }: { roomId: string }) {
     const asset = result.asset;
     if (!asset?.uri) return;
     openPreview({
+      duration: asset.duration ?? null,
+      fileSize: asset.fileSize ?? null,
       height: asset.height ?? null,
       mediaType: asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image",
       mimeType: asset.mimeType ?? null,

@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
-import { CameraScreen } from "@/components/memories/camera/CameraScreen";
+import { MemoryMediaCaptureScreen } from "@/components/memories/camera/MemoryMediaCaptureScreen";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMemoryRoomQuery } from "@/hooks/useMemories";
@@ -33,5 +33,5 @@ export default function MemoryCameraRoute() {
     );
   }
 
-  return <CameraScreen roomId={roomId} />;
+  return <MemoryMediaCaptureScreen roomId={roomId} />;
 }

@@ -1,23 +1,19 @@
-import { Image, type ImageSource } from "expo-image";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { ArrowLeft, Bookmark, Camera, ChevronRight, Globe, Heart, ImagePlus, Lock, MapPin, MessageCircle, PenLine, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, X } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Bookmark, Briefcase, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, MoreHorizontal, PenLine, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, X, type LucideIcon } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
+import { MediaCapture } from "@/components/media/MediaCapture";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useCreatePostMutation } from "@/hooks/useCreatePost";
 import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
-import {
-  imageFromRecentAsset,
-  listRecentPostImages,
-  pickPostImageFromCamera,
-  pickPostImageFromGallery,
-  type RecentPostImage
-} from "@/services/mediaPicker";
+import { getOccasionTheme } from "@/features/occasions/occasionThemes";
+import type { OccasionType } from "@/features/occasions/occasionTypes";
 import {
   autocompletePlaces,
   compactPlaceLocation,
@@ -40,9 +36,6 @@ function useShareTheme() {
   return { themeColors, styles };
 }
 
-const POST_BITE_IMAGE = require("../../assets/create/post-bite-card-bg.png");
-const TABLE_MEMORY_IMAGE = require("../../assets/create/table-memory-card-bg.png");
-
 type PickedImage = {
   mimeType?: string | null;
   uri: string;
@@ -58,6 +51,58 @@ type ReviewTag = {
 
 type ShareMode = "choice" | "solo" | "friends";
 type SoloStep = "details" | "media" | "preview";
+
+type CreateMemoryOccasionOption = {
+  accent: string;
+  accentBackground: string;
+  Icon: LucideIcon;
+  label: string;
+  title: string;
+  type: OccasionType;
+};
+
+const createMemoryOccasionOptions: CreateMemoryOccasionOption[] = [
+  {
+    accent: "#B66DFF",
+    accentBackground: "rgba(182, 109, 255, 0.16)",
+    Icon: Utensils,
+    label: "Food",
+    title: "Food",
+    type: "casual"
+  },
+  {
+    accent: "#FF7AAD",
+    accentBackground: "rgba(255, 122, 173, 0.16)",
+    Icon: Heart,
+    label: "Date",
+    title: "Date night",
+    type: "date_night"
+  },
+  {
+    accent: "#39D4C5",
+    accentBackground: "rgba(57, 212, 197, 0.14)",
+    Icon: Users,
+    label: "Friends",
+    title: "Friends",
+    type: "friends_hangout"
+  },
+  {
+    accent: "#FFBB4D",
+    accentBackground: "rgba(255, 187, 77, 0.15)",
+    Icon: Briefcase,
+    label: "Work",
+    title: "Work meal",
+    type: "work_meal"
+  },
+  {
+    accent: "#AFA7A0",
+    accentBackground: "rgba(245, 237, 216, 0.10)",
+    Icon: MoreHorizontal,
+    label: "Other",
+    title: "Other",
+    type: "unknown"
+  }
+];
 
 const tagOptions: ReviewTag[] = [
   { label: "Hidden gem" },
@@ -126,13 +171,16 @@ export default function ShareScreen() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [visibility, setVisibility] = useState<Visibility>("public");
   const [success, setSuccess] = useState("");
-  const [memoryRestaurantName, setMemoryRestaurantName] = useState("");
-  const [memoryRestaurantPlace, setMemoryRestaurantPlace] = useState<SelectedPlace | null>(null);
+  const [memoryOccasionTitle, setMemoryOccasionTitle] = useState("");
+  const [selectedMemoryOccasionType, setSelectedMemoryOccasionType] = useState<OccasionType>("casual");
   const [memoryParticipants, setMemoryParticipants] = useState("");
   const [memoryParticipantInput, setMemoryParticipantInput] = useState("");
   const [memoryFriendFocused, setMemoryFriendFocused] = useState(false);
-  const [recentImages, setRecentImages] = useState<RecentPostImage[]>([]);
-  const [recentImagesLoading, setRecentImagesLoading] = useState(false);
+  // Keep the two choice cards aligned after removing their image-backed art.
+  const [choiceCardHeight, setChoiceCardHeight] = useState<number>();
+  const measureChoiceCard = useCallback((height: number) => {
+    setChoiceCardHeight((current) => (current && current >= height ? current : Math.ceil(height)));
+  }, []);
 
   const firstDish = dishes.find((dish) => dish.name.trim()) ?? dishes[0];
   const memoryParticipantNames = useMemo(() => splitUsernames(memoryParticipants), [memoryParticipants]);
@@ -147,7 +195,7 @@ export default function ShareScreen() {
     query: memoryParticipantInput
   });
   const hasSelectedRestaurant = selectedPlaceMatches(restaurantName, restaurantPlace);
-  const hasSelectedMemoryRestaurant = selectedPlaceMatches(memoryRestaurantName, memoryRestaurantPlace);
+  const selectedMemoryOccasion = createMemoryOccasionOptions.find((option) => option.type === selectedMemoryOccasionType) ?? createMemoryOccasionOptions[0];
   const hasSoloDetails = Boolean(hasSelectedRestaurant && dishes.some((dish) => dish.name.trim() && dish.rating > 0));
   const canSubmit = Boolean(image && hasSoloDetails);
   const soloHeaderActionLabel = soloStep === "preview" ? "Post" : "Next";
@@ -156,8 +204,7 @@ export default function ShareScreen() {
     : soloStep === "media"
       ? !image
       : !canSubmit || createPost.isPending;
-  const canCreateMemory = Boolean(hasSelectedMemoryRestaurant && memoryParticipantNames.length > 0);
-  const showGallerySheet = isReady && isAuthenticated && shareMode === "solo" && soloStep === "media";
+  const canCreateMemory = Boolean(memoryParticipantNames.length > 0);
   const previewAuthorName = actor?.displayName || actor?.username || "You";
   const previewInitials = previewAuthorName
     .split(/\s+/)
@@ -166,30 +213,6 @@ export default function ShareScreen() {
     .map((part) => part[0]?.toUpperCase())
     .join("") || "Y";
   const previewTags = selectedTags;
-
-  useEffect(() => {
-    if (shareMode !== "solo" || soloStep !== "media") return;
-
-    let alive = true;
-    setRecentImagesLoading(true);
-    listRecentPostImages()
-      .then((result) => {
-        if (!alive) return;
-        setRecentImages(result.assets);
-        if (result.error) setImageError(result.error);
-      })
-      .catch((error: unknown) => {
-        if (!alive) return;
-        setImageError(error instanceof Error ? error.message : "Could not load recent photos.");
-      })
-      .finally(() => {
-        if (alive) setRecentImagesLoading(false);
-      });
-
-    return () => {
-      alive = false;
-    };
-  }, [shareMode, soloStep]);
 
   function cancelShareMode() {
     setShareMode("choice");
@@ -225,48 +248,6 @@ export default function ShareScreen() {
       return;
     }
     cancelShareMode();
-  }
-
-  async function pickImage() {
-    setImageError("");
-    setSuccess("");
-    const result = await pickPostImageFromGallery();
-    if (result.error) {
-      setImageError(result.error);
-      return;
-    }
-    if (result.asset) {
-      setImage({
-        mimeType: result.asset.mimeType,
-        uri: result.asset.uri
-      });
-    }
-  }
-
-  async function pickCameraImage() {
-    setImageError("");
-    setSuccess("");
-    const result = await pickPostImageFromCamera();
-    if (result.error) {
-      setImageError(result.error);
-      return;
-    }
-    if (result.asset) {
-      setImage({
-        mimeType: result.asset.mimeType,
-        uri: result.asset.uri
-      });
-    }
-  }
-
-  async function selectRecentImage(asset: RecentPostImage) {
-    setImageError("");
-    setSuccess("");
-    const result = await imageFromRecentAsset(asset);
-    setImage({
-      mimeType: result.asset.mimeType,
-      uri: result.asset.uri
-    });
   }
 
   function updateDish(key: string, nextDish: Partial<FoodItem>) {
@@ -370,12 +351,15 @@ export default function ShareScreen() {
     try {
       const result = await createMemoryRoom.mutateAsync({
         participantUsernames: splitUsernames(memoryParticipants),
-        area: memoryRestaurantPlace?.shortFormattedAddress,
-        restaurantId: memoryRestaurantPlace?.placeId,
-        restaurantName: memoryRestaurantPlace?.name ?? memoryRestaurantName
+        occasion: memoryOccasionTitle.trim() || selectedMemoryOccasion.title,
+        occasionConfidence: 1,
+        occasionConfirmedByUser: true,
+        occasionType: selectedMemoryOccasion.type,
+        restaurantName: "Table Memory",
+        themeKey: getOccasionTheme(selectedMemoryOccasion.type).id
       });
-      setMemoryRestaurantName("");
-      setMemoryRestaurantPlace(null);
+      setMemoryOccasionTitle("");
+      setSelectedMemoryOccasionType("casual");
       setMemoryParticipants("");
       setMemoryParticipantInput("");
       router.push({ pathname: "/memories/[id]", params: { id: result.id } });
@@ -387,7 +371,7 @@ export default function ShareScreen() {
   return (
     <Screen padded={false} style={styles.screenContent}>
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: (showGallerySheet ? 258 : spacing.xl) + insets.bottom }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xl + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -407,10 +391,7 @@ export default function ShareScreen() {
           ) : null}
           <View style={styles.headerText}>
             {shareMode === "friends" ? (
-              <>
-                <Text style={styles.title}>Table Memory</Text>
-                <Text style={styles.subtitle}>Save the place you visited with friends.</Text>
-              </>
+              <Text style={styles.title}>Table Memory</Text>
             ) : shareMode === "solo" ? null : (
               <>
                 <Text style={styles.title}>Create</Text>
@@ -448,10 +429,11 @@ export default function ShareScreen() {
               <ActionCard
                 Icon={PenLine}
                 accent="orange"
+                cardHeight={choiceCardHeight}
                 cta="Capture Dish"
                 CtaIcon={Camera}
                 description="Share the dish worth talking about."
-                imageSource={POST_BITE_IMAGE}
+                onMeasureHeight={measureChoiceCard}
                 onPress={openSolo}
                 tags={["Photo", "Rating"]}
                 title="Post a Bite"
@@ -459,10 +441,11 @@ export default function ShareScreen() {
               <ActionCard
                 Icon={Users}
                 accent="memory"
+                cardHeight={choiceCardHeight}
                 cta="Create memory"
                 CtaIcon={UserPlus}
                 description="Remember the places you visit with friends."
-                imageSource={TABLE_MEMORY_IMAGE}
+                onMeasureHeight={measureChoiceCard}
                 onPress={() => setShareMode("friends")}
                 tags={["Private", "With friends", "Photos + dishes"]}
                 title="Table Memory"
@@ -556,36 +539,11 @@ export default function ShareScreen() {
                     </View>
                   ) : soloStep === "media" ? (
                     <View style={styles.mediaStep}>
-                      <Pressable onPress={pickImage} style={[styles.requiredPhotoBox, image && styles.requiredPhotoBoxFilled]}>
-                        {image ? (
-                          <>
-                            <Image source={{ uri: image.uri }} style={styles.requiredPhotoPreview} contentFit="cover" />
-                            <View style={styles.requiredPhotoBadge}>
-                              <Text style={styles.requiredPhotoBadgeText}>Required photo</Text>
-                            </View>
-                            <View style={styles.requiredPhotoAction}>
-                              <ImagePlus size={14} color={c.white} strokeWidth={2.1} />
-                              <Text style={styles.requiredPhotoActionText}>Change</Text>
-                            </View>
-                            <Pressable onPress={() => setImage(null)} style={styles.requiredPhotoRemove}>
-                              <X size={15} color={c.white} strokeWidth={2.2} />
-                            </Pressable>
-                          </>
-                        ) : (
-                          <View style={styles.requiredPhotoEmpty}>
-                            <View style={styles.requiredPhotoIcon}>
-                              <ImagePlus size={28} color={c.orange} strokeWidth={2} />
-                            </View>
-                            <View style={styles.requiredPhotoTextBlock}>
-                              <View style={styles.requiredPhotoTitleRow}>
-                                <Text style={styles.requiredPhotoTitle}>Add food photo</Text>
-                                <Text style={styles.requiredPill}>Required</Text>
-                              </View>
-                              <Text style={styles.requiredPhotoText}>Add a photo, then tap Next to preview your post.</Text>
-                            </View>
-                          </View>
-                        )}
-                      </Pressable>
+                      <MediaCapture
+                        selected={image}
+                        onSelect={(media) => setImage({ mimeType: media.mimeType, uri: media.uri })}
+                        onClear={() => setImage(null)}
+                      />
                       {imageError ? <InlineError message={imageError} /> : null}
                     </View>
                   ) : (
@@ -704,12 +662,11 @@ export default function ShareScreen() {
               ) : (
                 <View style={styles.memorySetup}>
                   <View style={styles.attachmentStack}>
-                    <PlaceField
-                      onChangeText={setMemoryRestaurantName}
-                      onSelect={setMemoryRestaurantPlace}
-                      placeholder="Where did you go?"
-                      selectedPlace={memoryRestaurantPlace}
-                      value={memoryRestaurantName}
+                    <CreateMemoryOccasionPicker
+                      onSelect={setSelectedMemoryOccasionType}
+                      onTitleChange={setMemoryOccasionTitle}
+                      selectedType={selectedMemoryOccasionType}
+                      titleValue={memoryOccasionTitle}
                     />
 
                     <View style={styles.memoryFriendSection}>
@@ -774,19 +731,20 @@ export default function ShareScreen() {
                         </View>
                       ) : null}
                       {memoryParticipantNames.length > 0 ? (
-                        <View style={styles.memoryFriendChips}>
-                          {memoryParticipantNames.map((friend) => (
-                            <Pressable key={friend} onPress={() => removeMemoryParticipant(friend)} style={styles.memoryFriendChip}>
-                              <Text style={styles.memoryFriendChipText}>@{friend}</Text>
-                              <X size={12} color={c.muted} strokeWidth={2.4} />
-                            </Pressable>
-                          ))}
-                        </View>
+                        <>
+                          <View style={styles.memoryFriendChips}>
+                            {memoryParticipantNames.map((friend) => (
+                              <Pressable key={friend} onPress={() => removeMemoryParticipant(friend)} style={styles.memoryFriendChip}>
+                                <Text style={styles.memoryFriendChipText}>@{friend}</Text>
+                                <X size={12} color={c.muted} strokeWidth={2.4} />
+                              </Pressable>
+                            ))}
+                          </View>
+                          <Text style={styles.memoryFriendAddedText}>
+                            Private to invited friends.
+                          </Text>
+                        </>
                       ) : null}
-                    </View>
-                    <View style={styles.memoryPrivacyNote}>
-                      <Lock size={13} color={c.memory} strokeWidth={2.1} />
-                      <Text style={styles.memoryPrivacyNoteText}>Private to invited friends.</Text>
                     </View>
                   </View>
 
@@ -799,38 +757,6 @@ export default function ShareScreen() {
           )}
         </View>
       </ScrollView>
-      {showGallerySheet ? (
-        <View style={[styles.gallerySheet, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
-          <View style={styles.galleryHandle} />
-          <View style={styles.galleryHeader}>
-            <Text style={styles.galleryTitle}>Recent photos</Text>
-            <Pressable onPress={pickImage}>
-              <Text style={styles.galleryLibraryAction}>Open library</Text>
-            </Pressable>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryStrip}>
-            <Pressable onPress={pickCameraImage} style={styles.cameraTile}>
-              <Camera size={24} color={c.cream} strokeWidth={2.2} />
-              <Text style={styles.cameraTileText}>Camera</Text>
-            </Pressable>
-            {recentImages.map((asset) => (
-              <Pressable key={asset.id} onPress={() => void selectRecentImage(asset)} style={styles.galleryTile}>
-                <Image source={{ uri: asset.uri }} style={styles.galleryImage} contentFit="cover" />
-                {image?.uri === asset.uri ? (
-                  <View style={styles.gallerySelectedBadge}>
-                    <Text style={styles.gallerySelectedText}>Selected</Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            ))}
-            {!recentImagesLoading && recentImages.length === 0 ? (
-              <View style={styles.galleryEmptyTile}>
-                <Text style={styles.galleryEmptyText}>No recent photos</Text>
-              </View>
-            ) : null}
-          </ScrollView>
-        </View>
-      ) : null}
     </Screen>
   );
 }
@@ -839,19 +765,21 @@ function ActionCard({
   CtaIcon,
   Icon,
   accent,
+  cardHeight,
   cta,
   description,
-  imageSource,
+  onMeasureHeight,
   onPress,
   tags,
   title
 }: {
   accent: "memory" | "orange";
+  cardHeight?: number;
   cta: string;
   CtaIcon?: typeof Users;
   description: string;
   Icon: typeof Users;
-  imageSource: ImageSource;
+  onMeasureHeight?: (height: number) => void;
   onPress: () => void;
   tags: string[];
   title: string;
@@ -864,8 +792,11 @@ function ActionCard({
     : ["rgba(240, 96, 48, 0.22)", "rgba(232, 168, 48, 0.08)", "rgba(33, 28, 23, 0.98)"];
 
   return (
-    <Pressable onPress={onPress} style={[styles.actionCard, isMemory ? styles.actionCardMemory : styles.actionCardOrange]}>
-      <Image source={imageSource} style={styles.actionBackgroundImage} contentFit="cover" contentPosition="right center" />
+    <Pressable
+      onLayout={onMeasureHeight ? (event) => onMeasureHeight(event.nativeEvent.layout.height) : undefined}
+      onPress={onPress}
+      style={[styles.actionCard, isMemory ? styles.actionCardMemory : styles.actionCardOrange, cardHeight ? { height: cardHeight } : null]}
+    >
       <LinearGradient colors={gradientColors} end={{ x: 1, y: 1 }} start={{ x: 0, y: 0 }} style={StyleSheet.absoluteFillObject} />
       <LinearGradient
         colors={["rgba(12, 9, 7, 0.28)", "rgba(12, 9, 7, 0.08)", "rgba(12, 9, 7, 0.18)"]}
@@ -900,6 +831,98 @@ function ChoiceChip({ accent, label }: { accent: "memory" | "orange"; label: str
         {label}
       </Text>
     </View>
+  );
+}
+
+function CreateMemoryOccasionPicker({
+  onSelect,
+  onTitleChange,
+  selectedType,
+  titleValue
+}: {
+  onSelect: (type: OccasionType) => void;
+  onTitleChange: (value: string) => void;
+  selectedType: OccasionType;
+  titleValue: string;
+}) {
+  const { themeColors: c, styles } = useShareTheme();
+  const selectedOption = createMemoryOccasionOptions.find((option) => option.type === selectedType) ?? createMemoryOccasionOptions[0];
+  const SelectedIcon = selectedOption.Icon;
+
+  return (
+    <View style={styles.occasionPicker}>
+      <View style={styles.restaurantAttachment}>
+        <SelectedIcon size={20} color={selectedOption.accent} strokeWidth={1.9} />
+        <TextInput
+          onChangeText={onTitleChange}
+          placeholder="What's the occasion?"
+          placeholderTextColor={c.muted}
+          returnKeyType="done"
+          style={styles.fieldInput}
+          value={titleValue}
+        />
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionPickerContent}>
+        {createMemoryOccasionOptions.map((option) => (
+          <CreateMemoryOccasionButton
+            active={selectedType === option.type}
+            key={option.type}
+            onPress={() => onSelect(option.type)}
+            option={option}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function CreateMemoryOccasionButton({
+  active,
+  onPress,
+  option
+}: {
+  active: boolean;
+  onPress: () => void;
+  option: CreateMemoryOccasionOption;
+}) {
+  const { themeColors: c, styles } = useShareTheme();
+  const Icon = option.Icon;
+  const iconColor = active ? option.accent : c.muted;
+
+  return (
+    <Pressable
+      accessibilityLabel={option.label}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={styles.occasionChoice}
+    >
+      <View
+        style={[
+          styles.occasionIconButton,
+          active && styles.occasionIconButtonActive,
+          active && {
+            backgroundColor: option.accentBackground,
+            borderColor: option.accent
+          }
+        ]}
+      >
+        <Icon color={iconColor} size={26} strokeWidth={active ? 2.4 : 2} />
+      </View>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.86}
+        numberOfLines={1}
+        style={[
+          styles.occasionChoiceLabel,
+          active && {
+            color: option.accent
+          }
+        ]}
+      >
+        {option.label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -1131,6 +1154,7 @@ function createStyles(c: ThemeColors) {
     justifyContent: "center",
     marginLeft: -10,
     marginRight: spacing.s,
+    marginTop: -4,
     width: 40
   },
   headerText: {
@@ -1189,28 +1213,14 @@ function createStyles(c: ThemeColors) {
     position: "relative"
   },
   actionCardOrange: {
-    borderColor: "rgba(240, 96, 48, 0.42)",
-    shadowColor: c.orange,
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    shadowOffset: { height: 10, width: 0 },
-    elevation: 4
+    borderColor: "rgba(240, 96, 48, 0.42)"
   },
   actionCardMemory: {
-    borderColor: c.memoryBorder,
-    shadowColor: c.memory,
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    shadowOffset: { height: 10, width: 0 },
-    elevation: 4
-  },
-  actionBackgroundImage: {
-    ...StyleSheet.absoluteFillObject
+    borderColor: c.memoryBorder
   },
   actionContent: {
     flex: 1,
     minWidth: 0,
-    maxWidth: "62%",
     zIndex: 3
   },
   actionIcon: {
@@ -1645,6 +1655,12 @@ function createStyles(c: ThemeColors) {
     fontSize: 12,
     lineHeight: 16
   },
+  galleryStatusText: {
+    ...fontStyles.medium,
+    color: c.muted,
+    fontSize: 11,
+    lineHeight: 15
+  },
   galleryStrip: {
     gap: spacing.sm,
     paddingBottom: spacing.sm
@@ -1806,17 +1822,45 @@ function createStyles(c: ThemeColors) {
   memoryFriendSection: {
     gap: spacing.sm
   },
-  memoryPrivacyNote: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 7,
-    paddingTop: 2
-  },
-  memoryPrivacyNoteText: {
+  memoryFriendAddedText: {
     ...fontStyles.semiBold,
     color: c.muted,
     fontSize: 12,
     lineHeight: 16
+  },
+  occasionPicker: {
+    gap: spacing.sm,
+    paddingTop: 0
+  },
+  occasionPickerContent: {
+    gap: spacing.md,
+    paddingRight: 2
+  },
+  occasionChoice: {
+    alignItems: "center",
+    gap: 7,
+    width: 62
+  },
+  occasionIconButton: {
+    alignItems: "center",
+    backgroundColor: c.card,
+    borderColor: c.border,
+    borderRadius: 29,
+    borderWidth: 1,
+    height: 58,
+    justifyContent: "center",
+    width: 58
+  },
+  occasionIconButtonActive: {
+    borderWidth: 2
+  },
+  occasionChoiceLabel: {
+    ...fontStyles.extraBold,
+    color: c.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    maxWidth: 62,
+    textAlign: "center"
   },
   friendSuggestions: {
     backgroundColor: c.surface,

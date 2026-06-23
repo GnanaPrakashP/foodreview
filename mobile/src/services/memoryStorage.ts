@@ -1,8 +1,17 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
 
+import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
+import {
+  MEMORY_IMAGE_MAX_RESOLUTION,
+  MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS,
+  type MemoryMediaKind,
+  type MemoryModerationStatus
+} from "@/constants/memoryMediaPolicy";
 import type { AddMemoryMediaAsset } from "@/services/memories";
+import { assertValidMemoryUploadSize } from "@/services/memoryMediaValidation";
+import type { MemoryPhotoRow } from "@/services/memoryShared";
 
 // Cap the longest edge and re-encode photos before upload. Re-encoding also drops
 // all EXIF (incl. GPS/device) metadata, and keeps chat media small to load.
@@ -15,7 +24,32 @@ const LEGACY_REVIEW_PHOTOS_BUCKET = "review-photos";
 const VIDEO_COMPRESS_PROGRESS_SPAN = 0.5;
 
 export const MEMORY_MEDIA_BUCKET = "memory-media";
-export const MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
+
+export type UploadedMemoryMedia = {
+  durationMs: number | null;
+  fileSizeBytes: number;
+  imageHeight: number | null;
+  imageWidth: number | null;
+  intentId: string;
+  mediaType: MemoryMediaKind;
+  mimeType: string;
+  publicUrl: string;
+  storagePath: string;
+};
+
+type MemoryUploadIntentResponse = {
+  expiresAt: string;
+  intentId: string;
+  maxAllowedSize: number;
+  mediaKind: MemoryMediaKind;
+  mimeType: string;
+  storagePath: string;
+};
+
+type MemoryFinalizeResponse = {
+  moderationStatus: MemoryModerationStatus;
+  photo: MemoryPhotoRow;
+};
 
 export function isPrivateMemoryMediaPath(path?: string | null) {
   return Boolean(path && path.startsWith("memories/"));
@@ -70,7 +104,7 @@ export async function removeMemoryMediaFiles(paths: string[]) {
   if (legacyResult.error) throw new Error(legacyResult.error.message);
 }
 
-export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, username: string) {
+export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, _username: string) {
   const originalUri = input.mediaUri ?? input.imageUri;
   if (!originalUri) throw new Error("Choose a photo or video");
 
@@ -105,19 +139,37 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
       uploadUri = compressed.uri;
       ext = "mp4";
       contentType = "video/mp4";
-      // Prefer the transcoded output's real dimensions over the source asset's.
-      if (compressed.width && compressed.height) {
-        dimensions = normalizedDimensions(compressed.width, compressed.height);
-      }
       uploadProgressFloor = VIDEO_COMPRESS_PROGRESS_SPAN;
+    }
+    // Prefer the transcoded output's real dimensions over the source asset's.
+    if (compressed.width && compressed.height) {
+      dimensions = normalizedDimensions(compressed.width, compressed.height);
+    } else if (!dimensions.imageWidth || !dimensions.imageHeight) {
+      const originalDimensions = await readVideoDimensions(originalUri);
+      dimensions = normalizedDimensions(originalDimensions.width, originalDimensions.height);
     }
   }
 
-  const path = `memories/${input.roomId}/${username}/${uniqueUploadName(ext)}`;
   // Nudge the bar off zero once compression (if any) is done and the read begins.
   input.onUploadProgress?.(Math.max(0.02, uploadProgressFloor - 0.03));
   const fileBody = await fileBodyFromUri(uploadUri);
+  assertValidMemoryUploadSize(fileBody.byteLength, mediaType);
   input.onUploadProgress?.(uploadProgressFloor);
+
+  const intent = await createMemoryMediaUploadIntent({
+    durationMs: normalizedDurationMs(input.duration),
+    fileName: `media.${ext}`,
+    fileSizeBytes: fileBody.byteLength,
+    height: dimensions.imageHeight,
+    mediaKind: mediaType,
+    mimeType: contentType,
+    roomId: input.roomId,
+    width: dimensions.imageWidth
+  });
+
+  if (intent.mediaKind !== mediaType || intent.mimeType !== contentType) {
+    throw new Error("Media upload intent does not match the selected file.");
+  }
 
   const uploadProgressSpan = 0.95 - uploadProgressFloor;
   await uploadFileBody({
@@ -126,25 +178,45 @@ export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: s
     onProgress: (uploadProgress) => {
       input.onUploadProgress?.(uploadProgressFloor + uploadProgress * uploadProgressSpan);
     },
-    path
+    path: intent.storagePath
   });
   input.onUploadProgress?.(0.95);
 
-  let signedUrl: string;
-  try {
-    signedUrl = await createSignedMemoryMediaUrl(path);
-  } catch (error) {
-    await removeMemoryMediaFiles([path]).catch(() => {});
-    throw error;
-  }
-
   return {
+    durationMs: normalizedDurationMs(input.duration),
+    fileSizeBytes: fileBody.byteLength,
     imageHeight: dimensions.imageHeight,
     imageWidth: dimensions.imageWidth,
+    intentId: intent.intentId,
     mediaType,
-    publicUrl: signedUrl,
-    storagePath: path
+    mimeType: contentType,
+    publicUrl: originalUri,
+    storagePath: intent.storagePath
   };
+}
+
+export async function finalizeMemoryMediaUpload({
+  intentId,
+  messageId,
+  position,
+  roomId,
+  storagePath
+}: {
+  intentId: string;
+  messageId: string;
+  position: number;
+  roomId: string;
+  storagePath: string;
+}) {
+  const response = await authorizedMobileJson<MemoryFinalizeResponse>("/api/mobile/memories/finalize-upload", {
+    intentId,
+    messageId,
+    position,
+    roomId,
+    storagePath
+  });
+
+  return response.photo;
 }
 
 async function compressImageForUpload(
@@ -155,7 +227,7 @@ async function compressImageForUpload(
   try {
     const context = ImageManipulator.manipulate(uri);
     // Only downscale (never upscale), and only when we know the source dimensions.
-    if (width && height && Math.max(width, height) > MAX_IMAGE_DIMENSION) {
+    if (width && height && Math.max(width, height) > Math.min(MAX_IMAGE_DIMENSION, MEMORY_IMAGE_MAX_RESOLUTION)) {
       context.resize(width >= height ? { width: MAX_IMAGE_DIMENSION } : { height: MAX_IMAGE_DIMENSION });
     }
     const rendered = await context.renderAsync();
@@ -203,7 +275,22 @@ async function compressVideoForUpload(
     return { encoded: true, height, uri: compressedUri, width };
   } catch {
     // Never block a send on compression — fall back to the original file.
-    return { encoded: false, height: null, uri, width: null };
+    const dimensions = await readVideoDimensions(uri);
+    return { encoded: false, height: dimensions.height, uri, width: dimensions.width };
+  }
+}
+
+async function readVideoDimensions(uri: string): Promise<{ height: number | null; width: number | null }> {
+  if (Platform.OS === "web") return { height: null, width: null };
+  try {
+    const { getVideoMetaData } = require("react-native-compressor") as typeof import("react-native-compressor");
+    const meta = await getVideoMetaData(uri);
+    return {
+      height: meta.height ?? null,
+      width: meta.width ?? null
+    };
+  } catch {
+    return { height: null, width: null };
   }
 }
 
@@ -214,9 +301,9 @@ function normalizedDimensions(width?: number | null, height?: number | null) {
   return { imageHeight: Math.round(height), imageWidth: Math.round(width) };
 }
 
-function uniqueUploadName(ext: string) {
-  const random = Math.random().toString(36).slice(2, 10);
-  return `${Date.now()}-${random}.${ext}`;
+function normalizedDurationMs(duration?: number | null) {
+  if (!duration || duration <= 0 || !Number.isFinite(duration)) return null;
+  return Math.round(duration > 1000 ? duration : duration * 1000);
 }
 
 function extensionFor(uri: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
@@ -246,6 +333,43 @@ async function fileBodyFromUri(uri: string): Promise<ArrayBuffer> {
   const response = await fetch(uri);
   if (!response.ok) throw new Error("Could not read selected media");
   return response.arrayBuffer();
+}
+
+async function createMemoryMediaUploadIntent(input: {
+  durationMs: number | null;
+  fileName: string;
+  fileSizeBytes: number;
+  height: number | null;
+  mediaKind: MemoryMediaKind;
+  mimeType: string;
+  roomId: string;
+  width: number | null;
+}) {
+  return authorizedMobileJson<MemoryUploadIntentResponse>("/api/mobile/memories/upload-intent", input);
+}
+
+async function authorizedMobileJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  if (!apiBaseUrl) throw new Error("Media uploads require the API server.");
+
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in to upload media.");
+
+  const response = await fetch(apiUrl(path), {
+    body: JSON.stringify(body),
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+  const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Media upload failed.");
+  }
+  if (!payload) throw new Error("Media upload failed.");
+  return payload;
 }
 
 async function uploadFileBody({

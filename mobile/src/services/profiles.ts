@@ -442,10 +442,12 @@ export async function getProfilePage(username: string): Promise<ProfilePageData>
   const profile = await getProfileByUsername(username);
   if (!profile) throw new Error("Profile not found");
 
+  const displayName = displayNameForProfile(profile);
+  const reviewerAliases = Array.from(new Set([profile.username, displayName].filter(Boolean)));
   const { data: rawReviews, error } = await supabase
     .from("reviews")
     .select(REVIEW_SELECT)
-    .eq("reviewer_name", username)
+    .in("reviewer_name", reviewerAliases)
     .is("deleted_at", null)
     .is("hidden_at", null)
     .is("reported_at", null)
@@ -466,7 +468,7 @@ export async function getProfilePage(username: string): Promise<ProfilePageData>
 
   return {
     profile,
-    displayName: displayNameForProfile(profile),
+    displayName,
     stats: statsFromRows(rows),
     circleCount,
     posts

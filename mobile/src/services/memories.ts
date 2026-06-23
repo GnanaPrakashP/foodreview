@@ -1,50 +1,83 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
-import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemorySummary } from "@/services/memoryMapper";
+import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
+import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, mapMemorySummary } from "@/services/memoryMapper";
 import {
   memoryTablesError,
   normalizeUsername,
+  occasionConfidenceForRoom,
+  occasionConfirmedForRoom,
+  occasionTypeForRoom,
   ROOM_SELECT,
+  themeKeyForRoom,
   type MemoryDishRatingRow,
   type MemoryDishRow,
   type MemoryMemberRow,
   type MemoryMessageRow,
   type MemoryPhotoRow,
   type MemoryReadRow,
-  type MemoryRoomRow
+  type MemoryRoomRow,
+  type MemoryStopRow
 } from "@/services/memoryShared";
+import { getOccasionTheme } from "@/features/occasions/occasionThemes";
+import type { OccasionType } from "@/features/occasions/occasionTypes";
 import {
   createSignedMemoryMediaUrls,
+  finalizeMemoryMediaUpload,
   isPrivateMemoryMediaPath,
   removeMemoryMediaFiles,
   uploadMemoryPhoto
 } from "@/services/memoryStorage";
+import { assertValidMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { getCurrentUserProfile, getProfileByUsername } from "@/services/profiles";
-import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
 
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
 export const MEMORY_CHAT_PAGE_SIZE = 50;
 export const MEMORY_MEDIA_PAGE_SIZE = 30;
+const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 100;
+const MEMORY_ROOM_SUMMARY_MAX_PAGES = 10;
+const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
 
 const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, room_id, author_name, body, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_LEGACY = "id, room_id, author_name, body, created_at";
-const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
+const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
+const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
 const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
+
+function assertMemoryTextLength(value: string) {
+  if (value.length > MEMORY_TEXT_MAX_LENGTH) {
+    throw new Error(`Messages must be ${MEMORY_TEXT_MAX_LENGTH} characters or fewer.`);
+  }
+}
 
 export type CreateMemoryRoomInput = {
   restaurantName: string;
   restaurantId?: string | null;
   area?: string;
+  occasion?: string;
+  occasionType?: OccasionType;
+  occasionConfidence?: number;
+  occasionConfirmedByUser?: boolean;
+  themeKey?: string;
   visitDate?: string;
   participantUsernames: string[];
   sourcePostId?: string;
 };
 
+export type UpdateMemoryRoomOccasionInput = {
+  occasionType: OccasionType;
+  occasionConfidence: number;
+  occasionConfirmedByUser: boolean;
+  themeKey: string;
+};
+
 export type AddMemoryParticipantResult = {
   added: string[];
   alreadyMembers: string[];
+  blocked?: string[];
   invited: string[];
   notFound: string[];
 };
@@ -58,6 +91,8 @@ export type AddMemoryPhotoInput = {
   imageMimeType?: string | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  duration?: number | null;
+  fileSize?: number | null;
   mediaUri?: string;
   mediaMimeType?: string | null;
   mediaType?: "image" | "video";
@@ -73,6 +108,8 @@ export type AddMemoryMediaAsset = {
   mediaType?: "image" | "video";
   imageWidth?: number | null;
   imageHeight?: number | null;
+  duration?: number | null;
+  fileSize?: number | null;
   onUploadProgress?: (progress: number) => void;
 };
 
@@ -86,6 +123,23 @@ export type AddMemoryDishInput = {
   note?: string;
   rating?: number | null;
   roomId: string;
+  stopId?: string | null;
+};
+
+export type CreateMemoryStopInput = {
+  roomId: string;
+  stopType: MemoryStopType;
+  name: string;
+  note?: string | null;
+};
+
+export type UpdateMemoryStopInput = {
+  roomId: string;
+  stopId: string;
+  name?: string;
+  stopType?: MemoryStopType;
+  note?: string | null;
+  position?: number;
 };
 
 export type SetMemoryDishRatingInput = {
@@ -109,6 +163,42 @@ export type MemoryMediaPage = {
   photos: MemoryPhoto[];
   nextCursor: string | null;
 };
+
+type MemoryRoomSummaryRow = {
+  area: string | null;
+  created_at: string;
+  created_by: string;
+  id: string;
+  latest_activity_at: string;
+  latest_message: string | null;
+  message_count: number | string;
+  occasion_type?: string | null;
+  occasion_confidence?: number | string | null;
+  occasion_confirmed_by_user?: boolean | null;
+  participant_count: number | string;
+  photo_count: number | string;
+  restaurant_name: string;
+  source_post_id: string | null;
+  theme_key?: string | null;
+  title: string | null;
+  unread_count: number | string;
+  visit_date: string | null;
+};
+
+function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
+  if (!createdAt || !id) return null;
+  return `${createdAt}${MEMORY_PAGE_CURSOR_SEPARATOR}${id}`;
+}
+
+function parseMemoryPageCursor(cursor?: string | null) {
+  if (!cursor) return null;
+  const separatorIndex = cursor.lastIndexOf(MEMORY_PAGE_CURSOR_SEPARATOR);
+  if (separatorIndex <= 0) return { createdAt: cursor, id: null };
+  return {
+    createdAt: cursor.slice(0, separatorIndex),
+    id: cursor.slice(separatorIndex + 1) || null
+  };
+}
 
 async function displayNameMap(usernames: string[]) {
   const unique = Array.from(new Set(usernames.filter(Boolean)));
@@ -141,6 +231,34 @@ function memoryRoomNotFoundError() {
 
 function usernameMatches(first: string, second: string) {
   return first.toLowerCase() === second.toLowerCase();
+}
+
+function numericCount(value: number | string | null | undefined) {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+}
+
+function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
+  return {
+    id: row.id,
+    title: row.title?.trim() || row.restaurant_name,
+    occasionType: occasionTypeForRoom(row),
+    occasionConfidence: occasionConfidenceForRoom(row),
+    occasionConfirmedByUser: occasionConfirmedForRoom(row),
+    themeKey: themeKeyForRoom(row),
+    restaurantName: row.restaurant_name,
+    area: row.area,
+    visitDate: row.visit_date,
+    sourcePostId: row.source_post_id,
+    createdBy: row.created_by,
+    participantCount: numericCount(row.participant_count),
+    photoCount: numericCount(row.photo_count),
+    messageCount: numericCount(row.message_count),
+    unreadCount: numericCount(row.unread_count),
+    latestMessage: row.latest_message,
+    latestActivityAt: row.latest_activity_at,
+    createdAt: row.created_at
+  };
 }
 
 async function assertMemoryRoomMember(roomId: string, username: string) {
@@ -185,7 +303,10 @@ async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) 
   if (!token) return;
 
   await fetch(apiUrl("/api/mobile/memories/notify"), {
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      kind: input.kind,
+      roomId: input.roomId
+    }),
     headers: {
       "Authorization": `Bearer ${token}`,
       "Content-Type": "application/json"
@@ -216,8 +337,13 @@ async function roomRowsForUser(username: string): Promise<MemoryRoomRow[]> {
   return rooms ?? [];
 }
 
-export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
-  const username = await myUsername();
+function isMissingMemorySummaryRpc(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "PGRST202" ||
+    /shared_memory_room_summaries|schema cache|could not find .*function/i.test(message);
+}
+
+async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummary[]> {
   const rooms = await roomRowsForUser(username);
   const roomIds = rooms.map((room) => room.id);
   if (roomIds.length === 0) return [];
@@ -256,6 +382,40 @@ export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
   })).sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
 }
 
+export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
+  const username = await myUsername();
+  const summaries: MemoryRoomSummary[] = [];
+  let beforeActivityAt: string | null = null;
+  let beforeRoomId: string | null = null;
+
+  for (let page = 0; page < MEMORY_ROOM_SUMMARY_MAX_PAGES; page += 1) {
+    const result = await supabase
+      .rpc("shared_memory_room_summaries", {
+        p_before_activity_at: beforeActivityAt,
+        p_before_room_id: beforeRoomId,
+        p_limit: MEMORY_ROOM_SUMMARY_PAGE_SIZE
+      });
+    const data: unknown = result.data;
+    const error = result.error;
+
+    if (error) {
+      if (isMissingMemorySummaryRpc(error)) return listMemoryRoomsLegacy(username);
+      throw memoryTablesError(error);
+    }
+
+    const rows: MemoryRoomSummaryRow[] = Array.isArray(data) ? data as MemoryRoomSummaryRow[] : [];
+    summaries.push(...rows.map(mapMemorySummaryRow));
+    if (rows.length < MEMORY_ROOM_SUMMARY_PAGE_SIZE) break;
+
+    const lastRow: MemoryRoomSummaryRow | undefined = rows[rows.length - 1];
+    beforeActivityAt = lastRow?.latest_activity_at ?? null;
+    beforeRoomId = lastRow?.id ?? null;
+    if (!beforeActivityAt || !beforeRoomId) break;
+  }
+
+  return summaries;
+}
+
 async function validateParticipants(usernames: string[]) {
   const unique = Array.from(new Set(usernames.map(normalizeUsername).filter(Boolean)));
   const found: string[] = [];
@@ -277,6 +437,31 @@ function isMissingMemoryPhotoColumn(error: { message?: string; code?: string } |
 function isMissingMemoryPhotoDimensionColumn(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message ?? "";
   return /image_width|image_height|schema cache|could not find .*column/i.test(message);
+}
+
+function isMissingMemoryPhotoPhase2Column(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "PGRST204" ||
+    /uploader_id|upload_intent_id|moderation_status|moderation_reason|file_size_bytes|mime_type|duration_ms|schema cache|could not find .*column/i.test(message);
+}
+
+function withMemoryPhotoPhase2Defaults<T extends Partial<MemoryPhotoRow>>(photo: T): MemoryPhotoRow {
+  return {
+    duration_ms: null,
+    file_size_bytes: null,
+    image_height: null,
+    image_width: null,
+    media_type: "image",
+    message_id: null,
+    mime_type: null,
+    moderation_reason: null,
+    moderation_status: "approved",
+    position: 0,
+    public_url: null,
+    upload_intent_id: null,
+    uploader_id: null,
+    ...photo
+  } as MemoryPhotoRow;
 }
 
 function isMissingMemoryMessageEditColumn(error: { message?: string; code?: string } | null | undefined) {
@@ -305,6 +490,17 @@ function isMissingMemoryDishRatingsTable(error: { message?: string; code?: strin
     /shared_memory_dish_ratings|schema cache|could not find .*shared_memory_dish_ratings|relation .*shared_memory_dish_ratings.* does not exist/i.test(message);
 }
 
+// True when the shared_memory_stops table or the stop_id columns added alongside
+// it are not present yet (migration 202606220001 not applied). Lets rooms keep
+// working with room-level dishes/photos until the stops migration is run.
+function isMissingMemoryStopsSchema(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42P01" ||
+    error?.code === "PGRST204" ||
+    error?.code === "PGRST205" ||
+    /shared_memory_stops|stop_id|schema cache|could not find .*column|relation .*shared_memory_stops.* does not exist/i.test(message);
+}
+
 async function fetchMemoryMessageRowsPage({
   before,
   limit,
@@ -315,15 +511,21 @@ async function fetchMemoryMessageRowsPage({
   roomId: string;
 }): Promise<{ nextCursor: string | null; rows: MemoryMessageRow[] }> {
   const pageLimit = limit + 1;
+  const cursor = parseMemoryPageCursor(before);
   let messagesQuery = supabase
     .from("shared_memory_messages")
     .select(MEMORY_MESSAGE_SELECT)
     .eq("room_id", roomId);
 
-  if (before) messagesQuery = messagesQuery.lt("created_at", before);
+  if (cursor?.id) {
+    messagesQuery = messagesQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  } else if (cursor?.createdAt) {
+    messagesQuery = messagesQuery.lt("created_at", cursor.createdAt);
+  }
 
-  let messagesResult = await messagesQuery
+  const messagesResult = await messagesQuery
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(pageLimit)
     .returns<MemoryMessageRow[]>();
   let messages = messagesResult.data ?? [];
@@ -335,10 +537,15 @@ async function fetchMemoryMessageRowsPage({
       .select(MEMORY_MESSAGE_SELECT_WITHOUT_REPLY)
       .eq("room_id", roomId);
 
-    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+    if (cursor?.id) {
+      fallbackQuery = fallbackQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+    } else if (cursor?.createdAt) {
+      fallbackQuery = fallbackQuery.lt("created_at", cursor.createdAt);
+    }
 
     const fallback = await fallbackQuery
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(pageLimit)
       .returns<Array<Omit<MemoryMessageRow, "reply_to_message_id">>>();
     messages = (fallback.data ?? []).map((message) => ({ ...message, reply_to_message_id: null }));
@@ -351,10 +558,15 @@ async function fetchMemoryMessageRowsPage({
       .select(MEMORY_MESSAGE_SELECT_LEGACY)
       .eq("room_id", roomId);
 
-    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+    if (cursor?.id) {
+      fallbackQuery = fallbackQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+    } else if (cursor?.createdAt) {
+      fallbackQuery = fallbackQuery.lt("created_at", cursor.createdAt);
+    }
 
     const fallback = await fallbackQuery
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(pageLimit)
       .returns<Array<Omit<MemoryMessageRow, "edited_at" | "reply_to_message_id">>>();
     messages = (fallback.data ?? []).map((message) => ({ ...message, edited_at: null, reply_to_message_id: null }));
@@ -366,7 +578,7 @@ async function fetchMemoryMessageRowsPage({
   const selected = messages.slice(0, limit);
   const rows = [...selected].reverse();
   return {
-    nextCursor: messages.length > limit ? rows[0]?.created_at ?? null : null,
+    nextCursor: messages.length > limit ? encodeMemoryPageCursor(rows[0]?.created_at, rows[0]?.id) : null,
     rows
   };
 }
@@ -375,7 +587,7 @@ async function fetchMemoryMessageRowsByIds(roomId: string, messageIds: string[])
   const uniqueIds = Array.from(new Set(messageIds.filter(Boolean)));
   if (uniqueIds.length === 0) return [];
 
-  let messagesResult = await supabase
+  const messagesResult = await supabase
     .from("shared_memory_messages")
     .select(MEMORY_MESSAGE_SELECT)
     .eq("room_id", roomId)
@@ -422,7 +634,7 @@ async function fetchMemoryPhotosForMessages(roomId: string, messageIds: string[]
   const uniqueMessageIds = Array.from(new Set(messageIds.filter(Boolean)));
   if (uniqueMessageIds.length === 0) return [];
 
-  let photosResult = await supabase
+  const photosResult = await supabase
     .from("shared_memory_photos")
     .select(MEMORY_PHOTO_SELECT)
     .eq("room_id", roomId)
@@ -432,7 +644,17 @@ async function fetchMemoryPhotosForMessages(roomId: string, messageIds: string[]
   let photos = photosResult.data ?? [];
   let photosError = photosResult.error;
 
-  if (isMissingMemoryPhotoDimensionColumn(photosError)) {
+  if (isMissingMemoryPhotoPhase2Column(photosError)) {
+    const fallback = await supabase
+      .from("shared_memory_photos")
+      .select(MEMORY_PHOTO_SELECT_WITHOUT_PHASE2)
+      .eq("room_id", roomId)
+      .in("message_id", uniqueMessageIds)
+      .order("created_at", { ascending: false })
+      .returns<Array<Omit<MemoryPhotoRow, "duration_ms" | "file_size_bytes" | "mime_type" | "moderation_reason" | "moderation_status" | "upload_intent_id" | "uploader_id">>>();
+    photos = (fallback.data ?? []).map(withMemoryPhotoPhase2Defaults);
+    photosError = fallback.error;
+  } else if (isMissingMemoryPhotoDimensionColumn(photosError)) {
     const fallback = await supabase
       .from("shared_memory_photos")
       .select(MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS)
@@ -440,11 +662,7 @@ async function fetchMemoryPhotosForMessages(roomId: string, messageIds: string[]
       .in("message_id", uniqueMessageIds)
       .order("created_at", { ascending: false })
       .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width">>>();
-    photos = (fallback.data ?? []).map((photo) => ({
-      ...photo,
-      image_height: null,
-      image_width: null
-    }));
+    photos = (fallback.data ?? []).map(withMemoryPhotoPhase2Defaults);
     photosError = fallback.error;
   } else if (isMissingMemoryPhotoColumn(photosError)) {
     return [];
@@ -464,37 +682,63 @@ async function fetchMemoryMediaRowsPage({
   roomId: string;
 }): Promise<{ nextCursor: string | null; rows: MemoryPhotoRow[] }> {
   const pageLimit = limit + 1;
+  const cursor = parseMemoryPageCursor(before);
   let photosQuery = supabase
     .from("shared_memory_photos")
     .select(MEMORY_PHOTO_SELECT)
     .eq("room_id", roomId);
 
-  if (before) photosQuery = photosQuery.lt("created_at", before);
+  if (cursor?.id) {
+    photosQuery = photosQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  } else if (cursor?.createdAt) {
+    photosQuery = photosQuery.lt("created_at", cursor.createdAt);
+  }
 
-  let photosResult = await photosQuery
+  const photosResult = await photosQuery
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(pageLimit)
     .returns<MemoryPhotoRow[]>();
   let photos = photosResult.data ?? [];
   let photosError = photosResult.error;
 
-  if (isMissingMemoryPhotoDimensionColumn(photosError)) {
+  if (isMissingMemoryPhotoPhase2Column(photosError)) {
+    let fallbackQuery = supabase
+      .from("shared_memory_photos")
+      .select(MEMORY_PHOTO_SELECT_WITHOUT_PHASE2)
+      .eq("room_id", roomId);
+
+    if (cursor?.id) {
+      fallbackQuery = fallbackQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+    } else if (cursor?.createdAt) {
+      fallbackQuery = fallbackQuery.lt("created_at", cursor.createdAt);
+    }
+
+    const fallback = await fallbackQuery
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(pageLimit)
+      .returns<Array<Omit<MemoryPhotoRow, "duration_ms" | "file_size_bytes" | "mime_type" | "moderation_reason" | "moderation_status" | "upload_intent_id" | "uploader_id">>>();
+    photos = (fallback.data ?? []).map(withMemoryPhotoPhase2Defaults);
+    photosError = fallback.error;
+  } else if (isMissingMemoryPhotoDimensionColumn(photosError)) {
     let fallbackQuery = supabase
       .from("shared_memory_photos")
       .select(MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS)
       .eq("room_id", roomId);
 
-    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+    if (cursor?.id) {
+      fallbackQuery = fallbackQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+    } else if (cursor?.createdAt) {
+      fallbackQuery = fallbackQuery.lt("created_at", cursor.createdAt);
+    }
 
     const fallback = await fallbackQuery
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(pageLimit)
       .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width">>>();
-    photos = (fallback.data ?? []).map((photo) => ({
-      ...photo,
-      image_height: null,
-      image_width: null
-    }));
+    photos = (fallback.data ?? []).map(withMemoryPhotoPhase2Defaults);
     photosError = fallback.error;
   } else if (isMissingMemoryPhotoColumn(photosError)) {
     let fallbackQuery = supabase
@@ -502,20 +746,18 @@ async function fetchMemoryMediaRowsPage({
       .select(MEMORY_PHOTO_SELECT_LEGACY)
       .eq("room_id", roomId);
 
-    if (before) fallbackQuery = fallbackQuery.lt("created_at", before);
+    if (cursor?.id) {
+      fallbackQuery = fallbackQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+    } else if (cursor?.createdAt) {
+      fallbackQuery = fallbackQuery.lt("created_at", cursor.createdAt);
+    }
 
     const fallback = await fallbackQuery
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(pageLimit)
       .returns<Array<Omit<MemoryPhotoRow, "image_height" | "image_width" | "media_type" | "message_id" | "position">>>();
-    photos = (fallback.data ?? []).map((photo) => ({
-      ...photo,
-      image_height: null,
-      image_width: null,
-      media_type: "image" as const,
-      message_id: null,
-      position: 0
-    }));
+    photos = (fallback.data ?? []).map(withMemoryPhotoPhase2Defaults);
     photosError = fallback.error;
   }
 
@@ -523,7 +765,7 @@ async function fetchMemoryMediaRowsPage({
 
   const rows = photos.slice(0, limit);
   return {
-    nextCursor: photos.length > limit ? rows[rows.length - 1]?.created_at ?? null : null,
+    nextCursor: photos.length > limit ? encodeMemoryPageCursor(rows[rows.length - 1]?.created_at, rows[rows.length - 1]?.id) : null,
     rows
   };
 }
@@ -535,7 +777,7 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
   let restaurantName = input.restaurantName.trim();
   let area = input.area?.trim() || null;
   let restaurantId: string | null = input.restaurantId?.trim() || null;
-  let sourcePostId: string | null = input.sourcePostId?.trim() || null;
+  const sourcePostId: string | null = input.sourcePostId?.trim() || null;
 
   if (sourcePostId) {
     const { data: post, error } = await supabase
@@ -553,13 +795,22 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
 
   if (!restaurantName) throw new Error("Restaurant name is required");
 
+  const occasionType = input.occasionType ?? "unknown";
+  const occasionConfidence = Math.max(0, Math.min(Number(input.occasionConfidence ?? 0), 1));
+  const themeKey = input.themeKey?.trim() || getOccasionTheme(occasionType).id;
+
   const { data: room, error: roomError } = await supabase
     .rpc("create_shared_memory_room", {
       p_area: area,
+      p_occasion_confidence: occasionConfidence,
+      p_occasion_confirmed_by_user: input.occasionConfirmedByUser === true,
+      p_occasion_type: occasionType,
       p_participant_usernames: participants,
       p_restaurant_id: restaurantId,
       p_restaurant_name: restaurantName,
       p_source_post_id: sourcePostId,
+      p_theme_key: themeKey,
+      p_title: input.occasion?.trim() || null,
       p_visit_date: input.visitDate?.trim() || null
     })
     .select("id")
@@ -569,14 +820,43 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
   return { id: room.id };
 }
 
+export async function updateMemoryRoomOccasion(roomId: string, input: UpdateMemoryRoomOccasionInput): Promise<UpdateMemoryRoomOccasionInput> {
+  await myUsername();
+  const occasionConfidence = Math.max(0, Math.min(Number(input.occasionConfidence), 1));
+  const themeKey = input.themeKey.trim() || getOccasionTheme(input.occasionType).id;
+
+  const { error } = await supabase.rpc("update_shared_memory_room_occasion", {
+    p_occasion_confidence: occasionConfidence,
+    p_occasion_confirmed_by_user: input.occasionConfirmedByUser,
+    p_occasion_type: input.occasionType,
+    p_room_id: roomId,
+    p_theme_key: themeKey
+  });
+
+  if (error) throw memoryTablesError(error);
+  return {
+    occasionConfidence,
+    occasionConfirmedByUser: input.occasionConfirmedByUser,
+    occasionType: input.occasionType,
+    themeKey
+  };
+}
+
 async function fetchRoomParts(roomId: string, username: string) {
-  const [roomResult, membersResult, messagesPage, dishesResult, dishRatingsResult, readResult] = await Promise.all([
+  const [roomResult, membersResult, messagesPage, stopsResult, dishesResult, dishRatingsResult, readResult] = await Promise.all([
     supabase.from("shared_memory_rooms").select(ROOM_SELECT).eq("id", roomId).maybeSingle<MemoryRoomRow>(),
     supabase.from("shared_memory_members").select("id, room_id, user_name, role, created_at").eq("room_id", roomId).returns<MemoryMemberRow[]>(),
     fetchMemoryMessageRowsPage({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
     supabase
+      .from("shared_memory_stops")
+      .select("id, room_id, stop_type, name, note, position, created_by, created_at")
+      .eq("room_id", roomId)
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true })
+      .returns<MemoryStopRow[]>(),
+    supabase
       .from("shared_memory_dishes")
-      .select("id, room_id, added_by, dish_name, rating, note, created_at")
+      .select("id, room_id, stop_id, added_by, dish_name, rating, note, created_at")
       .eq("room_id", roomId)
       .order("created_at", { ascending: true })
       .returns<MemoryDishRow[]>(),
@@ -600,7 +880,29 @@ async function fetchRoomParts(roomId: string, username: string) {
 
   if (roomResult.error) throw memoryTablesError(roomResult.error);
   if (membersResult.error) throw memoryTablesError(membersResult.error);
-  if (dishesResult.error) throw memoryTablesError(dishesResult.error);
+
+  // Dishes now carry stop_id. Before the stops migration is applied that column
+  // is missing, so fall back to a stop-less select and treat dishes as room-level.
+  let dishes = dishesResult.data ?? [];
+  if (dishesResult.error) {
+    if (!isMissingMemoryStopsSchema(dishesResult.error)) throw memoryTablesError(dishesResult.error);
+    const fallback = await supabase
+      .from("shared_memory_dishes")
+      .select("id, room_id, added_by, dish_name, rating, note, created_at")
+      .eq("room_id", roomId)
+      .order("created_at", { ascending: true })
+      .returns<Omit<MemoryDishRow, "stop_id">[]>();
+    if (fallback.error) throw memoryTablesError(fallback.error);
+    dishes = (fallback.data ?? []).map((dish) => ({ ...dish, stop_id: null }));
+  }
+
+  let stops: MemoryStopRow[] = [];
+  if (stopsResult.error) {
+    if (!isMissingMemoryStopsSchema(stopsResult.error)) throw memoryTablesError(stopsResult.error);
+  } else {
+    stops = stopsResult.data ?? [];
+  }
+
   if (dishRatingsResult.error && !isMissingMemoryDishRatingsTable(dishRatingsResult.error)) {
     throw memoryTablesError(dishRatingsResult.error);
   }
@@ -611,7 +913,8 @@ async function fetchRoomParts(roomId: string, username: string) {
 
   return {
     room: roomResult.data,
-    dishes: dishesResult.data ?? [],
+    dishes,
+    stops,
     dishRatings: dishRatingsResult.error ? [] : dishRatingsResult.data ?? [],
     lastReadAt: readResult.error ? null : readResult.data?.last_read_at ?? null,
     members: membersResult.data ?? [],
@@ -628,6 +931,7 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
   assertLoadedMemoryRoomMember(parts.members, username);
   const names = [
     ...parts.members.map((member) => member.user_name),
+    ...parts.stops.map((stop) => stop.created_by),
     ...parts.dishes.map((dish) => dish.added_by),
     ...parts.dishRatings.map((rating) => rating.rated_by),
     ...parts.messages.map((message) => message.author_name),
@@ -645,6 +949,7 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
     namesByUsername,
     photos: parts.photos,
     replyMessages: parts.replyMessages,
+    stops: parts.stops,
     viewerName: username,
     room: parts.room
   });
@@ -787,6 +1092,7 @@ export async function addMemoryMessage(roomId: string, body: string, replyToMess
   await assertMemoryRoomMember(roomId, authorName);
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
+  assertMemoryTextLength(trimmed);
   const messageInsert = {
     room_id: roomId,
     author_name: authorName,
@@ -815,6 +1121,7 @@ export async function editMemoryMessage(roomId: string, messageId: string, body:
   await assertMemoryRoomMember(roomId, authorName);
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
+  assertMemoryTextLength(trimmed);
 
   const { error } = await supabase
     .from("shared_memory_messages")
@@ -952,6 +1259,81 @@ export async function deleteMemoryPhoto(roomId: string, photoId: string) {
   return { ok: true };
 }
 
+const STOPS_MIGRATION_HINT = "Run mobile/supabase/migrations/202606220001_shared_memory_stops.sql before adding stops.";
+
+export async function createMemoryStop(input: CreateMemoryStopInput): Promise<MemoryStop> {
+  const createdBy = await myUsername();
+  await assertMemoryRoomMember(input.roomId, createdBy);
+  const name = input.name.trim();
+  if (!name) throw new Error("Stop name is required");
+
+  const { data: lastStop } = await supabase
+    .from("shared_memory_stops")
+    .select("position")
+    .eq("room_id", input.roomId)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ position: number }>();
+  const position = (lastStop?.position ?? -1) + 1;
+
+  const { data, error } = await supabase
+    .from("shared_memory_stops")
+    .insert({
+      room_id: input.roomId,
+      created_by: createdBy,
+      stop_type: input.stopType,
+      name,
+      note: input.note?.trim() || null,
+      position
+    })
+    .select("id, room_id, stop_type, name, note, position, created_by, created_at")
+    .single<MemoryStopRow>();
+
+  if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
+  if (error) throw memoryTablesError(error);
+  void notifyMemoryRoomActivity({ kind: "dish", preview: name, roomId: input.roomId }).catch(() => {});
+  return mapMemoryStop(data, { [createdBy]: createdBy });
+}
+
+export async function updateMemoryStop(input: UpdateMemoryStopInput): Promise<{ ok: true }> {
+  const username = await myUsername();
+  await assertMemoryRoomMember(input.roomId, username);
+  const patch: Record<string, unknown> = {};
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) throw new Error("Stop name is required");
+    patch.name = name;
+  }
+  if (input.stopType !== undefined) patch.stop_type = input.stopType;
+  if (input.note !== undefined) patch.note = input.note?.trim() || null;
+  if (input.position !== undefined) patch.position = input.position;
+  if (Object.keys(patch).length === 0) return { ok: true };
+
+  const { error } = await supabase
+    .from("shared_memory_stops")
+    .update(patch)
+    .eq("id", input.stopId)
+    .eq("room_id", input.roomId);
+
+  if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
+  if (error) throw memoryTablesError(error);
+  return { ok: true };
+}
+
+export async function deleteMemoryStop(roomId: string, stopId: string): Promise<{ ok: true }> {
+  const username = await myUsername();
+  await assertMemoryRoomMember(roomId, username);
+  const { error } = await supabase
+    .from("shared_memory_stops")
+    .delete()
+    .eq("id", stopId)
+    .eq("room_id", roomId);
+
+  if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
+  if (error) throw memoryTablesError(error);
+  return { ok: true };
+}
+
 export async function addMemoryDish(input: AddMemoryDishInput) {
   const addedBy = await myUsername();
   await assertMemoryRoomMember(input.roomId, addedBy);
@@ -964,15 +1346,18 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
     throw new Error("Rating must be from 1 to 5");
   }
 
+  const dishInsert: Record<string, unknown> = {
+    added_by: addedBy,
+    dish_name: dishName,
+    note,
+    rating,
+    room_id: input.roomId
+  };
+  if (input.stopId) dishInsert.stop_id = input.stopId;
+
   const { data: dish, error } = await supabase
     .from("shared_memory_dishes")
-    .insert({
-      added_by: addedBy,
-      dish_name: dishName,
-      note,
-      rating,
-      room_id: input.roomId
-    })
+    .insert(dishInsert)
     .select("id")
     .single<{ id: string }>();
 
@@ -1049,6 +1434,8 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
   const assets = input.assets?.length
     ? input.assets
     : [{
+      duration: input.duration,
+      fileSize: input.fileSize,
       imageMimeType: input.imageMimeType,
       imageHeight: input.imageHeight,
       imageWidth: input.imageWidth,
@@ -1057,57 +1444,107 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
       mediaType: input.mediaType,
       mediaUri: input.mediaUri
     }];
+  assertValidMemoryMediaAssets(assets);
+  const messageBody = input.body?.trim() ?? "";
+  assertMemoryTextLength(messageBody);
 
   const uploadInputs = assets.map((asset) => ({ ...asset, roomId: input.roomId }));
-  const uploaded = await Promise.all(uploadInputs.map((asset) => uploadMemoryPhoto(asset, uploaderName)));
+  const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryPhoto>> | null> = [];
+  let message: MemoryMessageRow | null = null;
+  let photosInserted = false;
 
-  const messageInsert = {
-    author_name: uploaderName,
-    body: input.body?.trim() ?? "",
-    room_id: input.roomId,
-    ...(input.replyToMessageId ? { reply_to_message_id: input.replyToMessageId } : {})
-  };
+  try {
+    const uploadResults: Array<Awaited<ReturnType<typeof uploadMemoryPhoto>>> = [];
+    for (const [index, asset] of uploadInputs.entries()) {
+      const result = await uploadMemoryPhoto(asset, uploaderName);
+      uploaded[index] = result;
+      uploadResults.push(result);
+    }
 
-  const { data: message, error: messageError } = await supabase
-    .from("shared_memory_messages")
-    .insert(messageInsert)
-    .select(MEMORY_MESSAGE_SELECT)
-    .single<MemoryMessageRow>();
-
-  if (isMissingMemoryMessageReplyColumn(messageError)) {
-    throw new Error("Run mobile/supabase/migrations/202606090004_shared_memory_message_replies.sql before replying to messages.");
-  }
-  if (messageError) throw memoryTablesError(messageError);
-
-  const { data: insertedPhotos, error } = await supabase
-    .from("shared_memory_photos")
-    .insert(uploaded.map((media, position) => ({
-      media_type: media.mediaType,
-      message_id: message.id,
-      image_height: media.imageHeight,
-      image_width: media.imageWidth,
-      position,
-      public_url: media.storagePath,
+    const messageInsert = {
+      author_name: uploaderName,
+      body: messageBody,
       room_id: input.roomId,
-      storage_path: media.storagePath,
-      uploader_name: uploaderName,
-    })))
-    .select(MEMORY_PHOTO_SELECT)
-    .returns<MemoryPhotoRow[]>();
+      ...(input.replyToMessageId ? { reply_to_message_id: input.replyToMessageId } : {})
+    };
 
-  if (isMissingMemoryPhotoDimensionColumn(error)) {
-    throw new Error("Run mobile/supabase/migrations/202606090001_shared_memory_media_dimensions.sql before sending media in memory rooms.");
+    const { data: insertedMessage, error: messageError } = await supabase
+      .from("shared_memory_messages")
+      .insert(messageInsert)
+      .select(MEMORY_MESSAGE_SELECT)
+      .single<MemoryMessageRow>();
+
+    if (isMissingMemoryMessageReplyColumn(messageError)) {
+      throw new Error("Run mobile/supabase/migrations/202606090004_shared_memory_message_replies.sql before replying to messages.");
+    }
+    if (messageError) throw memoryTablesError(messageError);
+    if (!insertedMessage) throw new Error("Could not create media message.");
+    message = insertedMessage;
+
+    const { error } = await supabase
+      .from("shared_memory_photos")
+      .select("media_type, message_id, image_width, image_height, position, upload_intent_id, moderation_status, uploader_id")
+      .eq("room_id", input.roomId)
+      .limit(1);
+
+    if (isMissingMemoryPhotoPhase2Column(error)) {
+      throw new Error("Run mobile/supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql before sending media in memory rooms.");
+    }
+    if (isMissingMemoryPhotoDimensionColumn(error)) {
+      throw new Error("Run mobile/supabase/migrations/202606090001_shared_memory_media_dimensions.sql before sending media in memory rooms.");
+    }
+    if (isMissingMemoryPhotoColumn(error)) {
+      throw new Error("Run mobile/supabase/migrations/202606070001_shared_memory_photo_message_groups.sql before sending grouped media in memory rooms.");
+    }
+    if (error) throw memoryTablesError(error);
+
+    const photos: MemoryPhotoRow[] = [];
+    for (const [position, media] of uploadResults.entries()) {
+      photos.push(await finalizeMemoryMediaUpload({
+        intentId: media.intentId,
+        messageId: insertedMessage.id,
+        position,
+        roomId: input.roomId,
+        storagePath: media.storagePath
+      }));
+    }
+
+    photosInserted = true;
+    const signedPhotos = photos.map((photo, index) => {
+      const upload = uploadResults[index];
+      return photo.public_url ? photo : { ...photo, public_url: upload.publicUrl };
+    });
+
+    assets.forEach((asset) => asset.onUploadProgress?.(1));
+    if (signedPhotos.some((photo) => photo.moderation_status === "approved")) {
+      void notifyMemoryRoomActivity({
+        kind: "media",
+        preview: input.body?.trim() || `${uploadResults.length} media item${uploadResults.length === 1 ? "" : "s"}`,
+        roomId: input.roomId
+      }).catch(() => {});
+    }
+    return { message: insertedMessage, photos: signedPhotos };
+  } catch (error) {
+    if (!photosInserted) {
+      if (message?.id) {
+        try {
+          await supabase
+            .from("shared_memory_messages")
+            .delete()
+            .eq("id", message.id)
+            .eq("room_id", input.roomId)
+            .eq("author_name", uploaderName);
+        } catch {
+          // Cleanup is best-effort; preserve the original upload error.
+        }
+      }
+      const uploadedPaths = uploaded
+        .map((item) => item?.storagePath)
+        .filter((path): path is string => Boolean(path));
+      if (uploadedPaths.length > 0) {
+        await removeMemoryMediaFiles(uploadedPaths).catch(() => undefined);
+      }
+    }
+    throw error;
   }
-  if (isMissingMemoryPhotoColumn(error)) {
-    throw new Error("Run mobile/supabase/migrations/202606070001_shared_memory_photo_message_groups.sql before sending grouped media in memory rooms.");
-  }
-  if (error) throw memoryTablesError(error);
-  const signedPhotos = await signMemoryPhotoRows(insertedPhotos ?? []);
-  assets.forEach((asset) => asset.onUploadProgress?.(1));
-  void notifyMemoryRoomActivity({
-    kind: "media",
-    preview: input.body?.trim() || `${uploaded.length} media item${uploaded.length === 1 ? "" : "s"}`,
-    roomId: input.roomId
-  }).catch(() => {});
-  return { message, photos: signedPhotos };
 }

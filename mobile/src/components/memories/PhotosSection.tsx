@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { useMemo } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import type { AsyncState } from "@/components/memories/types";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 import type { MemoryPhoto } from "@/types/models";
 
 export function PhotosSection({
@@ -16,12 +18,15 @@ export function PhotosSection({
   photoError?: string;
   photos: MemoryPhoto[];
 }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Media</Text>
         <Pressable disabled={mutation.isPending} onPress={onAddPhoto} style={styles.addPhotoButton}>
-          <Ionicons name="image-outline" size={17} color={colors.dark.white} />
+          <Ionicons name="image-outline" size={17} color={themeColors.white} />
           <Text style={styles.addPhotoText}>{mutation.isPending ? "Adding..." : "Add media"}</Text>
         </Pressable>
       </View>
@@ -48,67 +53,69 @@ export function PhotosSection({
   );
 }
 
-const styles = StyleSheet.create({
-  section: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    gap: spacing.md,
-    padding: spacing.md
-  },
-  sectionHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between"
-  },
-  sectionTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 17
-  },
-  addPhotoButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.md,
-    flexDirection: "row",
-    gap: 5,
-    paddingHorizontal: spacing.s,
-    paddingVertical: 9
-  },
-  addPhotoText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 12
-  },
-  photos: {
-    gap: spacing.sm
-  },
-  photoCard: {
-    gap: 6,
-    width: 110
-  },
-  photo: {
-    aspectRatio: 4 / 5,
-    backgroundColor: colors.dark.surface,
-    borderRadius: radius.md,
-    width: "100%"
-  },
-  photoUser: {
-    ...fontStyles.extraBold,
-    color: colors.dark.muted,
-    fontSize: 11
-  },
-  emptyInline: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 19
-  },
-  error: {
-    ...fontStyles.regular,
-    color: colors.dark.dangerSoft,
-    fontSize: 13,
-    lineHeight: 19
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    section: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      gap: spacing.md,
+      padding: spacing.md
+    },
+    sectionHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "space-between"
+    },
+    sectionTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 17
+    },
+    addPhotoButton: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: radius.md,
+      flexDirection: "row",
+      gap: 5,
+      paddingHorizontal: spacing.s,
+      paddingVertical: 9
+    },
+    addPhotoText: {
+      ...fontStyles.extraBold,
+      color: c.white,
+      fontSize: 12
+    },
+    photos: {
+      gap: spacing.sm
+    },
+    photoCard: {
+      gap: 6,
+      width: 110
+    },
+    photo: {
+      aspectRatio: 4 / 5,
+      backgroundColor: c.surface,
+      borderRadius: radius.md,
+      width: "100%"
+    },
+    photoUser: {
+      ...fontStyles.extraBold,
+      color: c.muted,
+      fontSize: 11
+    },
+    emptyInline: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    error: {
+      ...fontStyles.regular,
+      color: c.dangerSoft,
+      fontSize: 13,
+      lineHeight: 19
+    }
+  });
+}

@@ -1,11 +1,20 @@
 import type { Session } from "@supabase/supabase-js";
+import type { OccasionType } from "@/features/occasions/occasionTypes";
 
 export type Visibility = "public" | "circle" | "me";
 export type AccountType = "public" | "private";
 export type ReviewStatus = "active" | "deleted" | "hidden" | "reported" | "removed";
 
 export type FoodItem = {
+  canonicalDishId?: string | null;
+  canonicalDishName?: string | null;
+  canonicalDishSource?: string | null;
+  dishClusterKey?: string | null;
+  dishFamilyId?: string | null;
+  dishFamilyName?: string | null;
+  dishNormalizationConfidence?: number | null;
   name: string;
+  rawDishName?: string;
   rating: number;
 };
 
@@ -42,6 +51,7 @@ export type ActorProfile = {
 export type ReviewPost = {
   id: string;
   reviewerName: string;
+  reviewerUsername: string;
   authorName: string;
   authorInitials: string;
   restaurantId: string | null;
@@ -127,9 +137,24 @@ export type MemoryMessage = {
   } | null;
 };
 
+export type MemoryStopType = "restaurant" | "cafe" | "bar" | "bowling" | "movie" | "activity" | "other";
+
+export type MemoryStop = {
+  id: string;
+  roomId: string;
+  stopType: MemoryStopType;
+  name: string;
+  note: string | null;
+  position: number;
+  createdBy: string;
+  createdByDisplayName: string;
+  createdAt: string;
+};
+
 export type MemoryDish = {
   id: string;
   roomId: string;
+  stopId: string | null;
   addedBy: string;
   addedByDisplayName: string;
   dishName: string;
@@ -156,7 +181,9 @@ export type MemoryDishRating = {
 export type MemoryPhoto = {
   id: string;
   roomId: string;
+  stopId?: string | null;
   messageId: string | null;
+  uploaderId?: string | null;
   uploaderName: string;
   uploaderDisplayName: string;
   publicUrl: string;
@@ -164,6 +191,7 @@ export type MemoryPhoto = {
   mediaType: "image" | "video";
   imageWidth: number | null;
   imageHeight: number | null;
+  moderationStatus?: "pending" | "approved" | "rejected" | null;
   position: number;
   createdAt: string;
   uploadProgress?: number | null;
@@ -172,6 +200,10 @@ export type MemoryPhoto = {
 export type MemoryRoom = {
   id: string;
   title: string;
+  occasionType: OccasionType;
+  occasionConfidence: number;
+  occasionConfirmedByUser: boolean;
+  themeKey: string;
   restaurantName: string;
   restaurantId: string | null;
   area: string | null;
@@ -182,6 +214,7 @@ export type MemoryRoom = {
   lastReadAt: string | null;
   createdAt: string;
   participants: MemoryParticipant[];
+  stops: MemoryStop[];
   dishes: MemoryDish[];
   messages: MemoryMessage[];
   photos: MemoryPhoto[];
@@ -190,6 +223,10 @@ export type MemoryRoom = {
 export type MemoryRoomSummary = {
   id: string;
   title: string;
+  occasionType: OccasionType;
+  occasionConfidence: number;
+  occasionConfirmedByUser: boolean;
+  themeKey: string;
   restaurantName: string;
   area: string | null;
   visitDate: string | null;

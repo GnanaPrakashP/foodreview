@@ -1,4 +1,5 @@
 import { supabase } from "@/api/supabase";
+import { apiUrl } from "@/api/config";
 import { addEngagementToRows } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
 import { removePushTokensForUser } from "@/services/notifications";
@@ -333,8 +334,18 @@ export async function unblockUser(username: string): Promise<void> {
 export async function deleteCurrentAccount() {
   await getViewerProfile();
 
-  const { error } = await supabase.rpc("delete_current_account");
-  if (error) throw new Error(error.message);
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before deleting your account");
+
+  const response = await fetch(apiUrl("/api/delete-account"), {
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    method: "POST"
+  });
+  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error ?? "Could not delete account");
 
   // The RPC removes the auth user; clear the local session regardless.
   await supabase.auth.signOut().catch(() => {});

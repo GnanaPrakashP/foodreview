@@ -23,7 +23,9 @@ test("legacy route aliases removed during product cleanup stay removed", () => {
 test("bottom nav exposes only current primary product tabs", () => {
   const nav = source("components/layout/BottomNav.tsx");
 
-  for (const href of ["/", "/explore", "/reviews/new", "/hungry", "/me"]) {
+  // The primary creation tab is the current Share/Table Memory entry point.
+  // /reviews/new still exists as a route, but it is no longer the bottom-nav tab.
+  for (const href of ["/", "/explore", "/share", "/hungry", "/me"]) {
     assert.match(nav, new RegExp(`href: "${href.replace(/\//g, "\\/")}"`));
   }
 

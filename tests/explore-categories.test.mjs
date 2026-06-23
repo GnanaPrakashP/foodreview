@@ -21,6 +21,12 @@ function loadExploreCategoriesModule() {
     require(id) {
       if (id === "@/lib/dish-normalizer") {
         return {
+          normalizeDishInput: () => ({
+            canonicalVariantId: null,
+            canonicalVariantName: null,
+            dishFamilyId: "other",
+            dishFamilyName: "Other",
+          }),
           normalizeDishName: () => null,
           normalizeDishTokens: (value) => String(value).split(/\s+/).filter(Boolean),
         };

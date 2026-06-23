@@ -1,27 +1,55 @@
 import {
+  occasionConfidenceForRoom,
+  occasionConfirmedForRoom,
+  occasionTypeForRoom,
   normalizeStatus,
+  themeKeyForRoom,
   titleForRoom,
   type MemoryDishRatingRow,
   type MemoryDishRow,
   type MemoryMemberRow,
   type MemoryMessageRow,
   type MemoryPhotoRow,
-  type MemoryRoomRow
+  type MemoryRoomRow,
+  type MemoryStopRow
 } from "@/services/memoryShared";
-import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
+
+const MEMORY_STOP_TYPES: readonly MemoryStopType[] = ["restaurant", "cafe", "bar", "bowling", "movie", "activity", "other"];
+
+function normalizeStopType(value: string): MemoryStopType {
+  return (MEMORY_STOP_TYPES as readonly string[]).includes(value) ? (value as MemoryStopType) : "other";
+}
+
+export function mapMemoryStop(stop: MemoryStopRow, namesByUsername: Record<string, string>): MemoryStop {
+  return {
+    id: stop.id,
+    roomId: stop.room_id,
+    stopType: normalizeStopType(stop.stop_type),
+    name: stop.name,
+    note: stop.note,
+    position: stop.position ?? 0,
+    createdBy: stop.created_by,
+    createdByDisplayName: namesByUsername[stop.created_by] ?? stop.created_by,
+    createdAt: stop.created_at
+  };
+}
 
 export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, string>): MemoryPhoto {
   return {
     id: photo.id,
     roomId: photo.room_id,
     messageId: photo.message_id ?? null,
+    uploaderId: photo.uploader_id ?? null,
     uploaderName: photo.uploader_name,
     uploaderDisplayName: namesByUsername[photo.uploader_name] ?? photo.uploader_name,
-    publicUrl: photo.public_url,
+    publicUrl: photo.public_url || photo.storage_path,
     storagePath: photo.storage_path,
+    stopId: photo.stop_id ?? null,
     mediaType: photo.media_type === "video" ? "video" : "image",
     imageWidth: photo.image_width ?? null,
     imageHeight: photo.image_height ?? null,
+    moderationStatus: photo.moderation_status ?? "approved",
     position: photo.position ?? 0,
     createdAt: photo.created_at
   };
@@ -110,6 +138,10 @@ export function mapMemorySummary({
   return {
     id: room.id,
     title: titleForRoom(room),
+    occasionType: occasionTypeForRoom(room),
+    occasionConfidence: occasionConfidenceForRoom(room),
+    occasionConfirmedByUser: occasionConfirmedForRoom(room),
+    themeKey: themeKeyForRoom(room),
     restaurantName: room.restaurant_name,
     area: room.area,
     visitDate: room.visit_date,
@@ -134,6 +166,7 @@ export function mapMemoryRoom({
   namesByUsername,
   photos,
   replyMessages,
+  stops = [],
   viewerName,
   room
 }: {
@@ -145,6 +178,7 @@ export function mapMemoryRoom({
   namesByUsername: Record<string, string>;
   photos: MemoryPhotoRow[];
   replyMessages?: MemoryMessageRow[];
+  stops?: MemoryStopRow[];
   viewerName?: string;
   room: MemoryRoomRow;
 }): MemoryRoom {
@@ -157,6 +191,10 @@ export function mapMemoryRoom({
   return {
     id: room.id,
     title: titleForRoom(room),
+    occasionType: occasionTypeForRoom(room),
+    occasionConfidence: occasionConfidenceForRoom(room),
+    occasionConfirmedByUser: occasionConfirmedForRoom(room),
+    themeKey: themeKeyForRoom(room),
     restaurantName: room.restaurant_name,
     restaurantId: room.restaurant_id,
     area: room.area,
@@ -173,6 +211,9 @@ export function mapMemoryRoom({
       role: member.role === "owner" ? "owner" : "participant",
       joinedAt: member.created_at
     })),
+    stops: [...stops]
+      .map((stop) => mapMemoryStop(stop, namesByUsername))
+      .sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     dishes: dishes.map((dish): MemoryDish => {
       const legacyRating = dish.rating === null || dish.rating === undefined ? null : Number(dish.rating);
       const dishRatingRows = ratingsByDishId[dish.id] ?? [];
@@ -209,6 +250,7 @@ export function mapMemoryRoom({
       return {
         id: dish.id,
         roomId: dish.room_id,
+        stopId: dish.stop_id ?? null,
         addedBy: dish.added_by,
         addedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
         averageRating,

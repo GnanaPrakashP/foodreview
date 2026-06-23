@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 
 export function MemoryCenterState({
   body,
@@ -14,9 +16,12 @@ export function MemoryCenterState({
   onPress?: () => void;
   title?: string;
 }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.center}>
-      {loading ? <ActivityIndicator color={colors.dark.orange} /> : null}
+      {loading ? <ActivityIndicator color={themeColors.orange} /> : null}
       {title ? <Text style={styles.emptyTitle}>{title}</Text> : null}
       {body ? <Text style={styles.emptyText}>{body}</Text> : null}
       {buttonLabel && onPress ? (
@@ -28,35 +33,37 @@ export function MemoryCenterState({
   );
 }
 
-const styles = StyleSheet.create({
-  center: {
-    alignItems: "center",
-    flex: 1,
-    gap: spacing.md,
-    justifyContent: "center"
-  },
-  emptyTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 18,
-    textAlign: "center"
-  },
-  emptyText: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center"
-  },
-  buttonSmall: {
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md
-  },
-  buttonSmallText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: 14
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    center: {
+      alignItems: "center",
+      flex: 1,
+      gap: spacing.md,
+      justifyContent: "center"
+    },
+    emptyTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 18,
+      textAlign: "center"
+    },
+    emptyText: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: "center"
+    },
+    buttonSmall: {
+      backgroundColor: c.orange,
+      borderRadius: radius.input,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md
+    },
+    buttonSmallText: {
+      ...fontStyles.extraBold,
+      color: c.white,
+      fontSize: 14
+    }
+  });
+}

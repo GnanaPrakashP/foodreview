@@ -18,6 +18,8 @@ function useInvalidateEngagementQueries() {
     queryClient.invalidateQueries({ queryKey: feedKeys.circle });
     queryClient.invalidateQueries({ queryKey: feedKeys.public });
     queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+    queryClient.invalidateQueries({ queryKey: ["circle"] });
+    queryClient.invalidateQueries({ queryKey: ["profile"] });
   };
 }
 

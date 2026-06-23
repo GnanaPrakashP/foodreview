@@ -2,6 +2,8 @@ export type MemoryCapturedMediaType = "image" | "video";
 
 export type MemoryCapturedMedia = {
   createdAt: string;
+  duration?: number | null;
+  fileSize?: number | null;
   height?: number | null;
   id: string;
   mediaType: MemoryCapturedMediaType;

@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { MemoryInput } from "@/components/memories/MemoryInput";
 import type { AsyncState } from "@/components/memories/types";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing } from "@/theme";
 import type { MemoryMessage } from "@/types/models";
 import { formatDisplayTime } from "@/utils/datetime";
 
@@ -19,6 +21,9 @@ export function MessagesSection({
   onSubmit: () => void;
   value: string;
 }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Messages</Text>
@@ -36,7 +41,7 @@ export function MessagesSection({
       <View style={styles.messageForm}>
         <MemoryInput multiline onChangeText={onChange} placeholder="Message this memory..." surface="field" value={value} />
         <Pressable disabled={mutation.isPending} onPress={onSubmit} style={styles.sendButton}>
-          <Ionicons name="send" size={18} color={colors.dark.white} />
+          <Ionicons name="send" size={18} color={themeColors.white} />
         </Pressable>
       </View>
       {mutation.isError ? <Text style={styles.error}>{mutation.errorMessage}</Text> : null}
@@ -44,75 +49,77 @@ export function MessagesSection({
   );
 }
 
-const styles = StyleSheet.create({
-  section: {
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    gap: spacing.md,
-    padding: spacing.md
-  },
-  sectionTitle: {
-    ...fontStyles.extraBold,
-    color: colors.dark.cream,
-    fontSize: 17
-  },
-  messages: {
-    gap: spacing.sm
-  },
-  message: {
-    backgroundColor: colors.dark.surface,
-    borderColor: colors.dark.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    padding: spacing.md
-  },
-  messageHeader: {
-    flexDirection: "row",
-    gap: spacing.md,
-    justifyContent: "space-between"
-  },
-  messageAuthor: {
-    ...fontStyles.extraBold,
-    color: colors.dark.orange,
-    fontSize: 12
-  },
-  messageTime: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 11
-  },
-  messageBody: {
-    ...fontStyles.medium,
-    color: colors.dark.cream,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 6
-  },
-  messageForm: {
-    alignItems: "flex-end",
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  sendButton: {
-    alignItems: "center",
-    backgroundColor: colors.dark.orange,
-    borderRadius: radius.input,
-    height: 48,
-    justifyContent: "center",
-    width: 48
-  },
-  emptyInline: {
-    ...fontStyles.regular,
-    color: colors.dark.muted,
-    fontSize: 13,
-    lineHeight: 19
-  },
-  error: {
-    ...fontStyles.regular,
-    color: colors.dark.dangerSoft,
-    fontSize: 13,
-    lineHeight: 19
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    section: {
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      gap: spacing.md,
+      padding: spacing.md
+    },
+    sectionTitle: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: 17
+    },
+    messages: {
+      gap: spacing.sm
+    },
+    message: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.input,
+      borderWidth: 1,
+      padding: spacing.md
+    },
+    messageHeader: {
+      flexDirection: "row",
+      gap: spacing.md,
+      justifyContent: "space-between"
+    },
+    messageAuthor: {
+      ...fontStyles.extraBold,
+      color: c.orange,
+      fontSize: 12
+    },
+    messageTime: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 11
+    },
+    messageBody: {
+      ...fontStyles.medium,
+      color: c.cream,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 6
+    },
+    messageForm: {
+      alignItems: "flex-end",
+      flexDirection: "row",
+      gap: spacing.sm
+    },
+    sendButton: {
+      alignItems: "center",
+      backgroundColor: c.orange,
+      borderRadius: radius.input,
+      height: 48,
+      justifyContent: "center",
+      width: 48
+    },
+    emptyInline: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    error: {
+      ...fontStyles.regular,
+      color: c.dangerSoft,
+      fontSize: 13,
+      lineHeight: 19
+    }
+  });
+}

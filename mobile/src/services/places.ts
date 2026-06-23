@@ -34,6 +34,11 @@ type DetailsResponse = {
   details?: PlaceDetails | null;
 };
 
+type LocationBias = {
+  lat: number;
+  lng: number;
+};
+
 export function createPlacesSessionToken() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -62,9 +67,13 @@ export function compactPlaceLocation(place: Pick<SelectedPlace, "formattedAddres
   return parts.slice(-2).join(", ");
 }
 
-export async function autocompletePlaces(input: string, sessionToken: string): Promise<PlaceSuggestion[]> {
+export async function autocompletePlaces(input: string, sessionToken: string, location?: LocationBias | null): Promise<PlaceSuggestion[]> {
   const params = new URLSearchParams({ input });
   if (sessionToken) params.set("sessionToken", sessionToken);
+  if (location) {
+    params.set("lat", String(location.lat));
+    params.set("lng", String(location.lng));
+  }
 
   const response = await fetch(apiUrl(`/api/places/autocomplete?${params.toString()}`));
   if (!response.ok) return [];

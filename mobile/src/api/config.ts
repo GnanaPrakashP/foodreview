@@ -53,7 +53,7 @@ function normalizeApiBaseUrl(value: string) {
   try {
     const url = new URL(value);
     const expoHost = expoDevServerHostname();
-    if (expoHost && !/^(localhost|127\.0\.0\.1)$/.test(expoHost)) {
+    if (expoHost) {
       url.hostname = expoHost;
       return url.toString().replace(/\/$/, "");
     }

@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const phase3Migration = readFileSync(
+  "mobile/supabase/migrations/202606180006_shared_memory_phase3_scalability.sql",
+  "utf8"
+);
+const finalAuditMigration = readFileSync(
+  "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
+  "utf8"
+);
+const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
+const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
+const summaryMigrations = `${phase3Migration}\n${finalAuditMigration}`;
+
+test("phase 3 adds indexes for common memory room queries", () => {
+  for (const expected of [
+    "shared_memory_messages_room_created_id_desc_idx",
+    "shared_memory_messages_room_reply_idx",
+    "shared_memory_photos_room_message_position_idx",
+    "shared_memory_photos_room_visible_created_idx",
+    "shared_memory_members_user_room_idx",
+    "shared_memory_rooms_created_id_desc_idx",
+    "shared_memory_reads_user_room_idx"
+  ]) {
+    assert.match(phase3Migration, new RegExp(expected));
+  }
+});
+
+test("phase 3 room summary RPC is bounded, member scoped, and search_path safe", () => {
+  assert.match(summaryMigrations, /create or replace function public\.shared_memory_room_summaries/);
+  assert.match(summaryMigrations, /security definer[\s\S]*set search_path = public/);
+  assert.match(summaryMigrations, /least\(greatest\(coalesce\(p_limit, 100\), 1\), 100\)/);
+  assert.match(summaryMigrations, /auth\.role\(\) <> 'service_role'/);
+  assert.match(summaryMigrations, /v_user_name is distinct from v_current_user_name/);
+  assert.match(summaryMigrations, /join public\.shared_memory_members[\s\S]*user_name = v_user_name/);
+  assert.match(summaryMigrations, /coalesce\(photo\.moderation_status, 'approved'\) = 'approved'/);
+  assert.match(summaryMigrations, /photo\.uploader_name = v_user_name/);
+  assert.match(summaryMigrations, /grant execute on function public\.shared_memory_room_summaries[\s\S]*to authenticated, service_role/);
+  assert.match(summaryMigrations, /revoke all on function public\.shared_memory_room_summaries[\s\S]*from anon/);
+  assert.match(finalAuditMigration, /paged_rooms as/);
+  assert.ok(
+    finalAuditMigration.indexOf("paged_rooms as") <
+      finalAuditMigration.indexOf("member_counts"),
+    "room summary counts must run after pagination"
+  );
+  assert.match(finalAuditMigration, /not public\.shared_memory_room_has_blocked_relationship\(room\.id, v_user_name\)/);
+});
+
+test("mobile memory list pages DB-computed summaries with legacy fallback", () => {
+  assert.match(memoryService, /\.rpc\("shared_memory_room_summaries"/);
+  assert.match(memoryService, /p_before_activity_at: beforeActivityAt/);
+  assert.match(memoryService, /p_before_room_id: beforeRoomId/);
+  assert.match(memoryService, /MEMORY_ROOM_SUMMARY_MAX_PAGES/);
+  assert.match(memoryService, /MEMORY_ROOM_SUMMARY_PAGE_SIZE/);
+  assert.match(memoryService, /mapMemorySummaryRow/);
+  assert.match(memoryService, /listMemoryRoomsLegacy\(username\)/);
+  assert.match(memoryService, /isMissingMemorySummaryRpc/);
+
+  const listMemoryRoomsBody = memoryService.match(/export async function listMemoryRooms\(\)[\s\S]*?\n}/)?.[0] ?? "";
+  assert.doesNotMatch(listMemoryRoomsBody, /from\("shared_memory_messages"\)[\s\S]*\.in\("room_id", roomIds\)/);
+  assert.doesNotMatch(listMemoryRoomsBody, /from\("shared_memory_photos"\)[\s\S]*\.in\("room_id", roomIds\)/);
+});
+
+test("mobile chat and media pagination use id tie-breaker cursors", () => {
+  assert.match(memoryService, /encodeMemoryPageCursor/);
+  assert.match(memoryService, /parseMemoryPageCursor/);
+  assert.match(memoryService, /created_at\.lt\.\$\{cursor\.createdAt\},and\(created_at\.eq\.\$\{cursor\.createdAt\},id\.lt\.\$\{cursor\.id\}\)/);
+  assert.match(memoryService, /\.order\("created_at", \{ ascending: false \}\)\s+\.order\("id", \{ ascending: false \}\)/);
+});
+
+test("phase 3 docs mention the summary RPC rollout and verification", () => {
+  assert.match(supabaseReadme, /202606180006_shared_memory_phase3_scalability\.sql/);
+  assert.match(supabaseReadme, /shared_memory_room_summaries/);
+  assert.match(supabaseReadme, /bounded room summaries/i);
+  assert.match(supabaseReadme, /Phase 3 scalability verification/i);
+});

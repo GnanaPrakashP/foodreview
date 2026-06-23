@@ -1,0 +1,91 @@
+name: Memory Hardening
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - ".agents/skills/chat-production-hardening/**"
+      - ".github/workflows/memory-hardening.yml"
+      - "app/api/delete-account/route.ts"
+      - "app/api/mobile/memories/**"
+      - "docs/security/**"
+      - "lib/memory-media-policy.ts"
+      - "lib/server/memory-*.ts"
+      - "mobile/app/memories/**"
+      - "mobile/src/constants/memory*.ts"
+      - "mobile/src/hooks/useMemories.ts"
+      - "mobile/src/services/memor*.ts"
+      - "mobile/src/services/settings.ts"
+      - "mobile/src/services/mediaUploadService.ts"
+      - "mobile/supabase/**"
+      - "tests/shared-memory-phase*.test.mjs"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "AGENTS.md"
+      - ".agents/skills/chat-production-hardening/**"
+      - ".github/workflows/memory-hardening.yml"
+      - "app/api/delete-account/route.ts"
+      - "app/api/mobile/memories/**"
+      - "docs/security/**"
+      - "lib/memory-media-policy.ts"
+      - "lib/server/memory-*.ts"
+      - "mobile/app/memories/**"
+      - "mobile/src/constants/memory*.ts"
+      - "mobile/src/hooks/useMemories.ts"
+      - "mobile/src/services/memor*.ts"
+      - "mobile/src/services/settings.ts"
+      - "mobile/src/services/mediaUploadService.ts"
+      - "mobile/supabase/**"
+      - "tests/shared-memory-phase*.test.mjs"
+
+jobs:
+  memory-hardening:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Run memory hardening phase tests
+        run: npm run test:memory-hardening
+
+      - name: Run full root tests
+        run: npm test
+
+      - name: Run coverage smoke
+        run: npm run test:coverage
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run root typecheck
+        run: npm run typecheck
+
+      - name: Run production build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+          MEMORY_UPLOAD_CLEANUP_SECRET: ci-placeholder-cleanup-secret
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run mobile typecheck
+        working-directory: mobile
+        run: npm run typecheck

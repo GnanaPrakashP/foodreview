@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createNotificationForNames } from "@/lib/notifications";
+import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
+import { assertMemoryRoomMutationAllowed, memoryRoomSecurityErrorStatus } from "@/lib/server/memory-room-security";
 import { getRouteActor } from "@/lib/server/route-supabase";
 
 type RoomRow = {
@@ -12,6 +14,15 @@ type ProfileRow = {
   username: string;
 };
 
+type BlockRow = {
+  blocked_name: string | null;
+  blocker_name: string | null;
+};
+
+type MemberRow = {
+  user_name: string;
+};
+
 type InviteRow = {
   id: string;
   receiver_name: string;
@@ -20,6 +31,7 @@ type InviteRow = {
 type InviteParticipantsResult = {
   added: string[];
   alreadyMembers: string[];
+  blocked: string[];
   invited: string[];
   notFound: string[];
 };
@@ -45,6 +57,7 @@ export async function POST(
   req: NextRequest,
   context: { params: Promise<{ roomId: string }> }
 ) {
+  const startedAt = Date.now();
   try {
     const { roomId } = await context.params;
     const body = await req.json().catch(() => null) as { usernames?: unknown } | null;
@@ -54,7 +67,7 @@ export async function POST(
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const { actor } = await getRouteActor(req);
+    const { actor, supabase } = await getRouteActor(req);
     if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
     const admin = createAdminClient();
@@ -62,6 +75,7 @@ export async function POST(
     const result: InviteParticipantsResult = {
       added: [],
       alreadyMembers: [],
+      blocked: [],
       invited: [],
       notFound: []
     };
@@ -72,18 +86,25 @@ export async function POST(
       .eq("id", roomId)
       .maybeSingle<RoomRow>();
 
-    if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+    if (roomError) return NextResponse.json({ error: "Unable to load memory room" }, { status: 500 });
     if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
+
+    await assertMemoryRoomMutationAllowed({
+      actorName: inviter,
+      admin,
+      roomId,
+      supabase
+    });
 
     const { data: membershipRows, error: membershipError } = await admin
       .from("shared_memory_members")
-      .select("id")
+      .select("user_name")
       .eq("room_id", roomId)
-      .eq("user_name", inviter)
-      .limit(1);
+      .returns<MemberRow[]>();
 
-    if (membershipError) return NextResponse.json({ error: membershipError.message }, { status: 500 });
-    if ((membershipRows ?? []).length === 0) {
+    if (membershipError) return NextResponse.json({ error: "Unable to load room members" }, { status: 500 });
+    const memberNames = new Set((membershipRows ?? []).map((member) => member.user_name));
+    if (!memberNames.has(inviter)) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
@@ -93,7 +114,7 @@ export async function POST(
       .in("username", usernames)
       .returns<ProfileRow[]>();
 
-    if (profileError) return NextResponse.json({ error: profileError.message }, { status: 500 });
+    if (profileError) return NextResponse.json({ error: "Unable to load profiles" }, { status: 500 });
 
     const profileNames = new Set((profiles ?? []).map((profile) => profile.username));
     result.notFound = usernames.filter((username) => !profileNames.has(username));
@@ -104,17 +125,44 @@ export async function POST(
 
     if (candidateNames.length === 0) return NextResponse.json(result);
 
+    const relationshipNames = Array.from(new Set([...memberNames, ...candidateNames]));
+    const { data: blockRows, error: blockError } = await admin
+      .from("blocked_users")
+      .select("blocker_name, blocked_name")
+      .in("blocker_name", relationshipNames)
+      .in("blocked_name", relationshipNames)
+      .returns<BlockRow[]>();
+
+    if (blockError) return NextResponse.json({ error: "Unable to verify participant permissions" }, { status: 500 });
+
+    const blockedTargets = new Set<string>();
+    for (const candidate of candidateNames) {
+      const blocked = (blockRows ?? []).some((block) => {
+        const blocker = block.blocker_name;
+        const blockedName = block.blocked_name;
+        if (!blocker || !blockedName || blocker === blockedName) return false;
+        if (blocker === candidate && relationshipNames.includes(blockedName)) return true;
+        if (blockedName === candidate && relationshipNames.includes(blocker)) return true;
+        return false;
+      });
+      if (blocked) blockedTargets.add(candidate);
+    }
+
+    result.blocked = candidateNames.filter((username) => blockedTargets.has(username));
+    const allowedCandidateNames = candidateNames.filter((username) => !blockedTargets.has(username));
+    if (allowedCandidateNames.length === 0) return NextResponse.json(result);
+
     const { data: existingRows, error: existingError } = await admin
       .from("shared_memory_members")
       .select("user_name")
       .eq("room_id", roomId)
-      .in("user_name", candidateNames);
+      .in("user_name", allowedCandidateNames);
 
-    if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+    if (existingError) return NextResponse.json({ error: "Unable to load existing participants" }, { status: 500 });
 
     const existingMembers = new Set((existingRows ?? []).map((row: { user_name: string }) => row.user_name));
-    result.alreadyMembers = candidateNames.filter((username) => existingMembers.has(username));
-    const targetNames = candidateNames.filter((username) => !existingMembers.has(username));
+    result.alreadyMembers = allowedCandidateNames.filter((username) => existingMembers.has(username));
+    const targetNames = allowedCandidateNames.filter((username) => !existingMembers.has(username));
 
     if (targetNames.length === 0) return NextResponse.json(result);
 
@@ -124,7 +172,7 @@ export async function POST(
       .eq("user_name", inviter)
       .in("member_name", targetNames);
 
-    if (circleError) return NextResponse.json({ error: circleError.message }, { status: 500 });
+    if (circleError) return NextResponse.json({ error: "Unable to verify circle membership" }, { status: 500 });
 
     const circleMembers = new Set((circleRows ?? []).map((row: { member_name: string }) => row.member_name));
     const addNames = targetNames.filter((username) => circleMembers.has(username));
@@ -138,7 +186,7 @@ export async function POST(
           { onConflict: "room_id,user_name" }
         );
 
-      if (addError) return NextResponse.json({ error: addError.message }, { status: 500 });
+      if (addError) return NextResponse.json({ error: "Unable to add participants" }, { status: 500 });
       result.added = addNames;
     }
 
@@ -161,7 +209,7 @@ export async function POST(
         .returns<InviteRow[]>();
 
       if (inviteInsert.error && !isMissingTableError(inviteInsert.error)) {
-        return NextResponse.json({ error: inviteInsert.error.message }, { status: 500 });
+        return NextResponse.json({ error: "Unable to invite participants" }, { status: 500 });
       }
 
       inviteRows = inviteInsert.data ?? inviteNames.map((receiverName) => ({ id: "", receiver_name: receiverName }));
@@ -171,25 +219,31 @@ export async function POST(
         recipientName: invite.receiver_name,
         actorName: inviter,
         type: "TABLE_MEMORY_INVITE",
-        title: "Table invite",
-        message: `${actor.displayName} invited you to ${room.restaurant_name}`,
+        title: "Table Memory",
+        message: "You have a new memory room invite.",
         entityType: "TABLE_MEMORY",
         entityId: roomId,
         metadata: {
           inviteId: invite.id || null,
-          receiverName: invite.receiver_name,
-          restaurantName: room.restaurant_name,
-          roomId,
-          senderName: inviter,
           status: "pending"
         },
         dedupe: true
       })));
     }
 
+    recordMemoryOperation("memory_participants.invite", {
+      durationMs: memoryOperationDurationMs(startedAt),
+      status: "success",
+      statusCode: 200
+    });
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[mobile/memories/participants] unhandled failure:", error);
-    return NextResponse.json({ error: "Unable to invite participants" }, { status: 500 });
+    recordMemoryOperation("memory_participants.invite", {
+      durationMs: memoryOperationDurationMs(startedAt),
+      errorKind: memoryErrorKind(error),
+      status: "error",
+      statusCode: memoryRoomSecurityErrorStatus(error)
+    });
+    return NextResponse.json({ error: "Unable to invite participants" }, { status: memoryRoomSecurityErrorStatus(error) });
   }
 }

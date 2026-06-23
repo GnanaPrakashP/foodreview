@@ -1,14 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
-type HeaderThemeColors = {
-  card: string;
-  border: string;
-  cream: string;
-  orange: string;
-  muted: string;
-};
+type HeaderThemeColors = ReturnType<typeof themeColorsFor>;
 
 type MemoryRouteHeaderProps = {
   backButtonVariant?: "boxed" | "plain";
@@ -25,10 +20,12 @@ export function MemoryRouteHeader({
   kicker,
   onBack,
   subtitle,
-  themeColors = colors.dark,
+  themeColors: providedThemeColors,
   title,
   titleWeight = "extraBold"
 }: MemoryRouteHeaderProps) {
+  const { themeColors: defaultThemeColors } = useThemePreference();
+  const themeColors = providedThemeColors ?? defaultThemeColors;
   const titleStyle = titleWeight === "regular"
     ? styles.titleRegular
     : titleWeight === "bold"

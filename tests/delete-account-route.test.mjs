@@ -67,24 +67,40 @@ function hasOp(entry, name) {
   return entry.ops.some(([op]) => op === name);
 }
 
-function loadRoute({ user = { id: "viewer-id" }, deleteUserError = null } = {}) {
+function loadRoute({
+  accountDeleteError = null,
+  mediaRows = [{ storage_path: "memories/room/user/intent/media.jpg" }],
+  storageError = null,
+  user = { id: "viewer-id" }
+} = {}) {
+  const serverRpcCalls = [];
   const serverClient = {
     auth: {
       getUser: async () => ({ data: { user }, error: null }),
     },
+    rpc: async (name) => {
+      serverRpcCalls.push(name);
+      return { data: null, error: accountDeleteError };
+    }
   };
+  const adminRpcCalls = [];
+  const removedPaths = [];
   const adminClient = {
     ...spyTableDb(),
-    auth: {
-      admin: {
-        deleteUser: async (id) => ({ data: { id }, error: deleteUserError }),
-      },
+    rpc: async (name, params) => {
+      adminRpcCalls.push({ name, params });
+      return { data: mediaRows, error: null };
     },
-  };
-  const deletedUsers = [];
-  adminClient.auth.admin.deleteUser = async (id) => {
-    deletedUsers.push(id);
-    return { data: { id }, error: deleteUserError };
+    storage: {
+      from(bucket) {
+        return {
+          remove: async (paths) => {
+            removedPaths.push({ bucket, paths });
+            return { data: [], error: storageError };
+          }
+        };
+      }
+    }
   };
 
   const mod = { exports: {} };
@@ -104,49 +120,62 @@ function loadRoute({ user = { id: "viewer-id" }, deleteUserError = null } = {}) 
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "@supabase/ssr") return { createServerClient: () => serverClient };
       if (id === "@supabase/supabase-js") return { createClient: () => adminClient };
+      if (id === "@/lib/memory-media-policy") return { MEMORY_MEDIA_BUCKET: "memory-media" };
+      if (id === "@/lib/server/memory-observability") {
+        return {
+          memoryErrorKind: () => "test_error",
+          memoryOperationDurationMs: () => 1,
+          recordMemoryOperation: () => {}
+        };
+      }
       if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => serverClient };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminClient };
       throw new Error(`Unexpected require in delete-account route tests: ${id}`);
     },
   });
-  return { route: mod.exports, adminClient, deletedUsers };
+  return { route: mod.exports, adminClient, adminRpcCalls, removedPaths, serverRpcCalls };
 }
 
 test("delete account route: logged-out users are rejected", async () => {
-  const { route, adminClient, deletedUsers } = loadRoute({ user: null });
+  const { route, adminClient, removedPaths, serverRpcCalls } = loadRoute({ user: null });
 
   const res = await route.POST();
 
   assert.equal(status(res), 401);
   assert.equal(body(res).error, "Not authenticated");
   assert.equal(adminClient._calls.length, 0);
-  assert.equal(deletedUsers.length, 0);
+  assert.equal(removedPaths.length, 0);
+  assert.equal(serverRpcCalls.length, 0);
 });
 
-test("delete account route: deletes only the authenticated user's profile before auth user", async () => {
-  const { route, adminClient, deletedUsers } = loadRoute({ user: { id: "user-123" } });
+test("delete account route: removes DB-backed memory media before deleting the authenticated account", async () => {
+  const { route, adminRpcCalls, removedPaths, serverRpcCalls } = loadRoute({ user: { id: "user-123" } });
 
   const res = await route.POST();
 
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
-  const profileDelete = adminClient._calls.find((call) => call.table === "profiles" && hasOp(call, "delete"));
-  assert.ok(profileDelete);
-  assert.equal(eqFilters(profileDelete).id, "user-123");
-  assert.deepEqual(deletedUsers, ["user-123"]);
+  assert.equal(JSON.stringify(adminRpcCalls), JSON.stringify([{
+    name: "shared_memory_account_media_paths",
+    params: { p_user_id: "user-123" }
+  }]));
+  assert.equal(JSON.stringify(removedPaths), JSON.stringify([{
+    bucket: "memory-media",
+    paths: ["memories/room/user/intent/media.jpg"]
+  }]));
+  assert.equal(JSON.stringify(serverRpcCalls), JSON.stringify(["delete_current_account"]));
 });
 
-test("delete account route: auth deletion failure is returned as 500", async () => {
-  const { route, adminClient, deletedUsers } = loadRoute({
+test("delete account route: account deletion failure is returned as a generic 500", async () => {
+  const { route, removedPaths, serverRpcCalls } = loadRoute({
+    accountDeleteError: { message: "delete failed" },
     user: { id: "user-123" },
-    deleteUserError: { message: "delete failed" },
   });
 
   const res = await route.POST();
 
   assert.equal(status(res), 500);
-  assert.equal(body(res).error, "delete failed");
-  const profileDelete = adminClient._calls.find((call) => call.table === "profiles" && hasOp(call, "delete"));
-  assert.ok(profileDelete);
-  assert.deepEqual(deletedUsers, ["user-123"]);
+  assert.equal(body(res).error, "Unable to delete account");
+  assert.equal(removedPaths.length, 1);
+  assert.equal(JSON.stringify(serverRpcCalls), JSON.stringify(["delete_current_account"]));
 });

@@ -5,7 +5,6 @@ import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,9 +15,8 @@ import {
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { memoryKeys, useAddMemoryPhotoMutation } from "@/hooks/useMemories";
-import { addMemoryDish } from "@/services/memories";
-import { removeMemoryCapture } from "@/services/memoryCaptureSession";
+import { queueMemoryCapturePost } from "@/services/memoryCaptureSession";
+import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { colors, fontStyles, radius, spacing } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
 
@@ -30,51 +28,51 @@ export function MediaPreviewScreen({
   roomId: string;
 }) {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const [captionOpen, setCaptionOpen] = useState(false);
   const [dishOpen, setDishOpen] = useState(false);
   const [caption, setCaption] = useState("");
   const [dishName, setDishName] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
   const [videoMuted, setVideoMuted] = useState(false);
-  const addPhoto = useAddMemoryPhotoMutation(roomId);
   const bottomInset = Platform.OS === "web" ? spacing.xl : Math.max(insets.bottom + spacing.lg, 28);
   const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, 42);
 
-  function postToRoom() {
-    if (posting || addPhoto.isPending) return;
+  async function postToRoom() {
+    if (posting) return;
     setPosting(true);
+    setPostError("");
 
     const trimmedCaption = caption.trim();
     const trimmedDishName = dishName.trim();
     const mimeType = asset.mimeType ?? (asset.mediaType === "video" ? "video/mp4" : "image/jpeg");
+    const validationError = validateMemoryMediaAssets([{
+      duration: asset.duration,
+      fileSize: asset.fileSize,
+      mediaMimeType: mimeType,
+      mediaType: asset.mediaType,
+      mediaUri: asset.uri
+    }]);
+    if (validationError) {
+      setPostError(validationError);
+      setPosting(false);
+      return;
+    }
 
-    const uploadInput = {
-      assets: [{
-        imageHeight: asset.height ?? null,
-        imageWidth: asset.width ?? null,
-        mediaMimeType: mimeType,
-        mediaType: asset.mediaType,
-        mediaUri: asset.uri
-      }],
-      body: trimmedCaption || undefined,
-      roomId
-    };
-
-    void addPhoto.mutateAsync(uploadInput)
-      .then(async () => {
-        removeMemoryCapture(asset.id);
-        if (!trimmedDishName) return;
-        await addMemoryDish({ dishName: trimmedDishName, roomId });
-        queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-      })
-      .catch(() => {});
+    const queued = queueMemoryCapturePost(asset.id, {
+      caption: trimmedCaption,
+      dishName: trimmedDishName
+    });
+    if (!queued) {
+      setPostError("Could not prepare media. Try again.");
+      setPosting(false);
+      return;
+    }
 
     router.dismissTo({
       pathname: "/memories/[id]",
-      params: { id: roomId, tab: "chat" }
+      params: { id: roomId, postCaptureId: asset.id, tab: "chat" }
     });
   }
 
@@ -160,6 +158,8 @@ export function MediaPreviewScreen({
               value={dishName}
             />
           ) : null}
+
+          {postError ? <Text style={styles.errorText}>{postError}</Text> : null}
 
           <Pressable
             accessibilityLabel="Post media to room"
@@ -296,6 +296,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     minHeight: 48,
     paddingHorizontal: spacing.base
+  },
+  errorText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.dangerSoft,
+    fontSize: 12,
+    letterSpacing: 0,
+    lineHeight: 16,
+    textAlign: "center"
   },
   postButton: {
     alignItems: "center",

@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter, type Href } from "expo-router";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { BackHandler, useWindowDimensions } from "react-native";
 import { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
@@ -30,10 +30,6 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
     transform: [{ translateX: interpolate(progress.value, [0, 1], [width, 0]) }]
   }));
 
-  useEffect(() => {
-    progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
-  }, [progress]);
-
   const performBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else if (fallbackHref) router.dismissTo(fallbackHref);
@@ -49,12 +45,16 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
 
   useFocusEffect(
     useCallback(() => {
+      closingRef.current = false;
+      progress.value = 0;
+      progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
+
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close])
+    }, [close, progress])
   );
 
   return { slideStyle, close };

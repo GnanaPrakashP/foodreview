@@ -8,12 +8,41 @@ export type DishCategory =
   | "unknown";
 
 export type MealType = "breakfast" | "lunch" | "snack" | "dinner" | "dessert" | "late_night";
+export type DishCanonicalSource = "known" | "generated" | "empty";
+
+export type DishFamilyId =
+  | "biryani"
+  | "burger"
+  | "chicken"
+  | "desserts"
+  | "ice_cream"
+  | "mandi"
+  | "milkshake"
+  | "paneer"
+  | "pizza"
+  | "shawarma"
+  | "sweets"
+  | "other";
+
+export type DishNormalization = {
+  rawDishName: string;
+  normalizedInput: string;
+  canonicalVariantId: string | null;
+  canonicalVariantName: string | null;
+  canonicalSource: DishCanonicalSource;
+  dishClusterKey: string;
+  dishFamilyId: DishFamilyId;
+  dishFamilyName: string;
+  confidence: number;
+};
 
 export type CanonicalDish = {
   id: string;
   displayName: string;
   category: DishCategory;
   cuisine: string;
+  familyId?: DishFamilyId;
+  familyName?: string;
   aliases: string[];
   defaultTags: string[];
   mealTypes: MealType[];
@@ -37,6 +66,11 @@ export type ReviewEnrichment = {
   rawDishName: string;
   canonicalDishId: string | null;
   canonicalDishName: string | null;
+  canonicalDishSource: DishCanonicalSource;
+  dishClusterKey: string;
+  dishFamilyId: DishFamilyId;
+  dishFamilyName: string;
+  dishNormalizationConfidence: number;
   category: DishCategory;
   cuisine: string;
   tags: string[];
@@ -64,6 +98,7 @@ const WORD_ALIASES: Record<string, string> = {
   curd: "yogurt",
   dhosa: "dosa",
   dhoosa: "dosa",
+  dish: "dish",
   dossa: "dosa",
   eg: "egg",
   eggs: "egg",
@@ -86,6 +121,7 @@ const WORD_ALIASES: Record<string, string> = {
   paratha: "parotta",
   parota: "parotta",
   prawns: "prawn",
+  sixtyfive: "65",
   pulav: "pulao",
   pulavv: "pulao",
   rotti: "roti",
@@ -105,19 +141,52 @@ const OPTIONAL_TOKENS = new Set([
   "best",
   "boneless",
   "classic",
-  "dum",
   "fresh",
   "hot",
   "hyderabad",
   "hyderabadi",
   "of",
   "plate",
-  "special",
   "the",
   "with",
 ]);
 
-const MODIFIER_TOKENS = new Set(["chicken", "mutton", "egg", "veg", "paneer", "prawn"]);
+const MODIFIER_TOKENS = new Set(["chicken", "dum", "egg", "fish", "mutton", "paneer", "prawn", "veg"]);
+
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+};
+
+const TENS_WORDS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fourty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
 
 export const CANONICAL_DISHES: CanonicalDish[] = [
   {
@@ -125,22 +194,97 @@ export const CANONICAL_DISHES: CanonicalDish[] = [
     displayName: "Biryani",
     category: "main_course",
     cuisine: "indian",
-    aliases: [
-      "biryani",
-      "biriyani",
-      "briyani",
-      "biriani",
-      "chicken biryani",
-      "ckn biryani",
-      "mutton biryani",
-      "egg biryani",
-      "veg biryani",
-      "paneer biryani",
-      "prawn biryani",
-      "dum biryani",
-      "hyderabadi biryani",
-      "hyderabadi chicken biryani",
-    ],
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["biryani", "biriyani", "briyani", "biriani", "dum biryani", "hyderabadi biryani"],
+    defaultTags: ["rice", "spicy"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "chicken_biryani",
+    displayName: "Chicken Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["chicken biryani", "ckn biryani", "chicken biriyani", "chicken briyani", "chiken biryani", "hyderabadi chicken biryani", "boneless chicken biryani"],
+    defaultTags: ["rice", "spicy", "chicken"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "chicken_dum_biryani",
+    displayName: "Chicken Dum Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["chicken dum biryani", "chicken dum biriyani", "chicken dum briyani", "ckn dum biryani", "ckn dum briyani", "hyderabadi chicken dum biryani"],
+    defaultTags: ["rice", "spicy", "chicken", "dum"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "mutton_biryani",
+    displayName: "Mutton Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["mutton biryani", "mutton biriyani", "mutton briyani", "mton biryani", "muton biryani", "muttn biryani", "mutton dum biryani"],
+    defaultTags: ["rice", "spicy", "mutton"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "fish_biryani",
+    displayName: "Fish Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["fish biryani", "fish biriyani", "fish briyani", "seafood biryani"],
+    defaultTags: ["rice", "spicy", "fish"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "prawn_biryani",
+    displayName: "Prawn Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["prawn biryani", "prawn biriyani", "prawn briyani", "prawns biryani", "shrimp biryani"],
+    defaultTags: ["rice", "spicy", "prawn"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "egg_biryani",
+    displayName: "Egg Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["egg biryani", "egg biriyani", "egg briyani"],
+    defaultTags: ["rice", "spicy", "egg"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "veg_biryani",
+    displayName: "Veg Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["veg biryani", "veg biriyani", "veg briyani", "vegetable biryani", "vegetable biriyani"],
+    defaultTags: ["rice", "spicy", "veg"],
+    mealTypes: ["lunch", "dinner", "late_night"],
+  },
+  {
+    id: "paneer_biryani",
+    displayName: "Paneer Biryani",
+    category: "main_course",
+    cuisine: "indian",
+    familyId: "biryani",
+    familyName: "Biryani",
+    aliases: ["paneer biryani", "paneer biriyani", "paneer briyani", "panner biryani", "paner biryani"],
     defaultTags: ["rice", "spicy"],
     mealTypes: ["lunch", "dinner", "late_night"],
   },
@@ -394,6 +538,29 @@ function closestToken(token: string): string {
   return bestDistance <= threshold ? (WORD_ALIASES[best] ?? best) : token;
 }
 
+function normalizeNumberTokens(tokens: string[]): string[] {
+  const normalized: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const tens = TENS_WORDS[token];
+    const next = tokens[index + 1];
+    if (tens !== undefined) {
+      const unit = next !== undefined ? NUMBER_WORDS[next] : undefined;
+      if (unit !== undefined && unit > 0 && unit < 10) {
+        normalized.push(String(tens + unit));
+        index += 1;
+      } else {
+        normalized.push(String(tens));
+      }
+      continue;
+    }
+
+    const value = NUMBER_WORDS[token];
+    normalized.push(value !== undefined ? String(value) : token);
+  }
+  return normalized;
+}
+
 function normalizedPhrase(input: string): string {
   return normalizeDishTokens(input).join(" ");
 }
@@ -407,6 +574,114 @@ function hasRequestedModifier(dishTokens: Set<string>, queryTokens: Set<string>)
     if (queryTokens.has(modifier) && !dishTokens.has(modifier)) return false;
   }
   return true;
+}
+
+function hasExtraSpecificModifier(dishTokens: Set<string>, queryTokens: Set<string>): boolean {
+  const queryHasModifier = Array.from(MODIFIER_TOKENS).some((modifier) => queryTokens.has(modifier));
+  if (!queryHasModifier) return false;
+
+  for (const modifier of MODIFIER_TOKENS) {
+    if (dishTokens.has(modifier) && !queryTokens.has(modifier)) return true;
+  }
+  return false;
+}
+
+const DISH_FAMILY_LABELS: Record<DishFamilyId, string> = {
+  biryani: "Biryani",
+  burger: "Burger",
+  chicken: "Chicken",
+  desserts: "Desserts",
+  ice_cream: "Ice Cream",
+  mandi: "Mandi",
+  milkshake: "Milkshake",
+  other: "Other",
+  paneer: "Paneer",
+  pizza: "Pizza",
+  shawarma: "Shawarma",
+  sweets: "Sweets",
+};
+
+function titleCaseFamily(id: DishFamilyId): string {
+  return DISH_FAMILY_LABELS[id] ?? "Other";
+}
+
+function generatedDishId(clusterKey: string): string | null {
+  return clusterKey ? `generated:${clusterKey}` : null;
+}
+
+function clusterKeyForNormalizedInput(normalizedInput: string): string {
+  return normalizedInput.replace(/\s+/g, "-");
+}
+
+function titleCaseDish(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.match(/^\d+$/) ? part : part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function titleCaseRawDish(value: string): string {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .split(" ")
+    .map((part) => part.match(/^\d+$/) ? part : part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function comparableGeneratedNameTokens(input: string): string[] {
+  return normalizeNumberTokens(basicTokens(input)).map(closestToken).filter(Boolean);
+}
+
+function generatedDishName(rawDishName: string, normalizedInput: string): string | null {
+  if (!normalizedInput) return null;
+  const rawTokens = basicTokens(rawDishName);
+  const normalizedTokens = comparableGeneratedNameTokens(rawDishName);
+  return rawTokens.join(" ") === normalizedTokens.join(" ")
+    ? titleCaseRawDish(rawDishName)
+    : titleCaseDish(normalizedInput);
+}
+
+function familyForDish(dish: CanonicalDish | null | undefined, tokens: Set<string>): DishFamilyId {
+  if (dish?.familyId) return dish.familyId;
+  if (dish?.id === "burger") return "burger";
+  if (dish?.id === "milkshake") return "milkshake";
+  if (dish?.id === "pizza") return "pizza";
+  if (dish?.id === "shawarma") return "shawarma";
+  if (dish?.id === "paneer_butter_masala") return "paneer";
+  if (dish?.id === "butter_chicken") return "chicken";
+  if (dish?.category === "dessert") return "desserts";
+  if (tokens.has("biryani")) return "biryani";
+  if (tokens.has("burger")) return "burger";
+  if (tokens.has("chicken")) return "chicken";
+  if (tokens.has("ice") && tokens.has("cream")) return "ice_cream";
+  if (tokens.has("mandi")) return "mandi";
+  if (tokens.has("milkshake") || tokens.has("shake")) return "milkshake";
+  if (tokens.has("paneer")) return "paneer";
+  if (tokens.has("pizza")) return "pizza";
+  if (tokens.has("shawarma")) return "shawarma";
+  if (tokens.has("sweet") || tokens.has("sweets")) return "sweets";
+  return "other";
+}
+
+function matchingAliasScore(dish: CanonicalDish, normalizedInput: string, inputTokens: Set<string>): number {
+  let bestScore = 0;
+
+  for (const alias of dish.aliases) {
+    const aliasPhrase = normalizedPhrase(alias);
+    const aliasTokens = normalizeDishTokens(alias);
+    if (aliasPhrase && aliasPhrase === normalizedInput) {
+      bestScore = Math.max(bestScore, 1000 + aliasTokens.length);
+      continue;
+    }
+    if (aliasTokens.length > 0 && includesAll(inputTokens, aliasTokens)) {
+      bestScore = Math.max(bestScore, 500 + aliasTokens.length);
+    }
+  }
+
+  return bestScore;
 }
 
 function getRestaurantName(restaurant: ReviewEnrichmentInput["restaurant"]): string {
@@ -461,7 +736,7 @@ export function normalizeDishTokens(input: string): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];
 
-  for (const raw of basicTokens(input)) {
+  for (const raw of normalizeNumberTokens(basicTokens(input))) {
     const token = closestToken(raw);
     if (!token || OPTIONAL_TOKENS.has(token) || seen.has(token)) continue;
     seen.add(token);
@@ -476,23 +751,40 @@ export function normalizeDishName(input: string): CanonicalDish | null {
   if (!normalizedInput) return null;
 
   const inputTokens = new Set(normalizeDishTokens(input));
-  const matches = CANONICAL_DISHES.filter((dish) =>
-    dish.aliases.some((alias) => {
-      const aliasTokens = normalizeDishTokens(alias);
-      if (normalizedPhrase(alias) === normalizedInput) return true;
-      return aliasTokens.length > 0 && includesAll(inputTokens, aliasTokens);
-    })
-  );
+  const matches = CANONICAL_DISHES
+    .map((dish) => ({ dish, score: matchingAliasScore(dish, normalizedInput, inputTokens) }))
+    .filter((match) => match.score > 0);
 
-  return matches.sort((a, b) => {
-    const aBest = Math.max(...a.aliases.map((alias) => normalizeDishTokens(alias).length));
-    const bBest = Math.max(...b.aliases.map((alias) => normalizeDishTokens(alias).length));
-    return bBest - aBest || a.displayName.localeCompare(b.displayName);
-  })[0] ?? null;
+  return matches.sort((a, b) => b.score - a.score || a.dish.displayName.localeCompare(b.dish.displayName))[0]?.dish ?? null;
+}
+
+export function normalizeDishInput(input: string): DishNormalization {
+  const rawDishName = input.trim().replace(/\s+/g, " ");
+  const normalizedInput = normalizedPhrase(rawDishName);
+  const tokens = new Set(normalizeDishTokens(rawDishName));
+  const dish = normalizeDishName(rawDishName);
+  const dishFamilyId = familyForDish(dish, tokens);
+  const exactAlias = Boolean(dish && dish.aliases.some((alias) => normalizedPhrase(alias) === normalizedInput));
+  const generatedClusterKey = clusterKeyForNormalizedInput(normalizedInput);
+  const canonicalSource: DishCanonicalSource = dish ? "known" : normalizedInput ? "generated" : "empty";
+  const canonicalVariantId = dish?.id ?? generatedDishId(generatedClusterKey);
+  const canonicalVariantName = dish?.displayName ?? generatedDishName(rawDishName, normalizedInput);
+
+  return {
+    rawDishName,
+    normalizedInput,
+    canonicalVariantId,
+    canonicalVariantName,
+    canonicalSource,
+    dishClusterKey: dish ? `known:${dish.id}` : generatedClusterKey ? `generated:${generatedClusterKey}` : "",
+    dishFamilyId,
+    dishFamilyName: dish?.familyName ?? titleCaseFamily(dishFamilyId),
+    confidence: dish ? exactAlias ? 1 : 0.9 : normalizedInput ? dishFamilyId === "other" ? 0.45 : 0.65 : 0,
+  };
 }
 
 export function normalizeDishDisplayName(input: string): string {
-  return normalizeDishName(input)?.displayName ?? input.trim().replace(/\s+/g, " ");
+  return normalizeDishInput(input).canonicalVariantName ?? input.trim().replace(/\s+/g, " ");
 }
 
 export function extractCaptionTags(caption: string | null | undefined): string[] {
@@ -521,6 +813,7 @@ export function inferMealType(createdAt: string | number | Date | null | undefin
 
 export function enrichReview(input: ReviewEnrichmentInput): ReviewEnrichment {
   const rawDishName = input.dishName.trim().replace(/\s+/g, " ");
+  const normalization = normalizeDishInput(rawDishName);
   const dish = normalizeDishName(rawDishName);
   const restaurantName = getRestaurantName(input.restaurant);
   const inferredMealType = inferMealType(input.createdAt);
@@ -532,7 +825,8 @@ export function enrichReview(input: ReviewEnrichmentInput): ReviewEnrichment {
   const searchTokenSet = new Set<string>();
 
   addSearchPhrase(searchTokenSet, rawDishName);
-  addSearchPhrase(searchTokenSet, dish?.displayName);
+  addSearchPhrase(searchTokenSet, normalization.canonicalVariantName);
+  addSearchPhrase(searchTokenSet, normalization.dishFamilyName);
   for (const alias of dish?.aliases ?? []) addSearchPhrase(searchTokenSet, alias);
   addSearchPhrase(searchTokenSet, dish?.category ?? "unknown");
   addSearchPhrase(searchTokenSet, cuisine);
@@ -541,8 +835,13 @@ export function enrichReview(input: ReviewEnrichmentInput): ReviewEnrichment {
 
   return {
     rawDishName,
-    canonicalDishId: dish?.id ?? null,
-    canonicalDishName: dish?.displayName ?? null,
+    canonicalDishId: normalization.canonicalVariantId,
+    canonicalDishName: normalization.canonicalVariantName,
+    canonicalDishSource: normalization.canonicalSource,
+    dishClusterKey: normalization.dishClusterKey,
+    dishFamilyId: normalization.dishFamilyId,
+    dishFamilyName: normalization.dishFamilyName,
+    dishNormalizationConfidence: normalization.confidence,
     category: dish?.category ?? "unknown",
     cuisine,
     tags,
@@ -558,6 +857,7 @@ export function dishSearchMatches(dishName: string, query: string): boolean {
   const dishTokens = new Set(normalizeDishTokens(dishName));
   const queryTokenSet = new Set(queryTokens);
   if (!hasRequestedModifier(dishTokens, queryTokenSet)) return false;
+  if (hasExtraSpecificModifier(dishTokens, queryTokenSet)) return false;
   if (queryTokens.every((token) => dishTokens.has(token))) return true;
 
   const dish = normalizeDishName(dishName);

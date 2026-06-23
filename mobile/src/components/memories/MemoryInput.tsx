@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { StyleSheet, TextInput, type TextInputProps } from "react-native";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 type MemoryInputProps = TextInputProps & {
   tall?: boolean;
@@ -7,37 +9,42 @@ type MemoryInputProps = TextInputProps & {
 };
 
 export function MemoryInput({ style, tall, surface = "card", ...props }: MemoryInputProps) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <TextInput
-      placeholderTextColor={colors.dark.muted}
+      placeholderTextColor={themeColors.muted}
       style={[styles.input, surface === "field" && styles.field, tall && styles.tall, style]}
       {...props}
     />
   );
 }
 
-const styles = StyleSheet.create({
-  input: {
-    ...fontStyles.medium,
-    backgroundColor: colors.dark.card,
-    borderColor: colors.dark.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    color: colors.dark.cream,
-    fontSize: typography.body,
-    paddingHorizontal: 14,
-    paddingVertical: 13
-  },
-  field: {
-    backgroundColor: colors.dark.surface,
-    borderRadius: radius.input,
-    flex: 1,
-    fontSize: 14,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 11
-  },
-  tall: {
-    minHeight: 96,
-    textAlignVertical: "top"
-  }
-});
+function createStyles(c: ReturnType<typeof themeColorsFor>) {
+  return StyleSheet.create({
+    input: {
+      ...fontStyles.medium,
+      backgroundColor: c.card,
+      borderColor: c.border,
+      borderRadius: radius.card,
+      borderWidth: 1,
+      color: c.cream,
+      fontSize: typography.body,
+      paddingHorizontal: 14,
+      paddingVertical: 13
+    },
+    field: {
+      backgroundColor: c.surface,
+      borderRadius: radius.input,
+      flex: 1,
+      fontSize: 14,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 11
+    },
+    tall: {
+      minHeight: 96,
+      textAlignVertical: "top"
+    }
+  });
+}

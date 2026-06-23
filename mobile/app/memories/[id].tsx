@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { PenLine, Star, Utensils } from "lucide-react-native";
 import { Image } from "expo-image";
+import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView, type VideoThumbnail } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -45,12 +47,19 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import {
+  getOccasionTheme,
+  occasionThemeToMemoryRoomTokens,
+  type OccasionTheme
+} from "@/features/occasions/occasionThemes";
+import { type OccasionType } from "@/features/occasions/occasionTypes";
+import {
   FOOD_WALLPAPER_TILE_SIZE,
   buildFoodWallpaperPlacements,
   type DoodlePrimitive
 } from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
+import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -60,7 +69,9 @@ import {
   useAddMemoryParticipantMutation,
   useAddMemoryDishMutation,
   useAddMemoryPhotoMutation,
+  useCreateMemoryStopMutation,
   useDeleteMemoryItemsMutation,
+  useDeleteMemoryStopMutation,
   useEditMemoryMessageMutation,
   useLeaveMemoryRoomMutation,
   useMarkMemoryRoomReadMutation,
@@ -75,12 +86,13 @@ import {
   pickMemoryMediaFromGallery,
   type MemoryMediaPickerResult
 } from "@/services/mediaPicker";
+import { consumeMemoryCapturePost, removeMemoryCapture } from "@/services/memoryCaptureSession";
+import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
-import { compactPlaceLocation } from "@/services/places";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
-import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom } from "@/types/models";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryStop, MemoryStopType } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
 type RoomMode = "overview" | "chat" | "media" | "dishes" | "people";
@@ -129,6 +141,8 @@ type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
   | { type: "photo"; value: MemoryPhoto };
 type MemoryCaptureAsset = {
+  duration?: number | null;
+  fileSize?: number | null;
   height?: number | null;
   mimeType?: string | null;
   type?: string | null;
@@ -142,6 +156,20 @@ const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mo
   { icon: "images-outline", label: "Media", mode: "media" },
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
+
+// Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
+// "Add dish" affordance — a movie or bowling stop just holds a note/photos.
+const MEMORY_STOP_META: Record<MemoryStopType, { emoji: string; label: string; canHaveDishes: boolean }> = {
+  restaurant: { emoji: "🍽️", label: "Restaurant", canHaveDishes: true },
+  cafe: { emoji: "☕", label: "Café", canHaveDishes: true },
+  bar: { emoji: "🍸", label: "Bar", canHaveDishes: true },
+  bowling: { emoji: "🎳", label: "Bowling", canHaveDishes: false },
+  movie: { emoji: "🎬", label: "Movie", canHaveDishes: false },
+  activity: { emoji: "🎯", label: "Activity", canHaveDishes: false },
+  other: { emoji: "📍", label: "Other", canHaveDishes: true }
+};
+
+const MEMORY_STOP_ORDER: MemoryStopType[] = ["restaurant", "cafe", "bar", "bowling", "movie", "activity", "other"];
 // Room palette mapped onto the shared memory tokens (see src/theme/tokens.ts).
 // Key names are kept stable so styles read clearly; values follow the current
 // app appearance with purple as the single memory-room primary accent.
@@ -233,9 +261,14 @@ const REPLY_SWIPE_MAX_TRANSLATE = 58;
 const FLOATING_ADD_EDGE_OFFSET = spacing.lg + 6;
 const FLOATING_ADD_BUTTON_SIZE = 54;
 const FLOATING_ADD_ICON_SIZE = 26;
-const FLOATING_ADD_ACTION_ICON_SIZE = 48;
+const FLOATING_ADD_ACTION_ICON_SIZE = 46;
 const FLOATING_ADD_MENU_GAP = 14;
+const ROOM_HEADER_SECTION_GAP = 6;
 const CHAT_HEADER_CLEARANCE = 112;
+// The overview header is taller than the compact one: it also shows the expanded
+// identity block (date + members) above the tabs, so the itinerary needs to clear
+// roughly that extra height.
+const TABLE_HEADER_CLEARANCE = CHAT_HEADER_CLEARANCE + 96;
 const CHAT_COMPOSER_CLEARANCE = 88;
 const MEDIA_GALLERY_GAP = 2;
 const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
@@ -245,9 +278,22 @@ const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_H
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
 const HEADER_MODE_TRANSITION_DURATION = 220;
+const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
+const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
+const CHAT_TIMELINE_WINDOW_SIZE = 9;
+const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
+const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
+const MEDIA_GALLERY_WINDOW_SIZE = 7;
+const MEDIA_VIEWER_MAX_RENDER_BATCH = 2;
+const MEDIA_VIEWER_WINDOW_SIZE = 3;
 type MediaPreviewSize = { height: number; width: number };
 type MediaTimestampPlacement = "bottom-left" | "bottom-right";
 type MessageGroupPosition = "single" | "first" | "middle" | "last";
+
+function effectiveRoomOccasionType(room: Pick<MemoryRoom, "occasionConfidence" | "occasionConfirmedByUser" | "occasionType">): OccasionType {
+  if (room.occasionConfirmedByUser || room.occasionConfidence >= 0.85) return room.occasionType;
+  return "unknown";
+}
 type AttachmentSheetView = "actions" | "dish" | "media";
 
 function roomModeFromTabParam(tab?: string | string[] | null): RoomTabMode | null {
@@ -331,6 +377,9 @@ function getSingleMediaPreviewSize({
   screenWidth: number;
 }): MediaPreviewSize {
   const maxMediaWidth = Math.min(screenWidth * 0.82, 340);
+  const maxMediaHeight = Math.min(Math.max(screenWidth * 1.05, 360), 430);
+  const minMediaWidth = Math.min(maxMediaWidth * 0.55, 180);
+  const minMediaHeight = 160;
 
   if (!imageWidth || !imageHeight || imageWidth <= 0 || imageHeight <= 0) {
     return {
@@ -347,31 +396,21 @@ function getSingleMediaPreviewSize({
     };
   }
 
-  if (aspect < 0.8) {
-    const width = Math.min(maxMediaWidth * 0.72, 250);
-    const rawHeight = width / aspect;
-    const height = Math.max(300, Math.min(rawHeight, 370));
+  let width = maxMediaWidth;
+  let height = width / aspect;
 
-    return {
-      height: Math.round(height),
-      width: Math.round(width)
-    };
+  if (height > maxMediaHeight) {
+    height = maxMediaHeight;
+    width = height * aspect;
   }
 
-  if (aspect <= 1.25) {
-    const width = Math.min(maxMediaWidth * 0.9, 310);
-    const rawHeight = width / aspect;
-    const height = Math.max(240, Math.min(rawHeight, 320));
-
-    return {
-      height: Math.round(height),
-      width: Math.round(width)
-    };
+  if (height < minMediaHeight) {
+    height = minMediaHeight;
+    width = height * aspect;
   }
 
-  const width = maxMediaWidth;
-  const rawHeight = width / aspect;
-  const height = Math.max(180, Math.min(rawHeight, 250));
+  width = Math.max(minMediaWidth, Math.min(width, maxMediaWidth));
+  height = Math.max(minMediaHeight, Math.min(height, maxMediaHeight));
 
   return {
     height: Math.round(height),
@@ -493,11 +532,12 @@ function useSmoothedKeyboardOffset(): SharedValue<number> {
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; tab?: string }>();
+  const params = useLocalSearchParams<{ id: string; postCaptureId?: string; tab?: string }>();
   const roomId = params.id ?? "";
+  const postCaptureId = typeof params.postCaptureId === "string" ? params.postCaptureId : "";
   const insets = useSafeAreaInsets();
   const { resolvedTheme } = useThemePreference();
-  applyRoomTheme(resolvedTheme);
+  applyRoomTheme(resolvedTheme, "unknown");
   const room = useMemoryRoomQuery(roomId);
   useMemoryRoomRealtime(roomId);
   const addParticipant = useAddMemoryParticipantMutation(roomId);
@@ -505,6 +545,8 @@ export default function MemoryDetailScreen() {
   const addDish = useAddMemoryDishMutation(roomId);
   const addPhoto = useAddMemoryPhotoMutation(roomId);
   const rateDish = useSetMemoryDishRatingMutation(roomId);
+  const createStop = useCreateMemoryStopMutation(roomId);
+  const deleteStop = useDeleteMemoryStopMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
@@ -516,6 +558,7 @@ export default function MemoryDetailScreen() {
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
+  const startedCapturePostsRef = useRef(new Set<string>());
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
   const chatTimelineHeightRef = useRef(0);
@@ -554,6 +597,11 @@ export default function MemoryDetailScreen() {
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [mediaError, setMediaError] = useState("");
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
+  const [stopComposerVisible, setStopComposerVisible] = useState(false);
+  const [dishTargetStopId, setDishTargetStopId] = useState<string | null>(null);
+  // Measured overview-header height so the itinerary clears the (taller) expanded
+  // header instead of tucking under it. Falls back to the static estimate.
+  const [tableHeaderHeight, setTableHeaderHeight] = useState(TABLE_HEADER_CLEARANCE);
   const [attachmentInitialView, setAttachmentInitialView] = useState<AttachmentSheetView>("actions");
   const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
   const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
@@ -602,6 +650,60 @@ export default function MemoryDetailScreen() {
     const nextMode = roomModeFromTabParam(params.tab);
     if (nextMode) setMode(nextMode);
   }, [params.tab]);
+
+  useEffect(() => {
+    if (!postCaptureId || startedCapturePostsRef.current.has(postCaptureId)) return;
+    if (!room.data) return;
+    const pendingPost = consumeMemoryCapturePost(postCaptureId);
+    if (!pendingPost) return;
+
+    startedCapturePostsRef.current.add(postCaptureId);
+    setMode("chat");
+
+    const { asset } = pendingPost;
+    const mimeType = asset.mimeType ?? (asset.mediaType === "video" ? "video/mp4" : "image/jpeg");
+    addPhoto.mutate({
+      assets: [{
+        duration: asset.duration ?? null,
+        fileSize: asset.fileSize ?? null,
+        imageHeight: asset.height ?? null,
+        imageWidth: asset.width ?? null,
+        mediaMimeType: mimeType,
+        mediaType: asset.mediaType,
+        mediaUri: asset.uri
+      }],
+      body: pendingPost.caption,
+      roomId
+    }, {
+      onError: (error) => {
+        Alert.alert("Could not post media", errorMessage(error) ?? "Try again.");
+      },
+      onSettled: () => {
+        removeMemoryCapture(asset.id);
+      },
+      onSuccess: () => {
+        if (!pendingPost.dishName) return;
+        void addDish.mutateAsync({ dishName: pendingPost.dishName }).catch(() => undefined);
+      }
+    });
+  }, [addDish, addPhoto, postCaptureId, room.data, roomId]);
+
+  useEffect(() => {
+    if (!room.data) return;
+    setSelectedMedia((current) => {
+      if (!current) return current;
+      const latestPhotos = mergeMemoryPhotos(room.data.photos, photosFromMessages(room.data.messages));
+      const latestById = new Map(latestPhotos.map((photo) => [photo.id, photo]));
+      let changed = false;
+      const items = current.items.map((item) => {
+        const latest = latestById.get(item.id);
+        if (!latest) return item;
+        if (latest.publicUrl !== item.publicUrl) changed = true;
+        return latest;
+      });
+      return changed ? { ...current, items } : current;
+    });
+  }, [room.data]);
 
   useEffect(() => {
     Animated.timing(floatingAddMenuProgress, {
@@ -749,7 +851,7 @@ export default function MemoryDetailScreen() {
     // padding), so this only changes for real content growth (multiline input,
     // banners) — never during keyboard transitions. Closed-state padding is added
     // statically; the open-state difference is compensated by chatListKeyboardStyle.
-    setChatBottomClearance(nextHeight + closedComposerBottomPadding + 8);
+    setChatBottomClearance(nextHeight + closedComposerBottomPadding);
     repinChatToBottom();
   }
 
@@ -1001,10 +1103,23 @@ export default function MemoryDetailScreen() {
   async function sendMediaAssets(selectedAssets: MemoryCaptureAsset[]) {
     setMediaError("");
     if (selectedAssets.length === 0) return;
+    const validationError = validateMemoryMediaAssets(selectedAssets.map((asset) => ({
+      duration: asset.duration,
+      fileSize: asset.fileSize,
+      mediaMimeType: asset.mimeType,
+      mediaType: asset.type,
+      mediaUri: asset.uri
+    })));
+    if (validationError) {
+      setMediaError(validationError);
+      return;
+    }
 
     try {
       await addPhoto.mutateAsync({
         assets: selectedAssets.map((asset) => ({
+          duration: asset.duration ?? null,
+          fileSize: asset.fileSize ?? null,
           imageHeight: asset.height ?? null,
           imageWidth: asset.width ?? null,
           mediaMimeType: asset.mimeType,
@@ -1041,11 +1156,13 @@ export default function MemoryDetailScreen() {
       await addDish.mutateAsync({
         dishName,
         note: dishNote,
-        rating: dishRating || null
+        rating: dishRating || null,
+        stopId: dishTargetStopId
       });
       setDishName("");
       setDishNote("");
       setDishRating(0);
+      setDishTargetStopId(null);
       return true;
     } catch {
       // Rendered from mutation state.
@@ -1053,13 +1170,39 @@ export default function MemoryDetailScreen() {
     }
   }
 
+  function openStopComposer() {
+    setFloatingAddMenuOpen(false);
+    setStopComposerVisible(true);
+  }
+
+  async function submitStop(input: { stopType: MemoryStopType; name: string; note?: string }) {
+    try {
+      await createStop.mutateAsync(input);
+      setStopComposerVisible(false);
+      return true;
+    } catch {
+      // Rendered from mutation state.
+      return false;
+    }
+  }
+
+  function addDishToStop(stopId: string) {
+    setDishTargetStopId(stopId);
+    setFloatingAddMenuOpen(false);
+    setReopenAddMenuOnCancel(false);
+    openAttachmentOptions("dish");
+  }
+
+  function removeStop(stopId: string) {
+    deleteStop.mutate(stopId);
+  }
+
   async function submitDishFromAttachment() {
     const didAdd = await submitDish();
     if (!didAdd) return;
     setAttachmentOptionsVisible(false);
-    const nextMode = attachmentOriginMode === "chat" ? "chat" : "dishes";
-    setMode(nextMode);
-    if (nextMode === "chat") requestAnimationFrame(() => scrollChatToBottom(true));
+    setMode("chat");
+    requestAnimationFrame(() => scrollChatToBottom(true));
   }
 
   function openPeopleAdd() {
@@ -1117,6 +1260,11 @@ export default function MemoryDetailScreen() {
   function openMediaViewer(media: MemoryPhoto, group: MemoryPhoto[] = [media]) {
     const index = Math.max(0, group.findIndex((item) => item.id === media.id));
     setSelectedMedia({ index, items: group });
+    void room.refetch();
+  }
+
+  function refreshSelectedMedia() {
+    void room.refetch();
   }
 
   function openAttachmentOptions(initialView: AttachmentSheetView = "actions") {
@@ -1146,11 +1294,7 @@ export default function MemoryDetailScreen() {
   }
 
   function openFloatingAddMedia() {
-    // Keep the speed-dial open while the camera is pushed over the room. The only
-    // way back to the room in overview is cancel (closeCamera -> router.back), so
-    // the menu reappears on cancel. A successful capture posts and returns via
-    // dismissTo(tab: "chat"), which leaves overview and hides the menu (see the
-    // mode effect). So we don't need to close it here.
+    setFloatingAddMenuOpen(false);
     setAttachmentOptionsVisible(false);
     router.push({
       pathname: "/memories/[id]/camera",
@@ -1159,6 +1303,7 @@ export default function MemoryDetailScreen() {
   }
 
   function openFloatingAddDish() {
+    setDishTargetStopId(null);
     setFloatingAddMenuOpen(false);
     setReopenAddMenuOnCancel(true);
     openAttachmentOptions("dish");
@@ -1257,6 +1402,9 @@ export default function MemoryDetailScreen() {
   }
 
   const data = mergedRoomData ?? room.data;
+  const roomOccasionType = effectiveRoomOccasionType(data);
+  const roomOccasionTheme = getOccasionTheme(roomOccasionType);
+  applyRoomTheme(resolvedTheme, roomOccasionType);
   const detailDish = detailDishId ? data.dishes.find((dish) => dish.id === detailDishId) ?? null : null;
   const displayRestaurantName = formatRestaurantDisplayName(data.restaurantName);
   const selectedTargets = selectedItemKeys
@@ -1291,6 +1439,9 @@ export default function MemoryDetailScreen() {
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
         onChangeMode={setMode}
+        onHeightChange={(height) => {
+          if (headerMode === "overview" && height > 0) setTableHeaderHeight(height);
+        }}
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
@@ -1307,7 +1458,7 @@ export default function MemoryDetailScreen() {
             mode === "chat" && styles.roomStageChat
           ]}
         >
-          <FoodChatWallpaper themeKey={resolvedTheme} visible />
+          <FoodChatWallpaper patternKey={roomOccasionTheme.backgroundPattern} themeKey={`${resolvedTheme}-${roomOccasionTheme.id}`} visible />
           <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
           <View style={styles.body}>
             <PaneReveal
@@ -1333,12 +1484,14 @@ export default function MemoryDetailScreen() {
                 onLayoutChange={handleChatTimelineLayout}
                 onLoadOlderMessages={loadOlderMessages}
                 onNearBottomChange={handleChatNearBottomChange}
-                onOpenDish={setDetailDishId}
+                onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
                 onOpenMedia={openMediaViewer}
+                onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
                 onReplyMessage={beginReplyMessage}
                 onScrollBeginDrag={handleChatScrollBeginDrag}
                 onSelectionPressOut={finishSelectionPress}
                 onToggleSelection={toggleSelectedItem}
+                pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                 scrollToBottom={scrollChatToBottom}
                 editingMessageId={editingMessage?.id ?? null}
                 lastReadAt={data.lastReadAt}
@@ -1346,6 +1499,7 @@ export default function MemoryDetailScreen() {
                 scrollRef={scrollRef}
                 selectedItemKeys={selectedItemKeys}
                 selectionMode={selectedItemKeys.length > 0}
+                themeCopy={roomOccasionTheme.copy}
               />
               </Reanimated.View>
             </PaneReveal>
@@ -1359,6 +1513,7 @@ export default function MemoryDetailScreen() {
                   onLoadMore={loadMoreMedia}
                   onOpenMedia={openMediaViewer}
                   photos={galleryPhotos}
+                  themeCopy={roomOccasionTheme.copy}
                 />
               </RoomPane>
             ) : mode === "dishes" ? (
@@ -1369,6 +1524,21 @@ export default function MemoryDetailScreen() {
                   onOpenDish={setDetailDishId}
                   onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
                   pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
+                  themeCopy={roomOccasionTheme.copy}
+                />
+              </RoomPane>
+            ) : mode === "overview" ? (
+              <RoomPane direction={paneDirection} key="overview">
+                <ItineraryPanel
+                  dishes={data.dishes}
+                  error={createStop.error?.message ?? deleteStop.error?.message}
+                  onAddDishToStop={addDishToStop}
+                  onOpenDish={setDetailDishId}
+                  onRemoveStop={removeStop}
+                  removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
+                  stops={data.stops}
+                  themeCopy={roomOccasionTheme.copy}
+                  topInset={tableHeaderHeight}
                 />
               </RoomPane>
             ) : null}
@@ -1409,6 +1579,7 @@ export default function MemoryDetailScreen() {
                   onInputFocus={handleComposerFocus}
                   replyingToMessage={replyingToMessage}
                   onSend={submitMessage}
+                  themeCopy={roomOccasionTheme.copy}
                 />
               )}
           </PaneReveal>
@@ -1421,7 +1592,11 @@ export default function MemoryDetailScreen() {
           onLeave={confirmLeaveRoom}
           visible={roomActionsVisible}
         />
-        <MediaViewer selection={selectedMedia} onClose={() => setSelectedMedia(null)} />
+        <MediaViewer
+          onClose={() => setSelectedMedia(null)}
+          onMediaError={refreshSelectedMedia}
+          selection={selectedMedia}
+        />
       </KeyboardAvoidingView>
       {/* Scrim for the speed-dial only. The dish/media sheet carries its own
           backdrop (attachSheetBackdrop) that fades in/out with its slide, so we
@@ -1431,7 +1606,16 @@ export default function MemoryDetailScreen() {
           accessibilityLabel="Close add menu"
           onPress={closeFloatingAddMenu}
           style={styles.floatingAddBackdrop}
-        />
+        >
+          <BlurView
+            blurReductionFactor={4}
+            experimentalBlurMethod="dimezisBlurView"
+            intensity={36}
+            style={StyleSheet.absoluteFill}
+            tint={resolvedTheme === "dark" ? "dark" : "light"}
+          />
+          <View pointerEvents="none" style={styles.floatingAddBackdropDim} />
+        </Pressable>
       ) : null}
       {floatingAddAvailable ? (
         <FloatingAddMenu
@@ -1439,9 +1623,17 @@ export default function MemoryDetailScreen() {
           visible={floatingAddVisible}
           open={floatingAddMenuOpen}
           progress={floatingAddMenuProgress}
+          onToggle={() => setFloatingAddMenuOpen((current) => !current)}
+        />
+      ) : null}
+      {floatingAddAvailable ? (
+        <AddMenuStack
+          bottomInset={insets.bottom}
           onDish={openFloatingAddDish}
           onMedia={openFloatingAddMedia}
-          onToggle={() => setFloatingAddMenuOpen((current) => !current)}
+          onStop={openStopComposer}
+          open={floatingAddMenuOpen}
+          progress={floatingAddMenuProgress}
         />
       ) : null}
       {/* Screen-level so the overlay covers the full screen (RN anchors absolute
@@ -1464,6 +1656,13 @@ export default function MemoryDetailScreen() {
         keyboardProgress={dishKeyboardProgress}
         pending={addPhoto.isPending}
         visible={attachmentOptionsVisible}
+      />
+      <StopComposerSheet
+        error={createStop.error?.message}
+        onClose={() => setStopComposerVisible(false)}
+        onSubmit={submitStop}
+        pending={createStop.isPending}
+        visible={stopComposerVisible}
       />
       <DishDetailSheet
         dish={detailDish}
@@ -1512,6 +1711,7 @@ function RoomHeader({
   onAddPeople,
   onBack,
   onChangeMode,
+  onHeightChange,
   onOpenActions,
   onViewPeople,
   transitioning
@@ -1524,17 +1724,16 @@ function RoomHeader({
   onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
+  onHeightChange?: (height: number) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
   transitioning: boolean;
 }) {
-  const locationLabel = compactPlaceLocation({
-    formattedAddress: data.area ?? "",
-    shortFormattedAddress: data.area ?? ""
-  });
+  const roomTitle = data.title?.trim() || displayRestaurantName;
+  const roomDateLabel = formatDisplayDate(data.visitDate ?? data.createdAt);
   const isMembersArea = mode === "people";
   const isCompactHeader = mode !== "overview";
-  const compactTitle = isMembersArea ? "Members" : displayRestaurantName;
+  const compactTitle = isMembersArea ? "Members" : roomTitle;
   const visualTabMode: RoomTabMode = isMembersArea ? "overview" : mode;
   const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
   const hasActiveTab = activeTabIndex >= 0;
@@ -1557,17 +1756,17 @@ function RoomHeader({
     outputRange: ROOM_TABS.map((_, index) => 2 + tabWidth * index)
   });
   const titleStyle = useAnimatedStyle(() => ({
-    fontSize: interpolate(collapseProgress.value, [0, 1], [21, 19]),
+    fontSize: interpolate(collapseProgress.value, [0, 1], [20, 19]),
     left: interpolate(collapseProgress.value, [0, 1], [26, 56]),
-    lineHeight: interpolate(collapseProgress.value, [0, 1], [29, 25]),
+    lineHeight: interpolate(collapseProgress.value, [0, 1], [27, 25]),
     right: interpolate(collapseProgress.value, [0, 1], [26, 58]),
-    top: interpolate(collapseProgress.value, [0, 1], [50, 12])
+    top: interpolate(collapseProgress.value, [0, 1], [44, 12])
   }));
   const expandedDetailsStyle = useAnimatedStyle(() => ({
-    marginTop: interpolate(collapseProgress.value, [0, 1], [42, 0]),
-    maxHeight: interpolate(collapseProgress.value, [0, 1], [100, 0]),
-    opacity: interpolate(collapseProgress.value, [0, 0.55, 1], [1, 0.22, 0]),
-    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -8]) }]
+    marginTop: interpolate(collapseProgress.value, [0, 1], [34, 0]),
+    maxHeight: interpolate(collapseProgress.value, [0, 1], [78, 0]),
+    opacity: interpolate(collapseProgress.value, [0, 0.45, 1], [1, 0.12, 0]),
+    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -10]) }]
   }));
   const addFriendSlotStyle = useAnimatedStyle(() => ({
     marginRight: interpolate(collapseProgress.value, [0, 1], [spacing.sm, 0]),
@@ -1614,6 +1813,7 @@ function RoomHeader({
       aria-hidden={transitioning ? true : undefined}
       accessibilityElementsHidden={transitioning}
       importantForAccessibility={transitioning ? "no-hide-descendants" : "auto"}
+      onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
       pointerEvents={transitioning ? "none" : "auto"}
       style={[styles.header, headerHideStyle]}
     >
@@ -1674,16 +1874,12 @@ function RoomHeader({
       >
         <View style={styles.roomIdentity}>
           <View style={styles.roomMetaRow}>
-            <View style={styles.roomMetaIconSlot}>
-              <Ionicons name="location-outline" size={13} color={ROOM_COLORS.muted} />
+            <View style={[styles.roomMetaGroup, styles.roomMetaLocationGroup]}>
+              <View style={styles.roomMetaIconSlot}>
+                <Ionicons name="calendar-outline" size={13} color={ROOM_COLORS.muted} />
+              </View>
+              <Text numberOfLines={1} style={[styles.roomMetaText, styles.roomMetaDateText]}>{roomDateLabel}</Text>
             </View>
-            <Text numberOfLines={1} style={styles.roomMetaText}>{locationLabel || "Area not set"}</Text>
-          </View>
-          <View style={styles.roomMetaRow}>
-            <View style={styles.roomMetaIconSlot}>
-              <Ionicons name="calendar-outline" size={13} color={ROOM_COLORS.muted} />
-            </View>
-            <Text numberOfLines={1} style={styles.roomMetaText}>{formatDisplayDate(data.createdAt)}</Text>
           </View>
           <Pressable
             accessibilityLabel={transitioning ? undefined : "View members"}
@@ -1711,7 +1907,6 @@ function RoomHeader({
               ) : null}
             </View>
             <Text numberOfLines={1} style={styles.roomFriendsText}>{friendsLabel}</Text>
-            <Ionicons name="chevron-forward" size={15} color={ROOM_COLORS.muted} />
           </Pressable>
         </View>
       </Reanimated.View>
@@ -1851,16 +2046,12 @@ function RoomPane({
 
 function FloatingAddMenu({
   bottomInset,
-  onDish,
-  onMedia,
   onToggle,
   visible,
   open,
   progress
 }: {
   bottomInset: number;
-  onDish: () => void;
-  onMedia: () => void;
   onToggle: () => void;
   visible: boolean;
   open: boolean;
@@ -1868,36 +2059,6 @@ function FloatingAddMenu({
 }) {
   const visibilityProgress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const buttonBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6);
-  const actionStackRight = FLOATING_ADD_EDGE_OFFSET + (FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2;
-  const mediaActionOpacity = progress.interpolate({
-    inputRange: [0, 0.18, 1],
-    outputRange: [0, 1, 1],
-    extrapolate: "clamp"
-  });
-  const mediaActionTranslateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP, 0]
-  });
-  const mediaActionScale = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.88, 1]
-  });
-  const dishActionOpacity = progress.interpolate({
-    inputRange: [0, 0.32, 1],
-    outputRange: [0, 0, 1],
-    extrapolate: "clamp"
-  });
-  const dishActionTranslateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [
-      FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_ACTION_ICON_SIZE + FLOATING_ADD_MENU_GAP + spacing.sm,
-      0
-    ]
-  });
-  const dishActionScale = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.84, 1]
-  });
   const iconRotate = progress.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "45deg"]
@@ -1912,16 +2073,6 @@ function FloatingAddMenu({
     outputRange: [0.92, 1]
   });
 
-  // The menu unmounts when the dish sheet / camera covers the room. With the
-  // native driver, an in-flight open/close animation never syncs its JS value
-  // back on unmount, so `progress` can survive as a stale 1. On (re)mount, snap
-  // it to the real `open` state — otherwise the speed-dial renders open while
-  // state says closed (backdrop tap is a no-op; the toggle needs two taps).
-  useEffect(() => {
-    progress.setValue(open ? 1 : 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   useEffect(() => {
     Animated.timing(visibilityProgress, {
       duration: visible ? 180 : 150,
@@ -1932,101 +2083,131 @@ function FloatingAddMenu({
   }, [visibilityProgress, visible]);
 
   return (
-    <>
-      {/* The scrim is rendered once at the room level (shared with the dish/media
-          sheet) so the black is a single continuous layer — see the room render. */}
-      <Animated.View
-        pointerEvents={open && visible ? "auto" : "none"}
-        style={[
-          styles.floatingAddActionStack,
-          {
-            bottom: buttonBottom + FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP,
-            right: actionStackRight
-          }
-        ]}
+    <Animated.View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[
+        styles.floatingAddButtonFrame,
+        {
+          bottom: buttonBottom,
+          opacity: buttonOpacity,
+          right: FLOATING_ADD_EDGE_OFFSET,
+          transform: [{ translateX: buttonTranslateX }, { scale: buttonScale }]
+        }
+      ]}
+    >
+      <Pressable
+        accessibilityLabel={open ? "Close add menu" : "Add to table"}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={onToggle}
+        style={styles.floatingAddButton}
       >
-        <Animated.View
-          style={{
-            opacity: dishActionOpacity,
-            transform: [{ translateY: dishActionTranslateY }, { scale: dishActionScale }]
-          }}
-        >
-          <FloatingAddAction
-            accent="gold"
-            icon="restaurant-outline"
-            label="Dishes"
-            onPress={onDish}
-          />
+        <Animated.View style={[styles.floatingAddIconWrap, { transform: [{ rotate: iconRotate }] }]}>
+          <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={ROOM_COLORS.onCool} style={styles.floatingAddIcon} />
         </Animated.View>
-        <Animated.View
-          style={{
-            opacity: mediaActionOpacity,
-            transform: [{ translateY: mediaActionTranslateY }, { scale: mediaActionScale }]
-          }}
-        >
-          <FloatingAddAction
-            accent="cool"
-            icon="camera-outline"
-            label="Media"
-            onPress={onMedia}
-          />
-        </Animated.View>
-      </Animated.View>
-      <Animated.View
-        pointerEvents={visible ? "auto" : "none"}
-        style={[
-          styles.floatingAddButtonFrame,
-          {
-            bottom: buttonBottom,
-            opacity: buttonOpacity,
-            right: FLOATING_ADD_EDGE_OFFSET,
-            transform: [{ translateX: buttonTranslateX }, { scale: buttonScale }]
-          }
-        ]}
-      >
-        <Pressable
-          accessibilityLabel={open ? "Close add menu" : "Add to memory"}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: open }}
-          onPress={onToggle}
-          style={[styles.floatingAddButton, open && styles.floatingAddButtonOpen]}
-        >
-          <Animated.View style={[styles.floatingAddIconWrap, { transform: [{ rotate: iconRotate }] }]}>
-            <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={ROOM_COLORS.onCool} style={styles.floatingAddIcon} />
-          </Animated.View>
-        </Pressable>
-      </Animated.View>
-    </>
+      </Pressable>
+    </Animated.View>
   );
 }
 
-function FloatingAddAction({
-  accent,
+// Speed-dial actions anchored to the + button. The menu grows upward from the
+// control instead of sliding a sheet over the bottom of the room.
+function AddMenuStack({
+  bottomInset,
+  onDish,
+  onMedia,
+  onStop,
+  open,
+  progress
+}: {
+  bottomInset: number;
+  onDish: () => void;
+  onMedia: () => void;
+  onStop: () => void;
+  open: boolean;
+  progress: Animated.Value;
+}) {
+  const stackBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6) + FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP;
+  const stackRight = FLOATING_ADD_EDGE_OFFSET + ((FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2);
+
+  return (
+    <Animated.View
+      pointerEvents={open ? "auto" : "none"}
+      style={[
+        styles.addMenuStack,
+        {
+          bottom: stackBottom,
+          right: stackRight
+        }
+      ]}
+    >
+      <AddMenuAction icon="location-outline" label="Place" onPress={onStop} progress={progress} stackIndexFromBottom={2} />
+      <AddMenuAction icon="restaurant-outline" label="Dish" onPress={onDish} progress={progress} stackIndexFromBottom={1} />
+      <AddMenuAction icon="camera-outline" label="Media" onPress={onMedia} progress={progress} stackIndexFromBottom={0} />
+    </Animated.View>
+  );
+}
+
+function AddMenuAction({
   icon,
   label,
-  onPress
+  onPress,
+  progress,
+  stackIndexFromBottom
 }: {
-  accent: "cool" | "gold";
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
+  progress: Animated.Value;
+  stackIndexFromBottom: number;
 }) {
-  const iconColor = accent === "cool" ? ROOM_COLORS.cool : ROOM_COLORS.gold;
+  const originOffsetY =
+    (FLOATING_ADD_BUTTON_SIZE / 2) +
+    FLOATING_ADD_MENU_GAP +
+    (FLOATING_ADD_ACTION_ICON_SIZE / 2) +
+    (stackIndexFromBottom * (FLOATING_ADD_ACTION_ICON_SIZE + spacing.sm));
+  const actionOpacity = progress.interpolate({
+    inputRange: [0, 0.12, 1],
+    outputRange: [0, 1, 1]
+  });
+  const actionTranslateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [originOffsetY, 0]
+  });
+  const iconScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.62, 1]
+  });
+  const labelOpacity = progress.interpolate({
+    inputRange: [0, 0.48, 1],
+    outputRange: [0, 0, 1]
+  });
+  const labelTranslateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [8, 0]
+  });
 
   return (
-    <Pressable
-      accessibilityLabel={`Add ${label.toLowerCase()}`}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={styles.floatingAddAction}
+    <Animated.View
+      style={{
+        opacity: actionOpacity,
+        transform: [{ translateY: actionTranslateY }]
+      }}
     >
-      <View style={styles.floatingAddActionLabel}>
-        <Text style={styles.floatingAddActionText}>{label}</Text>
-      </View>
-      <View style={[styles.floatingAddActionIcon, accent === "gold" && styles.floatingAddActionIconGold]}>
-        <Ionicons name={icon} size={20} color={iconColor} />
-      </View>
-    </Pressable>
+      <Pressable
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [styles.addMenuAction, pressed && styles.addMenuActionPressed]}
+      >
+        <Animated.View style={[styles.addMenuActionLabel, { opacity: labelOpacity, transform: [{ translateX: labelTranslateX }] }]}>
+          <Text style={styles.addMenuActionText}>{label}</Text>
+        </Animated.View>
+        <Animated.View style={[styles.addMenuActionIcon, { transform: [{ scale: iconScale }] }]}>
+          <Ionicons color={ROOM_COLORS.cool} name={icon} size={21} style={styles.addMenuActionGlyph} />
+        </Animated.View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -2090,16 +2271,19 @@ function ChatTimeline({
   onNearBottomChange,
   onOpenDish,
   onOpenMedia,
+  onRateDish,
   onReplyMessage,
   onScrollBeginDrag,
   onSelectionPressOut,
   onToggleSelection,
   lastReadAt,
   olderMessagesError,
+  pendingDishId,
   scrollRef,
   scrollToBottom,
   selectedItemKeys,
-  selectionMode
+  selectionMode,
+  themeCopy
 }: {
   active: boolean;
   bottomClearance: number;
@@ -2118,16 +2302,19 @@ function ChatTimeline({
   onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
+  onRateDish: (dishId: string, rating: number) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onScrollBeginDrag: () => void;
   onSelectionPressOut: (target: MemoryActionTarget) => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
   lastReadAt: string | null;
   olderMessagesError?: string;
+  pendingDishId?: string | null;
   scrollRef: React.RefObject<FlatList<ChatTimelineRow> | null>;
   scrollToBottom: (animated: boolean) => void;
   selectedItemKeys: string[];
   selectionMode: boolean;
+  themeCopy: OccasionTheme["copy"];
 }) {
   const timeline = useMemo(() => {
     const items: TimelineItem[] = [
@@ -2488,11 +2675,12 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  const rowHandlersRef = useRef({ onBeginSelection, onOpenDish, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection });
-  rowHandlersRef.current = { onBeginSelection, onOpenDish, onOpenMedia, onReplyMessage, onSelectionPressOut, onToggleSelection };
+  const rowHandlersRef = useRef({ onBeginSelection, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onSelectionPressOut, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onSelectionPressOut, onToggleSelection };
   const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
   const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
   const openRowDish = useCallback((dishId: string) => rowHandlersRef.current.onOpenDish(dishId), []);
+  const rateRowDish = useCallback((dishId: string, rating: number) => rowHandlersRef.current.onRateDish(dishId, rating), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
   const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
@@ -2539,6 +2727,8 @@ function ChatTimeline({
           groupPosition={item.groupPosition}
           mine={item.mine}
           onOpenDish={() => openRowDish(item.value.id)}
+          onRateDish={(rating) => rateRowDish(item.value.id, rating)}
+          pending={pendingDishId === item.value.id}
           rowStyle={rowStyle}
           showSenderDetails={item.showSenderDetails}
         />
@@ -2570,6 +2760,8 @@ function ChatTimeline({
     openRowDish,
     openRowMedia,
     participantNames,
+    pendingDishId,
+    rateRowDish,
     replyToRow,
     scrollToBottom,
     selectedItemKeys,
@@ -2588,6 +2780,7 @@ function ChatTimeline({
           { paddingTop: bottomClearance },
           timelineRows.length === 0 && styles.timelineContentEmpty
         ]}
+        initialNumToRender={CHAT_TIMELINE_INITIAL_RENDER_COUNT}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
         ListFooterComponent={timelineRows.length > 0 ? (
@@ -2602,26 +2795,13 @@ function ChatTimeline({
             />
           </View>
         ) : null}
-        ListEmptyComponent={(
-          <View style={[styles.emptyChat, styles.invertedListEdge]}>
-            <View style={styles.emptyIcon}>
-              <Ionicons name="sparkles-outline" size={26} color={ROOM_COLORS.cool} />
-            </View>
-            <Text style={styles.emptyTitle}>Build the table memory</Text>
-            <Text style={styles.emptyText}>Start with media, a favorite dish, or the friends who were there.</Text>
-            <View style={styles.emptyActionRow}>
-              <MemoryQuickAction icon="camera-outline" label="Media" onPress={onAddMedia} />
-              <MemoryQuickAction icon="restaurant-outline" label="Dish" onPress={onAddDish} />
-              <MemoryQuickAction icon="person-add-outline" label="Invite" onPress={onAddPeople} />
-            </View>
-          </View>
-        )}
         onEndReached={() => {
           if (initialAnchorReadyRef.current && hasOlderMessages && !loadingOlderMessages) {
             onLoadOlderMessages();
           }
         }}
         onEndReachedThreshold={0.4}
+        maxToRenderPerBatch={CHAT_TIMELINE_MAX_RENDER_BATCH}
         onScroll={(event) => {
           if (!active) return;
           const { contentOffset } = event.nativeEvent;
@@ -2675,16 +2855,43 @@ function ChatTimeline({
             });
           }, 220);
         }}
+        removeClippedSubviews={Platform.OS === "android"}
         renderItem={renderTimelineRow}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         style={styles.timelineList}
+        updateCellsBatchingPeriod={50}
+        windowSize={CHAT_TIMELINE_WINDOW_SIZE}
       />
+      {timelineRows.length === 0 ? (
+        // Rendered as a sibling (not ListEmptyComponent) so the inverted list's
+        // flip never applies — otherwise the empty state shows upside down.
+        <View pointerEvents="box-none" style={styles.emptyChatOverlay}>
+          <View style={styles.emptyChat}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="sparkles-outline" size={26} color={ROOM_COLORS.cool} />
+            </View>
+            <Text style={styles.emptyTitle}>{themeCopy.emptyTitle}</Text>
+            <Text style={styles.emptyText}>{themeCopy.emptyDescription}</Text>
+            <View style={styles.emptyActionRow}>
+              <MemoryQuickAction icon="camera-outline" label={themeCopy.mediaAction} onPress={onAddMedia} />
+              <MemoryQuickAction icon="restaurant-outline" label="Dish" onPress={onAddDish} />
+              <MemoryQuickAction icon="person-add-outline" label="Invite" onPress={onAddPeople} />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const FOOD_WALLPAPER_PLACEMENTS = buildFoodWallpaperPlacements();
+const ROMANTIC_WALLPAPER_PLACEMENTS = [
+  { transform: "translate(28 30) scale(0.55)", strokeWidth: 2 },
+  { transform: "translate(124 96) scale(0.48)", strokeWidth: 2 },
+  { transform: "translate(198 38) scale(0.42)", strokeWidth: 2 }
+] as const;
+const ROMANTIC_HEART_PATH = "M12 21s-7-4.4-9.3-8.2C.8 9.7 1.6 6 4.7 5.2c1.8-.5 3.5.2 4.5 1.6 1-1.4 2.7-2.1 4.5-1.6 3.1.8 3.9 4.5 2 7.6C19 16.6 12 21 12 21Z";
 
 function WallpaperPrimitive({ primitive }: { primitive: DoodlePrimitive }) {
   switch (primitive.type) {
@@ -2699,9 +2906,18 @@ function WallpaperPrimitive({ primitive }: { primitive: DoodlePrimitive }) {
   }
 }
 
-const FoodChatWallpaper = memo(function FoodChatWallpaper({ themeKey, visible }: { themeKey: string; visible: boolean }) {
+const FoodChatWallpaper = memo(function FoodChatWallpaper({
+  patternKey,
+  themeKey,
+  visible
+}: {
+  patternKey: string;
+  themeKey: string;
+  visible: boolean;
+}) {
   const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const patternId = `foodChatDoodlePattern-${themeKey}`;
+  const romantic = patternKey === "romantic-food-pattern";
 
   useEffect(() => {
     Animated.timing(opacity, {
@@ -2739,6 +2955,9 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({ themeKey, visible }:
                   ))}
                 </G>
               ))}
+              {romantic ? ROMANTIC_WALLPAPER_PLACEMENTS.map((placement, index) => (
+                <Path key={`heart-${index}`} d={ROMANTIC_HEART_PATH} strokeWidth={placement.strokeWidth} transform={placement.transform} />
+              )) : null}
             </G>
           </Pattern>
         </Defs>
@@ -2818,7 +3037,13 @@ function cacheVideoThumbnail(uri: string, thumbnail: VideoThumbnail) {
   }
 }
 
-function VideoThumbnailLayer({ uri }: { uri: string }) {
+function VideoThumbnailLayer({
+  contentFit = "cover",
+  uri
+}: {
+  contentFit?: "contain" | "cover";
+  uri: string;
+}) {
   const [thumbnail, setThumbnail] = useState<VideoThumbnail | null>(() => videoThumbnailCache.get(uri) ?? null);
   const player = useVideoPlayer(uri, (instance) => {
     instance.muted = true;
@@ -2867,7 +3092,7 @@ function VideoThumbnailLayer({ uri }: { uri: string }) {
       <VideoView
         allowsFullscreen={false}
         allowsPictureInPicture={false}
-        contentFit="cover"
+        contentFit={contentFit}
         nativeControls={false}
         player={player}
         playsInline
@@ -2879,7 +3104,15 @@ function VideoThumbnailLayer({ uri }: { uri: string }) {
 
   if (!thumbnail) return null;
 
-  return <Image contentFit="cover" source={thumbnail} style={styles.videoThumbnailImage} />;
+  return (
+    <Image
+      cachePolicy="memory-disk"
+      contentFit={contentFit}
+      recyclingKey={uri}
+      source={thumbnail}
+      style={styles.videoThumbnailImage}
+    />
+  );
 }
 
 function UploadProgressOverlay({ progress }: { progress?: number | null }) {
@@ -3574,11 +3807,18 @@ function MessageBubble({
   return null;
 }
 
+// Dishes read as a WhatsApp-style inline poll: a question (the dish), a row of
+// taps that cast/replace your single vote (your star rating) or leave it, an
+// average summary, and a "who rated" link. The timestamp sits bottom-right like
+// every other chat bubble. There is no per-rater note — voting is pure stars;
+// `dish.note` is the adder's optional one-line description shown under the name.
 function DishTimelineCard({
   dish,
   groupPosition,
   mine,
   onOpenDish,
+  onRateDish,
+  pending,
   rowStyle,
   showSenderDetails
 }: {
@@ -3586,13 +3826,13 @@ function DishTimelineCard({
   groupPosition: MessageGroupPosition;
   mine: boolean;
   onOpenDish: () => void;
+  onRateDish: (rating: number) => void;
+  pending: boolean;
   rowStyle?: StyleProp<ViewStyle>;
   showSenderDetails: boolean;
 }) {
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
-  const ratingLabel = dish.averageRating === null
-    ? "Unrated"
-    : `${formatMemoryDishRating(dish.averageRating)} · ${dish.ratingCount}`;
+  const myRating = dish.myRating ?? 0;
 
   return (
     <MessageRow
@@ -3603,11 +3843,7 @@ function DishTimelineCard({
       swipeEnabled={false}
     >
       <MessageBubbleFrame style={styles.dishTimelineFrame}>
-        <Pressable
-          accessibilityHint="Opens dish details to rate and see who rated"
-          accessibilityLabel={`${dish.dishName}, ${dish.ratingCount === 0 ? "no ratings yet" : `rated ${formatMemoryDishRating(dish.averageRating)} by ${dish.ratingCount}`}`}
-          accessibilityRole="button"
-          onPress={onOpenDish}
+        <View
           style={[
             styles.dishTimelineBubble,
             mine ? styles.dishTimelineBubbleMine : styles.dishTimelineBubbleOther,
@@ -3619,36 +3855,63 @@ function DishTimelineCard({
               {dish.addedByDisplayName}
             </Text>
           ) : null}
-          <View style={styles.dishTimelineHeader}>
-            <Text numberOfLines={1} style={[styles.dishTimelineKicker, mine && styles.dishTimelineKickerMine]}>
-              {mine ? "You added a dish" : "Added a dish"}
+
+          <Text numberOfLines={2} style={[styles.dishTimelineName, mine && styles.messageTextMine]}>
+            {dish.dishName}
+          </Text>
+          {dish.note ? (
+            <Text numberOfLines={2} style={[styles.dishTimelineNote, mine && styles.dishTimelineNoteMine]}>
+              {dish.note}
             </Text>
-            <MessageMeta
-              textStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
-              time={formatDisplayTime(dish.createdAt)}
-            />
-          </View>
-          <View style={styles.dishTimelinePayload}>
-            <View style={styles.dishTimelineIcon}>
-              <Utensils size={16} color={ROOM_COLORS.gold} strokeWidth={1.9} />
+          ) : null}
+
+          <View style={styles.dishTimelineStarsRow}>
+            <View style={styles.dishTimelineStars}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable
+                  accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: pending, selected: star <= myRating }}
+                  disabled={pending}
+                  hitSlop={6}
+                  key={star}
+                  onPress={() => onRateDish(star)}
+                  style={[styles.dishTimelineStarButton, pending && styles.dishYourStarButtonDisabled]}
+                >
+                  <Star
+                    size={24}
+                    color={ROOM_COLORS.gold}
+                    fill={star <= myRating ? ROOM_COLORS.gold : "transparent"}
+                    strokeWidth={1.7}
+                  />
+                </Pressable>
+              ))}
             </View>
-            <View style={styles.dishTimelineCopy}>
-              <Text numberOfLines={1} style={[styles.dishTimelineName, mine && styles.messageTextMine]}>
-                {dish.dishName}
+            {myRating ? null : (
+              <Text numberOfLines={1} style={[styles.dishTimelineVoteHint, mine && styles.dishTimelineNoteMine]}>
+                Tap to rate
               </Text>
-              {dish.note ? (
-                <Text numberOfLines={1} style={[styles.dishTimelineNote, mine && styles.dishTimelineNoteMine]}>
-                  {dish.note}
-                </Text>
-              ) : null}
-            </View>
-            <View style={styles.dishTimelineRating}>
-              <Ionicons name={dish.averageRating === null ? "star-outline" : "star"} size={10} color={ROOM_COLORS.gold} />
-              <Text numberOfLines={1} style={styles.dishTimelineRatingText}>{ratingLabel}</Text>
-              <Ionicons name="chevron-forward" size={12} color={ROOM_COLORS.muted} style={styles.dishTimelineChevron} />
-            </View>
+            )}
           </View>
-        </Pressable>
+
+          <Pressable
+            accessibilityHint="Opens dish details to see who rated"
+            accessibilityLabel={`${dish.dishName}, ${dish.ratingCount === 0 ? "no ratings yet" : `rated ${formatMemoryDishRating(dish.averageRating)} by ${dish.ratingCount}`}`}
+            accessibilityRole="button"
+            hitSlop={6}
+            onPress={onOpenDish}
+            style={styles.dishTimelineFooter}
+          >
+            <InlineTimestampText
+              fill
+              reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
+              text="View table ratings ›"
+              textStyle={[styles.dishTimelineRatersText, mine && styles.dishTimelineRatersTextMine]}
+              time={formatDisplayTime(dish.createdAt)}
+              timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
+            />
+          </Pressable>
+        </View>
       </MessageBubbleFrame>
     </MessageRow>
   );
@@ -3947,7 +4210,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   if (media.mediaType === "video") {
     return (
       <View style={styles.gridVideoPreview}>
-        <VideoThumbnailLayer uri={media.publicUrl} />
+        <VideoThumbnailLayer contentFit="contain" uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
           {!uploading ? (
@@ -3968,7 +4231,9 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   return (
     <View style={styles.gridMediaFill}>
       <Image
-        contentFit="cover"
+        cachePolicy="memory-disk"
+        contentFit="contain"
+        recyclingKey={media.storagePath || media.publicUrl}
         source={media.publicUrl}
         style={styles.gridMediaFill}
       />
@@ -3984,7 +4249,8 @@ function MediaGallery({
   loadingMore,
   onLoadMore,
   onOpenMedia,
-  photos
+  photos,
+  themeCopy
 }: {
   error?: string;
   hasMore: boolean;
@@ -3993,6 +4259,7 @@ function MediaGallery({
   onLoadMore: () => void;
   onOpenMedia: OpenMediaHandler;
   photos: MemoryPhoto[];
+  themeCopy: OccasionTheme["copy"];
 }) {
   const hasMedia = photos.length > 0;
 
@@ -4004,16 +4271,16 @@ function MediaGallery({
         hasMedia ? styles.galleryContentFilled : styles.galleryContentEmpty
       ]}
       data={photos}
-      initialNumToRender={6}
+      initialNumToRender={MEDIA_GALLERY_INITIAL_RENDER_COUNT}
       keyExtractor={(item) => item.id}
       ListEmptyComponent={(
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
             <Ionicons name={loading ? "hourglass-outline" : "images-outline"} size={26} color={ROOM_COLORS.cool} />
           </View>
-          <Text style={styles.emptyTitle}>{loading ? "Loading media" : "No media shared yet"}</Text>
+          <Text style={styles.emptyTitle}>{loading ? "Loading media" : themeCopy.emptyTitle}</Text>
           <Text style={styles.emptyText}>
-            {loading ? "Fetching photos and videos from this table." : "Photos and videos from the table will appear here."}
+            {loading ? "Fetching photos and videos from this table." : themeCopy.emptyDescription}
           </Text>
         </View>
       )}
@@ -4026,6 +4293,8 @@ function MediaGallery({
       numColumns={2}
       onEndReached={hasMore && !loadingMore ? onLoadMore : undefined}
       onEndReachedThreshold={0.6}
+      maxToRenderPerBatch={MEDIA_GALLERY_MAX_RENDER_BATCH}
+      removeClippedSubviews={Platform.OS !== "web"}
       renderItem={({ index, item: photo }) => (
         <View
           style={[
@@ -4039,13 +4308,14 @@ function MediaGallery({
             onPress={() => onOpenMedia(photo, [photo])}
             style={styles.galleryMediaButton}
           >
-            <MediaPreview media={photo} style={styles.mediaPreviewFlush} />
+            <MediaPreview contentFit="cover" media={photo} style={styles.galleryMediaPreview} />
           </Pressable>
         </View>
       )}
       showsVerticalScrollIndicator={false}
       style={styles.galleryList}
-      windowSize={7}
+      updateCellsBatchingPeriod={50}
+      windowSize={MEDIA_GALLERY_WINDOW_SIZE}
     />
   );
 }
@@ -4063,18 +4333,247 @@ function memoryDishRaterSummary(dish: MemoryDish) {
   return `Rated by ${names[0]}, ${names[1]} +${names.length - 2}`;
 }
 
+function ItineraryPanel({
+  dishes,
+  error,
+  onAddDishToStop,
+  onOpenDish,
+  onRemoveStop,
+  removingStopId,
+  stops,
+  topInset
+}: {
+  dishes: MemoryDish[];
+  error?: string;
+  onAddDishToStop: (stopId: string) => void;
+  onOpenDish: (dishId: string) => void;
+  onRemoveStop: (stopId: string) => void;
+  removingStopId?: string | null;
+  stops: MemoryStop[];
+  themeCopy: OccasionTheme["copy"];
+  topInset?: number;
+}) {
+  const { height: screenHeight } = useWindowDimensions();
+  const topPadding = topInset != null ? topInset + spacing.sm : TABLE_HEADER_CLEARANCE;
+  const bottomPadding = spacing.xl + 92;
+  const emptyPanelMinHeight = Math.max(260, screenHeight - topPadding - bottomPadding);
+  const dishesByStop = dishes.reduce<Record<string, MemoryDish[]>>((groups, dish) => {
+    if (!dish.stopId) return groups;
+    groups[dish.stopId] = [...(groups[dish.stopId] ?? []), dish];
+    return groups;
+  }, {});
+  const unassignedDishes = dishes.filter((dish) => !dish.stopId);
+  const isEmpty = stops.length === 0 && unassignedDishes.length === 0;
+
+  return (
+    <ScrollView
+      contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
+      showsVerticalScrollIndicator={false}
+    >
+      {isEmpty ? (
+        <View style={[styles.itineraryEmptyPanel, { minHeight: emptyPanelMinHeight }]}>
+          <View style={styles.emptyIcon}>
+            <Ionicons name="map-outline" size={26} color={ROOM_COLORS.cool} />
+          </View>
+          <Text style={styles.emptyTitle}>Plan your stops</Text>
+          <Text style={styles.emptyText}>Tap the + button and choose Place to add each spot the occasion took you — dinner, drinks, a movie.</Text>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.itineraryHeading}>Itinerary</Text>
+          {stops.map((stop, index) => {
+            const meta = MEMORY_STOP_META[stop.stopType];
+            const stopDishes = dishesByStop[stop.id] ?? [];
+            const removing = removingStopId === stop.id;
+            return (
+              <View key={stop.id} style={[styles.stopCard, removing && styles.stopCardRemoving]}>
+                <View style={styles.stopHeaderRow}>
+                  <View style={styles.stopEmojiWrap}>
+                    <Text style={styles.stopEmoji}>{meta.emoji}</Text>
+                  </View>
+                  <View style={styles.stopHeaderText}>
+                    <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
+                    <Text style={styles.stopTypeLabel}>{`Stop ${index + 1} · ${meta.label}`}</Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel={`Remove ${stop.name}`}
+                    accessibilityRole="button"
+                    disabled={removing}
+                    hitSlop={8}
+                    onPress={() => onRemoveStop(stop.id)}
+                    style={styles.stopRemoveButton}
+                  >
+                    <Ionicons name="close" size={16} color={ROOM_COLORS.muted} />
+                  </Pressable>
+                </View>
+                {stop.note ? <Text style={styles.stopNote}>{stop.note}</Text> : null}
+                {stopDishes.length > 0 ? (
+                  <View style={styles.stopDishList}>
+                    {stopDishes.map((dish) => (
+                      <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
+                    ))}
+                  </View>
+                ) : null}
+                {meta.canHaveDishes ? (
+                  <Pressable accessibilityRole="button" onPress={() => onAddDishToStop(stop.id)} style={styles.stopAddDishButton}>
+                    <Ionicons name="add" size={15} color={ROOM_COLORS.cool} />
+                    <Text style={styles.stopAddDishText}>Add dish</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+
+          {unassignedDishes.length > 0 ? (
+            <View style={styles.stopCard}>
+              <View style={styles.stopHeaderRow}>
+                <View style={styles.stopEmojiWrap}>
+                  <Text style={styles.stopEmoji}>🍽️</Text>
+                </View>
+                <View style={styles.stopHeaderText}>
+                  <Text style={styles.stopName}>Other dishes</Text>
+                  <Text style={styles.stopTypeLabel}>Not tied to a stop</Text>
+                </View>
+              </View>
+              <View style={styles.stopDishList}>
+                {unassignedDishes.map((dish) => (
+                  <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </>
+      )}
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </ScrollView>
+  );
+}
+
+function StopDishRow({ dish, onPress }: { dish: MemoryDish; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.stopDishRow}>
+      <View style={[styles.stopDishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
+        <Text style={styles.stopDishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
+      </View>
+      <Text numberOfLines={1} style={styles.stopDishName}>{dish.dishName}</Text>
+      <View style={[styles.dishRatingPill, dish.averageRating === null && styles.dishRatingPillEmpty]}>
+        <Ionicons name={dish.averageRating === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
+        <Text style={styles.dishRating}>{formatMemoryDishRating(dish.averageRating)}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
+    </Pressable>
+  );
+}
+
+function StopComposerSheet({
+  error,
+  onClose,
+  onSubmit,
+  pending,
+  visible
+}: {
+  error?: string;
+  onClose: () => void;
+  onSubmit: (input: { stopType: MemoryStopType; name: string; note?: string }) => Promise<boolean> | boolean;
+  pending: boolean;
+  visible: boolean;
+}) {
+  const [stopType, setStopType] = useState<MemoryStopType>("restaurant");
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setStopType("restaurant");
+    setName("");
+    setNote("");
+  }, [visible]);
+
+  const canSubmit = name.trim().length > 0 && !pending;
+
+  async function handleSubmit() {
+    if (!canSubmit) return;
+    await onSubmit({ stopType, name: name.trim(), note: note.trim() || undefined });
+  }
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.stopSheetRoot}>
+        <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.stopSheetBackdrop} />
+        <View style={styles.stopSheet}>
+          <View style={styles.stopSheetHandle} />
+          <Text style={styles.stopSheetTitle}>Add a stop</Text>
+          <Text style={styles.stopSheetSubtitle}>Where did the occasion take you?</Text>
+
+          <View style={styles.stopTypeGrid}>
+            {MEMORY_STOP_ORDER.map((type) => {
+              const meta = MEMORY_STOP_META[type];
+              const active = stopType === type;
+              return (
+                <Pressable
+                  accessibilityLabel={meta.label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  key={type}
+                  onPress={() => setStopType(type)}
+                  style={[styles.stopTypeChip, active && styles.stopTypeChipActive]}
+                >
+                  <Text style={styles.stopTypeChipEmoji}>{meta.emoji}</Text>
+                  <Text style={[styles.stopTypeChipLabel, active && styles.stopTypeChipLabelActive]}>{meta.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <TextInput
+            autoFocus
+            onChangeText={setName}
+            placeholder="Name this stop (e.g. Blue Tokai)"
+            placeholderTextColor={ROOM_COLORS.muted}
+            returnKeyType="done"
+            style={styles.stopInput}
+            value={name}
+          />
+          <TextInput
+            multiline
+            onChangeText={setNote}
+            placeholder="Add a note (optional)"
+            placeholderTextColor={ROOM_COLORS.muted}
+            style={[styles.stopInput, styles.stopNoteInput]}
+            value={note}
+          />
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={!canSubmit}
+            onPress={handleSubmit}
+            style={[styles.stopSubmitButton, !canSubmit && styles.stopSubmitButtonDisabled]}
+          >
+            <Text style={styles.stopSubmitText}>{pending ? "Adding…" : "Add stop"}</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 function DishesPanel({
   dishes,
   error,
   onOpenDish,
   onRateDish,
-  pendingDishId
+  pendingDishId,
+  themeCopy
 }: {
   dishes: MemoryDish[];
   error?: string;
   onOpenDish: (dishId: string) => void;
   onRateDish: (dishId: string, rating: number) => void;
   pendingDishId?: string | null;
+  themeCopy: OccasionTheme["copy"];
 }) {
   return (
     <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
@@ -4083,8 +4582,8 @@ function DishesPanel({
           <View style={styles.emptyIcon}>
             <Ionicons name="restaurant-outline" size={26} color={ROOM_COLORS.cool} />
           </View>
-          <Text style={styles.emptyTitle}>No table favorites yet</Text>
-          <Text style={styles.emptyText}>Dishes added from the table will appear here.</Text>
+          <Text style={styles.emptyTitle}>{themeCopy.emptyTitle}</Text>
+          <Text style={styles.emptyText}>{themeCopy.emptyDescription}</Text>
         </View>
       ) : (
         dishes.map((dish) => {
@@ -4957,8 +5456,17 @@ function SelectionActionBar({
   );
 }
 
-function MediaViewer({ onClose, selection }: { onClose: () => void; selection: MediaViewerState | null }) {
-  const viewerScrollRef = useRef<ScrollView>(null);
+function MediaViewer({
+  onClose,
+  onMediaError,
+  selection
+}: {
+  onClose: () => void;
+  onMediaError: () => void;
+  selection: MediaViewerState | null;
+}) {
+  const insets = useSafeAreaInsets();
+  const viewerListRef = useRef<FlatList<MemoryPhoto>>(null);
   const [activeIndex, setActiveIndex] = useState(selection?.index ?? 0);
   const [carouselWidth, setCarouselWidth] = useState(0);
 
@@ -4969,15 +5477,18 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
 
   useEffect(() => {
     if (!selection || carouselWidth <= 0) return;
-    viewerScrollRef.current?.scrollTo({ animated: false, x: selection.index * carouselWidth });
+    viewerListRef.current?.scrollToIndex({
+      animated: false,
+      index: Math.max(0, Math.min(selection.items.length - 1, selection.index))
+    });
   }, [carouselWidth, selection]);
 
   if (!selection || selection.items.length === 0) return null;
 
   const items = selection.items;
   const safeActiveIndex = Math.max(0, Math.min(items.length - 1, activeIndex));
-  const activeMedia = items[safeActiveIndex];
-  const activeKind = activeMedia.mediaType === "video" ? "Video" : "Photo";
+  const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, spacing.lg);
+  const bottomInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.bottom + spacing.md, spacing.lg);
 
   function handleViewerScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     if (carouselWidth <= 0) return;
@@ -4988,55 +5499,90 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
   function selectViewerItem(index: number) {
     setActiveIndex(index);
     if (carouselWidth > 0) {
-      viewerScrollRef.current?.scrollTo({ animated: true, x: index * carouselWidth });
+      viewerListRef.current?.scrollToIndex({ animated: true, index });
     }
   }
 
+  const renderViewerItem = ({ item: media }: { item: MemoryPhoto }) => (
+    <View style={[styles.viewerSlide, carouselWidth > 0 && { width: carouselWidth }]}>
+      {media.mediaType === "video" ? (
+        <ViewerVideo media={media} />
+      ) : (
+        <Image
+          cachePolicy="memory-disk"
+          contentFit="contain"
+          onError={onMediaError}
+          recyclingKey={media.storagePath || media.publicUrl}
+          source={media.publicUrl}
+          style={styles.viewerImage}
+        />
+      )}
+    </View>
+  );
+
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible>
+    <Modal
+      animationType="fade"
+      navigationBarTranslucent
+      onRequestClose={onClose}
+      statusBarTranslucent
+      transparent
+      visible
+    >
       <View style={styles.viewerBackdrop}>
-        <View style={styles.viewerHeader}>
-          <View style={styles.viewerHeaderText}>
-            <Text numberOfLines={1} style={styles.viewerTitle}>
-              {activeKind}{items.length > 1 ? ` ${safeActiveIndex + 1} of ${items.length}` : ""}
-            </Text>
-            <Text numberOfLines={1} style={styles.viewerSubtitle}>
-              {activeMedia.uploaderDisplayName} · {formatDisplayDate(activeMedia.createdAt)}
-            </Text>
-          </View>
-          <Pressable accessibilityLabel="Close media viewer" onPress={onClose} style={styles.viewerClose}>
-            <Ionicons name="close" size={22} color={ROOM_COLORS.white} />
-          </Pressable>
-        </View>
+        <StatusBar hidden />
         <View
           onLayout={(event) => setCarouselWidth(event.nativeEvent.layout.width)}
           style={styles.viewerBody}
         >
-          <ScrollView
+          <FlatList
+            data={items}
+            extraData={carouselWidth}
+            getItemLayout={carouselWidth > 0 ? (_data, index) => ({
+              index,
+              length: carouselWidth,
+              offset: carouselWidth * index
+            }) : undefined}
             horizontal
+            initialNumToRender={1}
+            keyExtractor={(item) => item.id}
+            maxToRenderPerBatch={MEDIA_VIEWER_MAX_RENDER_BATCH}
             onMomentumScrollEnd={handleViewerScroll}
+            onScrollToIndexFailed={(info) => {
+              if (carouselWidth <= 0) return;
+              setTimeout(() => {
+                viewerListRef.current?.scrollToIndex({
+                  animated: false,
+                  index: Math.max(0, Math.min(items.length - 1, info.index))
+                });
+              }, 50);
+            }}
             pagingEnabled
-            ref={viewerScrollRef}
+            ref={viewerListRef}
+            removeClippedSubviews={Platform.OS !== "web"}
+            renderItem={renderViewerItem}
             showsHorizontalScrollIndicator={false}
             style={styles.viewerCarousel}
-          >
-            {items.map((media) => (
-              <View key={media.id} style={[styles.viewerSlide, carouselWidth > 0 && { width: carouselWidth }]}>
-                {media.mediaType === "video" ? (
-                  <ViewerVideo media={media} />
-                ) : (
-                  <Image contentFit="contain" source={media.publicUrl} style={styles.viewerImage} />
-                )}
-              </View>
-            ))}
-          </ScrollView>
+            updateCellsBatchingPeriod={50}
+            windowSize={MEDIA_VIEWER_WINDOW_SIZE}
+          />
         </View>
+        <Pressable
+          accessibilityLabel="Close media viewer"
+          hitSlop={8}
+          onPress={onClose}
+          style={[styles.viewerClose, { top: topInset }]}
+        >
+          <Ionicons name="close" size={22} color={ROOM_COLORS.white} />
+        </Pressable>
         {items.length > 1 ? (
-          <View style={styles.viewerFooter}>
+          <View pointerEvents="box-none" style={[styles.viewerFooter, { paddingBottom: bottomInset }]}>
+            <Text style={styles.viewerCount}>{safeActiveIndex + 1} / {items.length}</Text>
             <ScrollView
               contentContainerStyle={styles.viewerThumbnails}
               horizontal
               showsHorizontalScrollIndicator={false}
+              style={styles.viewerThumbnailScroller}
             >
               {items.map((media, index) => (
                 <Pressable
@@ -5054,7 +5600,13 @@ function MediaViewer({ onClose, selection }: { onClose: () => void; selection: M
                       <Ionicons name="play" size={14} color={ROOM_COLORS.white} />
                     </View>
                   ) : (
-                    <Image contentFit="cover" source={media.publicUrl} style={styles.viewerThumbnailImage} />
+                    <Image
+                      cachePolicy="memory-disk"
+                      contentFit="cover"
+                      recyclingKey={media.storagePath || media.publicUrl}
+                      source={media.publicUrl}
+                      style={styles.viewerThumbnailImage}
+                    />
                   )}
                 </Pressable>
               ))}
@@ -5136,13 +5688,21 @@ function MediaTimestampOverlay({
   );
 }
 
-function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<ViewStyle> }) {
+function MediaPreview({
+  contentFit = "contain",
+  media,
+  style
+}: {
+  contentFit?: "contain" | "cover";
+  media: MemoryPhoto;
+  style?: StyleProp<ViewStyle>;
+}) {
   const uploading = isOptimisticMemoryMedia(media);
 
   if (media.mediaType === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        <VideoThumbnailLayer uri={media.publicUrl} />
+        <VideoThumbnailLayer contentFit={contentFit} uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
@@ -5161,7 +5721,9 @@ function MediaPreview({ media, style }: { media: MemoryPhoto; style?: StyleProp<
   return (
     <View style={[styles.mediaImageWrap, style as StyleProp<ViewStyle>]}>
       <Image
-        contentFit="cover"
+        cachePolicy="memory-disk"
+        contentFit={contentFit}
+        recyclingKey={media.storagePath || media.publicUrl}
         source={media.publicUrl}
         style={styles.mediaImage}
       />
@@ -5186,7 +5748,8 @@ function Composer({
   onLayoutChange,
   onInputFocus,
   replyingToMessage,
-  onSend
+  onSend,
+  themeCopy
 }: {
   editingLabel?: string;
   insetStyle: StyleProp<ViewStyle>;
@@ -5204,6 +5767,7 @@ function Composer({
   onInputFocus: () => void;
   replyingToMessage?: MemoryMessage | null;
   onSend: () => void;
+  themeCopy: OccasionTheme["copy"];
 }) {
   const canSend = Boolean(message.trim()) && !messagePending && !mediaPending;
   const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
@@ -5257,11 +5821,12 @@ function Composer({
         <View style={styles.composer}>
           <View style={styles.messageBox}>
             <TextInput
+              maxLength={MEMORY_TEXT_MAX_LENGTH}
               multiline
               onContentSizeChange={handleComposerContentSizeChange}
               onChangeText={onChangeMessage}
               onFocus={onInputFocus}
-              placeholder="Message..."
+              placeholder={themeCopy.composerPlaceholder}
               placeholderTextColor={ROOM_COLORS.muted}
               scrollEnabled={composerCanScroll}
               style={[
@@ -5327,7 +5892,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
     left: 0,
     maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: 14,
+    paddingBottom: 10,
     paddingHorizontal: 18,
     paddingTop: spacing.sm,
     position: "absolute",
@@ -5394,14 +5959,24 @@ function createStyles(ROOM_COLORS: RoomColors) {
     overflow: "hidden"
   },
   roomIdentity: {
-    gap: 6,
+    gap: ROOM_HEADER_SECTION_GAP,
     paddingHorizontal: 8
   },
   roomMetaRow: {
     alignItems: "center",
     flexDirection: "row",
+    gap: spacing.base,
+    justifyContent: "space-between",
+    minWidth: 0
+  },
+  roomMetaGroup: {
+    alignItems: "center",
+    flexDirection: "row",
     gap: 6,
     minWidth: 0
+  },
+  roomMetaLocationGroup: {
+    flexShrink: 1
   },
   roomMetaIconSlot: {
     alignItems: "center",
@@ -5411,16 +5986,19 @@ function createStyles(ROOM_COLORS: RoomColors) {
   roomMetaText: {
     ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
-    flex: 1,
     fontSize: 12,
     lineHeight: 16
+  },
+  roomMetaDateText: {
+    flexShrink: 1,
+    minWidth: 0
   },
   roomFriendsRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    marginTop: 2,
-    minHeight: 32,
+    marginTop: 0,
+    minHeight: 30,
     minWidth: 0
   },
   roomFriendAvatars: {
@@ -5432,9 +6010,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderColor: ROOM_COLORS.header,
     borderRadius: radius.pill,
     borderWidth: 2,
-    height: 30,
+    height: 28,
     justifyContent: "center",
-    width: 30
+    width: 28
   },
   roomFriendAvatarOverlap: {
     marginLeft: -8
@@ -5458,7 +6036,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     minWidth: 0
   },
   modeTabsAnimated: {
-    marginTop: spacing.md,
+    marginTop: ROOM_HEADER_SECTION_GAP,
     overflow: "hidden"
   },
   modeTabs: {
@@ -5540,43 +6118,43 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   floatingAddBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: ROOM_COLORS.scrim,
-    zIndex: 6
+    overflow: "hidden",
+    zIndex: 30
   },
-  floatingAddActionStack: {
+  floatingAddBackdropDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: ROOM_COLORS.scrimSoft
+  },
+  addMenuStack: {
     alignItems: "flex-end",
     gap: spacing.sm,
     position: "absolute",
-    right: spacing.lg,
-    zIndex: 7
+    zIndex: 32
   },
-  floatingAddAction: {
+  addMenuAction: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
     justifyContent: "flex-end",
-    minHeight: 48
+    minHeight: FLOATING_ADD_ACTION_ICON_SIZE
   },
-  floatingAddActionLabel: {
+  addMenuActionPressed: {
+    opacity: 0.68
+  },
+  addMenuActionLabel: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.surfaceHigh,
-    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 38,
+    height: 36,
     justifyContent: "center",
-    paddingHorizontal: spacing.base,
-    shadowColor: ROOM_COLORS.black,
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.20,
-    shadowRadius: 14
+    paddingHorizontal: spacing.xs
   },
-  floatingAddActionText: {
+  addMenuActionText: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
-    fontSize: 13
+    fontSize: 13,
+    lineHeight: 17
   },
-  floatingAddActionIcon: {
+  addMenuActionIcon: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.coolDim,
     borderColor: ROOM_COLORS.coolBorder,
@@ -5584,38 +6162,27 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderWidth: 1,
     height: FLOATING_ADD_ACTION_ICON_SIZE,
     justifyContent: "center",
-    shadowColor: ROOM_COLORS.black,
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.20,
-    shadowRadius: 14,
     width: FLOATING_ADD_ACTION_ICON_SIZE
   },
-  floatingAddActionIconGold: {
-    backgroundColor: ROOM_COLORS.goldDim,
-    borderColor: ROOM_COLORS.goldBorder
+  addMenuActionGlyph: {
+    height: 21,
+    lineHeight: 21,
+    textAlign: "center",
+    width: 21
   },
   floatingAddButtonFrame: {
     position: "absolute",
-    shadowColor: ROOM_COLORS.black,
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.28,
-    shadowRadius: 16,
-    zIndex: 8
+    zIndex: 31
   },
   floatingAddButton: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.cool,
-    borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
-    borderWidth: 1,
+    borderWidth: 0,
     height: FLOATING_ADD_BUTTON_SIZE,
     justifyContent: "center",
     width: FLOATING_ADD_BUTTON_SIZE,
     overflow: "hidden"
-  },
-  floatingAddButtonOpen: {
-    backgroundColor: ROOM_COLORS.coolPressed,
-    borderColor: ROOM_COLORS.outlineStrong
   },
   floatingAddIconWrap: {
     alignItems: "center",
@@ -5856,11 +6423,14 @@ function createStyles(ROOM_COLORS: RoomColors) {
   dishTimelineBubble: {
     borderRadius: 16,
     borderWidth: 1,
-    gap: 8,
+    gap: 6,
     maxWidth: "100%",
     overflow: "hidden",
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    // Bottom padding matches the text bubble (paddingBottom: 6) so the gap under
+    // the pinned timestamp is identical in both; top stays roomier for content.
+    paddingBottom: 6,
+    paddingHorizontal: 12,
+    paddingTop: 10,
     position: "relative",
     zIndex: 1
   },
@@ -5868,93 +6438,69 @@ function createStyles(ROOM_COLORS: RoomColors) {
     alignSelf: "flex-end",
     backgroundColor: CHAT_OWN_BUBBLE_COLOR,
     borderColor: ROOM_COLORS.sentBubbleBorder,
-    minWidth: 190
+    minWidth: 230
   },
   dishTimelineBubbleOther: {
     alignSelf: "flex-start",
     backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
     borderColor: ROOM_COLORS.border,
-    minWidth: 210
-  },
-  dishTimelineHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.sm,
-    justifyContent: "space-between"
-  },
-  dishTimelineKicker: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.cool,
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 14,
-    minWidth: 0
-  },
-  dishTimelineKickerMine: {
-    color: ROOM_COLORS.onSentBubble
-  },
-  dishTimelinePayload: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.glassDim,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 9
-  },
-  dishTimelineIcon: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.goldDim,
-    borderColor: ROOM_COLORS.goldBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 30,
-    justifyContent: "center",
-    width: 30
-  },
-  dishTimelineCopy: {
-    flex: 1,
-    minWidth: 0
+    minWidth: 240
   },
   dishTimelineName: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
-    fontSize: 13,
-    lineHeight: 16
+    fontSize: 15,
+    lineHeight: 19
   },
   dishTimelineNote: {
     ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14,
-    marginTop: 1
+    fontSize: 12,
+    lineHeight: 16
   },
   dishTimelineNoteMine: {
     color: ROOM_COLORS.sentReplyText
   },
-  dishTimelineRating: {
+  dishTimelineStarsRow: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.goldDim,
-    borderColor: ROOM_COLORS.goldBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
     flexDirection: "row",
-    flexShrink: 0,
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 4
+    gap: spacing.sm,
+    justifyContent: "space-between",
+    marginTop: 2
   },
-  dishTimelineRatingText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.gold,
-    fontSize: 10,
-    lineHeight: 12
+  dishTimelineStars: {
+    flexDirection: "row",
+    gap: 2
   },
-  dishTimelineChevron: {
-    marginLeft: -1,
-    marginRight: -3
+  dishTimelineStarButton: {
+    paddingVertical: 2
+  },
+  dishTimelineVoteHint: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  dishTimelineFooter: {
+    alignSelf: "stretch",
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 2,
+    paddingTop: 7
+  },
+  dishTimelineRatersText: {
+    ...fontStyles.regular,
+    color: ROOM_COLORS.onSurface,
+    flexShrink: 1,
+    fontSize: 12,
+    // Tall line box (matching a text-message body line) so the bottom-pinned
+    // timestamp drops below the label baseline exactly like a text bubble,
+    // instead of sitting level with the label on a short line.
+    lineHeight: 22,
+    minWidth: 0
+  },
+  dishTimelineRatersTextMine: {
+    color: ROOM_COLORS.onSentBubble
   },
   messageBubbleGroupedMine: {
     borderTopRightRadius: 7
@@ -6275,7 +6821,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     overflow: "hidden"
   },
   mediaImageWrap: {
-    aspectRatio: 1,
     backgroundColor: ROOM_COLORS.panelRaised,
     borderRadius: radius.md,
     overflow: "hidden",
@@ -6297,7 +6842,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   videoPreview: {
     alignItems: "center",
-    aspectRatio: 1,
     backgroundColor: ROOM_COLORS.black,
     borderRadius: radius.md,
     justifyContent: "center",
@@ -6725,40 +7269,18 @@ function createStyles(ROOM_COLORS: RoomColors) {
     opacity: 0.5
   },
   viewerBackdrop: {
-    backgroundColor: ROOM_COLORS.scrimStrong,
-    flex: 1,
-    padding: spacing.lg
-  },
-  viewerHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    paddingBottom: spacing.md,
-    paddingTop: spacing.md
-  },
-  viewerHeaderText: {
-    flex: 1,
-    minWidth: 0
-  },
-  viewerTitle: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.white,
-    fontSize: 14,
-    lineHeight: 18
-  },
-  viewerSubtitle: {
-    ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 2
+    backgroundColor: ROOM_COLORS.black,
+    flex: 1
   },
   viewerClose: {
     alignItems: "center",
-    backgroundColor: ROOM_COLORS.glassDim,
+    backgroundColor: "rgba(0, 0, 0, 0.48)",
     borderRadius: radius.pill,
     height: 40,
     justifyContent: "center",
+    position: "absolute",
+    right: spacing.lg,
+    zIndex: 2,
     width: 40
   },
   viewerBody: {
@@ -6790,21 +7312,36 @@ function createStyles(ROOM_COLORS: RoomColors) {
     width: "100%"
   },
   viewerFooter: {
+    alignItems: "center",
+    bottom: 0,
     gap: spacing.sm,
-    paddingTop: spacing.md
+    left: 0,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    position: "absolute",
+    right: 0,
+    zIndex: 2
   },
   viewerCount: {
     ...fontStyles.extraBold,
-    color: ROOM_COLORS.muted,
+    backgroundColor: "rgba(0, 0, 0, 0.52)",
+    borderRadius: radius.pill,
+    color: ROOM_COLORS.white,
     fontSize: 12,
     lineHeight: 16,
+    overflow: "hidden",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
     textAlign: "center"
+  },
+  viewerThumbnailScroller: {
+    maxHeight: 58,
+    width: "100%"
   },
   viewerThumbnails: {
     gap: spacing.sm,
     justifyContent: "center",
     minWidth: "100%",
-    paddingBottom: spacing.sm,
     paddingHorizontal: 2
   },
   viewerThumbnail: {
@@ -6862,6 +7399,215 @@ function createStyles(ROOM_COLORS: RoomColors) {
     padding: spacing.lg,
     paddingTop: CHAT_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
+  },
+  itineraryContent: {
+    gap: spacing.sm,
+    padding: spacing.lg,
+    paddingTop: TABLE_HEADER_CLEARANCE,
+    paddingBottom: spacing.xl + 92
+  },
+  itineraryHeading: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    letterSpacing: 1,
+    marginBottom: 2,
+    textTransform: "uppercase"
+  },
+  stopCard: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.base
+  },
+  stopCardRemoving: {
+    opacity: 0.5
+  },
+  stopHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.s
+  },
+  stopEmojiWrap: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderRadius: radius.pill,
+    height: 40,
+    justifyContent: "center",
+    width: 40
+  },
+  stopEmoji: {
+    fontSize: 20
+  },
+  stopHeaderText: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0
+  },
+  stopName: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 15
+  },
+  stopTypeLabel: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12
+  },
+  stopRemoveButton: {
+    alignItems: "center",
+    height: 28,
+    justifyContent: "center",
+    width: 28
+  },
+  stopNote: {
+    ...fontStyles.regular,
+    color: ROOM_COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18
+  },
+  stopDishList: {
+    gap: 6
+  },
+  stopDishRow: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.bg,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.s,
+    paddingHorizontal: spacing.s,
+    paddingVertical: 8
+  },
+  stopDishIcon: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    height: 28,
+    justifyContent: "center",
+    width: 28
+  },
+  stopDishIconText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.white,
+    fontSize: 12
+  },
+  stopDishName: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.onSurface,
+    flex: 1,
+    fontSize: 14,
+    minWidth: 0
+  },
+  stopAddDishButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: 4,
+    paddingVertical: 2
+  },
+  stopAddDishText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    fontSize: 13
+  },
+  stopSheetRoot: {
+    flex: 1,
+    justifyContent: "flex-end"
+  },
+  stopSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: ROOM_COLORS.scrim
+  },
+  stopSheet: {
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderTopLeftRadius: radius.card,
+    borderTopRightRadius: radius.card,
+    gap: spacing.md,
+    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md
+  },
+  stopSheetHandle: {
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.pill,
+    height: 4,
+    width: 40
+  },
+  stopSheetTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 18
+  },
+  stopSheetSubtitle: {
+    ...fontStyles.regular,
+    color: ROOM_COLORS.muted,
+    fontSize: 13,
+    marginTop: -6
+  },
+  stopTypeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  stopTypeChip: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8
+  },
+  stopTypeChipActive: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.cool
+  },
+  stopTypeChipEmoji: {
+    fontSize: 15
+  },
+  stopTypeChipLabel: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.muted,
+    fontSize: 13
+  },
+  stopTypeChipLabelActive: {
+    color: ROOM_COLORS.cool
+  },
+  stopInput: {
+    ...fontStyles.medium,
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 12
+  },
+  stopNoteInput: {
+    minHeight: 64,
+    textAlignVertical: "top"
+  },
+  stopSubmitButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.input,
+    justifyContent: "center",
+    minHeight: 50
+  },
+  stopSubmitButtonDisabled: {
+    opacity: 0.5
+  },
+  stopSubmitText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onCool,
+    fontSize: 15
   },
   peoplePanelContent: {
     gap: 0,
@@ -7430,6 +8176,16 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderRadius: 0,
     overflow: "hidden"
   },
+  galleryMediaPreview: {
+    aspectRatio: 1,
+    borderRadius: 0,
+    width: "100%"
+  },
+  emptyChatOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   emptyChat: {
     alignItems: "center",
     flex: 1,
@@ -7440,6 +8196,12 @@ function createStyles(ROOM_COLORS: RoomColors) {
     alignItems: "center",
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xxl
+  },
+  itineraryEmptyPanel: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl
   },
   emptyIcon: {
     alignItems: "center",
@@ -7467,9 +8229,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   composerWrap: {
     alignSelf: "center",
-    backgroundColor: ROOM_COLORS.bg,
+    backgroundColor: "transparent",
     borderTopColor: ROOM_COLORS.border,
-    borderTopWidth: 1,
+    borderTopWidth: 0,
     borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
@@ -7617,20 +8379,22 @@ function createStyles(ROOM_COLORS: RoomColors) {
 }
 
 let styles = createStyles(ROOM_COLORS);
-const LIGHT_ROOM_COLORS = createRoomColors(memoryRoomTokens.light);
-const ROOM_THEME_CACHE = {
-  dark: {
-    colors: ROOM_COLORS,
-    styles
-  },
-  light: {
-    colors: LIGHT_ROOM_COLORS,
-    styles: createStyles(LIGHT_ROOM_COLORS)
-  }
-} as const;
+const ROOM_THEME_CACHE = new Map<string, { colors: RoomColors; styles: ReturnType<typeof createStyles> }>();
 
-function applyRoomTheme(resolvedTheme: keyof typeof memoryRoomTokens) {
-  const theme = ROOM_THEME_CACHE[resolvedTheme];
+function roomThemeFor(resolvedTheme: keyof typeof memoryRoomTokens, occasionType: OccasionType) {
+  const key = `${resolvedTheme}:${occasionType}`;
+  const cached = ROOM_THEME_CACHE.get(key);
+  if (cached) return cached;
+
+  const tokens = occasionThemeToMemoryRoomTokens(memoryRoomTokens[resolvedTheme], occasionType);
+  const colors = createRoomColors(tokens);
+  const next = { colors, styles: createStyles(colors) };
+  ROOM_THEME_CACHE.set(key, next);
+  return next;
+}
+
+function applyRoomTheme(resolvedTheme: keyof typeof memoryRoomTokens, occasionType: OccasionType) {
+  const theme = roomThemeFor(resolvedTheme, occasionType);
   ROOM_COLORS = theme.colors;
   CHAT_OWN_BUBBLE_COLOR = theme.colors.sentBubble;
   CHAT_OTHER_BUBBLE_COLOR = theme.colors.receivedBubble;

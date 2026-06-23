@@ -10,8 +10,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --test tests/*.test.mjs",
-    "test:coverage": "c8 --reporter=text node --require ./tests/coverage-setup.cjs --test tests/*.test.mjs",
-    "test:coverage:html": "c8 --reporter=text-summary --reporter=html node --require ./tests/coverage-setup.cjs --test tests/*.test.mjs",
+    "test:memory-hardening": "node --test tests/shared-memory-phase1-security.test.mjs tests/shared-memory-phase2-media-security.test.mjs tests/shared-memory-phase3-scalability.test.mjs tests/shared-memory-phase4-mobile-performance.test.mjs tests/shared-memory-phase5-operations.test.mjs tests/shared-memory-phase6-ci.test.mjs",
+    "verify:memory-hardening": "npm run test:memory-hardening && npm test && npm run test:coverage && npm run lint && npm run typecheck && npm run build && cd mobile && npm run typecheck",
+    "test:coverage": "node --require ./tests/coverage-setup.cjs --test --experimental-test-coverage tests/*.test.mjs",
+    "test:coverage:html": "npm run test:coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "start": "next start"

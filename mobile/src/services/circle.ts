@@ -15,9 +15,55 @@ export type MyCircleSummary = {
 };
 
 export type CircleAccessStatus = "idle" | "pending" | "joined";
+export type CircleRequestAction = "accept" | "reject";
+
+export type CircleStatusPayload = {
+  accountType?: AccountType;
+  members?: string[];
+  joinedCircles?: string[];
+  pendingIncoming?: string[];
+  pendingSent?: string[];
+  circleCount?: number;
+  error?: string;
+};
+
+export type ProfileCircleRelationship = {
+  accountType: AccountType | null;
+  circleCount: number | null;
+  hasIncomingRequest: boolean;
+  status: CircleAccessStatus;
+};
 
 function displayNameForRow(row: { first_name: string | null; last_name: string | null; username: string }) {
   return [row.first_name, row.last_name].filter(Boolean).join(" ").trim() || row.username;
+}
+
+async function getAccessToken(message = "Log in to update your circle") {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error(message);
+  return token;
+}
+
+async function fetchCircleApi<T>(path: string, options: { body?: unknown; method?: "GET" | "POST" } = {}): Promise<T> {
+  const token = await getAccessToken();
+  const method = options.method ?? (options.body ? "POST" : "GET");
+  const response = await fetch(apiUrl(path), {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { "Content-Type": "application/json" } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const payload = await response.json().catch(() => null) as (T & { error?: unknown }) | null;
+
+  if (!response.ok) {
+    throw new Error(typeof payload?.error === "string" ? payload.error : "Unable to update circle");
+  }
+
+  return (payload ?? {}) as T;
 }
 
 export async function listMyCircle(): Promise<MyCircleSummary> {
@@ -114,23 +160,63 @@ export async function listCircleAccessStatuses(usernames: string[]): Promise<Rec
   return statuses;
 }
 
-export async function removeMyCircleMember(otherName: string) {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in to update your circle");
+export async function getCircleStatus(username: string): Promise<CircleStatusPayload> {
+  const name = username.trim();
+  if (!name) throw new Error("Username is required");
+  return fetchCircleApi<CircleStatusPayload>(`/api/circle/status?name=${encodeURIComponent(name)}`);
+}
 
-  const response = await fetch(apiUrl("/api/circle/remove"), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ otherName })
-  });
+export async function getProfileCircleRelationship(username: string): Promise<ProfileCircleRelationship> {
+  const profile = await getCurrentUserProfile();
+  if (!profile) throw new Error("Log in to view circle status");
 
-  const payload = await response.json().catch(() => null) as { error?: unknown } | null;
-  if (!response.ok) {
-    throw new Error(typeof payload?.error === "string" ? payload.error : "Unable to remove from circle");
+  const targetName = username.trim();
+  if (!targetName || targetName.toLowerCase() === profile.username.toLowerCase()) {
+    return {
+      accountType: null,
+      circleCount: null,
+      hasIncomingRequest: false,
+      status: "idle"
+    };
   }
+
+  const [myStatus, targetStatus] = await Promise.all([
+    getCircleStatus(profile.username),
+    getCircleStatus(targetName)
+  ]);
+  const joinedCircles = new Set([...(myStatus.joinedCircles ?? []), ...(myStatus.members ?? [])]);
+  const pendingSent = new Set(myStatus.pendingSent ?? []);
+  const pendingIncoming = new Set(myStatus.pendingIncoming ?? []);
+
+  return {
+    accountType: targetStatus.accountType ?? null,
+    circleCount: typeof targetStatus.circleCount === "number" ? targetStatus.circleCount : null,
+    hasIncomingRequest: pendingIncoming.has(targetName),
+    status: joinedCircles.has(targetName) ? "joined" : pendingSent.has(targetName) ? "pending" : "idle"
+  };
+}
+
+export async function cancelCircleRequest(receiverName: string) {
+  await fetchCircleApi<{ ok?: boolean }>("/api/circle/cancel", {
+    method: "POST",
+    body: { receiverName }
+  });
+}
+
+export async function leaveCircle(otherName: string) {
+  await fetchCircleApi<{ ok?: boolean }>("/api/circle/remove", {
+    method: "POST",
+    body: { otherName }
+  });
+}
+
+export async function respondToCircleRequest(input: { action: CircleRequestAction; senderName: string }) {
+  await fetchCircleApi<{ ok?: boolean; state?: string }>("/api/circle/respond", {
+    method: "POST",
+    body: input
+  });
+}
+
+export async function removeMyCircleMember(otherName: string) {
+  await leaveCircle(otherName);
 }

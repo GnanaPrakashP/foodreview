@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const supabase = await createRouteSupabase();
+  const supabase = await createRouteSupabase(req);
 
   const actor = await getAuthenticatedCircleActor(supabase);
   if (!actor) {
