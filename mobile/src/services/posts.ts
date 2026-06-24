@@ -1,11 +1,37 @@
+import { Platform } from "react-native";
+import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { normalizeDishInput } from "@/services/dishNormalizer";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { FoodItem, Visibility } from "@/types/models";
 
+const MAX_REVIEW_VIDEO_DURATION_MS = 10_000;
+
+export type CreatePostMediaInput = {
+  uri: string;
+  mimeType?: string | null;
+  mediaType?: "image" | "video";
+  durationMs?: number | null;
+  fileSize?: number | null;
+  height?: number | null;
+  width?: number | null;
+  // When true on a video, the audio track is stripped before upload.
+  muted?: boolean;
+};
+
 export type CreatePostInput = {
-  imageUri: string;
+  imageUri?: string;
   imageMimeType?: string | null;
+  mediaUri?: string;
+  mediaMimeType?: string | null;
+  mediaType?: "image" | "video";
+  mediaDurationMs?: number | null;
+  mediaFileSize?: number | null;
+  mediaHeight?: number | null;
+  mediaWidth?: number | null;
+  // Preferred multi-media field. When present it supersedes the single media*
+  // fields above (which remain for older single-capture callers).
+  mediaItems?: CreatePostMediaInput[];
   restaurantName: string;
   restaurantId?: string | null;
   restaurantArea?: string | null;
@@ -25,8 +51,44 @@ export type CreatePostResult = {
   id: string;
 };
 
+function resolveMediaType(media: { mediaType?: "image" | "video"; mimeType?: string | null }) {
+  return media.mediaType ?? (media.mimeType?.startsWith("video/") ? "video" : "image");
+}
+
+// Normalizes either the new `mediaItems` array or the legacy single media*
+// fields into one list, so the rest of the pipeline only deals with an array.
+function mediaInputs(input: CreatePostInput): CreatePostMediaInput[] {
+  if (input.mediaItems?.length) {
+    return input.mediaItems.filter((item) => item.uri);
+  }
+  const single = primaryMediaInput(input);
+  if (!single.uri) return [];
+  return [{
+    durationMs: input.mediaDurationMs,
+    fileSize: input.mediaFileSize,
+    height: input.mediaHeight,
+    mediaType: single.mediaType,
+    mimeType: single.mimeType,
+    uri: single.uri,
+    width: input.mediaWidth
+  }];
+}
+
 function validateInput(input: CreatePostInput) {
-  if (!input.imageUri) throw new Error("Choose an image");
+  const items = mediaInputs(input);
+  if (items.length === 0) throw new Error("Choose a photo or video");
+  for (const media of items) {
+    if (resolveMediaType(media) === "video") {
+      if (
+        typeof media.durationMs !== "number" ||
+        !Number.isFinite(media.durationMs) ||
+        media.durationMs <= 0 ||
+        media.durationMs > MAX_REVIEW_VIDEO_DURATION_MS
+      ) {
+        throw new Error("Videos must be 10 seconds or less");
+      }
+    }
+  }
   if (!input.restaurantName.trim()) throw new Error("Restaurant name is required");
   const dishes = normalizedDishes(input);
   if (dishes.length === 0) throw new Error("Add at least one dish");
@@ -36,6 +98,16 @@ function validateInput(input: CreatePostInput) {
   if (input.caption.trim() && input.caption.trim().length < 5) {
     throw new Error("Caption must be at least 5 characters");
   }
+}
+
+function primaryMediaInput(input: CreatePostInput) {
+  const mimeType = input.mediaMimeType ?? input.imageMimeType ?? null;
+  const mediaType = input.mediaType ?? (mimeType?.startsWith("video/") ? "video" : "image");
+  return {
+    mediaType,
+    mimeType,
+    uri: input.mediaUri ?? input.imageUri ?? ""
+  };
 }
 
 function normalizedDishes(input: CreatePostInput): FoodItem[] {
@@ -62,26 +134,65 @@ function normalizedDishes(input: CreatePostInput): FoodItem[] {
     .filter((dish) => dish.rawDishName);
 }
 
-function extensionFor(uri: string, mimeType?: string | null) {
+function extensionFor(uri: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
+  if (mimeType?.includes("quicktime")) return "mov";
+  if (mimeType?.includes("webm")) return "webm";
+  if (mimeType?.includes("mp4")) return "mp4";
   if (mimeType?.includes("png")) return "png";
   if (mimeType?.includes("webp")) return "webp";
   const match = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
   const ext = match?.[1]?.toLowerCase();
+  if (mediaType === "video" && (ext === "mp4" || ext === "mov" || ext === "webm")) return ext;
   if (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg") return ext;
-  return "jpg";
+  return mediaType === "video" ? "mp4" : "jpg";
+}
+
+function contentTypeFor(ext: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
+  if (mimeType) return mimeType;
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "webm") return "video/webm";
+  return mediaType === "video" ? "video/mp4" : "image/jpeg";
 }
 
 async function blobFromUri(uri: string): Promise<Blob> {
   const response = await fetch(uri);
-  if (!response.ok) throw new Error("Could not read selected image");
+  if (!response.ok) throw new Error("Could not read selected media");
   return response.blob();
 }
 
-async function uploadPostImage(input: CreatePostInput, userId: string) {
-  const ext = extensionFor(input.imageUri, input.imageMimeType);
-  const contentType = input.imageMimeType || (ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg");
-  const path = `public/mobile/${userId}/${Date.now()}.${ext}`;
-  const blob = await blobFromUri(input.imageUri);
+type UploadedMedia = {
+  publicUrl: string;
+  sizeBytes: number;
+  storagePath: string;
+  mediaType: "image" | "video";
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+};
+
+// Returns a copy of the video with no audio track. react-native-compressor is a
+// native module that isn't present in web/pre-rebuild clients, so we lazy-require
+// it and fall back to the original uri (audio intact) if it's unavailable.
+async function stripVideoAudio(uri: string): Promise<string> {
+  if (Platform.OS === "web") return uri;
+  try {
+    const { Video } = require("react-native-compressor") as typeof import("react-native-compressor");
+    return await Video.compress(uri, { compressionMethod: "auto", stripAudio: true });
+  } catch {
+    return uri;
+  }
+}
+
+async function uploadOne(media: CreatePostMediaInput, userId: string): Promise<UploadedMedia> {
+  const mediaType = resolveMediaType(media);
+  const uri = mediaType === "video" && media.muted ? await stripVideoAudio(media.uri) : media.uri;
+  const ext = extensionFor(uri, media.mimeType, mediaType);
+  const contentType = contentTypeFor(ext, media.mimeType, mediaType);
+  // Random suffix keeps parallel uploads in the same millisecond from colliding.
+  const path = `public/mobile/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const blob = await blobFromUri(uri);
 
   const { error } = await supabase.storage
     .from("review-photos")
@@ -91,9 +202,57 @@ async function uploadPostImage(input: CreatePostInput, userId: string) {
 
   const { data } = supabase.storage.from("review-photos").getPublicUrl(path);
   return {
+    durationMs: media.durationMs ?? null,
+    height: media.height ?? null,
+    mediaType,
     publicUrl: data.publicUrl,
-    storagePath: path
+    sizeBytes: media.fileSize ?? blob.size,
+    storagePath: path,
+    width: media.width ?? null
   };
+}
+
+async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedia[]) {
+  if (!apiBaseUrl) throw new Error("Video posts require the API server.");
+
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before posting");
+
+  const response = await fetch(apiUrl("/api/reviews"), {
+    body: JSON.stringify({
+      area: input.restaurantArea,
+      body: input.caption,
+      items: normalizedDishes(input),
+      media: uploaded.map((item) => ({
+        durationSeconds: item.durationMs ? item.durationMs / 1000 : undefined,
+        height: item.height ?? undefined,
+        mediaType: item.mediaType,
+        publicUrl: item.publicUrl,
+        sizeBytes: item.sizeBytes,
+        storagePath: item.storagePath,
+        width: item.width ?? undefined
+      })),
+      photoUrl: uploaded[0]?.publicUrl,
+      restaurantAddress: input.restaurantAddress,
+      restaurantId: input.restaurantId,
+      restaurantLat: input.restaurantLat,
+      restaurantLng: input.restaurantLng,
+      restaurantName: input.restaurantName,
+      tags: input.tags,
+      visibility: input.visibility
+    }),
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+  const payload = await response.json().catch(() => null) as { id?: string; error?: string } | null;
+  if (!response.ok || !payload?.id) {
+    throw new Error(payload?.error ?? "Could not share post");
+  }
+  return { id: payload.id };
 }
 
 export async function createPost(input: CreatePostInput): Promise<CreatePostResult> {
@@ -102,7 +261,18 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   const profile = await getCurrentUserProfile();
   if (!profile) throw new Error("Log in before posting");
 
-  const uploaded = await uploadPostImage(input, profile.id);
+  const items = mediaInputs(input);
+  const hasVideo = items.some((media) => resolveMediaType(media) === "video");
+  if (hasVideo && !apiBaseUrl) {
+    throw new Error("Video posts require the API server.");
+  }
+
+  const uploaded = await Promise.all(items.map((media) => uploadOne(media, profile.id)));
+  // Video (and any mixed set) goes through the API so typed review_photos rows
+  // are written; all-image posts use the direct insert with every photo_url.
+  if (hasVideo) {
+    return createReviewViaApi(input, uploaded);
+  }
   const tags = (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
 
   const { data, error } = await supabase
@@ -119,8 +289,8 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
       body: input.caption.trim() || null,
       tags,
       visibility: input.visibility,
-      photo_url: uploaded.publicUrl,
-      photo_urls: [uploaded.publicUrl],
+      photo_url: uploaded[0].publicUrl,
+      photo_urls: uploaded.map((item) => item.publicUrl),
       status: "active"
     })
     .select("id")

@@ -1,11 +1,13 @@
-import { useLocalSearchParams } from "expo-router";
-import { MemoryMediaCaptureScreen } from "@/components/memories/camera/MemoryMediaCaptureScreen";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMemoryRoomQuery } from "@/hooks/useMemories";
+import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 
 export default function MemoryCameraRoute() {
   const params = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const roomId = typeof params.id === "string" ? params.id : "";
   const room = useMemoryRoomQuery(roomId);
 
@@ -33,5 +35,15 @@ export default function MemoryCameraRoute() {
     );
   }
 
-  return <MemoryMediaCaptureScreen roomId={roomId} />;
+  return (
+    <CameraScreen
+      onCapture={(asset) => {
+        const capture = saveMemoryCapture(asset);
+        router.push({
+          pathname: "/memories/[id]/preview",
+          params: { captureId: capture.id, id: roomId }
+        });
+      }}
+    />
+  );
 }

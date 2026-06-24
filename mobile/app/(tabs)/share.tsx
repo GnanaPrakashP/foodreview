@@ -1,12 +1,14 @@
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
-import { ArrowLeft, Bookmark, Briefcase, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, MoreHorizontal, PenLine, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, X, type LucideIcon } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEvent } from "expo";
+import { useVideoPlayer, VideoView } from "expo-video";
+import * as VideoThumbnails from "expo-video-thumbnails";
+import { useFocusEffect, useRouter } from "expo-router";
+import { ArrowLeft, Bookmark, Briefcase, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, MoreHorizontal, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X, type LucideIcon } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
-import { MediaCapture } from "@/components/media/MediaCapture";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useCreatePostMutation } from "@/hooks/useCreatePost";
@@ -14,6 +16,7 @@ import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
+import { consumePendingPostCapture } from "@/services/postCaptureSession";
 import {
   autocompletePlaces,
   compactPlaceLocation,
@@ -36,9 +39,15 @@ function useShareTheme() {
   return { themeColors, styles };
 }
 
-type PickedImage = {
+type PickedMedia = {
+  duration?: number | null;
+  fileSize?: number | null;
+  height?: number | null;
+  mediaType: "image" | "video";
   mimeType?: string | null;
+  muted?: boolean;
   uri: string;
+  width?: number | null;
 };
 
 type DraftDish = FoodItem & {
@@ -50,7 +59,9 @@ type ReviewTag = {
 };
 
 type ShareMode = "choice" | "solo" | "friends";
-type SoloStep = "details" | "media" | "preview";
+type SoloStep = "review" | "details" | "preview";
+
+const MAX_POST_MEDIA = 4;
 
 type CreateMemoryOccasionOption = {
   accent: string;
@@ -160,9 +171,16 @@ export default function ShareScreen() {
   const createPost = useCreatePostMutation();
   const createMemoryRoom = useCreateMemoryRoomMutation();
   const [shareMode, setShareMode] = useState<ShareMode>("choice");
-  const [soloStep, setSoloStep] = useState<SoloStep>("details");
-  const [image, setImage] = useState<PickedImage | null>(null);
+  const [soloStep, setSoloStep] = useState<SoloStep>("review");
+  const [mediaItems, setMediaItems] = useState<PickedMedia[]>([]);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
   const [imageError, setImageError] = useState("");
+  const mediaItemsRef = useRef(mediaItems);
+  mediaItemsRef.current = mediaItems;
+  const { width: windowWidth } = useWindowDimensions();
+  const reviewPagerRef = useRef<ScrollView>(null);
+  const [pagerWidth, setPagerWidth] = useState(windowWidth);
+  const [previewMediaIndex, setPreviewMediaIndex] = useState(0);
   const [restaurantName, setRestaurantName] = useState("");
   const [restaurantPlace, setRestaurantPlace] = useState<SelectedPlace | null>(null);
   const [dishes, setDishes] = useState<DraftDish[]>(() => [emptyDish()]);
@@ -197,12 +215,13 @@ export default function ShareScreen() {
   const hasSelectedRestaurant = selectedPlaceMatches(restaurantName, restaurantPlace);
   const selectedMemoryOccasion = createMemoryOccasionOptions.find((option) => option.type === selectedMemoryOccasionType) ?? createMemoryOccasionOptions[0];
   const hasSoloDetails = Boolean(hasSelectedRestaurant && dishes.some((dish) => dish.name.trim() && dish.rating > 0));
-  const canSubmit = Boolean(image && hasSoloDetails);
+  const canAddMoreMedia = mediaItems.length < MAX_POST_MEDIA;
+  const canSubmit = Boolean(mediaItems.length > 0 && hasSoloDetails);
   const soloHeaderActionLabel = soloStep === "preview" ? "Post" : "Next";
-  const soloHeaderActionDisabled = soloStep === "details"
-    ? !hasSoloDetails
-    : soloStep === "media"
-      ? !image
+  const soloHeaderActionDisabled = soloStep === "review"
+    ? mediaItems.length === 0
+    : soloStep === "details"
+      ? !hasSoloDetails
       : !canSubmit || createPost.isPending;
   const canCreateMemory = Boolean(memoryParticipantNames.length > 0);
   const previewAuthorName = actor?.displayName || actor?.username || "You";
@@ -213,24 +232,96 @@ export default function ShareScreen() {
     .map((part) => part[0]?.toUpperCase())
     .join("") || "Y";
   const previewTags = selectedTags;
+  const previewLocation = compactPlaceLocation(restaurantPlace);
 
   function cancelShareMode() {
     setShareMode("choice");
-    setSoloStep("details");
+    setSoloStep("review");
+    setMediaItems([]);
+    setImageError("");
   }
 
+  // Solo posting now leads with the camera: opening solo pushes the capture
+  // screen first, and only a successful capture drops us into the review step.
   function openSolo() {
-    setShareMode("solo");
-    setSoloStep("details");
+    setSoloStep("review");
+    setImageError("");
+    router.push("/share/camera");
+  }
+
+  function addMorePhotos() {
+    if (!canAddMoreMedia) return;
+    setImageError("");
+    router.push("/share/camera");
+  }
+
+  function removeMediaAt(index: number) {
+    setMediaItems((current) => current.filter((_, position) => position !== index));
+  }
+
+  function toggleMuteAt(index: number) {
+    setMediaItems((current) => current.map((media, position) =>
+      position === index && media.mediaType === "video"
+        ? { ...media, muted: !media.muted }
+        : media
+    ));
+  }
+
+  // The in-app camera route stays pushed over this (still-mounted) tab; on
+  // return it leaves the capture here, which we append to the review step.
+  // A video is a single-item post; images accumulate up to MAX_POST_MEDIA.
+  // No capture (user backed out) leaves shareMode on "choice".
+  useFocusEffect(
+    useCallback(() => {
+      const captured = consumePendingPostCapture();
+      if (!captured) return;
+      const picked: PickedMedia = {
+        duration: captured.duration ?? null,
+        fileSize: captured.fileSize ?? null,
+        height: captured.height ?? null,
+        mediaType: captured.mediaType,
+        mimeType: captured.mimeType ?? null,
+        uri: captured.uri,
+        width: captured.width ?? null
+      };
+      // Photos and videos can be mixed in one post (up to MAX_POST_MEDIA).
+      const next = [...mediaItemsRef.current, picked].slice(0, MAX_POST_MEDIA);
+      setMediaItems(next);
+      setSelectedMediaIndex(next.length - 1);
+      setShareMode("solo");
+      setSoloStep("review");
+    }, [])
+  );
+
+  // Keep the large preview's selection in range as media is added or removed.
+  useEffect(() => {
+    setSelectedMediaIndex((index) => Math.min(index, Math.max(0, mediaItems.length - 1)));
+  }, [mediaItems.length]);
+
+  // Tapping a thumbnail (or adding media) snaps the swipe pager to that page.
+  useEffect(() => {
+    reviewPagerRef.current?.scrollTo({ x: selectedMediaIndex * pagerWidth, animated: true });
+  }, [selectedMediaIndex, pagerWidth]);
+
+  function handlePagerScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    if (pagerWidth <= 0) return;
+    const index = Math.round(event.nativeEvent.contentOffset.x / pagerWidth);
+    if (index !== selectedMediaIndex) setSelectedMediaIndex(index);
+  }
+
+  function handlePreviewScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    if (windowWidth <= 0) return;
+    const index = Math.round(event.nativeEvent.contentOffset.x / windowWidth);
+    if (index !== previewMediaIndex) setPreviewMediaIndex(index);
   }
 
   function handleSoloHeaderAction() {
-    if (soloStep === "details") {
-      setSoloStep("media");
+    if (soloStep === "review") {
+      setSoloStep("details");
       return;
     }
-
-    if (soloStep === "media") {
+    if (soloStep === "details") {
+      setPreviewMediaIndex(0);
       setSoloStep("preview");
       return;
     }
@@ -240,11 +331,11 @@ export default function ShareScreen() {
 
   function handleSoloBackAction() {
     if (soloStep === "preview") {
-      setSoloStep("media");
+      setSoloStep("details");
       return;
     }
-    if (soloStep === "media") {
-      setSoloStep("details");
+    if (soloStep === "details") {
+      setSoloStep("review");
       return;
     }
     cancelShareMode();
@@ -304,8 +395,8 @@ export default function ShareScreen() {
 
   async function submit() {
     setSuccess("");
-    if (!image) {
-      setImageError("Add at least one photo.");
+    if (mediaItems.length === 0) {
+      setImageError("Add a photo or video.");
       return;
     }
 
@@ -318,8 +409,16 @@ export default function ShareScreen() {
         caption,
         dishes: normalizedDishes,
         dishName: firstDish?.name ?? "",
-        imageMimeType: image.mimeType,
-        imageUri: image.uri,
+        mediaItems: mediaItems.map((media) => ({
+          durationMs: media.duration,
+          fileSize: media.fileSize,
+          height: media.height,
+          mediaType: media.mediaType,
+          mimeType: media.mimeType,
+          muted: media.muted,
+          uri: media.uri,
+          width: media.width
+        })),
         rating: firstDish?.rating || 0,
         recommended: true,
         restaurantAddress: restaurantPlace?.formattedAddress,
@@ -331,7 +430,7 @@ export default function ShareScreen() {
         tags: selectedTags,
         visibility
       });
-      setImage(null);
+      setMediaItems([]);
       setRestaurantName("");
       setRestaurantPlace(null);
       setDishes([emptyDish()]);
@@ -368,6 +467,92 @@ export default function ShareScreen() {
     }
   }
 
+  if (isReady && isAuthenticated && shareMode === "solo" && soloStep === "review") {
+    return (
+      <Screen padded={false} style={styles.screenContent}>
+        <View style={styles.reviewScreen}>
+          <View style={styles.reviewHeaderRow}>
+            <Pressable accessibilityLabel="Cancel share" onPress={cancelShareMode} style={styles.headerCancelButton}>
+              <X size={20} color={c.cream} strokeWidth={2.4} />
+            </Pressable>
+            <Pressable
+              disabled={soloHeaderActionDisabled}
+              onPress={handleSoloHeaderAction}
+              style={[styles.headerSubmitButton, soloHeaderActionDisabled && styles.submitButtonDisabled]}
+            >
+              <Text style={styles.headerSubmitText}>{soloHeaderActionLabel}</Text>
+            </Pressable>
+          </View>
+
+          <View
+            style={styles.reviewMain}
+            onLayout={(event) => setPagerWidth(event.nativeEvent.layout.width)}
+          >
+            {mediaItems.length > 0 ? (
+              <ScrollView
+                ref={reviewPagerRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={handlePagerScrollEnd}
+                style={StyleSheet.absoluteFill}
+              >
+                {mediaItems.map((media, index) => (
+                  <View key={`${media.uri}-${index}`} style={{ width: pagerWidth, height: "100%" }}>
+                    {media.mediaType === "video" ? (
+                      <SelectedPostVideo
+                        active={index === selectedMediaIndex}
+                        muted={media.muted}
+                        onToggleMute={() => toggleMuteAt(index)}
+                        style={styles.reviewMainImage}
+                        uri={media.uri}
+                      />
+                    ) : (
+                      <Image alt="Captured photo" contentFit="cover" source={{ uri: media.uri }} style={styles.reviewMainImage} />
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.reviewEmptyText}>No photos yet</Text>
+            )}
+          </View>
+
+          {imageError ? <View style={styles.reviewErrorWrap}><InlineError message={imageError} /></View> : null}
+
+          <View style={[styles.reviewBottomBar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+            <ScrollView contentContainerStyle={styles.reviewStripContent} horizontal showsHorizontalScrollIndicator={false}>
+              {mediaItems.map((media, index) => {
+                const active = index === selectedMediaIndex;
+                return (
+                  <Pressable
+                    key={`${media.uri}-${index}`}
+                    onPress={() => setSelectedMediaIndex(index)}
+                    style={[styles.reviewThumb, active && styles.reviewThumbActive]}
+                  >
+                    {media.mediaType === "video" ? (
+                      <VideoThumbnail uri={media.uri} />
+                    ) : (
+                      <Image alt="Thumbnail" contentFit="cover" source={{ uri: media.uri }} style={styles.reviewThumbMedia} />
+                    )}
+                    <Pressable accessibilityLabel="Remove photo" hitSlop={6} onPress={() => removeMediaAt(index)} style={styles.reviewThumbRemove}>
+                      <X size={11} color="#fff" strokeWidth={3} />
+                    </Pressable>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            {canAddMoreMedia ? (
+              <Pressable accessibilityLabel="Add more photos" onPress={addMorePhotos} style={styles.reviewAddButton}>
+                <Plus size={26} color={c.gold} strokeWidth={2.4} />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen padded={false} style={styles.screenContent}>
       <ScrollView
@@ -378,11 +563,11 @@ export default function ShareScreen() {
         <View style={styles.header}>
           {isReady && isAuthenticated && shareMode !== "choice" ? (
             <Pressable
-              accessibilityLabel={shareMode === "solo" && soloStep !== "details" ? "Back" : "Cancel share"}
+              accessibilityLabel={shareMode === "solo" && soloStep !== "review" ? "Back" : "Cancel share"}
               onPress={shareMode === "solo" ? handleSoloBackAction : cancelShareMode}
               style={styles.headerCancelButton}
             >
-              {shareMode === "solo" && soloStep !== "details" ? (
+              {shareMode === "solo" && soloStep !== "review" ? (
                 <ArrowLeft size={20} color={c.cream} strokeWidth={2.4} />
               ) : (
                 <X size={20} color={c.cream} strokeWidth={2.4} />
@@ -392,7 +577,9 @@ export default function ShareScreen() {
           <View style={styles.headerText}>
             {shareMode === "friends" ? (
               <Text style={styles.title}>Table Memory</Text>
-            ) : shareMode === "solo" ? null : (
+            ) : shareMode === "solo" ? (
+              soloStep === "preview" ? <Text style={styles.title}>Preview</Text> : null
+            ) : (
               <>
                 <Text style={styles.title}>Create</Text>
                 <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
@@ -493,6 +680,8 @@ export default function ShareScreen() {
                         <Text style={styles.addDishText}>Add another dish</Text>
                       </Pressable>
 
+                      {imageError ? <InlineError message={imageError} /> : null}
+
                       <View style={styles.tagGrid}>
                         <View style={styles.customTagRow}>
                           <Tag size={20} color={c.orange} strokeWidth={2} />
@@ -537,15 +726,6 @@ export default function ShareScreen() {
                       </View>
 
                     </View>
-                  ) : soloStep === "media" ? (
-                    <View style={styles.mediaStep}>
-                      <MediaCapture
-                        selected={image}
-                        onSelect={(media) => setImage({ mimeType: media.mimeType, uri: media.uri })}
-                        onClear={() => setImage(null)}
-                      />
-                      {imageError ? <InlineError message={imageError} /> : null}
-                    </View>
                   ) : (
                     <View style={styles.previewScreen}>
                       <View style={styles.previewFeedCard}>
@@ -566,20 +746,16 @@ export default function ShareScreen() {
                         <View style={styles.previewContentBlock}>
                           <View style={styles.previewPlaceBlock}>
                             <Text numberOfLines={2} style={styles.previewRestaurantName}>{restaurantName.trim()}</Text>
+                            {previewLocation ? (
+                              <View style={styles.previewLocationRow}>
+                                <MapPin size={12} color={c.mutedStrong} strokeWidth={2} />
+                                <Text numberOfLines={1} style={styles.previewLocationText}>{previewLocation}</Text>
+                              </View>
+                            ) : null}
                           </View>
 
                           <View style={styles.previewBody}>
                             {caption.trim() ? <Text style={styles.previewCaption}>{caption.trim()}</Text> : null}
-
-                            {previewTags.length > 0 ? (
-                              <View style={styles.previewFeedTags}>
-                                {previewTags.map((tag) => (
-                                  <View key={tag} style={styles.previewFeedTag}>
-                                    <Text style={styles.previewFeedTagText}>{tag}</Text>
-                                  </View>
-                                ))}
-                              </View>
-                            ) : null}
 
                             <View style={styles.previewFeedDishes}>
                               {dishes
@@ -596,12 +772,48 @@ export default function ShareScreen() {
                                   </View>
                                 ))}
                             </View>
+
+                            {previewTags.length > 0 ? (
+                              <View style={styles.previewFeedTags}>
+                                {previewTags.map((tag) => (
+                                  <View key={tag} style={styles.previewFeedTag}>
+                                    <Text style={styles.previewFeedTagText}>{tag}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            ) : null}
                           </View>
                         </View>
 
-                        {image ? (
+                        {mediaItems.length > 0 ? (
                           <View style={styles.previewMediaWrap}>
-                            <Image source={{ uri: image.uri }} style={styles.previewImage} contentFit="cover" />
+                            <ScrollView
+                              horizontal
+                              pagingEnabled
+                              showsHorizontalScrollIndicator={false}
+                              onMomentumScrollEnd={handlePreviewScrollEnd}
+                            >
+                              {mediaItems.map((media, index) => (
+                                <View key={`${media.uri}-${index}`} style={{ width: windowWidth }}>
+                                  {media.mediaType === "video" ? (
+                                    <SelectedPostVideo
+                                      active={index === previewMediaIndex}
+                                      muted={media.muted}
+                                      onToggleMute={() => toggleMuteAt(index)}
+                                      style={styles.previewImage}
+                                      uri={media.uri}
+                                    />
+                                  ) : (
+                                    <Image alt="Post photo" contentFit="cover" source={{ uri: media.uri }} style={styles.previewImage} />
+                                  )}
+                                </View>
+                              ))}
+                            </ScrollView>
+                            {mediaItems.length > 1 ? (
+                              <View style={styles.previewMediaCount}>
+                                <Text style={styles.previewMediaCountText}>{previewMediaIndex + 1}/{mediaItems.length}</Text>
+                              </View>
+                            ) : null}
                           </View>
                         ) : null}
 
@@ -1130,6 +1342,110 @@ function InlineError({ message }: { message: string }) {
   return <Text style={styles.inlineError}>{message}</Text>;
 }
 
+// A static first-frame preview of a video for the thumbnail strip (paused, muted)
+// with a small play badge so it's clearly a video.
+function VideoThumbnail({ uri }: { uri: string }) {
+  const { styles } = useShareTheme();
+  const [thumbUri, setThumbUri] = useState<string | null>(null);
+
+  // Generate a still image instead of mounting a live VideoView — a native video
+  // surface doesn't clip to the small rounded tile and bleeds behind the strip.
+  useEffect(() => {
+    let cancelled = false;
+    VideoThumbnails.getThumbnailAsync(uri, { time: 0, quality: 0.6 })
+      .then((result) => {
+        if (!cancelled) setThumbUri(result.uri);
+      })
+      .catch(() => {
+        // Leave the dark tile + play badge if a frame can't be extracted.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  return (
+    <View style={styles.reviewThumbMedia}>
+      {thumbUri ? (
+        <Image alt="Video thumbnail" contentFit="cover" source={{ uri: thumbUri }} style={StyleSheet.absoluteFill} />
+      ) : null}
+      <View style={styles.reviewThumbPlay}>
+        <View style={styles.reviewThumbPlayBadge}>
+          <Play size={11} color="#fff" fill="#fff" />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function formatVideoTime(seconds: number) {
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+// Minimal video controls: play/pause, elapsed/total time, and mute — nothing else
+// (no fullscreen, PiP, or scrubber).
+function SelectedPostVideo({
+  active = true,
+  muted = false,
+  onToggleMute,
+  style,
+  uri
+}: {
+  active?: boolean;
+  muted?: boolean;
+  onToggleMute?: () => void;
+  style?: StyleProp<ViewStyle>;
+  uri: string;
+}) {
+  const { styles } = useShareTheme();
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = true;
+    instance.timeUpdateEventInterval = 0.25;
+  });
+
+  useEffect(() => {
+    player.muted = muted;
+  }, [player, muted]);
+
+  // Pause a video when it's swiped off-screen so audio doesn't keep playing.
+  useEffect(() => {
+    if (!active) player.pause();
+  }, [active, player]);
+
+  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+  const timeEvent = useEvent(player, "timeUpdate");
+  const currentTime = timeEvent?.currentTime ?? player.currentTime;
+
+  function togglePlay() {
+    if (player.playing) player.pause();
+    else player.play();
+  }
+
+  return (
+    <View style={[styles.videoContainer, style ?? styles.previewVideo]}>
+      <VideoView contentFit="cover" nativeControls={false} player={player} style={StyleSheet.absoluteFill} />
+      <Pressable onPress={togglePlay} style={styles.videoTapLayer}>
+        {!isPlaying ? (
+          <View style={styles.videoPlayButton}>
+            <Play size={24} color="#fff" fill="#fff" />
+          </View>
+        ) : null}
+      </Pressable>
+      <View style={styles.videoBottomBar}>
+        <Text style={styles.videoTimeText}>
+          {formatVideoTime(currentTime)} / {formatVideoTime(player.duration)}
+        </Text>
+        {onToggleMute ? (
+          <Pressable accessibilityLabel={muted ? "Unmute video audio" : "Mute video audio"} hitSlop={8} onPress={onToggleMute} style={styles.videoSmallButton}>
+            {muted ? <VolumeX size={16} color="#fff" strokeWidth={2.2} /> : <Volume2 size={16} color="#fff" strokeWidth={2.2} />}
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function createStyles(c: ThemeColors) {
   return StyleSheet.create({
   screenContent: {
@@ -1293,9 +1609,6 @@ function createStyles(c: ThemeColors) {
   composerCard: {
     gap: 16
   },
-  mediaStep: {
-    gap: spacing.md
-  },
   requiredPhotoBox: {
     backgroundColor: c.surface,
     borderColor: c.orangeBorder,
@@ -1425,13 +1738,17 @@ function createStyles(c: ThemeColors) {
   previewFeedCard: {
     backgroundColor: c.bg,
     borderBottomColor: c.border,
-    borderBottomWidth: 1
+    borderBottomWidth: 1,
+    // Break out of the composer's horizontal padding so the card (and its media)
+    // spans edge-to-edge exactly like a real feed post.
+    marginHorizontal: -spacing.lg
   },
   previewFeedHeader: {
     alignItems: "center",
     flexDirection: "row",
     gap: 10,
     paddingBottom: 12,
+    paddingLeft: spacing.lg,
     paddingRight: 8,
     paddingTop: 14
   },
@@ -1491,7 +1808,8 @@ function createStyles(c: ThemeColors) {
     lineHeight: 15
   },
   previewContentBlock: {
-    paddingBottom: 12
+    paddingBottom: 12,
+    paddingHorizontal: spacing.lg
   },
   previewPlaceBlock: {
     paddingBottom: 0,
@@ -1504,7 +1822,20 @@ function createStyles(c: ThemeColors) {
     lineHeight: 21,
     marginBottom: 5
   },
+  previewLocationRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4
+  },
+  previewLocationText: {
+    ...fontStyles.regular,
+    color: c.mutedStrong,
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 14
+  },
   previewBody: {
+    gap: 10,
     paddingBottom: 0,
     paddingTop: 10
   },
@@ -1513,18 +1844,21 @@ function createStyles(c: ThemeColors) {
     backgroundColor: c.surface,
     width: "100%"
   },
+  previewVideo: {
+    aspectRatio: 4 / 5,
+    backgroundColor: c.black,
+    width: "100%"
+  },
   previewCaption: {
     ...fontStyles.regular,
     color: c.cream,
     fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 10
+    lineHeight: 20
   },
   previewFeedTags: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 10
+    gap: 6
   },
   previewFeedTag: {
     backgroundColor: "rgba(240, 96, 48, 0.10)",
@@ -1584,11 +1918,168 @@ function createStyles(c: ThemeColors) {
   previewMediaWrap: {
     position: "relative"
   },
+  previewMediaCount: {
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    position: "absolute",
+    right: 10,
+    top: 10
+  },
+  previewMediaCountText: {
+    ...fontStyles.semiBold,
+    color: "#fff",
+    fontSize: 11
+  },
+  reviewScreen: {
+    flex: 1
+  },
+  reviewHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingBottom: 8,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg
+  },
+  reviewMain: {
+    alignItems: "center",
+    backgroundColor: c.black,
+    flex: 1,
+    justifyContent: "center",
+    overflow: "hidden"
+  },
+  reviewMainImage: {
+    height: "100%",
+    width: "100%"
+  },
+  videoContainer: {
+    backgroundColor: c.black,
+    justifyContent: "center",
+    overflow: "hidden",
+    position: "relative"
+  },
+  videoTapLayer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  videoPlayButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: radius.pill,
+    height: 58,
+    justifyContent: "center",
+    width: 58
+  },
+  videoBottomBar: {
+    alignItems: "center",
+    bottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    left: 12,
+    position: "absolute",
+    right: 12
+  },
+  videoTimeText: {
+    ...fontStyles.semiBold,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: radius.pill,
+    color: "#fff",
+    fontSize: 12,
+    overflow: "hidden",
+    paddingHorizontal: 9,
+    paddingVertical: 3
+  },
+  videoSmallButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: radius.pill,
+    height: 34,
+    justifyContent: "center",
+    width: 34
+  },
+  reviewEmptyText: {
+    ...fontStyles.medium,
+    color: c.muted,
+    fontSize: 14
+  },
+  reviewErrorWrap: {
+    paddingHorizontal: spacing.base,
+    paddingTop: spacing.sm
+  },
+  reviewBottomBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: spacing.base,
+    paddingTop: spacing.md
+  },
+  reviewStripContent: {
+    alignItems: "center",
+    gap: 10,
+    paddingRight: 4
+  },
+  reviewThumb: {
+    borderColor: "transparent",
+    borderRadius: radius.md,
+    borderWidth: 2,
+    height: 64,
+    overflow: "hidden",
+    position: "relative",
+    width: 64
+  },
+  reviewThumbActive: {
+    borderColor: c.gold
+  },
+  reviewThumbMedia: {
+    backgroundColor: c.black,
+    borderRadius: radius.sm,
+    height: "100%",
+    overflow: "hidden",
+    width: "100%"
+  },
+  reviewThumbPlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  reviewThumbPlayBadge: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: radius.pill,
+    height: 22,
+    justifyContent: "center",
+    width: 22
+  },
+  reviewThumbRemove: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.65)",
+    borderRadius: radius.pill,
+    height: 20,
+    justifyContent: "center",
+    position: "absolute",
+    right: 2,
+    top: 2,
+    width: 20
+  },
+  reviewAddButton: {
+    alignItems: "center",
+    borderColor: c.gold,
+    borderRadius: radius.md,
+    borderStyle: "dashed",
+    borderWidth: 1.5,
+    height: 64,
+    justifyContent: "center",
+    width: 64
+  },
   previewActions: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
     paddingBottom: 8,
+    paddingHorizontal: spacing.lg,
     paddingTop: 10
   },
   previewActionCluster: {

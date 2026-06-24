@@ -83,10 +83,11 @@ import {
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
 import {
+  pickMemoryMediaFromCamera,
   pickMemoryMediaFromGallery,
   type MemoryMediaPickerResult
 } from "@/services/mediaPicker";
-import { consumeMemoryCapturePost, removeMemoryCapture } from "@/services/memoryCaptureSession";
+import { consumeMemoryCapturePost, removeMemoryCapture, saveMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
 import type { UserSearchResult } from "@/services/profiles";
@@ -596,6 +597,7 @@ export default function MemoryDetailScreen() {
   const [replyingToMessage, setReplyingToMessage] = useState<MemoryMessage | null>(null);
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [mediaError, setMediaError] = useState("");
+  const [cameraOpening, setCameraOpening] = useState(false);
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
   const [stopComposerVisible, setStopComposerVisible] = useState(false);
   const [dishTargetStopId, setDishTargetStopId] = useState<string | null>(null);
@@ -1340,12 +1342,45 @@ export default function MemoryDetailScreen() {
     );
   }
 
+  async function openNativeCameraForMemory() {
+    if (cameraOpening) return;
+    setCameraOpening(true);
+    setMediaError("");
+    try {
+      const result = await pickMemoryMediaFromCamera();
+      if (result.error) {
+        setMediaError(result.error);
+        Alert.alert("Could not open camera", result.error);
+        return;
+      }
+      const asset = result.asset;
+      if (!asset?.uri) return;
+      const mediaType = asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image";
+      const capture = saveMemoryCapture({
+        duration: asset.duration ?? null,
+        fileSize: asset.fileSize ?? null,
+        height: asset.height ?? null,
+        mediaType,
+        mimeType: asset.mimeType ?? null,
+        source: "camera",
+        uri: asset.uri,
+        width: asset.width ?? null
+      });
+      router.push({
+        pathname: "/memories/[id]/preview",
+        params: { captureId: capture.id, id: roomId }
+      });
+    } catch {
+      setMediaError("Could not open camera.");
+      Alert.alert("Could not open camera", "Try again.");
+    } finally {
+      setCameraOpening(false);
+    }
+  }
+
   function openCamera() {
     setAttachmentOptionsVisible(false);
-    router.push({
-      pathname: "/memories/[id]/camera",
-      params: { id: roomId }
-    });
+    void openNativeCameraForMemory();
   }
 
   function goBackToMemories() {
@@ -1654,7 +1689,7 @@ export default function MemoryDetailScreen() {
         onDishSubmit={submitDishFromAttachment}
         onGallery={() => submitMedia(pickMemoryMediaFromGallery)}
         keyboardProgress={dishKeyboardProgress}
-        pending={addPhoto.isPending}
+        pending={addPhoto.isPending || cameraOpening}
         visible={attachmentOptionsVisible}
       />
       <StopComposerSheet

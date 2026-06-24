@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useEvent } from "expo";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
@@ -83,7 +84,7 @@ export function MediaPreviewScreen({
         {asset.mediaType === "video" ? (
           <CapturedVideo muted={videoMuted} uri={asset.uri} />
         ) : (
-          <Image contentFit="contain" source={{ uri: asset.uri }} style={styles.imagePreview} />
+          <Image alt="Captured photo" contentFit="cover" source={{ uri: asset.uri }} style={styles.imagePreview} />
         )}
       </View>
 
@@ -186,15 +187,32 @@ function CapturedVideo({ muted, uri }: { muted: boolean; uri: string }) {
     player.muted = muted;
   }, [muted, player]);
 
+  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+
+  function togglePlay() {
+    if (player.playing) player.pause();
+    else player.play();
+  }
+
   return (
-    <VideoView
-      allowsFullscreen={false}
-      allowsPictureInPicture={false}
-      contentFit="contain"
-      nativeControls
-      player={player}
-      style={styles.videoPreview}
-    />
+    <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill}>
+      <VideoView
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
+        contentFit="cover"
+        nativeControls={false}
+        player={player}
+        pointerEvents="none"
+        style={styles.videoPreview}
+      />
+      {!isPlaying ? (
+        <View pointerEvents="none" style={styles.playOverlay}>
+          <View style={styles.playButton}>
+            <Ionicons name="play" size={28} color={colors.dark.white} />
+          </View>
+        </View>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -234,13 +252,22 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.48)",
-    borderColor: "rgba(255,255,255,0.12)",
-    borderRadius: radius.pill,
-    borderWidth: 1,
     height: 44,
     justifyContent: "center",
     width: 44
+  },
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  playButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: radius.pill,
+    height: 64,
+    justifyContent: "center",
+    width: 64
   },
   bottomOverlay: {
     ...StyleSheet.absoluteFillObject,

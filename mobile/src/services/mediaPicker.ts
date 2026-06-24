@@ -3,6 +3,7 @@ import { MEMORY_MEDIA_MAX_ITEMS, MEMORY_VIDEO_MAX_DURATION_MS } from "@/constant
 
 const imageMediaTypes: ImagePicker.MediaType[] = ["images"];
 const allMediaTypes: ImagePicker.MediaType[] = ["images", "videos"];
+const POST_VIDEO_MAX_DURATION_MS = 10_000;
 
 export type RecentPostImage = {
   id: string;
@@ -154,6 +155,32 @@ export async function pickMemoryMediaFromCamera(): Promise<MemoryMediaPickerResu
   return {
     asset: result.assets[0] ?? null,
     assets: result.assets,
+    error: null
+  };
+}
+
+export async function pickPostMediaFromCamera() {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) {
+    return {
+      asset: null,
+      error: "Camera permission was not granted."
+    };
+  }
+
+  const result = await ImagePicker.launchCameraAsync({
+    allowsEditing: false,
+    mediaTypes: allMediaTypes,
+    quality: 0.9,
+    videoMaxDuration: POST_VIDEO_MAX_DURATION_MS / 1000
+  });
+
+  if (result.canceled) {
+    return { asset: null, error: null };
+  }
+
+  return {
+    asset: result.assets[0] ?? null,
     error: null
   };
 }

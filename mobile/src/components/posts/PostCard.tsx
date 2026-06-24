@@ -1,4 +1,5 @@
 import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { Link } from "expo-router";
 import { usePathname, useRouter } from "expo-router";
 import { Bookmark, Heart, MapPin, MessageCircle, MoreVertical, Share2, Star, Utensils } from "lucide-react-native";
@@ -247,7 +248,11 @@ export function PostCard({ post }: PostCardProps) {
 
       {primaryMedia ? (
         <Pressable onPress={openPost} style={styles.mediaWrap}>
-          <Image source={{ uri: primaryMedia.publicUrl }} style={styles.image} contentFit="cover" />
+          {primaryMedia.mediaType === "video" ? (
+            <PostVideoPreview uri={primaryMedia.publicUrl} />
+          ) : (
+            <Image source={{ uri: primaryMedia.publicUrl }} style={styles.image} contentFit="cover" />
+          )}
           {post.media.length > 1 ? (
             <View style={styles.mediaCount}>
               <Text style={styles.mediaCountText}>1/{post.media.length}</Text>
@@ -307,6 +312,25 @@ export function PostCard({ post }: PostCardProps) {
       </View>
 
     </View>
+  );
+}
+
+function PostVideoPreview({ uri }: { uri: string }) {
+  const { themeColors } = useThemePreference();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = true;
+  });
+
+  return (
+    <VideoView
+      allowsFullscreen
+      allowsPictureInPicture
+      contentFit="cover"
+      nativeControls
+      player={player}
+      style={styles.image}
+    />
   );
 }
 

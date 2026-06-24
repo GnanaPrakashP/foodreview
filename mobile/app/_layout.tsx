@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from "@react-navig
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useMemo } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AppProviders } from "@/providers/AppProviders";
 import { useThemePreference } from "@/hooks/useThemePreference";
@@ -63,6 +64,7 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <AppProviders>
       {/* Translucent flags are required on edge-to-edge Android: without them the
           reported keyboard height is offset by the navigation-bar height, which
@@ -84,6 +86,7 @@ export default function RootLayout() {
             {/* Camera opens with a snappier fade than the global default so it
                 feels instant; a quick fade also hides the brief sensor warm-up. */}
             <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
+            <Stack.Screen name="share/camera" options={{ animation: "fade", animationDuration: 150 }} />
             {/* Settings and its sub-screens present over the screen beneath them and
                 drive their own Reanimated slide (useSlideOverScreen). Native
                 animation is disabled because native transparentModal ignores
@@ -96,5 +99,6 @@ export default function RootLayout() {
         </ThemeProvider>
       </KeyboardProvider>
     </AppProviders>
+    </GestureHandlerRootView>
   );
 }
