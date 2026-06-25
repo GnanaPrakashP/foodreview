@@ -1,11 +1,14 @@
 import { useFocusEffect, useRouter, type Href } from "expo-router";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { BackHandler, useWindowDimensions } from "react-native";
 import { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
 // Slide timing matched to the table-memory members panel (PeoplePanel).
 const ENTER_MS = 230;
 const EXIT_MS = 190;
+// Cap the slide distance so wide screens don't get an exaggerated travel —
+// matches the settings panel (SETTINGS_PANEL_TRAVEL_MAX); identical on phones.
+const PANEL_TRAVEL_MAX = 640;
 
 type SlideOverOptions = {
   // Where to go if there is no screen to pop back to (e.g. deep link). When the
@@ -25,9 +28,10 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
   const progress = useSharedValue(0);
   const closingRef = useRef(false);
 
+  const travel = Math.min(width, PANEL_TRAVEL_MAX);
   const slideStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0, 0.35, 1], [0.92, 1, 1]),
-    transform: [{ translateX: interpolate(progress.value, [0, 1], [width, 0]) }]
+    transform: [{ translateX: interpolate(progress.value, [0, 1], [travel, 0]) }]
   }));
 
   const performBack = useCallback(() => {
@@ -43,18 +47,22 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
     });
   }, [performBack, progress]);
 
+  // Start the enter slide on mount rather than on focus: the focus event for a
+  // freshly pushed screen lands a beat after mount, which left the panel sitting
+  // off-screen before sliding in (felt like a delay vs the inline settings panel).
+  useEffect(() => {
+    progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
+  }, [progress]);
+
+  // Hardware back should play the exit slide; keep this scoped to while focused.
   useFocusEffect(
     useCallback(() => {
-      closingRef.current = false;
-      progress.value = 0;
-      progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
-
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close, progress])
+    }, [close])
   );
 
   return { slideStyle, close };

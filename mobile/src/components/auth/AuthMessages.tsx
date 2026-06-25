@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 export function ErrorMessage({ children }: { children: ReactNode }) {
   const { themeColors } = useThemePreference();
@@ -45,7 +45,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.regular,
       color: c.danger,
       flex: 1,
-      fontSize: 12,
+      fontSize: typography.caption,
       lineHeight: 17
     },
     noticeBox: {
@@ -64,7 +64,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.bold,
       color: c.green,
       flex: 1,
-      fontSize: 12,
+      fontSize: typography.caption,
       lineHeight: 17
     }
   });

@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { queueMemoryCapturePost } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
 
 export function MediaPreviewScreen({
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 12,
+    fontSize: typography.caption,
     letterSpacing: 0
   },
   secondaryActionTextActive: {
@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     color: colors.dark.cream,
-    fontSize: 15,
+    fontSize: typography.body,
     letterSpacing: 0,
     minHeight: 48,
     paddingHorizontal: spacing.base
@@ -327,7 +327,7 @@ const styles = StyleSheet.create({
   errorText: {
     ...fontStyles.semiBold,
     color: colors.dark.dangerSoft,
-    fontSize: 12,
+    fontSize: typography.caption,
     letterSpacing: 0,
     lineHeight: 16,
     textAlign: "center"
@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
   postButtonText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 15,
+    fontSize: typography.body,
     letterSpacing: 0
   }
 });

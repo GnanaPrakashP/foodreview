@@ -38,7 +38,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       backgroundColor: c.surface,
       borderRadius: radius.input,
       flex: 1,
-      fontSize: 14,
+      fontSize: typography.body,
       paddingHorizontal: spacing.md,
       paddingVertical: 11
     },

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 export function MemoryCenterState({
   body,
@@ -44,13 +44,13 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     emptyTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 18,
+      fontSize: typography.section,
       textAlign: "center"
     },
     emptyText: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 14,
+      fontSize: typography.body,
       lineHeight: 20,
       textAlign: "center"
     },
@@ -63,7 +63,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     buttonSmallText: {
       ...fontStyles.extraBold,
       color: c.white,
-      fontSize: 14
+      fontSize: typography.body
     }
   });
 }

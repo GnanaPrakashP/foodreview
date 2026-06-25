@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { MemoryInput } from "@/components/memories/MemoryInput";
 import type { AsyncState } from "@/components/memories/types";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryParticipant } from "@/types/models";
 
 export function ParticipantsSection({
@@ -57,7 +57,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     sectionTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 17
+      fontSize: typography.section
     },
     peopleWrap: {
       flexDirection: "row",
@@ -73,7 +73,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     personText: {
       ...fontStyles.extraBold,
       color: c.orange,
-      fontSize: 12
+      fontSize: typography.caption
     },
     inlineForm: {
       flexDirection: "row",
@@ -89,7 +89,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     error: {
       ...fontStyles.regular,
       color: c.dangerSoft,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 19
     }
   });

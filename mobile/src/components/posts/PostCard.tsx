@@ -13,7 +13,7 @@ import {
 } from "@/hooks/useEngagement";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { ReviewPost } from "@/types/models";
 
 type PostCardProps = {
@@ -362,7 +362,7 @@ function createStyles(c: ThemeColors) {
     avatarText: {
       ...fontStyles.extraBold,
       color: "#FFFFFF",
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 15,
       textAlign: "center"
     },
@@ -386,26 +386,26 @@ function createStyles(c: ThemeColors) {
     author: {
       ...fontStyles.semiBold,
       color: c.cream,
-      fontSize: 13,
+      fontSize: typography.body,
       flexShrink: 1,
       lineHeight: 18
     },
     headerDot: {
       ...fontStyles.bold,
       color: c.muted,
-      fontSize: 15,
+      fontSize: typography.caption,
       lineHeight: 18
     },
     headerMeta: {
       ...fontStyles.regular,
       color: c.mutedStrong,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 18
     },
     sharedContext: {
       ...fontStyles.regular,
       color: c.mutedStrong,
-      fontSize: 12,
+      fontSize: typography.caption,
       lineHeight: 15,
       marginTop: 0
     },
@@ -451,13 +451,13 @@ function createStyles(c: ThemeColors) {
     deleteActionText: {
       ...fontStyles.extraBold,
       color: c.danger,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 17
     },
     noActionsText: {
       ...fontStyles.semiBold,
       color: c.muted,
-      fontSize: 12,
+      fontSize: typography.caption,
       lineHeight: 16,
       paddingHorizontal: 6,
       paddingVertical: 8,
@@ -480,7 +480,7 @@ function createStyles(c: ThemeColors) {
     requestButtonText: {
       ...fontStyles.extraBold,
       color: c.orange,
-      fontSize: 11,
+      fontSize: typography.eyebrow,
       lineHeight: 14
     },
     placeBlock: {
@@ -490,7 +490,7 @@ function createStyles(c: ThemeColors) {
     restaurantName: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 18,
+      fontSize: typography.section,
       lineHeight: 21,
       marginBottom: 5
     },
@@ -503,7 +503,7 @@ function createStyles(c: ThemeColors) {
       ...fontStyles.regular,
       color: c.mutedStrong,
       flex: 1,
-      fontSize: 11,
+      fontSize: typography.eyebrow,
       lineHeight: 14
     },
     mediaWrap: {
@@ -526,7 +526,7 @@ function createStyles(c: ThemeColors) {
     mediaCountText: {
       ...fontStyles.semiBold,
       color: "#FFFFFF",
-      fontSize: 12
+      fontSize: typography.caption
     },
     imageFallback: {
       alignItems: "center",
@@ -535,7 +535,7 @@ function createStyles(c: ThemeColors) {
     fallbackText: {
       ...fontStyles.extraBold,
       color: c.muted,
-      fontSize: 13,
+      fontSize: typography.caption,
       marginTop: spacing.sm
     },
     actions: {
@@ -567,7 +567,7 @@ function createStyles(c: ThemeColors) {
     actionText: {
       ...fontStyles.semiBold,
       color: c.muted,
-      fontSize: 13
+      fontSize: typography.caption
     },
     actionTextActive: {
       color: c.danger
@@ -579,8 +579,8 @@ function createStyles(c: ThemeColors) {
     caption: {
       ...fontStyles.regular,
       color: c.cream,
-      fontSize: 13,
-      lineHeight: 20,
+      fontSize: typography.body,
+      lineHeight: 21,
       marginBottom: 10
     },
     tags: {
@@ -600,7 +600,7 @@ function createStyles(c: ThemeColors) {
     tagText: {
       ...fontStyles.extraBold,
       color: c.orange,
-      fontSize: 10,
+      fontSize: typography.eyebrow,
       lineHeight: 11
     },
     dishes: {
@@ -625,7 +625,7 @@ function createStyles(c: ThemeColors) {
       ...fontStyles.regular,
       color: c.cream,
       flexShrink: 1,
-      fontSize: 11,
+      fontSize: typography.eyebrow,
       lineHeight: 14
     },
     ratingPill: {
@@ -642,7 +642,7 @@ function createStyles(c: ThemeColors) {
     ratingText: {
       ...fontStyles.bold,
       color: c.gold,
-      fontSize: 10,
+      fontSize: typography.eyebrow,
       lineHeight: 11
     },
   });

@@ -32,7 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import { useInAppCameraPermissions } from "@/hooks/useInAppCameraPermissions";
 import { pickSingleMemoryMediaFromGallery } from "@/services/mediaPicker";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 
 const MAX_VIDEO_MS = 30_000;
@@ -805,7 +805,7 @@ const styles = StyleSheet.create({
   recordingText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 13,
+    fontSize: typography.caption,
     letterSpacing: 0
   },
   focusReticle: {
@@ -854,7 +854,7 @@ const styles = StyleSheet.create({
   zoomPillText: {
     ...fontStyles.extraBold,
     color: "#FFD15C",
-    fontSize: 13,
+    fontSize: typography.caption,
     letterSpacing: 0
   },
   zoomRail: {
@@ -881,7 +881,7 @@ const styles = StyleSheet.create({
   zoomText: {
     ...fontStyles.extraBold,
     color: colors.dark.white,
-    fontSize: 12,
+    fontSize: typography.caption,
     letterSpacing: 0.5
   },
   zoomTextActive: {
@@ -902,7 +902,7 @@ const styles = StyleSheet.create({
   modeText: {
     ...fontStyles.extraBold,
     color: "rgba(255,255,255,0.60)",
-    fontSize: 13,
+    fontSize: typography.caption,
     letterSpacing: 1.5
   },
   modeTextActive: {
@@ -934,7 +934,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 1,
     color: colors.dark.white,
-    fontSize: 12,
+    fontSize: typography.caption,
     letterSpacing: 0,
     marginBottom: spacing.sm,
     overflow: "hidden",
@@ -954,7 +954,7 @@ const styles = StyleSheet.create({
   centerText: {
     ...fontStyles.semiBold,
     color: colors.dark.cream,
-    fontSize: 14,
+    fontSize: typography.body,
     letterSpacing: 0
   },
   permissionState: {
@@ -977,7 +977,7 @@ const styles = StyleSheet.create({
   permissionTitle: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 22,
+    fontSize: typography.metric,
     letterSpacing: 0,
     marginBottom: spacing.sm,
     textAlign: "center"
@@ -985,7 +985,7 @@ const styles = StyleSheet.create({
   permissionText: {
     ...fontStyles.medium,
     color: colors.dark.muted,
-    fontSize: 14,
+    fontSize: typography.body,
     letterSpacing: 0,
     lineHeight: 20,
     marginBottom: spacing.lg,
@@ -1002,7 +1002,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...fontStyles.extraBold,
     color: CAMERA_COLORS.onMemory,
-    fontSize: 14,
+    fontSize: typography.body,
     letterSpacing: 0
   },
   secondaryButton: {
@@ -1012,13 +1012,13 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...fontStyles.extraBold,
     color: colors.dark.cream,
-    fontSize: 13,
+    fontSize: typography.caption,
     letterSpacing: 0
   },
   errorText: {
     ...fontStyles.semiBold,
     color: colors.dark.dangerSoft,
-    fontSize: 12,
+    fontSize: typography.caption,
     letterSpacing: 0,
     marginTop: spacing.md,
     textAlign: "center"

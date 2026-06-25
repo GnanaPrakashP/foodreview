@@ -96,17 +96,17 @@ const styles = StyleSheet.create({
   },
   titleRegular: {
     ...fontStyles.regular,
-    fontSize: 24,
+    fontSize: typography.heading,
     lineHeight: 29
   },
   titleBold: {
     ...fontStyles.bold,
-    fontSize: 24,
+    fontSize: typography.heading,
     lineHeight: 29
   },
   subtitle: {
     ...fontStyles.semiBold,
-    fontSize: 13,
+    fontSize: typography.caption,
     marginTop: 3
   }
 });

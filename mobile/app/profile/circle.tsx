@@ -1,4 +1,4 @@
-import { Users } from "lucide-react-native";
+import { UserMinus } from "lucide-react-native";
 import { useMemo } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated from "react-native-reanimated";
@@ -9,10 +9,6 @@ import { useMyCircleQuery, useRemoveCircleMemberMutation } from "@/hooks/useCirc
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing } from "@/theme";
-
-function accountTypeLabel(value: "private" | "public") {
-  return value === "public" ? "Public account" : "Private account";
-}
 
 function initialsForName(displayName: string, username: string) {
   return displayName
@@ -55,11 +51,9 @@ export default function ProfileCircleScreen() {
       <View style={styles.content}>
         <MemoryRouteHeader
           backButtonVariant="plain"
-          kicker="Profile"
           onBack={close}
-          subtitle={circle.data ? `${accountTypeLabel(circle.data.accountType)} · ${members.length} ${members.length === 1 ? "person" : "people"}` : undefined}
           themeColors={themeColors}
-          title="My Circle"
+          title="Circle"
         />
 
         {circle.isLoading ? (
@@ -88,18 +82,18 @@ export default function ProfileCircleScreen() {
                   <Text numberOfLines={1} style={styles.memberName}>{member.displayName}</Text>
                   <Text numberOfLines={1} style={styles.memberHandle}>@{member.username}</Text>
                 </View>
-                <View style={styles.memberPlaces}>
-                  <Users size={13} color={themeColors.orange} strokeWidth={2.2} />
-                  <Text style={styles.memberPlacesText}>
-                    {member.placeCount} place{member.placeCount === 1 ? "" : "s"}
-                  </Text>
-                </View>
                 <Pressable
+                  accessibilityLabel={`Remove ${member.displayName || member.username} from circle`}
+                  accessibilityRole="button"
                   disabled={removeMember.isPending}
                   onPress={() => confirmRemove(member.username, member.displayName)}
-                  style={[styles.removeButton, removeMember.isPending && styles.removeButtonDisabled]}
+                  style={({ pressed }) => [
+                    styles.removeButton,
+                    pressed && styles.pressed,
+                    removeMember.isPending && styles.removeButtonDisabled
+                  ]}
                 >
-                  <Text style={styles.removeButtonText}>Remove</Text>
+                  <UserMinus size={15} color={themeColors.dangerSoft} strokeWidth={2.2} />
                 </Pressable>
               </View>
             ))}
@@ -118,11 +112,8 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       padding: spacing.lg
     },
     memberList: {
-      backgroundColor: c.card,
-      borderColor: c.border,
-      borderRadius: radius.card,
-      borderWidth: 1,
-      overflow: "hidden"
+      borderTopColor: c.border,
+      borderTopWidth: 1
     },
     memberRow: {
       alignItems: "center",
@@ -130,17 +121,17 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       borderBottomWidth: 1,
       flexDirection: "row",
       gap: spacing.md,
-      minHeight: 72,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 12
+      minHeight: 76,
+      paddingHorizontal: 2,
+      paddingVertical: 0
     },
     memberAvatar: {
       alignItems: "center",
       backgroundColor: c.orange,
-      borderRadius: 19,
-      height: 38,
+      borderRadius: radius.pill,
+      height: 42,
       justifyContent: "center",
-      width: 38
+      width: 42
     },
     memberAvatarText: {
       ...fontStyles.extraBold,
@@ -165,41 +156,21 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       lineHeight: 16,
       marginTop: 3
     },
-    memberPlaces: {
-      alignItems: "center",
-      backgroundColor: c.orangeDim,
-      borderColor: c.orangeBorder,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      flexDirection: "row",
-      gap: 5,
-      paddingHorizontal: 9,
-      paddingVertical: 6
-    },
-    memberPlacesText: {
-      ...fontStyles.extraBold,
-      color: c.orange,
-      fontSize: 11,
-      lineHeight: 13
-    },
     removeButton: {
       alignItems: "center",
       backgroundColor: c.dangerDim,
       borderColor: c.dangerBorder,
       borderRadius: radius.md,
       borderWidth: 1,
+      height: 34,
       justifyContent: "center",
-      paddingHorizontal: 10,
-      paddingVertical: 7
+      width: 34
+    },
+    pressed: {
+      opacity: 0.65
     },
     removeButtonDisabled: {
       opacity: 0.6
-    },
-    removeButtonText: {
-      ...fontStyles.extraBold,
-      color: c.dangerSoft,
-      fontSize: 11,
-      lineHeight: 13
     }
   });
 }

@@ -1,8 +1,8 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { CalendarDays, ChevronRight, FileText, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, X } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { CalendarDays, Camera, ChevronRight, FileText, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, X } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppButton } from "@/components/ui/AppButton";
@@ -13,9 +13,9 @@ import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { compactPlaceLocation } from "@/services/places";
+import { ProfileSettingsPanel } from "../profile/settings";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData } from "@/types/models";
 
 type ProfileTab = "posts" | "memories";
@@ -73,96 +73,130 @@ export default function ProfileScreen() {
   const page = useCurrentProfilePageQuery({ enabled: isReady && isAuthenticated });
   const memories = useMemoryRoomsQuery({ enabled: isReady && isAuthenticated && Boolean(page.data) });
   const canRefresh = isReady && isAuthenticated;
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const openingSettingsRef = useRef(false);
+
+  const openSettings = useCallback(() => {
+    if (openingSettingsRef.current) return;
+    openingSettingsRef.current = true;
+    setSettingsVisible(true);
+  }, []);
+
+  const finishSettingsClose = useCallback(() => {
+    setSettingsVisible(false);
+    openingSettingsRef.current = false;
+  }, []);
 
   return (
-    <Screen
-      onRefresh={canRefresh ? () => {
-        void page.refetch();
-        if (page.data) void memories.refetch();
-      } : undefined}
-      padded={false}
-      refreshing={canRefresh && (page.isRefetching || memories.isRefetching)}
-      scroll
-      style={styles.screenContent}
-    >
-      <View style={styles.stack}>
-        {!isReady ? (
-          <LoadingState message="Restoring your session." title="Loading profile" />
-        ) : !isAuthenticated ? (
-          <SignedOutFeedState message="Sign in to view your profile, stats, and posts." />
-        ) : page.isLoading ? (
-          <LoadingState message="Fetching your profile and posts." title="Loading profile" />
-        ) : page.isError ? (
-          <ErrorState
-            actionLabel="Try again"
-            message={page.error.message}
-            onAction={() => page.refetch()}
-            title="Profile unavailable"
-          />
-        ) : !page.data ? (
-          <ProfileSetupCard />
-        ) : (
-          <ProfileContent memories={memories} page={page.data} />
-        )}
-      </View>
-    </Screen>
+    <View style={styles.root}>
+      <Screen
+        onRefresh={canRefresh ? () => {
+          void page.refetch();
+          if (page.data) void memories.refetch();
+        } : undefined}
+        padded={false}
+        refreshing={canRefresh && (page.isRefetching || memories.isRefetching)}
+        scroll
+        style={styles.screenContent}
+      >
+        <View style={styles.stack}>
+          {!isReady ? (
+            <LoadingState message="Restoring your session." title="Loading profile" />
+          ) : !isAuthenticated ? (
+            <SignedOutFeedState message="Sign in to view your profile, stats, and posts." />
+          ) : page.isLoading ? (
+            <LoadingState message="Fetching your profile and posts." title="Loading profile" />
+          ) : page.isError ? (
+            <ErrorState
+              actionLabel="Try again"
+              message={page.error.message}
+              onAction={() => page.refetch()}
+              title="Profile unavailable"
+            />
+          ) : !page.data ? (
+            <ProfileSetupCard />
+          ) : (
+            <ProfileContent memories={memories} onSettingsPress={openSettings} page={page.data} />
+          )}
+        </View>
+      </Screen>
+      {settingsVisible ? <ProfileSettingsPanel onCloseEnd={finishSettingsClose} /> : null}
+    </View>
   );
 }
 
-function ProfileContent({ memories, page }: { memories: ReturnType<typeof useMemoryRoomsQuery>; page: ProfilePageData }) {
+function ProfileContent({
+  memories,
+  onSettingsPress,
+  page
+}: {
+  memories: ReturnType<typeof useMemoryRoomsQuery>;
+  onSettingsPress: () => void;
+  page: ProfilePageData;
+}) {
   const { styles } = useProfileTheme();
   const router = useRouter();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<ProfileTab>(() => profileTabFromParam(params.tab));
   const [showTrustSheet, setShowTrustSheet] = useState(false);
+  // Horizontal scroll offset of the pager, driven natively. Both the pager
+  // (writes it) and the tab bar (slides its indicator from it) share this.
+  const scrollX = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     setActiveTab(profileTabFromParam(params.tab));
   }, [params.tab]);
 
-  function changeProfileTab(tab: ProfileTab) {
+  const changeProfileTab = useCallback((tab: ProfileTab) => {
     setActiveTab(tab);
-    router.setParams({ tab });
-  }
-
-  // Guard against a fast double-tap pushing the settings route twice.
-  const openingSettingsRef = useRef(false);
-  const openSettings = useCallback(() => {
-    if (openingSettingsRef.current) return;
-    openingSettingsRef.current = true;
-    router.push("/profile/settings");
-    setTimeout(() => { openingSettingsRef.current = false; }, 500);
+    // URL sync is off the critical path — defer it so it doesn't add navigation
+    // work to the same frame as the tap.
+    requestAnimationFrame(() => router.setParams({ tab }));
   }, [router]);
+
+  // Memoize the heavy tab subtrees so unrelated re-renders (e.g. opening the
+  // settings overlay) don't reconcile the feed on the same frame the slide
+  // mounts — that reconciliation is what made the settings animation stutter on
+  // the heavier tab and feel different between Posts and Memories.
+  const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
+  const postsContent = useMemo(() => (
+    <PostFeed
+      emptyActionLabel="Share review"
+      emptyMessage="Share your first food review to start building your profile."
+      emptyTitle="No posts yet"
+      onEmptyAction={() => router.push("/share")}
+      posts={page.posts}
+    />
+  ), [page.posts, router]);
+  const memoriesContent = useMemo(() => (
+    <MemoriesTab
+      isError={memoriesIsError}
+      isLoading={memoriesIsLoading}
+      memories={memoriesData ?? []}
+      onRetry={() => memoriesRefetch()}
+      errorMessage={memoriesError?.message}
+    />
+  ), [memoriesData, memoriesError, memoriesIsError, memoriesIsLoading, memoriesRefetch]);
 
   return (
       <View style={styles.profileStack}>
-        <ProfileHero page={page} onSettingsPress={openSettings} />
+        <ProfileHero page={page} onSettingsPress={onSettingsPress} />
         <ProfileStats
           page={page}
           onCirclePress={() => router.push("/profile/circle")}
           onTrustPress={() => setShowTrustSheet(true)}
         />
-        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} />
+        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} scrollX={scrollX} />
 
-      {activeTab === "posts" ? (
-        <View style={styles.postsFeedBleed}>
-          <PostFeed
-            emptyActionLabel="Share review"
-            emptyMessage="Share your first food review to start building your profile."
-            emptyTitle="No posts yet"
-            onEmptyAction={() => router.push("/share")}
-            posts={page.posts}
-          />
-        </View>
-      ) : (
-        <MemoriesTab
-          isError={memories.isError}
-          isLoading={memories.isLoading}
-          memories={memories.data ?? []}
-          onRetry={() => memories.refetch()}
-          errorMessage={memories.error?.message}
-        />
-      )}
+      {/* Both panes stay mounted side-by-side; the pager tracks the finger and
+          snaps to the nearest tab on release. */}
+      <ProfilePager
+        index={activeTab === "posts" ? 0 : 1}
+        onIndexChange={(i) => changeProfileTab(i === 0 ? "posts" : "memories")}
+        postsPane={postsContent}
+        memoriesPane={memoriesContent}
+        scrollX={scrollX}
+      />
       <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} />
     </View>
   );
@@ -349,24 +383,131 @@ function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string })
   );
 }
 
-function ProfileTabs({ activeTab, onChange }: { activeTab: ProfileTab; onChange: (tab: ProfileTab) => void }) {
+function ProfileTabs({
+  activeTab,
+  onChange,
+  scrollX
+}: {
+  activeTab: ProfileTab;
+  onChange: (tab: ProfileTab) => void;
+  scrollX: Animated.Value;
+}) {
   const { styles } = useProfileTheme();
+  const { width } = useWindowDimensions();
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "posts", label: "Posts" },
     { id: "memories", label: "Memories" }
   ];
 
+  // The pager pages by full screen width; the indicator travels one tab slot
+  // (half the content row) over that same range, so it tracks the swipe 1:1.
+  const slot = (width - spacing.lg * 2) / 2;
+  const indicatorX = scrollX.interpolate({
+    inputRange: [0, width],
+    outputRange: [0, slot],
+    extrapolate: "clamp"
+  });
+
   return (
     <View style={styles.tabs}>
-      {tabs.map((tab) => {
-        const active = tab.id === activeTab;
-        return (
-          <Pressable key={tab.id} onPress={() => onChange(tab.id)} style={styles.tabButton}>
-            <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
-            <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
-          </Pressable>
-        );
-      })}
+      <View style={styles.tabRow}>
+        {tabs.map((tab) => {
+          const active = tab.id === activeTab;
+          return (
+            <Pressable key={tab.id} onPress={() => onChange(tab.id)} style={styles.tabButton}>
+              <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={styles.tabTrack}>
+        <Animated.View style={[styles.tabIndicator, { transform: [{ translateX: indicatorX }], width: slot }]} />
+      </View>
+    </View>
+  );
+}
+
+// Follow-finger pager for the Posts/Memories tabs, built on a native horizontal
+// paging ScrollView. Orthogonal nested scrolling (this horizontal one inside the
+// profile's vertical scroll) is handled natively, so paging stays smooth without
+// a custom gesture fighting the outer scroll. The viewport height tracks the
+// active pane (state, not per-frame) so the surrounding vertical scroll is sized
+// right and the drag itself never triggers a re-layout.
+function ProfilePager({
+  index,
+  memoriesPane,
+  onIndexChange,
+  postsPane,
+  scrollX
+}: {
+  index: number;
+  memoriesPane: ReactNode;
+  onIndexChange: (index: number) => void;
+  postsPane: ReactNode;
+  scrollX: Animated.Value;
+}) {
+  const { styles } = useProfileTheme();
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const firstSyncRef = useRef(true);
+  // Frozen to the first render: contentOffset must only seed the initial page.
+  // If it re-applied on tab taps it would snap to the target (the indicator
+  // "blinks" there) before scrollTo could animate the slide.
+  const initialOffset = useRef({ x: index * width, y: 0 }).current;
+  const [heights, setHeights] = useState<[number, number]>([0, 0]);
+
+  // Feed the live scroll offset to the tab indicator on the native thread.
+  const onScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: true }),
+    [scrollX]
+  );
+
+  // Drive the page from a tab tap (animated); the initial alignment jumps.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ x: index * width, animated: !firstSyncRef.current });
+    firstSyncRef.current = false;
+  }, [index, width]);
+
+  const measure = useCallback(
+    (pane: 0 | 1) => (event: LayoutChangeEvent) => {
+      const next = Math.round(event.nativeEvent.layout.height);
+      setHeights((prev) => (prev[pane] === next ? prev : pane === 0 ? [next, prev[1]] : [prev[0], next]));
+    },
+    []
+  );
+
+  const onMomentumEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const next = Math.round(event.nativeEvent.contentOffset.x / width);
+      if (next !== index) onIndexChange(next);
+    },
+    [index, width, onIndexChange]
+  );
+
+  // Until measured, leave height unset so the ScrollView fits its content rather
+  // than collapsing; afterwards pin it to the active pane.
+  const viewportHeight = heights[index] || undefined;
+
+  return (
+    <View style={styles.pagerViewport}>
+      <Animated.ScrollView
+        ref={scrollRef}
+        contentOffset={initialOffset}
+        horizontal
+        onMomentumScrollEnd={onMomentumEnd}
+        onScroll={onScroll}
+        pagingEnabled
+        scrollEventThrottle={16}
+        showsHorizontalScrollIndicator={false}
+        style={viewportHeight ? { height: viewportHeight } : undefined}
+      >
+        <View onLayout={measure(0)} style={{ width }}>
+          {postsPane}
+        </View>
+        <View onLayout={measure(1)} style={[styles.pagerPanePadded, { width }]}>
+          {memoriesPane}
+        </View>
+      </Animated.ScrollView>
     </View>
   );
 }
@@ -427,43 +568,58 @@ function MemoriesTab({
   );
 }
 
+function timelineDateParts(value: string): { day: string; month: string } {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { day: "--", month: "" };
+  return {
+    day: new Intl.DateTimeFormat("en-US", { day: "2-digit" }).format(date),
+    month: new Intl.DateTimeFormat("en-US", { month: "short" }).format(date)
+  };
+}
+
 function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: () => void }) {
   const { PROFILE_COLORS, styles } = useProfileTheme();
-  const locationLabel = compactPlaceLocation({
-    formattedAddress: memory.area ?? "",
-    shortFormattedAddress: memory.area ?? ""
-  });
   const date = timelineDateParts(memory.visitDate ?? memory.createdAt);
   const hasUnread = memory.unreadCount > 0;
+  const friendsLabel = memory.participantCount <= 1 ? "Just you" : `${memory.participantCount} friends`;
+  const hasInside = memory.photoCount > 0 || memory.messageCount > 0;
 
   return (
-    <Pressable onPress={onPress} style={[styles.memoryRow, hasUnread && styles.memoryRowUnread]}>
-      <View style={styles.memoryDate}>
-        <Text style={styles.memoryDay}>{date.day}</Text>
-        <Text style={styles.memoryMonthShort}>{date.month}</Text>
-      </View>
-      <View style={styles.memoryDivider} />
-      <View style={styles.memoryCopy}>
-        <Text numberOfLines={1} style={[styles.memoryTitle, hasUnread && styles.memoryTitleUnread]}>{memory.title}</Text>
-        <Text numberOfLines={1} style={styles.memoryMeta}>
-          {locationLabel || "Area not set"}
-        </Text>
-      </View>
-      <View style={styles.memoryCounts}>
+    <Pressable onPress={onPress} style={[styles.memoryCard, hasUnread && styles.memoryCardUnread]}>
+      <View style={styles.memoryHeader}>
+        <View style={styles.memoryDate}>
+          <Text style={styles.memoryDay}>{date.day}</Text>
+          <Text style={styles.memoryMonth}>{date.month}</Text>
+        </View>
+        <View style={styles.memoryDivider} />
+        <View style={styles.memoryCopy}>
+          <Text numberOfLines={1} style={[styles.memoryTitle, hasUnread && styles.memoryTitleUnread]}>{memory.title}</Text>
+          <Text numberOfLines={1} style={styles.memoryFriends}>{friendsLabel}</Text>
+        </View>
         {hasUnread ? (
           <View style={styles.memoryUnreadBadge}>
             <Text style={styles.memoryUnreadText}>{memory.unreadCount > 99 ? "99+" : memory.unreadCount}</Text>
           </View>
         ) : null}
-        <View style={styles.memoryCountRow}>
-          <Users size={12} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
-          <Text style={styles.memoryCountText}>{memory.participantCount}</Text>
-        </View>
-        <View style={styles.memoryCountRow}>
-          <MessageCircle size={12} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
-          <Text style={styles.memoryCountText}>{memory.messageCount}</Text>
-        </View>
       </View>
+      {hasInside ? (
+        <View style={styles.memoryStats}>
+          {memory.photoCount > 0 ? (
+            <View style={styles.memoryStat}>
+              <Camera size={13} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
+              <Text style={styles.memoryStatText}>{memory.photoCount}</Text>
+            </View>
+          ) : null}
+          {memory.messageCount > 0 ? (
+            <View style={styles.memoryStat}>
+              <MessageCircle size={13} color={PROFILE_COLORS.mutedLow} strokeWidth={2.2} />
+              <Text style={styles.memoryStatText}>{memory.messageCount}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <Text style={styles.memoryEmptyHint}>Empty so far · add your first stop</Text>
+      )}
     </Pressable>
   );
 }
@@ -547,17 +703,12 @@ function joinedLabel(value: string) {
   return `Joined ${new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(date)}`;
 }
 
-function timelineDateParts(value: string): { day: string; month: string } {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return { day: "--", month: "" };
-  return {
-    day: new Intl.DateTimeFormat("en-US", { day: "2-digit" }).format(date),
-    month: new Intl.DateTimeFormat("en-US", { month: "short" }).format(date)
-  };
-}
-
 function createStyles(PROFILE_COLORS: ProfilePalette) {
   return StyleSheet.create({
+  root: {
+    backgroundColor: PROFILE_COLORS.bg,
+    flex: 1
+  },
   screenContent: {
     backgroundColor: PROFILE_COLORS.bg,
     flexGrow: 1
@@ -570,8 +721,18 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   profileStack: {
     gap: spacing.md
   },
-  postsFeedBleed: {
-    marginHorizontal: -spacing.lg
+  pagerViewport: {
+    // Break out of the stack's horizontal padding so each pane is full screen
+    // width (posts stay edge-to-edge); clip the off-screen pane during the slide.
+    marginHorizontal: -spacing.lg,
+    overflow: "hidden"
+  },
+  pagerRow: {
+    alignItems: "flex-start",
+    flexDirection: "row"
+  },
+  pagerPanePadded: {
+    paddingHorizontal: spacing.lg
   },
   hero: {
     backgroundColor: PROFILE_COLORS.bg,
@@ -596,7 +757,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   avatar: {
     alignItems: "center",
     backgroundColor: PROFILE_COLORS.accent,
-    borderRadius: radius.avatar,
+    borderRadius: radius.pill,
     height: 72,
     justifyContent: "center",
     overflow: "hidden",
@@ -609,25 +770,24 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   avatarText: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.onAccent,
-    fontSize: 22
+    fontSize: typography.metric
   },
   identity: {
     flex: 1,
     minWidth: 0
   },
   name: {
-    ...fontStyles.bold,
+    ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
-    fontSize: 23,
-    lineHeight: 29
+    fontSize: typography.metric,
+    lineHeight: 27
   },
   handle: {
     ...fontStyles.semiBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 13,
+    fontSize: typography.caption,
     lineHeight: 18,
-    marginTop: 2,
-    opacity: 0.62
+    marginTop: 2
   },
   joinedRow: {
     alignItems: "center",
@@ -638,20 +798,21 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   joinedText: {
     ...fontStyles.semiBold,
     color: PROFILE_COLORS.mutedLow,
-    fontSize: 12,
+    fontSize: typography.caption,
     lineHeight: 16
   },
   bio: {
     ...fontStyles.medium,
     color: PROFILE_COLORS.text,
-    fontSize: 14,
+    fontSize: typography.body,
     lineHeight: 20,
-    marginTop: spacing.md,
-    opacity: 0.82
+    // Optical nudge: the round avatar's visual edge reads as slightly inset, so
+    // a flush-left bio looks like it pokes out. ~4px right makes them line up.
+    marginLeft: 4,
+    marginTop: spacing.md
   },
   statsRow: {
-    flexDirection: "row",
-    paddingVertical: spacing.sm
+    flexDirection: "row"
   },
   statItem: {
     alignItems: "center",
@@ -665,17 +826,18 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     borderLeftWidth: 1
   },
   statValue: {
-    ...fontStyles.extraBold,
+    ...fontStyles.bold,
     color: PROFILE_COLORS.text,
-    fontSize: 24,
-    letterSpacing: 0,
-    lineHeight: 29
+    fontSize: typography.metric,
+    lineHeight: 27
   },
   statLabel: {
-    ...fontStyles.bold,
+    ...fontStyles.extraBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14
+    fontSize: typography.eyebrow,
+    letterSpacing: 0.8,
+    lineHeight: 14,
+    textTransform: "uppercase"
   },
   trustModalRoot: {
     backgroundColor: "rgba(0, 0, 0, 0.62)",
@@ -704,7 +866,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   trustSheetTitle: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
-    fontSize: 16,
+    fontSize: typography.body,
     lineHeight: 20
   },
   trustCloseButton: {
@@ -747,7 +909,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   trustScoreMax: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.accent,
-    fontSize: 11,
+    fontSize: typography.eyebrow,
     lineHeight: 13,
     marginTop: 3
   },
@@ -778,13 +940,13 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
     flex: 1,
-    fontSize: 14,
+    fontSize: typography.body,
     lineHeight: 18
   },
   trustLevelDescription: {
     ...fontStyles.bold,
     color: PROFILE_COLORS.muted,
-    fontSize: 12,
+    fontSize: typography.caption,
     lineHeight: 17,
     marginTop: 12
   },
@@ -812,13 +974,13 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
     flexShrink: 1,
-    fontSize: 17,
+    fontSize: typography.section,
     lineHeight: 19
   },
   trustMetricLabel: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 10,
+    fontSize: typography.eyebrow,
     lineHeight: 13,
     marginTop: 9
   },
@@ -832,7 +994,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.muted,
     flex: 1,
-    fontSize: 11,
+    fontSize: typography.eyebrow,
     lineHeight: 14
   },
   trustGrowthCard: {
@@ -845,7 +1007,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   trustGrowthEyebrow: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 10,
+    fontSize: typography.eyebrow,
     letterSpacing: 0.8,
     lineHeight: 13,
     textTransform: "uppercase"
@@ -875,60 +1037,67 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   trustGrowthLabel: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
-    fontSize: 11,
+    fontSize: typography.eyebrow,
     lineHeight: 13
   },
   trustGrowthNote: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 12,
+    fontSize: typography.caption,
     lineHeight: 15,
     marginTop: 13,
     textAlign: "center"
   },
   tabs: {
-    flexDirection: "row",
+    // Symmetric padding so the gap below the underline (to the first card)
+    // matches the gap above the labels (to the stats) — both 12px gap + 4px here.
+    paddingBottom: spacing.xs,
     paddingTop: spacing.xs
+  },
+  tabRow: {
+    flexDirection: "row"
   },
   tabButton: {
     alignItems: "center",
     flex: 1,
-    gap: spacing.s
+    paddingBottom: spacing.s
   },
   tabText: {
     ...fontStyles.bold,
     color: PROFILE_COLORS.muted,
-    fontSize: 12,
+    fontSize: typography.caption,
     lineHeight: 15
   },
   tabTextActive: {
     color: PROFILE_COLORS.accent
   },
-  tabUnderline: {
+  tabTrack: {
     backgroundColor: PROFILE_COLORS.border,
     height: 2,
     width: "100%"
   },
-  tabUnderlineActive: {
-    backgroundColor: PROFILE_COLORS.accent
+  tabIndicator: {
+    backgroundColor: PROFILE_COLORS.accent,
+    height: 2
   },
   memoryList: {
     gap: spacing.sm
   },
-  memoryRow: {
-    alignItems: "center",
+  memoryCard: {
     backgroundColor: PROFILE_COLORS.card,
     borderColor: PROFILE_COLORS.border,
-    borderRadius: radius.md,
+    borderRadius: radius.card,
     borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.md,
-    minHeight: 86,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12
+    gap: spacing.sm,
+    padding: spacing.md
   },
-  memoryRowUnread: {
+  memoryCardUnread: {
     borderColor: PROFILE_COLORS.accentBorder
+  },
+  memoryHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md
   },
   memoryDate: {
     alignItems: "center",
@@ -937,13 +1106,13 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   memoryDay: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.accent,
-    fontSize: 14,
-    lineHeight: 16
+    fontSize: typography.body,
+    lineHeight: 18
   },
-  memoryMonthShort: {
+  memoryMonth: {
     ...fontStyles.bold,
     color: PROFILE_COLORS.muted,
-    fontSize: 10,
+    fontSize: typography.eyebrow,
     lineHeight: 13,
     marginTop: 2,
     textTransform: "uppercase"
@@ -960,49 +1129,55 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   memoryTitle: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
-    fontSize: 15,
+    fontSize: typography.body,
     lineHeight: 19
   },
   memoryTitleUnread: {
     color: PROFILE_COLORS.textStrong
   },
-  memoryMeta: {
+  memoryFriends: {
     ...fontStyles.semiBold,
     color: PROFILE_COLORS.muted,
-    fontSize: 12,
+    fontSize: typography.caption,
     lineHeight: 16,
-    marginTop: 3
-  },
-  memoryCounts: {
-    alignItems: "flex-end",
-    gap: 7
+    marginTop: 2
   },
   memoryUnreadBadge: {
     alignItems: "center",
     backgroundColor: PROFILE_COLORS.accent,
     borderRadius: radius.pill,
-    minWidth: 22,
-    paddingHorizontal: 7,
-    paddingVertical: 3
+    minWidth: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 2
   },
   memoryUnreadText: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.onAccent,
-    fontSize: 10,
-    lineHeight: 12
+    fontSize: typography.eyebrow,
+    lineHeight: 13
   },
-  memoryCountRow: {
+  memoryStats: {
+    flexDirection: "row",
+    gap: spacing.base,
+    paddingLeft: 38 + spacing.md * 2 + 1
+  },
+  memoryStat: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 4,
-    justifyContent: "flex-end",
-    minWidth: 34
+    gap: 5
   },
-  memoryCountText: {
-    ...fontStyles.extraBold,
+  memoryStatText: {
+    ...fontStyles.bold,
     color: PROFILE_COLORS.muted,
-    fontSize: 11,
-    lineHeight: 14
+    fontSize: typography.caption,
+    lineHeight: 15
+  },
+  memoryEmptyHint: {
+    ...fontStyles.medium,
+    color: PROFILE_COLORS.mutedLow,
+    fontSize: typography.caption,
+    lineHeight: 16,
+    paddingLeft: 38 + spacing.md * 2 + 1
   },
   setupCard: {
     gap: spacing.md
@@ -1032,14 +1207,14 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     borderRadius: radius.input,
     borderWidth: 1,
     color: PROFILE_COLORS.text,
-    fontSize: 15,
+    fontSize: typography.body,
     paddingHorizontal: spacing.md,
     paddingVertical: 12
   },
   error: {
     ...fontStyles.regular,
     color: PROFILE_COLORS.danger,
-    fontSize: 13,
+    fontSize: typography.caption,
     lineHeight: 19
   }
   });

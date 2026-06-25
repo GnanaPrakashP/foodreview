@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   },
   muted: {
     ...fontStyles.semiBold,
-    fontSize: 13,
+    fontSize: typography.caption,
     lineHeight: 19
   }
 });

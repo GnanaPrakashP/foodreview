@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import type { AsyncState } from "@/components/memories/types";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryPhoto } from "@/types/models";
 
 export function PhotosSection({
@@ -71,7 +71,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     sectionTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 17
+      fontSize: typography.section
     },
     addPhotoButton: {
       alignItems: "center",
@@ -85,7 +85,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     addPhotoText: {
       ...fontStyles.extraBold,
       color: c.white,
-      fontSize: 12
+      fontSize: typography.caption
     },
     photos: {
       gap: spacing.sm
@@ -103,18 +103,18 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     photoUser: {
       ...fontStyles.extraBold,
       color: c.muted,
-      fontSize: 11
+      fontSize: typography.eyebrow
     },
     emptyInline: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 19
     },
     error: {
       ...fontStyles.regular,
       color: c.dangerSoft,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 19
     }
   });

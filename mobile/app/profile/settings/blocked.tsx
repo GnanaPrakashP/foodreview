@@ -118,7 +118,7 @@ function createStyles(themeColors: ThemeColors) {
     avatar: {
       alignItems: "center",
       backgroundColor: themeColors.orange,
-      borderRadius: radius.avatar,
+      borderRadius: radius.pill,
       height: 44,
       justifyContent: "center",
       overflow: "hidden",

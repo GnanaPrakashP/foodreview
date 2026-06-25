@@ -1,5 +1,6 @@
-import { PropsWithChildren, ReactNode } from "react";
+import { PropsWithChildren, ReactNode, useRef } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { useScrollToTop } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing, typography } from "@/theme";
@@ -66,6 +67,10 @@ export function AppScreen({
 }: AppScreenProps) {
   const insets = useSafeAreaInsets();
   const { themeColors } = useThemePreference();
+  // Re-tapping the active tab scrolls this screen back to the top, matching the
+  // standard social-app behavior. No-op when not scrollable (ref stays null).
+  const scrollRef = useRef<ScrollView>(null);
+  useScrollToTop(scrollRef);
   const screenBg = { backgroundColor: backgroundColor ?? themeColors.bg };
   const contentStyle = [
     padded && styles.padded,
@@ -86,6 +91,7 @@ export function AppScreen({
     return (
       <SafeAreaView edges={["top"]} style={[styles.screen, screenBg]}>
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="handled"
           refreshControl={onRefresh ? (
@@ -163,7 +169,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     ...fontStyles.semiBold,
-    fontSize: 13,
+    fontSize: typography.caption,
     lineHeight: 19,
     marginTop: 2
   }

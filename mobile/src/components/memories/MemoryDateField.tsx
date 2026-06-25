@@ -3,7 +3,7 @@ import DateTimePicker, { type DateTimePickerEvent } from "@react-native-communit
 import { useMemo, useState } from "react";
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 const DAY_MS = 86_400_000;
 
@@ -168,7 +168,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.medium,
       color: c.cream,
       flex: 1,
-      fontSize: 15
+      fontSize: typography.body
     },
     placeholder: {
       color: c.muted
@@ -192,7 +192,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     chipText: {
       ...fontStyles.extraBold,
       color: c.muted,
-      fontSize: 13
+      fontSize: typography.caption
     },
     chipTextActive: {
       color: c.orange
@@ -220,17 +220,17 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     sheetTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 15
+      fontSize: typography.body
     },
     sheetCancel: {
       ...fontStyles.medium,
       color: c.muted,
-      fontSize: 15
+      fontSize: typography.body
     },
     sheetDone: {
       ...fontStyles.extraBold,
       color: c.orange,
-      fontSize: 15
+      fontSize: typography.body
     }
   });
 }

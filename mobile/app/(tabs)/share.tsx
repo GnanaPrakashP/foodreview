@@ -1498,7 +1498,7 @@ function createStyles(c: ThemeColors) {
   title: {
     ...fontStyles.regular,
     color: c.cream,
-    fontSize: Platform.OS === "web" ? typography.webTitle : 24,
+    fontSize: Platform.OS === "web" ? typography.webTitle : typography.heading,
     letterSpacing: 0,
     lineHeight: Platform.OS === "web" ? 32 : 29
   },
@@ -1559,7 +1559,7 @@ function createStyles(c: ThemeColors) {
   actionTitle: {
     ...fontStyles.extraBold,
     color: "#FFFFFF",
-    fontSize: 24,
+    fontSize: typography.heading,
     letterSpacing: 0,
     lineHeight: 28,
     marginBottom: 8

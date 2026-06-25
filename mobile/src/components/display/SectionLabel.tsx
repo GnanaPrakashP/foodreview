@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text } from "react-native";
 import { useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, spacing } from "@/theme";
+import { fontStyles, spacing, typography } from "@/theme";
 
 export function SectionLabel({ children }: { children: ReactNode }) {
   const { themeColors } = useThemePreference();
@@ -11,7 +11,7 @@ export function SectionLabel({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create({
   sectionLabel: {
     ...fontStyles.extraBold,
-    fontSize: 10,
+    fontSize: typography.eyebrow,
     letterSpacing: 1.4,
     marginTop: spacing.sm,
     textTransform: "uppercase"

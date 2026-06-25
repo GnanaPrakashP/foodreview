@@ -1435,7 +1435,7 @@ function createStyles(c: ThemeColors) {
       ...fontStyles.regular,
       color: c.cream,
       flex: 1,
-      fontSize: Platform.OS === "web" ? typography.webTitle : 24,
+      fontSize: Platform.OS === "web" ? typography.webTitle : typography.heading,
       lineHeight: Platform.OS === "web" ? 32 : 29
     },
     locationButton: {

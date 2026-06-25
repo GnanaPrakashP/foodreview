@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, type Edge, useSafeAreaInsets } from "react-native-safe-area-context";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, spacing } from "@/theme";
+import { fontStyles, spacing, typography } from "@/theme";
 
 const logoSource = require("../../../assets/circlebites-logo.png");
 
@@ -121,7 +121,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     wordmark: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 34,
+      fontSize: typography.hero,
       letterSpacing: -0.5,
       lineHeight: 34,
       marginBottom: 6
@@ -129,7 +129,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     tagline: {
       ...fontStyles.semiBoldItalic,
       color: c.orange,
-      fontSize: 18,
+      fontSize: typography.section,
       letterSpacing: 0.1,
       lineHeight: 23
     }

@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 type AuthButtonProps = {
   children: ReactNode;
@@ -165,7 +165,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     orangeButtonText: {
       ...fontStyles.bold,
       color: c.white,
-      fontSize: 15,
+      fontSize: typography.body,
       letterSpacing: 0.2
     },
     orangeButtonTextDisabled: {
@@ -184,7 +184,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     ghostButtonText: {
       ...fontStyles.semiBold,
       color: c.muted,
-      fontSize: 14
+      fontSize: typography.body
     },
     methodButton: {
       alignItems: "center",
@@ -214,7 +214,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     methodButtonText: {
       ...fontStyles.bold,
       color: c.cream,
-      fontSize: 16,
+      fontSize: typography.body,
       textAlign: "center"
     },
     methodButtonTextPrimary: {
@@ -237,7 +237,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     dividerText: {
       ...fontStyles.semiBold,
       color: c.muted,
-      fontSize: 12,
+      fontSize: typography.caption,
       textTransform: "uppercase"
     }
   });

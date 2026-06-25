@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { MemoryInput } from "@/components/memories/MemoryInput";
 import type { AsyncState } from "@/components/memories/types";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryMessage } from "@/types/models";
 import { formatDisplayTime } from "@/utils/datetime";
 
@@ -62,7 +62,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     sectionTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 17
+      fontSize: typography.section
     },
     messages: {
       gap: spacing.sm
@@ -82,17 +82,17 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     messageAuthor: {
       ...fontStyles.extraBold,
       color: c.orange,
-      fontSize: 12
+      fontSize: typography.caption
     },
     messageTime: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 11
+      fontSize: typography.eyebrow
     },
     messageBody: {
       ...fontStyles.medium,
       color: c.cream,
-      fontSize: 14,
+      fontSize: typography.body,
       lineHeight: 20,
       marginTop: 6
     },
@@ -112,13 +112,13 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     emptyInline: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 19
     },
     error: {
       ...fontStyles.regular,
       color: c.dangerSoft,
-      fontSize: 13,
+      fontSize: typography.caption,
       lineHeight: 19
     }
   });

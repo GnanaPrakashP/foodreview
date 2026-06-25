@@ -85,19 +85,22 @@ export const radius = {
   input: 14,
   md: 12,
   card: 16,
-  avatar: 22,
   pill: 999
 } as const;
 
+// Descending type scale (px). Keep this ordered largest → smallest so the
+// rhythm between steps stays legible.
 export const typography = {
   hero: 34,
-  title: 26,
   webTitle: 28,
+  title: 26,
+  heading: 24,
+  metric: 22,
   section: 18,
   body: 15,
   caption: 12,
-  tab: 9,
-  eyebrow: 11
+  eyebrow: 11,
+  tab: 9
 } as const;
 
 export const shadows = {

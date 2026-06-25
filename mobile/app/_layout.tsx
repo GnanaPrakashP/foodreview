@@ -9,8 +9,8 @@ import { useThemePreference } from "@/hooks/useThemePreference";
 import { useCircleBitesFonts } from "@/theme";
 
 // The Explore detail screens, circle screen, settings, and every settings
-// sub-screen present over the screen beneath them and drive their own
-// Reanimated slide (see useSlideOverScreen). Native animation is disabled and
+// sub-screen present over the screen beneath them and drive their own custom
+// slide. Native animation is disabled and
 // the container is transparent so the screen underneath shows during the slide.
 const SLIDE_OVER_OPTIONS = {
   presentation: "transparentModal",
@@ -88,7 +88,7 @@ export default function RootLayout() {
             <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
             <Stack.Screen name="share/camera" options={{ animation: "fade", animationDuration: 150 }} />
             {/* Settings and its sub-screens present over the screen beneath them and
-                drive their own Reanimated slide (useSlideOverScreen). Native
+                drive their own custom slide. Native
                 animation is disabled because native transparentModal ignores
                 slide_from_right/animationDuration (especially on iOS); the
                 transparent container lets the screen underneath show during the slide. */}

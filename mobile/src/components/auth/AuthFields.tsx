@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 type AuthInputProps = {
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
@@ -120,7 +120,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.medium,
       color: c.cream,
       flex: 1,
-      fontSize: 15,
+      fontSize: typography.body,
       minWidth: 0,
       outlineColor: "transparent",
       outlineWidth: 0,
@@ -129,7 +129,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     toggleText: {
       ...fontStyles.semiBold,
       color: c.muted,
-      fontSize: 12,
+      fontSize: typography.caption,
       letterSpacing: 0.3,
       lineHeight: 14
     }

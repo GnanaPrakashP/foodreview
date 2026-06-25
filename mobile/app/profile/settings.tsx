@@ -1,24 +1,27 @@
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useRouter } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Modal, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import Animated, { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { Animated, BackHandler, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowLeft, Bell, Bookmark, ChevronRight, FileText, Heart, Info, LifeBuoy, Lock, LogOut, MessageCircle, Monitor, Moon, Settings, Shield, Sun, Trash2, UserCog, UserX } from "lucide-react-native";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useLogoutMutation } from "@/hooks/useAuth";
 import { useCurrentUserProfileQuery, useUpdateAccountTypeMutation } from "@/hooks/useProfiles";
 import { useDeleteAccountMutation } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference, type ThemeMode } from "@/hooks/useThemePreference";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
 import type { AccountType } from "@/types/models";
 
 // Slide-in/out timing, matched to the table-memory members panel (PeoplePanel).
 const SETTINGS_ENTER_MS = 230;
 const SETTINGS_EXIT_MS = 190;
+const SETTINGS_PANEL_TRAVEL_MAX = 640;
 
 type SettingsColors = ReturnType<typeof themeColorsFor>;
 type SettingsStyles = ReturnType<typeof createStyles>;
+type ProfileSettingsPanelProps = {
+  onCloseEnd?: () => void;
+};
 
 const SettingsThemeContext = createContext<{ styles: SettingsStyles; themeColors: SettingsColors } | null>(null);
 
@@ -33,6 +36,14 @@ function accountTypeLabel(value?: "private" | "public") {
 }
 
 export default function ProfileSettingsScreen() {
+  return (
+    <View style={routeStyles.root}>
+      <ProfileSettingsPanel />
+    </View>
+  );
+}
+
+export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps = {}) {
   const router = useRouter();
   const profile = useCurrentUserProfileQuery();
   const logout = useLogoutMutation();
@@ -42,34 +53,54 @@ export default function ProfileSettingsScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [closing, setClosing] = useState(false);
 
-  // Hand-rolled slide matched to the members panel: enters from the right over
-  // the still profile and slides back out on close. progress 0 -> 1 drives both
-  // the horizontal offset and a subtle fade, on the UI thread.
+  // Mirrors the table-memory PeoplePanel motion so settings feels like the same
+  // slide-over surface: native-driver timing, capped travel, and subtle fade.
   const { width } = useWindowDimensions();
-  const progress = useSharedValue(0);
+  const insets = useSafeAreaInsets();
+  const enterProgress = useRef(new Animated.Value(0)).current;
   const isClosingRef = useRef(false);
-  const slideStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 0.35, 1], [0.92, 1, 1]),
-    transform: [{ translateX: interpolate(progress.value, [0, 1], [width, 0]) }]
-  }));
+  const panelTranslateX = enterProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Math.min(width, SETTINGS_PANEL_TRAVEL_MAX), 0]
+  });
+  const panelOpacity = enterProgress.interpolate({
+    inputRange: [0, 0.35, 1],
+    outputRange: [0.92, 1, 1]
+  });
 
   useEffect(() => {
-    progress.value = withTiming(1, { duration: SETTINGS_ENTER_MS, easing: Easing.out(Easing.cubic) });
-  }, [progress]);
+    Animated.timing(enterProgress, {
+      duration: SETTINGS_ENTER_MS,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true
+    }).start();
+  }, [enterProgress]);
 
   const performBack = useCallback(() => {
+    if (onCloseEnd) {
+      onCloseEnd();
+      return;
+    }
     if (router.canGoBack()) router.back();
     else router.dismissTo("/profile");
-  }, [router]);
+  }, [onCloseEnd, router]);
 
   const closeSettings = useCallback(() => {
     if (isClosingRef.current) return;
     isClosingRef.current = true;
-    progress.value = withTiming(0, { duration: SETTINGS_EXIT_MS, easing: Easing.in(Easing.cubic) }, (finished) => {
-      if (finished) runOnJS(performBack)();
+    setClosing(true);
+    Animated.timing(enterProgress, {
+      duration: SETTINGS_EXIT_MS,
+      easing: Easing.in(Easing.cubic),
+      toValue: 0,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (finished) performBack();
     });
-  }, [performBack, progress]);
+  }, [enterProgress, performBack]);
 
   // Android hardware back should play the slide-out too.
   useFocusEffect(
@@ -136,10 +167,26 @@ export default function ProfileSettingsScreen() {
 
   return (
     <SettingsThemeContext.Provider value={{ styles, themeColors }}>
-      <Animated.View style={[styles.slide, slideStyle]}>
-        <Screen backgroundColor={themeColors.bg} padded={false} scroll style={styles.screenContent}>
-        <View style={styles.content}>
-          <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
+      <Animated.View
+        pointerEvents={closing ? "none" : "auto"}
+        style={[
+          styles.slide,
+          {
+            opacity: panelOpacity,
+            transform: [{ translateX: panelTranslateX }]
+          }
+        ]}
+      >
+        <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: spacing.xl + insets.bottom, paddingTop: spacing.md + insets.top }
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          style={styles.screenContent}
+        >
           <SettingsHeader onBack={closeSettings} />
 
           <SettingsSection title="Account">
@@ -312,8 +359,7 @@ export default function ProfileSettingsScreen() {
               </Pressable>
             </View>
           </SettingsSection>
-        </View>
-        </Screen>
+        </ScrollView>
       </Animated.View>
 
       <DeleteAccountModal
@@ -448,12 +494,13 @@ function createStyles(themeColors: SettingsColors) {
 
   return StyleSheet.create({
     slide: {
+      ...StyleSheet.absoluteFillObject,
       backgroundColor: themeColors.bg,
-      flex: 1
+      zIndex: 20
     },
     screenContent: {
       backgroundColor: themeColors.bg,
-      flexGrow: 1
+      flex: 1
     },
     content: {
       gap: spacing.md,
@@ -478,7 +525,7 @@ function createStyles(themeColors: SettingsColors) {
       ...fontStyles.regular,
       color: themeColors.cream,
       flex: 1,
-      fontSize: 24,
+      fontSize: typography.heading,
       lineHeight: 29
     },
     section: {
@@ -710,3 +757,9 @@ function createStyles(themeColors: SettingsColors) {
     }
   });
 }
+
+const routeStyles = StyleSheet.create({
+  root: {
+    flex: 1
+  }
+});

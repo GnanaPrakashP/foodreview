@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useMyCircleQuery } from "@/hooks/useCircle";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 const USERNAME_PATTERN = /^[a-z0-9_]+$/;
 
@@ -174,7 +174,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.bold,
       color: c.orange,
       flexShrink: 1,
-      fontSize: 13
+      fontSize: typography.caption
     },
     searchRow: {
       alignItems: "center",
@@ -191,7 +191,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       ...fontStyles.medium,
       color: c.cream,
       flex: 1,
-      fontSize: 15,
+      fontSize: typography.body,
       padding: 0
     },
     statusRow: {
@@ -203,7 +203,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     statusText: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 13,
+      fontSize: typography.caption,
       paddingHorizontal: 2
     },
     suggestions: {
@@ -233,12 +233,12 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     suggestionName: {
       ...fontStyles.bold,
       color: c.cream,
-      fontSize: 14
+      fontSize: typography.body
     },
     suggestionUsername: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 12
+      fontSize: typography.caption
     }
   });
 }

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 export type Stat = {
   label: string;
@@ -40,13 +40,13 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     statValue: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 23,
+      fontSize: typography.metric,
       lineHeight: 27
     },
     statLabel: {
       ...fontStyles.extraBold,
       color: c.muted,
-      fontSize: 11,
+      fontSize: typography.eyebrow,
       marginTop: 5
     }
   });

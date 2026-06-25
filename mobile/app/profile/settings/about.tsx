@@ -8,7 +8,7 @@ import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, spacing, typography } from "@/theme";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
@@ -104,7 +104,7 @@ function createStyles(themeColors: ThemeColors) {
     brandName: {
       ...fontStyles.extraBold,
       color: themeColors.orange,
-      fontSize: 24,
+      fontSize: typography.heading,
       lineHeight: 29
     },
     brandTagline: {
