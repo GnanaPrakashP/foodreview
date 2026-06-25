@@ -102,6 +102,12 @@ export type ProfilePageData = {
   stats: ProfileStats;
   circleCount: number;
   posts: ReviewPost[];
+  nextPostsCursor: string | null;
+};
+
+export type ProfilePostsPage = {
+  posts: ReviewPost[];
+  nextCursor: string | null;
 };
 
 export type AuthSnapshot = {
@@ -234,6 +240,7 @@ export type MemoryRoomSummary = {
   createdBy: string;
   participantCount: number;
   photoCount: number;
+  dishCount: number;
   messageCount: number;
   unreadCount: number;
   latestMessage: string | null;

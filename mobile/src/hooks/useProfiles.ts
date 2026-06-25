@@ -1,9 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actorFromProfile,
   getCurrentProfilePage,
   getCurrentUserProfile,
   getProfilePage,
+  getProfilePostsPage,
   setupCurrentUserProfile,
   updateCurrentAccountType,
   updateCurrentProfileDetails,
@@ -18,7 +19,8 @@ import { useSessionStore } from "@/stores/sessionStore";
 export const profileKeys = {
   current: ["profile", "current"] as const,
   currentPage: ["profile", "current-page"] as const,
-  byUsername: (username: string) => ["profile", username] as const
+  byUsername: (username: string) => ["profile", username] as const,
+  posts: (username: string) => ["profile", username, "posts"] as const
 };
 
 export function useCurrentUserProfileQuery(options: { enabled?: boolean } = {}) {
@@ -42,6 +44,16 @@ export function useProfilePageQuery(username: string) {
     queryKey: profileKeys.byUsername(username),
     queryFn: () => getProfilePage(username),
     enabled: Boolean(username)
+  });
+}
+
+export function useProfilePostsInfiniteQuery(username: string, options: { enabled?: boolean } = {}) {
+  return useInfiniteQuery({
+    queryKey: profileKeys.posts(username),
+    queryFn: ({ pageParam }) => getProfilePostsPage(username, pageParam),
+    enabled: Boolean(username) && (options.enabled ?? true),
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: null as string | null
   });
 }
 
@@ -86,6 +98,7 @@ export function useUpdateAccountTypeMutation() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: profileKeys.current });
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
       queryClient.invalidateQueries({ queryKey: ["circle"] });
     }
@@ -102,6 +115,7 @@ export function useUpdateAvatarMutation() {
       setProfile(actorFromProfile(profile));
       queryClient.invalidateQueries({ queryKey: profileKeys.current });
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
     }
   });
@@ -117,6 +131,7 @@ export function useUpdateProfileDetailsMutation() {
       setProfile(actorFromProfile(profile));
       queryClient.invalidateQueries({ queryKey: profileKeys.current });
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
     }
   });

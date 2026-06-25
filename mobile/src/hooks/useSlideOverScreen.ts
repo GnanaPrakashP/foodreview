@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter, type Href } from "expo-router";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { BackHandler, useWindowDimensions } from "react-native";
 import { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
@@ -47,22 +47,18 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
     });
   }, [performBack, progress]);
 
-  // Start the enter slide on mount rather than on focus: the focus event for a
-  // freshly pushed screen lands a beat after mount, which left the panel sitting
-  // off-screen before sliding in (felt like a delay vs the inline settings panel).
-  useEffect(() => {
-    progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
-  }, [progress]);
-
   // Hardware back should play the exit slide; keep this scoped to while focused.
   useFocusEffect(
     useCallback(() => {
+      closingRef.current = false;
+      progress.value = 0;
+      progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close])
+    }, [close, progress])
   );
 
   return { slideStyle, close };

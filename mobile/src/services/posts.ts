@@ -3,6 +3,7 @@ import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { normalizeDishInput } from "@/services/dishNormalizer";
 import { getCurrentUserProfile } from "@/services/profiles";
+import { uploadReviewMedia } from "@/services/reviewMedia";
 import type { FoodItem, Visibility } from "@/types/models";
 
 const MAX_REVIEW_VIDEO_DURATION_MS = 10_000;
@@ -134,35 +135,9 @@ function normalizedDishes(input: CreatePostInput): FoodItem[] {
     .filter((dish) => dish.rawDishName);
 }
 
-function extensionFor(uri: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
-  if (mimeType?.includes("quicktime")) return "mov";
-  if (mimeType?.includes("webm")) return "webm";
-  if (mimeType?.includes("mp4")) return "mp4";
-  if (mimeType?.includes("png")) return "png";
-  if (mimeType?.includes("webp")) return "webp";
-  const match = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  const ext = match?.[1]?.toLowerCase();
-  if (mediaType === "video" && (ext === "mp4" || ext === "mov" || ext === "webm")) return ext;
-  if (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg") return ext;
-  return mediaType === "video" ? "mp4" : "jpg";
-}
-
-function contentTypeFor(ext: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
-  if (mimeType) return mimeType;
-  if (ext === "png") return "image/png";
-  if (ext === "webp") return "image/webp";
-  if (ext === "mov") return "video/quicktime";
-  if (ext === "webm") return "video/webm";
-  return mediaType === "video" ? "video/mp4" : "image/jpeg";
-}
-
-async function blobFromUri(uri: string): Promise<Blob> {
-  const response = await fetch(uri);
-  if (!response.ok) throw new Error("Could not read selected media");
-  return response.blob();
-}
-
 type UploadedMedia = {
+  intentId: string;
+  mimeType: string;
   publicUrl: string;
   sizeBytes: number;
   storagePath: string;
@@ -185,35 +160,32 @@ async function stripVideoAudio(uri: string): Promise<string> {
   }
 }
 
-async function uploadOne(media: CreatePostMediaInput, userId: string): Promise<UploadedMedia> {
+async function uploadOne(media: CreatePostMediaInput): Promise<UploadedMedia> {
   const mediaType = resolveMediaType(media);
   const uri = mediaType === "video" && media.muted ? await stripVideoAudio(media.uri) : media.uri;
-  const ext = extensionFor(uri, media.mimeType, mediaType);
-  const contentType = contentTypeFor(ext, media.mimeType, mediaType);
-  // Random suffix keeps parallel uploads in the same millisecond from colliding.
-  const path = `public/mobile/${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const blob = await blobFromUri(uri);
+  const uploaded = await uploadReviewMedia({
+    category: "post",
+    durationMs: media.durationMs,
+    mediaKind: mediaType,
+    mimeType: media.mimeType,
+    uri
+  });
 
-  const { error } = await supabase.storage
-    .from("review-photos")
-    .upload(path, blob, { contentType, upsert: false });
-
-  if (error) throw new Error(error.message);
-
-  const { data } = supabase.storage.from("review-photos").getPublicUrl(path);
   return {
     durationMs: media.durationMs ?? null,
     height: media.height ?? null,
+    intentId: uploaded.intentId,
     mediaType,
-    publicUrl: data.publicUrl,
-    sizeBytes: media.fileSize ?? blob.size,
-    storagePath: path,
+    mimeType: uploaded.mimeType,
+    publicUrl: uploaded.publicUrl,
+    sizeBytes: uploaded.fileSizeBytes,
+    storagePath: uploaded.storagePath,
     width: media.width ?? null
   };
 }
 
 async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedia[]) {
-  if (!apiBaseUrl) throw new Error("Video posts require the API server.");
+  if (!apiBaseUrl && Platform.OS !== "web") throw new Error("Posting requires the API server.");
 
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -227,13 +199,10 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
       media: uploaded.map((item) => ({
         durationSeconds: item.durationMs ? item.durationMs / 1000 : undefined,
         height: item.height ?? undefined,
+        intentId: item.intentId,
         mediaType: item.mediaType,
-        publicUrl: item.publicUrl,
-        sizeBytes: item.sizeBytes,
-        storagePath: item.storagePath,
         width: item.width ?? undefined
       })),
-      photoUrl: uploaded[0]?.publicUrl,
       restaurantAddress: input.restaurantAddress,
       restaurantId: input.restaurantId,
       restaurantLat: input.restaurantLat,
@@ -262,40 +231,10 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   if (!profile) throw new Error("Log in before posting");
 
   const items = mediaInputs(input);
-  const hasVideo = items.some((media) => resolveMediaType(media) === "video");
-  if (hasVideo && !apiBaseUrl) {
-    throw new Error("Video posts require the API server.");
+  if (!apiBaseUrl && Platform.OS !== "web") {
+    throw new Error("Posting requires the API server.");
   }
 
-  const uploaded = await Promise.all(items.map((media) => uploadOne(media, profile.id)));
-  // Video (and any mixed set) goes through the API so typed review_photos rows
-  // are written; all-image posts use the direct insert with every photo_url.
-  if (hasVideo) {
-    return createReviewViaApi(input, uploaded);
-  }
-  const tags = (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
-
-  const { data, error } = await supabase
-    .from("reviews")
-    .insert({
-      reviewer_name: profile.username,
-      restaurant_id: input.restaurantId?.trim() || null,
-      restaurant_name: input.restaurantName.trim(),
-      area: input.restaurantArea?.trim() || null,
-      restaurant_address: input.restaurantAddress?.trim() || null,
-      restaurant_lat: typeof input.restaurantLat === "number" ? input.restaurantLat : null,
-      restaurant_lng: typeof input.restaurantLng === "number" ? input.restaurantLng : null,
-      items: normalizedDishes(input),
-      body: input.caption.trim() || null,
-      tags,
-      visibility: input.visibility,
-      photo_url: uploaded[0].publicUrl,
-      photo_urls: uploaded.map((item) => item.publicUrl),
-      status: "active"
-    })
-    .select("id")
-    .single<{ id: string }>();
-
-  if (error) throw new Error(error.message);
-  return { id: data.id };
+  const uploaded = await Promise.all(items.map((media) => uploadOne(media)));
+  return createReviewViaApi(input, uploaded);
 }

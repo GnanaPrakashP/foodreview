@@ -51,7 +51,8 @@ import {
   occasionThemeToMemoryRoomTokens,
   type OccasionTheme
 } from "@/features/occasions/occasionThemes";
-import { type OccasionType } from "@/features/occasions/occasionTypes";
+import { saveOccasionCorrection } from "@/features/occasions/occasionStorage";
+import { occasionLabel, type OccasionType } from "@/features/occasions/occasionTypes";
 import {
   FOOD_WALLPAPER_TILE_SIZE,
   buildFoodWallpaperPlacements,
@@ -79,6 +80,7 @@ import {
   useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime,
+  useUpdateMemoryRoomOccasionMutation,
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
@@ -157,6 +159,8 @@ const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mo
   { icon: "images-outline", label: "Media", mode: "media" },
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
+
+const ROOM_OCCASION_CHANGE_ORDER: OccasionType[] = ["casual", "date_night", "friends_hangout", "family_time", "work_meal", "solo", "unknown"];
 
 // Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
 // "Add dish" affordance — a movie or bowling stop just holds a note/photos.
@@ -294,6 +298,16 @@ type MessageGroupPosition = "single" | "first" | "middle" | "last";
 function effectiveRoomOccasionType(room: Pick<MemoryRoom, "occasionConfidence" | "occasionConfirmedByUser" | "occasionType">): OccasionType {
   if (room.occasionConfirmedByUser || room.occasionConfidence >= 0.85) return room.occasionType;
   return "unknown";
+}
+
+function occasionChipLabel(type: OccasionType) {
+  const theme = getOccasionTheme(type);
+  return `${theme.icon} ${occasionLabel(type)}`;
+}
+
+function nextOccasionType(type: OccasionType): OccasionType {
+  const index = ROOM_OCCASION_CHANGE_ORDER.indexOf(type);
+  return ROOM_OCCASION_CHANGE_ORDER[(index + 1) % ROOM_OCCASION_CHANGE_ORDER.length] ?? "casual";
 }
 type AttachmentSheetView = "actions" | "dish" | "media";
 
@@ -550,6 +564,7 @@ export default function MemoryDetailScreen() {
   const deleteStop = useDeleteMemoryStopMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
+  const updateOccasion = useUpdateMemoryRoomOccasionMutation(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
@@ -1319,6 +1334,22 @@ export default function MemoryDetailScreen() {
     setRoomActionsVisible(false);
   }
 
+  function changeRoomOccasion(type: OccasionType) {
+    const theme = getOccasionTheme(type);
+    updateOccasion.mutate({
+      occasionConfidence: 1,
+      occasionConfirmedByUser: true,
+      occasionType: type,
+      themeKey: theme.id
+    }, {
+      onSuccess: () => {
+        if (room.data?.title && myUsername) {
+          void saveOccasionCorrection({ phrase: room.data.title, type, userName: myUsername });
+        }
+      }
+    });
+  }
+
   function confirmLeaveRoom() {
     closeRoomActions();
     Alert.alert(
@@ -1474,6 +1505,7 @@ export default function MemoryDetailScreen() {
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
         onChangeMode={setMode}
+        onChangeOccasion={() => changeRoomOccasion(nextOccasionType(data.occasionType))}
         onHeightChange={(height) => {
           if (headerMode === "overview" && height > 0) setTableHeaderHeight(height);
         }}
@@ -1746,6 +1778,7 @@ function RoomHeader({
   onAddPeople,
   onBack,
   onChangeMode,
+  onChangeOccasion,
   onHeightChange,
   onOpenActions,
   onViewPeople,
@@ -1759,13 +1792,15 @@ function RoomHeader({
   onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
+  onChangeOccasion: () => void;
   onHeightChange?: (height: number) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
   transitioning: boolean;
 }) {
   const roomTitle = data.title?.trim() || displayRestaurantName;
-  const roomDateLabel = formatDisplayDate(data.visitDate ?? data.createdAt);
+  const roomDateLabel = formatDisplayDate(data.createdAt);
+  const locationLabel = data.area?.trim() || (displayRestaurantName && displayRestaurantName !== "Table Memory" ? displayRestaurantName : "");
   const isMembersArea = mode === "people";
   const isCompactHeader = mode !== "overview";
   const compactTitle = isMembersArea ? "Members" : roomTitle;
@@ -1911,11 +1946,20 @@ function RoomHeader({
           <View style={styles.roomMetaRow}>
             <View style={[styles.roomMetaGroup, styles.roomMetaLocationGroup]}>
               <View style={styles.roomMetaIconSlot}>
+                <Ionicons name="location-outline" size={13} color={ROOM_COLORS.muted} />
+              </View>
+              <Text numberOfLines={1} style={styles.roomMetaText}>{locationLabel || "Area not set"}</Text>
+            </View>
+            <View style={[styles.roomMetaGroup, styles.roomMetaLocationGroup]}>
+              <View style={styles.roomMetaIconSlot}>
                 <Ionicons name="calendar-outline" size={13} color={ROOM_COLORS.muted} />
               </View>
               <Text numberOfLines={1} style={[styles.roomMetaText, styles.roomMetaDateText]}>{roomDateLabel}</Text>
             </View>
           </View>
+          <Pressable onPress={onChangeOccasion} style={styles.occasionChip}>
+            <Text numberOfLines={1} style={styles.occasionChipText}>{occasionChipLabel(data.occasionType)} · Change</Text>
+          </Pressable>
           <Pressable
             accessibilityLabel={transitioning ? undefined : "View members"}
             accessibilityRole={transitioning ? undefined : "button"}
@@ -6027,6 +6071,22 @@ function createStyles(ROOM_COLORS: RoomColors) {
   roomMetaDateText: {
     flexShrink: 1,
     minWidth: 0
+  },
+  occasionChip: {
+    alignSelf: "flex-start",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    maxWidth: "100%",
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  occasionChipText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.coolOnContainer,
+    fontSize: 11,
+    lineHeight: 14
   },
   roomFriendsRow: {
     alignItems: "center",

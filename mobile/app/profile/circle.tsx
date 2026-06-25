@@ -54,6 +54,7 @@ export default function ProfileCircleScreen() {
           onBack={close}
           themeColors={themeColors}
           title="Circle"
+          titleWeight="bold"
         />
 
         {circle.isLoading ? (
@@ -72,7 +73,7 @@ export default function ProfileCircleScreen() {
             title="Your circle is empty"
           />
         ) : (
-          <View style={styles.memberList}>
+          <View>
             {members.map((member) => (
               <View key={member.username} style={styles.memberRow}>
                 <View style={styles.memberAvatar}>
@@ -108,12 +109,8 @@ export default function ProfileCircleScreen() {
 function createStyles(c: ReturnType<typeof themeColorsFor>) {
   return StyleSheet.create({
     content: {
-      gap: spacing.lg,
+      gap: spacing.sm,
       padding: spacing.lg
-    },
-    memberList: {
-      borderTopColor: c.border,
-      borderTopWidth: 1
     },
     memberRow: {
       alignItems: "center",

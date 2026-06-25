@@ -13,6 +13,7 @@ export function useCreatePostMutation() {
       queryClient.invalidateQueries({ queryKey: feedKeys.public });
       queryClient.invalidateQueries({ queryKey: profileKeys.current });
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
     }
   });
 }

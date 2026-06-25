@@ -4,6 +4,45 @@ Current phase: Final production-readiness audit
 
 Next required phase: Authenticated staging smoke verification
 
+## Profile Hardening Blocker Fixes
+
+Status: Ready for staging validation, not production-ready.
+
+The Profile-tab validation blockers found after commit `af8cbdcbf748c35a89e706a48f6b39e0c40d2019` were addressed in the repository:
+
+- Renamed the untracked Profile migration to `202606250001_profile_media_username_hardening.sql`.
+- Replaced pending review/avatar uploads to the public `review-photos` bucket with a private `review-media-quarantine` bucket.
+- Kept `review-photos` public only for finalized objects written by trusted server code.
+- Added Sharp-based server image decode, metadata stripping, orientation normalization, and JPEG re-encoding for review/avatar images.
+- Added durable account media cleanup jobs with `pending/running/succeeded/failed`, retry timestamps, attempts, and a protected worker route at `/api/internal/account-media-cleanup`.
+- Updated account deletion and post deletion to delete owner-scoped Storage paths first and return `cleanupPending` when durable retry is required.
+- Added paginated Storage enumeration for owner-prefixed review/avatar/quarantine paths.
+- Refactored the mobile Profile tab so posts and memories render through a primary vertical `FlatList` instead of an outer `ScrollView` wrapping disabled nested lists.
+
+Latest Profile blocker-fix verification:
+
+- `npm test`: 794/794.
+- `npm run test:coverage`: 794/794; Node coverage smoke reported 100.00% lines, 77.78% branches, 100.00% functions for the instrumented setup file.
+- `npm run lint`: passed with 76 warnings. The previous baseline was 75; the additional warning is from ignored generated file `mobile/.expo/types/router.d.ts`, not a tracked commit candidate.
+- `npm run typecheck`: passed.
+- `cd mobile && npm run typecheck`: passed.
+- `npm run build`: passed outside the sandbox after the known Turbopack helper-port sandbox failure.
+- `npm run test:memory-hardening`: 63/63.
+- `node --test tests/shared-memory-phase1-security.test.mjs`: 19/19.
+- `node --test tests/shared-memory-phase2-media-security.test.mjs`: 19/19.
+- `node --test tests/mobile-explore-parity.test.mjs`: 18/18.
+- `node --test tests/profile-production-hardening.test.mjs`: 12/12.
+- `node --test tests/reviews-route.test.mjs tests/review-crud.test.mjs`: 59/59.
+- `node --test tests/delete-account-route.test.mjs`: 4/4.
+- `node --test tests/review-media-image-validation.test.mjs tests/account-media-cleanup-worker.test.mjs`: covered image decode/re-encode, spoof/corrupt/zero-byte/large-dimension rejection, HEIC rejection, cleanup path ownership, paginated Storage enumeration, and cleanup job owner filtering.
+
+Supabase validation remains incomplete in this environment:
+
+- `npx supabase --version`: 2.108.0.
+- `docker --version`: failed; Docker is not installed.
+- `npx supabase start`, `npx supabase db reset`, `npx supabase db lint`, `npx supabase test db`, and `npx supabase db diff --schema public,storage` could not run because the Supabase CLI could not connect to a Docker daemon/local Postgres.
+- Real Auth/RLS/Storage matrix, migration application, DB lint, pgTAP, username concurrency, and native mobile runtime validation must still run in disposable staging before production.
+
 ## Verified Result
 
 Status: Partial
@@ -49,6 +88,7 @@ The final audit migration is now visible in the configured Supabase project. Thi
 - Added private, user-specific local correction persistence for occasion choices. No global name-to-relationship rules or external AI calls were added.
 - Updated the Table Memory occasion create fields in both the Share tab create flow and standalone create form to use a free-text room title plus an icon picker for selected occasion metadata through the existing create-room RPC. No Supabase schema, RLS, Storage, service-role, or logging changes were required.
 - Removed the Share tab Table Memory place prompt from the create flow. The app now passes the existing required `restaurantName` RPC field as the internal fallback `"Table Memory"` for that flow; no schema/RLS/storage changes were made.
+- Updated the mobile profile Memories tab to group memory cards by month in a timeline with orange dots and a connector line, while preserving the original stacked date block with divider, occasion title, place line, and participant, media, dish, and message counts. Dish counts are computed from `shared_memory_dishes.room_id` for already-visible room summaries only; the place line uses existing room summary `restaurantName`/`area` fields, and no dish names, message bodies, media URLs, signed URLs, or storage paths are added to the profile list.
 
 ## Automated Verification
 
@@ -89,6 +129,29 @@ Latest product-change verification for Table Memory occasion picker:
 - `npm run typecheck`: passed.
 - `cd mobile && npm run typecheck`: passed.
 - Expo web smoke reached the authenticated login gate at `http://localhost:8082/memories/create`; visual create-page verification still requires a logged-in session.
+
+Latest product-change verification for profile Memories summary card:
+
+- `npm run test:memory-hardening`: 63/63.
+- `node --test tests/shared-memory-phase1-security.test.mjs`: 19/19.
+- `node --test tests/shared-memory-phase2-media-security.test.mjs`: 19/19.
+- `npm run typecheck`: passed.
+- `cd mobile && npm run typecheck`: passed.
+- `npm test`: failed in `tests/mobile-explore-parity.test.mjs` on four existing static assertions unrelated to the profile Memories card (`useSlideOverScreen`, Share memory title placeholder, memory header date, dynamic occasion mutation pattern). No DB/Supabase checks were run.
+- Stacked-date/divider follow-up: `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Place-line follow-up: `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Place-label trim/empty-state follow-up: whitespace is collapsed before rendering place fields, empty place state now renders `No places added`, `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Month timeline follow-up: cards are grouped by `visitDate ?? createdAt` month and rendered with a fixed orange-dot timeline rail; `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Card-divider brightness follow-up: the vertical divider inside each memory card now uses a higher-contrast muted neutral at partial opacity for better visibility; `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Card-content spacing follow-up: the occasion, place, and stat-icon content now has extra left spacing after the internal divider while preserving date/divider alignment; `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+- Timeline marker spacing follow-up: the orange timeline dots now use a slightly larger background ring so the connector line has more visible separation around each marker; `npm run test:memory-hardening` passed 63/63, `npm run typecheck` passed, and `cd mobile && npm run typecheck` passed.
+
+## Profile Media Staging Validation Follow-up
+
+- Review/avatar image uploads remain routed through private `review-media-quarantine`, trusted Sharp decode/re-encode, and finalized public `review-photos` objects.
+- New review/post video uploads are disabled until a trusted server-side transcode, metadata-stripping, duration, codec, and malformed-file validation pipeline exists. Existing legacy video display data is not migrated or deleted by this change.
+- `review-media-quarantine` and `review-photos` MIME allowlists for the Profile hardening migration now allow only `image/jpeg`, `image/png`, and `image/webp` for new review/avatar media.
+- Real Supabase Auth/RLS/Storage matrix validation and native iOS/Android Profile validation are still required before production.
 
 ## Supabase Verification
 

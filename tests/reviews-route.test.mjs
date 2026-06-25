@@ -46,6 +46,14 @@ const src = {
 function mockDb(...responses) {
   let idx = 0;
   return {
+    storage: {
+      from() {
+        return {
+          getPublicUrl: (path) => ({ data: { publicUrl: `https://storage.test/${path}` } }),
+          remove: async () => ({ data: [], error: null }),
+        };
+      },
+    },
     from(_table) {
       const next = () => Promise.resolve(responses[idx++] ?? { data: null, error: null });
       const chain = {
@@ -55,6 +63,7 @@ function mockDb(...responses) {
       for (const m of [
         "select", "eq", "ilike", "or", "limit", "insert",
         "delete", "update", "order", "in", "single", "maybeSingle", "upsert",
+        "returns",
       ]) {
         chain[m] = () => chain;
       }
@@ -67,19 +76,59 @@ function mockDb(...responses) {
  * Capturing mock DB: records the argument passed to `.insert()` so tests
  * can verify what row was written to the database.
  */
-function capturingDb(resolveWith = { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null }) {
+function validIntent(overrides = {}) {
+  return {
+    category: "post",
+    file_size_bytes: 1234,
+    id: "intent-1",
+    media_type: "image",
+    mime_type: "image/jpeg",
+    status: "finalized",
+    storage_path: "posts/uid-alice/intent-1/media.jpg",
+    user_id: "uid-alice",
+    user_name: "Alice",
+    ...overrides,
+  };
+}
+
+function capturingDb(
+  resolveWith = { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null },
+  intentRow = validIntent()
+) {
   let insertedRow;
+  let insertedPhotoRows;
   return {
     get _inserted() { return insertedRow; },
-    from(_table) {
+    get _insertedPhotoRows() { return insertedPhotoRows; },
+    storage: {
+      from() {
+        return {
+          getPublicUrl: (path) => ({ data: { publicUrl: `https://storage.test/${path}` } }),
+          remove: async () => ({ data: [], error: null }),
+        };
+      },
+    },
+    from(table) {
       const chain = {
-        then(res, rej) { return Promise.resolve(resolveWith).then(res, rej); },
+        then(res, rej) {
+          const response =
+            table === "review_media_upload_intents"
+              ? { data: [intentRow], error: null }
+              : table === "review_photos"
+                ? { data: null, error: null }
+                : resolveWith;
+          return Promise.resolve(response).then(res, rej);
+        },
         catch(rej) { return Promise.resolve(resolveWith).catch(rej); },
-        insert(row) { if (insertedRow === undefined) insertedRow = row; return chain; },
+        insert(row) {
+          if (table === "review_photos") insertedPhotoRows = row;
+          if (table === "reviews" && insertedRow === undefined) insertedRow = row;
+          return chain;
+        },
       };
       for (const m of [
         "select", "eq", "limit", "single", "maybeSingle",
-        "delete", "update", "order", "in",
+        "delete", "update", "order", "in", "returns",
       ]) {
         chain[m] = () => chain;
       }
@@ -154,6 +203,19 @@ function loadRoute(code, { db, adminDb, authName }) {
       if (id === "@/lib/server/reputation") {
         return { refreshUserReputationFoundation: async () => {} };
       }
+      if (id === "@/lib/server/account-media-cleanup") {
+        return {
+          recordAccountMediaCleanupJob: async () => "cleanup-job",
+          removeStorageObjectsOrQueue: async () => ({ cleanupPending: false, removedCount: 1 }),
+        };
+      }
+      if (id === "@/lib/server/review-media") {
+        return {
+          REVIEW_MEDIA_BUCKET: "review-photos",
+          REVIEW_POST_MAX_ITEMS: 4,
+          isOwnedReviewMediaPath: (path, userId) => path?.includes(`/${userId}/`) ?? false,
+        };
+      }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminDb ?? db };
       if (id === "@/lib/circle-auth") {
         return {
@@ -172,7 +234,7 @@ function loadRoute(code, { db, adminDb, authName }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
-  media: [{ publicUrl: "https://example.test/photo.jpg", storagePath: "public/photo.jpg", mediaType: "image" }],
+  media: [{ intentId: "intent-1", mediaType: "image" }],
   visibility: "public",
 };
 
@@ -185,7 +247,14 @@ test("POST /reviews: logged-out user is rejected with 401", async () => {
 });
 
 test("POST /reviews: forged reviewerName in body is ignored; authenticated actor is used", async () => {
-  const db = capturingDb();
+  const db = capturingDb(
+    { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null },
+    validIntent({
+      user_id: "uid-alice-smith",
+      user_name: "Alice Smith",
+      storage_path: "posts/uid-alice-smith/intent-1/media.jpg",
+    })
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice Smith" });
   const res = await POST(
     makeReq({ ...VALID_BODY, reviewerName: "Mallory Hacker" })
@@ -196,7 +265,14 @@ test("POST /reviews: forged reviewerName in body is ignored; authenticated actor
 });
 
 test("POST /reviews: reviewer_name in response row is the auth actor, not request body", async () => {
-  const db = capturingDb();
+  const db = capturingDb(
+    { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null },
+    validIntent({
+      user_id: "uid-priya-kumar",
+      user_name: "Priya Kumar",
+      storage_path: "posts/uid-priya-kumar/intent-1/media.jpg",
+    })
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Priya Kumar" });
   await POST(makeReq(VALID_BODY));
   assert.equal(db._inserted.reviewer_name, "Priya Kumar");
@@ -225,8 +301,7 @@ test("POST /reviews: empty items array returns 400", async () => {
 test("POST /reviews: more than four media items returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const media = Array.from({ length: 5 }, (_, i) => ({
-    publicUrl: `https://example.test/media-${i}.jpg`,
-    storagePath: `public/media-${i}.jpg`,
+    intentId: `intent-${i}`,
     mediaType: "image",
   }));
 
@@ -236,11 +311,10 @@ test("POST /reviews: more than four media items returns 400", async () => {
   assert.match(body(res).error, /Maximum 4 media/i);
 });
 
-test("POST /reviews: videos longer than ten seconds return 400", async () => {
+test("POST /reviews: videos are disabled before duration validation", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const media = [{
-    publicUrl: "https://example.test/video.mp4",
-    storagePath: "public/video.mp4",
+    intentId: "intent-video",
     mediaType: "video",
     durationSeconds: 10.1,
   }];
@@ -248,36 +322,42 @@ test("POST /reviews: videos longer than ten seconds return 400", async () => {
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
   assert.equal(status(res), 400);
-  assert.match(body(res).error, /10 seconds/i);
+  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
 });
 
-test("POST /reviews: videos without duration return 400", async () => {
+test("POST /reviews: videos without duration are disabled", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const media = [{
-    publicUrl: "https://example.test/video.mp4",
-    storagePath: "public/video.mp4",
+    intentId: "intent-video",
     mediaType: "video",
   }];
 
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
   assert.equal(status(res), 400);
-  assert.match(body(res).error, /10 seconds/i);
+  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
 });
 
-test("POST /reviews: videos of ten seconds are accepted", async () => {
-  const db = capturingDb();
+test("POST /reviews: finalized video intents are rejected until trusted transcoding exists", async () => {
+  const db = capturingDb(
+    { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null },
+    validIntent({
+      id: "intent-video",
+      media_type: "video",
+      mime_type: "video/mp4",
+      storage_path: "posts/uid-alice/intent-video/media.mp4",
+    })
+  );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const media = [{
-    publicUrl: "https://example.test/video.mp4",
-    storagePath: "public/video.mp4",
-    mediaType: "video",
+    intentId: "intent-video",
     durationSeconds: 10,
   }];
 
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 400);
+  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
 });
 
 test("POST /reviews: items with only whitespace names returns 400", async () => {
@@ -338,12 +418,15 @@ test("POST /reviews: valid review returns the new review id", async () => {
 
 test("POST /reviews: DB error returns 500", async () => {
   const { POST } = loadRoute(src.create, {
-    db: mockDb({ data: null, error: { message: "db connection failed" } }),
+    db: mockDb(
+      { data: [validIntent()], error: null },
+      { data: null, error: { message: "db connection failed" } }
+    ),
     authName: "Alice",
   });
   const res = await POST(makeReq(VALID_BODY));
   assert.equal(status(res), 500);
-  assert.match(body(res).error, /db connection failed/);
+  assert.equal(body(res).error, "Could not create review");
 });
 
 // ── DELETE /api/reviews/[id] ──────────────────────────────────────────────────
@@ -406,7 +489,7 @@ test("DELETE /reviews/[id]: DB delete error returns 500", async () => {
   });
   const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) });
   assert.equal(status(res), 500);
-  assert.match(body(res).error, /delete failed/);
+  assert.equal(body(res).error, "Could not delete review");
 });
 
 test("DELETE /reviews/[id]: DB fetch error returns 404", async () => {
@@ -512,7 +595,7 @@ test("PATCH /reviews/[id]: DB update error returns 500", async () => {
     { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
   assert.equal(status(res), 500);
-  assert.match(body(res).error, /update failed/);
+  assert.equal(body(res).error, "Could not update review");
 });
 
 test("PATCH /reviews/[id]: review not found returns 404", async () => {

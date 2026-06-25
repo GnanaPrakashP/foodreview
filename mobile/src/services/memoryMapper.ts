@@ -109,6 +109,7 @@ export function mapMemoryMessages({
 }
 
 export function mapMemorySummary({
+  dishes = [],
   members,
   messages,
   photos,
@@ -116,6 +117,7 @@ export function mapMemorySummary({
   viewerName,
   room
 }: {
+  dishes?: Array<{ room_id: string }>;
   members: Array<{ room_id: string }>;
   messages: Array<{ room_id: string; author_name?: string | null; body: string; created_at: string }>;
   photos: Array<{ room_id: string }>;
@@ -149,6 +151,7 @@ export function mapMemorySummary({
     createdBy: room.created_by,
     participantCount: members.filter((member) => member.room_id === room.id).length,
     photoCount: photos.filter((photo) => photo.room_id === room.id).length,
+    dishCount: dishes.filter((dish) => dish.room_id === room.id).length,
     messageCount: roomMessages.length,
     unreadCount,
     latestMessage: roomMessages[0]?.body ?? null,

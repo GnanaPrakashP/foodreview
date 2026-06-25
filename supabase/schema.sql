@@ -679,6 +679,49 @@ create policy "Review photos readable with review"
   on public.review_photos for select to anon, authenticated
   using (public.can_read_review_id(review_id));
 
+create table if not exists public.review_media_upload_intents (
+  id                      uuid        primary key default gen_random_uuid(),
+  user_id                 uuid        not null references auth.users(id) on delete cascade,
+  user_name               text        not null,
+  category                text        not null,
+  media_type              text        not null,
+  mime_type               text        not null,
+  extension               text        not null,
+  file_size_bytes         bigint      not null,
+  max_file_size_bytes     bigint      not null,
+  final_bucket_id         text        not null default 'review-photos',
+  quarantine_bucket_id    text        not null default 'review-media-quarantine',
+  quarantine_storage_path text        not null unique,
+  storage_path            text        not null unique,
+  status                  text        not null default 'created',
+  moderation_status       text,
+  moderation_reason       text,
+  created_at              timestamptz not null default now(),
+  expires_at              timestamptz not null,
+  finalized_at            timestamptz,
+  check (category in ('avatar', 'post')),
+  check (media_type in ('image', 'video')),
+  check (status in ('created', 'finalized', 'consumed', 'expired', 'rejected', 'abandoned')),
+  check (file_size_bytes > 0),
+  check (max_file_size_bytes > 0),
+  check (file_size_bytes <= max_file_size_bytes),
+  check (final_bucket_id = 'review-photos'),
+  check (quarantine_bucket_id = 'review-media-quarantine'),
+  check (quarantine_storage_path ~ ('^pending/' || user_id::text || '/' || id::text || '/[A-Za-z0-9._~-]+$')),
+  check (
+    (category = 'avatar' and media_type = 'image' and storage_path ~ ('^avatars/' || user_id::text || '/' || id::text || '/[A-Za-z0-9._~-]+$'))
+    or
+    (category = 'post' and storage_path ~ ('^posts/' || user_id::text || '/' || id::text || '/[A-Za-z0-9._~-]+$'))
+  )
+);
+
+alter table public.review_media_upload_intents enable row level security;
+
+drop policy if exists "Users can read own review media upload intents" on public.review_media_upload_intents;
+create policy "Users can read own review media upload intents"
+  on public.review_media_upload_intents for select to authenticated
+  using (user_id = auth.uid());
+
 -- =============================================
 -- Storage bucket for review photos
 -- =============================================
@@ -689,9 +732,22 @@ values (
   'review-photos',
   true,
   52428800,
-  array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime']
+  array['image/jpeg', 'image/png', 'image/webp']
 )
 on conflict (id) do nothing;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'review-media-quarantine',
+  'review-media-quarantine',
+  false,
+  52428800,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Anyone can view review photos" on storage.objects;
 drop policy if exists "Anyone can upload review photos" on storage.objects;
@@ -699,25 +755,32 @@ drop policy if exists "Authenticated users can upload review photos" on storage.
 drop policy if exists "Authenticated users can upload to quarantine" on storage.objects;
 drop policy if exists "Users can delete their own review photos" on storage.objects;
 drop policy if exists "Service role can delete review photos" on storage.objects;
+drop policy if exists "Authenticated users can upload scoped review media quarantine intents" on storage.objects;
+drop policy if exists "Service role can manage review media objects" on storage.objects;
 
 create policy "Anyone can view review photos"
   on storage.objects for select
   using (bucket_id = 'review-photos');
 
-create policy "Authenticated users can upload review photos"
-  on storage.objects for insert to authenticated
-  with check (bucket_id = 'review-photos');
-
-create policy "Authenticated users can upload to quarantine"
+create policy "Authenticated users can upload scoped review media quarantine intents"
   on storage.objects for insert to authenticated
   with check (
-    bucket_id = 'review-photos'
-    and (storage.foldername(name))[1] = 'quarantine'
+    bucket_id = 'review-media-quarantine'
+    and exists (
+      select 1
+      from public.review_media_upload_intents intent
+      where intent.quarantine_bucket_id = storage.objects.bucket_id
+        and intent.quarantine_storage_path = storage.objects.name
+        and intent.user_id = auth.uid()
+        and intent.status = 'created'
+        and intent.expires_at > now()
+        and intent.quarantine_storage_path like ('pending/' || auth.uid()::text || '/' || intent.id::text || '/%')
+    )
   );
 
-create policy "Service role can delete review photos"
+create policy "Service role can manage review media objects"
   on storage.objects for delete to service_role
-  using (bucket_id = 'review-photos');
+  using (bucket_id in ('review-photos', 'review-media-quarantine'));
 
 -- =============================================
 -- LIKES

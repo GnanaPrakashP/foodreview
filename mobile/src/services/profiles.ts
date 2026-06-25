@@ -1,6 +1,6 @@
 import { supabase } from "@/api/supabase";
 import { apiUrl } from "@/api/config";
-import type { AccountType, ActorProfile, Profile, ProfilePageData, ProfileStats } from "@/types/models";
+import type { AccountType, ActorProfile, Profile, ProfilePageData, ProfilePostsPage, ProfileStats } from "@/types/models";
 import {
   displayNameForProfile,
   mapProfile,
@@ -9,6 +9,7 @@ import {
   type ReviewRow
 } from "@/services/reviewMapper";
 import { addEngagementToRows, fetchDisplayNames } from "@/services/feeds";
+import { uploadReviewMedia } from "@/services/reviewMedia";
 
 const PROFILE_SELECT = [
   "id",
@@ -26,6 +27,8 @@ const PROFILE_SELECT = [
   "total_feedback_points",
   "created_at"
 ].join(", ");
+
+export const PROFILE_POST_PAGE_SIZE = 24;
 
 export type SignupProfileInput = {
   userId: string;
@@ -179,48 +182,22 @@ export type AvatarUploadInput = {
   mimeType?: string | null;
 };
 
-function avatarExtension(uri: string, mimeType?: string | null): string {
-  if (mimeType?.includes("png")) return "png";
-  if (mimeType?.includes("webp")) return "webp";
-  const ext = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1]?.toLowerCase();
-  if (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg") return ext === "jpeg" ? "jpg" : ext;
-  return "jpg";
-}
-
 export async function updateCurrentUserAvatar(input: AvatarUploadInput): Promise<Profile> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw new Error(userError.message);
   const user = userData.user;
   if (!user) throw new Error("Log in before updating your photo");
 
-  const ext = avatarExtension(input.uri, input.mimeType);
-  const contentType = input.mimeType || (ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg");
-  const path = `public/avatars/${user.id}/${Date.now()}.${ext}`;
+  await uploadReviewMedia({
+    category: "avatar",
+    mediaKind: "image",
+    mimeType: input.mimeType,
+    uri: input.uri
+  });
 
-  const response = await fetch(input.uri);
-  if (!response.ok) throw new Error("Could not read the selected image");
-  const blob = await response.blob();
-
-  const { error: uploadError } = await supabase.storage
-    .from("review-photos")
-    .upload(path, blob, { contentType, upsert: false });
-  if (uploadError) throw new Error(uploadError.message);
-
-  const { data: publicUrlData } = supabase.storage.from("review-photos").getPublicUrl(path);
-  const avatarUrl = publicUrlData.publicUrl;
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .update({ avatar_url: avatarUrl })
-    .eq("id", user.id)
-    .select(PROFILE_SELECT)
-    .single<ProfileRow>();
-
-  if (error) throw new Error(error.message);
-
-  await supabase.auth.updateUser({ data: { avatar_url: avatarUrl } }).catch(() => {});
-
-  return mapProfile(data);
+  const profile = await getCurrentUserProfile();
+  if (!profile) throw new Error("Profile not found");
+  return profile;
 }
 
 export async function updateCurrentAccountType(accountType: AccountType): Promise<Profile> {
@@ -428,6 +405,73 @@ function statsFromRows(rows: ReviewRow[]): ProfileStats {
   };
 }
 
+type ProfilePostCursor = {
+  createdAt: string;
+  id: string;
+};
+
+function encodeProfilePostCursor(row: ReviewRow | undefined): string | null {
+  if (!row?.created_at || !row.id) return null;
+  return encodeURIComponent(`${row.created_at}|${row.id}`);
+}
+
+function parseProfilePostCursor(cursor?: string | null): ProfilePostCursor | null {
+  if (!cursor) return null;
+  const [createdAt, id] = decodeURIComponent(cursor).split("|");
+  if (!createdAt || !id) return null;
+  return { createdAt, id };
+}
+
+function reviewerAliasesForProfile(profile: Profile, displayName = displayNameForProfile(profile)) {
+  return Array.from(new Set([profile.username, displayName].filter(Boolean)));
+}
+
+async function getProfileStats(profile: Profile, reviewerAliases = reviewerAliasesForProfile(profile)): Promise<ProfileStats> {
+  const { data, error } = await supabase
+    .rpc("profile_post_stats", { p_username: profile.username })
+    .maybeSingle<{
+      total_visits: number | string | null;
+      unique_dishes: number | string | null;
+      unique_places: number | string | null;
+    }>();
+
+  if (!error && data) {
+    return {
+      totalVisits: Number(data.total_visits ?? 0),
+      uniqueDishes: Number(data.unique_dishes ?? 0),
+      uniquePlaces: Number(data.unique_places ?? 0)
+    };
+  }
+
+  if (error && !isMissingProfileStatsRpcError(error)) throw new Error(error.message);
+
+  const rows: ReviewRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error: pageError } = await supabase
+      .from("reviews")
+      .select(REVIEW_SELECT)
+      .in("reviewer_name", reviewerAliases)
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + 999)
+      .returns<ReviewRow[]>();
+    if (pageError) throw new Error(pageError.message);
+    rows.push(...(page ?? []));
+    if (!page || page.length < 1000) break;
+  }
+  return statsFromRows(rows);
+}
+
+function isMissingProfileStatsRpcError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+  return code === "PGRST202" || message.includes("profile_post_stats");
+}
+
 async function getCircleMemberCount(username: string): Promise<number> {
   const { count, error } = await supabase
     .from("circle_memberships")
@@ -438,40 +482,73 @@ async function getCircleMemberCount(username: string): Promise<number> {
   return count ?? 0;
 }
 
-export async function getProfilePage(username: string): Promise<ProfilePageData> {
-  const profile = await getProfileByUsername(username);
-  if (!profile) throw new Error("Profile not found");
-
-  const displayName = displayNameForProfile(profile);
-  const reviewerAliases = Array.from(new Set([profile.username, displayName].filter(Boolean)));
-  const { data: rawReviews, error } = await supabase
+async function fetchProfilePostRows(
+  profile: Profile,
+  cursor?: string | null,
+  limit = PROFILE_POST_PAGE_SIZE,
+  reviewerAliases = reviewerAliasesForProfile(profile)
+) {
+  const parsedCursor = parseProfilePostCursor(cursor);
+  let query = supabase
     .from("reviews")
     .select(REVIEW_SELECT)
     .in("reviewer_name", reviewerAliases)
     .is("deleted_at", null)
     .is("hidden_at", null)
     .is("reported_at", null)
-    .eq("status", "active")
+    .eq("status", "active");
+
+  if (parsedCursor) {
+    query = query.or(`created_at.lt.${parsedCursor.createdAt},and(created_at.eq.${parsedCursor.createdAt},id.lt.${parsedCursor.id})`);
+  }
+
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(24)
+    .limit(limit + 1)
     .returns<ReviewRow[]>();
 
   if (error) throw new Error(error.message);
+  return data ?? [];
+}
 
-  const rows = rawReviews ?? [];
+export async function getProfilePostsPage(
+  username: string,
+  cursor?: string | null,
+  reviewerAliases?: string[]
+): Promise<ProfilePostsPage> {
+  const profile = await getProfileByUsername(username);
+  if (!profile) throw new Error("Profile not found");
+
+  const rowsWithExtra = await fetchProfilePostRows(profile, cursor, PROFILE_POST_PAGE_SIZE, reviewerAliases);
+  const rows = rowsWithExtra.slice(0, PROFILE_POST_PAGE_SIZE);
   const displayNames = await fetchDisplayNames(rows.map((row) => row.reviewer_name));
-  const [posts, circleCount] = await Promise.all([
-    addEngagementToRows(rows, profile.username, displayNames),
+  const posts = await addEngagementToRows(rows, profile.username, displayNames);
+  return {
+    nextCursor: rowsWithExtra.length > PROFILE_POST_PAGE_SIZE ? encodeProfilePostCursor(rows[rows.length - 1]) : null,
+    posts
+  };
+}
+
+export async function getProfilePage(username: string): Promise<ProfilePageData> {
+  const profile = await getProfileByUsername(username);
+  if (!profile) throw new Error("Profile not found");
+
+  const displayName = displayNameForProfile(profile);
+  const reviewerAliases = Array.from(new Set([profile.username, displayName].filter(Boolean)));
+  const [postPage, stats, circleCount] = await Promise.all([
+    getProfilePostsPage(profile.username, null, reviewerAliases),
+    getProfileStats(profile, reviewerAliases),
     getCircleMemberCount(profile.username)
   ]);
 
   return {
     profile,
     displayName,
-    stats: statsFromRows(rows),
+    stats,
     circleCount,
-    posts
+    posts: postPage.posts,
+    nextPostsCursor: postPage.nextCursor
   };
 }
 

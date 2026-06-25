@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { StyleSheet, View } from "react-native";
+import { FlatList, StyleSheet, View } from "react-native";
 import { PostCard } from "@/components/posts/PostCard";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import type { ReviewPost } from "@/types/models";
@@ -63,11 +63,16 @@ export function PostFeed({
   }
 
   return (
-    <View style={styles.stack}>
-      {posts.map((post) => (
-        <PostCard key={post.id} post={post} />
-      ))}
-    </View>
+    <FlatList
+      data={posts}
+      initialNumToRender={8}
+      keyExtractor={(post) => post.id}
+      maxToRenderPerBatch={8}
+      renderItem={({ item }) => <PostCard post={item} />}
+      scrollEnabled={false}
+      style={styles.stack}
+      windowSize={7}
+    />
   );
 }
 

@@ -7,6 +7,7 @@ import { ArrowLeft, Bell, Bookmark, ChevronRight, FileText, Heart, Info, LifeBuo
 import { useLogoutMutation } from "@/hooks/useAuth";
 import { useCurrentUserProfileQuery, useUpdateAccountTypeMutation } from "@/hooks/useProfiles";
 import { useDeleteAccountMutation } from "@/hooks/useSettings";
+import { useSessionStore } from "@/stores/sessionStore";
 import { themeColorsFor, useThemePreference, type ThemeMode } from "@/hooks/useThemePreference";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
@@ -16,6 +17,10 @@ import type { AccountType } from "@/types/models";
 const SETTINGS_ENTER_MS = 230;
 const SETTINGS_EXIT_MS = 190;
 const SETTINGS_PANEL_TRAVEL_MAX = 640;
+const SEGMENT_ANIMATION_MS = 180;
+const SEGMENT_GAP = 2;
+const APPEARANCE_SEGMENT_WIDTH = 31;
+const ACCOUNT_TYPE_SEGMENT_WIDTH = 60;
 
 type SettingsColors = ReturnType<typeof themeColorsFor>;
 type SettingsStyles = ReturnType<typeof createStyles>;
@@ -35,6 +40,21 @@ function accountTypeLabel(value?: "private" | "public") {
   return value === "private" ? "Private" : "Public";
 }
 
+function useSlidingSegmentPosition(index: number, step: number) {
+  const translateX = useRef(new Animated.Value(index * step)).current;
+
+  useEffect(() => {
+    Animated.timing(translateX, {
+      duration: SEGMENT_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+      toValue: index * step,
+      useNativeDriver: true
+    }).start();
+  }, [index, step, translateX]);
+
+  return translateX;
+}
+
 export default function ProfileSettingsScreen() {
   return (
     <View style={routeStyles.root}>
@@ -46,6 +66,7 @@ export default function ProfileSettingsScreen() {
 export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps = {}) {
   const router = useRouter();
   const profile = useCurrentUserProfileQuery();
+  const sessionProfile = useSessionStore((state) => state.profile);
   const logout = useLogoutMutation();
   const updateAccountType = useUpdateAccountTypeMutation();
   const deleteAccount = useDeleteAccountMutation();
@@ -54,6 +75,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [closing, setClosing] = useState(false);
+  const accountType = profile.data?.accountType ?? sessionProfile?.accountType;
 
   // Mirrors the table-memory PeoplePanel motion so settings feels like the same
   // slide-over surface: native-driver timing, capped travel, and subtle fade.
@@ -235,24 +257,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
                 )}
               </View>
               <Text style={styles.rowLabel}>Appearance</Text>
-              <View style={styles.segmentedControl}>
-                {(["system", "light", "dark"] as ThemeMode[]).map((mode) => {
-                  const active = themeMode === mode;
-                  const Icon = mode === "system" ? Monitor : mode === "light" ? Sun : Moon;
-                  return (
-                    <Pressable
-                      accessibilityLabel={`${mode} appearance`}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                      key={mode}
-                      onPress={() => setThemeMode(mode)}
-                      style={[styles.appearanceSegmentButton, active && styles.segmentButtonActive]}
-                    >
-                      <Icon size={13} color={active ? themeColors.white : themeColors.muted} strokeWidth={2.1} />
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <AppearanceSegmentedControl onChange={setThemeMode} value={themeMode} />
             </View>
             <View style={styles.separator} />
             <SettingsRow
@@ -270,29 +275,18 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
               <View style={styles.rowLabelStack}>
                 <Text style={styles.rowLabel}>Account Type</Text>
                 <Text style={styles.rowSubLabel}>
-                  {profile.data?.accountType === "private" ? "Only your circle sees your posts" : "Anyone can see your posts"}
+                  {accountType === "private"
+                    ? "Only your circle sees your posts"
+                    : accountType === "public"
+                      ? "Anyone can see your posts"
+                      : "Loading account privacy"}
                 </Text>
               </View>
-              <View style={styles.segmentedControl}>
-                {(["private", "public"] as AccountType[]).map((type) => {
-                  const active = profile.data?.accountType === type;
-                  return (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityState={{ disabled: !profile.data || updateAccountType.isPending, selected: active }}
-                      disabled={!profile.data || updateAccountType.isPending}
-                      hitSlop={8}
-                      key={type}
-                      onPress={() => confirmAccountType(type)}
-                      style={[styles.segmentButton, active && styles.segmentButtonActive]}
-                    >
-                      <Text style={[styles.segmentButtonText, active && styles.segmentButtonTextActive]}>
-                        {accountTypeLabel(type)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <AccountTypeSegmentedControl
+                disabled={!profile.data || updateAccountType.isPending}
+                onChange={confirmAccountType}
+                value={accountType}
+              />
             </View>
             <View style={styles.separator} />
             <SettingsRow
@@ -426,6 +420,95 @@ function DeleteAccountModal({
         </View>
       </View>
     </Modal>
+  );
+}
+
+function AppearanceSegmentedControl({
+  onChange,
+  value
+}: {
+  onChange: (mode: ThemeMode) => void;
+  value: ThemeMode;
+}) {
+  const { styles, themeColors } = useSettingsTheme();
+  const options = ["system", "light", "dark"] as const;
+  const activeIndex = Math.max(0, options.indexOf(value));
+  const indicatorTranslateX = useSlidingSegmentPosition(activeIndex, APPEARANCE_SEGMENT_WIDTH + SEGMENT_GAP);
+
+  return (
+    <View style={styles.segmentedControl}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.segmentIndicator,
+          styles.appearanceSegmentIndicator,
+          { transform: [{ translateX: indicatorTranslateX }] }
+        ]}
+      />
+      {options.map((mode) => {
+        const active = value === mode;
+        const Icon = mode === "system" ? Monitor : mode === "light" ? Sun : Moon;
+        return (
+          <Pressable
+            accessibilityLabel={`${mode} appearance`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            key={mode}
+            onPress={() => onChange(mode)}
+            style={styles.appearanceSegmentButton}
+          >
+            <Icon size={13} color={active ? themeColors.white : themeColors.muted} strokeWidth={2.1} />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function AccountTypeSegmentedControl({
+  disabled,
+  onChange,
+  value
+}: {
+  disabled: boolean;
+  onChange: (type: AccountType) => void;
+  value?: AccountType;
+}) {
+  const { styles } = useSettingsTheme();
+  const options = ["private", "public"] as const;
+  const activeIndex = value ? Math.max(0, options.indexOf(value)) : 0;
+  const indicatorTranslateX = useSlidingSegmentPosition(activeIndex, ACCOUNT_TYPE_SEGMENT_WIDTH + SEGMENT_GAP);
+
+  return (
+    <View style={styles.segmentedControl}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.segmentIndicator,
+          styles.accountTypeSegmentIndicator,
+          !value && styles.segmentIndicatorHidden,
+          { transform: [{ translateX: indicatorTranslateX }] }
+        ]}
+      />
+      {options.map((type) => {
+        const active = value === type;
+        return (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled, selected: active }}
+            disabled={disabled}
+            hitSlop={8}
+            key={type}
+            onPress={() => onChange(type)}
+            style={styles.segmentButton}
+          >
+            <Text style={[styles.segmentButtonText, active && styles.segmentButtonTextActive]}>
+              {accountTypeLabel(type)}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -594,22 +677,43 @@ function createStyles(themeColors: SettingsColors) {
       borderWidth: 1,
       flexDirection: "row",
       gap: 2,
-      padding: 3
+      overflow: "hidden",
+      padding: 3,
+      position: "relative"
+    },
+    segmentIndicator: {
+      backgroundColor: themeColors.orange,
+      borderRadius: 9,
+      left: 3,
+      position: "absolute",
+      top: 3
+    },
+    appearanceSegmentIndicator: {
+      height: 27,
+      width: APPEARANCE_SEGMENT_WIDTH
+    },
+    accountTypeSegmentIndicator: {
+      height: 27,
+      width: ACCOUNT_TYPE_SEGMENT_WIDTH
+    },
+    segmentIndicatorHidden: {
+      opacity: 0
     },
     segmentButton: {
+      alignItems: "center",
       borderRadius: 9,
-      paddingHorizontal: 9,
-      paddingVertical: 6
+      height: 27,
+      justifyContent: "center",
+      width: ACCOUNT_TYPE_SEGMENT_WIDTH,
+      zIndex: 1
     },
     appearanceSegmentButton: {
       alignItems: "center",
       borderRadius: 9,
       height: 27,
       justifyContent: "center",
-      width: 31
-    },
-    segmentButtonActive: {
-      backgroundColor: themeColors.orange
+      width: APPEARANCE_SEGMENT_WIDTH,
+      zIndex: 1
     },
     segmentButtonText: {
       ...fontStyles.extraBold,

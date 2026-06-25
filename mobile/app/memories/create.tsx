@@ -132,7 +132,7 @@ export default function CreateMemoryScreen() {
             </Field>
           ) : null}
 
-          <Field label="Occasion" styles={styles}>
+          <Field label="Memory" styles={styles}>
             <CreateOccasionPicker
               colors={themeColors}
               onSelect={setSelectedOccasionType}
@@ -146,7 +146,7 @@ export default function CreateMemoryScreen() {
           <Field label="Restaurant" styles={styles}>
             <MemoryInput
               onChangeText={setRestaurantName}
-              placeholder={fromPost ? "Restaurant name override (optional)" : "Where did you eat?"}
+              placeholder={mode === "post" ? "Restaurant name override (optional)" : "Restaurant name"}
               value={restaurantName}
             />
           </Field>
@@ -200,7 +200,7 @@ function CreateOccasionPicker({
         <SelectedIcon size={20} color={selectedOption.accent} strokeWidth={1.9} />
         <TextInput
           onChangeText={onTitleChange}
-          placeholder="What's the occasion?"
+          placeholder="Name this memory"
           placeholderTextColor={colors.muted}
           returnKeyType="done"
           style={styles.occasionTitleInput}

@@ -41,12 +41,27 @@ const src = {
 function spyDb(...responses) {
   let idx = 0;
   const calls = [];
+  let authNameForIntents = "Alice";
   return {
     get _calls() { return calls; },
+    _setAuthName(name) { authNameForIntents = name || "Alice"; },
+    storage: {
+      from() {
+        return {
+          getPublicUrl: (path) => ({ data: { publicUrl: `https://storage.test/${path}` } }),
+          remove: async () => ({ data: [], error: null }),
+        };
+      },
+    },
     from(table) {
       const entry = { table, ops: [] };
       calls.push(entry);
-      const next = () => Promise.resolve(responses[idx++] ?? { data: null, error: null });
+      const next = () => {
+        if (table === "review_media_upload_intents") {
+          return Promise.resolve({ data: [validIntentFor(authNameForIntents)], error: null });
+        }
+        return Promise.resolve(responses[idx++] ?? { data: null, error: null });
+      };
       const chain = {
         then(res, rej) { return next().then(res, rej); },
         catch(rej) { return next().catch(rej); },
@@ -54,11 +69,27 @@ function spyDb(...responses) {
       for (const m of [
         "select", "eq", "limit", "insert", "delete",
         "update", "single", "maybeSingle", "order", "in", "upsert",
+        "returns",
       ]) {
         chain[m] = (...args) => { entry.ops.push([m, ...args]); return chain; };
       }
       return chain;
     },
+  };
+}
+
+function validIntentFor(authName) {
+  const userId = `uid-${authName.toLowerCase().replace(/\s/g, "-")}`;
+  return {
+    category: "post",
+    file_size_bytes: 1234,
+    id: "intent-1",
+    media_type: "image",
+    mime_type: "image/jpeg",
+    status: "finalized",
+    storage_path: `posts/${userId}/intent-1/media.jpg`,
+    user_id: userId,
+    user_name: authName,
   };
 }
 
@@ -93,6 +124,7 @@ function body(res) { return res._body; }
 function status(res) { return res._status; }
 
 function loadRoute(code, { db, authName }) {
+  db?._setAuthName?.(authName);
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -151,6 +183,19 @@ function loadRoute(code, { db, authName }) {
       if (id === "@/lib/server/reputation") {
         return { refreshUserReputationFoundation: async () => {} };
       }
+      if (id === "@/lib/server/account-media-cleanup") {
+        return {
+          recordAccountMediaCleanupJob: async () => "cleanup-job",
+          removeStorageObjectsOrQueue: async () => ({ cleanupPending: false, removedCount: 1 }),
+        };
+      }
+      if (id === "@/lib/server/review-media") {
+        return {
+          REVIEW_MEDIA_BUCKET: "review-photos",
+          REVIEW_POST_MAX_ITEMS: 4,
+          isOwnedReviewMediaPath: (path, userId) => path?.includes(`/${userId}/`) ?? false,
+        };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
@@ -168,7 +213,7 @@ function loadRoute(code, { db, authName }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
-  media: [{ publicUrl: "https://example.test/photo.jpg", storagePath: "public/photo.jpg", mediaType: "image" }],
+  media: [{ intentId: "intent-1", mediaType: "image" }],
   visibility: "public",
 };
 

@@ -1067,7 +1067,7 @@ function CreateMemoryOccasionPicker({
         <SelectedIcon size={20} color={selectedOption.accent} strokeWidth={1.9} />
         <TextInput
           onChangeText={onTitleChange}
-          placeholder="What's the occasion?"
+          placeholder="Name this memory"
           placeholderTextColor={c.muted}
           returnKeyType="done"
           style={styles.fieldInput}

@@ -172,6 +172,7 @@ type MemoryRoomSummaryRow = {
   latest_activity_at: string;
   latest_message: string | null;
   message_count: number | string;
+  dish_count?: number | string | null;
   occasion_type?: string | null;
   occasion_confidence?: number | string | null;
   occasion_confirmed_by_user?: boolean | null;
@@ -253,12 +254,32 @@ function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
     createdBy: row.created_by,
     participantCount: numericCount(row.participant_count),
     photoCount: numericCount(row.photo_count),
+    dishCount: numericCount(row.dish_count),
     messageCount: numericCount(row.message_count),
     unreadCount: numericCount(row.unread_count),
     latestMessage: row.latest_message,
     latestActivityAt: row.latest_activity_at,
     createdAt: row.created_at
   };
+}
+
+async function dishCountsByRoomId(roomIds: string[]): Promise<Map<string, number>> {
+  const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean)));
+  const counts = new Map<string, number>();
+  if (uniqueRoomIds.length === 0) return counts;
+
+  const { data, error } = await supabase
+    .from("shared_memory_dishes")
+    .select("room_id")
+    .in("room_id", uniqueRoomIds)
+    .returns<Array<{ room_id: string }>>();
+
+  if (error) throw memoryTablesError(error);
+
+  for (const row of data ?? []) {
+    counts.set(row.room_id, (counts.get(row.room_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 async function assertMemoryRoomMember(roomId: string, username: string) {
@@ -348,19 +369,21 @@ async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummar
   const roomIds = rooms.map((room) => room.id);
   if (roomIds.length === 0) return [];
 
-  const [members, messages, photos] = await Promise.all([
+  const [members, messages, photos, dishes] = await Promise.all([
     supabase.from("shared_memory_members").select("room_id").in("room_id", roomIds),
     supabase
       .from("shared_memory_messages")
       .select("room_id, author_name, body, created_at")
       .in("room_id", roomIds)
       .order("created_at", { ascending: false }),
-    supabase.from("shared_memory_photos").select("room_id").in("room_id", roomIds)
+    supabase.from("shared_memory_photos").select("room_id").in("room_id", roomIds),
+    supabase.from("shared_memory_dishes").select("room_id").in("room_id", roomIds)
   ]);
 
   if (members.error) throw memoryTablesError(members.error);
   if (messages.error) throw memoryTablesError(messages.error);
   if (photos.error) throw memoryTablesError(photos.error);
+  if (dishes.error) throw memoryTablesError(dishes.error);
 
   const { data: readsData, error: readsError } = await supabase
     .from("shared_memory_reads")
@@ -373,6 +396,7 @@ async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummar
   const reads = readsError ? [] : readsData ?? [];
 
   return rooms.map((room) => mapMemorySummary({
+    dishes: dishes.data ?? [],
     members: members.data ?? [],
     messages: messages.data ?? [],
     photos: photos.data ?? [],
@@ -404,7 +428,14 @@ export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
     }
 
     const rows: MemoryRoomSummaryRow[] = Array.isArray(data) ? data as MemoryRoomSummaryRow[] : [];
-    summaries.push(...rows.map(mapMemorySummaryRow));
+    const dishCounts = await dishCountsByRoomId(rows.map((row) => row.id));
+    summaries.push(...rows.map((row) => {
+      const summary = mapMemorySummaryRow(row);
+      return {
+        ...summary,
+        dishCount: dishCounts.get(summary.id) ?? summary.dishCount
+      };
+    }));
     if (rows.length < MEMORY_ROOM_SUMMARY_PAGE_SIZE) break;
 
     const lastRow: MemoryRoomSummaryRow | undefined = rows[rows.length - 1];

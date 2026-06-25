@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
+import { removeStorageObjectsOrQueue } from "@/lib/server/account-media-cleanup";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isOwnedReviewMediaPath, REVIEW_MEDIA_BUCKET } from "@/lib/server/review-media";
+
+type ReviewDeleteRow = {
+  reviewer_name: string;
+  review_photos?: Array<{ storage_path: string | null }> | null;
+};
 
 export async function DELETE(
   _req: NextRequest,
@@ -13,7 +20,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(_req);
 
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
@@ -22,9 +29,9 @@ export async function DELETE(
   const admin = createAdminClient();
   const { data: review, error: fetchError } = await admin
     .from("reviews")
-    .select("reviewer_name")
+    .select("reviewer_name, review_photos(storage_path)")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<ReviewDeleteRow>();
 
   if (fetchError || !review) {
     return NextResponse.json({ error: "Review not found" }, { status: 404 });
@@ -34,6 +41,19 @@ export async function DELETE(
     return NextResponse.json({ error: "Not your review" }, { status: 403 });
   }
 
+  const storagePaths = Array.from(new Set((review.review_photos ?? [])
+    .map((photo) => photo.storage_path)
+    .filter((path): path is string => Boolean(path && isOwnedReviewMediaPath(path, actor.userId)))));
+  let cleanupPending = false;
+  if (storagePaths.length > 0) {
+    const cleanup = await removeStorageObjectsOrQueue(admin, {
+      bucketId: REVIEW_MEDIA_BUCKET,
+      paths: storagePaths,
+      userId: actor.userId
+    });
+    cleanupPending = cleanup.cleanupPending;
+  }
+
   const { error } = await admin
     .from("reviews")
     .delete()
@@ -41,11 +61,11 @@ export async function DELETE(
     .eq("reviewer_name", actor.actorName);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Could not delete review" }, { status: 500 });
   }
 
   invalidateSocialCachesForNames([actor.actorName]);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ cleanupPending, ok: true }, { status: cleanupPending ? 202 : 200 });
 }
 
 export async function PATCH(
@@ -57,7 +77,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
 
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
@@ -112,7 +132,7 @@ export async function PATCH(
     .eq("reviewer_name", actor.actorName);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Could not update review" }, { status: 500 });
   }
 
   invalidateSocialCachesForNames([actor.actorName]);

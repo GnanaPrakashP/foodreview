@@ -57,19 +57,11 @@ function spyTableDb() {
   };
 }
 
-function eqFilters(entry) {
-  return Object.fromEntries(
-    entry.ops.filter(([op]) => op === "eq").map(([, col, val]) => [col, val])
-  );
-}
-
-function hasOp(entry, name) {
-  return entry.ops.some(([op]) => op === name);
-}
-
 function loadRoute({
   accountDeleteError = null,
   mediaRows = [{ storage_path: "memories/room/user/intent/media.jpg" }],
+  reviewRows = [],
+  storageObjectRows = [],
   storageError = null,
   user = { id: "viewer-id" }
 } = {}) {
@@ -89,7 +81,24 @@ function loadRoute({
     ...spyTableDb(),
     rpc: async (name, params) => {
       adminRpcCalls.push({ name, params });
-      return { data: mediaRows, error: null };
+      if (name === "shared_memory_account_media_paths") return { data: mediaRows, error: null };
+      if (name === "review_media_account_storage_paths") return { data: reviewRows, error: null };
+      return { data: null, error: null };
+    },
+    schema() {
+      return {
+        from() {
+          const chain = {
+            then(res) {
+              return Promise.resolve({ data: storageObjectRows, error: null }).then(res);
+            },
+          };
+          for (const m of ["select", "eq", "like", "returns"]) {
+            chain[m] = () => chain;
+          }
+          return chain;
+        }
+      };
     },
     storage: {
       from(bucket) {
@@ -128,6 +137,33 @@ function loadRoute({
           recordMemoryOperation: () => {}
         };
       }
+      if (id === "@/lib/server/account-media-cleanup") {
+        return {
+          removeStorageObjectsOrQueue: async (_admin, input) => {
+            if (input.paths.length > 0) removedPaths.push({ bucket: input.bucketId, paths: input.paths });
+            return storageError
+              ? { cleanupPending: true, removedCount: 0 }
+              : { cleanupPending: false, removedCount: input.paths.length };
+          },
+          storageObjectPathsForPrefixes: async () => storageObjectRows.map((row) => row.name),
+          uniqueStrings: (values) => Array.from(new Set(values.filter(Boolean))),
+        };
+      }
+      if (id === "@/lib/server/review-media") {
+        return {
+          REVIEW_MEDIA_BUCKET: "review-photos",
+          REVIEW_MEDIA_QUARANTINE_BUCKET: "review-media-quarantine",
+          isOwnedReviewMediaPath: (path, userId) =>
+            typeof path === "string" &&
+            (path.startsWith(`avatars/${userId}/`) ||
+              path.startsWith(`posts/${userId}/`) ||
+              path.startsWith(`public/avatars/${userId}/`) ||
+              path.startsWith(`public/mobile/${userId}/`)),
+          isOwnedReviewMediaQuarantinePath: (path, userId) =>
+            typeof path === "string" && path.startsWith(`pending/${userId}/`),
+          publicReviewMediaPathFromUrl: (value) => value ?? null,
+        };
+      }
       if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => serverClient };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminClient };
       throw new Error(`Unexpected require in delete-account route tests: ${id}`);
@@ -155,14 +191,34 @@ test("delete account route: removes DB-backed memory media before deleting the a
 
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+  assert.equal(body(res).cleanupPending, false);
   assert.equal(JSON.stringify(adminRpcCalls), JSON.stringify([{
     name: "shared_memory_account_media_paths",
+    params: { p_user_id: "user-123" }
+  }, {
+    name: "review_media_account_storage_paths",
     params: { p_user_id: "user-123" }
   }]));
   assert.equal(JSON.stringify(removedPaths), JSON.stringify([{
     bucket: "memory-media",
     paths: ["memories/room/user/intent/media.jpg"]
   }]));
+  assert.equal(JSON.stringify(serverRpcCalls), JSON.stringify(["delete_current_account"]));
+});
+
+test("delete account route: durable cleanup pending returns 202 after account deletion", async () => {
+  const { route, removedPaths, serverRpcCalls } = loadRoute({
+    mediaRows: [{ storage_path: "memories/room/user-123/intent/media.jpg" }],
+    storageError: { message: "storage unavailable" },
+    user: { id: "user-123" },
+  });
+
+  const res = await route.POST();
+
+  assert.equal(status(res), 202);
+  assert.equal(body(res).ok, true);
+  assert.equal(body(res).cleanupPending, true);
+  assert.equal(removedPaths.length, 1);
   assert.equal(JSON.stringify(serverRpcCalls), JSON.stringify(["delete_current_account"]));
 });
 

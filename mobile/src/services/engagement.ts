@@ -70,14 +70,22 @@ export async function togglePostBookmark(input: ToggleBookmarkInput) {
 }
 
 export async function deletePost(input: { postId: string }) {
-  const viewerName = await getViewerName();
-  const { error } = await supabase
-    .from("reviews")
-    .delete()
-    .eq("id", input.postId)
-    .eq("reviewer_name", viewerName);
+  await getViewerName();
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error("Log in before deleting this post");
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before deleting this post");
 
-  if (error) throw new Error(error.message);
+  const response = await fetch(apiUrl(`/api/reviews/${encodeURIComponent(input.postId)}`), {
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    method: "DELETE"
+  });
+  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Could not delete post");
+  }
 }
 
 export async function requestCircleAccess(input: RequestCircleInput): Promise<"pending" | "joined"> {
