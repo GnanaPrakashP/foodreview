@@ -298,8 +298,10 @@ test("cleanup jobs have an operational protected worker and paginated storage en
   assert.match(migration, /next_retry_at\s+timestamptz not null default now\(\)/);
   assert.match(migration, /status in \('pending', 'running', 'succeeded', 'failed'\)/);
   assert.match(cleanupHelper, /function isOwnedAccountStoragePath/);
-  assert.match(cleanupHelper, /for \(let from = 0; ; from \+= pageSize\)/);
-  assert.match(cleanupHelper, /\.range\(from, from \+ pageSize - 1\)/);
+  assert.match(cleanupHelper, /visitedPrefixes = new Set<string>\(\)/);
+  assert.match(cleanupHelper, /\.storage\.from\(bucketId\)\.list\(prefix/);
+  assert.match(cleanupHelper, /offset,/, "storage cleanup enumeration must paginate through the Storage API");
+  assert.doesNotMatch(cleanupHelper, /\.schema\("storage"\)/);
   assert.match(cleanupHelper, /recordAccountMediaCleanupJob/);
   assert.match(cleanupHelper, /runAccountMediaCleanupJobs/);
   assert.match(cleanupHelper, /status: "running"/);

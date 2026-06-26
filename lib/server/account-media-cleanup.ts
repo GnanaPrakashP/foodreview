@@ -9,6 +9,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
+export const STORAGE_REMOVE_BATCH_SIZE = 100;
+
 export type AccountMediaCleanupJobRow = {
   attempts: number;
   bucket_id: string;
@@ -20,6 +22,23 @@ export type AccountMediaCleanupJobRow = {
 
 export function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+function chunkStrings(values: string[], size: number) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function cleanupErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  return "storage_remove_failed";
 }
 
 export function isOwnedAccountStoragePath({
@@ -49,23 +68,37 @@ export async function storageObjectPathsForPrefixes(
   prefixes: string[],
   pageSize = 1000
 ) {
-  const storageSchema = admin.schema("storage");
   const paths: string[] = [];
-  for (const prefix of prefixes) {
-    for (let from = 0; ; from += pageSize) {
-      const { data, error } = await storageSchema
-        .from("objects")
-        .select("name")
-        .eq("bucket_id", bucketId)
-        .like("name", `${prefix}%`)
-        .order("name", { ascending: true })
-        .range(from, from + pageSize - 1)
-        .returns<Array<{ name: string }>>();
+  const visitedPrefixes = new Set<string>();
+  const listPrefix = async (prefix: string) => {
+    if (visitedPrefixes.has(prefix)) return;
+    visitedPrefixes.add(prefix);
+
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await admin.storage.from(bucketId).list(prefix, {
+        limit: pageSize,
+        offset,
+        sortBy: { column: "name", order: "asc" }
+      });
       if (error) throw error;
       const page = data ?? [];
-      paths.push(...page.map((row) => row.name));
+      for (const item of page) {
+        const name = item.name;
+        if (!name || name === ".emptyFolderPlaceholder") continue;
+        const objectPath = `${prefix}${name}`;
+        const isFolder = item.id == null && item.metadata == null;
+        if (isFolder) {
+          await listPrefix(`${objectPath}/`);
+        } else {
+          paths.push(objectPath);
+        }
+      }
       if (page.length < pageSize) break;
     }
+  };
+
+  for (const prefix of prefixes) {
+    await listPrefix(prefix);
   }
   return uniqueStrings(paths);
 }
@@ -89,7 +122,7 @@ export async function recordAccountMediaCleanupJob(
     }));
   if (storagePaths.length === 0) return null;
 
-  const message = input.error instanceof Error ? input.error.message : "storage_remove_failed";
+  const message = cleanupErrorMessage(input.error);
   const { data, error } = await admin
     .from("account_media_cleanup_jobs")
     .insert({
@@ -126,11 +159,35 @@ export async function removeStorageObjectsOrQueue(
     }));
   if (paths.length === 0) return { cleanupPending: false, removedCount: 0 };
 
-  const { error } = await admin.storage.from(input.bucketId).remove(paths);
-  if (!error) return { cleanupPending: false, removedCount: paths.length };
+  const failedPaths: string[] = [];
+  let lastError: unknown = null;
+  let removedCount = 0;
 
-  await recordAccountMediaCleanupJob(admin, { ...input, error, paths });
-  return { cleanupPending: true, removedCount: 0 };
+  for (const batch of chunkStrings(paths, STORAGE_REMOVE_BATCH_SIZE)) {
+    try {
+      const { error } = await admin.storage.from(input.bucketId).remove(batch);
+      if (error) {
+        failedPaths.push(...batch);
+        lastError = error;
+        continue;
+      }
+      removedCount += batch.length;
+    } catch (error) {
+      failedPaths.push(...batch);
+      lastError = error;
+    }
+  }
+
+  if (failedPaths.length === 0) {
+    return { cleanupPending: false, removedCount };
+  }
+
+  await recordAccountMediaCleanupJob(admin, {
+    ...input,
+    error: lastError ?? new Error("storage_remove_failed"),
+    paths: failedPaths
+  });
+  return { cleanupPending: true, removedCount };
 }
 
 export async function runAccountMediaCleanupJobs(admin: AdminClient, limit = 25) {

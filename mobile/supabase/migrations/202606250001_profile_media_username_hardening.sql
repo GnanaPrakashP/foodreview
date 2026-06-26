@@ -83,6 +83,9 @@ drop policy if exists "Users can insert review media upload intents" on public.r
 drop policy if exists "Users can update review media upload intents" on public.review_media_upload_intents;
 drop policy if exists "Users can delete review media upload intents" on public.review_media_upload_intents;
 
+grant select on table public.review_media_upload_intents to authenticated;
+grant all privileges on table public.review_media_upload_intents to service_role;
+
 -- ---------------------------------------------------------------------------
 -- Review photo ownership and finalized-intent enforcement for new media rows.
 -- Legacy rows remain readable, but rows tied to new upload intents must match
@@ -332,6 +335,9 @@ create index if not exists account_media_cleanup_jobs_ready_idx
 alter table public.account_media_cleanup_jobs enable row level security;
 drop policy if exists "Account media cleanup jobs are service only" on public.account_media_cleanup_jobs;
 
+revoke all on table public.account_media_cleanup_jobs from anon, authenticated;
+grant all privileges on table public.account_media_cleanup_jobs to service_role;
+
 create or replace function public.review_media_account_storage_paths(p_user_id uuid)
 returns table(storage_path text)
 language sql
@@ -429,7 +435,7 @@ as $$
       from visible_reviews
     ) as unique_places,
     (
-      select count(distinct visible_dishes.place_key || chr(0) || visible_dishes.dish_name)::integer
+      select count(distinct (visible_dishes.place_key, visible_dishes.dish_name))::integer
       from visible_dishes
     ) as unique_dishes;
 $$;

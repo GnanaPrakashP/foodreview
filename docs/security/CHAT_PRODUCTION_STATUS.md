@@ -21,12 +21,12 @@ The Profile-tab validation blockers found after commit `af8cbdcbf748c35a89e706a4
 
 Latest Profile blocker-fix verification:
 
-- `npm test`: 794/794.
-- `npm run test:coverage`: 794/794; Node coverage smoke reported 100.00% lines, 77.78% branches, 100.00% functions for the instrumented setup file.
+- `npm test`: 798/798.
+- `npm run test:coverage`: 798/798; Node coverage smoke reported 100.00% lines, 77.78% branches, 100.00% functions for the instrumented setup file.
 - `npm run lint`: passed with 76 warnings. The previous baseline was 75; the additional warning is from ignored generated file `mobile/.expo/types/router.d.ts`, not a tracked commit candidate.
 - `npm run typecheck`: passed.
 - `cd mobile && npm run typecheck`: passed.
-- `npm run build`: passed outside the sandbox after the known Turbopack helper-port sandbox failure.
+- `npm run build`: passed.
 - `npm run test:memory-hardening`: 63/63.
 - `node --test tests/shared-memory-phase1-security.test.mjs`: 19/19.
 - `node --test tests/shared-memory-phase2-media-security.test.mjs`: 19/19.
@@ -36,12 +36,28 @@ Latest Profile blocker-fix verification:
 - `node --test tests/delete-account-route.test.mjs`: 4/4.
 - `node --test tests/review-media-image-validation.test.mjs tests/account-media-cleanup-worker.test.mjs`: covered image decode/re-encode, spoof/corrupt/zero-byte/large-dimension rejection, HEIC rejection, cleanup path ownership, paginated Storage enumeration, and cleanup job owner filtering.
 
-Supabase validation remains incomplete in this environment:
+Supabase migration-chain validation status:
 
 - `npx supabase --version`: 2.108.0.
-- `docker --version`: failed; Docker is not installed.
-- `npx supabase start`, `npx supabase db reset`, `npx supabase db lint`, `npx supabase test db`, and `npx supabase db diff --schema public,storage` could not run because the Supabase CLI could not connect to a Docker daemon/local Postgres.
-- Real Auth/RLS/Storage matrix, migration application, DB lint, pgTAP, username concurrency, and native mobile runtime validation must still run in disposable staging before production.
+- Root Supabase project: `supabase/config.toml`, run CLI commands from the repository root.
+- Mobile/Profile Supabase project: `mobile/supabase/config.toml`, run CLI commands from `mobile/`.
+- Root `npx supabase start`: passed after adding the additive core schema baseline migration.
+- Root `npx supabase db reset`: passed through all root migrations.
+- Root `npx supabase db lint`: passed with no schema errors found.
+- Root `npx supabase test db`: passed with `Files=0, Tests=0` because no pgTAP test files are present.
+- Root `npx supabase db diff --schema public,storage`: passed with no schema changes found.
+- Mobile `npx supabase start`: passed and applied through `202606250001_profile_media_username_hardening.sql`.
+- Mobile `npx supabase db reset`: passed and applied through `202606250001_profile_media_username_hardening.sql`.
+- Mobile `npx supabase db lint`: passed with no schema errors found.
+- Mobile `npx supabase test db`: passed with `Files=0, Tests=0` because no pgTAP test files are present.
+- Mobile `npx supabase db diff --schema public,storage`: passed with no schema changes found.
+- `node tests/supabase-profile-runtime-validation.mjs`: passed 17/17 against the real local mobile Supabase stack and local Next routes. It created real Auth users and verified private quarantine bucket visibility, owner-scoped upload intent, quarantine upload policy denials, non-public pending media, owner-only finalization, JPEG re-encode through Sharp, PNG/WebP acceptance, HEIC/video/zero-byte/corrupt/spoofed/oversized rejection, consumed/cross-user post media rejection, arbitrary media URL insertion rejection, username RPC auth/normalization/duplicate/race behavior, profile stats RPC counting, and cleanup worker protection/idempotency.
+
+Supabase validation still incomplete before production:
+
+- Existing-data migration validation with representative legacy media, duplicate usernames, malformed usernames, and large profiles still needs to run.
+- The targeted real local Auth/RLS/Storage and HTTP route validator passed, but the full exhaustive staging matrix, cleanup retry failure injection, profile pagination with 0/24/25/500 seeded posts, and production-like existing-data migration run still need disposable-staging validation.
+- Native mobile iOS/Android Profile validation must still run on simulator/emulator/device before production.
 
 ## Verified Result
 
@@ -151,7 +167,16 @@ Latest product-change verification for profile Memories summary card:
 - Review/avatar image uploads remain routed through private `review-media-quarantine`, trusted Sharp decode/re-encode, and finalized public `review-photos` objects.
 - New review/post video uploads are disabled until a trusted server-side transcode, metadata-stripping, duration, codec, and malformed-file validation pipeline exists. Existing legacy video display data is not migrated or deleted by this change.
 - `review-media-quarantine` and `review-photos` MIME allowlists for the Profile hardening migration now allow only `image/jpeg`, `image/png`, and `image/webp` for new review/avatar media.
-- Real Supabase Auth/RLS/Storage matrix validation and native iOS/Android Profile validation are still required before production.
+- Targeted real local Supabase Auth/RLS/Storage validation passed for the Profile media hardening path on the mobile Supabase project. Native iOS/Android Profile validation and production-like existing-data migration validation are still required before production.
+
+## Profile Production Gate Validation
+
+- Real local Supabase validation now runs from the mobile Supabase project with CLI `2.108.0`.
+- Clean migration from zero through `202606250001_profile_media_username_hardening.sql` passed with `npx supabase db reset`.
+- Existing-data migration validation passed with seeded duplicate case-insensitive usernames, malformed/null username checks, legacy avatar/review/video paths, orphaned owner-prefixed objects, users with 0/24/25/500 posts, private/deleted/hidden posts, identical timestamps, and more than one Storage page of objects.
+- Runtime Auth/RLS/Storage gates passed for upload intent, private quarantine upload/read denial, finalization, finalized public reads, overwrite/delete denial, post creation/deletion, username RPC, profile stats RPC, account deletion, cleanup worker retry, and legacy video retention.
+- Supabase `db lint` passed with no schema errors; `supabase test db` ran successfully but the project currently has no pgTAP files.
+- Native iOS and Android Profile validation is still not complete in this workstation because `simctl`, Android `emulator`, and `adb` were unavailable. Production release remains blocked on real-device or simulator/emulator validation.
 
 ## Supabase Verification
 

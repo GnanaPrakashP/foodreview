@@ -35,7 +35,9 @@ vm.runInNewContext(outputText, {
 
 const {
   isOwnedAccountStoragePath,
+  removeStorageObjectsOrQueue,
   recordAccountMediaCleanupJob,
+  STORAGE_REMOVE_BATCH_SIZE,
   storageObjectPathsForPrefixes
 } = mod.exports;
 
@@ -70,49 +72,61 @@ test("account media cleanup path ownership rejects cross-user review, quarantine
 });
 
 test("account media cleanup storage enumeration paginates beyond one storage page", async () => {
-  const ranges = [];
-  const pages = [
-    Array.from({ length: 2 }, (_, i) => ({ name: `posts/user-a/${i}/media.jpg` })),
-    [{ name: "posts/user-a/2/media.jpg" }]
-  ];
+  const listCalls = [];
   const admin = {
-    schema(schemaName) {
-      assert.equal(schemaName, "storage");
-      return {
-        from(table) {
-          assert.equal(table, "objects");
-          const chain = {
-            _from: 0,
-            _to: 0,
-            eq() { return chain; },
-            like() { return chain; },
-            order() { return chain; },
-            range(from, to) {
-              ranges.push([from, to]);
-              chain._from = from;
-              chain._to = to;
-              return chain;
-            },
-            returns() { return chain; },
-            select() { return chain; },
-            then(resolve) {
-              const index = chain._from === 0 ? 0 : 1;
-              return Promise.resolve({ data: pages[index], error: null }).then(resolve);
+    storage: {
+      from(bucketId) {
+        assert.equal(bucketId, "review-photos");
+        return {
+          list(prefix, options) {
+            listCalls.push([prefix, options.offset, options.limit]);
+            if (prefix === "posts/user-a/" && options.offset === 0) {
+              return Promise.resolve({
+                data: [
+                  { id: null, metadata: null, name: "bulk" },
+                  { id: "single-id", metadata: {}, name: "single.jpg" }
+                ],
+                error: null
+              });
             }
-          };
-          return chain;
-        }
-      };
+            if (prefix === "posts/user-a/" && options.offset === 2) {
+              return Promise.resolve({ data: [], error: null });
+            }
+            if (prefix === "posts/user-a/bulk/" && options.offset === 0) {
+              return Promise.resolve({
+                data: [
+                  { id: "0", metadata: {}, name: "object-0.jpg" },
+                  { id: "1", metadata: {}, name: "object-1.jpg" }
+                ],
+                error: null
+              });
+            }
+            if (prefix === "posts/user-a/bulk/" && options.offset === 2) {
+              return Promise.resolve({
+                data: [{ id: "2", metadata: {}, name: "object-2.jpg" }],
+                error: null
+              });
+            }
+            return Promise.resolve({ data: [], error: null });
+          }
+        };
+      }
     }
   };
 
   const paths = await storageObjectPathsForPrefixes(admin, "review-photos", ["posts/user-a/"], 2);
 
-  assert.deepEqual(ranges, [[0, 1], [2, 3]]);
+  assert.equal(JSON.stringify(listCalls), JSON.stringify([
+    ["posts/user-a/", 0, 2],
+    ["posts/user-a/bulk/", 0, 2],
+    ["posts/user-a/bulk/", 2, 2],
+    ["posts/user-a/", 2, 2]
+  ]));
   assert.equal(JSON.stringify(paths), JSON.stringify([
-    "posts/user-a/0/media.jpg",
-    "posts/user-a/1/media.jpg",
-    "posts/user-a/2/media.jpg"
+    "posts/user-a/bulk/object-0.jpg",
+    "posts/user-a/bulk/object-1.jpg",
+    "posts/user-a/bulk/object-2.jpg",
+    "posts/user-a/single.jpg"
   ]));
 });
 
@@ -147,4 +161,93 @@ test("account media cleanup job records only owner-scoped paths", async () => {
   assert.equal(jobId, "job-1");
   assert.equal(JSON.stringify(inserted.storage_paths), JSON.stringify(["posts/user-a/intent/media.jpg"]));
   assert.equal(inserted.status, "pending");
+});
+
+test("account media cleanup removes storage objects in bounded batches", async () => {
+  const removeCalls = [];
+  const paths = Array.from(
+    { length: STORAGE_REMOVE_BATCH_SIZE + 3 },
+    (_, index) => `posts/user-a/intent-${index}/media.jpg`
+  );
+  const admin = {
+    storage: {
+      from(bucketId) {
+        assert.equal(bucketId, "review-photos");
+        return {
+          remove(batch) {
+            removeCalls.push(batch);
+            return Promise.resolve({ error: null });
+          }
+        };
+      }
+    }
+  };
+
+  const result = await removeStorageObjectsOrQueue(admin, {
+    bucketId: "review-photos",
+    paths,
+    userId: "user-a"
+  });
+
+  assert.equal(result.cleanupPending, false);
+  assert.equal(result.removedCount, paths.length);
+  assert.equal(removeCalls.length, 2);
+  assert.equal(removeCalls[0].length, STORAGE_REMOVE_BATCH_SIZE);
+  assert.equal(removeCalls[1].length, 3);
+});
+
+test("account media cleanup queues only failed owner-scoped storage batches", async () => {
+  const paths = Array.from(
+    { length: STORAGE_REMOVE_BATCH_SIZE + 2 },
+    (_, index) => `posts/user-a/intent-${index}/media.jpg`
+  );
+  paths.push("posts/user-b/not-owned/media.jpg");
+
+  let removeIndex = 0;
+  let inserted;
+  const admin = {
+    from(table) {
+      assert.equal(table, "account_media_cleanup_jobs");
+      const chain = {
+        insert(row) {
+          inserted = row;
+          return chain;
+        },
+        maybeSingle() {
+          return Promise.resolve({ data: { id: "job-1" }, error: null });
+        },
+        select() {
+          return chain;
+        }
+      };
+      return chain;
+    },
+    storage: {
+      from(bucketId) {
+        assert.equal(bucketId, "review-photos");
+        return {
+          remove() {
+            removeIndex += 1;
+            if (removeIndex === 1) return Promise.resolve({ error: null });
+            return Promise.resolve({ error: new Error("storage unavailable") });
+          }
+        };
+      }
+    }
+  };
+
+  const result = await removeStorageObjectsOrQueue(admin, {
+    bucketId: "review-photos",
+    paths,
+    userId: "user-a"
+  });
+
+  assert.equal(result.cleanupPending, true);
+  assert.equal(result.removedCount, STORAGE_REMOVE_BATCH_SIZE);
+  assert.equal(inserted.status, "pending");
+  assert.equal(inserted.last_error, "storage unavailable");
+  assert.equal(JSON.stringify(inserted.storage_paths), JSON.stringify([
+    `posts/user-a/intent-${STORAGE_REMOVE_BATCH_SIZE}/media.jpg`,
+    `posts/user-a/intent-${STORAGE_REMOVE_BATCH_SIZE + 1}/media.jpg`
+  ]));
 });

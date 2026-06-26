@@ -2,7 +2,9 @@
 
 These migrations support mobile-only flows that are not yet in the root Supabase migration set.
 
-Run the SQL files against the same Supabase project used by `mobile/.env.local`.
+Run the SQL files against the same Supabase project used by `mobile/.env.local`. The Supabase CLI project root is `mobile/`; run CLI commands from `mobile`, because the config lives at `mobile/supabase/config.toml`.
+
+The first migration, `202505010001_core_schema_baseline.sql`, is an additive compatibility baseline for local/staging migration replay. It creates the core `profiles`, `reviews`, `review_photos`, `comments`, `likes`, storage bucket, and helper-function dependencies that the mobile migration chain already expects in deployed databases. It is intentionally forward-safe and must not be replaced by a fake minimal table stub.
 
 For the Table Memory / Friends create-room flow, run:
 
@@ -178,13 +180,13 @@ brew install supabase/tap/supabase
 
 supabase --version
 
-# Local DB workflow, after creating/linking mobile/supabase/config.toml:
-cd mobile/supabase
+# Local DB workflow:
+cd mobile
 supabase start
 supabase db reset
 
 # Staging workflow:
-cd mobile/supabase
+cd mobile
 supabase login
 supabase link --project-ref <staging-project-ref>
 supabase db push
