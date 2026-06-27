@@ -40,3 +40,19 @@ test("mobile Supabase config maps Android loopback to emulator host without chan
   assert.match(supabaseConfigSource, /hostname\.replace\(\/\[\^A-Za-z0-9\._-\]\/g, ["']_["']\)/);
   assert.match(supabaseConfigSource, /storageKey: supabaseAuthStorageKey/);
 });
+
+test("mobile Supabase auth storage chunks large native SecureStore sessions", () => {
+  assert.match(supabaseConfigSource, /const SECURE_STORE_CHUNK_SIZE = 1800;/);
+  assert.match(supabaseConfigSource, /const SECURE_STORE_CHUNK_INDEX_SUFFIX = ["']\.chunks["'];/);
+  assert.match(supabaseConfigSource, /const SECURE_STORE_CHUNK_KEY_SUFFIX = ["']\.chunk\.["'];/);
+  assert.doesNotMatch(supabaseConfigSource, /SECURE_STORE_CHUNK_(?:INDEX_SUFFIX|KEY_SUFFIX) = ["'][^"']*:/);
+  assert.match(supabaseConfigSource, /function chunkSecureStoreValue/);
+  assert.match(supabaseConfigSource, /function getNativeSecureStoreItem/);
+  assert.match(supabaseConfigSource, /function setNativeSecureStoreItem/);
+  assert.match(supabaseConfigSource, /function removeNativeSecureStoreItem/);
+  assert.match(supabaseConfigSource, /value\.length <= SECURE_STORE_CHUNK_SIZE/);
+  assert.match(supabaseConfigSource, /SecureStore\.setItemAsync\(secureStoreChunkKey\(key, index\), chunk\)/);
+  assert.match(supabaseConfigSource, /SecureStore\.setItemAsync\(\s*secureStoreChunkIndexKey\(key\),\s*JSON\.stringify/);
+  assert.match(supabaseConfigSource, /SecureStore\.deleteItemAsync\(key\)/);
+  assert.match(supabaseConfigSource, /removeSecureStoreChunks\(key, chunkIndex\)/);
+});
