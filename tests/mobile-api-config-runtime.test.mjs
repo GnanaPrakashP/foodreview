@@ -5,12 +5,15 @@ import { test } from "node:test";
 const apiConfigSource = readFileSync(new URL("../mobile/src/api/config.ts", import.meta.url), "utf8");
 const supabaseConfigSource = readFileSync(new URL("../mobile/src/api/supabase.ts", import.meta.url), "utf8");
 
-test("mobile API config preserves explicit remote hosts and maps Android loopback to emulator host", () => {
+test("mobile API config preserves explicit remote hosts and supports both Android local API paths", () => {
   assert.match(apiConfigSource, /function isLoopbackHostname/);
+  assert.match(apiConfigSource, /function shouldUseAndroidEmulatorHost/);
   assert.match(apiConfigSource, /function runtimeEnvValue/);
   assert.match(apiConfigSource, /runtimeEnvValue\(["']EXPO_PUBLIC_API_BASE_URL["']\) \?\? process\.env\.EXPO_PUBLIC_API_BASE_URL/);
   assert.match(apiConfigSource, /if \(!isLoopbackHostname\(url\.hostname\)\)\s*{\s*return url\.toString\(\)\.replace/);
-  assert.match(apiConfigSource, /Platform\.OS === ["']android["'][\s\S]*url\.hostname = ["']10\.0\.2\.2["']/);
+  assert.match(apiConfigSource, /Platform\.OS === ["']android["'] && shouldUseAndroidEmulatorHost\(url\.hostname\)[\s\S]*url\.hostname = ["']10\.0\.2\.2["']/);
+  assert.match(apiConfigSource, /return value\.replace\(["']:\/\/localhost["'], ["']:\/\/10\.0\.2\.2["']\);/);
+  assert.doesNotMatch(apiConfigSource, /\.replace\(["']:\/\/127\.0\.0\.1["'], ["']:\/\/10\.0\.2\.2["']\)/);
   assert.doesNotMatch(
     apiConfigSource,
     /const expoHost = expoDevServerHostname\(\);\s*if \(expoHost\)\s*{\s*url\.hostname = expoHost;/,

@@ -22,8 +22,8 @@ const localEnv = loadEnvFiles([
 
 const artifactDir = envValue("ANDROID_PROFILE_ARTIFACT_DIR", "/private/tmp/profile-android-validation");
 const metroPort = envValue("EXPO_PORT", "8081");
-const apiBaseUrl = envValue("EXPO_PUBLIC_API_BASE_URL", "http://127.0.0.1:3025");
-const supabaseUrl = envValue("EXPO_PUBLIC_SUPABASE_URL", envValue("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:55321"));
+const apiBaseUrl = envValue("EXPO_PUBLIC_API_BASE_URL");
+const supabaseUrl = envValue("EXPO_PUBLIC_SUPABASE_URL", envValue("NEXT_PUBLIC_SUPABASE_URL", ""));
 const supabaseAnonKey = envValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", envValue("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""));
 const autoLoginEmail = envValue("EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL", "");
 const autoLoginPassword = envValue("EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD", "");
@@ -122,6 +122,8 @@ async function main() {
 
 function validateConfiguration() {
   const missing = [];
+  if (!apiBaseUrl) missing.push("EXPO_PUBLIC_API_BASE_URL");
+  if (!supabaseUrl) missing.push("EXPO_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL");
   if (!supabaseAnonKey) missing.push("EXPO_PUBLIC_SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY");
   if (!autoLoginEmail) missing.push("EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL");
   if (!autoLoginPassword) missing.push("EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD");
@@ -145,7 +147,7 @@ async function ensureMetro() {
 
   writeFileSync(metroLogPath, "");
   console.log(`Starting Expo Metro on ${metroPort}. Logs: ${metroLogPath}`);
-  metroProcess = spawn("npx", ["expo", "start", "--host", "localhost", "--port", metroPort], {
+  metroProcess = spawn("npx", ["expo", "start", "--clear", "--host", "localhost", "--port", metroPort], {
     cwd: mobileDir,
     env: runtimeEnv,
     stdio: ["ignore", "pipe", "pipe"]

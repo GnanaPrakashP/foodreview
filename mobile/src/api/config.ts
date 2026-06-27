@@ -50,6 +50,10 @@ function isLoopbackHostname(value: string) {
   return value === "localhost" || value === "127.0.0.1";
 }
 
+function shouldUseAndroidEmulatorHost(value: string) {
+  return value === "localhost";
+}
+
 function normalizeApiBaseUrl(value: string) {
   if (Platform.OS === "web") {
     const currentHost = globalThis.location?.hostname;
@@ -71,7 +75,7 @@ function normalizeApiBaseUrl(value: string) {
       return url.toString().replace(/\/$/, "");
     }
 
-    if (Platform.OS === "android") {
+    if (Platform.OS === "android" && shouldUseAndroidEmulatorHost(url.hostname)) {
       url.hostname = "10.0.2.2";
       return url.toString().replace(/\/$/, "");
     }
@@ -84,7 +88,7 @@ function normalizeApiBaseUrl(value: string) {
     return url.toString().replace(/\/$/, "");
   } catch {
     if (Platform.OS !== "android") return value;
-    return value.replace("://localhost", "://10.0.2.2").replace("://127.0.0.1", "://10.0.2.2");
+    return value.replace("://localhost", "://10.0.2.2");
   }
 }
 
