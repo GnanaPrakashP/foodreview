@@ -199,10 +199,15 @@ test("profile statistics are server-derived and profile posts use stable keyset 
   assert.match(profileScreen, /queryClient\.invalidateQueries\(\{ queryKey: \["profile"\] \}\)/);
   assert.match(createPostHook, /queryClient\.invalidateQueries\(\{ queryKey: \["profile"\] \}\)/);
   assert.match(profileScreen, /<FlatList/);
-  assert.match(profileScreen, /ListHeaderComponent/);
+  assert.match(profileScreen, /<View style=\{styles\.profileHeader\}>[\s\S]*<ProfilePager/);
+  assert.doesNotMatch(profileScreen, /ListHeaderComponent=\{renderListHeader\}/);
   assert.match(profileScreen, /onEndReached=\{onEndReached\}/);
   assert.match(profileScreen, /RefreshControl/);
-  assert.doesNotMatch(profileScreen, /<ProfilePager/);
+  assert.match(profileScreen, /<ProfilePager/);
+  assert.match(profileScreen, /function ProfilePager/);
+  assert.match(profileScreen, /<Animated\.ScrollView/);
+  assert.match(profileScreen, /horizontal/);
+  assert.match(profileScreen, /pagingEnabled/);
   assert.doesNotMatch(profileScreen, /scrollEnabled=\{false\}/);
 });
 

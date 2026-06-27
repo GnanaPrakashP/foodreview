@@ -1,10 +1,20 @@
-import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
-import { registerForPushNotifications } from "@/services/notifications";
+import { loadNotificationsModule, registerForPushNotifications } from "@/services/notifications";
 import { useSessionStore } from "@/stores/sessionStore";
 
-function roomIdFromNotificationResponse(response: Notifications.NotificationResponse | null | undefined) {
+type NotificationResponseLike = {
+  notification: {
+    request: {
+      content: {
+        data?: Record<string, unknown>;
+      };
+      identifier?: string;
+    };
+  };
+};
+
+function roomIdFromNotificationResponse(response: NotificationResponseLike | null | undefined) {
   const roomId = response?.notification.request.content.data?.roomId;
   return typeof roomId === "string" && roomId.trim() ? roomId.trim() : "";
 }
@@ -34,7 +44,10 @@ export function PushNotificationBootstrap() {
   }, [username]);
 
   useEffect(() => {
-    function openMemoryRoom(response: Notifications.NotificationResponse | null | undefined) {
+    let alive = true;
+    let subscription: { remove: () => void } | null = null;
+
+    function openMemoryRoom(response: NotificationResponseLike | null | undefined) {
       const roomId = roomIdFromNotificationResponse(response);
       const notificationId = response?.notification.request.identifier;
       if (!roomId || handledNotificationRef.current === notificationId) return;
@@ -42,12 +55,21 @@ export function PushNotificationBootstrap() {
       router.push(`/memories/${roomId}`);
     }
 
-    Notifications.getLastNotificationResponseAsync()
-      .then(openMemoryRoom)
+    loadNotificationsModule()
+      .then((Notifications) => {
+        if (!alive || !Notifications) return;
+        Notifications.getLastNotificationResponseAsync()
+          .then(openMemoryRoom)
+          .catch(() => {});
+
+        subscription = Notifications.addNotificationResponseReceivedListener(openMemoryRoom);
+      })
       .catch(() => {});
 
-    const subscription = Notifications.addNotificationResponseReceivedListener(openMemoryRoom);
-    return () => subscription.remove();
+    return () => {
+      alive = false;
+      subscription?.remove();
+    };
   }, [router]);
 
   return null;

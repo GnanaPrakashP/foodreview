@@ -18,6 +18,16 @@ type ConstantsWithHosts = typeof Constants & {
   } | null;
 };
 
+type RuntimeProcessGlobal = typeof globalThis & {
+  process?: {
+    env?: Record<string, string | undefined>;
+  };
+};
+
+function runtimeEnvValue(name: string) {
+  return (globalThis as RuntimeProcessGlobal).process?.env?.[name];
+}
+
 function hostnameFromExpoHost(value: string | null | undefined) {
   if (!value) return "";
   return value.replace(/^https?:\/\//, "").split("/")[0]?.split(":")[0] ?? "";
@@ -36,10 +46,14 @@ function expoDevServerHostname() {
   return candidates.map(hostnameFromExpoHost).find(Boolean) ?? "";
 }
 
+function isLoopbackHostname(value: string) {
+  return value === "localhost" || value === "127.0.0.1";
+}
+
 function normalizeApiBaseUrl(value: string) {
   if (Platform.OS === "web") {
     const currentHost = globalThis.location?.hostname;
-    if (!currentHost || !/^(localhost|127\.0\.0\.1)$/.test(currentHost)) return value;
+    if (!currentHost || !isLoopbackHostname(currentHost)) return value;
 
     try {
       const url = new URL(value);
@@ -52,20 +66,29 @@ function normalizeApiBaseUrl(value: string) {
 
   try {
     const url = new URL(value);
-    const expoHost = expoDevServerHostname();
-    if (expoHost) {
-      url.hostname = expoHost;
+
+    if (!isLoopbackHostname(url.hostname)) {
       return url.toString().replace(/\/$/, "");
     }
-  } catch {
-    // Fall through to Android emulator localhost normalization.
-  }
 
-  if (Platform.OS !== "android") return value;
-  return value.replace("://localhost", "://10.0.2.2").replace("://127.0.0.1", "://10.0.2.2");
+    if (Platform.OS === "android") {
+      url.hostname = "10.0.2.2";
+      return url.toString().replace(/\/$/, "");
+    }
+
+    const expoHost = expoDevServerHostname();
+    if (expoHost && !isLoopbackHostname(expoHost)) {
+      url.hostname = expoHost;
+    }
+
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    if (Platform.OS !== "android") return value;
+    return value.replace("://localhost", "://10.0.2.2").replace("://127.0.0.1", "://10.0.2.2");
+  }
 }
 
-export const apiBaseUrl = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
+export const apiBaseUrl = normalizeApiBaseUrl(runtimeEnvValue("EXPO_PUBLIC_API_BASE_URL") ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
 
 export function apiUrl(path: string) {
   if (!apiBaseUrl) return path;

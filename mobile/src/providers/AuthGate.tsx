@@ -9,10 +9,14 @@ export function AuthGate() {
   const pathname = usePathname();
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
+  const isAutoLoginPending = useSessionStore((state) => state.isAutoLoginPending);
   const profile = useSessionStore((state) => state.profile);
 
   useEffect(() => {
     if (!isReady) return;
+    // Hold off on any routing while the dev auto-login finishes, otherwise the
+    // brief signed-out window would flash the login screen before it lands.
+    if (isAutoLoginPending) return;
 
     if (!isAuthenticated) {
       if (!signedOutRoutes.has(pathname)) router.replace("/login");
@@ -22,7 +26,7 @@ export function AuthGate() {
     if (signedOutRoutes.has(pathname)) {
       router.replace(profile ? "/" : "/onboarding/profile");
     }
-  }, [isAuthenticated, isReady, pathname, profile, router]);
+  }, [isAuthenticated, isAutoLoginPending, isReady, pathname, profile, router]);
 
   return null;
 }

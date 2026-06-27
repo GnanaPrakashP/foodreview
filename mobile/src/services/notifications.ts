@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
+import type * as ExpoNotifications from "expo-notifications";
 import { Platform } from "react-native";
 import { supabase } from "@/api/supabase";
 
@@ -10,18 +10,42 @@ type PushRegistrationResult =
 export type NotificationPermissionSummary = {
   canAskAgain: boolean;
   granted: boolean;
-  status: Notifications.PermissionStatus;
+  status: ExpoNotifications.PermissionStatus | "unavailable";
 };
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: false,
-    shouldSetBadge: true,
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true
-  })
-});
+type NotificationsModule = typeof import("expo-notifications");
+
+let notificationsModulePromise: Promise<NotificationsModule | null> | null = null;
+let notificationHandlerConfigured = false;
+
+function isAndroidExpoGo() {
+  return Platform.OS === "android" && Constants.appOwnership === "expo";
+}
+
+export async function loadNotificationsModule(): Promise<NotificationsModule | null> {
+  if (Platform.OS === "web") return null;
+  if (isAndroidExpoGo()) return null;
+
+  notificationsModulePromise ??= import("expo-notifications")
+    .then((Notifications) => {
+      if (!notificationHandlerConfigured) {
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldPlaySound: false,
+            shouldSetBadge: true,
+            shouldShowAlert: true,
+            shouldShowBanner: true,
+            shouldShowList: true
+          })
+        });
+        notificationHandlerConfigured = true;
+      }
+      return Notifications;
+    })
+    .catch(() => null);
+
+  return notificationsModulePromise;
+}
 
 function isMissingPushTokensTable(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message ?? "";
@@ -36,7 +60,7 @@ function notificationProjectId() {
     process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
 }
 
-async function ensureNotificationPermission() {
+async function ensureNotificationPermission(Notifications: NotificationsModule) {
   const existing = await Notifications.getPermissionsAsync();
   if (existing.granted) return true;
 
@@ -45,6 +69,15 @@ async function ensureNotificationPermission() {
 }
 
 export async function getNotificationPermissionSummary(): Promise<NotificationPermissionSummary> {
+  const Notifications = await loadNotificationsModule();
+  if (!Notifications) {
+    return {
+      canAskAgain: false,
+      granted: false,
+      status: "unavailable"
+    };
+  }
+
   const permission = await Notifications.getPermissionsAsync();
   return {
     canAskAgain: permission.canAskAgain,
@@ -58,7 +91,12 @@ export async function registerForPushNotifications(username: string): Promise<Pu
     return { granted: false, reason: "Push notifications are only registered on native devices." };
   }
 
-  const permissionGranted = await ensureNotificationPermission();
+  const Notifications = await loadNotificationsModule();
+  if (!Notifications) {
+    return { granted: false, reason: "Push notifications are unavailable in this build." };
+  }
+
+  const permissionGranted = await ensureNotificationPermission(Notifications);
   if (!permissionGranted) {
     return { granted: false, reason: "Notification permission was not granted." };
   }

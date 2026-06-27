@@ -2,7 +2,7 @@ import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ListRenderItemInfo } from "react-native";
+import { Animated, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type ListRenderItemInfo, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQueryClient } from "@tanstack/react-query";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
@@ -32,7 +32,7 @@ type ProfileListRow =
   | { type: "posts-error" }
   | { type: "posts-empty" }
   | { type: "memory-month"; id: string; month: string }
-  | { type: "memory"; memory: MemoryRoomSummary }
+  | { type: "memory"; isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }
   | { type: "memories-loading" }
   | { type: "memories-error" }
   | { type: "memories-empty" };
@@ -78,6 +78,15 @@ function formatTrustScore(score: number | string | null | undefined) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
+function profileErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (!message.trim()) return fallback;
+  if (/user from sub claim|jwt|supabase|postgres|postgrest|sql|schema|relation|permission denied|violates/i.test(message)) {
+    return fallback;
+  }
+  return message;
+}
+
 export default function ProfileScreen() {
   const { styles } = useProfileTheme();
   const isReady = useSessionStore((state) => state.isReady);
@@ -116,7 +125,7 @@ export default function ProfileScreen() {
           ) : page.isError ? (
             <ErrorState
               actionLabel="Try again"
-              message={page.error.message}
+              message={profileErrorMessage(page.error, "We couldn't load your profile. Try again.")}
               onAction={() => page.refetch()}
               title="Profile unavailable"
             />
@@ -158,6 +167,7 @@ function ProfileContent({
   const [activeTab, setActiveTab] = useState<ProfileTab>(() => profileTabFromParam(params.tab));
   const [showTrustSheet, setShowTrustSheet] = useState(false);
   const endReachedInFlightRef = useRef(false);
+  const scrollX = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     setActiveTab(profileTabFromParam(params.tab));
@@ -179,19 +189,18 @@ function ProfileContent({
   }, [posts.isFetchingNextPage]);
 
   const memoryRows = useMemo(() => buildMemoryRows(memoriesData ?? []), [memoriesData]);
-  const rows = useMemo<ProfileListRow[]>(() => {
-    if (activeTab === "posts") {
-      if (posts.isLoading && pagedPosts.length === 0) return [{ type: "posts-loading" }];
-      if (posts.isError && pagedPosts.length === 0) return [{ type: "posts-error" }];
-      if (pagedPosts.length === 0) return [{ type: "posts-empty" }];
-      return pagedPosts.map((post) => ({ type: "post", post }));
-    }
-
+  const postRows = useMemo<ProfileListRow[]>(() => {
+    if (posts.isLoading && pagedPosts.length === 0) return [{ type: "posts-loading" }];
+    if (posts.isError && pagedPosts.length === 0) return [{ type: "posts-error" }];
+    if (pagedPosts.length === 0) return [{ type: "posts-empty" }];
+    return pagedPosts.map((post) => ({ type: "post", post }));
+  }, [pagedPosts, posts.isError, posts.isLoading]);
+  const memoriesRows = useMemo<ProfileListRow[]>(() => {
     if (memoriesIsLoading) return [{ type: "memories-loading" }];
     if (memoriesIsError) return [{ type: "memories-error" }];
     if (memoryRows.length === 0) return [{ type: "memories-empty" }];
     return memoryRows;
-  }, [activeTab, memoriesIsError, memoriesIsLoading, memoryRows, pagedPosts, posts.isError, posts.isLoading]);
+  }, [memoriesIsError, memoriesIsLoading, memoryRows]);
 
   const onRefresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["profile"] });
@@ -215,73 +224,85 @@ function ProfileContent({
       case "post":
         return <PostCard post={item.post} />;
       case "posts-loading":
-        return <ListState><LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" /></ListState>;
+        return <View style={styles.listInset}><ListState><LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" /></ListState></View>;
       case "posts-error":
         return (
-          <ListState>
-            <ErrorState
-              actionLabel="Try again"
-              message={posts.error?.message ?? "Could not load posts."}
-              onAction={() => posts.refetch()}
-              title="Feed unavailable"
-            />
-          </ListState>
+          <View style={styles.listInset}>
+            <ListState>
+              <ErrorState
+                actionLabel="Try again"
+                message={profileErrorMessage(posts.error, "Could not load posts.")}
+                onAction={() => posts.refetch()}
+                title="Feed unavailable"
+              />
+            </ListState>
+          </View>
         );
       case "posts-empty":
         return (
-          <ListState>
-            <EmptyState
-              actionLabel="Share review"
-              icon="restaurant-outline"
-              message="Share your first food review to start building your profile."
-              onAction={() => router.push("/share")}
-              title="No posts yet"
-            />
-          </ListState>
+          <View style={styles.listInset}>
+            <ListState>
+              <EmptyState
+                actionLabel="Share review"
+                icon="restaurant-outline"
+                message="Share your first food review to start building your profile."
+                onAction={() => router.push("/share")}
+                title="No posts yet"
+              />
+            </ListState>
+          </View>
         );
       case "memory-month":
-        return <Text style={styles.memoryMonthHeading}>{item.month}</Text>;
+        return <View style={styles.listInset}><Text style={styles.memoryMonthHeading}>{item.month}</Text></View>;
       case "memory":
-        return <MemoryTimelineItem memory={item.memory} />;
+        return (
+          <View style={styles.listInset}>
+            <MemoryTimelineItem isFirst={item.isFirst} isLast={item.isLast} memory={item.memory} />
+          </View>
+        );
       case "memories-loading":
-        return <ListState><LoadingState message="Fetching your memories." title="Loading memories" /></ListState>;
+        return <View style={styles.listInset}><ListState><LoadingState message="Fetching your memories." title="Loading memories" /></ListState></View>;
       case "memories-error":
         return (
-          <ListState>
-            <ErrorState
-              actionLabel="Try again"
-              message={memoriesError?.message ?? "We couldn't load your memories."}
-              onAction={() => memoriesRefetch()}
-              title="Memories unavailable"
-            />
-          </ListState>
+          <View style={styles.listInset}>
+            <ListState>
+              <ErrorState
+                actionLabel="Try again"
+                message={profileErrorMessage(memoriesError, "We couldn't load your memories.")}
+                onAction={() => memoriesRefetch()}
+                title="Memories unavailable"
+              />
+            </ListState>
+          </View>
         );
       case "memories-empty":
         return (
-          <ListState>
-            <EmptyState
-              actionLabel="Create memory"
-              icon="images-outline"
-              message="Create a private memory for a meal with friends."
-              onAction={() => router.push("/memories/create")}
-              title="No memories yet"
-            />
-          </ListState>
+          <View style={styles.listInset}>
+            <ListState>
+              <EmptyState
+                actionLabel="Create memory"
+                icon="images-outline"
+                message="Create a private memory for a meal with friends."
+                onAction={() => router.push("/memories/create")}
+                title="No memories yet"
+              />
+            </ListState>
+          </View>
         );
       default:
         return null;
     }
   }, [memoriesError, memoriesRefetch, posts, router, styles]);
 
-  const footer = activeTab === "posts" && pagedPosts.length > 0 ? (
+  const footer = pagedPosts.length > 0 ? (
     <>
       {posts.isFetchingNextPage ? (
-        <View style={styles.loadMoreWrap}>
+        <View style={[styles.listInset, styles.loadMoreWrap]}>
           <LoadingState message="Loading more posts." title="Loading posts" />
         </View>
       ) : null}
       {posts.isError && pagedPosts.length > 0 ? (
-        <View style={styles.inlineRetry}>
+        <View style={[styles.listInset, styles.inlineRetry]}>
           <Text style={styles.inlineRetryText}>Could not load more posts.</Text>
           <AppButton onPress={() => { void posts.refetch(); }} tone="secondary">Retry</AppButton>
         </View>
@@ -289,41 +310,72 @@ function ProfileContent({
     </>
   ) : null;
 
+  const makeRefreshControl = useCallback(() => canRefresh ? (
+    <RefreshControl
+      colors={[PROFILE_COLORS.accent]}
+      onRefresh={() => { void onRefresh(); }}
+      progressBackgroundColor={PROFILE_COLORS.card}
+      refreshing={pageQuery.isRefetching || memories.isRefetching || posts.isRefetching}
+      tintColor={PROFILE_COLORS.accent}
+    />
+  ) : undefined, [
+    PROFILE_COLORS.accent,
+    PROFILE_COLORS.card,
+    canRefresh,
+    memories.isRefetching,
+    onRefresh,
+    pageQuery.isRefetching,
+    posts.isRefetching
+  ]);
+
   return (
     <>
-      <FlatList
-        contentContainerStyle={styles.virtualListContent}
-        data={rows}
-        initialNumToRender={activeTab === "posts" ? 8 : 12}
-        keyExtractor={profileListKey}
-        keyboardShouldPersistTaps="handled"
-        ListFooterComponent={footer}
-        ListHeaderComponent={(
-          <View style={styles.profileHeader}>
+      <View style={styles.profileHeader}>
         <ProfileHero page={page} onSettingsPress={onSettingsPress} />
         <ProfileStats
           page={page}
           onCirclePress={() => router.push("/profile/circle")}
           onTrustPress={() => setShowTrustSheet(true)}
         />
-        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} />
-          </View>
-        )}
-        maxToRenderPerBatch={activeTab === "posts" ? 8 : 12}
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.45}
-        refreshControl={canRefresh ? (
-          <RefreshControl
-            colors={[PROFILE_COLORS.accent]}
-            onRefresh={() => { void onRefresh(); }}
-            progressBackgroundColor={PROFILE_COLORS.card}
-            refreshing={pageQuery.isRefetching || memories.isRefetching || posts.isRefetching}
-            tintColor={PROFILE_COLORS.accent}
+        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} scrollX={scrollX} />
+      </View>
+      <ProfilePager
+        index={activeTab === "posts" ? 0 : 1}
+        memoriesPane={(
+          <FlatList
+            contentContainerStyle={styles.virtualListContent}
+            data={memoriesRows}
+            initialNumToRender={12}
+            keyExtractor={profileListKey}
+            keyboardShouldPersistTaps="handled"
+            maxToRenderPerBatch={12}
+            refreshControl={makeRefreshControl()}
+            renderItem={renderItem}
+            showsVerticalScrollIndicator={false}
+            style={styles.pagerList}
+            windowSize={9}
           />
-        ) : undefined}
-        renderItem={renderItem}
-        showsVerticalScrollIndicator={false}
-        windowSize={9}
+        )}
+        onIndexChange={(index) => changeProfileTab(index === 0 ? "posts" : "memories")}
+        postsPane={(
+          <FlatList
+            contentContainerStyle={styles.virtualListContent}
+            data={postRows}
+            initialNumToRender={8}
+            keyExtractor={profileListKey}
+            keyboardShouldPersistTaps="handled"
+            ListFooterComponent={footer}
+            maxToRenderPerBatch={8}
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.45}
+            refreshControl={makeRefreshControl()}
+            renderItem={renderItem}
+            showsVerticalScrollIndicator={false}
+            style={styles.pagerList}
+            windowSize={9}
+          />
+        )}
+        scrollX={scrollX}
       />
       <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} />
     </>
@@ -513,32 +565,123 @@ function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string })
 
 function ProfileTabs({
   activeTab,
-  onChange
+  onChange,
+  scrollX
 }: {
   activeTab: ProfileTab;
   onChange: (tab: ProfileTab) => void;
+  scrollX: Animated.Value;
 }) {
-  const { styles } = useProfileTheme();
+  const { PROFILE_COLORS, styles } = useProfileTheme();
+  const { width } = useWindowDimensions();
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "posts", label: "Posts" },
     { id: "memories", label: "Memories" }
   ];
+  const slot = (width - spacing.lg * 2) / 2;
+  const indicatorX = scrollX.interpolate({
+    inputRange: [0, width],
+    outputRange: [0, slot],
+    extrapolate: "clamp"
+  });
+  const postsTextColor = scrollX.interpolate({
+    inputRange: [0, width],
+    outputRange: [PROFILE_COLORS.accent, PROFILE_COLORS.muted],
+    extrapolate: "clamp"
+  });
+  const memoriesTextColor = scrollX.interpolate({
+    inputRange: [0, width],
+    outputRange: [PROFILE_COLORS.muted, PROFILE_COLORS.accent],
+    extrapolate: "clamp"
+  });
 
   return (
     <View style={styles.tabs}>
       <View style={styles.tabRow}>
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
+          const color = tab.id === "posts" ? postsTextColor : memoriesTextColor;
           return (
-            <Pressable key={tab.id} onPress={() => onChange(tab.id)} style={styles.tabButton}>
-              <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              key={tab.id}
+              onPress={() => onChange(tab.id)}
+              style={styles.tabButton}
+            >
+              <Animated.Text style={[styles.tabText, { color }]}>{tab.label}</Animated.Text>
             </Pressable>
           );
         })}
       </View>
       <View style={styles.tabTrack}>
-        <View style={[styles.tabIndicator, activeTab === "memories" && styles.tabIndicatorMemories]} />
+        <Animated.View style={[styles.tabIndicator, { transform: [{ translateX: indicatorX }], width: slot }]} />
       </View>
+    </View>
+  );
+}
+
+function ProfilePager({
+  index,
+  memoriesPane,
+  onIndexChange,
+  postsPane,
+  scrollX
+}: {
+  index: number;
+  memoriesPane: ReactNode;
+  onIndexChange: (index: number) => void;
+  postsPane: ReactNode;
+  scrollX: Animated.Value;
+}) {
+  const { styles } = useProfileTheme();
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const firstSyncRef = useRef(true);
+  const initialOffset = useRef({ x: index * width, y: 0 }).current;
+  const onScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: false }),
+    [scrollX]
+  );
+
+  useEffect(() => {
+    const nextOffset = index * width;
+    if (firstSyncRef.current) scrollX.setValue(nextOffset);
+    scrollRef.current?.scrollTo({ x: nextOffset, animated: !firstSyncRef.current });
+    firstSyncRef.current = false;
+  }, [index, scrollX, width]);
+
+  const settlePage = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const next = Math.min(1, Math.max(0, Math.round(event.nativeEvent.contentOffset.x / Math.max(width, 1))));
+      if (next !== index) onIndexChange(next);
+    },
+    [index, onIndexChange, width]
+  );
+
+  return (
+    <View style={styles.pagerViewport}>
+      <Animated.ScrollView
+        ref={scrollRef}
+        contentOffset={initialOffset}
+        directionalLockEnabled
+        horizontal
+        nestedScrollEnabled
+        onMomentumScrollEnd={settlePage}
+        onScroll={onScroll}
+        onScrollEndDrag={settlePage}
+        pagingEnabled
+        scrollEventThrottle={16}
+        showsHorizontalScrollIndicator={false}
+        style={styles.pagerScroll}
+      >
+        <View style={[styles.pagerPage, { width }]}>
+          {postsPane}
+        </View>
+        <View style={[styles.pagerPage, { width }]}>
+          {memoriesPane}
+        </View>
+      </Animated.ScrollView>
     </View>
   );
 }
@@ -549,19 +692,25 @@ function ListState({ children }: { children: ReactNode }) {
 }
 
 function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
-  const groupedMemories = [...memories]
-    .sort((a, b) => new Date(b.visitDate ?? b.createdAt).getTime() - new Date(a.visitDate ?? a.createdAt).getTime())
-    .reduce<Array<{ memories: MemoryRoomSummary[]; month: string }>>((groups, memory) => {
+  const sortedMemories = [...memories]
+    .sort((a, b) => new Date(b.visitDate ?? b.createdAt).getTime() - new Date(a.visitDate ?? a.createdAt).getTime());
+  const groupedMemories = sortedMemories
+    .reduce<Array<{ memories: Array<{ isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }>; month: string }>>((groups, memory, index) => {
       const month = timelineMonthLabel(memory.visitDate ?? memory.createdAt);
       const lastGroup = groups[groups.length - 1];
-      if (lastGroup?.month === month) lastGroup.memories.push(memory);
-      else groups.push({ month, memories: [memory] });
+      const row = {
+        isFirst: index === 0,
+        isLast: index === sortedMemories.length - 1,
+        memory
+      };
+      if (lastGroup?.month === month) lastGroup.memories.push(row);
+      else groups.push({ month, memories: [row] });
       return groups;
     }, []);
 
   return groupedMemories.flatMap((group) => [
     { type: "memory-month", id: `month-${group.month}`, month: group.month } as const,
-    ...group.memories.map((memory) => ({ type: "memory", memory } as const))
+    ...group.memories.map(({ isFirst, isLast, memory }) => ({ type: "memory", isFirst, isLast, memory } as const))
   ]);
 }
 
@@ -572,13 +721,14 @@ function profileListKey(item: ProfileListRow) {
   return item.type;
 }
 
-function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
+function MemoryTimelineItem({ isFirst, isLast, memory }: { isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }) {
   const { styles } = useProfileTheme();
   const router = useRouter();
 
   return (
     <View style={styles.memoryTimelineRow}>
-      <View pointerEvents="none" style={styles.memoryTimelineLine} />
+      {!isFirst ? <View pointerEvents="none" style={[styles.memoryTimelineLine, styles.memoryTimelineLineAbove]} /> : null}
+      {!isLast ? <View pointerEvents="none" style={[styles.memoryTimelineLine, styles.memoryTimelineLineBelow]} /> : null}
       <View style={styles.memoryTimelineMarker}>
         <View style={styles.memoryTimelineDot} />
       </View>
@@ -710,7 +860,7 @@ function ProfileSetupCard() {
           value={username}
         />
       </View>
-      {setup.isError ? <Text style={styles.error}>{setup.error.message}</Text> : null}
+      {setup.isError ? <Text style={styles.error}>{profileErrorMessage(setup.error, "Could not save your profile. Try again.")}</Text> : null}
       <AppButton
         disabled={!firstName.trim() || !lastName.trim() || !username.trim()}
         loading={setup.isPending}
@@ -761,7 +911,8 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   screenContent: {
     backgroundColor: PROFILE_COLORS.bg,
-    flexGrow: 1
+    flexGrow: 1,
+    paddingBottom: 0
   },
   stack: {
     flex: 1,
@@ -772,6 +923,23 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   virtualListContent: {
     gap: spacing.md,
     paddingBottom: spacing.xl
+  },
+  listInset: {
+    paddingHorizontal: spacing.lg
+  },
+  pagerViewport: {
+    flex: 1,
+    marginHorizontal: -spacing.lg,
+    overflow: "hidden"
+  },
+  pagerScroll: {
+    flex: 1
+  },
+  pagerPage: {
+    flex: 1
+  },
+  pagerList: {
+    flex: 1
   },
   profileHeader: {
     gap: spacing.md
@@ -1124,12 +1292,8 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   tabText: {
     ...fontStyles.bold,
-    color: PROFILE_COLORS.muted,
     fontSize: typography.caption,
     lineHeight: 15
-  },
-  tabTextActive: {
-    color: PROFILE_COLORS.accent
   },
   tabTrack: {
     backgroundColor: PROFILE_COLORS.border,
@@ -1138,11 +1302,7 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   tabIndicator: {
     backgroundColor: PROFILE_COLORS.accent,
-    height: 2,
-    width: "50%"
-  },
-  tabIndicatorMemories: {
-    marginLeft: "50%"
+    height: 2
   },
   memoryMonthHeading: {
     ...fontStyles.extraBold,
@@ -1156,16 +1316,23 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   memoryTimelineLine: {
     backgroundColor: PROFILE_COLORS.accentBorder,
-    bottom: 10,
     left: 7.5,
     position: "absolute",
-    top: 10,
     width: 1
+  },
+  memoryTimelineLineAbove: {
+    bottom: "50%",
+    top: -spacing.md / 2
+  },
+  memoryTimelineLineBelow: {
+    bottom: -spacing.md / 2,
+    top: "50%"
   },
   memoryTimelineRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.md
+    gap: spacing.md,
+    overflow: "visible"
   },
   memoryTimelineMarker: {
     alignItems: "center",

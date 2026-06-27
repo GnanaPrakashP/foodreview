@@ -79,8 +79,8 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: themeColors.bg }
             }}
           >
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
+            <Stack.Screen name="(auth)" options={{ animation: "none" }} />
             <Stack.Screen name="auth/callback" />
             <Stack.Screen name="onboarding/profile" />
             {/* Camera opens with a snappier fade than the global default so it

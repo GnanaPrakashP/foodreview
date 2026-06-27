@@ -16,6 +16,7 @@
     "test:coverage:html": "npm run test:coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "validate:android-profile": "node scripts/android-profile-login.mjs",
     "start": "next start"
   },
   "dependencies": {

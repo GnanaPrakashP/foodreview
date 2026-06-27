@@ -29,11 +29,20 @@ const env = Object.fromEntries(
 
 const SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+const PASSWORD = env.SEED_USER_PASSWORD ?? env.FOODCIRCLE_SEED_PASSWORD;
 
 if (!SERVICE_ROLE_KEY) {
   console.error(
     "\n❌  SUPABASE_SERVICE_ROLE_KEY not found in .env.local\n" +
     "    Add it from: Supabase Dashboard → Project Settings → API → service_role\n"
+  );
+  process.exit(1);
+}
+
+if (!PASSWORD) {
+  console.error(
+    "\n❌  SEED_USER_PASSWORD not found in .env.local\n" +
+    "    Set a local-only seed password before running this script.\n"
   );
   process.exit(1);
 }
@@ -60,8 +69,6 @@ const USERS = [
   { firstName: "Siddharth", lastName: "Rao",       username: "siddharth_rao",   email: "siddharth@foodcircle.test"},
   { firstName: "Lakshmi",   lastName: "Bhat",      username: "lakshmi_bhat",    email: "lakshmi@foodcircle.test"  },
 ];
-
-const PASSWORD = "Test@1234";
 
 /* ── Reviews ── */
 const RESTAURANT_META = {

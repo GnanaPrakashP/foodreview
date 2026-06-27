@@ -427,8 +427,9 @@ test("mobile explore detail screens use the settings-style slide-over animation"
   assert.match(circleStatusRoute, /createRouteSupabase\(req\)/);
   assert.match(circleCancelRoute, /getRouteActor\(req\)/);
   assert.match(circleRespondRoute, /getRouteActor\(req\)/);
-  assert.match(apiConfig, /if \(expoHost\) \{\s*url\.hostname = expoHost/);
-  assert.doesNotMatch(apiConfig, /expoHost && !\/\^\(localhost\|127/);
+  assert.match(apiConfig, /if \(Platform\.OS === "android"\) \{\s*url\.hostname = "10\.0\.2\.2"/);
+  assert.match(apiConfig, /if \(expoHost && !isLoopbackHostname\(expoHost\)\) \{\s*url\.hostname = expoHost/);
+  assert.doesNotMatch(apiConfig, /if \(expoHost\) \{\s*url\.hostname = expoHost/);
   assert.match(hook, /useFocusEffect\(/);
   assert.match(hook, /closingRef\.current = false/);
   assert.match(hook, /progress\.value = 0/);
