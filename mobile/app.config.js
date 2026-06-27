@@ -33,6 +33,16 @@ module.exports = ({ config: expoConfig } = {}) => {
 
   if (isLocalHttpUrl(apiBaseUrl)) {
     plugins.push("./plugins/withAndroidCleartextForLocalApi");
+    config.ios = {
+      ...config.ios,
+      infoPlist: {
+        ...config.ios?.infoPlist,
+        NSAppTransportSecurity: {
+          ...config.ios?.infoPlist?.NSAppTransportSecurity,
+          NSAllowsLocalNetworking: true
+        }
+      }
+    };
   }
 
   return {
