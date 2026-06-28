@@ -196,24 +196,68 @@ async function fillPasswordAndSignIn(adb, serial) {
 
   xml = await readUiXml(adb, serial);
   await tapText(adb, serial, xml, "Sign In", fallbackPoint(await screenSize(adb, serial), 0.5, 0.86));
-  await waitForAnyUiText(adb, serial, ["Explore", "Profile", "What they're eating", "Set up your profile"], "post-login shell");
+  await waitForLoggedInShell(adb, serial);
 }
 
 async function openProfile(adb, serial) {
   const size = await screenSize(adb, serial);
-  await delay(3_000);
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  await waitForLoggedInShell(adb, serial);
+  await adbExec(adb, ["-s", serial, "shell", "input", "keyevent", "111"], { allowFailure: true });
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     const xml = await readUiXml(adb, serial);
-    const normalized = normalizedXml(xml);
-    if (profileTerms.every((term) => normalized.includes(term.toLowerCase()))) return;
-    await tapBounds(
-      adb,
-      serial,
-      findBounds(xml, "content-desc", "Profile") ?? findBounds(xml, "text", "Profile"),
-      fallbackPoint(size, 0.88, 0.94)
-    );
-    await delay(1_500);
+    if (isProfileScreen(xml)) return;
+
+    const bounds = findBottomNavBounds(xml, size, "Profile");
+    const point = profileTapPoint(bounds, size, attempt);
+    console.log(`Opening Profile tab attempt ${attempt + 1} with tap at ${point.x},${point.y}.`);
+    await adbExec(adb, ["-s", serial, "shell", "input", "tap", String(point.x), String(point.y)]);
+
+    const afterTap = await waitForProfileScreen(adb, serial, 4_000);
+    if (isProfileScreen(afterTap)) return;
   }
+
+  const xml = await readUiXml(adb, serial).catch(() => "");
+  writeFileSync(resolve(artifactDir, "profile-navigation-failed-ui.xml"), xml);
+  throw new Error(`Could not open Profile tab after retries. Expected Profile terms: ${profileTerms.join(", ")}`);
+}
+
+async function waitForLoggedInShell(adb, serial) {
+  const size = await screenSize(adb, serial);
+  const started = Date.now();
+  let lastXml = "";
+  while (Date.now() - started < timeoutMs) {
+    lastXml = await readUiXml(adb, serial).catch(() => "");
+    const normalized = normalizedXml(lastXml);
+    if (await dismissBlockingSystemDialog(adb, serial, lastXml, normalized)) {
+      await delay(1_000);
+      continue;
+    }
+    const failure = failureTermForXml(lastXml);
+    if (failure) throw new Error(`App showed failure text: ${failure}`);
+    if (findBottomNavBounds(lastXml, size, "Profile") || normalized.includes("set up your profile")) return lastXml;
+    await delay(1_000);
+  }
+  writeFileSync(resolve(artifactDir, "post-login-shell-timeout-ui.xml"), lastXml);
+  throw new Error("Timed out waiting for logged-in shell with Profile tab");
+}
+
+async function waitForProfileScreen(adb, serial, timeout) {
+  const started = Date.now();
+  let lastXml = "";
+  while (Date.now() - started < timeout) {
+    lastXml = await readUiXml(adb, serial).catch(() => "");
+    const normalized = normalizedXml(lastXml);
+    if (await dismissBlockingSystemDialog(adb, serial, lastXml, normalized)) {
+      await delay(500);
+      continue;
+    }
+    const failure = failureTermForXml(lastXml);
+    if (failure) throw new Error(`App showed failure text: ${failure}`);
+    if (isProfileScreen(lastXml)) return lastXml;
+    await delay(500);
+  }
+  return lastXml;
 }
 
 async function waitForUiText(adb, serial, terms, label) {
@@ -226,9 +270,9 @@ async function waitForUiText(adb, serial, terms, label) {
       await delay(1_000);
       continue;
     }
-    const failure = failureTerms.find((term) => normalized.includes(term.toLowerCase()));
+    const failure = failureTermForXml(lastXml);
     if (failure) throw new Error(`App showed failure text: ${failure}`);
-    if (terms.every((term) => normalized.includes(term.toLowerCase()))) return lastXml;
+    if (hasAllTerms(lastXml, terms)) return lastXml;
     await delay(1_000);
   }
   writeFileSync(resolve(artifactDir, `${safeName(label)}-timeout-ui.xml`), lastXml);
@@ -245,9 +289,9 @@ async function waitForAnyUiText(adb, serial, terms, label) {
       await delay(1_000);
       continue;
     }
-    const failure = failureTerms.find((term) => normalized.includes(term.toLowerCase()));
+    const failure = failureTermForXml(lastXml);
     if (failure) throw new Error(`App showed failure text: ${failure}`);
-    if (terms.some((term) => normalized.includes(term.toLowerCase()))) return lastXml;
+    if (hasAnyTerm(lastXml, terms)) return lastXml;
     await delay(1_000);
   }
   writeFileSync(resolve(artifactDir, `${safeName(label)}-timeout-ui.xml`), lastXml);
@@ -374,20 +418,34 @@ async function screenSize(adb, serial) {
 }
 
 function findBounds(xml, attribute, value) {
+  return findAllBounds(xml, attribute, value)[0] ?? null;
+}
+
+function findAllBounds(xml, attribute, value) {
   const encodedValue = xmlEncodeAttribute(value);
   const nodePattern = new RegExp(`<node\\b[^>]*${attribute}="${escapeRegExp(encodedValue)}"[^>]*>`, "g");
+  const bounds = [];
   let nodeMatch;
   while ((nodeMatch = nodePattern.exec(xml))) {
     const boundsMatch = nodeMatch[0].match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
     if (!boundsMatch) continue;
-    return {
+    bounds.push({
       left: Number(boundsMatch[1]),
       top: Number(boundsMatch[2]),
       right: Number(boundsMatch[3]),
       bottom: Number(boundsMatch[4])
-    };
+    });
   }
-  return null;
+  return bounds;
+}
+
+function findBottomNavBounds(xml, size, value) {
+  const minTop = size.height * 0.75;
+  const candidates = [
+    ...findAllBounds(xml, "content-desc", value),
+    ...findAllBounds(xml, "text", value)
+  ].filter((bounds) => bounds.top >= minTop && bounds.bottom <= size.height);
+  return candidates.sort((a, b) => b.bottom - a.bottom)[0] ?? null;
 }
 
 function centerOfBounds(bounds) {
@@ -399,6 +457,17 @@ function centerOfBounds(bounds) {
 
 function fallbackPoint({ width, height }, xRatio, yRatio) {
   return { x: Math.round(width * xRatio), y: Math.round(height * yRatio) };
+}
+
+function profileTapPoint(bounds, size, attempt) {
+  if (bounds) return centerOfBounds(bounds);
+  const fallbacks = [
+    fallbackPoint(size, 0.875, 0.945),
+    fallbackPoint(size, 0.875, 0.935),
+    fallbackPoint(size, 0.91, 0.935),
+    fallbackPoint(size, 0.84, 0.935)
+  ];
+  return fallbacks[attempt % fallbacks.length];
 }
 
 function exec(command, commandArgs, options = {}) {
@@ -529,6 +598,25 @@ function numberFromArg(name, fallback) {
 
 function normalizedXml(xml) {
   return decodeXml(xml).toLowerCase();
+}
+
+function failureTermForXml(xml) {
+  const normalized = normalizedXml(xml);
+  return failureTerms.find((term) => normalized.includes(term.toLowerCase()));
+}
+
+function hasAllTerms(xml, terms) {
+  const normalized = normalizedXml(xml);
+  return terms.every((term) => normalized.includes(term.toLowerCase()));
+}
+
+function hasAnyTerm(xml, terms) {
+  const normalized = normalizedXml(xml);
+  return terms.some((term) => normalized.includes(term.toLowerCase()));
+}
+
+function isProfileScreen(xml) {
+  return hasAllTerms(xml, profileTerms);
 }
 
 function decodeXml(value) {

@@ -10,6 +10,10 @@ const sessionStoreSource = readFileSync(new URL("../mobile/src/stores/sessionSto
 const envExampleSource = readFileSync(new URL("../mobile/.env.example", import.meta.url), "utf8");
 const rootLayoutSource = readFileSync(new URL("../mobile/app/_layout.tsx", import.meta.url), "utf8");
 const androidLoginScriptSource = readFileSync(new URL("../scripts/android-profile-login.mjs", import.meta.url), "utf8");
+const androidInstalledLoginScriptSource = readFileSync(
+  new URL("../scripts/android-installed-profile-login.mjs", import.meta.url),
+  "utf8"
+);
 const packageJsonSource = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 
 test("mobile dev auto-login is gated to dev builds and configured credentials", () => {
@@ -29,7 +33,9 @@ test("mobile dev auto-login does not commit a password or log raw auth errors", 
   assert.doesNotMatch(autoLoginSource, /Test@1234/);
   assert.doesNotMatch(envExampleSource, /Test@1234/);
   assert.doesNotMatch(androidLoginScriptSource, /Test@1234/);
+  assert.doesNotMatch(androidInstalledLoginScriptSource, /Test@1234/);
   assert.doesNotMatch(androidLoginScriptSource, /rahul@foodcircle\.test/);
+  assert.doesNotMatch(androidInstalledLoginScriptSource, /rahul@foodcircle\.test/);
 });
 
 test("Android Profile login validation script launches Expo without manual credential entry", () => {
@@ -42,6 +48,18 @@ test("Android Profile login validation script launches Expo without manual crede
   assert.match(androidLoginScriptSource, /uiautomator/);
   assert.match(androidLoginScriptSource, /profile-success\.png/);
   assert.match(androidLoginScriptSource, /profile-logcat\.txt/);
+});
+
+test("Android installed Profile validation uses Profile-specific navigation proof", () => {
+  assert.match(androidInstalledLoginScriptSource, /waitForLoggedInShell/);
+  assert.match(androidInstalledLoginScriptSource, /findBottomNavBounds\(lastXml, size, "Profile"\)/);
+  assert.match(androidInstalledLoginScriptSource, /profileTapPoint/);
+  assert.match(androidInstalledLoginScriptSource, /Could not open Profile tab after retries/);
+  assert.match(androidInstalledLoginScriptSource, /function isProfileScreen\(xml\) \{\s*return hasAllTerms\(xml, profileTerms\);/);
+  assert.doesNotMatch(
+    androidInstalledLoginScriptSource,
+    /waitForAnyUiText\(adb, serial, \["Explore", "Profile", "What they're eating"/
+  );
 });
 
 test("Android auth-to-tabs transition does not leave a dim native overlay above tabs", () => {
