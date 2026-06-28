@@ -89,7 +89,7 @@ import {
   pickMemoryMediaFromGallery,
   type MemoryMediaPickerResult
 } from "@/services/mediaPicker";
-import { consumeMemoryCapturePost, removeMemoryCapture, saveMemoryCapture } from "@/services/memoryCaptureSession";
+import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
 import type { UserSearchResult } from "@/services/profiles";
@@ -547,9 +547,8 @@ function useSmoothedKeyboardOffset(): SharedValue<number> {
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; postCaptureId?: string; tab?: string }>();
+  const params = useLocalSearchParams<{ id: string; tab?: string }>();
   const roomId = params.id ?? "";
-  const postCaptureId = typeof params.postCaptureId === "string" ? params.postCaptureId : "";
   const insets = useSafeAreaInsets();
   const { resolvedTheme } = useThemePreference();
   applyRoomTheme(resolvedTheme, "unknown");
@@ -574,7 +573,6 @@ export default function MemoryDetailScreen() {
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
-  const startedCapturePostsRef = useRef(new Set<string>());
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
   const chatTimelineHeightRef = useRef(0);
@@ -667,43 +665,6 @@ export default function MemoryDetailScreen() {
     const nextMode = roomModeFromTabParam(params.tab);
     if (nextMode) setMode(nextMode);
   }, [params.tab]);
-
-  useEffect(() => {
-    if (!postCaptureId || startedCapturePostsRef.current.has(postCaptureId)) return;
-    if (!room.data) return;
-    const pendingPost = consumeMemoryCapturePost(postCaptureId);
-    if (!pendingPost) return;
-
-    startedCapturePostsRef.current.add(postCaptureId);
-    setMode("chat");
-
-    const { asset } = pendingPost;
-    const mimeType = asset.mimeType ?? (asset.mediaType === "video" ? "video/mp4" : "image/jpeg");
-    addPhoto.mutate({
-      assets: [{
-        duration: asset.duration ?? null,
-        fileSize: asset.fileSize ?? null,
-        imageHeight: asset.height ?? null,
-        imageWidth: asset.width ?? null,
-        mediaMimeType: mimeType,
-        mediaType: asset.mediaType,
-        mediaUri: asset.uri
-      }],
-      body: pendingPost.caption,
-      roomId
-    }, {
-      onError: (error) => {
-        Alert.alert("Could not post media", errorMessage(error) ?? "Try again.");
-      },
-      onSettled: () => {
-        removeMemoryCapture(asset.id);
-      },
-      onSuccess: () => {
-        if (!pendingPost.dishName) return;
-        void addDish.mutateAsync({ dishName: pendingPost.dishName }).catch(() => undefined);
-      }
-    });
-  }, [addDish, addPhoto, postCaptureId, room.data, roomId]);
 
   useEffect(() => {
     if (!room.data) return;
@@ -3098,6 +3059,7 @@ function isOptimisticMemoryMedia(media: MemoryPhoto) {
 }
 
 const VIDEO_THUMBNAIL_TIME_SECONDS = 0.1;
+const VIDEO_THUMBNAIL_TIMES_SECONDS = [VIDEO_THUMBNAIL_TIME_SECONDS];
 const VIDEO_THUMBNAIL_MAX_WIDTH = 720;
 const VIDEO_THUMBNAIL_CACHE_LIMIT = 80;
 const videoThumbnailCache = new Map<string, VideoThumbnail>();
@@ -3145,7 +3107,7 @@ function VideoThumbnailLayer({
     let cancelled = false;
 
     void player
-      .generateThumbnailsAsync(VIDEO_THUMBNAIL_TIME_SECONDS, { maxWidth: VIDEO_THUMBNAIL_MAX_WIDTH })
+      .generateThumbnailsAsync(VIDEO_THUMBNAIL_TIMES_SECONDS, { maxWidth: VIDEO_THUMBNAIL_MAX_WIDTH })
       .then((thumbnails) => {
         const nextThumbnail = thumbnails[0] ?? null;
         if (nextThumbnail) {

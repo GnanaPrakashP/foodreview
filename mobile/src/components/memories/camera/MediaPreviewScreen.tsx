@@ -16,8 +16,9 @@ import {
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { queueMemoryCapturePost } from "@/services/memoryCaptureSession";
+import { removeMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
+import { postMemoryRoomMedia } from "@/services/mediaUploadService";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
 
@@ -35,6 +36,7 @@ export function MediaPreviewScreen({
   const [caption, setCaption] = useState("");
   const [dishName, setDishName] = useState("");
   const [posting, setPosting] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const [postError, setPostError] = useState("");
   const [videoMuted, setVideoMuted] = useState(false);
   const bottomInset = Platform.OS === "web" ? spacing.xl : Math.max(insets.bottom + spacing.lg, 28);
@@ -61,20 +63,39 @@ export function MediaPreviewScreen({
       return;
     }
 
-    const queued = queueMemoryCapturePost(asset.id, {
-      caption: trimmedCaption,
-      dishName: trimmedDishName
-    });
-    if (!queued) {
-      setPostError("Could not prepare media. Try again.");
-      setPosting(false);
-      return;
-    }
+    await nextFrame();
 
-    router.dismissTo({
-      pathname: "/memories/[id]",
-      params: { id: roomId, postCaptureId: asset.id, tab: "chat" }
-    });
+    try {
+      await postMemoryRoomMedia({
+        asset,
+        caption: trimmedCaption,
+        dishName: trimmedDishName,
+        roomId
+      });
+      removeMemoryCapture(asset.id);
+      setNavigating(true);
+      await nextFrame();
+      router.dismissTo({
+        pathname: "/memories/[id]",
+        params: { id: roomId, tab: "chat" }
+      });
+    } catch {
+      setPostError("Could not post media. Check your connection and try again.");
+      setPosting(false);
+    }
+  }
+
+  if (posting) {
+    return (
+      <View style={styles.screen}>
+        <StatusBar hidden />
+        <View style={[styles.postingState, { paddingBottom: bottomInset, paddingTop: topInset }]}>
+          <Ionicons name="cloud-upload-outline" size={34} color={colors.dark.white} />
+          <Text style={styles.postingTitle}>{navigating ? "Returning to room" : "Posting to room"}</Text>
+          <Text style={styles.postingText}>Keep CircleBites open while your memory uploads.</Text>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -234,6 +255,29 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%"
   },
+  postingState: {
+    alignItems: "center",
+    flex: 1,
+    gap: spacing.sm,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl
+  },
+  postingTitle: {
+    ...fontStyles.extraBold,
+    color: colors.dark.white,
+    fontSize: typography.heading,
+    letterSpacing: 0,
+    marginTop: spacing.sm,
+    textAlign: "center"
+  },
+  postingText: {
+    ...fontStyles.semiBold,
+    color: "rgba(245,237,216,0.72)",
+    fontSize: typography.caption,
+    letterSpacing: 0,
+    lineHeight: 18,
+    textAlign: "center"
+  },
   topGradient: {
     height: 160,
     left: 0,
@@ -352,3 +396,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   }
 });
+
+function nextFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}

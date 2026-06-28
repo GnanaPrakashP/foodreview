@@ -4,7 +4,6 @@ import test from "node:test";
 
 const memoryRoomScreen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
 const memoryPreviewScreen = readFileSync("mobile/src/components/memories/camera/MediaPreviewScreen.tsx", "utf8");
-const memoryCaptureSession = readFileSync("mobile/src/services/memoryCaptureSession.ts", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const memoryStorage = readFileSync("mobile/src/services/memoryStorage.ts", "utf8");
 const memoryValidation = readFileSync("mobile/src/services/memoryMediaValidation.ts", "utf8");
@@ -96,16 +95,15 @@ test("phase 4 uploads and finalizes memory media sequentially to cap memory pres
   assert.doesNotMatch(addMediaBody, /Promise\.all\(uploadResults\.map/);
 });
 
-test("camera preview opens chat immediately and lets mounted room upload optimistically", () => {
-  assert.match(memoryCaptureSession, /const pendingPosts = new Map/);
-  assert.match(memoryCaptureSession, /queueMemoryCapturePost/);
-  assert.match(memoryCaptureSession, /consumeMemoryCapturePost/);
-  assert.match(memoryPreviewScreen, /queueMemoryCapturePost\(asset\.id/);
-  assert.match(memoryPreviewScreen, /router\.dismissTo\(\{[\s\S]*postCaptureId: asset\.id[\s\S]*tab: "chat"/);
-  assert.doesNotMatch(memoryPreviewScreen, /await addPhoto\.mutateAsync/);
-  assert.match(memoryRoomScreen, /consumeMemoryCapturePost\(postCaptureId\)/);
-  assert.match(memoryRoomScreen, /addPhoto\.mutate\(\{[\s\S]*mediaUri: asset\.uri/);
-  assert.match(memoryRoomScreen, /removeMemoryCapture\(asset\.id\)/);
+test("camera preview uploads media directly before returning to chat", () => {
+  assert.match(memoryPreviewScreen, /await postMemoryRoomMedia\(\{[\s\S]*asset,[\s\S]*roomId[\s\S]*\}\)/);
+  assert.match(memoryPreviewScreen, /removeMemoryCapture\(asset\.id\)/);
+  assert.match(memoryPreviewScreen, /router\.dismissTo\(\{[\s\S]*params: \{ id: roomId, tab: "chat" \}/);
+  assert.match(memoryPreviewScreen, /Could not post media\. Check your connection and try again\./);
+  assert.doesNotMatch(memoryPreviewScreen, /queueMemoryCapturePost\(asset\.id/);
+  assert.doesNotMatch(memoryPreviewScreen, /postCaptureId: asset\.id/);
+  assert.doesNotMatch(memoryRoomScreen, /consumeMemoryCapturePost\(postCaptureId\)/);
+  assert.doesNotMatch(memoryRoomScreen, /postCaptureId/);
 });
 
 test("adding a dish from the attachment sheet returns to chat, not the dishes tab", () => {
