@@ -1,12 +1,15 @@
 import { useRouter } from "expo-router";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useCircleFeedQuery } from "@/hooks/useFeeds";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { useMainTabPager } from "@/navigation/MainTabPagerContext";
+import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing } from "@/theme";
 
 export default function CircleScreen() {
   const router = useRouter();
@@ -15,6 +18,14 @@ export default function CircleScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const feed = useCircleFeedQuery({ enabled: isReady && isAuthenticated });
+  const mainTabPager = useMainTabPager();
+  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "index" : true;
+  const mainTabSwipeGesture = useMainTabSwipeGestureZone({
+    enabled: isActiveMainTab,
+    left: "explore",
+    owner: "index",
+    source: "main-header-swipe"
+  });
   const unreadNotificationCount = 0;
   const notificationBadge = unreadNotificationCount > 9 ? "9+" : String(unreadNotificationCount);
   const canRefresh = isReady && isAuthenticated;
@@ -26,38 +37,42 @@ export default function CircleScreen() {
       refreshing={canRefresh && feed.isRefetching}
       scroll
     >
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>
-            What they're <Text style={styles.titleAccent}>eating</Text>
-          </Text>
-        </View>
-        <Pressable hitSlop={8} onPress={() => router.push("/notifications")} style={styles.notificationButton}>
-          <Text style={styles.notificationIcon}>🔔</Text>
-          {unreadNotificationCount > 0 ? (
-            <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>{notificationBadge}</Text>
+      <GestureDetector gesture={mainTabSwipeGesture}>
+        <View collapsable={false}>
+          <View style={styles.header}>
+            <View style={styles.headerText}>
+              <Text style={styles.title}>
+                What they're <Text style={styles.titleAccent}>eating</Text>
+              </Text>
             </View>
-          ) : null}
-        </Pressable>
-      </View>
-      <View style={styles.stack}>
-        {!isReady ? (
-          <PostFeed emptyMessage="" emptyTitle="" isLoading />
-        ) : !isAuthenticated ? (
-          <SignedOutFeedState message="Sign in to see posts from you and people in your circle." />
-        ) : (
-          <PostFeed
-            emptyMessage="Follow people or share your first bite to start seeing trusted food picks here."
-            emptyTitle="Your circle is quiet"
-            errorMessage="We couldn't load your circle feed. Please try again."
-            isError={feed.isError}
-            isLoading={feed.isLoading}
-            onRetry={() => feed.refetch()}
-            posts={feed.data?.posts}
-          />
-        )}
-      </View>
+            <Pressable hitSlop={8} onPress={() => router.push("/notifications")} style={styles.notificationButton}>
+              <Text style={styles.notificationIcon}>🔔</Text>
+              {unreadNotificationCount > 0 ? (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>{notificationBadge}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
+          <View style={styles.stack}>
+            {!isReady ? (
+              <PostFeed emptyMessage="" emptyTitle="" isLoading />
+            ) : !isAuthenticated ? (
+              <SignedOutFeedState message="Sign in to see posts from you and people in your circle." />
+            ) : (
+              <PostFeed
+                emptyMessage="Follow people or share your first bite to start seeing trusted food picks here."
+                emptyTitle="Your circle is quiet"
+                errorMessage="We couldn't load your circle feed. Please try again."
+                isError={feed.isError}
+                isLoading={feed.isLoading}
+                onRetry={() => feed.refetch()}
+                posts={feed.data?.posts}
+              />
+            )}
+          </View>
+        </View>
+      </GestureDetector>
     </Screen>
   );
 }
@@ -68,9 +83,9 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       alignItems: "center",
       flexDirection: "row",
       justifyContent: "space-between",
-      paddingBottom: 12,
+      paddingBottom: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
-      paddingTop: spacing.lg
+      paddingTop: screenLayout.topGap
     },
     headerText: {
       flex: 1,

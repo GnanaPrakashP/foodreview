@@ -7,6 +7,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowLeft, Bookmark, Briefcase, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, MoreHorizontal, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X, type LucideIcon } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
@@ -27,8 +28,10 @@ import {
   type SelectedPlace
 } from "@/services/places";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { useMainTabPager } from "@/navigation/MainTabPagerContext";
+import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing, typography } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -164,6 +167,22 @@ function initialsForUser(displayName: string, username: string) {
 export default function ShareScreen() {
   const { themeColors: c, styles } = useShareTheme();
   const router = useRouter();
+  const mainTabPager = useMainTabPager();
+  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "share" : true;
+  const headerSwipeGesture = useMainTabSwipeGestureZone({
+    enabled: isActiveMainTab,
+    left: "profile",
+    owner: "share",
+    right: "explore",
+    source: "main-header-swipe"
+  });
+  const bodySwipeGesture = useMainTabSwipeGestureZone({
+    enabled: isActiveMainTab,
+    left: "profile",
+    owner: "share",
+    right: "explore",
+    source: "main-header-swipe"
+  });
   const insets = useSafeAreaInsets();
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
@@ -175,6 +194,7 @@ export default function ShareScreen() {
   const [mediaItems, setMediaItems] = useState<PickedMedia[]>([]);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
   const [imageError, setImageError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const mediaItemsRef = useRef(mediaItems);
   mediaItemsRef.current = mediaItems;
   const { width: windowWidth } = useWindowDimensions();
@@ -218,6 +238,12 @@ export default function ShareScreen() {
   const canAddMoreMedia = mediaItems.length < MAX_POST_MEDIA;
   const canSubmit = Boolean(mediaItems.length > 0 && hasSoloDetails);
   const soloHeaderActionLabel = soloStep === "preview" ? "Post" : "Next";
+  const uploadPercent = uploadProgress === null ? null : Math.max(0, Math.min(100, Math.round(uploadProgress * 100)));
+  const postSubmitLabel = createPost.isPending
+    ? uploadPercent === null
+      ? "Posting..."
+      : `Posting ${uploadPercent}%`
+    : soloHeaderActionLabel;
   const soloHeaderActionDisabled = soloStep === "review"
     ? mediaItems.length === 0
     : soloStep === "details"
@@ -239,6 +265,7 @@ export default function ShareScreen() {
     setSoloStep("review");
     setMediaItems([]);
     setImageError("");
+    setUploadProgress(null);
   }
 
   // Solo posting now leads with the camera: opening solo pushes the capture
@@ -273,8 +300,16 @@ export default function ShareScreen() {
   // No capture (user backed out) leaves shareMode on "choice".
   useFocusEffect(
     useCallback(() => {
+      if (!isActiveMainTab) return;
       const captured = consumePendingPostCapture();
       if (!captured) return;
+      setUploadProgress(null);
+      if (captured.mediaType === "video") {
+        setShareMode("solo");
+        setSoloStep("review");
+        setImageError("Video uploads are temporarily unavailable. Add a photo instead.");
+        return;
+      }
       const picked: PickedMedia = {
         duration: captured.duration ?? null,
         fileSize: captured.fileSize ?? null,
@@ -290,7 +325,8 @@ export default function ShareScreen() {
       setSelectedMediaIndex(next.length - 1);
       setShareMode("solo");
       setSoloStep("review");
-    }, [])
+      setImageError("");
+    }, [isActiveMainTab])
   );
 
   // Keep the large preview's selection in range as media is added or removed.
@@ -395,12 +431,14 @@ export default function ShareScreen() {
 
   async function submit() {
     setSuccess("");
+    setUploadProgress(null);
     if (mediaItems.length === 0) {
       setImageError("Add a photo or video.");
       return;
     }
 
     try {
+      setUploadProgress(0);
       const normalizedDishes = dishes
         .map((dish) => ({ name: dish.name.trim(), rating: dish.rating }))
         .filter((dish) => dish.name);
@@ -419,6 +457,7 @@ export default function ShareScreen() {
           uri: media.uri,
           width: media.width
         })),
+        onUploadProgress: setUploadProgress,
         rating: firstDish?.rating || 0,
         recommended: true,
         restaurantAddress: restaurantPlace?.formattedAddress,
@@ -440,7 +479,9 @@ export default function ShareScreen() {
       setVisibility("public");
       setSoloStep("details");
       setSuccess("Post shared. Your feeds and profile are refreshing.");
+      setUploadProgress(null);
     } catch {
+      setUploadProgress(null);
       // Mutation error is rendered below.
     }
   }
@@ -471,18 +512,20 @@ export default function ShareScreen() {
     return (
       <Screen padded={false} style={styles.screenContent}>
         <View style={styles.reviewScreen}>
-          <View style={styles.reviewHeaderRow}>
-            <Pressable accessibilityLabel="Cancel share" onPress={cancelShareMode} style={styles.headerCancelButton}>
-              <X size={20} color={c.cream} strokeWidth={2.4} />
-            </Pressable>
-            <Pressable
-              disabled={soloHeaderActionDisabled}
-              onPress={handleSoloHeaderAction}
-              style={[styles.headerSubmitButton, soloHeaderActionDisabled && styles.submitButtonDisabled]}
-            >
-              <Text style={styles.headerSubmitText}>{soloHeaderActionLabel}</Text>
-            </Pressable>
-          </View>
+          <GestureDetector gesture={headerSwipeGesture}>
+            <View collapsable={false} style={styles.reviewHeaderRow}>
+              <Pressable accessibilityLabel="Cancel share" onPress={cancelShareMode} style={styles.headerCancelButton}>
+                <X size={20} color={c.cream} strokeWidth={2.4} />
+              </Pressable>
+              <Pressable
+                disabled={soloHeaderActionDisabled}
+                onPress={handleSoloHeaderAction}
+                style={[styles.headerSubmitButton, soloHeaderActionDisabled && styles.submitButtonDisabled]}
+              >
+                <Text style={styles.headerSubmitText}>{soloHeaderActionLabel}</Text>
+              </Pressable>
+            </View>
+          </GestureDetector>
 
           <View
             style={styles.reviewMain}
@@ -560,51 +603,53 @@ export default function ShareScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          {isReady && isAuthenticated && shareMode !== "choice" ? (
-            <Pressable
-              accessibilityLabel={shareMode === "solo" && soloStep !== "review" ? "Back" : "Cancel share"}
-              onPress={shareMode === "solo" ? handleSoloBackAction : cancelShareMode}
-              style={styles.headerCancelButton}
-            >
-              {shareMode === "solo" && soloStep !== "review" ? (
-                <ArrowLeft size={20} color={c.cream} strokeWidth={2.4} />
+        <GestureDetector gesture={headerSwipeGesture}>
+          <View collapsable={false} style={styles.header}>
+            {isReady && isAuthenticated && shareMode !== "choice" ? (
+              <Pressable
+                accessibilityLabel={shareMode === "solo" && soloStep !== "review" ? "Back" : "Cancel share"}
+                onPress={shareMode === "solo" ? handleSoloBackAction : cancelShareMode}
+                style={styles.headerCancelButton}
+              >
+                {shareMode === "solo" && soloStep !== "review" ? (
+                  <ArrowLeft size={20} color={c.cream} strokeWidth={2.4} />
+                ) : (
+                  <X size={20} color={c.cream} strokeWidth={2.4} />
+                )}
+              </Pressable>
+            ) : null}
+            <View style={styles.headerText}>
+              {shareMode === "friends" ? (
+                <Text style={styles.title}>Table Memory</Text>
+              ) : shareMode === "solo" ? (
+                soloStep === "preview" ? <Text style={styles.title}>Preview</Text> : null
               ) : (
-                <X size={20} color={c.cream} strokeWidth={2.4} />
+                <>
+                  <Text style={styles.title}>Create</Text>
+                  <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
+                </>
               )}
-            </Pressable>
-          ) : null}
-          <View style={styles.headerText}>
-            {shareMode === "friends" ? (
-              <Text style={styles.title}>Table Memory</Text>
-            ) : shareMode === "solo" ? (
-              soloStep === "preview" ? <Text style={styles.title}>Preview</Text> : null
-            ) : (
-              <>
-                <Text style={styles.title}>Create</Text>
-                <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
-              </>
-            )}
+            </View>
+            {isReady && isAuthenticated && shareMode === "solo" ? (
+              <Pressable
+                disabled={soloHeaderActionDisabled}
+                onPress={handleSoloHeaderAction}
+                style={[styles.headerSubmitButton, soloHeaderActionDisabled && styles.submitButtonDisabled]}
+              >
+                <Text style={styles.headerSubmitText}>{postSubmitLabel}</Text>
+              </Pressable>
+            ) : null}
+            {isReady && isAuthenticated && shareMode === "friends" ? (
+              <Pressable
+                disabled={!canCreateMemory || createMemoryRoom.isPending}
+                onPress={submitMemoryRoom}
+                style={[styles.headerSubmitButton, (!canCreateMemory || createMemoryRoom.isPending) && styles.submitButtonDisabled]}
+              >
+                <Text style={styles.headerSubmitText}>{createMemoryRoom.isPending ? "Creating..." : "Create"}</Text>
+              </Pressable>
+            ) : null}
           </View>
-          {isReady && isAuthenticated && shareMode === "solo" ? (
-            <Pressable
-              disabled={soloHeaderActionDisabled}
-              onPress={handleSoloHeaderAction}
-              style={[styles.headerSubmitButton, soloHeaderActionDisabled && styles.submitButtonDisabled]}
-            >
-              <Text style={styles.headerSubmitText}>{createPost.isPending ? "Posting..." : soloHeaderActionLabel}</Text>
-            </Pressable>
-          ) : null}
-          {isReady && isAuthenticated && shareMode === "friends" ? (
-            <Pressable
-              disabled={!canCreateMemory || createMemoryRoom.isPending}
-              onPress={submitMemoryRoom}
-              style={[styles.headerSubmitButton, (!canCreateMemory || createMemoryRoom.isPending) && styles.submitButtonDisabled]}
-            >
-              <Text style={styles.headerSubmitText}>{createMemoryRoom.isPending ? "Creating..." : "Create"}</Text>
-            </Pressable>
-          ) : null}
-        </View>
+        </GestureDetector>
 
         <View style={styles.stack}>
           {!isReady ? (
@@ -612,32 +657,34 @@ export default function ShareScreen() {
           ) : !isAuthenticated ? (
             <SignedOutFeedState message="Sign in to share a real food post." />
           ) : shareMode === "choice" ? (
-            <View style={styles.choiceStack}>
-              <ActionCard
-                Icon={PenLine}
-                accent="orange"
-                cardHeight={choiceCardHeight}
-                cta="Capture Dish"
-                CtaIcon={Camera}
-                description="Share the dish worth talking about."
-                onMeasureHeight={measureChoiceCard}
-                onPress={openSolo}
-                tags={["Photo", "Rating"]}
-                title="Post a Bite"
-              />
-              <ActionCard
-                Icon={Users}
-                accent="memory"
-                cardHeight={choiceCardHeight}
-                cta="Create memory"
-                CtaIcon={UserPlus}
-                description="Remember the places you visit with friends."
-                onMeasureHeight={measureChoiceCard}
-                onPress={() => setShareMode("friends")}
-                tags={["Private", "With friends", "Photos + dishes"]}
-                title="Table Memory"
-              />
-            </View>
+            <GestureDetector gesture={bodySwipeGesture}>
+              <View collapsable={false} style={styles.choiceStack}>
+                <ActionCard
+                  Icon={PenLine}
+                  accent="orange"
+                  cardHeight={choiceCardHeight}
+                  cta="Capture Dish"
+                  CtaIcon={Camera}
+                  description="Share the dish worth talking about."
+                  onMeasureHeight={measureChoiceCard}
+                  onPress={openSolo}
+                  tags={["Photo", "Rating"]}
+                  title="Post a Bite"
+                />
+                <ActionCard
+                  Icon={Users}
+                  accent="memory"
+                  cardHeight={choiceCardHeight}
+                  cta="Create memory"
+                  CtaIcon={UserPlus}
+                  description="Remember the places you visit with friends."
+                  onMeasureHeight={measureChoiceCard}
+                  onPress={() => setShareMode("friends")}
+                  tags={["Private", "With friends", "Photos + dishes"]}
+                  title="Table Memory"
+                />
+              </View>
+            </GestureDetector>
           ) : (
             <>
               {shareMode === "solo" ? (
@@ -1459,9 +1506,9 @@ function createStyles(c: ThemeColors) {
     alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingBottom: 8,
+    paddingBottom: screenLayout.headerContentGap,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
+    paddingTop: screenLayout.topGap
   },
   headerCancelButton: {
     alignItems: "center",
@@ -1939,9 +1986,9 @@ function createStyles(c: ThemeColors) {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingBottom: 8,
+    paddingBottom: screenLayout.headerContentGap,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
+    paddingTop: screenLayout.topGap
   },
   reviewMain: {
     alignItems: "center",

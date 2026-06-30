@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Linking, StyleSheet, Switch, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
   useNotificationSettingsQuery,
   useUpdateNotificationSettingsMutation
@@ -24,7 +22,7 @@ const SETTING_ROWS: Array<{ key: keyof NotificationSettings; label: string; desc
 ];
 
 export default function NotificationSettingsScreen() {
-  const { resolvedTheme, themeColors } = useThemePreference();
+  const { themeColors } = useThemePreference();
   const { slideStyle, close } = useSlideOverScreen();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
@@ -62,21 +60,13 @@ export default function NotificationSettingsScreen() {
   }
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.lg}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Notifications"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        themeColors={themeColors}
-        title="Notifications"
-        titleWeight="regular"
-      />
-
       {settingsQuery.isLoading || !draft ? (
         <LoadingState message="Loading your notification preferences." title="Loading notifications" />
       ) : settingsQuery.isError ? (
@@ -129,8 +119,7 @@ export default function NotificationSettingsScreen() {
           </View>
         </View>
       )}
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

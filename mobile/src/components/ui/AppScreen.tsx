@@ -1,9 +1,10 @@
-import { PropsWithChildren, ReactNode, useRef } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { PropsWithChildren, ReactNode, useRef, type ElementRef } from "react";
+import { Platform, RefreshControl, StatusBar, StyleSheet, Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { useScrollToTop } from "@react-navigation/native";
+import { ScrollView as GestureHandlerScrollView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing, typography } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 
 type AppHeaderProps = {
   eyebrow?: string;
@@ -18,8 +19,14 @@ type AppScreenProps = PropsWithChildren<AppHeaderProps & {
   onRefresh?: () => void;
   padded?: boolean;
   refreshing?: boolean;
+  safeTop?: boolean;
   scroll?: boolean;
   style?: ViewStyle | ViewStyle[];
+  touchHandlers?: {
+    onTouchCancel?: (event: GestureResponderEvent) => void;
+    onTouchEnd?: (event: GestureResponderEvent) => void;
+    onTouchStart?: (event: GestureResponderEvent) => void;
+  };
 }>;
 
 export function AppHeader({ eyebrow, italicTitlePart, rightAccessory, subtitle, title }: AppHeaderProps) {
@@ -60,18 +67,23 @@ export function AppScreen({
   padded = true,
   refreshing = false,
   rightAccessory,
+  safeTop = true,
   scroll = false,
   style,
   subtitle,
+  touchHandlers,
   title
 }: AppScreenProps) {
   const insets = useSafeAreaInsets();
   const { themeColors } = useThemePreference();
+  const androidTopInset = Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0;
+  const topInset = safeTop ? Math.max(insets.top, androidTopInset) : 0;
+  const screenBg = { backgroundColor: backgroundColor ?? themeColors.bg };
+  const screenStyle = [styles.screen, screenBg, topInset > 0 ? { paddingTop: topInset } : null];
   // Re-tapping the active tab scrolls this screen back to the top, matching the
   // standard social-app behavior. No-op when not scrollable (ref stays null).
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ElementRef<typeof GestureHandlerScrollView>>(null);
   useScrollToTop(scrollRef);
-  const screenBg = { backgroundColor: backgroundColor ?? themeColors.bg };
   const contentStyle = [
     padded && styles.padded,
     { paddingBottom: spacing.xl + insets.bottom },
@@ -89,8 +101,9 @@ export function AppScreen({
 
   if (scroll) {
     return (
-      <SafeAreaView edges={["top"]} style={[styles.screen, screenBg]}>
-        <ScrollView
+      <SafeAreaView edges={[]} style={screenStyle}>
+        <GestureHandlerScrollView
+          contentInsetAdjustmentBehavior="never"
           ref={scrollRef}
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="handled"
@@ -105,16 +118,25 @@ export function AppScreen({
           ) : undefined}
           showsVerticalScrollIndicator={false}
         >
-          {header}
-          {children}
-        </ScrollView>
+          {touchHandlers ? (
+            <View {...touchHandlers}>
+              {header}
+              {children}
+            </View>
+          ) : (
+            <>
+              {header}
+              {children}
+            </>
+          )}
+        </GestureHandlerScrollView>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView edges={["top"]} style={[styles.screen, backgroundColor ? { backgroundColor } : null]}>
-      <View style={[styles.fill, contentStyle]}>
+    <SafeAreaView edges={[]} style={screenStyle}>
+      <View style={[styles.fill, contentStyle]} {...touchHandlers}>
         {header}
         {children}
       </View>
@@ -131,13 +153,13 @@ const styles = StyleSheet.create({
   },
   padded: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md
+    paddingTop: screenLayout.topGap
   },
   header: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
-    marginBottom: spacing.base,
+    marginBottom: screenLayout.headerContentGap,
     minHeight: 46
   },
   headerText: {

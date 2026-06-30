@@ -1,10 +1,12 @@
 import { Image } from "expo-image";
 import * as Location from "expo-location";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronDown, LocateFixed, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
-import Reanimated, { Easing, Extrapolation, interpolate, runOnUI, scrollTo, type SharedValue, useAnimatedRef, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, AppState, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
+import { MaterialTabBar, Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
@@ -17,8 +19,8 @@ import {
   type PlaceCategoryId
 } from "@/constants/exploreCategories";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
-import { useExploreFeedQuery } from "@/hooks/useFeeds";
-import { normalizeDishDisplayName, normalizeDishInput } from "@/services/dishNormalizer";
+import { useExploreDiscoveryQuery } from "@/hooks/useFeeds";
+import type { ExploreDishSpotlight, ExplorePersonSpotlight, ExplorePlaceSpotlight } from "@/services/exploreDiscovery";
 import {
   loadSavedExploreLocation,
   reverseGeocodeExploreLocation,
@@ -35,71 +37,56 @@ import {
   type PlaceSuggestion
 } from "@/services/places";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { useMainTabPager } from "@/navigation/MainTabPagerContext";
+import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing, typography } from "@/theme";
-import type { ReviewPost } from "@/types/models";
+import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 
 type ExploreTab = "places" | "dishes" | "people";
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
-type PlaceSpotlight = {
-  key: string;
-  name: string;
-  placeId: string | null;
-  area: string | null;
-  photo: string | null;
-  averageRating: number | null;
-  categoryTags: PlaceCategoryId[];
-  circleReviewers: string[];
-  ratingCount: number;
-  tags: string[];
-  topDishes: string[];
-  postCount: number;
-};
-
-type DishSpotlight = {
-  key: string;
-  name: string;
-  familyId: DishClusterId;
-  familyName: string;
-  topRestaurantNames: string[];
-  photo: string | null;
-  averageRating: number | null;
-  categoryTags: DishClusterId[];
-  mentionCount: number;
-  ratingCount: number;
-  tags: string[];
-  snippet: string | null;
-};
-
-type PersonSpotlight = {
-  username: string;
-  displayName: string;
-  initials: string;
-  totalPlaces: number;
-};
+type PlaceSpotlight = ExplorePlaceSpotlight;
+type DishSpotlight = ExploreDishSpotlight;
+type PersonSpotlight = ExplorePersonSpotlight;
 
 type PersonRequestStatus = "idle" | "loading" | "pending" | "joined";
 
 // Explore is a "top near you" discovery surface, not an exhaustive list. Capping the
-// rendered cards keeps the (non-virtualised) lists bounded so memory and load time stay
-// predictable regardless of how large the feed is. Lists are pre-sorted by relevance, so
-// the cap keeps the strongest results.
-const EXPLORE_LIST_LIMIT = 24;
-const EMPTY_POSTS: ReviewPost[] = [];
+// rendered cards keeps the lists bounded so memory and load time stay predictable
+// regardless of how large the backend discovery payload grows.
+const EXPLORE_FEED_SCAN_LIMIT = 30;
+const EXPLORE_MAX_LIST_LIMIT = 24;
+const EXPLORE_INITIAL_CARD_LIMIT = 6;
+const EXPLORE_CARD_PAGE_SIZE = 6;
+const EXPLORE_APP_RESUME_REFRESH_MS = 10 * 60_000;
 const EMPTY_PLACES: PlaceSpotlight[] = [];
 const EMPTY_DISHES: DishSpotlight[] = [];
 const EMPTY_PEOPLE: PersonSpotlight[] = [];
-
 const PLACE_CARD_HEIGHT = 152;
 const PLACE_MEDIA_WIDTH = PLACE_CARD_HEIGHT * 4 / 5;
+const EXPLORE_HEADER_ROW_CONTENT_HEIGHT = Platform.OS === "web" ? 42 : 34;
+const EXPLORE_HEADER_ROW_HEIGHT = screenLayout.topGap + EXPLORE_HEADER_ROW_CONTENT_HEIGHT + screenLayout.headerContentGap;
+const EXPLORE_SEARCH_WRAP_TOP_PADDING = Platform.OS === "web" ? spacing.sm : 4;
+const EXPLORE_SEARCH_BOX_HEIGHT = Platform.OS === "web" ? 42 : 38;
+const EXPLORE_SEARCH_WRAP_HEIGHT = EXPLORE_SEARCH_WRAP_TOP_PADDING + EXPLORE_SEARCH_BOX_HEIGHT + spacing.md;
+const EXPLORE_TAB_ROW_HEIGHT = 31;
+const EXPLORE_TAB_BUTTON_HEIGHT = 29;
+const EXPLORE_TABS_OUTER_BOTTOM_PADDING = Platform.OS === "web" ? 14 : 10;
+const EXPLORE_TABS_OUTER_HEIGHT = EXPLORE_TAB_ROW_HEIGHT + EXPLORE_TABS_OUTER_BOTTOM_PADDING;
+const EXPLORE_COLLAPSIBLE_HEADER_HEIGHT =
+  EXPLORE_HEADER_ROW_HEIGHT + EXPLORE_SEARCH_WRAP_HEIGHT;
 const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 const EXPLORE_TABS: Array<{ id: ExploreTab; label: string }> = [
   { id: "places", label: "Places" },
   { id: "dishes", label: "Dishes" },
   { id: "people", label: "People" }
 ];
+const INITIAL_VISIBLE_COUNTS: Record<ExploreTab, number> = {
+  dishes: EXPLORE_INITIAL_CARD_LIMIT,
+  people: EXPLORE_INITIAL_CARD_LIMIT,
+  places: EXPLORE_INITIAL_CARD_LIMIT
+};
 
 function useExploreTheme() {
   const { themeColors } = useThemePreference();
@@ -119,18 +106,6 @@ function avatarColor(name: string) {
   return avatarColors[hash % avatarColors.length];
 }
 
-function ratingStats(values: number[]) {
-  const clean = values.filter((value) => Number.isFinite(value) && value > 0);
-  return {
-    averageRating: clean.length > 0 ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null,
-    ratingCount: clean.length
-  };
-}
-
-function ratingSortValue(value: number | null) {
-  return value ?? 0;
-}
-
 function displayRating(value: number | null) {
   return value !== null && value > 0 ? value.toFixed(1).replace(/\.0$/, "") : "No rating";
 }
@@ -138,11 +113,6 @@ function displayRating(value: number | null) {
 function exploreTabFromParam(value?: string): ExploreTab {
   if (value === "dishes" || value === "people") return value;
   return "places";
-}
-
-function tabIndexFor(tab: ExploreTab) {
-  const index = EXPLORE_TABS.findIndex((item) => item.id === tab);
-  return index >= 0 ? index : 0;
 }
 
 function placeCategoryLabel(categoryId: PlaceCategoryId) {
@@ -164,230 +134,45 @@ function circleProofText(names: string[]) {
   return `${firstName(names[0])}, ${firstName(names[1])} + ${names.length - 2} have been here`;
 }
 
-function placeLocation(post: ReviewPost) {
-  return post.area || post.restaurantAddress || "";
-}
-
-function buildPlaces(posts: ReviewPost[]): PlaceSpotlight[] {
-  const places = new Map<string, {
-    area: string | null;
-    dishCounts: Map<string, number>;
-    name: string;
-    photo: string | null;
-    placeId: string | null;
-    ratings: number[];
-    circleReviewers: Map<string, string>;
-    tags: Map<string, number>;
-    postCount: number;
-  }>();
-
-  for (const post of posts) {
-    const location = placeLocation(post);
-    const key = post.restaurantId
-      ? `place:${post.restaurantId}`
-      : `${post.restaurantName.toLowerCase()}::${location.toLowerCase()}`;
-    const current = places.get(key) ?? {
-      area: location || null,
-      dishCounts: new Map<string, number>(),
-      name: post.restaurantName,
-      photo: post.media[0]?.publicUrl ?? null,
-      placeId: post.restaurantId,
-      ratings: [],
-      circleReviewers: new Map<string, string>(),
-      tags: new Map<string, number>(),
-      postCount: 0
-    };
-
-    if (!current.photo && post.media[0]?.publicUrl) current.photo = post.media[0].publicUrl;
-    if (!current.placeId && post.restaurantId) current.placeId = post.restaurantId;
-    current.postCount += 1;
-    if (post.circleRequestStatus === "joined") {
-      current.circleReviewers.set(post.reviewerUsername || post.reviewerName, post.authorName);
-    }
-    for (const item of post.items) {
-      current.ratings.push(item.rating);
-      current.dishCounts.set(item.name, (current.dishCounts.get(item.name) ?? 0) + 1);
-    }
-    for (const tag of post.tags) current.tags.set(tag, (current.tags.get(tag) ?? 0) + 1);
-    places.set(key, current);
-  }
-
-  return Array.from(places.entries())
-    .map(([key, place]) => {
-      const ratings = ratingStats(place.ratings);
-      const topDishes = Array.from(place.dishCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([dish]) => dish);
-      const categoryTags = placeMatchesCategory({ area: place.area, name: place.name, topDishes }, "all")
-        ? PLACE_CATEGORIES
-          .map((category) => category.id)
-          .filter((category) => category !== "all" && placeMatchesCategory({ area: place.area, name: place.name, topDishes }, category))
-          .slice(0, 2)
-        : [];
-
-      return {
-        key,
-        area: place.area,
-        averageRating: ratings.averageRating,
-        categoryTags,
-        circleReviewers: Array.from(place.circleReviewers.values()),
-        name: place.name,
-        placeId: place.placeId,
-        photo: place.photo,
-        ratingCount: ratings.ratingCount,
-        tags: Array.from(place.tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([tag]) => tag),
-        topDishes,
-        postCount: place.postCount
-      };
-    })
-    .sort((a, b) => b.postCount - a.postCount || ratingSortValue(b.averageRating) - ratingSortValue(a.averageRating));
-}
-
-function buildDishes(posts: ReviewPost[]): DishSpotlight[] {
-  const dishes = new Map<string, {
-    familyId: DishClusterId;
-    familyName: string;
-    name: string;
-    photo: string | null;
-    ratings: number[];
-    restaurants: Map<string, number>;
-    snippet: string | null;
-    tags: Map<string, number>;
-  }>();
-
-  for (const post of posts) {
-    for (const item of post.items) {
-      const normalization = normalizeDishInput(item.name);
-      const displayName = normalization.canonicalVariantName ?? normalizeDishDisplayName(item.name);
-      const key = normalization.canonicalVariantId
-        ? `variant:${normalization.canonicalVariantId}`
-        : `raw:${displayName.toLowerCase()}`;
-      const current = dishes.get(key) ?? {
-        familyId: normalization.dishFamilyId,
-        familyName: normalization.dishFamilyName,
-        name: displayName,
-        photo: post.media[0]?.publicUrl ?? null,
-        ratings: [],
-        restaurants: new Map<string, number>(),
-        snippet: post.body,
-        tags: new Map<string, number>()
-      };
-
-      if (!current.photo && post.media[0]?.publicUrl) current.photo = post.media[0].publicUrl;
-      if (!current.snippet && post.body) current.snippet = post.body;
-      current.ratings.push(item.rating);
-      current.restaurants.set(post.restaurantName, (current.restaurants.get(post.restaurantName) ?? 0) + 1);
-      for (const tag of post.tags) current.tags.set(tag, (current.tags.get(tag) ?? 0) + 1);
-      dishes.set(key, current);
-    }
-  }
-
-  return Array.from(dishes.entries())
-    .map(([key, dish]) => {
-      const ratings = ratingStats(dish.ratings);
-      const tags = Array.from(dish.tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([tag]) => tag);
-      const categoryTags = DISH_CATEGORIES
-        .map((category) => category.id)
-        .filter((category) => category !== "all" && dishMatchesCategory({ name: dish.name, tags }, category))
-        .slice(0, 2);
-
-      return {
-        key,
-        averageRating: ratings.averageRating,
-        categoryTags,
-        familyId: dish.familyId,
-        familyName: dish.familyName,
-        mentionCount: dish.ratings.length,
-        name: dish.name,
-        photo: dish.photo,
-        ratingCount: ratings.ratingCount,
-        snippet: dish.snippet,
-        tags,
-        topRestaurantNames: Array.from(dish.restaurants.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([restaurant]) => restaurant)
-      };
-    })
-    .sort((a, b) => b.mentionCount - a.mentionCount || ratingSortValue(b.averageRating) - ratingSortValue(a.averageRating));
-}
-
-function normalizedPersonIdentity(value: string) {
-  return value.trim().replace(/^@+/, "").replace(/[_\s]+/g, " ").replace(/\s+/g, " ").toLowerCase();
-}
-
-function buildPeople(posts: ReviewPost[], viewerName: string, viewerDisplayName: string): PersonSpotlight[] {
-  const people = new Map<string, { displayName: string; places: Set<string> }>();
-  const excludedIdentities = new Set([viewerName, viewerDisplayName].map(normalizedPersonIdentity).filter(Boolean));
-
-  for (const post of posts) {
-    const username = post.reviewerUsername || post.reviewerName;
-    if (
-      excludedIdentities.has(normalizedPersonIdentity(username))
-      || excludedIdentities.has(normalizedPersonIdentity(post.reviewerName))
-      || excludedIdentities.has(normalizedPersonIdentity(post.authorName))
-    ) {
-      continue;
-    }
-
-    const current = people.get(username) ?? {
-      displayName: post.authorName,
-      places: new Set<string>()
-    };
-    current.places.add(post.restaurantName);
-    people.set(username, current);
-  }
-
-  return Array.from(people.entries())
-    .map(([username, person]) => ({
-      username,
-      displayName: person.displayName,
-      initials: initialsFor(person.displayName || username),
-      totalPlaces: person.places.size
-    }))
-    .sort((a, b) => b.totalPlaces - a.totalPlaces);
-}
-
 export default function ExploreScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ tab?: string }>();
-  const { width } = useWindowDimensions();
   const { themeColors, styles } = useExploreTheme();
+  const isFocused = useIsFocused();
+  const mainTabPager = useMainTabPager();
   const requestCircleAccess = useRequestCircleAccessMutation();
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
-  const viewerDisplayName = useSessionStore((state) => state.profile?.displayName ?? "");
+  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "explore" : isFocused;
+  const isActiveMainTabRef = useRef(isActiveMainTab);
+  isActiveMainTabRef.current = isActiveMainTab;
   const initialTab = useRef(exploreTabFromParam(params.tab)).current;
-  const [activeTab, setActiveTab] = useState<ExploreTab>(initialTab);
+  const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ExploreTab>(initialTab);
-  const paramsTabRef = useRef(params.tab);
-  const pagerTransitionTargetRef = useRef<ExploreTab | null>(null);
-  const pagerRef = useAnimatedRef<ScrollView>();
-  // Horizontal scroll offset of the pager. Reanimated keeps the tab indicator on the UI
-  // thread so swipes/tap transitions stay smooth while the feed is loading or hydrating.
-  const scrollX = useSharedValue(tabIndexFor(initialTab) * width);
-  const [pagerHeight, setPagerHeight] = useState(0);
-  const keepLoadingPanelsDuringTransitionRef = useRef(false);
-  const [, forceRenderAfterPagerTransition] = useState(0);
-  const pagerTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backgroundedAtRef = useRef<number | null>(null);
+  const tabScrollReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [exploreLocation, setExploreLocation] = useState<ExploreUserLocation | null>(null);
   const [locationHydrated, setLocationHydrated] = useState(false);
   const [locationLabel, setLocationLabel] = useState("Set location");
   const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
   const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
+  const [innerPagerSettled, setInnerPagerSettled] = useState(true);
+  const [tabScrollReady, setTabScrollReady] = useState(true);
   const [query, setQuery] = useState("");
+  const [visibleCounts, setVisibleCounts] = useState(INITIAL_VISIBLE_COUNTS);
   const [personRequestStatuses, setPersonRequestStatuses] = useState<Record<string, PersonRequestStatus>>({});
-  const feed = useExploreFeedQuery({ location: exploreLocation }, { enabled: locationHydrated });
-  const rawPosts = feed.data?.posts ?? EMPTY_POSTS;
-  // Defer the heavy list build + card render so it runs at low priority. When the feed
-  // arrives, rendering all three tabs' cards no longer blocks the JS thread — tab taps stay
-  // responsive and the content streams in instead of freezing the screen until it's done.
-  const posts = useDeferredValue(rawPosts);
-  const isHydrating = posts.length === 0 && rawPosts.length > 0;
-  const showLoading = !locationHydrated || feed.isLoading || isHydrating;
-  const normalizedQuery = query.trim().toLowerCase();
-  const renderLoadingPanels = !normalizedQuery && (showLoading || keepLoadingPanelsDuringTransitionRef.current);
-  const places = useMemo(() => renderLoadingPanels ? EMPTY_PLACES : buildPlaces(posts), [posts, renderLoadingPanels]);
-  const dishes = useMemo(() => renderLoadingPanels ? EMPTY_DISHES : buildDishes(posts), [posts, renderLoadingPanels]);
-  const people = useMemo(
-    () => renderLoadingPanels ? EMPTY_PEOPLE : buildPeople(posts, viewerName, viewerDisplayName),
-    [posts, renderLoadingPanels, viewerDisplayName, viewerName]
+  const discovery = useExploreDiscoveryQuery(
+    { limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation },
+    { enabled: locationHydrated }
   );
+  const showInitialLoading = !locationHydrated || (discovery.isLoading && !discovery.data);
+  const showLoading = showInitialLoading;
+  const listsScrollable = !showLoading && innerPagerSettled && tabScrollReady;
+  const normalizedQuery = query.trim().toLowerCase();
+  const places = showLoading ? EMPTY_PLACES : discovery.data?.places ?? EMPTY_PLACES;
+  const dishes = showLoading ? EMPTY_DISHES : discovery.data?.dishes ?? EMPTY_DISHES;
+  const people = showLoading ? EMPTY_PEOPLE : discovery.data?.people ?? EMPTY_PEOPLE;
   const peopleSearch = useUserProfileSearch({
     enabled: Boolean(normalizedQuery),
     excludedUsernames: viewerName ? [viewerName] : [],
@@ -420,60 +205,34 @@ export default function ExploreScreen() {
     }
     return Array.from(merged.values()).slice(0, 8);
   }, [filteredPeople, peopleSearch.results]);
-  const tabWidth = Math.max(0, width - spacing.base * 2) / EXPLORE_TABS.length;
-  const pagerScrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollX.value = event.contentOffset.x;
-    }
+  const headerSwipeGesture = useMainTabSwipeGestureZone({
+    enabled: !showLocationPicker,
+    left: "share",
+    owner: "explore",
+    right: "index",
+    source: "main-header-swipe"
+  });
+  const searchSwipeGesture = useMainTabSwipeGestureZone({
+    enabled: !showLocationPicker && !searchFocused,
+    left: "share",
+    owner: "explore",
+    right: "index",
+    source: "main-header-swipe"
   });
 
-  const clearPagerTransitionTimeout = useCallback(() => {
-    if (pagerTransitionTimeoutRef.current) {
-      clearTimeout(pagerTransitionTimeoutRef.current);
-      pagerTransitionTimeoutRef.current = null;
-    }
+  const handleExploreTabChange = useCallback((tab: ExploreTab) => {
+    activeTabRef.current = tab;
+    setTabScrollReady(false);
+    if (tabScrollReadyTimeoutRef.current) clearTimeout(tabScrollReadyTimeoutRef.current);
+    tabScrollReadyTimeoutRef.current = setTimeout(() => {
+      tabScrollReadyTimeoutRef.current = null;
+      setTabScrollReady(true);
+    }, 260);
   }, []);
 
-  const finishPagerTransition = useCallback(() => {
-    clearPagerTransitionTimeout();
-    keepLoadingPanelsDuringTransitionRef.current = false;
-    forceRenderAfterPagerTransition((version) => version + 1);
-  }, [clearPagerTransitionTimeout]);
-
-  const commitPagerTab = useCallback((tab: ExploreTab) => {
-    pagerTransitionTargetRef.current = null;
-    activeTabRef.current = tab;
-    setActiveTab(tab);
-    if (exploreTabFromParam(paramsTabRef.current) !== tab) router.setParams({ tab });
-  }, [router]);
-
-  const beginPagerTransition = useCallback((targetTab?: ExploreTab) => {
-    clearPagerTransitionTimeout();
-    pagerTransitionTargetRef.current = targetTab ?? null;
-    if (showLoading) keepLoadingPanelsDuringTransitionRef.current = true;
-    pagerTransitionTimeoutRef.current = setTimeout(() => {
-      const fallbackTab = pagerTransitionTargetRef.current;
-      pagerTransitionTimeoutRef.current = null;
-      keepLoadingPanelsDuringTransitionRef.current = false;
-      forceRenderAfterPagerTransition((version) => version + 1);
-      if (fallbackTab) commitPagerTab(fallbackTab);
-    }, 520);
-  }, [clearPagerTransitionTimeout, commitPagerTab, showLoading]);
-
-  const scrollPagerTo = useCallback((nextOffset: number, animated: boolean) => {
-    scrollX.value = animated
-      ? withTiming(nextOffset, { duration: 260, easing: Easing.out(Easing.cubic) })
-      : nextOffset;
-    if (!pagerRef.current) return;
-    runOnUI((x: number, shouldAnimate: boolean) => {
-      "worklet";
-      scrollTo(pagerRef, x, 0, shouldAnimate);
-    })(nextOffset, animated);
-  }, [pagerRef, scrollX]);
-
-  const handlePagerScrollBegin = useCallback(() => {
-    beginPagerTransition();
-  }, [beginPagerTransition]);
+  const handleExplorePagerStateChange = useCallback((event: { nativeEvent: { pageScrollState: "idle" | "dragging" | "settling" } }) => {
+    setInnerPagerSettled(event.nativeEvent.pageScrollState === "idle");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -498,46 +257,38 @@ export default function ExploreScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    paramsTabRef.current = params.tab;
-  }, [params.tab]);
-
   useEffect(() => () => {
-    clearPagerTransitionTimeout();
-  }, [clearPagerTransitionTimeout]);
+    if (tabScrollReadyTimeoutRef.current) clearTimeout(tabScrollReadyTimeoutRef.current);
+  }, []);
 
-  // Tap a tab to page the horizontal scroller with native scroll animation. Route params
-  // are committed on momentum end so navigation re-renders never compete with the scroll.
-  const goToTab = useCallback((tab: ExploreTab) => {
-    const currentTarget = pagerTransitionTargetRef.current ?? activeTabRef.current;
-    if (tab === currentTarget) return;
-    const nextOffset = tabIndexFor(tab) * width;
-    beginPagerTransition(tab);
-    scrollPagerTo(nextOffset, true);
-  }, [beginPagerTransition, scrollPagerTo, width]);
-
-  const handlePagerMomentumEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const index = Math.round(event.nativeEvent.contentOffset.x / Math.max(width, 1));
-    const tab = EXPLORE_TABS[index]?.id ?? "places";
-    scrollX.value = tabIndexFor(tab) * width;
-    finishPagerTransition();
-    commitPagerTab(tab);
-  }, [commitPagerTab, finishPagerTransition, scrollX, width]);
-
-  // Deep links / external param changes: page to that tab (no animation if it's the first).
   useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "background" || nextState === "inactive") {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+
+      if (nextState !== "active" || !locationHydrated || !isActiveMainTabRef.current) return;
+      const backgroundedAt = backgroundedAtRef.current;
+      backgroundedAtRef.current = null;
+      if (backgroundedAt && Date.now() - backgroundedAt > EXPLORE_APP_RESUME_REFRESH_MS) {
+        void discovery.refetch();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [discovery.refetch, locationHydrated]);
+
+  // Deep links / external param changes animate through the same pager progress as taps
+  // and swipes, so the indicator and content never update on separate clocks.
+  useEffect(() => {
+    if (!isActiveMainTab) return;
     const tab = exploreTabFromParam(params.tab);
     if (tab === activeTabRef.current) return;
-    const nextOffset = tabIndexFor(tab) * width;
-    beginPagerTransition(tab);
-    scrollPagerTo(nextOffset, true);
-  }, [beginPagerTransition, params.tab, scrollPagerTo, width]);
-
-  // Keep the pager aligned to the active tab when the width changes (rotation).
-  useEffect(() => {
-    const nextOffset = tabIndexFor(activeTabRef.current) * width;
-    scrollPagerTo(nextOffset, false);
-  }, [scrollPagerTo, width]);
+    activeTabRef.current = tab;
+    tabsRef.current?.jumpToTab(tab);
+  }, [isActiveMainTab, params.tab]);
 
   function handleLocationSelect(nextLocation: ExploreUserLocation) {
     setExploreLocation(nextLocation);
@@ -547,6 +298,7 @@ export default function ExploreScreen() {
   }
 
   const openPlace = useCallback((place: PlaceSpotlight) => {
+    if (!isActiveMainTabRef.current) return;
     if (place.placeId) {
       router.push({
         pathname: "/restaurants/[placeId]",
@@ -569,10 +321,12 @@ export default function ExploreScreen() {
   }, [router]);
 
   const openDish = useCallback((dish: DishSpotlight) => {
+    if (!isActiveMainTabRef.current) return;
     router.push({ pathname: "/dishes/[dish]", params: { dish: dish.name } });
   }, [router]);
 
   const openProfile = useCallback((username: string) => {
+    if (!isActiveMainTabRef.current) return;
     if (!username) return;
     if (username === viewerName) {
       router.push("/profile");
@@ -608,187 +362,306 @@ export default function ExploreScreen() {
     }
   }, [personStatusFor, requestCircleAccess, viewerName]);
 
-  const placesForCategory = useMemo(
-    () => filteredPlaces.filter((place) => placeMatchesCategory(place, placeCategory)).slice(0, EXPLORE_LIST_LIMIT),
+  useEffect(() => {
+    setVisibleCounts(INITIAL_VISIBLE_COUNTS);
+  }, [discovery.data, dishCategory, placeCategory, normalizedQuery]);
+
+  const allPlacesForCategory = useMemo(
+    () => filteredPlaces.filter((place) => placeMatchesCategory(place, placeCategory)).slice(0, EXPLORE_MAX_LIST_LIMIT),
     [filteredPlaces, placeCategory]
   );
-  const dishesForCategory = useMemo(
-    () => filteredDishes.filter((dish) => dishMatchesCategory(dish, dishCategory)).slice(0, EXPLORE_LIST_LIMIT),
+  const allDishesForCategory = useMemo(
+    () => filteredDishes.filter((dish) => dishMatchesCategory(dish, dishCategory)).slice(0, EXPLORE_MAX_LIST_LIMIT),
     [filteredDishes, dishCategory]
   );
-  const peopleForList = useMemo(() => filteredPeople.slice(0, EXPLORE_LIST_LIMIT), [filteredPeople]);
+  const allPeopleForList = useMemo(() => filteredPeople.slice(0, EXPLORE_MAX_LIST_LIMIT), [filteredPeople]);
+  const placesForCategory = useMemo(
+    () => allPlacesForCategory.slice(0, visibleCounts.places),
+    [allPlacesForCategory, visibleCounts.places]
+  );
+  const dishesForCategory = useMemo(
+    () => allDishesForCategory.slice(0, visibleCounts.dishes),
+    [allDishesForCategory, visibleCounts.dishes]
+  );
+  const peopleForList = useMemo(
+    () => allPeopleForList.slice(0, visibleCounts.people),
+    [allPeopleForList, visibleCounts.people]
+  );
+
+  const revealMore = useCallback((tab: ExploreTab, total: number) => {
+    setVisibleCounts((current) => {
+      if (current[tab] >= total) return current;
+      return {
+        ...current,
+        [tab]: Math.min(total, current[tab] + EXPLORE_CARD_PAGE_SIZE)
+      };
+    });
+  }, []);
+
+  const revealMorePlaces = useCallback(() => {
+    revealMore("places", allPlacesForCategory.length);
+  }, [allPlacesForCategory.length, revealMore]);
+
+  const revealMoreDishes = useCallback(() => {
+    revealMore("dishes", allDishesForCategory.length);
+  }, [allDishesForCategory.length, revealMore]);
+
+  const revealMorePeople = useCallback(() => {
+    revealMore("people", allPeopleForList.length);
+  }, [allPeopleForList.length, revealMore]);
+
+  const refreshExplore = useCallback(() => {
+    if (!locationHydrated) return;
+    void discovery.refetch();
+  }, [discovery.refetch, locationHydrated]);
 
   const refreshControl = useMemo(() => (
     <RefreshControl
-      refreshing={feed.isRefetching}
-      onRefresh={() => { void feed.refetch(); }}
+      refreshing={discovery.isRefetching}
+      onRefresh={refreshExplore}
       colors={[themeColors.orange]}
       progressBackgroundColor={themeColors.card}
+      progressViewOffset={0}
       tintColor={themeColors.orange}
     />
-  ), [feed.isRefetching, feed.refetch, themeColors.card, themeColors.orange]);
+  ), [discovery.isRefetching, refreshExplore, themeColors.card, themeColors.orange]);
+  const listRefreshControl = Platform.OS === "android" ? undefined : refreshControl;
 
-  // Each tab is its own virtualised FlatList — only on-screen cards render, so the feed
-  // arriving never blocks the JS thread, and each tab scrolls independently with no manual
-  // height. Memoised so paging/active-tab changes don't re-render the lists.
-  const placesPanel = useMemo(() => (
-    <FlatList
-      data={showLoading || feed.isError ? EMPTY_PLACES : placesForCategory}
-      keyExtractor={(item) => item.key}
-      renderItem={({ item }) => (
-        <View style={styles.pageItem}>
-          <PlaceCard place={item} onOpen={() => openPlace(item)} />
+  const renderExploreHeader = useCallback(() => (
+    <View style={styles.collapsibleHeader}>
+      <GestureDetector gesture={headerSwipeGesture}>
+        <View collapsable={false} style={styles.header}>
+          <Text style={styles.title}>Explore</Text>
+          <Pressable
+            accessibilityLabel="Location"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => setShowLocationPicker(true)}
+            style={styles.locationButton}
+          >
+            <Text style={styles.locationCompass}>🧭</Text>
+            <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
+            <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+          </Pressable>
         </View>
-      )}
-      ItemSeparatorComponent={ListGap}
-      ListHeaderComponent={(
-        <>
-          <CategoryGrid categories={PLACE_CATEGORIES} selected={placeCategory} onChange={setPlaceCategory} />
-          <View style={styles.pageHeader}>
-            <DiscoveryHeader icon="places" title="Top places near you" />
+      </GestureDetector>
+
+      <GestureDetector gesture={searchSwipeGesture}>
+        <View collapsable={false} style={styles.searchWrap}>
+          <View style={styles.searchBox}>
+            <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onBlur={() => setSearchFocused(false)}
+              onChangeText={setQuery}
+              onFocus={() => setSearchFocused(true)}
+              placeholder="Search people, dishes or places..."
+              placeholderTextColor={themeColors.muted}
+              style={styles.searchInput}
+              value={query}
+            />
+            {query ? (
+              <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
+                <X size={13} color={themeColors.muted} strokeWidth={2.4} />
+              </Pressable>
+            ) : null}
           </View>
-        </>
-      )}
-      ListEmptyComponent={showLoading ? (
-        <View style={styles.pageItem}>
-          <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
         </View>
-      ) : feed.isError ? (
-        <View style={styles.pageItem}>
-          <ErrorState actionLabel="Try again" message={feed.error?.message ?? ""} onAction={() => feed.refetch()} title="Explore unavailable" />
-        </View>
-      ) : (
-        <View style={styles.pageItem}>
-          <EmptyState
-            message={placeCategory !== "all" ? "" : "Public posts will shape top places as people share reviews."}
-            title={placeCategory !== "all" ? `No places in ${placeCategoryLabel(placeCategory)} yet` : "No posts yet"}
-          />
-        </View>
-      )}
-      style={styles.pageList}
-      contentContainerStyle={styles.pageContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={refreshControl}
-      nestedScrollEnabled
-      initialNumToRender={6}
-      maxToRenderPerBatch={6}
-      windowSize={7}
-      removeClippedSubviews
-    />
-  ), [feed.isError, feed.error, feed.refetch, openPlace, placeCategory, placesForCategory, refreshControl, showLoading, styles]);
+      </GestureDetector>
+    </View>
+  ), [
+    headerSwipeGesture,
+    locationLabel,
+    query,
+    searchSwipeGesture,
+    styles,
+    themeColors.muted
+  ]);
 
-  const dishesPanel = useMemo(() => (
-    <FlatList
-      data={showLoading || feed.isError ? EMPTY_DISHES : dishesForCategory}
-      keyExtractor={(item) => item.key}
-      renderItem={({ item }) => (
-        <View style={styles.pageItem}>
-          <DishCard dish={item} onOpen={() => openDish(item)} />
-        </View>
-      )}
-      ItemSeparatorComponent={ListGap}
-      ListHeaderComponent={(
-        <>
-          <CategoryGrid categories={DISH_CATEGORIES} selected={dishCategory} onChange={setDishCategory} compact />
-          <View style={styles.pageHeader}>
-            <DiscoveryHeader icon="dishes" title="Top dishes near you" />
-          </View>
-        </>
-      )}
-      ListEmptyComponent={showLoading ? (
-        <View style={styles.pageItem}>
-          <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
-        </View>
-      ) : feed.isError ? (
-        <View style={styles.pageItem}>
-          <ErrorState actionLabel="Try again" message={feed.error?.message ?? ""} onAction={() => feed.refetch()} title="Explore unavailable" />
-        </View>
-      ) : (
-        <View style={styles.pageItem}>
-          <EmptyState
-            message={dishCategory !== "all" ? "" : "Public posts with dish ratings will shape this list."}
-            title={dishCategory !== "all" ? `No dishes in ${dishCategoryLabel(dishCategory)} yet` : "No dishes yet"}
-          />
-        </View>
-      )}
-      style={styles.pageList}
-      contentContainerStyle={styles.pageContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={refreshControl}
-      nestedScrollEnabled
-      initialNumToRender={6}
-      maxToRenderPerBatch={6}
-      windowSize={7}
-      removeClippedSubviews
-    />
-  ), [dishCategory, dishesForCategory, feed.isError, feed.error, feed.refetch, openDish, refreshControl, showLoading, styles]);
+  const renderExploreTabBar = useCallback((tabBarProps: TabBarProps<string>) => (
+    <View style={styles.tabsOuter}>
+      <MaterialTabBar
+        {...tabBarProps}
+        activeColor={themeColors.orange}
+        inactiveColor={themeColors.muted}
+        indicatorStyle={styles.tabIndicator}
+        getLabelText={(name) => EXPLORE_TABS.find((tab) => tab.id === name)?.label ?? name}
+        labelStyle={styles.tabText}
+        style={styles.tabsScroller}
+        contentContainerStyle={styles.tabs}
+        tabStyle={styles.tab}
+        width={tabBarProps.width == null ? undefined : Math.max(0, tabBarProps.width - spacing.base * 2)}
+      />
+    </View>
+  ), [styles, themeColors.muted, themeColors.orange]);
 
-  const peoplePanel = useMemo(() => (
-    <FlatList
-      data={showLoading || feed.isError ? EMPTY_PEOPLE : peopleForList}
-      keyExtractor={(item) => item.username}
-      renderItem={({ item }) => (
-        <PersonCard
-          person={item}
-          status={personStatusFor(item.username)}
-          onOpenProfile={() => openProfile(item.username)}
-          onRequest={() => requestPerson(item.username)}
-        />
-      )}
-      ListHeaderComponent={(
-        <View style={styles.peopleDiscoveryHeader}>
-          <DiscoveryHeader icon="people" title="People to discover" />
-        </View>
-      )}
-      ListEmptyComponent={(
-        <View style={styles.stateWrap}>
-          {showLoading ? (
-            <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
-          ) : feed.isError ? (
-            <ErrorState actionLabel="Try again" message={feed.error?.message ?? ""} onAction={() => feed.refetch()} title="Explore unavailable" />
-          ) : (
-            <EmptyState message="No more people to discover right now." title="No people yet" />
+  const exploreTabs = (
+    <Tabs.Container
+      ref={tabsRef}
+      initialTabName={initialTab}
+      containerStyle={styles.tabsClip}
+      headerHeight={EXPLORE_COLLAPSIBLE_HEADER_HEIGHT}
+      headerContainerStyle={styles.collapsibleHeaderContainer}
+      renderHeader={renderExploreHeader}
+      renderTabBar={renderExploreTabBar}
+      tabBarHeight={EXPLORE_TABS_OUTER_HEIGHT}
+      pagerProps={{
+        offscreenPageLimit: 2,
+        onPageScrollStateChanged: handleExplorePagerStateChange,
+        scrollEnabled: !showLocationPicker
+      }}
+      onTabChange={({ tabName }) => handleExploreTabChange(tabName as ExploreTab)}
+    >
+      <Tabs.Tab name="places" label="Places">
+        <Tabs.FlatList
+          data={showLoading || discovery.isError ? EMPTY_PLACES : placesForCategory}
+          keyExtractor={(item) => item.key}
+          renderItem={({ item }) => (
+            <View style={styles.pageItem}>
+              <PlaceCard place={item} onOpen={() => openPlace(item)} />
+            </View>
           )}
-        </View>
-      )}
-      style={styles.pageList}
-      contentContainerStyle={styles.pageContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={refreshControl}
-      nestedScrollEnabled
-      initialNumToRender={8}
-      maxToRenderPerBatch={8}
-      windowSize={7}
-      removeClippedSubviews
-    />
-  ), [feed.isError, feed.error, feed.refetch, openProfile, peopleForList, personStatusFor, refreshControl, requestPerson, showLoading, styles]);
-
-  const tabPanels: Record<ExploreTab, ReactNode> = {
-    places: placesPanel,
-    dishes: dishesPanel,
-    people: peoplePanel
-  };
-
+          ItemSeparatorComponent={ListGap}
+          ListHeaderComponent={(
+            <>
+              <CategoryGrid categories={PLACE_CATEGORIES} selected={placeCategory} onChange={setPlaceCategory} />
+              <View style={styles.pageHeader}>
+                <DiscoveryHeader icon="places" title="Top places near you" />
+              </View>
+            </>
+          )}
+          ListEmptyComponent={showLoading ? (
+            <View style={styles.pageItem}>
+              <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
+            </View>
+          ) : discovery.isError ? (
+            <View style={styles.pageItem}>
+              <ErrorState actionLabel="Try again" message={discovery.error?.message ?? ""} onAction={refreshExplore} title="Explore unavailable" />
+            </View>
+          ) : (
+            <View style={styles.pageItem}>
+              <EmptyState
+                message={placeCategory !== "all" ? "" : "Public posts will shape top places as people share reviews."}
+                title={placeCategory !== "all" ? `No places in ${placeCategoryLabel(placeCategory)} yet` : "No posts yet"}
+              />
+            </View>
+          )}
+          style={styles.pageList}
+          contentContainerStyle={styles.pageContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={listRefreshControl}
+          nestedScrollEnabled
+          scrollEnabled={listsScrollable}
+          onEndReached={showLoading ? undefined : revealMorePlaces}
+          onEndReachedThreshold={0.65}
+          initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
+          maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          windowSize={5}
+          removeClippedSubviews={false}
+        />
+      </Tabs.Tab>
+      <Tabs.Tab name="dishes" label="Dishes">
+        <Tabs.FlatList
+          data={showLoading || discovery.isError ? EMPTY_DISHES : dishesForCategory}
+          keyExtractor={(item) => item.key}
+          renderItem={({ item }) => (
+            <View style={styles.pageItem}>
+              <DishCard dish={item} onOpen={() => openDish(item)} />
+            </View>
+          )}
+          ItemSeparatorComponent={ListGap}
+          ListHeaderComponent={(
+            <>
+              <CategoryGrid categories={DISH_CATEGORIES} selected={dishCategory} onChange={setDishCategory} compact />
+              <View style={styles.pageHeader}>
+                <DiscoveryHeader icon="dishes" title="Top dishes near you" />
+              </View>
+            </>
+          )}
+          ListEmptyComponent={showLoading ? (
+            <View style={styles.pageItem}>
+              <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
+            </View>
+          ) : discovery.isError ? (
+            <View style={styles.pageItem}>
+              <ErrorState actionLabel="Try again" message={discovery.error?.message ?? ""} onAction={refreshExplore} title="Explore unavailable" />
+            </View>
+          ) : (
+            <View style={styles.pageItem}>
+              <EmptyState
+                message={dishCategory !== "all" ? "" : "Public posts with dish ratings will shape this list."}
+                title={dishCategory !== "all" ? `No dishes in ${dishCategoryLabel(dishCategory)} yet` : "No dishes yet"}
+              />
+            </View>
+          )}
+          style={styles.pageList}
+          contentContainerStyle={styles.pageContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={listRefreshControl}
+          nestedScrollEnabled
+          scrollEnabled={listsScrollable}
+          onEndReached={showLoading ? undefined : revealMoreDishes}
+          onEndReachedThreshold={0.65}
+          initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
+          maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          windowSize={5}
+          removeClippedSubviews={false}
+        />
+      </Tabs.Tab>
+      <Tabs.Tab name="people" label="People">
+        <Tabs.FlatList
+          data={showLoading || discovery.isError ? EMPTY_PEOPLE : peopleForList}
+          keyExtractor={(item) => item.username}
+          renderItem={({ item }) => (
+            <PersonCard
+              person={item}
+              status={personStatusFor(item.username)}
+              onOpenProfile={() => openProfile(item.username)}
+              onRequest={() => requestPerson(item.username)}
+            />
+          )}
+          ListHeaderComponent={(
+            <View style={styles.peopleDiscoveryHeader}>
+              <DiscoveryHeader icon="people" title="People to discover" />
+            </View>
+          )}
+          ListEmptyComponent={(
+            <View style={styles.stateWrap}>
+              {showLoading ? (
+                <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
+              ) : discovery.isError ? (
+                <ErrorState actionLabel="Try again" message={discovery.error?.message ?? ""} onAction={refreshExplore} title="Explore unavailable" />
+              ) : (
+                <EmptyState message="No more people to discover right now." title="No people yet" />
+              )}
+            </View>
+          )}
+          style={styles.pageList}
+          contentContainerStyle={styles.pageContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={listRefreshControl}
+          nestedScrollEnabled
+          scrollEnabled={listsScrollable}
+          onEndReached={showLoading ? undefined : revealMorePeople}
+          onEndReachedThreshold={0.65}
+          initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
+          maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          windowSize={5}
+          removeClippedSubviews={false}
+        />
+      </Tabs.Tab>
+    </Tabs.Container>
+  );
   return (
-    <Screen backgroundColor={themeColors.bg} padded={false} style={styles.screenFill}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Explore</Text>
-        <Pressable
-          accessibilityLabel="Location"
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => setShowLocationPicker(true)}
-          style={styles.locationButton}
-        >
-          <Text style={styles.locationCompass}>🧭</Text>
-          <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
-          <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
-        </Pressable>
-      </View>
-
+    <Screen
+      backgroundColor={themeColors.bg}
+      padded={false}
+      style={styles.screenFill}
+    >
       <LocationPickerSheet
         currentLocation={exploreLocation}
         visible={showLocationPicker}
@@ -796,76 +669,69 @@ export default function ExploreScreen() {
         onSelect={handleLocationSelect}
       />
 
-      <View style={styles.searchWrap}>
-        <View style={styles.searchBox}>
-          <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={setQuery}
-            placeholder="Search people, dishes or places..."
-            placeholderTextColor={themeColors.muted}
-            style={styles.searchInput}
-            value={query}
-          />
-          {query ? (
-            <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-              <X size={13} color={themeColors.muted} strokeWidth={2.4} />
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
       {normalizedQuery ? (
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          refreshControl={refreshControl}
-          showsVerticalScrollIndicator={false}
-          style={styles.fill}
-        >
-          <SearchResults
-            dishes={filteredDishes.slice(0, 6)}
-            people={searchPeople}
-            peopleError={peopleSearch.error}
-            peopleLoading={peopleSearch.loading}
-            places={filteredPlaces.slice(0, 6)}
-            query={query.trim()}
-            onOpenDish={openDish}
-            onOpenPlace={openPlace}
-            onOpenProfile={openProfile}
-            onRequestPerson={requestPerson}
-            personStatusFor={personStatusFor}
-          />
-        </ScrollView>
-      ) : (
         <>
-          <ExploreTabs activeTab={activeTab} onChange={goToTab} scrollX={scrollX} tabWidth={tabWidth} width={width} />
-          <View style={styles.fill} onLayout={(event) => setPagerHeight(event.nativeEvent.layout.height)}>
-            {pagerHeight > 0 ? (
-              <Reanimated.ScrollView
-                ref={pagerRef as never}
-                horizontal
-                pagingEnabled
-                bounces={false}
-                decelerationRate="fast"
-                disableIntervalMomentum
-                showsHorizontalScrollIndicator={false}
-                scrollEventThrottle={16}
-                contentOffset={{ x: tabIndexFor(initialTab) * width, y: 0 }}
-                onScroll={pagerScrollHandler}
-                onScrollBeginDrag={handlePagerScrollBegin}
-                onMomentumScrollEnd={handlePagerMomentumEnd}
+          <GestureDetector gesture={headerSwipeGesture}>
+            <View collapsable={false} style={styles.header}>
+              <Text style={styles.title}>Explore</Text>
+              <Pressable
+                accessibilityLabel="Location"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => setShowLocationPicker(true)}
+                style={styles.locationButton}
               >
-                {EXPLORE_TABS.map((tab) => (
-                  <View key={tab.id} style={{ width, height: pagerHeight }}>
-                    {renderLoadingPanels ? <ExploreLoadingPanel tab={tab.id} /> : tabPanels[tab.id]}
-                  </View>
-                ))}
-              </Reanimated.ScrollView>
-            ) : null}
-          </View>
+                <Text style={styles.locationCompass}>🧭</Text>
+                <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
+                <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+              </Pressable>
+            </View>
+          </GestureDetector>
+
+          <GestureDetector gesture={searchSwipeGesture}>
+            <View collapsable={false} style={styles.searchWrap}>
+              <View style={styles.searchBox}>
+                <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
+                <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onBlur={() => setSearchFocused(false)}
+                  onChangeText={setQuery}
+                  onFocus={() => setSearchFocused(true)}
+                  placeholder="Search people, dishes or places..."
+                  placeholderTextColor={themeColors.muted}
+                  style={styles.searchInput}
+                  value={query}
+                />
+                <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
+                  <X size={13} color={themeColors.muted} strokeWidth={2.4} />
+                </Pressable>
+              </View>
+            </View>
+          </GestureDetector>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            refreshControl={refreshControl}
+            showsVerticalScrollIndicator={false}
+            style={styles.fill}
+          >
+            <SearchResults
+              dishes={filteredDishes.slice(0, 6)}
+              people={searchPeople}
+              peopleError={peopleSearch.error}
+              peopleLoading={peopleSearch.loading}
+              places={filteredPlaces.slice(0, 6)}
+              query={query.trim()}
+              onOpenDish={openDish}
+              onOpenPlace={openPlace}
+              onOpenProfile={openProfile}
+              onRequestPerson={requestPerson}
+              personStatusFor={personStatusFor}
+            />
+          </ScrollView>
         </>
-      )}
+      ) : exploreTabs}
     </Screen>
   );
 }
@@ -1028,60 +894,6 @@ function LocationPickerSheet({
   );
 }
 
-function ExploreTabs({
-  activeTab,
-  onChange,
-  scrollX,
-  tabWidth,
-  width
-}: {
-  activeTab: ExploreTab;
-  onChange: (tab: ExploreTab) => void;
-  scrollX: SharedValue<number>;
-  tabWidth: number;
-  width: number;
-}) {
-  const { styles } = useExploreTheme();
-  const indicatorStyle = useAnimatedStyle(() => {
-    const pageWidth = Math.max(width, 1);
-    return {
-      transform: [{
-        translateX: interpolate(
-          scrollX.value,
-          EXPLORE_TABS.map((_, index) => index * pageWidth),
-          EXPLORE_TABS.map((_, index) => index * tabWidth),
-          Extrapolation.CLAMP
-        )
-      }],
-      width: tabWidth
-    };
-  }, [tabWidth, width]);
-
-  return (
-    <View style={styles.tabsOuter}>
-      <View style={styles.tabs}>
-        {EXPLORE_TABS.map((tab) => {
-          const active = activeTab === tab.id;
-          return (
-            <Pressable key={tab.id} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => onChange(tab.id)} style={styles.tab}>
-              <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
-            </Pressable>
-          );
-        })}
-        {tabWidth > 0 ? (
-          <Reanimated.View
-            pointerEvents="none"
-            style={[
-              styles.tabIndicator,
-              indicatorStyle
-            ]}
-          />
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 function CategoryGrid<T extends string>({
   categories,
   compact,
@@ -1138,26 +950,6 @@ function CategoryGrid<T extends string>({
 
 function ListGap() {
   return <View style={{ height: 10 }} />;
-}
-
-function ExploreLoadingPanel({ tab }: { tab: ExploreTab }) {
-  const { styles } = useExploreTheme();
-  const title = tab === "places"
-    ? "Top places near you"
-    : tab === "dishes"
-      ? "Top dishes near you"
-      : "People to discover";
-
-  return (
-    <View style={styles.loadingPanel}>
-      <View style={styles.pageHeader}>
-        <DiscoveryHeader icon={tab} title={title} />
-      </View>
-      <View style={styles.pageItem}>
-        <LoadingState message="Finding top places, dishes, and people." title="Loading Explore" />
-      </View>
-    </View>
-  );
 }
 
 function DiscoveryHeader({ icon, title }: { icon: "places" | "dishes" | "people"; title: string }) {
@@ -1415,21 +1207,39 @@ function DishRestaurantRows({ names }: { names: string[] }) {
 function createStyles(c: ThemeColors) {
   return StyleSheet.create({
     screenFill: {
+      backgroundColor: c.bg,
       flex: 1,
       paddingBottom: 0
     },
     fill: {
+      backgroundColor: c.bg,
       flex: 1,
       minHeight: 0
     },
+    tabsClip: {
+      backgroundColor: c.bg,
+      flex: 1,
+      minHeight: 0,
+      overflow: "hidden"
+    },
+    collapsibleHeaderContainer: {
+      backgroundColor: c.bg,
+      elevation: 0,
+      shadowOpacity: 0
+    },
+    collapsibleHeader: {
+      backgroundColor: c.bg
+    },
     header: {
       alignItems: "center",
+      backgroundColor: c.bg,
       flexDirection: "row",
       gap: Platform.OS === "web" ? spacing.md : spacing.sm,
+      height: EXPLORE_HEADER_ROW_HEIGHT,
       justifyContent: "space-between",
-      paddingBottom: 8,
+      paddingBottom: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
-      paddingTop: spacing.lg
+      paddingTop: screenLayout.topGap
     },
     title: {
       ...fontStyles.regular,
@@ -1570,9 +1380,11 @@ function createStyles(c: ThemeColors) {
       marginTop: 2
     },
     searchWrap: {
+      backgroundColor: c.bg,
+      height: EXPLORE_SEARCH_WRAP_HEIGHT,
       paddingBottom: spacing.md,
       paddingHorizontal: spacing.base,
-      paddingTop: Platform.OS === "web" ? spacing.sm : 4
+      paddingTop: EXPLORE_SEARCH_WRAP_TOP_PADDING
     },
     searchBox: {
       alignItems: "center",
@@ -1582,14 +1394,17 @@ function createStyles(c: ThemeColors) {
       borderWidth: 1,
       flexDirection: "row",
       gap: Platform.OS === "web" ? 10 : 8,
+      height: EXPLORE_SEARCH_BOX_HEIGHT,
       paddingHorizontal: spacing.base,
-      paddingVertical: Platform.OS === "web" ? 12 : 10
+      paddingVertical: 0
     },
     searchInput: {
       ...fontStyles.regular,
       color: c.cream,
       flex: 1,
       fontSize: 14,
+      includeFontPadding: false,
+      lineHeight: 18,
       minWidth: 0,
       padding: 0
     },
@@ -1604,13 +1419,21 @@ function createStyles(c: ThemeColors) {
       width: 24
     },
     tabsOuter: {
-      paddingBottom: Platform.OS === "web" ? 14 : 10,
+      backgroundColor: c.bg,
+      height: EXPLORE_TABS_OUTER_HEIGHT,
+      paddingBottom: EXPLORE_TABS_OUTER_BOTTOM_PADDING,
       paddingHorizontal: spacing.base
     },
+    tabsScroller: {
+      backgroundColor: c.bg,
+      height: EXPLORE_TAB_ROW_HEIGHT
+    },
     tabs: {
+      backgroundColor: c.bg,
       borderBottomColor: c.border,
       borderBottomWidth: 2,
       flexDirection: "row",
+      height: EXPLORE_TAB_ROW_HEIGHT,
       position: "relative"
     },
     categoryStaticWrap: {
@@ -1660,17 +1483,16 @@ function createStyles(c: ThemeColors) {
     tab: {
       alignItems: "center",
       flex: 1,
-      paddingBottom: 9,
+      height: EXPLORE_TAB_BUTTON_HEIGHT,
+      paddingBottom: 4,
       paddingTop: 10
     },
     tabText: {
       ...fontStyles.semiBold,
-      color: c.muted,
       fontSize: typography.caption,
-      lineHeight: 15
-    },
-    tabTextActive: {
-      color: c.orange
+      includeFontPadding: false,
+      lineHeight: 15,
+      margin: 0
     },
     tabIndicator: {
       backgroundColor: c.orange,
@@ -1681,14 +1503,12 @@ function createStyles(c: ThemeColors) {
       position: "absolute"
     },
     pageList: {
+      backgroundColor: c.bg,
       flex: 1
     },
     pageContent: {
+      backgroundColor: c.bg,
       paddingBottom: 100
-    },
-    loadingPanel: {
-      flex: 1,
-      paddingTop: 2
     },
     pageHeader: {
       paddingHorizontal: spacing.base
@@ -1700,6 +1520,7 @@ function createStyles(c: ThemeColors) {
       paddingHorizontal: spacing.base
     },
     searchResults: {
+      backgroundColor: c.bg,
       paddingBottom: 100
     },
     searchSection: {

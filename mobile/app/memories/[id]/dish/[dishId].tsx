@@ -10,7 +10,7 @@ import { useMemoryRoomQuery, useSetMemoryDishRatingMutation } from "@/hooks/useM
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing } from "@/theme";
+import { avatarAccents, fontStyles, memoryRoomTokens, radius, screenLayout, spacing } from "@/theme";
 
 function dishInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -161,16 +161,17 @@ export default function DishRatingsScreen() {
 const styles = StyleSheet.create({
   headerWrap: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
+    paddingTop: screenLayout.topGap
   },
   stateWrap: {
-    paddingHorizontal: spacing.lg
+    paddingHorizontal: spacing.lg,
+    paddingTop: screenLayout.headerContentGap
   },
   content: {
     gap: spacing.md,
     paddingBottom: spacing.xl,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm
+    paddingTop: screenLayout.headerContentGap
   },
   dishHeader: {
     alignItems: "center",

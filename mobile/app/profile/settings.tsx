@@ -2,14 +2,16 @@ import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useRouter } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Animated, BackHandler, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowLeft, Bell, Bookmark, ChevronRight, FileText, Heart, Info, LifeBuoy, Lock, LogOut, MessageCircle, Monitor, Moon, Settings, Shield, Sun, Trash2, UserCog, UserX } from "lucide-react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { Bell, Bookmark, ChevronRight, FileText, Heart, Info, LifeBuoy, Lock, LogOut, MessageCircle, Monitor, Moon, Settings, Shield, Sun, Trash2, UserCog, UserX } from "lucide-react-native";
+import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { useLogoutMutation } from "@/hooks/useAuth";
 import { useCurrentUserProfileQuery, useUpdateAccountTypeMutation } from "@/hooks/useProfiles";
 import { useDeleteAccountMutation } from "@/hooks/useSettings";
+import { PROFILE_SUB_SCREEN_HEADER_TOP_PADDING } from "@/components/profile/ProfileSubScreen";
 import { useSessionStore } from "@/stores/sessionStore";
 import { themeColorsFor, useThemePreference, type ThemeMode } from "@/hooks/useThemePreference";
-import { colors, fontStyles, radius, spacing, typography } from "@/theme";
+import { colors, fontStyles, radius, screenLayout, spacing } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
 import type { AccountType } from "@/types/models";
 
@@ -200,10 +202,11 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
         ]}
       >
         <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
+        <SafeAreaView edges={["top"]} style={styles.screenContent}>
         <ScrollView
           contentContainerStyle={[
             styles.content,
-            { paddingBottom: spacing.xl + insets.bottom, paddingTop: spacing.md + insets.top }
+            { paddingBottom: spacing.xl + insets.bottom, paddingTop: PROFILE_SUB_SCREEN_HEADER_TOP_PADDING }
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -354,6 +357,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
             </View>
           </SettingsSection>
         </ScrollView>
+        </SafeAreaView>
       </Animated.View>
 
       <DeleteAccountModal
@@ -525,21 +529,16 @@ function SettingsSection({ children, title }: { children: ReactNode; title: stri
 }
 
 function SettingsHeader({ onBack }: { onBack: () => void }) {
-  const { styles, themeColors } = useSettingsTheme();
+  const { themeColors } = useSettingsTheme();
 
   return (
-    <View style={styles.settingsHeader}>
-      <Pressable
-        accessibilityLabel="Go back"
-        accessibilityRole="button"
-        hitSlop={8}
-        onPress={onBack}
-        style={({ pressed }) => [styles.settingsBackButton, pressed && styles.pressedSurface]}
-      >
-        <ArrowLeft size={20} color={themeColors.cream} strokeWidth={2.2} />
-      </Pressable>
-      <Text style={styles.settingsHeaderTitle}>Settings</Text>
-    </View>
+    <MemoryRouteHeader
+      backButtonVariant="plain"
+      onBack={onBack}
+      themeColors={themeColors}
+      title="Settings"
+      titleWeight="regular"
+    />
   );
 }
 
@@ -586,30 +585,8 @@ function createStyles(themeColors: SettingsColors) {
       flex: 1
     },
     content: {
-      gap: spacing.md,
+      gap: screenLayout.headerContentGap,
       padding: spacing.lg
-    },
-    settingsHeader: {
-      alignItems: "center",
-      flexDirection: "row",
-      gap: spacing.md,
-      minHeight: 44
-    },
-    settingsBackButton: {
-      alignItems: "center",
-      borderRadius: radius.input,
-      height: 44,
-      justifyContent: "center",
-      width: 44,
-      // Match the plain back arrow on sub-screens: flush to the content edge.
-      marginLeft: -12
-    },
-    settingsHeaderTitle: {
-      ...fontStyles.regular,
-      color: themeColors.cream,
-      flex: 1,
-      fontSize: typography.heading,
-      lineHeight: 29
     },
     section: {
       gap: spacing.xs

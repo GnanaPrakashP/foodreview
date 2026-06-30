@@ -1,3 +1,4 @@
+import { apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { fetchDisplayNames, getBlockedUsernames } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
@@ -36,6 +37,29 @@ async function viewerName() {
   return profile.username;
 }
 
+async function authToken() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before commenting");
+  return token;
+}
+
+async function authorizedJson<T>(path: string, init: RequestInit & { body?: string }): Promise<T> {
+  const token = await authToken();
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init.headers ?? {})
+    }
+  });
+  const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!response.ok || !payload) throw new Error(payload?.error ?? "Could not update comments");
+  return payload;
+}
+
 export async function getPostComments(postId: string): Promise<PostComment[]> {
   if (!postId) return [];
 
@@ -64,25 +88,18 @@ export async function addPostComment(input: { postId: string; content: string })
   if (content.length > 500) throw new Error("Comment is too long");
 
   const name = await viewerName();
-  const { data, error } = await supabase
-    .from("comments")
-    .insert({ post_id: input.postId, user_name: name, content })
-    .select("id, post_id, user_name, content, created_at")
-    .single<CommentRow>();
+  const data = await authorizedJson<CommentRow>("/api/comments", {
+    method: "POST",
+    body: JSON.stringify({ postId: input.postId, content })
+  });
 
-  if (error) throw new Error(error.message);
-
-  const displayNames = await fetchDisplayNames([name]);
-  return mapComment(data, displayNames[name] ?? name);
+  const displayNames = await fetchDisplayNames([data.user_name || name]);
+  return mapComment(data, displayNames[data.user_name] ?? data.user_name ?? name);
 }
 
 export async function deletePostComment(input: { commentId: string }) {
-  const name = await viewerName();
-  const { error } = await supabase
-    .from("comments")
-    .delete()
-    .eq("id", input.commentId)
-    .eq("user_name", name);
-
-  if (error) throw new Error(error.message);
+  await viewerName();
+  await authorizedJson<{ ok: true }>(`/api/comments/${encodeURIComponent(input.commentId)}`, {
+    method: "DELETE"
+  });
 }

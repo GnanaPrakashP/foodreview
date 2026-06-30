@@ -18,7 +18,7 @@ test("home/circle page defers feed loading to the client cache path", () => {
   assert.match(helper, /const batch = \(\(rawBatch \?\? \[\]\) as unknown\[]\)\.map/);
   assert.match(helper, /normalizeReview\(r as Parameters<typeof normalizeReview>\[0\]\)/);
   assert.match(helper, /filterCircleTrendingReviews\(batch,/);
-  assert.match(helper, /const postIds = allReviews\.map/);
+  assert.match(helper, /buildFeedAssemblyMaps\(readDb, allReviews/);
   assert.match(helper, /const rankedUnseenReviews = rankCircleFeedReviews\(/);
   assert.match(helper, /const rankedSeenFallbackReviews = rankCircleFeedReviews\(/);
   assert.match(helper, /const rankedReviews = \[\.\.\.rankedUnseenReviews, \.\.\.rankedSeenFallbackReviews\]/);

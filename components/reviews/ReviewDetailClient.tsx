@@ -192,11 +192,6 @@ export default function ReviewDetailClient({
       }
       invalidateEngagementCaches();
       invalidateCachedJson("/api/feed/public");
-      await fetch("/api/notifications/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "POST_UNLIKED", reviewId: review.id, actorName: myName }),
-      }).catch(() => {});
       return;
     }
 
@@ -213,11 +208,6 @@ export default function ReviewDetailClient({
     }
     invalidateEngagementCaches();
     invalidateCachedJson("/api/feed/public");
-    await fetch("/api/notifications/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "POST_LIKED", reviewId: review.id, actorName: myName }),
-    }).catch(() => {});
   }, [liked, likeCount, myName, review.id]);
 
   const toggleBookmark = useCallback(async () => {
@@ -284,11 +274,6 @@ export default function ReviewDetailClient({
       setComments((prev) => prev.map((comment) => comment.id === tempId ? data : comment));
       invalidateEngagementCaches();
       invalidateCachedJson("/api/feed/public");
-      await fetch("/api/notifications/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "POST_COMMENTED", reviewId: review.id, commentId: data.id, actorName: myName }),
-      }).catch(() => {});
     }
     setSending(false);
   }
@@ -306,11 +291,6 @@ export default function ReviewDetailClient({
     }
     invalidateEngagementCaches();
     invalidateCachedJson("/api/feed/public");
-    await fetch("/api/notifications/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "POST_COMMENT_DELETED", commentId: id, actorName: myName }),
-    }).catch(() => {});
   }
 
   function startLongPress(commentId: string, owner: string) {

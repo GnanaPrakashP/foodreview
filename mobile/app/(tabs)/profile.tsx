@@ -1,8 +1,11 @@
 import { Image } from "expo-image";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Animated, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type ListRenderItemInfo, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
+import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQueryClient } from "@tanstack/react-query";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
@@ -12,12 +15,15 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { profileKeys, useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { useMainTabPager, type MainTabRequestSource } from "@/navigation/MainTabPagerContext";
+import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { ProfileSettingsPanel } from "../profile/settings";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing, typography } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData, ReviewPost } from "@/types/models";
 
 type ProfileTab = "posts" | "memories";
@@ -28,6 +34,10 @@ type ThemeColors = ReturnType<typeof themeColorsFor>;
 type ProfilePalette = ReturnType<typeof profilePalette>;
 type ProfileListRow =
   | { type: "post"; post: ReviewPost }
+  | { type: "profile-loading" }
+  | { type: "profile-error" }
+  | { type: "profile-setup" }
+  | { type: "signed-out" }
   | { type: "posts-loading" }
   | { type: "posts-error" }
   | { type: "posts-empty" }
@@ -116,30 +126,15 @@ export default function ProfileScreen() {
         style={styles.screenContent}
       >
         <View style={styles.stack}>
-          {!isReady ? (
-            <LoadingState message="Restoring your session." title="Loading profile" />
-          ) : !isAuthenticated ? (
-            <SignedOutFeedState message="Sign in to view your profile, stats, and posts." />
-          ) : page.isLoading ? (
-            <LoadingState message="Fetching your profile and posts." title="Loading profile" />
-          ) : page.isError ? (
-            <ErrorState
-              actionLabel="Try again"
-              message={profileErrorMessage(page.error, "We couldn't load your profile. Try again.")}
-              onAction={() => page.refetch()}
-              title="Profile unavailable"
-            />
-          ) : !page.data ? (
-            <ProfileSetupCard />
-          ) : (
-            <ProfileContent
-              canRefresh={canRefresh}
-              memories={memories}
-              onSettingsPress={openSettings}
-              page={page.data}
-              pageQuery={page}
-            />
-          )}
+          <ProfileContent
+            canRefresh={canRefresh}
+            isAuthenticated={isAuthenticated}
+            isReady={isReady}
+            memories={memories}
+            onSettingsPress={openSettings}
+            page={page.data ?? null}
+            pageQuery={page}
+          />
         </View>
       </Screen>
       {settingsVisible ? <ProfileSettingsPanel onCloseEnd={finishSettingsClose} /> : null}
@@ -149,80 +144,143 @@ export default function ProfileScreen() {
 
 function ProfileContent({
   canRefresh,
+  isAuthenticated,
+  isReady,
   memories,
   onSettingsPress,
   page,
   pageQuery
 }: {
   canRefresh: boolean;
+  isAuthenticated: boolean;
+  isReady: boolean;
   memories: ReturnType<typeof useMemoryRoomsQuery>;
   onSettingsPress: () => void;
-  page: ProfilePageData;
+  page: ProfilePageData | null;
   pageQuery: ReturnType<typeof useCurrentProfilePageQuery>;
 }) {
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const router = useRouter();
+  const isFocused = useIsFocused();
+  const mainTabPager = useMainTabPager();
   const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ tab?: string }>();
-  const [activeTab, setActiveTab] = useState<ProfileTab>(() => profileTabFromParam(params.tab));
+  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "profile" : isFocused;
+  const isActiveMainTabRef = useRef(isActiveMainTab);
+  isActiveMainTabRef.current = isActiveMainTab;
+  const initialTab = useRef(profileTabFromParam(params.tab)).current;
+  const tabsRef = useRef<CollapsibleRef>(undefined);
+  const activeTabRef = useRef<ProfileTab>(initialTab);
   const [showTrustSheet, setShowTrustSheet] = useState(false);
   const endReachedInFlightRef = useRef(false);
-  const scrollX = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    setActiveTab(profileTabFromParam(params.tab));
-  }, [params.tab]);
+  const openCreate = useCallback((source: MainTabRequestSource = "profile-content-swipe") => {
+    if (mainTabPager) {
+      if (!mainTabPager.isActiveTab("profile")) return;
+      mainTabPager.goToMainTab("share", source);
+      return;
+    }
+    router.push("/share");
+  }, [mainTabPager, router]);
 
-  const changeProfileTab = useCallback((tab: ProfileTab) => {
-    setActiveTab(tab);
-    // URL sync is off the critical path — defer it so it doesn't add navigation
-    // work to the same frame as the tap.
-    requestAnimationFrame(() => router.setParams({ tab }));
+  const commitProfileTab = useCallback((tab: ProfileTab) => {
+    if (isActiveMainTabRef.current) requestAnimationFrame(() => router.setParams({ tab }));
   }, [router]);
 
+  const handleProfileTabChange = useCallback((tab: ProfileTab) => {
+    activeTabRef.current = tab;
+    commitProfileTab(tab);
+  }, [commitProfileTab]);
+
+  useEffect(() => {
+    if (!isActiveMainTab) return;
+    const nextTab = profileTabFromParam(params.tab);
+    if (nextTab === activeTabRef.current) return;
+    activeTabRef.current = nextTab;
+    tabsRef.current?.jumpToTab(nextTab);
+  }, [isActiveMainTab, params.tab]);
+
+  // Cross-tab swipe (profile → share) lives only on the non-scrolling header so it
+  // composes with — instead of fighting — the inner posts/memories pager on the content.
+  const profileSwipeGesture = useMainTabSwipeGestureZone({
+    owner: "profile",
+    right: "share",
+    source: "profile-header-swipe"
+  });
+
   const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
-  const posts = useProfilePostsInfiniteQuery(page.profile.username, { enabled: Boolean(page.profile.username) });
-  const pagedPosts = posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page.posts;
+  const profileUsername = page?.profile.username ?? "";
+  const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: Boolean(profileUsername) });
+  const pagedPosts = posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page?.posts ?? [];
 
   useEffect(() => {
     if (!posts.isFetchingNextPage) endReachedInFlightRef.current = false;
   }, [posts.isFetchingNextPage]);
 
   const memoryRows = useMemo(() => buildMemoryRows(memoriesData ?? []), [memoriesData]);
+  // The Profile shell mounts immediately; data states render as rows so tabs,
+  // refresh, and gestures stay available while profile data loads.
   const postRows = useMemo<ProfileListRow[]>(() => {
+    if (!isReady || (isAuthenticated && pageQuery.isLoading)) return [{ type: "profile-loading" }];
+    if (!isAuthenticated) return [{ type: "signed-out" }];
+    if (pageQuery.isError) return [{ type: "profile-error" }];
+    if (!page) return [{ type: "profile-setup" }];
     if (posts.isLoading && pagedPosts.length === 0) return [{ type: "posts-loading" }];
     if (posts.isError && pagedPosts.length === 0) return [{ type: "posts-error" }];
     if (pagedPosts.length === 0) return [{ type: "posts-empty" }];
     return pagedPosts.map((post) => ({ type: "post", post }));
-  }, [pagedPosts, posts.isError, posts.isLoading]);
+  }, [isAuthenticated, isReady, page, pagedPosts, pageQuery.isError, pageQuery.isLoading, posts.isError, posts.isLoading]);
   const memoriesRows = useMemo<ProfileListRow[]>(() => {
+    if (!isReady || (isAuthenticated && pageQuery.isLoading)) return [{ type: "memories-loading" }];
+    if (!isAuthenticated) return [{ type: "signed-out" }];
+    if (pageQuery.isError) return [{ type: "profile-error" }];
+    if (!page) return [{ type: "profile-setup" }];
     if (memoriesIsLoading) return [{ type: "memories-loading" }];
     if (memoriesIsError) return [{ type: "memories-error" }];
     if (memoryRows.length === 0) return [{ type: "memories-empty" }];
     return memoryRows;
-  }, [memoriesIsError, memoriesIsLoading, memoryRows]);
+  }, [isAuthenticated, isReady, memoriesIsError, memoriesIsLoading, memoryRows, page, pageQuery.isError, pageQuery.isLoading]);
 
   const onRefresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["profile"] });
-    await queryClient.resetQueries({ queryKey: profileKeys.posts(page.profile.username) });
+    if (profileUsername) await queryClient.resetQueries({ queryKey: profileKeys.posts(profileUsername) });
     await Promise.all([
       pageQuery.refetch(),
       memoriesRefetch()
     ]);
-  }, [memoriesRefetch, page.profile.username, pageQuery, queryClient]);
+  }, [memoriesRefetch, pageQuery, profileUsername, queryClient]);
 
   const onEndReached = useCallback(() => {
-    if (activeTab !== "posts" || !posts.hasNextPage || posts.isFetchingNextPage || endReachedInFlightRef.current) return;
+    if (!posts.hasNextPage || posts.isFetchingNextPage || endReachedInFlightRef.current) return;
     endReachedInFlightRef.current = true;
     void posts.fetchNextPage().finally(() => {
       endReachedInFlightRef.current = false;
     });
-  }, [activeTab, posts]);
+  }, [posts]);
 
-  const renderItem = useCallback(({ item }: ListRenderItemInfo<ProfileListRow>) => {
+  const renderListRow = useCallback((item: ProfileListRow) => {
     switch (item.type) {
       case "post":
         return <PostCard post={item.post} />;
+      case "profile-loading":
+        return <View style={styles.listInset}><ProfileSkeletonList /></View>;
+      case "profile-error":
+        return (
+          <View style={styles.listInset}>
+            <ListState>
+              <ErrorState
+                actionLabel="Try again"
+                message={profileErrorMessage(pageQuery.error, "We couldn't load your profile. Try again.")}
+                onAction={() => pageQuery.refetch()}
+                title="Profile unavailable"
+              />
+            </ListState>
+          </View>
+        );
+      case "profile-setup":
+        return <View style={styles.listInset}><ProfileSetupCard /></View>;
+      case "signed-out":
+        return <View style={styles.listInset}><SignedOutFeedState message="Sign in to view your profile, stats, and posts." /></View>;
       case "posts-loading":
         return <View style={styles.listInset}><ListState><LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" /></ListState></View>;
       case "posts-error":
@@ -246,7 +304,7 @@ function ProfileContent({
                 actionLabel="Share review"
                 icon="restaurant-outline"
                 message="Share your first food review to start building your profile."
-                onAction={() => router.push("/share")}
+                onAction={() => openCreate()}
                 title="No posts yet"
               />
             </ListState>
@@ -292,10 +350,10 @@ function ProfileContent({
       default:
         return null;
     }
-  }, [memoriesError, memoriesRefetch, posts, router, styles]);
+  }, [memoriesError, memoriesRefetch, openCreate, pageQuery, posts, router, styles]);
 
   const footer = pagedPosts.length > 0 ? (
-    <>
+    <View>
       {posts.isFetchingNextPage ? (
         <View style={[styles.listInset, styles.loadMoreWrap]}>
           <LoadingState message="Loading more posts." title="Loading posts" />
@@ -307,7 +365,7 @@ function ProfileContent({
           <AppButton onPress={() => { void posts.refetch(); }} tone="secondary">Retry</AppButton>
         </View>
       ) : null}
-    </>
+    </View>
   ) : null;
 
   const makeRefreshControl = useCallback(() => canRefresh ? (
@@ -315,6 +373,7 @@ function ProfileContent({
       colors={[PROFILE_COLORS.accent]}
       onRefresh={() => { void onRefresh(); }}
       progressBackgroundColor={PROFILE_COLORS.card}
+      progressViewOffset={0}
       refreshing={pageQuery.isRefetching || memories.isRefetching || posts.isRefetching}
       tintColor={PROFILE_COLORS.accent}
     />
@@ -327,74 +386,121 @@ function ProfileContent({
     pageQuery.isRefetching,
     posts.isRefetching
   ]);
+  const refreshControl = makeRefreshControl();
+
+  const renderProfileHeader = useCallback((tabBarProps: TabBarProps<string>) => (
+    <GestureDetector gesture={profileSwipeGesture}>
+      <View collapsable={false} style={styles.profileHeader}>
+        {page ? (
+          <>
+            <ProfileHero page={page} onSettingsPress={onSettingsPress} />
+            <ProfileStats
+              page={page}
+              onCirclePress={() => router.push("/profile/circle")}
+              onTrustPress={() => setShowTrustSheet(true)}
+            />
+          </>
+        ) : (
+          <>
+            <ProfileHeroSkeleton onSettingsPress={onSettingsPress} settingsEnabled={isReady && isAuthenticated} />
+            <ProfileStatsSkeleton />
+          </>
+        )}
+        <UnderlineTabBar
+          tabBarProps={tabBarProps}
+          activeColor={PROFILE_COLORS.accent}
+          inactiveColor={PROFILE_COLORS.muted}
+          instantPress
+          indicatorStyle={styles.tabIndicator}
+          getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
+          labelStyle={styles.tabText}
+          style={styles.tabs}
+          contentContainerStyle={styles.tabRow}
+          tabStyle={styles.tabButton}
+        />
+      </View>
+    </GestureDetector>
+  ), [
+    PROFILE_COLORS.accent,
+    PROFILE_COLORS.muted,
+    isAuthenticated,
+    isReady,
+    onSettingsPress,
+    page,
+    profileSwipeGesture,
+    router,
+    styles
+  ]);
 
   return (
     <>
-      <View style={styles.profileHeader}>
-        <ProfileHero page={page} onSettingsPress={onSettingsPress} />
-        <ProfileStats
-          page={page}
-          onCirclePress={() => router.push("/profile/circle")}
-          onTrustPress={() => setShowTrustSheet(true)}
-        />
-        <ProfileTabs activeTab={activeTab} onChange={changeProfileTab} scrollX={scrollX} />
+      <View style={styles.profilePagerStage}>
+        <Tabs.Container
+          ref={tabsRef}
+          initialTabName={initialTab}
+          containerStyle={styles.profileTabsContainer}
+          headerContainerStyle={styles.collapsibleHeaderContainer}
+          renderHeader={renderProfileHeader}
+          renderTabBar={() => null}
+          tabBarHeight={0}
+          onTabChange={({ tabName }) => handleProfileTabChange(tabName as ProfileTab)}
+        >
+          <Tabs.Tab name="posts" label="Posts">
+            <Tabs.FlatList
+              data={postRows}
+              keyExtractor={profileListKey}
+              renderItem={({ item }) => renderListRow(item)}
+              ListFooterComponent={footer}
+              contentContainerStyle={styles.profileListContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              onEndReached={onEndReached}
+              onEndReachedThreshold={0.7}
+              refreshControl={refreshControl}
+              showsVerticalScrollIndicator={false}
+              style={styles.profileList}
+            />
+          </Tabs.Tab>
+          <Tabs.Tab name="memories" label="Memories">
+            <Tabs.FlatList
+              data={memoriesRows}
+              keyExtractor={profileListKey}
+              renderItem={({ item }) => renderListRow(item)}
+              ItemSeparatorComponent={ProfileListGap}
+              contentContainerStyle={styles.profileListContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              refreshControl={refreshControl}
+              showsVerticalScrollIndicator={false}
+              style={styles.profileList}
+            />
+          </Tabs.Tab>
+        </Tabs.Container>
       </View>
-      <ProfilePager
-        index={activeTab === "posts" ? 0 : 1}
-        memoriesPane={(
-          <FlatList
-            contentContainerStyle={styles.virtualListContent}
-            data={memoriesRows}
-            initialNumToRender={12}
-            keyExtractor={profileListKey}
-            keyboardShouldPersistTaps="handled"
-            maxToRenderPerBatch={12}
-            refreshControl={makeRefreshControl()}
-            renderItem={renderItem}
-            showsVerticalScrollIndicator={false}
-            style={styles.pagerList}
-            windowSize={9}
-          />
-        )}
-        onIndexChange={(index) => changeProfileTab(index === 0 ? "posts" : "memories")}
-        postsPane={(
-          <FlatList
-            contentContainerStyle={styles.virtualListContent}
-            data={postRows}
-            initialNumToRender={8}
-            keyExtractor={profileListKey}
-            keyboardShouldPersistTaps="handled"
-            ListFooterComponent={footer}
-            maxToRenderPerBatch={8}
-            onEndReached={onEndReached}
-            onEndReachedThreshold={0.45}
-            refreshControl={makeRefreshControl()}
-            renderItem={renderItem}
-            showsVerticalScrollIndicator={false}
-            style={styles.pagerList}
-            windowSize={9}
-          />
-        )}
-        scrollX={scrollX}
-      />
-      <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} />
+      {page ? <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} /> : null}
     </>
   );
 }
 
-function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; page: ProfilePageData }) {
+function ProfileHero({
+  onSettingsPress,
+  page
+}: {
+  onSettingsPress: () => void;
+  page: ProfilePageData;
+}) {
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const profile = page.profile;
   const initials = initialsForName(page.displayName, profile.username);
   const joinedAt = joinedLabel(profile.createdAt);
 
   return (
-    <View style={styles.hero}>
-      <Pressable accessibilityLabel="Open settings" onPress={onSettingsPress} style={styles.settingsButton}>
+    <View pointerEvents="box-none" style={styles.hero}>
+      <Pressable accessibilityLabel="Open settings" accessibilityRole="button" onPress={onSettingsPress} style={styles.settingsButton}>
         <Settings size={21} color={PROFILE_COLORS.text} strokeWidth={2.1} />
       </Pressable>
 
-      <View style={styles.heroIdentityRow}>
+      <View pointerEvents="none" style={styles.heroIdentityRow}>
         <View style={styles.avatar}>
           {profile.avatarUrl ? (
             <Image contentFit="cover" source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
@@ -403,13 +509,13 @@ function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; p
           )}
         </View>
 
-        <View style={styles.identity}>
+        <View pointerEvents="box-none" style={styles.identity}>
           <Text numberOfLines={1} style={styles.name}>{page.displayName}</Text>
           <Text numberOfLines={1} style={styles.handle}>
             @{profile.username} · {page.stats.totalVisits} visit{page.stats.totalVisits === 1 ? "" : "s"}
           </Text>
           {joinedAt ? (
-            <View style={styles.joinedRow}>
+            <View pointerEvents="box-none" style={styles.joinedRow}>
               <CalendarDays size={13} color={PROFILE_COLORS.mutedLow} strokeWidth={2} />
               <Text style={styles.joinedText}>{joinedAt}</Text>
             </View>
@@ -417,7 +523,7 @@ function ProfileHero({ onSettingsPress, page }: { onSettingsPress: () => void; p
         </View>
       </View>
 
-      {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+      {profile.bio ? <Text pointerEvents="none" style={styles.bio}>{profile.bio}</Text> : null}
     </View>
   );
 }
@@ -440,7 +546,7 @@ function ProfileStats({
   ];
 
   return (
-    <View style={styles.statsRow}>
+    <View pointerEvents="box-none" style={styles.statsRow}>
       {stats.map((stat) => (
         <Pressable
           key={stat.label}
@@ -451,6 +557,69 @@ function ProfileStats({
           <Text style={styles.statValue}>{stat.value}</Text>
           <Text style={styles.statLabel}>{stat.label}</Text>
         </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function ProfileHeroSkeleton({
+  onSettingsPress,
+  settingsEnabled
+}: {
+  onSettingsPress: () => void;
+  settingsEnabled: boolean;
+}) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
+
+  return (
+    <View pointerEvents="box-none" style={styles.hero}>
+      <Pressable
+        accessibilityLabel="Open settings"
+        accessibilityRole="button"
+        disabled={!settingsEnabled}
+        onPress={onSettingsPress}
+        style={[styles.settingsButton, !settingsEnabled && styles.disabledControl]}
+      >
+        <Settings size={21} color={PROFILE_COLORS.text} strokeWidth={2.1} />
+      </Pressable>
+
+      <View pointerEvents="none" style={styles.heroIdentityRow}>
+        <View style={[styles.avatar, styles.skeletonAvatar]} />
+        <View style={styles.identity}>
+          <View style={[styles.skeletonLine, styles.skeletonName]} />
+          <View style={[styles.skeletonLine, styles.skeletonHandle]} />
+          <View style={[styles.skeletonLine, styles.skeletonJoined]} />
+        </View>
+      </View>
+      <View pointerEvents="none" style={[styles.skeletonLine, styles.skeletonBio]} />
+    </View>
+  );
+}
+
+function ProfileStatsSkeleton() {
+  const { styles } = useProfileTheme();
+  return (
+    <View pointerEvents="none" style={styles.statsRow}>
+      {["trust", "places", "dishes", "circle"].map((item, index) => (
+        <View key={item} style={[styles.statItem, index > 0 && styles.statItemDivider]}>
+          <View style={[styles.skeletonLine, styles.skeletonStatValue]} />
+          <View style={[styles.skeletonLine, styles.skeletonStatLabel]} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ProfileSkeletonList() {
+  const { styles } = useProfileTheme();
+  return (
+    <View pointerEvents="none" style={styles.skeletonList}>
+      {[0, 1, 2].map((item) => (
+        <View key={item} style={styles.skeletonCard}>
+          <View style={[styles.skeletonLine, styles.skeletonCardTitle]} />
+          <View style={[styles.skeletonLine, styles.skeletonCardMeta]} />
+          <View style={[styles.skeletonLine, styles.skeletonCardBody]} />
+        </View>
       ))}
     </View>
   );
@@ -563,132 +732,13 @@ function TrustGrowthStep({ Icon, label }: { Icon: typeof Users; label: string })
   );
 }
 
-function ProfileTabs({
-  activeTab,
-  onChange,
-  scrollX
-}: {
-  activeTab: ProfileTab;
-  onChange: (tab: ProfileTab) => void;
-  scrollX: Animated.Value;
-}) {
-  const { PROFILE_COLORS, styles } = useProfileTheme();
-  const { width } = useWindowDimensions();
-  const tabs: Array<{ id: ProfileTab; label: string }> = [
-    { id: "posts", label: "Posts" },
-    { id: "memories", label: "Memories" }
-  ];
-  const slot = (width - spacing.lg * 2) / 2;
-  const indicatorX = scrollX.interpolate({
-    inputRange: [0, width],
-    outputRange: [0, slot],
-    extrapolate: "clamp"
-  });
-  const postsTextColor = scrollX.interpolate({
-    inputRange: [0, width],
-    outputRange: [PROFILE_COLORS.accent, PROFILE_COLORS.muted],
-    extrapolate: "clamp"
-  });
-  const memoriesTextColor = scrollX.interpolate({
-    inputRange: [0, width],
-    outputRange: [PROFILE_COLORS.muted, PROFILE_COLORS.accent],
-    extrapolate: "clamp"
-  });
-
-  return (
-    <View style={styles.tabs}>
-      <View style={styles.tabRow}>
-        {tabs.map((tab) => {
-          const active = tab.id === activeTab;
-          const color = tab.id === "posts" ? postsTextColor : memoriesTextColor;
-          return (
-            <Pressable
-              accessibilityRole="tab"
-              accessibilityState={{ selected: active }}
-              key={tab.id}
-              onPress={() => onChange(tab.id)}
-              style={styles.tabButton}
-            >
-              <Animated.Text style={[styles.tabText, { color }]}>{tab.label}</Animated.Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      <View style={styles.tabTrack}>
-        <Animated.View style={[styles.tabIndicator, { transform: [{ translateX: indicatorX }], width: slot }]} />
-      </View>
-    </View>
-  );
-}
-
-function ProfilePager({
-  index,
-  memoriesPane,
-  onIndexChange,
-  postsPane,
-  scrollX
-}: {
-  index: number;
-  memoriesPane: ReactNode;
-  onIndexChange: (index: number) => void;
-  postsPane: ReactNode;
-  scrollX: Animated.Value;
-}) {
-  const { styles } = useProfileTheme();
-  const { width } = useWindowDimensions();
-  const scrollRef = useRef<ScrollView>(null);
-  const firstSyncRef = useRef(true);
-  const initialOffset = useRef({ x: index * width, y: 0 }).current;
-  const onScroll = useMemo(
-    () => Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: false }),
-    [scrollX]
-  );
-
-  useEffect(() => {
-    const nextOffset = index * width;
-    if (firstSyncRef.current) scrollX.setValue(nextOffset);
-    scrollRef.current?.scrollTo({ x: nextOffset, animated: !firstSyncRef.current });
-    firstSyncRef.current = false;
-  }, [index, scrollX, width]);
-
-  const settlePage = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const next = Math.min(1, Math.max(0, Math.round(event.nativeEvent.contentOffset.x / Math.max(width, 1))));
-      if (next !== index) onIndexChange(next);
-    },
-    [index, onIndexChange, width]
-  );
-
-  return (
-    <View style={styles.pagerViewport}>
-      <Animated.ScrollView
-        ref={scrollRef}
-        contentOffset={initialOffset}
-        directionalLockEnabled
-        horizontal
-        nestedScrollEnabled
-        onMomentumScrollEnd={settlePage}
-        onScroll={onScroll}
-        onScrollEndDrag={settlePage}
-        pagingEnabled
-        scrollEventThrottle={16}
-        showsHorizontalScrollIndicator={false}
-        style={styles.pagerScroll}
-      >
-        <View style={[styles.pagerPage, { width }]}>
-          {postsPane}
-        </View>
-        <View style={[styles.pagerPage, { width }]}>
-          {memoriesPane}
-        </View>
-      </Animated.ScrollView>
-    </View>
-  );
-}
-
 function ListState({ children }: { children: ReactNode }) {
   const { styles } = useProfileTheme();
   return <View style={styles.listState}>{children}</View>;
+}
+
+function ProfileListGap() {
+  return <View style={{ height: spacing.md }} />;
 }
 
 function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
@@ -917,32 +967,39 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   stack: {
     flex: 1,
     gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
-  },
-  virtualListContent: {
-    gap: spacing.md,
-    paddingBottom: spacing.xl
+    overflow: "hidden",
+    paddingHorizontal: spacing.lg
   },
   listInset: {
     paddingHorizontal: spacing.lg
   },
-  pagerViewport: {
+  profilePagerStage: {
     flex: 1,
     marginHorizontal: -spacing.lg,
-    overflow: "hidden"
+    position: "relative"
   },
-  pagerScroll: {
+  profileTabsContainer: {
+    backgroundColor: PROFILE_COLORS.bg,
     flex: 1
   },
-  pagerPage: {
+  collapsibleHeaderContainer: {
+    backgroundColor: PROFILE_COLORS.bg,
+    elevation: 0,
+    shadowOpacity: 0
+  },
+  profileList: {
+    backgroundColor: PROFILE_COLORS.bg,
     flex: 1
   },
-  pagerList: {
-    flex: 1
+  profileListContent: {
+    backgroundColor: PROFILE_COLORS.bg,
+    paddingBottom: spacing.xl
   },
   profileHeader: {
-    gap: spacing.md
+    backgroundColor: PROFILE_COLORS.bg,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: screenLayout.topGap
   },
   listState: {
     paddingTop: spacing.sm
@@ -965,6 +1022,37 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   hero: {
     backgroundColor: PROFILE_COLORS.bg,
     position: "relative"
+  },
+  disabledControl: {
+    opacity: 0.42
+  },
+  skeletonLine: {
+    backgroundColor: PROFILE_COLORS.surface,
+    borderRadius: radius.pill,
+    opacity: 0.82
+  },
+  skeletonAvatar: {
+    backgroundColor: PROFILE_COLORS.surface
+  },
+  skeletonName: {
+    height: 22,
+    width: "62%"
+  },
+  skeletonHandle: {
+    height: 13,
+    marginTop: 9,
+    width: "74%"
+  },
+  skeletonJoined: {
+    height: 12,
+    marginTop: 9,
+    width: "42%"
+  },
+  skeletonBio: {
+    height: 15,
+    marginLeft: 4,
+    marginTop: spacing.md,
+    width: "76%"
   },
   settingsButton: {
     alignItems: "center",
@@ -1066,6 +1154,40 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     letterSpacing: 0.8,
     lineHeight: 14,
     textTransform: "uppercase"
+  },
+  skeletonStatValue: {
+    height: 20,
+    width: 38
+  },
+  skeletonStatLabel: {
+    height: 10,
+    width: 48
+  },
+  skeletonList: {
+    gap: spacing.md,
+    paddingTop: spacing.sm
+  },
+  skeletonCard: {
+    backgroundColor: PROFILE_COLORS.card,
+    borderColor: PROFILE_COLORS.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    gap: spacing.sm,
+    minHeight: 128,
+    padding: spacing.md
+  },
+  skeletonCardTitle: {
+    height: 18,
+    width: "58%"
+  },
+  skeletonCardMeta: {
+    height: 12,
+    width: "42%"
+  },
+  skeletonCardBody: {
+    height: 52,
+    marginTop: spacing.xs,
+    width: "100%"
   },
   trustModalRoot: {
     backgroundColor: "rgba(0, 0, 0, 0.62)",
@@ -1277,31 +1399,32 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     textAlign: "center"
   },
   tabs: {
-    // Symmetric padding so the gap below the underline (to the first card)
-    // matches the gap above the labels (to the stats) — both 12px gap + 4px here.
     paddingBottom: spacing.xs,
     paddingTop: spacing.xs
   },
   tabRow: {
-    flexDirection: "row"
+    borderBottomColor: PROFILE_COLORS.border,
+    borderBottomWidth: 2,
+    flexDirection: "row",
+    position: "relative"
   },
   tabButton: {
     alignItems: "center",
     flex: 1,
-    paddingBottom: spacing.s
+    justifyContent: "flex-end",
+    paddingBottom: 4,
+    paddingTop: 10
   },
   tabText: {
     ...fontStyles.bold,
     fontSize: typography.caption,
+    includeFontPadding: false,
     lineHeight: 15
-  },
-  tabTrack: {
-    backgroundColor: PROFILE_COLORS.border,
-    height: 2,
-    width: "100%"
   },
   tabIndicator: {
     backgroundColor: PROFILE_COLORS.accent,
+    borderRadius: radius.pill,
+    bottom: -2,
     height: 2
   },
   memoryMonthHeading: {

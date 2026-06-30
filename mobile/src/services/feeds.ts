@@ -6,7 +6,8 @@ import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ProfileRow, t
 const PAGE_SIZE = 24;
 const DISH_SCAN_SIZE = 400;
 const PUBLIC_REVIEW_BATCH_SIZE = 1000;
-const EXPLORE_REVIEW_SCAN_LIMIT = 240;
+const EXPLORE_REVIEW_SCAN_LIMIT = 30;
+const EXPLORE_MAX_REVIEW_SCAN_LIMIT = 60;
 const RESTAURANT_SCAN_SIZE = 1000;
 
 type EngagementMaps = {
@@ -35,6 +36,7 @@ export type RestaurantFeedInput = {
 };
 
 export type ExploreFeedInput = {
+  limit?: number;
   location?: {
     lat: number;
     lng: number;
@@ -540,12 +542,16 @@ export async function getPublicFeed(): Promise<FeedPage> {
 
 export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<FeedPage> {
   const viewerName = await getViewerName();
+  const scanLimit = Math.min(
+    EXPLORE_MAX_REVIEW_SCAN_LIMIT,
+    Math.max(1, input.limit ?? EXPLORE_REVIEW_SCAN_LIMIT)
+  );
   const [nearbyRows, joinedCircleOwners] = await Promise.all([
-    scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: EXPLORE_REVIEW_SCAN_LIMIT, location: input.location ?? null }),
+    scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: scanLimit, location: input.location ?? null }),
     getJoinedCircleOwners(viewerName)
   ]);
   const rows = input.location && nearbyRows.length === 0
-    ? await scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: EXPLORE_REVIEW_SCAN_LIMIT })
+    ? await scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: scanLimit })
     : nearbyRows;
   const identities = await fetchReviewerIdentities(rows.map((row) => row.reviewer_name));
   const joinedCircleOwnerSet = new Set(joinedCircleOwners);

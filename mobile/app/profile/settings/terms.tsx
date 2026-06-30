@@ -1,8 +1,6 @@
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing } from "@/theme";
@@ -36,21 +34,14 @@ export default function TermsOfServiceScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.lg}
+      onBack={close}
+      slideStyle={slideStyle}
+      subtitle={LAST_UPDATED}
+      themeColors={themeColors}
+      title="Terms of Service"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        subtitle={LAST_UPDATED}
-        themeColors={themeColors}
-        title="Terms of Service"
-        titleWeight="regular"
-      />
       <View style={styles.content}>
         {sections.map((section) => (
           <View key={section.title} style={styles.section}>
@@ -59,8 +50,7 @@ export default function TermsOfServiceScreen() {
           </View>
         ))}
       </View>
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

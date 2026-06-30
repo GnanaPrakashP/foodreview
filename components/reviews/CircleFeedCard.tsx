@@ -215,11 +215,6 @@ export default function CircleFeedCard({
       }
       invalidateEngagementCaches();
       invalidateCachedJson("/api/feed/public");
-      await fetch("/api/notifications/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "POST_UNLIKED", reviewId: review.id, actorName: myName }),
-      }).catch(() => {});
     } else {
       const response = await fetch("/api/likes", {
         method: "POST",
@@ -234,13 +229,8 @@ export default function CircleFeedCard({
       }
       invalidateEngagementCaches();
       invalidateCachedJson("/api/feed/public");
-      await fetch("/api/notifications/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "POST_LIKED", reviewId: review.id, actorName: myName }),
-      }).catch(() => {});
     }
-  }, [myName, mounted, liked, likeCount, review, review.id]);
+  }, [myName, mounted, liked, likeCount, review]);
 
   const toggleBookmark = useCallback(async () => {
     if (!myName || !mounted) return;

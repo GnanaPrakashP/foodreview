@@ -1,10 +1,8 @@
 import { UserMinus } from "lucide-react-native";
 import { useMemo } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMyCircleQuery, useRemoveCircleMemberMutation } from "@/hooks/useCircle";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -46,72 +44,63 @@ export default function ProfileCircleScreen() {
   }
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen backgroundColor={themeColors.bg} padded={false} scroll style={{ backgroundColor: themeColors.bg }}>
-      <View style={styles.content}>
-        <MemoryRouteHeader
-          backButtonVariant="plain"
-          onBack={close}
-          themeColors={themeColors}
-          title="Circle"
-          titleWeight="bold"
+    <ProfileSubScreen
+      contentGap={spacing.sm}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Circle"
+      titleWeight="bold"
+    >
+      {circle.isLoading ? (
+        <LoadingState message="Fetching your circle." title="Loading circle" />
+      ) : circle.isError ? (
+        <ErrorState
+          actionLabel="Try again"
+          message={circle.error.message}
+          onAction={() => circle.refetch()}
+          title="Circle unavailable"
         />
-
-        {circle.isLoading ? (
-          <LoadingState message="Fetching your circle." title="Loading circle" />
-        ) : circle.isError ? (
-          <ErrorState
-            actionLabel="Try again"
-            message={circle.error.message}
-            onAction={() => circle.refetch()}
-            title="Circle unavailable"
-          />
-        ) : members.length === 0 ? (
-          <EmptyState
-            icon="people-outline"
-            message={circle.data?.accountType === "public" ? "No one has joined your circle yet." : "Add friends to build your circle."}
-            title="Your circle is empty"
-          />
-        ) : (
-          <View>
-            {members.map((member) => (
-              <View key={member.username} style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>{initialsForName(member.displayName, member.username)}</Text>
-                </View>
-                <View style={styles.memberCopy}>
-                  <Text numberOfLines={1} style={styles.memberName}>{member.displayName}</Text>
-                  <Text numberOfLines={1} style={styles.memberHandle}>@{member.username}</Text>
-                </View>
-                <Pressable
-                  accessibilityLabel={`Remove ${member.displayName || member.username} from circle`}
-                  accessibilityRole="button"
-                  disabled={removeMember.isPending}
-                  onPress={() => confirmRemove(member.username, member.displayName)}
-                  style={({ pressed }) => [
-                    styles.removeButton,
-                    pressed && styles.pressed,
-                    removeMember.isPending && styles.removeButtonDisabled
-                  ]}
-                >
-                  <UserMinus size={15} color={themeColors.dangerSoft} strokeWidth={2.2} />
-                </Pressable>
+      ) : members.length === 0 ? (
+        <EmptyState
+          icon="people-outline"
+          message={circle.data?.accountType === "public" ? "No one has joined your circle yet." : "Add friends to build your circle."}
+          title="Your circle is empty"
+        />
+      ) : (
+        <View>
+          {members.map((member) => (
+            <View key={member.username} style={styles.memberRow}>
+              <View style={styles.memberAvatar}>
+                <Text style={styles.memberAvatarText}>{initialsForName(member.displayName, member.username)}</Text>
               </View>
-            ))}
-          </View>
-        )}
-      </View>
-    </Screen>
-    </Animated.View>
+              <View style={styles.memberCopy}>
+                <Text numberOfLines={1} style={styles.memberName}>{member.displayName}</Text>
+                <Text numberOfLines={1} style={styles.memberHandle}>@{member.username}</Text>
+              </View>
+              <Pressable
+                accessibilityLabel={`Remove ${member.displayName || member.username} from circle`}
+                accessibilityRole="button"
+                disabled={removeMember.isPending}
+                onPress={() => confirmRemove(member.username, member.displayName)}
+                style={({ pressed }) => [
+                  styles.removeButton,
+                  pressed && styles.pressed,
+                  removeMember.isPending && styles.removeButtonDisabled
+                ]}
+              >
+                <UserMinus size={15} color={themeColors.dangerSoft} strokeWidth={2.2} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+    </ProfileSubScreen>
   );
 }
 
 function createStyles(c: ReturnType<typeof themeColorsFor>) {
   return StyleSheet.create({
-    content: {
-      gap: spacing.sm,
-      padding: spacing.lg
-    },
     memberRow: {
       alignItems: "center",
       borderBottomColor: c.border,

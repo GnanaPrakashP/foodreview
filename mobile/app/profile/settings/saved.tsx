@@ -1,9 +1,7 @@
 import { StyleSheet, View } from "react-native";
-import Animated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useSavedSettingsItemsQuery } from "@/hooks/useSettings";
@@ -16,11 +14,14 @@ export default function SavedPostsScreen() {
   const posts = saved.data?.posts ?? [];
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen padded={false} scroll style={{ gap: spacing.md }}>
-      <View style={styles.headerWrap}>
-        <MemoryRouteHeader backButtonVariant="plain" onBack={close} themeColors={themeColors} title="Saved Posts" titleWeight="regular" />
-      </View>
+    <ProfileSubScreen
+      contentGap={spacing.md}
+      contentHorizontalPadding={false}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Saved Posts"
+    >
       {saved.isLoading ? (
         <View style={styles.stateWrap}>
           <LoadingState message="Fetching posts you saved." title="Loading saved posts" />
@@ -36,21 +37,17 @@ export default function SavedPostsScreen() {
         </View>
       ) : (
         <PostFeed
+          embedded
           emptyMessage="Posts you save will appear here."
           emptyTitle="No saved posts yet"
           posts={posts}
         />
       )}
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  headerWrap: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg
-  },
   stateWrap: {
     paddingHorizontal: spacing.lg
   }

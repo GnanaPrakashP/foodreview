@@ -82,6 +82,29 @@ async function getViewerProfile() {
   return profile;
 }
 
+async function authToken(action: string) {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Log in before " + action);
+  return token;
+}
+
+async function authorizedSettingsJson(path: string, init: RequestInit & { body?: string }, action: string) {
+  const token = await authToken(action);
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+      ...(init.headers ?? {})
+    }
+  });
+  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error ?? "Could not update settings");
+  return payload;
+}
+
 async function getVisibleReviewRows(postIds: string[], viewerName: string): Promise<Map<string, ReviewRow>> {
   const uniquePostIds = Array.from(new Set(postIds.filter(Boolean)));
   if (uniquePostIds.length === 0) return new Map();
@@ -312,23 +335,21 @@ export async function blockUser(username: string): Promise<void> {
   const target = username.trim().toLowerCase().replace(/^@/, "");
   if (!target) throw new Error("Choose someone to block");
   if (target === viewer.username) throw new Error("You can't block yourself");
-
-  const { error } = await supabase
-    .from("blocked_users")
-    .upsert({ blocker_name: viewer.username, blocked_name: target }, { onConflict: "blocker_name,blocked_name" });
-
-  if (error) throw new Error(error.message);
+  await authorizedSettingsJson("/api/mobile/blocks", {
+    method: "POST",
+    body: JSON.stringify({ username: target })
+  }, "blocking this account");
 }
 
 export async function unblockUser(username: string): Promise<void> {
   const viewer = await getViewerProfile();
-  const { error } = await supabase
-    .from("blocked_users")
-    .delete()
-    .eq("blocker_name", viewer.username)
-    .eq("blocked_name", username);
-
-  if (error) throw new Error(error.message);
+  const target = username.trim().toLowerCase().replace(/^@/, "");
+  if (!target) throw new Error("Choose someone to unblock");
+  if (target === viewer.username) throw new Error("You can't unblock yourself");
+  await authorizedSettingsJson("/api/mobile/blocks", {
+    method: "DELETE",
+    body: JSON.stringify({ username: target })
+  }, "unblocking this account");
 }
 
 export async function deleteCurrentAccount() {

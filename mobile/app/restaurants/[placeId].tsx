@@ -9,7 +9,7 @@ import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useRestaurantFeedQuery } from "@/hooks/useFeeds";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing, typography } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { ReviewPost } from "@/types/models";
 
 type ParamValue = string | string[] | undefined;
@@ -334,9 +334,9 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       alignItems: "flex-start",
       flexDirection: "row",
       gap: spacing.md,
-      paddingBottom: 14,
+      paddingBottom: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
-      paddingTop: spacing.base
+      paddingTop: screenLayout.topGap
     },
     backButton: {
       alignItems: "center",

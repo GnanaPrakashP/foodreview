@@ -3,9 +3,7 @@ import { useRouter } from "expo-router";
 import { useMemo } from "react";
 import { ChevronRight, FileText, Shield } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing, typography } from "@/theme";
@@ -28,21 +26,13 @@ export default function AboutScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.md}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="About"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        themeColors={themeColors}
-        title="About"
-        titleWeight="regular"
-      />
-
       <View style={styles.brandCard}>
         <Text style={styles.brandName}>CircleBites</Text>
         <Text style={styles.brandTagline}>A private food journal for you and your circle.</Text>
@@ -56,8 +46,7 @@ export default function AboutScreen() {
       </View>
 
       <Text style={styles.copyright}>© {new Date().getFullYear()} CircleBites</Text>
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

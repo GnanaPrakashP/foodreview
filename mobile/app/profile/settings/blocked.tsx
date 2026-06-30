@@ -1,10 +1,8 @@
 import { Image } from "expo-image";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useBlockedUsersQuery, useUnblockUserMutation } from "@/hooks/useSettings";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -37,22 +35,14 @@ export default function BlockedAccountsScreen() {
   }
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.md}
+      onBack={close}
+      slideStyle={slideStyle}
+      subtitle="People you've blocked can't see your posts or contact you."
+      themeColors={themeColors}
+      title="Blocked Accounts"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        subtitle="People you've blocked can't see your posts or contact you."
-        themeColors={themeColors}
-        title="Blocked Accounts"
-        titleWeight="regular"
-      />
-
       {blocked.isLoading ? (
         <LoadingState message="Loading your block list." title="Loading blocked accounts" />
       ) : blocked.isError ? (
@@ -95,8 +85,7 @@ export default function BlockedAccountsScreen() {
           ))}
         </View>
       )}
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

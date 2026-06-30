@@ -88,6 +88,16 @@ function loadRoute(code, { db, authName }) {
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/notifications") {
+        return {
+          createPostLikeNotification: async () => null,
+          removeLikeNotification: async () => undefined,
+        };
+      }
+      if (id === "@/lib/profile-names") {
+        return { profileDisplayName: (_profile, fallback = "") => fallback };
+      }
+      if (id === "@/lib/types") return {};
       if (id === "@/lib/server/review-access") {
         return { canActorReadPost: async () => ({ allowed: true }) };
       }

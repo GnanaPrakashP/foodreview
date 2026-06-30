@@ -117,21 +117,39 @@ function loadRoute({ db }) {
           },
         };
       }
-      if (id === "@/lib/profile-display") {
+      if (id === "@/lib/server/feed-assembly") {
         return {
-          buildProfileDisplayMap: async (db, names) => {
-            const usernames = Array.from(new Set(names.map((name) => name?.trim()).filter(Boolean)));
-            if (usernames.length === 0) return {};
-            const { data } = await db
-              .from("profiles")
-              .select("username, first_name, last_name")
-              .in("username", usernames);
+          buildFeedAssemblyMaps: async (db, reviews, options = {}) => {
+            const postIds = reviews.map((review) => review.id);
+            if (postIds.length === 0) {
+              return { likeCountMap: {}, commentMap: {}, likedByMeMap: {}, bookmarkedPostMap: {}, profileMap: {}, tasteTrustSummaryMap: {} };
+            }
+            const viewerName = options.viewerName ?? "";
+            const [{ data: likes }, { data: comments }, { data: wishlist }, { data: profiles }] = await Promise.all([
+              db.from("likes").select("post_id, user_name").in("post_id", postIds),
+              db.from("comments").select("id, post_id, user_name, content, created_at").in("post_id", postIds).order("created_at", { ascending: false }),
+              viewerName ? db.from("wishlist").select("post_id").eq("user_name", viewerName).in("post_id", postIds) : Promise.resolve({ data: [] }),
+              db.from("profiles").select("username, first_name, last_name").in("username", Array.from(new Set(reviews.map((review) => review.reviewer_name))))
+            ]);
+            const likeCountMap = {};
+            const likedByMeMap = {};
+            for (const like of likes ?? []) {
+              likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
+              if (viewerName && like.user_name === viewerName) likedByMeMap[like.post_id] = true;
+            }
+            const commentMap = {};
+            for (const comment of comments ?? []) {
+              if (!commentMap[comment.post_id]) commentMap[comment.post_id] = { count: 1, top: comment };
+              else commentMap[comment.post_id].count += 1;
+            }
+            const bookmarkedPostMap = {};
+            for (const item of wishlist ?? []) if (item.post_id) bookmarkedPostMap[item.post_id] = true;
             const profileMap = {};
-            for (const profile of data ?? []) {
+            for (const profile of profiles ?? []) {
               const displayName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
               if (profile.username && displayName) profileMap[profile.username] = displayName;
             }
-            return profileMap;
+            return { likeCountMap, commentMap, likedByMeMap, bookmarkedPostMap, profileMap, tasteTrustSummaryMap: {} };
           },
         };
       }

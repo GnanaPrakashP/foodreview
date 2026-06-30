@@ -66,16 +66,6 @@ function spyDb(...responses) {
   };
 }
 
-function eqFilters(entry) {
-  return Object.fromEntries(
-    entry.ops.filter(([op]) => op === "eq").map(([, col, val]) => [col, val])
-  );
-}
-
-function hasOp(entry, name) {
-  return entry.ops.some(([op]) => op === name);
-}
-
 function loadRoute({
   admin = spyDb(),
   viewer = { id: "viewer-id", name: "Alice" },
@@ -169,10 +159,10 @@ test("events: forged actorName is rejected before notification work", async () =
   assert.equal(calls.createPostLikeNotification.length, 0);
 });
 
-test("events: actorName falls back to authenticated profile name when viewer name is missing", async () => {
+test("events: actorName falls back to authenticated profile name for circle post events", async () => {
   const admin = spyDb(
     actorProfile(),
-    { data: review(), error: null }
+    { data: review({ reviewer_name: "Alice" }), error: null }
   );
   const { route, calls } = loadRoute({
     admin,
@@ -180,92 +170,30 @@ test("events: actorName falls back to authenticated profile name when viewer nam
     fallbackProfileName: "Alice",
   });
 
-  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1" }));
+  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1" }));
 
   assert.equal(status(res), 200);
-  assert.equal(calls.createPostLikeNotification.length, 1);
-  assert.equal(calls.createPostLikeNotification[0][2], "Alice");
-  assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
+  assert.equal(calls.createCirclePostNotifications.length, 1);
 });
 
-test("events: POST_LIKED always creates a notification without querying the likes table", async () => {
-  const admin = spyDb(
-    actorProfile(),
-    { data: review(), error: null }
-  );
+test("events: engagement notifications are owned by mutation routes", async () => {
+  const admin = spyDb(actorProfile(), { data: review(), error: null });
   const { route, calls } = loadRoute({ admin });
 
-  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Alice" }));
-
-  assert.equal(status(res), 200);
-  assert.equal(calls.createPostLikeNotification.length, 1);
-  assert.equal(calls.createPostLikeNotification[0][1].id, "review-1");
-  assert.equal(calls.createPostLikeNotification[0][2], "Alice");
-  assert.equal(calls.createPostLikeNotification[0][3], "Alice Ate");
-  // Verify the likes table is never queried — actorName/user_name mismatch cannot block notification creation
-  assert.equal(admin._calls.filter((c) => c.table === "likes").length, 0);
-});
-
-test("events: POST_COMMENTED rejects comments that do not belong to the authenticated actor", async () => {
-  const admin = spyDb(
-    actorProfile(),
-    { data: review(), error: null },
-    {
-      data: {
-        id: "comment-1",
-        post_id: "review-1",
-        user_name: "Mallory",
-        content: "Forged",
-        created_at: "2026-01-02T00:00:00.000Z",
-      },
-      error: null,
-    }
-  );
-  const { route, calls } = loadRoute({ admin });
-
-  const res = await route.POST(makeReq({
+  const liked = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Alice" }));
+  const commented = await route.POST(makeReq({
     event: "POST_COMMENTED",
     reviewId: "review-1",
     commentId: "comment-1",
     actorName: "Alice",
   }));
 
-  assert.equal(status(res), 404);
+  assert.equal(status(liked), 410);
+  assert.equal(status(commented), 410);
+  assert.match(body(liked).error, /mutation routes/i);
+  assert.equal(calls.createPostLikeNotification.length, 0);
   assert.equal(calls.createPostCommentNotifications.length, 0);
-});
-
-test("events: POST_COMMENTED creates notifications with prior commenters for a real actor comment", async () => {
-  const admin = spyDb(
-    actorProfile(),
-    { data: review(), error: null },
-    {
-      data: {
-        id: "comment-1",
-        post_id: "review-1",
-        user_name: "Alice",
-        content: "Looks great",
-        created_at: "2026-01-02T00:00:00.000Z",
-      },
-      error: null,
-    },
-    { data: [{ user_name: "Charlie" }, { user_name: "Dana" }], error: null }
-  );
-  const { route, calls } = loadRoute({ admin });
-
-  const res = await route.POST(makeReq({
-    event: "POST_COMMENTED",
-    reviewId: "review-1",
-    commentId: "comment-1",
-    actorName: "Alice",
-  }));
-
-  assert.equal(status(res), 200);
-  assert.equal(calls.createPostCommentNotifications.length, 1);
-  assert.deepEqual(calls.createPostCommentNotifications[0][4], ["Charlie", "Dana"]);
-  assert.equal(calls.createPostCommentNotifications[0][5], "Alice Ate");
-  assert.equal(eqFilters(admin._calls[2]).id, "comment-1");
-  assert.equal(eqFilters(admin._calls[2]).post_id, "review-1");
-  assert.equal(hasOp(admin._calls[3], "lt"), true);
+  assert.equal(admin._calls.filter((c) => c.table === "likes" || c.table === "comments" || c.table === "reviews").length, 0);
 });
 
 test("events: CIRCLE_POST_CREATED rejects posts not owned by the actor", async () => {

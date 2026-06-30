@@ -7,6 +7,16 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#F7F5F0",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#F7F5F0",
+      "enforceContrast": false
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.circlebites.mobile",
@@ -20,6 +30,7 @@
     },
     "android": {
       "package": "com.circlebites.mobile",
+      "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",

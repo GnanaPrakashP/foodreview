@@ -2,10 +2,8 @@ import { ChevronRight } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { useSettingsCommentsQuery } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -24,9 +22,13 @@ export default function MyCommentsScreen() {
   const data = comments.data ?? [];
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen padded={false} scroll style={{ gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>
-      <MemoryRouteHeader backButtonVariant="plain" onBack={close} themeColors={themeColors} title="My Comments" titleWeight="regular" />
+    <ProfileSubScreen
+      contentGap={spacing.md}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="My Comments"
+    >
       {comments.isLoading ? (
         <LoadingState message="Fetching comments you wrote." title="Loading comments" />
       ) : comments.isError ? (
@@ -59,8 +61,7 @@ export default function MyCommentsScreen() {
           ))}
         </View>
       )}
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

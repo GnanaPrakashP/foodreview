@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
 import { KeyRound, Mail, ShieldCheck } from "lucide-react-native";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { usePasswordResetMutation } from "@/hooks/useAuth";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -46,21 +44,13 @@ export default function SecurityScreen() {
   }
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.lg}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Account & Security"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        themeColors={themeColors}
-        title="Account & Security"
-        titleWeight="regular"
-      />
-
       <View style={styles.card}>
         <InfoRow styles={styles} themeColors={themeColors} Icon={Mail} label="Email" value={email || "Not available"} />
         <View style={styles.separator} />
@@ -103,8 +93,7 @@ export default function SecurityScreen() {
           </Text>
         </View>
       )}
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

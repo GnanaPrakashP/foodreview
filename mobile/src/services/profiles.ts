@@ -178,8 +178,11 @@ export async function getCurrentUserProfile(): Promise<Profile | null> {
 }
 
 export type AvatarUploadInput = {
+  fileSize?: number | null;
+  height?: number | null;
   uri: string;
   mimeType?: string | null;
+  width?: number | null;
 };
 
 export async function updateCurrentUserAvatar(input: AvatarUploadInput): Promise<Profile> {
@@ -190,9 +193,12 @@ export async function updateCurrentUserAvatar(input: AvatarUploadInput): Promise
 
   await uploadReviewMedia({
     category: "avatar",
+    fileSize: input.fileSize,
+    height: input.height,
     mediaKind: "image",
     mimeType: input.mimeType,
-    uri: input.uri
+    uri: input.uri,
+    width: input.width
   });
 
   const profile = await getCurrentUserProfile();

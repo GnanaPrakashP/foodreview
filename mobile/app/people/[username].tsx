@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
@@ -15,13 +15,15 @@ import {
 } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useProfilePageQuery } from "@/hooks/useProfiles";
+import { useReportContentMutation } from "@/hooks/useReports";
 import { useBlockedUsersQuery, useBlockUserMutation, useUnblockUserMutation } from "@/hooks/useSettings";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import type { CircleAccessStatus } from "@/services/circle";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, spacing } from "@/theme";
+import { colors, fontStyles, radius, screenLayout, spacing } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
+import { chooseReportReason } from "@/utils/reporting";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 type PersonStyles = ReturnType<typeof createStyles>;
@@ -58,6 +60,7 @@ export default function PersonProfileScreen() {
   const blocked = useBlockedUsersQuery();
   const blockUser = useBlockUserMutation();
   const unblockUser = useUnblockUserMutation();
+  const reportContent = useReportContentMutation();
 
   const isSelf = !username || username === currentUsername;
   const isBlocked = (blocked.data ?? []).some((user) => user.username === username);
@@ -228,21 +231,32 @@ export default function PersonProfileScreen() {
     }
   }
 
-  async function openActions() {
-    if (isBlocked) {
-      const confirmed = await confirmAction({ title: `Unblock @${username}?`, confirmLabel: "Unblock" });
-      if (!confirmed) return;
-      try {
-        await unblockUser.mutateAsync(username);
-      } catch (error) {
-        notify("Could not unblock", error instanceof Error ? error.message : "Please try again.");
-      }
-      return;
+  async function reportProfile() {
+    if (!username || reportContent.isPending) return;
+    const reason = await chooseReportReason("profile");
+    if (!reason) return;
+    try {
+      await reportContent.mutateAsync({ targetId: username, targetType: "profile", reason });
+      notify("Report sent", "Thanks. FoodReview moderation will review it.");
+    } catch (error) {
+      notify("Could not send report", error instanceof Error ? error.message : "Please try again.");
     }
+  }
 
+  async function confirmUnblockProfile() {
+    const confirmed = await confirmAction({ title: "Unblock @" + username + "?", confirmLabel: "Unblock" });
+    if (!confirmed) return;
+    try {
+      await unblockUser.mutateAsync(username);
+    } catch (error) {
+      notify("Could not unblock", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  async function confirmBlockProfile() {
     const confirmed = await confirmAction({
-      title: `Block @${username}?`,
-      message: "They won't be able to see your posts, and you won't see theirs.",
+      title: "Block @" + username + "?",
+      message: "They will not be able to see your posts, and you will not see theirs.",
       confirmLabel: "Block",
       destructive: true
     });
@@ -253,6 +267,23 @@ export default function PersonProfileScreen() {
     } catch (error) {
       notify("Could not block", error instanceof Error ? error.message : "Please try again.");
     }
+  }
+
+  function openActions() {
+    if (isBlocked) {
+      Alert.alert("@" + username, undefined, [
+        { text: "Report profile", style: "destructive", onPress: () => void reportProfile() },
+        { text: "Unblock", onPress: () => void confirmUnblockProfile() },
+        { text: "Cancel", style: "cancel" }
+      ]);
+      return;
+    }
+
+    Alert.alert("@" + username, undefined, [
+      { text: "Report profile", style: "destructive", onPress: () => void reportProfile() },
+      { text: "Block", style: "destructive", onPress: () => void confirmBlockProfile() },
+      { text: "Cancel", style: "cancel" }
+    ]);
   }
 
   return (
@@ -270,6 +301,7 @@ export default function PersonProfileScreen() {
               <Pressable
                 accessibilityLabel="More options"
                 accessibilityRole="button"
+                disabled={blockUser.isPending || unblockUser.isPending || reportContent.isPending}
                 hitSlop={8}
                 onPress={openActions}
                 style={styles.backButton}
@@ -410,9 +442,9 @@ function createStyles(c: ThemeColors) {
       flex: 1
     },
     stack: {
-      gap: spacing.md,
+      gap: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
-      paddingTop: spacing.sm
+      paddingTop: screenLayout.topGap
     },
     topBar: {
       alignItems: "center",

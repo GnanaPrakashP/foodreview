@@ -6,7 +6,7 @@ import { getCurrentUserProfile } from "@/services/profiles";
 import { uploadReviewMedia } from "@/services/reviewMedia";
 import type { FoodItem, Visibility } from "@/types/models";
 
-const MAX_REVIEW_VIDEO_DURATION_MS = 10_000;
+const REVIEW_VIDEO_DISABLED_MESSAGE = "Video uploads are temporarily unavailable";
 
 export type CreatePostMediaInput = {
   uri: string;
@@ -33,6 +33,7 @@ export type CreatePostInput = {
   // Preferred multi-media field. When present it supersedes the single media*
   // fields above (which remain for older single-capture callers).
   mediaItems?: CreatePostMediaInput[];
+  onUploadProgress?: (progress: number) => void;
   restaurantName: string;
   restaurantId?: string | null;
   restaurantArea?: string | null;
@@ -80,14 +81,7 @@ function validateInput(input: CreatePostInput) {
   if (items.length === 0) throw new Error("Choose a photo or video");
   for (const media of items) {
     if (resolveMediaType(media) === "video") {
-      if (
-        typeof media.durationMs !== "number" ||
-        !Number.isFinite(media.durationMs) ||
-        media.durationMs <= 0 ||
-        media.durationMs > MAX_REVIEW_VIDEO_DURATION_MS
-      ) {
-        throw new Error("Videos must be 10 seconds or less");
-      }
+      throw new Error(REVIEW_VIDEO_DISABLED_MESSAGE);
     }
   }
   if (!input.restaurantName.trim()) throw new Error("Restaurant name is required");
@@ -147,28 +141,22 @@ type UploadedMedia = {
   durationMs: number | null;
 };
 
-// Returns a copy of the video with no audio track. react-native-compressor is a
-// native module that isn't present in web/pre-rebuild clients, so we lazy-require
-// it and fall back to the original uri (audio intact) if it's unavailable.
-async function stripVideoAudio(uri: string): Promise<string> {
-  if (Platform.OS === "web") return uri;
-  try {
-    const { Video } = require("react-native-compressor") as typeof import("react-native-compressor");
-    return await Video.compress(uri, { compressionMethod: "auto", stripAudio: true });
-  } catch {
-    return uri;
-  }
-}
-
-async function uploadOne(media: CreatePostMediaInput): Promise<UploadedMedia> {
+async function uploadOneWithProgress(
+  media: CreatePostMediaInput,
+  onUploadProgress?: (progress: number) => void
+): Promise<UploadedMedia> {
   const mediaType = resolveMediaType(media);
-  const uri = mediaType === "video" && media.muted ? await stripVideoAudio(media.uri) : media.uri;
+  if (mediaType === "video") throw new Error(REVIEW_VIDEO_DISABLED_MESSAGE);
   const uploaded = await uploadReviewMedia({
     category: "post",
     durationMs: media.durationMs,
+    fileSize: media.fileSize,
+    height: media.height,
     mediaKind: mediaType,
     mimeType: media.mimeType,
-    uri
+    onUploadProgress,
+    width: media.width,
+    uri: media.uri
   });
 
   return {
@@ -182,6 +170,22 @@ async function uploadOne(media: CreatePostMediaInput): Promise<UploadedMedia> {
     storagePath: uploaded.storagePath,
     width: media.width ?? null
   };
+}
+
+async function uploadPostMediaItems(items: CreatePostMediaInput[], onUploadProgress?: (progress: number) => void) {
+  const uploaded: UploadedMedia[] = [];
+  const total = Math.max(1, items.length);
+  onUploadProgress?.(0);
+
+  for (const [index, media] of items.entries()) {
+    const item = await uploadOneWithProgress(media, (itemProgress) => {
+      onUploadProgress?.((index + Math.max(0, Math.min(itemProgress, 1))) / total);
+    });
+    uploaded.push(item);
+    onUploadProgress?.((index + 1) / total);
+  }
+
+  return uploaded;
 }
 
 async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedia[]) {
@@ -235,6 +239,6 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
     throw new Error("Posting requires the API server.");
   }
 
-  const uploaded = await Promise.all(items.map((media) => uploadOne(media)));
+  const uploaded = await uploadPostMediaItems(items, input.onUploadProgress);
   return createReviewViaApi(input, uploaded);
 }

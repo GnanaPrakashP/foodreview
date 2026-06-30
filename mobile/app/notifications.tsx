@@ -3,7 +3,7 @@ import { StyleSheet, View } from "react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { EmptyState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { spacing } from "@/theme";
+import { screenLayout, spacing } from "@/theme";
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -24,7 +24,8 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    gap: spacing.lg,
-    padding: spacing.lg
+    gap: screenLayout.headerContentGap,
+    padding: spacing.lg,
+    paddingTop: screenLayout.topGap
   }
 });

@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CIRCLE_FEED_PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
 import { parseCircleFeedCursor } from "@/lib/circle-feed";
-import type { Comment } from "@/lib/types";
-import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { loadSeenPostIdsForUser } from "@/lib/server/post-views";
@@ -164,49 +163,13 @@ export async function GET(req: NextRequest) {
       ? { createdAt: reviews[reviews.length - 1].created_at, id: reviews[reviews.length - 1].id }
       : null;
 
-    const postIds = reviews.map((r) => r.id);
-
-    const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, profileMap] = postIds.length > 0
-      ? await Promise.all([
-          db.from("likes").select("post_id, user_name").in("post_id", postIds),
-          db
-            .from("comments")
-            .select("id, post_id, user_name, content, created_at")
-            .in("post_id", postIds)
-            .order("created_at", { ascending: false }),
-          myName && postIds.length > 0
-            ? db
-                .from("wishlist")
-                .select("post_id")
-                .eq("user_name", myName)
-                .in("post_id", postIds)
-            : Promise.resolve({ data: [] }),
-          Promise.resolve().then(() => buildProfileDisplayMap(db, reviews.map((r) => r.reviewer_name))),
-        ])
-      : [{ data: [] }, { data: [] }, { data: [] }, {}];
-
-    const likeCountMap: Record<string, number> = {};
-    const likedByMeMap: Record<string, boolean> = {};
-    for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
-      likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
-      if (like.user_name === myName) likedByMeMap[like.post_id] = true;
-    }
-
-    const bookmarkedPostMap: Record<string, boolean> = {};
-    for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
-      if (item.post_id) bookmarkedPostMap[item.post_id] = true;
-    }
-
-    type CommentRow = Comment & { post_id: string };
-    const commentMap: Record<string, { count: number; top: Comment }> = {};
-    for (const comment of (rawComments ?? []) as unknown as CommentRow[]) {
-      const ex = commentMap[comment.post_id];
-      if (!ex) {
-        commentMap[comment.post_id] = { count: 1, top: comment };
-      } else {
-        ex.count++;
-      }
-    }
+    const {
+      likeCountMap,
+      commentMap,
+      likedByMeMap,
+      bookmarkedPostMap,
+      profileMap,
+    } = await buildFeedAssemblyMaps(db, reviews, { viewerName: myName });
 
     return NextResponse.json({
       reviews,

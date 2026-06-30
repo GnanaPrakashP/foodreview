@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   getCircleFeed,
   getDishFeed,
@@ -9,11 +9,13 @@ import {
   type ExploreFeedInput,
   type RestaurantFeedInput
 } from "@/services/feeds";
+import { getExploreDiscovery } from "@/services/exploreDiscovery";
 
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
   dish: (dishName: string) => ["feed", "dish", dishName] as const,
-  explore: (input: ExploreFeedInput = {}) => ["feed", "explore", input.location?.lat ?? "", input.location?.lng ?? ""] as const,
+  exploreDiscovery: (input: ExploreFeedInput = {}) => ["feed", "explore-discovery", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
+  explore: (input: ExploreFeedInput = {}) => ["feed", "explore", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
   public: ["feed", "public"] as const,
   restaurant: (input: RestaurantFeedInput) => ["feed", "restaurant", input.placeId ?? "", input.restaurantName ?? "", input.restaurantAddress ?? ""] as const,
   review: (postId: string) => ["feed", "review", postId] as const
@@ -39,7 +41,23 @@ export function useExploreFeedQuery(input: ExploreFeedInput = {}, options: { ena
   return useQuery({
     queryKey: feedKeys.explore(input),
     queryFn: () => getExploreFeed(input),
-    enabled: options.enabled ?? true
+    enabled: options.enabled ?? true,
+    gcTime: 2 * 60 * 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnMount: false,
+    staleTime: 30 * 60_000
+  });
+}
+
+export function useExploreDiscoveryQuery(input: ExploreFeedInput = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: feedKeys.exploreDiscovery(input),
+    queryFn: () => getExploreDiscovery(input),
+    enabled: options.enabled ?? true,
+    gcTime: 2 * 60 * 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnMount: false,
+    staleTime: 30 * 60_000
   });
 }
 

@@ -6,9 +6,8 @@ import { rankCircleFeedReviews } from "@/lib/feed-ranking";
 import { filterCircleTrendingReviews } from "@/lib/visibility";
 import { CIRCLE_FEED_MAX_PAGE_SIZE, CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getPrivateCached, invalidatePrivateCacheByTags } from "@/lib/private-cache";
-import { buildProfileDisplayMap } from "@/lib/profile-display";
+import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
 import { normalizeReview } from "@/lib/server/normalize-review";
-import { getPostTasteTrustSummaryMap } from "@/lib/server/taste-trust";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import { loadSeenPostIdsForUser } from "@/lib/server/post-views";
 
@@ -293,49 +292,14 @@ async function loadCircleFeedPageForNames(
   const nextCursor = hasMore && allReviews.length > 0
     ? cursorForCircleFeedReview(allReviews[allReviews.length - 1])
     : null;
-  const postIds = allReviews.map((review) => review.id);
-
-  const [{ data: rawLikes }, { data: rawComments }, { data: rawWishlist }, tasteTrustSummaryMap, profileMap] = postIds.length > 0
-    ? await Promise.all([
-        readDb.from("likes").select("post_id, user_name").in("post_id", postIds),
-        readDb
-          .from("comments")
-          .select("id, post_id, user_name, content, created_at")
-          .in("post_id", postIds)
-          .order("created_at", { ascending: false }),
-        myName && postIds.length > 0
-          ? readDb
-              .from("wishlist")
-              .select("post_id")
-              .eq("user_name", myName)
-              .in("post_id", postIds)
-          : Promise.resolve({ data: [] }),
-        getPostTasteTrustSummaryMap(readDb, postIds),
-        Promise.resolve().then(() => buildProfileDisplayMap(readDb, allReviews.map((r) => r.reviewer_name))),
-      ])
-    : [{ data: [] }, { data: [] }, { data: [] }, {}, {}];
-
-  const likeCountMap: Record<string, number> = {};
-  const likedByMeMap: Record<string, boolean> = {};
-  for (const like of (rawLikes ?? []) as { post_id: string; user_name: string }[]) {
-    likeCountMap[like.post_id] = (likeCountMap[like.post_id] ?? 0) + 1;
-    if (like.user_name === myName) likedByMeMap[like.post_id] = true;
-  }
-
-  const bookmarkedPostMap: Record<string, boolean> = {};
-  for (const item of (rawWishlist ?? []) as { post_id: string | null }[]) {
-    if (item.post_id) bookmarkedPostMap[item.post_id] = true;
-  }
-
-  const commentMap: Record<string, { count: number; top: Comment }> = {};
-  for (const comment of rawComments ?? []) {
-    const ex = commentMap[comment.post_id];
-    if (!ex) {
-      commentMap[comment.post_id] = { count: 1, top: comment };
-    } else {
-      ex.count++;
-    }
-  }
+  const {
+    likeCountMap,
+    commentMap,
+    likedByMeMap,
+    bookmarkedPostMap,
+    profileMap,
+    tasteTrustSummaryMap,
+  } = await buildFeedAssemblyMaps(readDb, allReviews, { viewerName: myName, includeTasteTrust: true });
 
   const rankedUnseenReviews = rankCircleFeedReviews(
     allReviews.filter((review) => unseenPostIds.has(review.id)),

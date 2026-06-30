@@ -4,9 +4,15 @@ import { StatusBar } from "expo-status-bar";
 import { useMemo } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { configureReanimatedLogger, ReanimatedLogLevel } from "react-native-reanimated";
 import { AppProviders } from "@/providers/AppProviders";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useCircleBitesFonts } from "@/theme";
+
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false
+});
 
 // The Explore detail screens, circle screen, settings, and every settings
 // sub-screen present over the screen beneath them and drive their own custom
@@ -64,13 +70,15 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ backgroundColor: themeColors.bg, flex: 1 }}>
     <AppProviders>
-      {/* Translucent flags are required on edge-to-edge Android: without them the
-          reported keyboard height is offset by the navigation-bar height, which
-          misplaces anything anchored to the keyboard (worst after back-button dismiss). */}
-      <KeyboardProvider navigationBarTranslucent statusBarTranslucent>
-        <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
+      <KeyboardProvider>
+        <StatusBar
+          backgroundColor={themeColors.bg}
+          hidden={false}
+          style={resolvedTheme === "light" ? "dark" : "light"}
+          translucent={false}
+        />
         <ThemeProvider value={navigationTheme}>
           <Stack
             screenOptions={{

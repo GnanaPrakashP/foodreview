@@ -80,6 +80,11 @@ export const spacing = {
   xxl: 36
 } as const;
 
+export const screenLayout = {
+  topGap: spacing.md,
+  headerContentGap: spacing.md
+} as const;
+
 export const radius = {
   sm: 8,
   input: 14,

@@ -23,58 +23,49 @@ async function getViewerName() {
   return profile.username;
 }
 
+async function authToken(action: string) {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  const token = data.session?.access_token;
+  if (!token) throw new Error(`Log in before ${action}`);
+  return token;
+}
+
+async function authorizedJson(path: string, init: RequestInit & { body?: string }) {
+  const token = await authToken("updating this post");
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init.headers ?? {})
+    }
+  });
+  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error ?? "Could not update this post");
+  return payload;
+}
+
 export async function togglePostLike(input: ToggleLikeInput) {
-  const viewerName = await getViewerName();
-
-  if (input.liked) {
-    const { error } = await supabase
-      .from("likes")
-      .delete()
-      .eq("post_id", input.postId)
-      .eq("user_name", viewerName);
-
-    if (error) throw new Error(error.message);
-    return;
-  }
-
-  const { error } = await supabase
-    .from("likes")
-    .insert({ post_id: input.postId, user_name: viewerName });
-
-  if (error && error.code !== "23505") throw new Error(error.message);
+  await authorizedJson("/api/likes", {
+    method: input.liked ? "DELETE" : "POST",
+    body: JSON.stringify({ postId: input.postId })
+  });
 }
 
 export async function togglePostBookmark(input: ToggleBookmarkInput) {
-  const viewerName = await getViewerName();
-
-  if (input.bookmarked) {
-    const { error } = await supabase
-      .from("wishlist")
-      .delete()
-      .eq("post_id", input.postId)
-      .eq("user_name", viewerName);
-
-    if (error) throw new Error(error.message);
-    return;
-  }
-
-  const { error } = await supabase
-    .from("wishlist")
-    .insert({
-      post_id: input.postId,
-      restaurant_name: input.restaurantName.trim(),
-      user_name: viewerName
-    });
-
-  if (error && error.code !== "23505") throw new Error(error.message);
+  await authorizedJson("/api/wishlist", {
+    method: input.bookmarked ? "DELETE" : "POST",
+    body: JSON.stringify({
+      postId: input.postId,
+      restaurantName: input.restaurantName
+    })
+  });
 }
 
 export async function deletePost(input: { postId: string }) {
   await getViewerName();
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error("Log in before deleting this post");
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before deleting this post");
+  const token = await authToken("deleting this post");
 
   const response = await fetch(apiUrl(`/api/reviews/${encodeURIComponent(input.postId)}`), {
     headers: {
@@ -89,10 +80,7 @@ export async function deletePost(input: { postId: string }) {
 }
 
 export async function requestCircleAccess(input: RequestCircleInput): Promise<"pending" | "joined"> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before requesting circle access");
+  const token = await authToken("requesting circle access");
 
   const response = await fetch(apiUrl("/api/circle/request"), {
     method: "POST",

@@ -8,9 +8,13 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
 import { useReviewPostQuery } from "@/hooks/useFeeds";
+import { useReportContentMutation } from "@/hooks/useReports";
+import { useBlockUserMutation } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing } from "@/theme";
+import { chooseReportReason } from "@/utils/reporting";
+import type { PostComment } from "@/types/models";
 
 const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 
@@ -40,6 +44,8 @@ export default function ReviewDetailScreen() {
   const comments = usePostCommentsQuery(postId);
   const addComment = useAddPostCommentMutation(postId);
   const deleteComment = useDeletePostCommentMutation(postId);
+  const reportContent = useReportContentMutation();
+  const blockUser = useBlockUserMutation();
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
   const [commentText, setCommentText] = useState("");
 
@@ -70,6 +76,50 @@ export default function ReviewDetailScreen() {
           }
         }
       }
+    ]);
+  }
+
+  async function reportComment(comment: PostComment) {
+    if (reportContent.isPending) return;
+    const reason = await chooseReportReason("comment");
+    if (!reason) return;
+    try {
+      await reportContent.mutateAsync({ targetId: comment.id, targetType: "comment", reason });
+      Alert.alert("Report sent", "Thanks. FoodReview moderation will review it.");
+    } catch (error) {
+      Alert.alert("Could not send report", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  function confirmBlockCommentAuthor(comment: PostComment) {
+    if (blockUser.isPending) return;
+    Alert.alert("Block @" + comment.userName + "?", "You won't see each other's posts, comments, or circle activity.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: blockUser.isPending ? "Blocking..." : "Block",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await blockUser.mutateAsync(comment.userName);
+            Alert.alert("Blocked", "@" + comment.userName + " has been added to your block list.");
+          } catch (error) {
+            Alert.alert("Could not block", error instanceof Error ? error.message : "Please try again.");
+          }
+        }
+      }
+    ]);
+  }
+
+  function openCommentActions(comment: PostComment) {
+    if (comment.userName === viewerName) {
+      confirmDeleteComment(comment.id, comment.userName);
+      return;
+    }
+
+    Alert.alert("Comment options", "Choose an action for @" + comment.userName + ".", [
+      { text: "Report comment", style: "destructive", onPress: () => void reportComment(comment) },
+      { text: "Block @" + comment.userName, style: "destructive", onPress: () => confirmBlockCommentAuthor(comment) },
+      { text: "Cancel", style: "cancel" }
     ]);
   }
 
@@ -116,7 +166,7 @@ export default function ReviewDetailScreen() {
                 {comments.data.map((comment) => (
                   <Pressable
                     key={comment.id}
-                    onLongPress={() => confirmDeleteComment(comment.id, comment.userName)}
+                    onLongPress={() => openCommentActions(comment)}
                     style={styles.commentRow}
                   >
                     <View style={[styles.commentAvatar, { backgroundColor: avatarColor(comment.authorName) }]}>
@@ -171,8 +221,9 @@ export default function ReviewDetailScreen() {
 function createStyles(c: ReturnType<typeof themeColorsFor>) {
   return StyleSheet.create({
     headerWrap: {
+      paddingBottom: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
-      paddingTop: spacing.md
+      paddingTop: screenLayout.topGap
     },
     stateWrap: {
       padding: spacing.lg

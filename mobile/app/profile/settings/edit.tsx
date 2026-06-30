@@ -2,9 +2,7 @@ import { Image } from "expo-image";
 import { Camera } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { useCurrentUserProfileQuery, useUpdateAvatarMutation, useUpdateProfileDetailsMutation } from "@/hooks/useProfiles";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -58,7 +56,13 @@ export default function EditProfileScreen() {
     }
     if (!asset) return;
     try {
-      const updated = await updateAvatar.mutateAsync({ uri: asset.uri, mimeType: asset.mimeType });
+      const updated = await updateAvatar.mutateAsync({
+        fileSize: asset.fileSize ?? null,
+        height: asset.height ?? null,
+        mimeType: asset.mimeType,
+        uri: asset.uri,
+        width: asset.width ?? null
+      });
       setAvatarUrl(updated.avatarUrl ?? null);
     } catch (uploadError) {
       notify("Could not update photo", uploadError instanceof Error ? uploadError.message : "Please try again.");
@@ -85,104 +89,99 @@ export default function EditProfileScreen() {
   const saveDisabled = !name.trim() || !usernameValid || updateProfile.isPending;
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen backgroundColor={themeColors.bg} padded={false}>
-      <View style={styles.content}>
-        <MemoryRouteHeader backButtonVariant="plain" onBack={close} themeColors={themeColors} title="Edit Profile" titleWeight="regular" />
-
-        <View style={styles.form}>
-          <View style={styles.avatarSection}>
-            <Pressable
-              accessibilityLabel="Change profile photo"
-              accessibilityRole="button"
-              disabled={updateAvatar.isPending}
-              onPress={changeAvatar}
-              style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
-            >
-              {avatarUrl ? (
-                <Image contentFit="cover" source={{ uri: avatarUrl }} style={styles.avatarImage} />
-              ) : (
-                <Text style={styles.avatarInitials}>{initialsFor(name || username)}</Text>
-              )}
-              <View style={styles.avatarBadge}>
-                {updateAvatar.isPending ? (
-                  <ActivityIndicator color={themeColors.white} size="small" />
-                ) : (
-                  <Camera size={14} color={themeColors.white} strokeWidth={2.3} />
-                )}
-              </View>
-            </Pressable>
-            <Pressable disabled={updateAvatar.isPending} onPress={changeAvatar}>
-              <Text style={styles.avatarAction}>{updateAvatar.isPending ? "Uploading..." : "Change photo"}</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Name</Text>
-            <TextInput
-              onChangeText={setName}
-              placeholder="Your name"
-              placeholderTextColor={themeColors.muted}
-              style={styles.input}
-              value={name}
-            />
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Username</Text>
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={(value) => {
-                setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ""));
-                if (usernameError) setUsernameError(null);
-              }}
-              placeholder="username"
-              placeholderTextColor={themeColors.muted}
-              style={[styles.input, usernameError && styles.inputError]}
-              value={username}
-            />
-            {usernameError ? (
-              <Text style={styles.errorText}>{usernameError}</Text>
+    <ProfileSubScreen
+      contentGap={spacing.base}
+      onBack={close}
+      scroll={false}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Edit Profile"
+    >
+      <View style={styles.form}>
+        <Pressable
+          accessibilityLabel="Change profile photo"
+          accessibilityRole="button"
+          disabled={updateAvatar.isPending}
+          onPress={changeAvatar}
+          style={({ pressed }) => [styles.avatarSection, pressed && styles.pressed]}
+        >
+          <View style={styles.avatar}>
+            {avatarUrl ? (
+              <Image contentFit="cover" source={{ uri: avatarUrl }} style={styles.avatarImage} />
             ) : (
-              <Text style={styles.hint}>3-20 characters, lowercase letters, numbers, or underscore.</Text>
+              <Text style={styles.avatarInitials}>{initialsFor(name || username)}</Text>
             )}
+            <View style={styles.avatarBadge}>
+              {updateAvatar.isPending ? (
+                <ActivityIndicator color={themeColors.white} size="small" />
+              ) : (
+                <Camera size={14} color={themeColors.white} strokeWidth={2.3} />
+              )}
+            </View>
           </View>
+          <Text style={styles.avatarAction}>{updateAvatar.isPending ? "Uploading..." : "Change photo"}</Text>
+        </Pressable>
 
-          <View style={styles.field}>
-            <Text style={styles.label}>Bio</Text>
-            <TextInput
-              maxLength={160}
-              multiline
-              onChangeText={setBio}
-              placeholder="Tell people what you love to eat"
-              placeholderTextColor={themeColors.muted}
-              style={[styles.input, styles.bioInput]}
-              textAlignVertical="top"
-              value={bio}
-            />
-            <Text style={styles.counter}>{bio.length}/160</Text>
-          </View>
-
-          <Pressable
-            disabled={saveDisabled}
-            onPress={save}
-            style={({ pressed }) => [styles.saveButton, saveDisabled && styles.saveButtonDisabled, pressed && !saveDisabled && styles.pressed]}
-          >
-            <Text style={styles.saveButtonText}>{updateProfile.isPending ? "Saving..." : "Save"}</Text>
-          </Pressable>
+        <View style={styles.field}>
+          <Text style={styles.label}>Name</Text>
+          <TextInput
+            onChangeText={setName}
+            placeholder="Your name"
+            placeholderTextColor={themeColors.muted}
+            style={styles.input}
+            value={name}
+          />
         </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Username</Text>
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={(value) => {
+              setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ""));
+              if (usernameError) setUsernameError(null);
+            }}
+            placeholder="username"
+            placeholderTextColor={themeColors.muted}
+            style={[styles.input, usernameError && styles.inputError]}
+            value={username}
+          />
+          {usernameError ? (
+            <Text style={styles.errorText}>{usernameError}</Text>
+          ) : (
+            <Text style={styles.hint}>3-20 characters, lowercase letters, numbers, or underscore.</Text>
+          )}
+        </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Bio</Text>
+          <TextInput
+            maxLength={160}
+            multiline
+            onChangeText={setBio}
+            placeholder="Tell people what you love to eat"
+            placeholderTextColor={themeColors.muted}
+            style={[styles.input, styles.bioInput]}
+            textAlignVertical="top"
+            value={bio}
+          />
+          <Text style={styles.counter}>{bio.length}/160</Text>
+        </View>
+
+        <Pressable
+          disabled={saveDisabled}
+          onPress={save}
+          style={({ pressed }) => [styles.saveButton, saveDisabled && styles.saveButtonDisabled, pressed && !saveDisabled && styles.pressed]}
+        >
+          <Text style={styles.saveButtonText}>{updateProfile.isPending ? "Saving..." : "Save"}</Text>
+        </Pressable>
       </View>
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 
 function createStyles(themeColors: ThemeColors) {
   return StyleSheet.create({
-    content: {
-      gap: spacing.xl,
-      padding: spacing.lg
-    },
     form: {
       gap: spacing.base
     },

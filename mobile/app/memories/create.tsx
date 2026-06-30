@@ -11,7 +11,7 @@ import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
 import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, spacing } from "@/theme";
+import { fontStyles, radius, screenLayout, spacing } from "@/theme";
 
 type CreateOccasionOption = {
   accent: string;
@@ -321,9 +321,10 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       flex: 1
     },
     content: {
-      gap: spacing.base,
+      gap: screenLayout.headerContentGap,
       padding: spacing.lg,
-      paddingBottom: 110
+      paddingBottom: 110,
+      paddingTop: screenLayout.topGap
     },
     fieldGroup: {
       gap: spacing.sm

@@ -2,9 +2,11 @@ import { useRouter } from "expo-router";
 import { FlatList, StyleSheet, View } from "react-native";
 import { PostCard } from "@/components/posts/PostCard";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
+import { spacing } from "@/theme";
 import type { ReviewPost } from "@/types/models";
 
 type PostFeedProps = {
+  embedded?: boolean;
   emptyActionLabel?: string;
   emptyMessage: string;
   emptyTitle: string;
@@ -17,6 +19,7 @@ type PostFeedProps = {
 };
 
 export function PostFeed({
+  embedded = false,
   emptyActionLabel,
   emptyMessage,
   emptyTitle,
@@ -62,6 +65,14 @@ export function PostFeed({
     );
   }
 
+  if (embedded) {
+    return (
+      <View style={styles.stack}>
+        {posts.map((post) => <PostCard key={post.id} post={post} />)}
+      </View>
+    );
+  }
+
   return (
     <FlatList
       data={posts}
@@ -92,8 +103,8 @@ export function SignedOutFeedState({ message = "Sign in to see your CircleBites 
 
 const styles = StyleSheet.create({
   stateWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 10
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.s
   },
   stack: {
     gap: 0

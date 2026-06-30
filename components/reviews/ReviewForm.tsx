@@ -33,23 +33,24 @@ type RestaurantSuggestion = {
   secondaryText: string;
 };
 
-type ModeratedPhoto = {
+type UploadedReviewMedia = {
+  category: "post" | "avatar";
+  fileSizeBytes: number;
+  height?: number | null;
+  intentId: string;
+  mediaKind: "image" | "video";
+  mimeType: string;
   publicUrl: string;
   storagePath: string;
-  width: number;
-  height: number;
-  sizeBytes: number;
-  mediaType?: "image";
+  width?: number | null;
 };
 
-type ModeratedMedia = ModeratedPhoto | {
-  publicUrl: string;
-  storagePath: string;
-  width: null;
-  height: null;
-  sizeBytes: number;
-  durationSeconds: number;
-  mediaType: "video";
+type ReviewMediaPayload = {
+  durationSeconds?: number;
+  height?: number | null;
+  intentId: string;
+  mediaType: "image" | "video";
+  width?: number | null;
 };
 
 type ReviewInsertPayload = {
@@ -66,8 +67,8 @@ type ReviewInsertPayload = {
   items: FoodItem[];
   body: string | null;
   photoUrl: string | null;
-  photos?: ModeratedPhoto[];
-  media?: ModeratedMedia[];
+  photos?: ReviewMediaPayload[];
+  media?: ReviewMediaPayload[];
   visibility: Visibility;
   tags?: string[];
 };
@@ -99,6 +100,86 @@ function errorMessage(error: unknown): string {
     if (typeof message === "string") return message;
   }
   return String(error ?? "");
+}
+
+function extensionForReviewFile(file: File, mediaKind: "image" | "video") {
+  const mimeType = file.type.toLowerCase();
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("webp")) return "webp";
+  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
+  if (mimeType.includes("quicktime")) return "mov";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("mp4")) return "mp4";
+  const ext = file.name.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
+  if (mediaKind === "image" && (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg")) return ext === "jpeg" ? "jpg" : ext;
+  if (mediaKind === "video" && (ext === "mp4" || ext === "mov" || ext === "webm")) return ext;
+  return mediaKind === "video" ? "mp4" : "jpg";
+}
+
+function contentTypeForReviewFile(file: File, mediaKind: "image" | "video") {
+  if (file.type) return file.type;
+  const ext = extensionForReviewFile(file, mediaKind);
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "webm") return "video/webm";
+  return mediaKind === "video" ? "video/mp4" : "image/jpeg";
+}
+
+async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!response.ok || !payload) throw new Error(payload?.error ?? "Media upload failed");
+  return payload;
+}
+
+async function uploadReviewMediaFile(supabase: ReturnType<typeof createClient>, file: ReviewUploadFile): Promise<UploadedReviewMedia> {
+  const mediaKind: "image" | "video" = file.type.startsWith("video/") ? "video" : "image";
+  if (mediaKind === "video") throw new Error("Video uploads are temporarily unavailable");
+
+  const mimeType = contentTypeForReviewFile(file, mediaKind);
+  const ext = extensionForReviewFile(file, mediaKind);
+  const intent = await postJson<{
+    category: "post";
+    expiresAt: string;
+    intentId: string;
+    maxAllowedSize: number;
+    mediaKind: "image" | "video";
+    mimeType: string;
+    storagePath: string;
+    uploadBucket: string;
+    uploadPath: string;
+  }>("/api/review-media/upload-intent", {
+    category: "post",
+    fileName: `media.${ext}`,
+    fileSizeBytes: file.size,
+    mediaKind,
+    mimeType,
+  });
+
+  const { error: uploadError } = await supabase.storage
+    .from(intent.uploadBucket)
+    .upload(intent.uploadPath, file, { contentType: intent.mimeType, upsert: false });
+  if (uploadError) throw new Error("Could not upload media");
+
+  return postJson<UploadedReviewMedia>("/api/review-media/finalize-upload", {
+    category: "post",
+    intentId: intent.intentId,
+    uploadPath: intent.uploadPath,
+  });
+}
+
+function reviewMediaPayload(item: UploadedReviewMedia): ReviewMediaPayload {
+  return {
+    height: item.height ?? null,
+    intentId: item.intentId,
+    mediaType: item.mediaKind,
+    width: item.width ?? null,
+  };
 }
 
 function isMissingOptionalReviewColumn(error: unknown): boolean {
@@ -473,76 +554,16 @@ export default function ReviewForm() {
     const supabase = createClient();
 
     try {
-      // --- Phase 1: upload media. Images go through moderation; videos are stored with their media type. ---
-      let media: ModeratedMedia[] = [];
-      const imageFiles = photoFiles.filter((file) => file.type.startsWith("image/"));
-      const videoFiles = photoFiles.filter((file) => file.type.startsWith("video/"));
-
-      if (imageFiles.length > 0) {
-        setSubmitStep("uploading");
-
-        const quarantinePaths: string[] = [];
-        for (let i = 0; i < imageFiles.length; i++) {
-          const file = imageFiles[i];
-          const ext = file.name.split(".").pop() ?? "jpg";
-          const path = `quarantine/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
-          const { error: uploadErr } = await supabase.storage
-            .from("review-photos")
-            .upload(path, file, { upsert: false });
-          if (uploadErr) throw new Error("Failed to upload photo for checking");
-          quarantinePaths.push(path);
-        }
-
-        const moderateRes = await fetch("/api/photos/moderate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quarantinePaths }),
-        });
-        const moderateJson = await moderateRes.json().catch(() => ({}));
-        if (!moderateRes.ok) {
-          throw new Error(moderateJson.error ?? "Photo check failed — please try different photos");
-        }
-        media = (moderateJson.photos as ModeratedPhoto[]).map((photo) => ({ ...photo, mediaType: "image" }));
+      // --- Phase 1: authorize, upload, and server-finalize media intents. ---
+      setSubmitStep("uploading");
+      const uploadedMedia: UploadedReviewMedia[] = [];
+      for (const file of photoFiles) {
+        uploadedMedia.push(await uploadReviewMediaFile(supabase, file));
       }
-
-      if (videoFiles.length > 0) {
-        setSubmitStep("uploading");
-        const uploadedVideos: ModeratedMedia[] = [];
-        for (let i = 0; i < videoFiles.length; i++) {
-          const file = videoFiles[i];
-          const ext = file.name.split(".").pop() ?? (file.type === "video/webm" ? "webm" : "mp4");
-          const quarantinePath = `quarantine/${Date.now()}_${i}_${Math.random().toString(36).slice(2)}.${ext}`;
-
-          const { error: uploadErr } = await supabase.storage
-            .from("review-photos")
-            .upload(quarantinePath, file, { contentType: file.type, upsert: false });
-          if (uploadErr) throw new Error("Failed to upload video");
-
-          const moderateRes = await fetch("/api/videos/moderate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ quarantinePath }),
-          });
-          const moderateJson = await moderateRes.json().catch(() => ({}));
-          if (!moderateRes.ok) {
-            throw new Error(moderateJson.error ?? "Video check failed — please try a different video");
-          }
-
-          uploadedVideos.push({
-            publicUrl: moderateJson.publicUrl,
-            storagePath: moderateJson.storagePath,
-            width: null,
-            height: null,
-            sizeBytes: file.size,
-            durationSeconds: 0,
-            mediaType: "video",
-          });
-        }
-        media = [...media, ...uploadedVideos];
-      }
+      const media = uploadedMedia.map(reviewMediaPayload);
 
       setSubmitStep("posting");
-      const photoUrl = media[0]?.publicUrl ?? null;
+      const photoUrl = uploadedMedia[0]?.publicUrl ?? null;
 
       const allItems = items
         .filter((it) => it.name.trim())
@@ -554,7 +575,7 @@ export default function ReviewForm() {
         body: body.trim() || null,
         tags: selectedTags,
         photoUrl,
-        photos: media.filter((item): item is ModeratedPhoto & { mediaType: "image" } => item.mediaType !== "video"),
+        photos: media.filter((item) => item.mediaType === "image"),
         media,
         visibility,
       };

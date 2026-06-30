@@ -5,7 +5,8 @@ import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView, type VideoThumbnail } from "expo-video";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import PagerView from "react-native-pager-view";
+import { type ComponentProps, memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -42,6 +43,8 @@ import Reanimated, {
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
+  useEvent,
+  useHandler,
   useSharedValue,
   withTiming
 } from "react-native-reanimated";
@@ -153,12 +156,41 @@ type MemoryCaptureAsset = {
   width?: number | null;
 };
 const ROOM_MAX_WIDTH = 640;
+const AnimatedPagerView = Reanimated.createAnimatedComponent(PagerView);
+
+type PagerScrollPayload = { offset: number; position: number };
+
+// Bridges react-native-pager-view's onPageScroll into a Reanimated worklet so the
+// header collapse + tab indicator can follow the swipe (and setPage animations) on
+// the UI thread, instead of snapping after onPageSelected settles.
+function usePagerScrollHandler(
+  handlers: { onPageScroll: (event: PagerScrollPayload & { eventName: string }) => void },
+  dependencies?: unknown[]
+): ComponentProps<typeof AnimatedPagerView>["onPageScroll"] {
+  const { doDependenciesDiffer } = useHandler<PagerScrollPayload, Record<string, unknown>>(handlers, dependencies);
+  const handler = useEvent<PagerScrollPayload>(
+    (event) => {
+      "worklet";
+      const { onPageScroll } = handlers;
+      if (onPageScroll && event.eventName.endsWith("onPageScroll")) {
+        onPageScroll(event);
+      }
+    },
+    ["onPageScroll"],
+    doDependenciesDiffer
+  );
+  // Reanimated's processed worklet handler is wired natively by createAnimatedComponent;
+  // the cast only bridges its type to the pager's DirectEventHandler prop type.
+  return handler as unknown as ComponentProps<typeof AnimatedPagerView>["onPageScroll"];
+}
+
 const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mode: RoomTabMode }> = [
   { icon: "journal-outline", label: "Table", mode: "overview" },
   { icon: "chatbubble-ellipses-outline", label: "Chat", mode: "chat" },
   { icon: "images-outline", label: "Media", mode: "media" },
   { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
 ];
+const ROOM_TAB_MODES = ROOM_TABS.map((tab) => tab.mode);
 
 const ROOM_OCCASION_CHANGE_ORDER: OccasionType[] = ["casual", "date_night", "friends_hangout", "family_time", "work_meal", "solo", "unknown"];
 
@@ -282,7 +314,6 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
-const HEADER_MODE_TRANSITION_DURATION = 220;
 const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
 const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
 const CHAT_TIMELINE_WINDOW_SIZE = 9;
@@ -316,6 +347,11 @@ function roomModeFromTabParam(tab?: string | string[] | null): RoomTabMode | nul
   if (value === "table" || value === "overview") return "overview";
   if (value === "chat" || value === "media" || value === "dishes") return value;
   return null;
+}
+
+function roomTabIndexForMode(mode: RoomTabMode) {
+  const index = ROOM_TAB_MODES.indexOf(mode);
+  return index >= 0 ? index : 0;
 }
 
 function memoryActionKey(target: MemoryActionTarget) {
@@ -594,6 +630,18 @@ export default function MemoryDetailScreen() {
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialMode = roomModeFromTabParam(params.tab) ?? "overview";
+  const initialRoomTabIndex = useRef(roomTabIndexForMode(initialMode)).current;
+  const roomPagerRef = useRef<PagerView>(null);
+  const roomPagerIndexRef = useRef(initialRoomTabIndex);
+  // Live fractional pager position (0=Table, 1=Chat, ...). Drives the header collapse
+  // + tab indicator so they track the swipe instead of snapping after it settles.
+  const pagerPosition = useSharedValue(initialRoomTabIndex);
+  const pagerScrollHandler = usePagerScrollHandler({
+    onPageScroll: (event) => {
+      "worklet";
+      pagerPosition.value = event.position + event.offset;
+    }
+  });
   const [mode, setMode] = useState<RoomMode>(initialMode);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
@@ -702,17 +750,22 @@ export default function MemoryDetailScreen() {
     if (!attachmentOptionsVisible) dishKeyboardProgress.value = 0;
   }, [attachmentOptionsVisible, dishKeyboardProgress]);
 
-  const previousModeRef = useRef<RoomMode>("overview");
   const paneTabMode: RoomTabMode = mode === "people" ? "overview" : mode;
-  const previousTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === previousModeRef.current);
-  const activePaneTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === paneTabMode);
-  const paneDirection = previousTabIndex >= 0 && activePaneTabIndex >= 0
-    ? Math.sign(activePaneTabIndex - previousTabIndex)
-    : 0;
+  const activePaneTabIndex = roomTabIndexForMode(paneTabMode);
+  const handleRoomPageSelected = useCallback((event: { nativeEvent: { position: number } }) => {
+    const nextMode = ROOM_TAB_MODES[event.nativeEvent.position];
+    if (!nextMode) return;
+    roomPagerIndexRef.current = event.nativeEvent.position;
+    if (mode !== "people" && mode !== nextMode) setMode(nextMode);
+  }, [mode]);
 
   useEffect(() => {
-    if (mode !== "people") previousModeRef.current = mode;
-  }, [mode]);
+    if (roomPagerIndexRef.current === activePaneTabIndex) return;
+    roomPagerIndexRef.current = activePaneTabIndex;
+    requestAnimationFrame(() => {
+      roomPagerRef.current?.setPage(activePaneTabIndex);
+    });
+  }, [activePaneTabIndex]);
 
   useEffect(() => () => {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
@@ -1454,6 +1507,14 @@ export default function MemoryDetailScreen() {
   const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
+  const roomPagerScrollEnabled = (
+    mode !== "people" &&
+    !attachmentOptionsVisible &&
+    !selectedMedia &&
+    !roomActionsVisible &&
+    !stopComposerVisible &&
+    !detailDishId
+  );
 
   return (
     <Screen padded={false} style={styles.screenContent}>
@@ -1463,6 +1524,7 @@ export default function MemoryDetailScreen() {
         keyboardProgress={dishKeyboardProgress}
         mode={headerMode}
         myUsername={myUsername}
+        pagerPosition={pagerPosition}
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
         onChangeMode={setMode}
@@ -1489,74 +1551,16 @@ export default function MemoryDetailScreen() {
           <FoodChatWallpaper patternKey={roomOccasionTheme.backgroundPattern} themeKey={`${resolvedTheme}-${roomOccasionTheme.id}`} visible />
           <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
           <View style={styles.body}>
-            <PaneReveal
-              active={mode === "chat"}
-              pointerEvents={mode === "chat" ? "auto" : "none"}
-              style={mode === "chat" ? styles.roomPaneActive : styles.roomPaneHidden}
+            <AnimatedPagerView
+              ref={roomPagerRef}
+              initialPage={initialRoomTabIndex}
+              keyboardDismissMode="on-drag"
+              onPageScroll={pagerScrollHandler}
+              onPageSelected={handleRoomPageSelected}
+              scrollEnabled={roomPagerScrollEnabled}
+              style={styles.roomPager}
             >
-              <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
-              <ChatTimeline
-                active={mode === "chat"}
-                bottomClearance={chatBottomClearance}
-                data={data}
-                hasOlderMessages={canLoadOlderMessages}
-                loadingOlderMessages={olderMessages.isFetchingNextPage}
-                myUsername={myUsername}
-                onAddDish={() => setMode("dishes")}
-                onAddMedia={openAttachmentActions}
-                onAddPeople={openPeopleAdd}
-                onBeginSelection={beginSelection}
-                onContentHeightChange={(height) => {
-                  chatContentHeightRef.current = height;
-                }}
-                onLayoutChange={handleChatTimelineLayout}
-                onLoadOlderMessages={loadOlderMessages}
-                onNearBottomChange={handleChatNearBottomChange}
-                onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
-                onOpenMedia={openMediaViewer}
-                onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                onReplyMessage={beginReplyMessage}
-                onScrollBeginDrag={handleChatScrollBeginDrag}
-                onSelectionPressOut={finishSelectionPress}
-                onToggleSelection={toggleSelectedItem}
-                pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                scrollToBottom={scrollChatToBottom}
-                editingMessageId={editingMessage?.id ?? null}
-                lastReadAt={data.lastReadAt}
-                olderMessagesError={errorMessage(olderMessages.error)}
-                scrollRef={scrollRef}
-                selectedItemKeys={selectedItemKeys}
-                selectionMode={selectedItemKeys.length > 0}
-                themeCopy={roomOccasionTheme.copy}
-              />
-              </Reanimated.View>
-            </PaneReveal>
-            {mode === "media" ? (
-              <RoomPane direction={paneDirection} key="media">
-                <MediaGallery
-                  error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
-                  hasMore={Boolean(mediaPages.hasNextPage)}
-                  loading={mediaPages.isLoading && galleryPhotos.length === 0}
-                  loadingMore={mediaPages.isFetchingNextPage}
-                  onLoadMore={loadMoreMedia}
-                  onOpenMedia={openMediaViewer}
-                  photos={galleryPhotos}
-                  themeCopy={roomOccasionTheme.copy}
-                />
-              </RoomPane>
-            ) : mode === "dishes" ? (
-              <RoomPane direction={paneDirection} key="dishes">
-                <DishesPanel
-                  dishes={data.dishes}
-                  error={rateDish.error?.message}
-                  onOpenDish={setDetailDishId}
-                  onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                  pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                  themeCopy={roomOccasionTheme.copy}
-                />
-              </RoomPane>
-            ) : mode === "overview" ? (
-              <RoomPane direction={paneDirection} key="overview">
+              <View collapsable={false} key="overview" style={styles.roomPagerPage}>
                 <ItineraryPanel
                   dishes={data.dishes}
                   error={createStop.error?.message ?? deleteStop.error?.message}
@@ -1568,8 +1572,68 @@ export default function MemoryDetailScreen() {
                   themeCopy={roomOccasionTheme.copy}
                   topInset={tableHeaderHeight}
                 />
-              </RoomPane>
-            ) : null}
+              </View>
+              <View collapsable={false} key="chat" style={styles.roomPagerPage}>
+                <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
+                  <ChatTimeline
+                    active={mode === "chat"}
+                    bottomClearance={chatBottomClearance}
+                    data={data}
+                    hasOlderMessages={canLoadOlderMessages}
+                    loadingOlderMessages={olderMessages.isFetchingNextPage}
+                    myUsername={myUsername}
+                    onAddDish={() => setMode("dishes")}
+                    onAddMedia={openAttachmentActions}
+                    onAddPeople={openPeopleAdd}
+                    onBeginSelection={beginSelection}
+                    onContentHeightChange={(height) => {
+                      chatContentHeightRef.current = height;
+                    }}
+                    onLayoutChange={handleChatTimelineLayout}
+                    onLoadOlderMessages={loadOlderMessages}
+                    onNearBottomChange={handleChatNearBottomChange}
+                    onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
+                    onOpenMedia={openMediaViewer}
+                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                    onReplyMessage={beginReplyMessage}
+                    onScrollBeginDrag={handleChatScrollBeginDrag}
+                    onSelectionPressOut={finishSelectionPress}
+                    onToggleSelection={toggleSelectedItem}
+                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
+                    scrollToBottom={scrollChatToBottom}
+                    editingMessageId={editingMessage?.id ?? null}
+                    lastReadAt={data.lastReadAt}
+                    olderMessagesError={errorMessage(olderMessages.error)}
+                    scrollRef={scrollRef}
+                    selectedItemKeys={selectedItemKeys}
+                    selectionMode={selectedItemKeys.length > 0}
+                    themeCopy={roomOccasionTheme.copy}
+                  />
+                </Reanimated.View>
+              </View>
+              <View collapsable={false} key="media" style={styles.roomPagerPage}>
+                <MediaGallery
+                  error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
+                  hasMore={Boolean(mediaPages.hasNextPage)}
+                  loading={mediaPages.isLoading && galleryPhotos.length === 0}
+                  loadingMore={mediaPages.isFetchingNextPage}
+                  onLoadMore={loadMoreMedia}
+                  onOpenMedia={openMediaViewer}
+                  photos={galleryPhotos}
+                  themeCopy={roomOccasionTheme.copy}
+                />
+              </View>
+              <View collapsable={false} key="dishes" style={styles.roomPagerPage}>
+                <DishesPanel
+                  dishes={data.dishes}
+                  error={rateDish.error?.message}
+                  onOpenDish={setDetailDishId}
+                  onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                  pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
+                  themeCopy={roomOccasionTheme.copy}
+                />
+              </View>
+            </AnimatedPagerView>
           </View>
 
           <PaneReveal
@@ -1743,6 +1807,7 @@ function RoomHeader({
   onHeightChange,
   onOpenActions,
   onViewPeople,
+  pagerPosition,
   transitioning
 }: {
   data: MemoryRoom;
@@ -1757,6 +1822,7 @@ function RoomHeader({
   onHeightChange?: (height: number) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
+  pagerPosition: SharedValue<number>;
   transitioning: boolean;
 }) {
   const roomTitle = data.title?.trim() || displayRestaurantName;
@@ -1768,11 +1834,10 @@ function RoomHeader({
   const visualTabMode: RoomTabMode = isMembersArea ? "overview" : mode;
   const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
   const hasActiveTab = activeTabIndex >= 0;
-  const tabIndicatorProgress = useRef(new Animated.Value(Math.max(0, activeTabIndex))).current;
-  // Collapse runs through Reanimated so the layout props (maxHeight, margins, width)
-  // animate on the UI thread, in lockstep with the tab indicator, even when the JS
-  // thread is busy mounting the chat timeline.
-  const collapseProgress = useSharedValue(isCompactHeader ? 1 : 0);
+  // Collapse + tab indicator follow the live pager position (clamped) so they animate
+  // on the UI thread in lockstep with the swipe / setPage, even while the JS thread is
+  // busy mounting the chat timeline. Table (index 0) stays expanded; every other tab collapsed.
+  const collapseProgress = useDerivedValue(() => Math.min(Math.max(pagerPosition.value, 0), 1));
   // Fully fades + slides the whole header out of the way while the dish/media
   // sheet's keyboard is up, in exact lockstep with the keyboard (no own timing).
   const headerHideStyle = useAnimatedStyle(() => ({
@@ -1782,10 +1847,11 @@ function RoomHeader({
   const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabTrackWidth = Math.max(0, tabBarWidth - 4);
   const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
-  const tabIndicatorTranslateX = tabIndicatorProgress.interpolate({
-    inputRange: ROOM_TABS.map((_, index) => index),
-    outputRange: ROOM_TABS.map((_, index) => 2 + tabWidth * index)
-  });
+  const tabIndicatorStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: 2 + tabWidth * Math.min(Math.max(pagerPosition.value, 0), ROOM_TABS.length - 1) }
+    ]
+  }));
   const titleStyle = useAnimatedStyle(() => ({
     fontSize: interpolate(collapseProgress.value, [0, 1], [20, 19]),
     left: interpolate(collapseProgress.value, [0, 1], [26, 56]),
@@ -1821,22 +1887,6 @@ function RoomHeader({
     ? friendNames.join(", ")
     : "No friends yet";
 
-  useEffect(() => {
-    if (!hasActiveTab) return;
-    Animated.timing(tabIndicatorProgress, {
-      duration: HEADER_MODE_TRANSITION_DURATION,
-      easing: Easing.out(Easing.cubic),
-      toValue: activeTabIndex,
-      useNativeDriver: true
-    }).start();
-  }, [activeTabIndex, hasActiveTab, tabIndicatorProgress]);
-
-  useEffect(() => {
-    collapseProgress.value = withTiming(isCompactHeader ? 1 : 0, {
-      duration: HEADER_MODE_TRANSITION_DURATION,
-      easing: ReanimatedEasing.out(ReanimatedEasing.cubic)
-    });
-  }, [collapseProgress, isCompactHeader]);
 
 
   return (
@@ -1960,14 +2010,12 @@ function RoomHeader({
           style={styles.modeTabs}
         >
           {tabWidth > 0 && hasActiveTab ? (
-            <Animated.View
+            <Reanimated.View
               pointerEvents="none"
               style={[
                 styles.modeTabIndicator,
-                {
-                  transform: [{ translateX: tabIndicatorTranslateX }],
-                  width: tabWidth
-                }
+                { width: tabWidth },
+                tabIndicatorStyle
               ]}
             />
           ) : null}
@@ -2046,39 +2094,6 @@ function PaneReveal({
 
   return (
     <Animated.View pointerEvents={pointerEvents} style={[style, { opacity: progress }]}>
-      {children}
-    </Animated.View>
-  );
-}
-
-function RoomPane({
-  children,
-  direction,
-  style
-}: {
-  children: ReactNode;
-  direction: number;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const directionRef = useRef(direction);
-  const progress = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(progress, {
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true
-    }).start();
-  }, [progress]);
-
-  const translateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [directionRef.current * 26, 0]
-  });
-
-  return (
-    <Animated.View style={[style ?? styles.roomPane, { opacity: progress, transform: [{ translateX }] }]}>
       {children}
     </Animated.View>
   );
@@ -6154,16 +6169,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
     width: "100%",
     zIndex: 1
   },
-  roomPaneActive: {
-    flex: 1,
-    zIndex: 1
+  roomPager: {
+    flex: 1
   },
-  roomPaneHidden: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0,
-    zIndex: 0
-  },
-  roomPane: {
+  roomPagerPage: {
     flex: 1
   },
   chatBottomOverlay: {

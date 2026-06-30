@@ -2,9 +2,7 @@ import * as Linking from "expo-linking";
 import { Mail, MessageCircleQuestion } from "lucide-react-native";
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated from "react-native-reanimated";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing } from "@/theme";
@@ -30,21 +28,13 @@ export default function HelpContactScreen() {
   }
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: themeColors.bg }, slideStyle]}>
-    <Screen
-      backgroundColor={themeColors.bg}
-      padded={false}
-      scroll
-      style={{ backgroundColor: themeColors.bg, gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}
+    <ProfileSubScreen
+      contentGap={spacing.sm}
+      onBack={close}
+      slideStyle={slideStyle}
+      themeColors={themeColors}
+      title="Help & Contact"
     >
-      <MemoryRouteHeader
-        backButtonVariant="plain"
-        onBack={close}
-        themeColors={themeColors}
-        title="Help & Contact"
-        titleWeight="regular"
-      />
-
       <View style={styles.card}>
         <View style={styles.iconWrap}>
           <MessageCircleQuestion size={24} color={themeColors.orange} strokeWidth={2.3} />
@@ -63,8 +53,7 @@ export default function HelpContactScreen() {
         <Text style={styles.infoTitle}>Support email</Text>
         <Text selectable style={styles.infoText}>{supportEmail}</Text>
       </View>
-    </Screen>
-    </Animated.View>
+    </ProfileSubScreen>
   );
 }
 

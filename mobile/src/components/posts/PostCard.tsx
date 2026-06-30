@@ -2,7 +2,7 @@ import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Link } from "expo-router";
 import { usePathname, useRouter } from "expo-router";
-import { Bookmark, Heart, MapPin, MessageCircle, MoreVertical, Share2, Star, Utensils } from "lucide-react-native";
+import { Bookmark, Flag, Heart, MapPin, MessageCircle, MoreVertical, Share2, Star, UserX, Utensils } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import {
@@ -11,10 +11,14 @@ import {
   useTogglePostBookmarkMutation,
   useTogglePostLikeMutation
 } from "@/hooks/useEngagement";
+import { useReportContentMutation } from "@/hooks/useReports";
+import { useBlockUserMutation } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, spacing, typography } from "@/theme";
+import { chooseReportReason } from "@/utils/reporting";
 import type { ReviewPost } from "@/types/models";
+import type { ReportTargetType } from "@/services/reports";
 
 type PostCardProps = {
   post: ReviewPost;
@@ -56,6 +60,8 @@ export function PostCard({ post }: PostCardProps) {
   const likeMutation = useTogglePostLikeMutation();
   const bookmarkMutation = useTogglePostBookmarkMutation();
   const deletePostMutation = useDeletePostMutation();
+  const reportMutation = useReportContentMutation();
+  const blockUserMutation = useBlockUserMutation();
   const requestCircleMutation = useRequestCircleAccessMutation();
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
   const primaryMedia = post.media[0];
@@ -69,6 +75,8 @@ export function PostCard({ post }: PostCardProps) {
   const hasReviewContent = Boolean(post.body) || post.tags.length > 0 || post.items.length > 0;
   const isOwnPost = Boolean(viewerName) && viewerName.toLowerCase() === post.reviewerName.toLowerCase();
   const showRequestButton = !isOwnPost && post.isPublicDiscovery && requestStatus !== "joined";
+  const targetUsername = post.reviewerUsername || post.reviewerName;
+  const postActionsBusy = deletePostMutation.isPending || reportMutation.isPending || blockUserMutation.isPending;
 
   useEffect(() => {
     setLiked(post.likedByMe);
@@ -133,6 +141,39 @@ export function PostCard({ post }: PostCardProps) {
     ]);
   }
 
+  async function reportTarget(targetType: ReportTargetType, targetId: string, label: string) {
+    if (reportMutation.isPending) return;
+    setShowPostActions(false);
+    const reason = await chooseReportReason(label);
+    if (!reason) return;
+    try {
+      await reportMutation.mutateAsync({ targetId, targetType, reason });
+      Alert.alert("Report sent", "Thanks. FoodReview moderation will review it.");
+    } catch (error) {
+      Alert.alert("Could not send report", error instanceof Error ? error.message : "Please try again.");
+    }
+  }
+
+  function confirmBlockAuthor() {
+    if (isOwnPost || blockUserMutation.isPending) return;
+    setShowPostActions(false);
+    Alert.alert("Block @" + targetUsername + "?", "You won't see each other's posts, comments, or circle activity.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: blockUserMutation.isPending ? "Blocking..." : "Block",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await blockUserMutation.mutateAsync(targetUsername);
+            Alert.alert("Blocked", "@" + targetUsername + " has been added to your block list.");
+          } catch (error) {
+            Alert.alert("Could not block", error instanceof Error ? error.message : "Please try again.");
+          }
+        }
+      }
+    ]);
+  }
+
   async function requestCircle() {
     if (!showRequestButton || requestCircleMutation.isPending) return;
     setRequestStatus("loading");
@@ -173,10 +214,10 @@ export function PostCard({ post }: PostCardProps) {
         ) : null}
         <View style={styles.postActionsWrap}>
           <Pressable
-            disabled={deletePostMutation.isPending}
+            disabled={postActionsBusy}
             hitSlop={10}
             onPress={() => setShowPostActions((open) => !open)}
-            style={[styles.moreButton, deletePostMutation.isPending && styles.moreButtonDisabled]}
+            style={[styles.moreButton, postActionsBusy && styles.moreButtonDisabled]}
           >
             <MoreVertical size={18} color={themeColors.cream} strokeWidth={2} />
           </Pressable>
@@ -193,7 +234,33 @@ export function PostCard({ post }: PostCardProps) {
                   </Text>
                 </Pressable>
               ) : (
-                <Text style={styles.noActionsText}>No actions</Text>
+                <>
+                  <Pressable
+                    disabled={reportMutation.isPending}
+                    onPress={() => void reportTarget("review", post.id, "post")}
+                    style={[styles.menuAction, reportMutation.isPending && styles.menuActionDisabled]}
+                  >
+                    <Flag size={14} color={themeColors.cream} strokeWidth={2.1} />
+                    <Text style={styles.menuActionText}>Report post</Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={reportMutation.isPending}
+                    onPress={() => void reportTarget("profile", targetUsername, "profile")}
+                    style={[styles.menuAction, reportMutation.isPending && styles.menuActionDisabled]}
+                  >
+                    <Flag size={14} color={themeColors.cream} strokeWidth={2.1} />
+                    <Text style={styles.menuActionText}>Report profile</Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={blockUserMutation.isPending}
+                    onPress={confirmBlockAuthor}
+                    style={[styles.menuAction, styles.menuActionDestructive, blockUserMutation.isPending && styles.menuActionDisabled]}
+                  >
+                    <UserX size={14} color={themeColors.danger} strokeWidth={2.1} />
+                    <Text style={[styles.menuActionText, styles.menuActionTextDestructive]}>Block @</Text>
+                    <Text numberOfLines={1} style={[styles.menuActionText, styles.menuActionTextDestructive, styles.menuActionName]}>{targetUsername}</Text>
+                  </Pressable>
+                </>
               )}
             </View>
           ) : null}
@@ -430,11 +497,12 @@ function createStyles(c: ThemeColors) {
       borderColor: c.border,
       borderRadius: radius.md,
       borderWidth: 1,
+      gap: 6,
       padding: 6,
       position: "absolute",
       right: 0,
       top: 38,
-      width: 152,
+      width: 188,
       zIndex: 25
     },
     deleteAction: {
@@ -454,14 +522,36 @@ function createStyles(c: ThemeColors) {
       fontSize: typography.caption,
       lineHeight: 17
     },
-    noActionsText: {
-      ...fontStyles.semiBold,
-      color: c.muted,
+    menuAction: {
+      alignItems: "center",
+      borderRadius: 9,
+      flexDirection: "row",
+      gap: 8,
+      minHeight: 38,
+      paddingHorizontal: 10,
+      paddingVertical: 9
+    },
+    menuActionDestructive: {
+      backgroundColor: c.dangerDim,
+      borderColor: c.dangerBorder,
+      borderWidth: 1
+    },
+    menuActionDisabled: {
+      opacity: 0.7
+    },
+    menuActionText: {
+      ...fontStyles.extraBold,
+      color: c.cream,
       fontSize: typography.caption,
-      lineHeight: 16,
-      paddingHorizontal: 6,
-      paddingVertical: 8,
-      textAlign: "center"
+      lineHeight: 16
+    },
+    menuActionTextDestructive: {
+      color: c.danger
+    },
+    menuActionName: {
+      flex: 1,
+      marginLeft: -6,
+      minWidth: 0
     },
     requestButton: {
       alignItems: "center",

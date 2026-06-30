@@ -31,9 +31,10 @@ function loadCircleFeedModule() {
         if (id === "@/lib/visibility") return { filterCircleTrendingReviews: (reviews) => reviews };
         if (id === "@/lib/feed-config") return { CIRCLE_FEED_PAGE_SIZE: 20, CIRCLE_FEED_MAX_PAGE_SIZE: 40 };
         if (id === "@/lib/private-cache") return { getPrivateCached: async ({ load }) => (await load()).value, invalidatePrivateCacheByTags() {} };
-        if (id === "@/lib/profile-display") return { buildProfileDisplayMap: async () => ({}) };
+        if (id === "@/lib/server/feed-assembly") {
+          return { buildFeedAssemblyMaps: async () => ({ likeCountMap: {}, commentMap: {}, likedByMeMap: {}, bookmarkedPostMap: {}, profileMap: {}, tasteTrustSummaryMap: {} }) };
+        }
         if (id === "@/lib/server/normalize-review") return { normalizeReview: (review) => review };
-        if (id === "@/lib/server/taste-trust") return { getPostTasteTrustSummaryMap: async () => ({}) };
         if (id === "@/lib/server/post-views") return { loadSeenPostIdsForUser: async (_db, _userId, extraPostIds = []) => new Set(extraPostIds) };
         throw new Error(`Unexpected require in circle-feed pagination tests: ${id}`);
       },

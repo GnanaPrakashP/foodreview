@@ -117,6 +117,19 @@ function loadRoute(code, { db, authName }) {
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
+      if (id === "@/lib/notifications") {
+        return {
+          createPostCommentNotifications: async () => undefined,
+          removeCommentNotification: async () => undefined,
+        };
+      }
+      if (id === "@/lib/profile-names") {
+        return { profileDisplayName: (_profile, fallback = "") => fallback };
+      }
+      if (id === "@/lib/types") return {};
+      if (id === "@/lib/server/review-access") {
+        return { canActorReadPost: async () => ({ allowed: true }) };
+      }
       if (id === "@/lib/server/cache-invalidation") {
         return {
           invalidateCircleFeedCacheForNames() {},
@@ -319,8 +332,7 @@ test("DELETE /comments/[id]: delete uses both id and user_name filters", async (
 test("DELETE /comments/[id]: DB delete error returns 500", async () => {
   const { DELETE } = loadRoute(src.deleteById, {
     db: mockDb(
-      { data: { user_name: "Alice" }, error: null },
-      { data: { reviewer_name: "Bob" }, error: null },
+      { data: { user_name: "Alice", post_id: "post-1" }, error: null },
       { data: null, error: { message: "delete failed" } }
     ),
     authName: "Alice",
