@@ -5,10 +5,10 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronDown, LocateFixed, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
-import { GestureDetector } from "react-native-gesture-handler";
-import { MaterialTabBar, Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
+import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
 import {
   DISH_CATEGORIES,
   PLACE_CATEGORIES,
@@ -37,8 +37,6 @@ import {
   type PlaceSuggestion
 } from "@/services/places";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { useMainTabPager } from "@/navigation/MainTabPagerContext";
-import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
@@ -139,26 +137,21 @@ export default function ExploreScreen() {
   const params = useLocalSearchParams<{ tab?: string }>();
   const { themeColors, styles } = useExploreTheme();
   const isFocused = useIsFocused();
-  const mainTabPager = useMainTabPager();
   const requestCircleAccess = useRequestCircleAccessMutation();
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
-  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "explore" : isFocused;
+  const isActiveMainTab = isFocused;
   const isActiveMainTabRef = useRef(isActiveMainTab);
   isActiveMainTabRef.current = isActiveMainTab;
   const initialTab = useRef(exploreTabFromParam(params.tab)).current;
   const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ExploreTab>(initialTab);
   const backgroundedAtRef = useRef<number | null>(null);
-  const tabScrollReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [exploreLocation, setExploreLocation] = useState<ExploreUserLocation | null>(null);
   const [locationHydrated, setLocationHydrated] = useState(false);
   const [locationLabel, setLocationLabel] = useState("Set location");
   const [showLocationPicker, setShowLocationPicker] = useState(false);
-  const [searchFocused, setSearchFocused] = useState(false);
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
   const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
-  const [innerPagerSettled, setInnerPagerSettled] = useState(true);
-  const [tabScrollReady, setTabScrollReady] = useState(true);
   const [query, setQuery] = useState("");
   const [visibleCounts, setVisibleCounts] = useState(INITIAL_VISIBLE_COUNTS);
   const [personRequestStatuses, setPersonRequestStatuses] = useState<Record<string, PersonRequestStatus>>({});
@@ -168,7 +161,6 @@ export default function ExploreScreen() {
   );
   const showInitialLoading = !locationHydrated || (discovery.isLoading && !discovery.data);
   const showLoading = showInitialLoading;
-  const listsScrollable = !showLoading && innerPagerSettled && tabScrollReady;
   const normalizedQuery = query.trim().toLowerCase();
   const places = showLoading ? EMPTY_PLACES : discovery.data?.places ?? EMPTY_PLACES;
   const dishes = showLoading ? EMPTY_DISHES : discovery.data?.dishes ?? EMPTY_DISHES;
@@ -205,33 +197,8 @@ export default function ExploreScreen() {
     }
     return Array.from(merged.values()).slice(0, 8);
   }, [filteredPeople, peopleSearch.results]);
-  const headerSwipeGesture = useMainTabSwipeGestureZone({
-    enabled: !showLocationPicker,
-    left: "share",
-    owner: "explore",
-    right: "index",
-    source: "main-header-swipe"
-  });
-  const searchSwipeGesture = useMainTabSwipeGestureZone({
-    enabled: !showLocationPicker && !searchFocused,
-    left: "share",
-    owner: "explore",
-    right: "index",
-    source: "main-header-swipe"
-  });
-
   const handleExploreTabChange = useCallback((tab: ExploreTab) => {
     activeTabRef.current = tab;
-    setTabScrollReady(false);
-    if (tabScrollReadyTimeoutRef.current) clearTimeout(tabScrollReadyTimeoutRef.current);
-    tabScrollReadyTimeoutRef.current = setTimeout(() => {
-      tabScrollReadyTimeoutRef.current = null;
-      setTabScrollReady(true);
-    }, 260);
-  }, []);
-
-  const handleExplorePagerStateChange = useCallback((event: { nativeEvent: { pageScrollState: "idle" | "dragging" | "settling" } }) => {
-    setInnerPagerSettled(event.nativeEvent.pageScrollState === "idle");
   }, []);
 
   useEffect(() => {
@@ -255,10 +222,6 @@ export default function ExploreScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => () => {
-    if (tabScrollReadyTimeoutRef.current) clearTimeout(tabScrollReadyTimeoutRef.current);
   }, []);
 
   useEffect(() => {
@@ -429,69 +392,61 @@ export default function ExploreScreen() {
 
   const renderExploreHeader = useCallback(() => (
     <View style={styles.collapsibleHeader}>
-      <GestureDetector gesture={headerSwipeGesture}>
-        <View collapsable={false} style={styles.header}>
-          <Text style={styles.title}>Explore</Text>
-          <Pressable
-            accessibilityLabel="Location"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => setShowLocationPicker(true)}
-            style={styles.locationButton}
-          >
-            <Text style={styles.locationCompass}>🧭</Text>
-            <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
-            <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
-          </Pressable>
-        </View>
-      </GestureDetector>
+      <View collapsable={false} style={styles.header}>
+        <Text style={styles.title}>Explore</Text>
+        <Pressable
+          accessibilityLabel="Location"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => setShowLocationPicker(true)}
+          style={styles.locationButton}
+        >
+          <Text style={styles.locationCompass}>🧭</Text>
+          <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
+          <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+        </Pressable>
+      </View>
 
-      <GestureDetector gesture={searchSwipeGesture}>
-        <View collapsable={false} style={styles.searchWrap}>
-          <View style={styles.searchBox}>
-            <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              onBlur={() => setSearchFocused(false)}
-              onChangeText={setQuery}
-              onFocus={() => setSearchFocused(true)}
-              placeholder="Search people, dishes or places..."
-              placeholderTextColor={themeColors.muted}
-              style={styles.searchInput}
-              value={query}
-            />
-            {query ? (
-              <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-                <X size={13} color={themeColors.muted} strokeWidth={2.4} />
-              </Pressable>
-            ) : null}
-          </View>
+      <View collapsable={false} style={styles.searchWrap}>
+        <View style={styles.searchBox}>
+          <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setQuery}
+            placeholder="Search people, dishes or places..."
+            placeholderTextColor={themeColors.muted}
+            style={styles.searchInput}
+            value={query}
+          />
+          {query ? (
+            <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
+              <X size={13} color={themeColors.muted} strokeWidth={2.4} />
+            </Pressable>
+          ) : null}
         </View>
-      </GestureDetector>
+      </View>
     </View>
   ), [
-    headerSwipeGesture,
     locationLabel,
     query,
-    searchSwipeGesture,
     styles,
     themeColors.muted
   ]);
 
   const renderExploreTabBar = useCallback((tabBarProps: TabBarProps<string>) => (
     <View style={styles.tabsOuter}>
-      <MaterialTabBar
-        {...tabBarProps}
+      <UnderlineTabBar
+        tabBarProps={tabBarProps}
         activeColor={themeColors.orange}
         inactiveColor={themeColors.muted}
         indicatorStyle={styles.tabIndicator}
+        instantPress
         getLabelText={(name) => EXPLORE_TABS.find((tab) => tab.id === name)?.label ?? name}
         labelStyle={styles.tabText}
         style={styles.tabsScroller}
         contentContainerStyle={styles.tabs}
         tabStyle={styles.tab}
-        width={tabBarProps.width == null ? undefined : Math.max(0, tabBarProps.width - spacing.base * 2)}
       />
     </View>
   ), [styles, themeColors.muted, themeColors.orange]);
@@ -505,11 +460,10 @@ export default function ExploreScreen() {
       headerContainerStyle={styles.collapsibleHeaderContainer}
       renderHeader={renderExploreHeader}
       renderTabBar={renderExploreTabBar}
+      revealHeaderOnScroll={false}
       tabBarHeight={EXPLORE_TABS_OUTER_HEIGHT}
       pagerProps={{
-        offscreenPageLimit: 2,
-        onPageScrollStateChanged: handleExplorePagerStateChange,
-        scrollEnabled: !showLocationPicker
+        offscreenPageLimit: 2
       }}
       onTabChange={({ tabName }) => handleExploreTabChange(tabName as ExploreTab)}
     >
@@ -553,11 +507,12 @@ export default function ExploreScreen() {
           keyboardShouldPersistTaps="handled"
           refreshControl={listRefreshControl}
           nestedScrollEnabled
-          scrollEnabled={listsScrollable}
+          overScrollMode="never"
           onEndReached={showLoading ? undefined : revealMorePlaces}
           onEndReachedThreshold={0.65}
           initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
           maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          updateCellsBatchingPeriod={50}
           windowSize={5}
           removeClippedSubviews={false}
         />
@@ -602,11 +557,12 @@ export default function ExploreScreen() {
           keyboardShouldPersistTaps="handled"
           refreshControl={listRefreshControl}
           nestedScrollEnabled
-          scrollEnabled={listsScrollable}
+          overScrollMode="never"
           onEndReached={showLoading ? undefined : revealMoreDishes}
           onEndReachedThreshold={0.65}
           initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
           maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          updateCellsBatchingPeriod={50}
           windowSize={5}
           removeClippedSubviews={false}
         />
@@ -645,11 +601,12 @@ export default function ExploreScreen() {
           keyboardShouldPersistTaps="handled"
           refreshControl={listRefreshControl}
           nestedScrollEnabled
-          scrollEnabled={listsScrollable}
+          overScrollMode="never"
           onEndReached={showLoading ? undefined : revealMorePeople}
           onEndReachedThreshold={0.65}
           initialNumToRender={EXPLORE_INITIAL_CARD_LIMIT}
           maxToRenderPerBatch={EXPLORE_INITIAL_CARD_LIMIT}
+          updateCellsBatchingPeriod={50}
           windowSize={5}
           removeClippedSubviews={false}
         />
@@ -671,44 +628,38 @@ export default function ExploreScreen() {
 
       {normalizedQuery ? (
         <>
-          <GestureDetector gesture={headerSwipeGesture}>
-            <View collapsable={false} style={styles.header}>
-              <Text style={styles.title}>Explore</Text>
-              <Pressable
-                accessibilityLabel="Location"
-                accessibilityRole="button"
-                hitSlop={8}
-                onPress={() => setShowLocationPicker(true)}
-                style={styles.locationButton}
-              >
-                <Text style={styles.locationCompass}>🧭</Text>
-                <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
-                <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+          <View collapsable={false} style={styles.header}>
+            <Text style={styles.title}>Explore</Text>
+            <Pressable
+              accessibilityLabel="Location"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => setShowLocationPicker(true)}
+              style={styles.locationButton}
+            >
+              <Text style={styles.locationCompass}>🧭</Text>
+              <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
+              <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+            </Pressable>
+          </View>
+
+          <View collapsable={false} style={styles.searchWrap}>
+            <View style={styles.searchBox}>
+              <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setQuery}
+                placeholder="Search people, dishes or places..."
+                placeholderTextColor={themeColors.muted}
+                style={styles.searchInput}
+                value={query}
+              />
+              <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
+                <X size={13} color={themeColors.muted} strokeWidth={2.4} />
               </Pressable>
             </View>
-          </GestureDetector>
-
-          <GestureDetector gesture={searchSwipeGesture}>
-            <View collapsable={false} style={styles.searchWrap}>
-              <View style={styles.searchBox}>
-                <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onBlur={() => setSearchFocused(false)}
-                  onChangeText={setQuery}
-                  onFocus={() => setSearchFocused(true)}
-                  placeholder="Search people, dishes or places..."
-                  placeholderTextColor={themeColors.muted}
-                  style={styles.searchInput}
-                  value={query}
-                />
-                <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-                  <X size={13} color={themeColors.muted} strokeWidth={2.4} />
-                </Pressable>
-              </View>
-            </View>
-          </GestureDetector>
+          </View>
 
           <ScrollView
             keyboardShouldPersistTaps="handled"
@@ -982,7 +933,15 @@ function PlaceCard({ onOpen, place }: { onOpen: () => void; place: PlaceSpotligh
     <Pressable accessibilityRole="button" onPress={onOpen} style={[styles.spotlightCard, styles.fixedSpotlightCard]}>
       <View style={[styles.spotlightMedia, styles.fixedSpotlightMedia]}>
         {place.photo ? (
-          <Image source={{ uri: place.photo }} style={styles.spotlightImage} contentFit="cover" />
+          <Image
+            cachePolicy="memory-disk"
+            contentFit="cover"
+            decodeFormat="rgb"
+            enforceEarlyResizing
+            recyclingKey={place.photo}
+            source={{ uri: place.photo }}
+            style={styles.spotlightImage}
+          />
         ) : (
           <Store size={24} color={themeColors.orange} strokeWidth={2.1} />
         )}
@@ -1012,7 +971,15 @@ function DishCard({ dish, onOpen }: { dish: DishSpotlight; onOpen: () => void })
     <Pressable accessibilityRole="button" onPress={onOpen} style={[styles.spotlightCard, styles.fixedSpotlightCard]}>
       <View style={[styles.spotlightMedia, styles.fixedSpotlightMedia, styles.dishMedia]}>
         {dish.photo ? (
-          <Image source={{ uri: dish.photo }} style={styles.spotlightImage} contentFit="cover" />
+          <Image
+            cachePolicy="memory-disk"
+            contentFit="cover"
+            decodeFormat="rgb"
+            enforceEarlyResizing
+            recyclingKey={dish.photo}
+            source={{ uri: dish.photo }}
+            style={styles.spotlightImage}
+          />
         ) : (
           <Utensils size={24} color={themeColors.green} strokeWidth={2.1} />
         )}

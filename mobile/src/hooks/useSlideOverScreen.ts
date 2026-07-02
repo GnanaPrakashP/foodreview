@@ -4,8 +4,8 @@ import { BackHandler, useWindowDimensions } from "react-native";
 import { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
 // Slide timing matched to the table-memory members panel (PeoplePanel).
-const ENTER_MS = 230;
-const EXIT_MS = 190;
+const ENTER_MS = 150;
+const EXIT_MS = 120;
 // Cap the slide distance so wide screens don't get an exaggerated travel —
 // matches the settings panel (SETTINGS_PANEL_TRAVEL_MAX); identical on phones.
 const PANEL_TRAVEL_MAX = 640;

@@ -1,7 +1,16 @@
 import { useRouter } from "expo-router";
-import { FlatList, StyleSheet, View } from "react-native";
+import { type ReactElement } from "react";
+import {
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle
+} from "react-native";
 import { PostCard } from "@/components/posts/PostCard";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
+import { useThemePreference } from "@/hooks/useThemePreference";
 import { spacing } from "@/theme";
 import type { ReviewPost } from "@/types/models";
 
@@ -13,10 +22,20 @@ type PostFeedProps = {
   errorMessage?: string;
   isError?: boolean;
   isLoading?: boolean;
+  ListHeaderComponent?: ReactElement | null;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+  listStyle?: StyleProp<ViewStyle>;
   onEmptyAction?: () => void;
+  onRefresh?: () => void;
   onRetry?: () => void;
   posts?: ReviewPost[];
+  refreshing?: boolean;
+  scrollEnabled?: boolean;
 };
+
+const FEED_INITIAL_RENDER_COUNT = 4;
+const FEED_RENDER_BATCH_SIZE = 4;
+const FEED_WINDOW_SIZE = 5;
 
 export function PostFeed({
   embedded = false,
@@ -26,64 +45,106 @@ export function PostFeed({
   errorMessage,
   isError,
   isLoading,
+  ListHeaderComponent,
+  contentContainerStyle,
+  listStyle,
   onEmptyAction,
+  onRefresh,
   onRetry,
-  posts = []
+  posts = [],
+  refreshing = false,
+  scrollEnabled = false
 }: PostFeedProps) {
-  if (isLoading) {
+  const { themeColors } = useThemePreference();
+
+  const refreshControl = onRefresh ? (
+    <RefreshControl
+      colors={[themeColors.orange]}
+      onRefresh={onRefresh}
+      progressBackgroundColor={themeColors.card}
+      refreshing={refreshing}
+      tintColor={themeColors.orange}
+    />
+  ) : undefined;
+
+  function renderState() {
+    if (isLoading) {
+      return (
+        <View style={styles.stateWrap}>
+          <LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" />
+        </View>
+      );
+    }
+
+    if (isError) {
+      return (
+        <View style={styles.stateWrap}>
+          <ErrorState
+            actionLabel={onRetry ? "Try again" : undefined}
+            message={errorMessage ?? "Could not load posts."}
+            onAction={onRetry}
+            title="Feed unavailable"
+          />
+        </View>
+      );
+    }
+
+    if (posts.length === 0) {
+      return (
+        <View style={styles.stateWrap}>
+          <EmptyState
+            actionLabel={emptyActionLabel}
+            icon="restaurant-outline"
+            message={emptyMessage}
+            onAction={onEmptyAction}
+            title={emptyTitle}
+          />
+        </View>
+      );
+    }
+
+    return null;
+  }
+
+  const state = renderState();
+
+  if (scrollEnabled) {
     return (
-      <View style={styles.stateWrap}>
-        <LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" />
-      </View>
+      <FlatList
+        contentContainerStyle={[styles.virtualizedContent, contentContainerStyle]}
+        data={state ? [] : posts}
+        initialNumToRender={FEED_INITIAL_RENDER_COUNT}
+        keyExtractor={(post) => post.id}
+        keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={state}
+        ListHeaderComponent={ListHeaderComponent}
+        maxToRenderPerBatch={FEED_RENDER_BATCH_SIZE}
+        overScrollMode="never"
+        refreshControl={refreshControl}
+        renderItem={({ item }) => <PostCard post={item} />}
+        scrollEnabled
+        showsVerticalScrollIndicator={false}
+        style={[styles.virtualizedList, listStyle]}
+        updateCellsBatchingPeriod={50}
+        windowSize={FEED_WINDOW_SIZE}
+      />
     );
   }
 
-  if (isError) {
-    return (
-      <View style={styles.stateWrap}>
-        <ErrorState
-          actionLabel={onRetry ? "Try again" : undefined}
-          message={errorMessage ?? "Could not load posts."}
-          onAction={onRetry}
-          title="Feed unavailable"
-        />
-      </View>
-    );
-  }
-
-  if (posts.length === 0) {
-    return (
-      <View style={styles.stateWrap}>
-        <EmptyState
-          actionLabel={emptyActionLabel}
-          icon="restaurant-outline"
-          message={emptyMessage}
-          onAction={onEmptyAction}
-          title={emptyTitle}
-        />
-      </View>
-    );
-  }
-
-  if (embedded) {
+  if (state) {
     return (
       <View style={styles.stack}>
-        {posts.map((post) => <PostCard key={post.id} post={post} />)}
+        {ListHeaderComponent}
+        {state}
       </View>
     );
   }
 
   return (
-    <FlatList
-      data={posts}
-      initialNumToRender={8}
-      keyExtractor={(post) => post.id}
-      maxToRenderPerBatch={8}
-      renderItem={({ item }) => <PostCard post={item} />}
-      scrollEnabled={false}
-      style={styles.stack}
-      windowSize={7}
-    />
+    <View style={styles.stack}>
+      {ListHeaderComponent}
+      {posts.map((post) => <PostCard key={post.id} post={post} />)}
+    </View>
   );
 }
 
@@ -108,5 +169,11 @@ const styles = StyleSheet.create({
   },
   stack: {
     gap: 0
+  },
+  virtualizedContent: {
+    flexGrow: 1
+  },
+  virtualizedList: {
+    flex: 1
   }
 });

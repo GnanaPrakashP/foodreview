@@ -233,6 +233,7 @@ export type MemoryRoomSummary = {
   occasionConfidence: number;
   occasionConfirmedByUser: boolean;
   themeKey: string;
+  placeNames: string[];
   restaurantName: string;
   area: string | null;
   visitDate: string | null;

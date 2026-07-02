@@ -3,8 +3,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { GestureDetector } from "react-native-gesture-handler";
+import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQueryClient } from "@tanstack/react-query";
@@ -19,8 +18,6 @@ import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { profileKeys, useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { useMainTabPager, type MainTabRequestSource } from "@/navigation/MainTabPagerContext";
-import { useMainTabSwipeGestureZone } from "@/navigation/useMainTabSwipeZone";
 import { ProfileSettingsPanel } from "../profile/settings";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
@@ -29,6 +26,10 @@ import type { MemoryRoomSummary, ProfilePageData, ReviewPost } from "@/types/mod
 type ProfileTab = "posts" | "memories";
 
 const TASTE_TRUST_MIN_CONFIRMATIONS = 5;
+const PROFILE_TAB_BAR_HEIGHT = 40;
+const PROFILE_LIST_INITIAL_RENDER_COUNT = 4;
+const PROFILE_LIST_RENDER_BATCH_SIZE = 4;
+const PROFILE_LIST_WINDOW_SIZE = 5;
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 type ProfilePalette = ReturnType<typeof profilePalette>;
@@ -41,7 +42,7 @@ type ProfileListRow =
   | { type: "posts-loading" }
   | { type: "posts-error" }
   | { type: "posts-empty" }
-  | { type: "memory-month"; id: string; month: string }
+  | { type: "memory-month"; id: string; isFirst: boolean; month: string }
   | { type: "memory"; isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }
   | { type: "memories-loading" }
   | { type: "memories-error" }
@@ -162,35 +163,22 @@ function ProfileContent({
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const router = useRouter();
   const isFocused = useIsFocused();
-  const mainTabPager = useMainTabPager();
   const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ tab?: string }>();
-  const isActiveMainTab = mainTabPager ? mainTabPager.activeTab === "profile" : isFocused;
-  const isActiveMainTabRef = useRef(isActiveMainTab);
-  isActiveMainTabRef.current = isActiveMainTab;
+  const isActiveMainTab = isFocused;
   const initialTab = useRef(profileTabFromParam(params.tab)).current;
   const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ProfileTab>(initialTab);
   const [showTrustSheet, setShowTrustSheet] = useState(false);
   const endReachedInFlightRef = useRef(false);
 
-  const openCreate = useCallback((source: MainTabRequestSource = "profile-content-swipe") => {
-    if (mainTabPager) {
-      if (!mainTabPager.isActiveTab("profile")) return;
-      mainTabPager.goToMainTab("share", source);
-      return;
-    }
+  const openCreate = useCallback(() => {
     router.push("/share");
-  }, [mainTabPager, router]);
-
-  const commitProfileTab = useCallback((tab: ProfileTab) => {
-    if (isActiveMainTabRef.current) requestAnimationFrame(() => router.setParams({ tab }));
   }, [router]);
 
   const handleProfileTabChange = useCallback((tab: ProfileTab) => {
     activeTabRef.current = tab;
-    commitProfileTab(tab);
-  }, [commitProfileTab]);
+  }, []);
 
   useEffect(() => {
     if (!isActiveMainTab) return;
@@ -199,14 +187,6 @@ function ProfileContent({
     activeTabRef.current = nextTab;
     tabsRef.current?.jumpToTab(nextTab);
   }, [isActiveMainTab, params.tab]);
-
-  // Cross-tab swipe (profile → share) lives only on the non-scrolling header so it
-  // composes with — instead of fighting — the inner posts/memories pager on the content.
-  const profileSwipeGesture = useMainTabSwipeGestureZone({
-    owner: "profile",
-    right: "share",
-    source: "profile-header-swipe"
-  });
 
   const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
   const profileUsername = page?.profile.username ?? "";
@@ -311,7 +291,11 @@ function ProfileContent({
           </View>
         );
       case "memory-month":
-        return <View style={styles.listInset}><Text style={styles.memoryMonthHeading}>{item.month}</Text></View>;
+        return (
+          <View style={[styles.listInset, item.isFirst && styles.firstMemoryMonthInset]}>
+            <Text style={styles.memoryMonthHeading}>{item.month}</Text>
+          </View>
+        );
       case "memory":
         return (
           <View style={styles.listInset}>
@@ -387,95 +371,117 @@ function ProfileContent({
     posts.isRefetching
   ]);
   const refreshControl = makeRefreshControl();
+  const listRefreshControl = Platform.OS === "android" ? undefined : refreshControl;
 
-  const renderProfileHeader = useCallback((tabBarProps: TabBarProps<string>) => (
-    <GestureDetector gesture={profileSwipeGesture}>
-      <View collapsable={false} style={styles.profileHeader}>
-        {page ? (
-          <>
-            <ProfileHero page={page} onSettingsPress={onSettingsPress} />
-            <ProfileStats
-              page={page}
-              onCirclePress={() => router.push("/profile/circle")}
-              onTrustPress={() => setShowTrustSheet(true)}
-            />
-          </>
-        ) : (
-          <>
-            <ProfileHeroSkeleton onSettingsPress={onSettingsPress} settingsEnabled={isReady && isAuthenticated} />
-            <ProfileStatsSkeleton />
-          </>
-        )}
-        <UnderlineTabBar
-          tabBarProps={tabBarProps}
-          activeColor={PROFILE_COLORS.accent}
-          inactiveColor={PROFILE_COLORS.muted}
-          instantPress
-          indicatorStyle={styles.tabIndicator}
-          getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
-          labelStyle={styles.tabText}
-          style={styles.tabs}
-          contentContainerStyle={styles.tabRow}
-          tabStyle={styles.tabButton}
-        />
-      </View>
-    </GestureDetector>
+  const renderProfileHeader = useCallback(() => (
+    <View collapsable={false} style={styles.profileHeader}>
+      {page ? (
+        <>
+          <ProfileHero page={page} onSettingsPress={onSettingsPress} />
+          <ProfileStats
+            page={page}
+            onCirclePress={() => router.push("/profile/circle")}
+            onTrustPress={() => setShowTrustSheet(true)}
+          />
+        </>
+      ) : (
+        <>
+          <ProfileHeroSkeleton onSettingsPress={onSettingsPress} settingsEnabled={isReady && isAuthenticated} />
+          <ProfileStatsSkeleton />
+        </>
+      )}
+    </View>
   ), [
-    PROFILE_COLORS.accent,
-    PROFILE_COLORS.muted,
     isAuthenticated,
     isReady,
     onSettingsPress,
     page,
-    profileSwipeGesture,
     router,
     styles
   ]);
 
+  const renderProfileTabBar = useCallback((tabBarProps: TabBarProps<string>) => (
+    <UnderlineTabBar
+      tabBarProps={tabBarProps}
+      activeColor={PROFILE_COLORS.accent}
+      inactiveColor={PROFILE_COLORS.muted}
+      indicatorStyle={styles.tabIndicator}
+      getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
+      instantPress
+      labelStyle={styles.tabText}
+      style={styles.tabs}
+      contentContainerStyle={styles.tabRow}
+      tabStyle={styles.tabButton}
+    />
+  ), [
+    PROFILE_COLORS.accent,
+    PROFILE_COLORS.muted,
+    styles
+  ]);
+
+  const profileTabs = (
+    <Tabs.Container
+      ref={tabsRef}
+      initialTabName={initialTab}
+      containerStyle={styles.profileTabsContainer}
+      headerContainerStyle={styles.collapsibleHeaderContainer}
+      renderHeader={renderProfileHeader}
+      renderTabBar={renderProfileTabBar}
+      revealHeaderOnScroll={false}
+      tabBarHeight={PROFILE_TAB_BAR_HEIGHT}
+      onTabChange={({ tabName }) => handleProfileTabChange(tabName as ProfileTab)}
+      pagerProps={{
+        offscreenPageLimit: 1
+      }}
+    >
+      <Tabs.Tab name="posts" label="Posts">
+        <Tabs.FlatList
+          data={postRows}
+          keyExtractor={profileListKey}
+          renderItem={({ item }) => renderListRow(item)}
+          ListFooterComponent={footer}
+          contentContainerStyle={styles.profileListContent}
+          initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
+          keyboardShouldPersistTaps="handled"
+          maxToRenderPerBatch={PROFILE_LIST_RENDER_BATCH_SIZE}
+          nestedScrollEnabled
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.7}
+          overScrollMode="never"
+          refreshControl={listRefreshControl}
+          removeClippedSubviews={false}
+          showsVerticalScrollIndicator={false}
+          style={styles.profileList}
+          updateCellsBatchingPeriod={50}
+          windowSize={PROFILE_LIST_WINDOW_SIZE}
+        />
+      </Tabs.Tab>
+      <Tabs.Tab name="memories" label="Memories">
+        <Tabs.FlatList
+          data={memoriesRows}
+          keyExtractor={profileListKey}
+          renderItem={({ item }) => renderListRow(item)}
+          ItemSeparatorComponent={ProfileListGap}
+          contentContainerStyle={styles.profileListContent}
+          initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
+          keyboardShouldPersistTaps="handled"
+          maxToRenderPerBatch={PROFILE_LIST_RENDER_BATCH_SIZE}
+          nestedScrollEnabled
+          overScrollMode="never"
+          refreshControl={listRefreshControl}
+          removeClippedSubviews={false}
+          showsVerticalScrollIndicator={false}
+          style={styles.profileList}
+          updateCellsBatchingPeriod={50}
+          windowSize={PROFILE_LIST_WINDOW_SIZE}
+        />
+      </Tabs.Tab>
+    </Tabs.Container>
+  );
   return (
     <>
       <View style={styles.profilePagerStage}>
-        <Tabs.Container
-          ref={tabsRef}
-          initialTabName={initialTab}
-          containerStyle={styles.profileTabsContainer}
-          headerContainerStyle={styles.collapsibleHeaderContainer}
-          renderHeader={renderProfileHeader}
-          renderTabBar={() => null}
-          tabBarHeight={0}
-          onTabChange={({ tabName }) => handleProfileTabChange(tabName as ProfileTab)}
-        >
-          <Tabs.Tab name="posts" label="Posts">
-            <Tabs.FlatList
-              data={postRows}
-              keyExtractor={profileListKey}
-              renderItem={({ item }) => renderListRow(item)}
-              ListFooterComponent={footer}
-              contentContainerStyle={styles.profileListContent}
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-              onEndReached={onEndReached}
-              onEndReachedThreshold={0.7}
-              refreshControl={refreshControl}
-              showsVerticalScrollIndicator={false}
-              style={styles.profileList}
-            />
-          </Tabs.Tab>
-          <Tabs.Tab name="memories" label="Memories">
-            <Tabs.FlatList
-              data={memoriesRows}
-              keyExtractor={profileListKey}
-              renderItem={({ item }) => renderListRow(item)}
-              ItemSeparatorComponent={ProfileListGap}
-              contentContainerStyle={styles.profileListContent}
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-              refreshControl={refreshControl}
-              showsVerticalScrollIndicator={false}
-              style={styles.profileList}
-            />
-          </Tabs.Tab>
-        </Tabs.Container>
+        {profileTabs}
       </View>
       {page ? <TrustScoreSheet page={page} visible={showTrustSheet} onClose={() => setShowTrustSheet(false)} /> : null}
     </>
@@ -503,7 +509,14 @@ function ProfileHero({
       <View pointerEvents="none" style={styles.heroIdentityRow}>
         <View style={styles.avatar}>
           {profile.avatarUrl ? (
-            <Image contentFit="cover" source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
+            <Image
+              cachePolicy="memory-disk"
+              contentFit="cover"
+              enforceEarlyResizing
+              recyclingKey={profile.avatarUrl}
+              source={{ uri: profile.avatarUrl }}
+              style={styles.avatarImage}
+            />
           ) : (
             <Text style={styles.avatarText}>{initials}</Text>
           )}
@@ -758,8 +771,8 @@ function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
       return groups;
     }, []);
 
-  return groupedMemories.flatMap((group) => [
-    { type: "memory-month", id: `month-${group.month}`, month: group.month } as const,
+  return groupedMemories.flatMap((group, index) => [
+    { type: "memory-month", id: `month-${group.month}`, isFirst: index === 0, month: group.month } as const,
     ...group.memories.map(({ isFirst, isLast, memory }) => ({ type: "memory", isFirst, isLast, memory } as const))
   ]);
 }
@@ -810,11 +823,15 @@ function cleanMemoryPlacePart(value?: string | null) {
 }
 
 function memoryPlaceLabel(memory: MemoryRoomSummary): string {
+  const placeNames = (memory.placeNames ?? [])
+    .map(cleanMemoryPlacePart)
+    .filter(Boolean);
+  if (placeNames.length > 0) return placeNames.join(", ");
+
   const restaurantName = cleanMemoryPlacePart(memory.restaurantName);
   const area = cleanMemoryPlacePart(memory.area);
   const hasNamedPlace = restaurantName && restaurantName.toLowerCase() !== "table memory";
 
-  if (hasNamedPlace && area && restaurantName.toLowerCase() !== area.toLowerCase()) return `${restaurantName} · ${area}`;
   if (hasNamedPlace) return restaurantName;
   if (area) return area;
   return "No places added";
@@ -1399,7 +1416,10 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     textAlign: "center"
   },
   tabs: {
+    backgroundColor: PROFILE_COLORS.bg,
+    height: PROFILE_TAB_BAR_HEIGHT,
     paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.base,
     paddingTop: spacing.xs
   },
   tabRow: {
@@ -1432,6 +1452,9 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     color: PROFILE_COLORS.text,
     fontSize: typography.body,
     lineHeight: 18
+  },
+  firstMemoryMonthInset: {
+    paddingTop: 14
   },
   memoryTimelineTrack: {
     gap: spacing.md,

@@ -3,10 +3,10 @@ import { BlurView } from "expo-blur";
 import { PenLine, Star, Utensils } from "lucide-react-native";
 import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
-import { useVideoPlayer, VideoView, type VideoThumbnail } from "expo-video";
+import { useVideoPlayer, VideoView } from "expo-video";
+import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbnails";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import PagerView from "react-native-pager-view";
-import { type ComponentProps, memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -18,9 +18,7 @@ import {
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  type TextInputContentSizeChangeEventData,
   Modal,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -31,8 +29,10 @@ import {
   type TextStyle,
   useWindowDimensions,
   View,
+  type ViewToken,
   type ViewStyle
 } from "react-native";
+import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardHandler, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Reanimated, {
@@ -43,8 +43,6 @@ import Reanimated, {
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
-  useEvent,
-  useHandler,
   useSharedValue,
   withTiming
 } from "react-native-reanimated";
@@ -54,8 +52,7 @@ import {
   occasionThemeToMemoryRoomTokens,
   type OccasionTheme
 } from "@/features/occasions/occasionThemes";
-import { saveOccasionCorrection } from "@/features/occasions/occasionStorage";
-import { occasionLabel, type OccasionType } from "@/features/occasions/occasionTypes";
+import type { OccasionType } from "@/features/occasions/occasionTypes";
 import {
   FOOD_WALLPAPER_TILE_SIZE,
   buildFoodWallpaperPlacements,
@@ -63,7 +60,13 @@ import {
 } from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
-import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
+import {
+  MEMORY_ROOM_TABS as ROOM_TABS,
+  useMemoryRoomController,
+  type MemoryRoomMode as RoomMode,
+  type MemoryRoomTabMode as RoomTabMode
+} from "@/features/memories/room/useMemoryRoomController";
+import { MemoryComposer } from "@/features/memories/room/MemoryComposer";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -76,6 +79,7 @@ import {
   useCreateMemoryStopMutation,
   useDeleteMemoryItemsMutation,
   useDeleteMemoryStopMutation,
+  useDismissFailedMemoryMessage,
   useEditMemoryMessageMutation,
   useLeaveMemoryRoomMutation,
   useMarkMemoryRoomReadMutation,
@@ -83,7 +87,6 @@ import {
   useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime,
-  useUpdateMemoryRoomOccasionMutation,
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
@@ -101,8 +104,6 @@ import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type Memo
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryStop, MemoryStopType } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
-type RoomMode = "overview" | "chat" | "media" | "dishes" | "people";
-type RoomTabMode = Exclude<RoomMode, "people">;
 type MemberCircleStatus = CircleAccessStatus | "loading";
 type TimelineItem =
   | { id: string; createdAt: string; type: "message"; value: MemoryMessage }
@@ -156,44 +157,6 @@ type MemoryCaptureAsset = {
   width?: number | null;
 };
 const ROOM_MAX_WIDTH = 640;
-const AnimatedPagerView = Reanimated.createAnimatedComponent(PagerView);
-
-type PagerScrollPayload = { offset: number; position: number };
-
-// Bridges react-native-pager-view's onPageScroll into a Reanimated worklet so the
-// header collapse + tab indicator can follow the swipe (and setPage animations) on
-// the UI thread, instead of snapping after onPageSelected settles.
-function usePagerScrollHandler(
-  handlers: { onPageScroll: (event: PagerScrollPayload & { eventName: string }) => void },
-  dependencies?: unknown[]
-): ComponentProps<typeof AnimatedPagerView>["onPageScroll"] {
-  const { doDependenciesDiffer } = useHandler<PagerScrollPayload, Record<string, unknown>>(handlers, dependencies);
-  const handler = useEvent<PagerScrollPayload>(
-    (event) => {
-      "worklet";
-      const { onPageScroll } = handlers;
-      if (onPageScroll && event.eventName.endsWith("onPageScroll")) {
-        onPageScroll(event);
-      }
-    },
-    ["onPageScroll"],
-    doDependenciesDiffer
-  );
-  // Reanimated's processed worklet handler is wired natively by createAnimatedComponent;
-  // the cast only bridges its type to the pager's DirectEventHandler prop type.
-  return handler as unknown as ComponentProps<typeof AnimatedPagerView>["onPageScroll"];
-}
-
-const ROOM_TABS: Array<{ icon: keyof typeof Ionicons.glyphMap; label: string; mode: RoomTabMode }> = [
-  { icon: "journal-outline", label: "Table", mode: "overview" },
-  { icon: "chatbubble-ellipses-outline", label: "Chat", mode: "chat" },
-  { icon: "images-outline", label: "Media", mode: "media" },
-  { icon: "restaurant-outline", label: "Dishes", mode: "dishes" }
-];
-const ROOM_TAB_MODES = ROOM_TABS.map((tab) => tab.mode);
-
-const ROOM_OCCASION_CHANGE_ORDER: OccasionType[] = ["casual", "date_night", "friends_hangout", "family_time", "work_meal", "solo", "unknown"];
-
 // Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
 // "Add dish" affordance — a movie or bowling stop just holds a note/photos.
 const MEMORY_STOP_META: Record<MemoryStopType, { emoji: string; label: string; canHaveDishes: boolean }> = {
@@ -301,11 +264,23 @@ const FLOATING_ADD_ICON_SIZE = 26;
 const FLOATING_ADD_ACTION_ICON_SIZE = 46;
 const FLOATING_ADD_MENU_GAP = 14;
 const ROOM_HEADER_SECTION_GAP = 6;
+const ROOM_HEADER_HORIZONTAL_PADDING = 18;
+const ROOM_HEADER_CONTENT_INSET = 8;
+const ROOM_HEADER_CONTROL_SIZE = 34;
+const ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP = 2;
+const ROOM_HEADER_EXPANDED_IDENTITY_MAX_HEIGHT = 96;
+const ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE = 3;
+const ROOM_HEADER_EXPANDED_TITLE_LEFT = ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET + ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE;
+const ROOM_HEADER_EXPANDED_TITLE_RIGHT = ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET;
+const ROOM_HEADER_EXPANDED_TITLE_TOP = spacing.sm + ROOM_HEADER_CONTROL_SIZE + ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP;
+const ROOM_HEADER_COMPACT_TITLE_LEFT = 56;
+const ROOM_HEADER_COMPACT_TITLE_RIGHT = 58;
+const ROOM_HEADER_COMPACT_TITLE_TOP = 12;
 const CHAT_HEADER_CLEARANCE = 112;
 // The overview header is taller than the compact one: it also shows the expanded
-// identity block (date + members) above the tabs, so the itinerary needs to clear
-// roughly that extra height.
-const TABLE_HEADER_CLEARANCE = CHAT_HEADER_CLEARANCE + 96;
+// identity block (title + date + members) above the tabs, so the itinerary needs
+// to clear roughly that extra height.
+const TABLE_HEADER_CLEARANCE = CHAT_HEADER_CLEARANCE + 56;
 const CHAT_COMPOSER_CLEARANCE = 88;
 const MEDIA_GALLERY_GAP = 2;
 const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
@@ -314,9 +289,16 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
+const ROOM_PANE_ENTER_DELAY = 28;
+const ROOM_PANE_ENTER_DURATION = 160;
+const ROOM_PANE_EXIT_DURATION = 90;
+const ROOM_PANE_TRANSLATE_Y = 5;
+const CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS = 18;
 const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
 const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
 const CHAT_TIMELINE_WINDOW_SIZE = 9;
+const CHAT_TIMELINE_LOAD_OLDER_DEBOUNCE_MS = 650;
+const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
 const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
 const MEDIA_GALLERY_WINDOW_SIZE = 7;
@@ -331,28 +313,7 @@ function effectiveRoomOccasionType(room: Pick<MemoryRoom, "occasionConfidence" |
   return "unknown";
 }
 
-function occasionChipLabel(type: OccasionType) {
-  const theme = getOccasionTheme(type);
-  return `${theme.icon} ${occasionLabel(type)}`;
-}
-
-function nextOccasionType(type: OccasionType): OccasionType {
-  const index = ROOM_OCCASION_CHANGE_ORDER.indexOf(type);
-  return ROOM_OCCASION_CHANGE_ORDER[(index + 1) % ROOM_OCCASION_CHANGE_ORDER.length] ?? "casual";
-}
 type AttachmentSheetView = "actions" | "dish" | "media";
-
-function roomModeFromTabParam(tab?: string | string[] | null): RoomTabMode | null {
-  const value = Array.isArray(tab) ? tab[0] : tab;
-  if (value === "table" || value === "overview") return "overview";
-  if (value === "chat" || value === "media" || value === "dishes") return value;
-  return null;
-}
-
-function roomTabIndexForMode(mode: RoomTabMode) {
-  const index = ROOM_TAB_MODES.indexOf(mode);
-  return index >= 0 ? index : 0;
-}
 
 function memoryActionKey(target: MemoryActionTarget) {
   return `${target.type}:${target.value.id}`;
@@ -599,7 +560,7 @@ export default function MemoryDetailScreen() {
   const deleteStop = useDeleteMemoryStopMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
-  const updateOccasion = useUpdateMemoryRoomOccasionMutation(roomId);
+  const dismissFailedMessage = useDismissFailedMemoryMessage(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
@@ -629,20 +590,12 @@ export default function MemoryDetailScreen() {
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initialMode = roomModeFromTabParam(params.tab) ?? "overview";
-  const initialRoomTabIndex = useRef(roomTabIndexForMode(initialMode)).current;
-  const roomPagerRef = useRef<PagerView>(null);
-  const roomPagerIndexRef = useRef(initialRoomTabIndex);
-  // Live fractional pager position (0=Table, 1=Chat, ...). Drives the header collapse
-  // + tab indicator so they track the swipe instead of snapping after it settles.
-  const pagerPosition = useSharedValue(initialRoomTabIndex);
-  const pagerScrollHandler = usePagerScrollHandler({
-    onPageScroll: (event) => {
-      "worklet";
-      pagerPosition.value = event.position + event.offset;
-    }
-  });
-  const [mode, setMode] = useState<RoomMode>(initialMode);
+  const {
+    mode,
+    pagerPosition,
+    paneTabMode,
+    requestRoomMode
+  } = useMemoryRoomController(params.tab);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -654,6 +607,7 @@ export default function MemoryDetailScreen() {
   // realtime rating updates flow into the open sheet via the live `data.dishes`.
   const [detailDishId, setDetailDishId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const messageDraftRef = useRef("");
   const [editingMessage, setEditingMessage] = useState<MemoryMessage | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<MemoryMessage | null>(null);
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
@@ -704,15 +658,15 @@ export default function MemoryDetailScreen() {
     ...(memberCircleStatusQuery.data ?? {}),
     ...memberCircleStatusOverrides
   }), [memberCircleStatusOverrides, memberCircleStatusQuery.data]);
+  function updateMessageDraft(value: string) {
+    messageDraftRef.current = value;
+    setMessage(value);
+  }
+
   const finishPeopleClose = useCallback(() => {
     setPeopleClosing(false);
-    setMode("overview");
-  }, []);
-
-  useEffect(() => {
-    const nextMode = roomModeFromTabParam(params.tab);
-    if (nextMode) setMode(nextMode);
-  }, [params.tab]);
+    requestRoomMode("overview");
+  }, [requestRoomMode]);
 
   useEffect(() => {
     if (!room.data) return;
@@ -729,6 +683,11 @@ export default function MemoryDetailScreen() {
       });
       return changed ? { ...current, items } : current;
     });
+  }, [room.data]);
+
+  useEffect(() => {
+    if (!room.data) return;
+    [...room.data.photos, ...photosFromMessages(room.data.messages)].forEach(prefetchMemoryMedia);
   }, [room.data]);
 
   useEffect(() => {
@@ -749,23 +708,6 @@ export default function MemoryDetailScreen() {
   useEffect(() => {
     if (!attachmentOptionsVisible) dishKeyboardProgress.value = 0;
   }, [attachmentOptionsVisible, dishKeyboardProgress]);
-
-  const paneTabMode: RoomTabMode = mode === "people" ? "overview" : mode;
-  const activePaneTabIndex = roomTabIndexForMode(paneTabMode);
-  const handleRoomPageSelected = useCallback((event: { nativeEvent: { position: number } }) => {
-    const nextMode = ROOM_TAB_MODES[event.nativeEvent.position];
-    if (!nextMode) return;
-    roomPagerIndexRef.current = event.nativeEvent.position;
-    if (mode !== "people" && mode !== nextMode) setMode(nextMode);
-  }, [mode]);
-
-  useEffect(() => {
-    if (roomPagerIndexRef.current === activePaneTabIndex) return;
-    roomPagerIndexRef.current = activePaneTabIndex;
-    requestAnimationFrame(() => {
-      roomPagerRef.current?.setPage(activePaneTabIndex);
-    });
-  }, [activePaneTabIndex]);
 
   useEffect(() => () => {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
@@ -985,13 +927,14 @@ export default function MemoryDetailScreen() {
     setSelectedParticipants((current) => current.filter((item) => item.username.toLowerCase() !== username.toLowerCase()));
   }
 
-  async function submitMessage() {
+  async function submitMessage(draftOverride?: string) {
+    const draftBody = draftOverride ?? messageDraftRef.current;
     try {
       if (editingMessage) {
-        await editMessage.mutateAsync({ body: message, messageId: editingMessage.id });
+        await editMessage.mutateAsync({ body: draftBody, messageId: editingMessage.id });
         setEditingMessage(null);
       } else {
-        const outgoingBody = message;
+        const outgoingBody = draftBody;
         const trimmedBody = outgoingBody.trim();
         if (!trimmedBody) return;
         const outgoingReply = replyingToMessage;
@@ -999,15 +942,14 @@ export default function MemoryDetailScreen() {
         sendSequenceRef.current += 1;
         // WhatsApp-style: the message just appears at the bottom (optimistic),
         // no entry animation. Clear the input and pin to the newest message.
-        setMessage("");
+        updateMessageDraft("");
         setReplyingToMessage(null);
         void addMessageMutateAsyncRef.current({
           body: outgoingBody,
           clientId,
           replyToMessageId: outgoingReply?.id ?? null
         }).catch(() => {
-          setMessage((current) => (current.trim().length > 0 ? current : outgoingBody));
-          setReplyingToMessage((current) => current ?? outgoingReply);
+          // The failed optimistic row stays visible with retry/cancel actions.
         });
         // The list pins to the new message from onContentSizeChange (which has the
         // correct post-layout height) — scrolling here too would use a stale height
@@ -1017,7 +959,7 @@ export default function MemoryDetailScreen() {
         });
         return;
       }
-      setMessage("");
+      updateMessageDraft("");
       setReplyingToMessage(null);
       requestAnimationFrame(() => scrollChatToBottom(true));
     } catch {
@@ -1025,13 +967,33 @@ export default function MemoryDetailScreen() {
     }
   }
 
+  function retryFailedMessage(target: MemoryMessage) {
+    if (target.deliveryStatus !== "failed") return;
+    const clientId = `retry:${Date.now()}:${sendSequenceRef.current}`;
+    sendSequenceRef.current += 1;
+    void addMessageMutateAsyncRef.current({
+      body: target.body,
+      clientId,
+      replacesMessageId: target.id,
+      replyToMessageId: target.replyToMessageId
+    }).catch(() => {
+      // The replacement optimistic row is marked failed by the mutation hook.
+    });
+    requestRoomMode("chat");
+  }
+
+  function cancelFailedMessage(target: MemoryMessage) {
+    if (target.deliveryStatus !== "failed") return;
+    dismissFailedMessage(target.id);
+  }
+
   function beginEditMessage(target: MemoryMessage) {
     selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
     setReplyingToMessage(null);
     setEditingMessage(target);
-    setMessage(target.body);
-    setMode("chat");
+    updateMessageDraft(target.body);
+    requestRoomMode("chat");
   }
 
   function beginReplyMessage(target: MemoryMessage) {
@@ -1039,7 +1001,7 @@ export default function MemoryDetailScreen() {
     setSelectedItemKeys([]);
     setEditingMessage(null);
     setReplyingToMessage(target);
-    setMode("chat");
+    requestRoomMode("chat");
     requestAnimationFrame(() => {
       setTimeout(() => messageInputRef.current?.focus(), 80);
     });
@@ -1047,7 +1009,7 @@ export default function MemoryDetailScreen() {
 
   function cancelEditMessage() {
     setEditingMessage(null);
-    setMessage("");
+    updateMessageDraft("");
   }
 
   function cancelReplyMessage() {
@@ -1058,13 +1020,13 @@ export default function MemoryDetailScreen() {
     const key = memoryActionKey(target);
     setEditingMessage(null);
     setReplyingToMessage(null);
-    setMessage("");
+    updateMessageDraft("");
     selectedItemKeysRef.current = [key];
     setSelectedItemKeys([key]);
     suppressSelectionToggleRef.current = key;
     if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
     suppressSelectionToggleTimeoutRef.current = null;
-    setMode("chat");
+    requestRoomMode("chat");
   }
 
   function finishSelectionPress(target: MemoryActionTarget) {
@@ -1161,10 +1123,10 @@ export default function MemoryDetailScreen() {
         replyToMessageId: replyingToMessage?.id ?? null,
         roomId
       });
-      setMessage("");
+      updateMessageDraft("");
       setReplyingToMessage(null);
       const nextMode = attachmentOriginMode === "chat" ? "chat" : "media";
-      setMode(nextMode);
+      requestRoomMode(nextMode);
       if (nextMode === "chat") requestAnimationFrame(() => scrollChatToBottom(true));
     } catch {
       // Rendered from mutation state.
@@ -1232,18 +1194,18 @@ export default function MemoryDetailScreen() {
     const didAdd = await submitDish();
     if (!didAdd) return;
     setAttachmentOptionsVisible(false);
-    setMode("chat");
+    requestRoomMode("chat");
     requestAnimationFrame(() => scrollChatToBottom(true));
   }
 
   function openPeopleAdd() {
     setPeopleClosing(false);
-    setMode("people");
+    requestRoomMode("people");
   }
 
   function openPeopleList() {
     setPeopleClosing(false);
-    setMode("people");
+    requestRoomMode("people");
   }
 
   function closePeopleScreen() {
@@ -1346,22 +1308,6 @@ export default function MemoryDetailScreen() {
 
   function closeRoomActions() {
     setRoomActionsVisible(false);
-  }
-
-  function changeRoomOccasion(type: OccasionType) {
-    const theme = getOccasionTheme(type);
-    updateOccasion.mutate({
-      occasionConfidence: 1,
-      occasionConfirmedByUser: true,
-      occasionType: type,
-      themeKey: theme.id
-    }, {
-      onSuccess: () => {
-        if (room.data?.title && myUsername) {
-          void saveOccasionCorrection({ phrase: room.data.title, type, userName: myUsername });
-        }
-      }
-    });
   }
 
   function confirmLeaveRoom() {
@@ -1507,14 +1453,6 @@ export default function MemoryDetailScreen() {
   const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
-  const roomPagerScrollEnabled = (
-    mode !== "people" &&
-    !attachmentOptionsVisible &&
-    !selectedMedia &&
-    !roomActionsVisible &&
-    !stopComposerVisible &&
-    !detailDishId
-  );
 
   return (
     <Screen padded={false} style={styles.screenContent}>
@@ -1527,8 +1465,7 @@ export default function MemoryDetailScreen() {
         pagerPosition={pagerPosition}
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
-        onChangeMode={setMode}
-        onChangeOccasion={() => changeRoomOccasion(nextOccasionType(data.occasionType))}
+        onChangeMode={requestRoomMode}
         onHeightChange={(height) => {
           if (headerMode === "overview" && height > 0) setTableHeaderHeight(height);
         }}
@@ -1550,97 +1487,91 @@ export default function MemoryDetailScreen() {
         >
           <FoodChatWallpaper patternKey={roomOccasionTheme.backgroundPattern} themeKey={`${resolvedTheme}-${roomOccasionTheme.id}`} visible />
           <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
-          <View style={styles.body}>
-            <AnimatedPagerView
-              ref={roomPagerRef}
-              initialPage={initialRoomTabIndex}
-              keyboardDismissMode="on-drag"
-              onPageScroll={pagerScrollHandler}
-              onPageSelected={handleRoomPageSelected}
-              scrollEnabled={roomPagerScrollEnabled}
-              style={styles.roomPager}
-            >
-              <View collapsable={false} key="overview" style={styles.roomPagerPage}>
-                <ItineraryPanel
-                  dishes={data.dishes}
-                  error={createStop.error?.message ?? deleteStop.error?.message}
-                  onAddDishToStop={addDishToStop}
-                  onOpenDish={setDetailDishId}
-                  onRemoveStop={removeStop}
-                  removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
-                  stops={data.stops}
-                  themeCopy={roomOccasionTheme.copy}
-                  topInset={tableHeaderHeight}
-                />
-              </View>
-              <View collapsable={false} key="chat" style={styles.roomPagerPage}>
-                <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
-                  <ChatTimeline
-                    active={mode === "chat"}
-                    bottomClearance={chatBottomClearance}
-                    data={data}
-                    hasOlderMessages={canLoadOlderMessages}
-                    loadingOlderMessages={olderMessages.isFetchingNextPage}
-                    myUsername={myUsername}
-                    onAddDish={() => setMode("dishes")}
-                    onAddMedia={openAttachmentActions}
-                    onAddPeople={openPeopleAdd}
-                    onBeginSelection={beginSelection}
-                    onContentHeightChange={(height) => {
-                      chatContentHeightRef.current = height;
-                    }}
-                    onLayoutChange={handleChatTimelineLayout}
-                    onLoadOlderMessages={loadOlderMessages}
-                    onNearBottomChange={handleChatNearBottomChange}
-                    onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
+            <View style={styles.body}>
+              <View style={styles.roomPager}>
+                <RoomPane active={paneTabMode === "overview"} motion="fade">
+                  <ItineraryPanel
+                    dishes={data.dishes}
+                    error={createStop.error?.message ?? deleteStop.error?.message}
+                    onAddDishToStop={addDishToStop}
+                    onOpenDish={setDetailDishId}
+                    onRemoveStop={removeStop}
+                    removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
+                    stops={data.stops}
+                    themeCopy={roomOccasionTheme.copy}
+                    topInset={tableHeaderHeight}
+                  />
+                </RoomPane>
+                <RoomPane active={paneTabMode === "chat"}>
+                  <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
+                    <ChatTimeline
+                      active={mode === "chat"}
+                      bottomClearance={chatBottomClearance}
+                      data={data}
+                      hasOlderMessages={canLoadOlderMessages}
+                      loadingOlderMessages={olderMessages.isFetchingNextPage}
+                      myUsername={myUsername}
+                      onAddDish={() => requestRoomMode("dishes")}
+                      onAddMedia={openAttachmentActions}
+                      onAddPeople={openPeopleAdd}
+                      onBeginSelection={beginSelection}
+                      onContentHeightChange={(height) => {
+                        chatContentHeightRef.current = height;
+                      }}
+                      onLayoutChange={handleChatTimelineLayout}
+                      onLoadOlderMessages={loadOlderMessages}
+                      onNearBottomChange={handleChatNearBottomChange}
+                      onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
+                      onOpenMedia={openMediaViewer}
+                      onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                      onCancelFailedMessage={cancelFailedMessage}
+                      onReplyMessage={beginReplyMessage}
+                      onRetryFailedMessage={retryFailedMessage}
+                      onScrollBeginDrag={handleChatScrollBeginDrag}
+                      onSelectionPressOut={finishSelectionPress}
+                      onToggleSelection={toggleSelectedItem}
+                      pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
+                      scrollToBottom={scrollChatToBottom}
+                      editingMessageId={editingMessage?.id ?? null}
+                      lastReadAt={data.lastReadAt}
+                      olderMessagesError={errorMessage(olderMessages.error)}
+                      scrollRef={scrollRef}
+                      selectedItemKeys={selectedItemKeys}
+                      selectionMode={selectedItemKeys.length > 0}
+                      themeCopy={roomOccasionTheme.copy}
+                    />
+                  </Reanimated.View>
+                </RoomPane>
+                <RoomPane active={paneTabMode === "media"}>
+                  <MediaGallery
+                    error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
+                    hasMore={Boolean(mediaPages.hasNextPage)}
+                    loading={mediaPages.isLoading && galleryPhotos.length === 0}
+                    loadingMore={mediaPages.isFetchingNextPage}
+                    onLoadMore={loadMoreMedia}
                     onOpenMedia={openMediaViewer}
-                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                    onReplyMessage={beginReplyMessage}
-                    onScrollBeginDrag={handleChatScrollBeginDrag}
-                    onSelectionPressOut={finishSelectionPress}
-                    onToggleSelection={toggleSelectedItem}
-                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                    scrollToBottom={scrollChatToBottom}
-                    editingMessageId={editingMessage?.id ?? null}
-                    lastReadAt={data.lastReadAt}
-                    olderMessagesError={errorMessage(olderMessages.error)}
-                    scrollRef={scrollRef}
-                    selectedItemKeys={selectedItemKeys}
-                    selectionMode={selectedItemKeys.length > 0}
+                    photos={galleryPhotos}
                     themeCopy={roomOccasionTheme.copy}
                   />
-                </Reanimated.View>
+                </RoomPane>
+                <RoomPane active={paneTabMode === "dishes"}>
+                  <DishesPanel
+                    dishes={data.dishes}
+                    error={rateDish.error?.message}
+                    onOpenDish={setDetailDishId}
+                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
+                    themeCopy={roomOccasionTheme.copy}
+                  />
+                </RoomPane>
               </View>
-              <View collapsable={false} key="media" style={styles.roomPagerPage}>
-                <MediaGallery
-                  error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
-                  hasMore={Boolean(mediaPages.hasNextPage)}
-                  loading={mediaPages.isLoading && galleryPhotos.length === 0}
-                  loadingMore={mediaPages.isFetchingNextPage}
-                  onLoadMore={loadMoreMedia}
-                  onOpenMedia={openMediaViewer}
-                  photos={galleryPhotos}
-                  themeCopy={roomOccasionTheme.copy}
-                />
-              </View>
-              <View collapsable={false} key="dishes" style={styles.roomPagerPage}>
-                <DishesPanel
-                  dishes={data.dishes}
-                  error={rateDish.error?.message}
-                  onOpenDish={setDetailDishId}
-                  onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                  pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                  themeCopy={roomOccasionTheme.copy}
-                />
-              </View>
-            </AnimatedPagerView>
-          </View>
+            </View>
 
-          <PaneReveal
-            active={mode === "chat"}
-            pointerEvents={mode === "chat" ? "auto" : "none"}
-            style={styles.chatBottomOverlay}
-          >
+            <PaneReveal
+              active={mode === "chat"}
+              pointerEvents={mode === "chat" ? "auto" : "none"}
+              style={styles.chatBottomOverlay}
+            >
               {selectedItemKeys.length > 0 ? (
                 <SelectionActionBar
                   canDelete={canDeleteSelected}
@@ -1654,19 +1585,20 @@ export default function MemoryDetailScreen() {
                   onLayoutChange={handleComposerLayout}
                 />
               ) : (
-                <Composer
+                <MemoryComposer
+                  colors={ROOM_COLORS}
                   mediaError={mediaError}
                   mediaPending={addPhoto.isPending}
                   mediaMutationError={addPhoto.error?.message}
                   message={message}
-                  messageError={addMessage.error?.message || editMessage.error?.message}
-                  messagePending={addMessage.isPending || editMessage.isPending}
+                  messageError={editingMessage ? editMessage.error?.message : undefined}
+                  messagePending={Boolean(editingMessage) && editMessage.isPending}
                   editingLabel={editingMessage ? `Editing message` : undefined}
                   insetStyle={composerInsetStyle}
                   inputRef={messageInputRef}
                   onCancelEdit={cancelEditMessage}
                   onCancelReply={cancelReplyMessage}
-                  onChangeMessage={setMessage}
+                  onChangeMessage={updateMessageDraft}
                   onLayoutChange={handleComposerLayout}
                   onInputFocus={handleComposerFocus}
                   replyingToMessage={replyingToMessage}
@@ -1674,7 +1606,7 @@ export default function MemoryDetailScreen() {
                   themeCopy={roomOccasionTheme.copy}
                 />
               )}
-          </PaneReveal>
+            </PaneReveal>
           </Reanimated.View>
         </View>
 
@@ -1803,7 +1735,6 @@ function RoomHeader({
   onAddPeople,
   onBack,
   onChangeMode,
-  onChangeOccasion,
   onHeightChange,
   onOpenActions,
   onViewPeople,
@@ -1818,7 +1749,6 @@ function RoomHeader({
   onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
-  onChangeOccasion: () => void;
   onHeightChange?: (height: number) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
@@ -1826,17 +1756,15 @@ function RoomHeader({
   transitioning: boolean;
 }) {
   const roomTitle = data.title?.trim() || displayRestaurantName;
-  const roomDateLabel = formatDisplayDate(data.createdAt);
-  const locationLabel = data.area?.trim() || (displayRestaurantName && displayRestaurantName !== "Table Memory" ? displayRestaurantName : "");
+  const roomDateLabel = formatDisplayDate(data.visitDate ?? data.createdAt);
   const isMembersArea = mode === "people";
   const isCompactHeader = mode !== "overview";
   const compactTitle = isMembersArea ? "Members" : roomTitle;
   const visualTabMode: RoomTabMode = isMembersArea ? "overview" : mode;
   const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
   const hasActiveTab = activeTabIndex >= 0;
-  // Collapse + tab indicator follow the live pager position (clamped) so they animate
-  // on the UI thread in lockstep with the swipe / setPage, even while the JS thread is
-  // busy mounting the chat timeline. Table (index 0) stays expanded; every other tab collapsed.
+  // Collapse + tab indicator follow the controlled room tab position. Table
+  // (index 0) stays expanded; every other tab is compact.
   const collapseProgress = useDerivedValue(() => Math.min(Math.max(pagerPosition.value, 0), 1));
   // Fully fades + slides the whole header out of the way while the dish/media
   // sheet's keyboard is up, in exact lockstep with the keyboard (no own timing).
@@ -1854,14 +1782,14 @@ function RoomHeader({
   }));
   const titleStyle = useAnimatedStyle(() => ({
     fontSize: interpolate(collapseProgress.value, [0, 1], [20, 19]),
-    left: interpolate(collapseProgress.value, [0, 1], [26, 56]),
+    left: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_LEFT, ROOM_HEADER_COMPACT_TITLE_LEFT]),
     lineHeight: interpolate(collapseProgress.value, [0, 1], [27, 25]),
-    right: interpolate(collapseProgress.value, [0, 1], [26, 58]),
-    top: interpolate(collapseProgress.value, [0, 1], [44, 12])
+    right: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_RIGHT, ROOM_HEADER_COMPACT_TITLE_RIGHT]),
+    top: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_TOP, ROOM_HEADER_COMPACT_TITLE_TOP])
   }));
-  const expandedDetailsStyle = useAnimatedStyle(() => ({
-    marginTop: interpolate(collapseProgress.value, [0, 1], [34, 0]),
-    maxHeight: interpolate(collapseProgress.value, [0, 1], [78, 0]),
+  const expandedIdentityStyle = useAnimatedStyle(() => ({
+    marginTop: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP, 0]),
+    maxHeight: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_IDENTITY_MAX_HEIGHT, 0]),
     opacity: interpolate(collapseProgress.value, [0, 0.45, 1], [1, 0.12, 0]),
     transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -10]) }]
   }));
@@ -1869,7 +1797,7 @@ function RoomHeader({
     marginRight: interpolate(collapseProgress.value, [0, 1], [spacing.sm, 0]),
     opacity: interpolate(collapseProgress.value, [0, 0.7, 1], [1, 0.15, 0]),
     transform: [{ translateX: interpolate(collapseProgress.value, [0, 1], [0, 24]) }],
-    width: interpolate(collapseProgress.value, [0, 1], [34, 0])
+    width: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_CONTROL_SIZE, 0])
   }));
   const tabBarStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -4]) }]
@@ -1886,8 +1814,6 @@ function RoomHeader({
   const friendsLabel = friendNames.length > 0
     ? friendNames.join(", ")
     : "No friends yet";
-
-
 
   return (
     <Reanimated.View
@@ -1950,27 +1876,31 @@ function RoomHeader({
       </View>
 
       <Reanimated.View
+        accessibilityElementsHidden={isCompactHeader}
+        importantForAccessibility={isCompactHeader ? "no-hide-descendants" : "auto"}
         pointerEvents={isCompactHeader ? "none" : "auto"}
-        style={[styles.roomIdentityAnimated, expandedDetailsStyle]}
+        style={[styles.roomIdentityAnimated, expandedIdentityStyle]}
       >
         <View style={styles.roomIdentity}>
+          <Text
+            accessibilityElementsHidden
+            adjustsFontSizeToFit
+            importantForAccessibility="no-hide-descendants"
+            maxFontSizeMultiplier={1}
+            minimumFontScale={0.78}
+            numberOfLines={1}
+            style={[styles.expandedRoomTitle, styles.expandedRoomTitlePlaceholder]}
+          >
+            {roomTitle}
+          </Text>
           <View style={styles.roomMetaRow}>
-            <View style={[styles.roomMetaGroup, styles.roomMetaLocationGroup]}>
-              <View style={styles.roomMetaIconSlot}>
-                <Ionicons name="location-outline" size={13} color={ROOM_COLORS.muted} />
-              </View>
-              <Text numberOfLines={1} style={styles.roomMetaText}>{locationLabel || "Area not set"}</Text>
-            </View>
-            <View style={[styles.roomMetaGroup, styles.roomMetaLocationGroup]}>
+            <View style={styles.roomMetaGroup}>
               <View style={styles.roomMetaIconSlot}>
                 <Ionicons name="calendar-outline" size={13} color={ROOM_COLORS.muted} />
               </View>
               <Text numberOfLines={1} style={[styles.roomMetaText, styles.roomMetaDateText]}>{roomDateLabel}</Text>
             </View>
           </View>
-          <Pressable onPress={onChangeOccasion} style={styles.occasionChip}>
-            <Text numberOfLines={1} style={styles.occasionChipText}>{occasionChipLabel(data.occasionType)} · Change</Text>
-          </Pressable>
           <Pressable
             accessibilityLabel={transitioning ? undefined : "View members"}
             accessibilityRole={transitioning ? undefined : "button"}
@@ -2070,6 +2000,55 @@ function ModeButton({
   );
 }
 
+function RoomPane({
+  active,
+  children,
+  motion = "lift"
+}: {
+  active: boolean;
+  children: ReactNode;
+  motion?: "fade" | "lift";
+}) {
+  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  useEffect(() => {
+    progress.stopAnimation();
+    const animation = Animated.timing(progress, {
+      delay: active && motion === "lift" ? ROOM_PANE_ENTER_DELAY : 0,
+      duration: active ? ROOM_PANE_ENTER_DURATION : ROOM_PANE_EXIT_DURATION,
+      easing: Easing.out(Easing.cubic),
+      toValue: active ? 1 : 0,
+      useNativeDriver: true
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [active, motion, progress]);
+
+  const translateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [motion === "lift" ? ROOM_PANE_TRANSLATE_Y : 0, 0]
+  });
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden={!active}
+      collapsable={false}
+      importantForAccessibility={active ? "auto" : "no-hide-descendants"}
+      pointerEvents={active ? "auto" : "none"}
+      style={[
+        styles.roomPagerPage,
+        {
+          opacity: progress,
+          transform: [{ translateY }],
+          zIndex: active ? 2 : 1
+        }
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
 function PaneReveal({
   active,
   children,
@@ -2085,7 +2064,7 @@ function PaneReveal({
 
   useEffect(() => {
     Animated.timing(progress, {
-      duration: active ? 180 : 120,
+      duration: active ? 180 : 0,
       easing: Easing.out(Easing.cubic),
       toValue: active ? 1 : 0,
       useNativeDriver: true
@@ -2308,6 +2287,38 @@ function ChatHistoryHeader({
   );
 }
 
+const prefetchedMemoryMediaKeys = new Set<string>();
+
+function memoryMediaCacheKey(media: MemoryPhoto) {
+  return media.storagePath || media.id || media.publicUrl;
+}
+
+function prefetchMemoryMedia(media: MemoryPhoto) {
+  const cacheKey = memoryMediaCacheKey(media);
+  if (!media.publicUrl || prefetchedMemoryMediaKeys.has(cacheKey)) return;
+  prefetchedMemoryMediaKeys.add(cacheKey);
+  if (media.mediaType === "video") {
+    void generateCachedVideoThumbnail(cacheKey, media.publicUrl)
+      .then((thumbnail) => {
+        if (!thumbnail) prefetchedMemoryMediaKeys.delete(cacheKey);
+      });
+    return;
+  }
+  Image.prefetch(media.publicUrl).catch(() => {
+    prefetchedMemoryMediaKeys.delete(cacheKey);
+  });
+}
+
+function prefetchTimelineRowMedia(row: ChatTimelineRow) {
+  if (row.type === "media") {
+    prefetchMemoryMedia(row.value);
+    return;
+  }
+  if (row.type === "message") {
+    row.value.attachments.forEach(prefetchMemoryMedia);
+  }
+}
+
 function ChatTimeline({
   active,
   bottomClearance,
@@ -2327,7 +2338,9 @@ function ChatTimeline({
   onOpenDish,
   onOpenMedia,
   onRateDish,
+  onCancelFailedMessage,
   onReplyMessage,
+  onRetryFailedMessage,
   onScrollBeginDrag,
   onSelectionPressOut,
   onToggleSelection,
@@ -2358,7 +2371,9 @@ function ChatTimeline({
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onRateDish: (dishId: string, rating: number) => void;
+  onCancelFailedMessage: (message: MemoryMessage) => void;
   onReplyMessage: (message: MemoryMessage) => void;
+  onRetryFailedMessage: (message: MemoryMessage) => void;
   onScrollBeginDrag: () => void;
   onSelectionPressOut: (target: MemoryActionTarget) => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
@@ -2414,6 +2429,12 @@ function ChatTimeline({
   // when the user drags away from the bottom.
   const followBottomRef = useRef(false);
   const isDraggingRef = useRef(false);
+  const loadOlderGuardRef = useRef({ inFlight: false, lastRequestAt: 0 });
+  const viewabilityDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [progressiveRowsUnlocked, setProgressiveRowsUnlocked] = useState(false);
+  const [showLatestButton, setShowLatestButton] = useState(false);
+  const [hasUnseenLatest, setHasUnseenLatest] = useState(false);
+  const latestButtonVisibleRef = useRef(false);
   // Set the follow-bottom intent DURING render (before layout/onContentSizeChange),
   // so the new message is pinned in the same layout pass. If we only set it in an
   // effect (which runs after onContentSizeChange), the content-size scroll sees
@@ -2467,13 +2488,22 @@ function ChatTimeline({
     listNearBottomRef.current = false;
     followBottomRef.current = false;
     initialAnchorReadyRef.current = false;
+    setHasUnseenLatest(false);
     setInitialAnchorReady(false);
+    latestButtonVisibleRef.current = false;
+    setProgressiveRowsUnlocked(false);
+    setShowLatestButton(false);
   }, [data.id]);
 
   const revealInitialAnchor = useCallback(() => {
     if (initialAnchorReadyRef.current) return;
     initialAnchorReadyRef.current = true;
     requestAnimationFrame(() => setInitialAnchorReady(true));
+  }, []);
+  const setLatestButtonVisible = useCallback((visible: boolean) => {
+    if (latestButtonVisibleRef.current === visible) return;
+    latestButtonVisibleRef.current = visible;
+    setShowLatestButton(visible);
   }, []);
 
   const timelineRows = useMemo(() => {
@@ -2559,6 +2589,16 @@ function ChatTimeline({
     () => invertedRows.findIndex((row) => row.type === "unread"),
     [invertedRows]
   );
+  const renderedRows = useMemo(() => {
+    const canRenderProgressively = (
+      firstUnreadRowIndex < 0 &&
+      !progressiveRowsUnlocked &&
+      invertedRows.length > CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS
+    );
+    return canRenderProgressively
+      ? invertedRows.slice(0, CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS)
+      : invertedRows;
+  }, [firstUnreadRowIndex, invertedRows, progressiveRowsUnlocked]);
   const messageRowIndexById = useMemo(() => {
     const byId = new Map<string, number>();
     invertedRows.forEach((row, index) => {
@@ -2570,7 +2610,25 @@ function ChatTimeline({
 
   useEffect(() => () => {
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    if (viewabilityDebounceRef.current) clearTimeout(viewabilityDebounceRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!loadingOlderMessages) loadOlderGuardRef.current.inFlight = false;
+  }, [loadingOlderMessages]);
+
+  const requestLoadOlderMessages = useCallback(() => {
+    if (!hasOlderMessages || loadingOlderMessages) return;
+    const now = Date.now();
+    if (
+      loadOlderGuardRef.current.inFlight ||
+      now - loadOlderGuardRef.current.lastRequestAt < CHAT_TIMELINE_LOAD_OLDER_DEBOUNCE_MS
+    ) {
+      return;
+    }
+    loadOlderGuardRef.current = { inFlight: true, lastRequestAt: now };
+    onLoadOlderMessages();
+  }, [hasOlderMessages, loadingOlderMessages, onLoadOlderMessages]);
 
   const highlightMessage = useCallback((messageId: string) => {
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
@@ -2584,6 +2642,11 @@ function ChatTimeline({
   const scrollToMessage = useCallback((messageId: string, animated: boolean) => {
     const rowIndex = messageRowIndexById.get(messageId);
     if (rowIndex == null) return false;
+    if (rowIndex >= renderedRows.length) {
+      setProgressiveRowsUnlocked(true);
+      requestAnimationFrame(() => scrollToMessage(messageId, animated));
+      return true;
+    }
     followBottomRef.current = false;
     listNearBottomRef.current = false;
     onNearBottomChange(false);
@@ -2594,13 +2657,13 @@ function ChatTimeline({
     });
     highlightMessage(messageId);
     return true;
-  }, [highlightMessage, messageRowIndexById, onNearBottomChange, scrollRef]);
+  }, [highlightMessage, messageRowIndexById, onNearBottomChange, renderedRows.length, scrollRef]);
 
   const jumpToRepliedMessage = useCallback((messageId: string) => {
     if (scrollToMessage(messageId, true)) return;
     pendingReplyJumpRef.current = messageId;
-    if (hasOlderMessages && !loadingOlderMessages) onLoadOlderMessages();
-  }, [hasOlderMessages, loadingOlderMessages, onLoadOlderMessages, scrollToMessage]);
+    requestLoadOlderMessages();
+  }, [requestLoadOlderMessages, scrollToMessage]);
 
   useEffect(() => {
     const pendingMessageId = pendingReplyJumpRef.current;
@@ -2610,13 +2673,13 @@ function ChatTimeline({
       return;
     }
     if (hasOlderMessages && !loadingOlderMessages) {
-      onLoadOlderMessages();
+      requestLoadOlderMessages();
       return;
     }
     if (!hasOlderMessages && !loadingOlderMessages) {
       pendingReplyJumpRef.current = null;
     }
-  }, [hasOlderMessages, loadingOlderMessages, onLoadOlderMessages, scrollToMessage, timelineRows.length]);
+  }, [hasOlderMessages, loadingOlderMessages, requestLoadOlderMessages, scrollToMessage, timelineRows.length]);
 
   useEffect(() => {
     if (!active || !listNearBottomRef.current) return;
@@ -2627,7 +2690,11 @@ function ChatTimeline({
     const previousLatestId = latestTimelineItemIdRef.current;
     latestTimelineItemIdRef.current = latestTimelineItemId;
     if (!active || !latestTimelineItemId || previousLatestId === latestTimelineItemId) return undefined;
-    if (!latestTimelineItemMine && !listNearBottomRef.current && !followBottomRef.current) return undefined;
+    if (!latestTimelineItemMine && !listNearBottomRef.current && !followBottomRef.current) {
+      setHasUnseenLatest(true);
+      setLatestButtonVisible(true);
+      return undefined;
+    }
 
     // The primary scroll is done by onContentSizeChange, which fires once the new
     // row has laid out and so uses the correct content height — scrolling here with
@@ -2636,6 +2703,8 @@ function ChatTimeline({
     // tick, after the height ref is fresh) for the case the user had scrolled up.
     followBottomRef.current = true;
     listNearBottomRef.current = true;
+    setHasUnseenLatest(false);
+    setLatestButtonVisible(false);
     onNearBottomChange(true);
     const timeout = setTimeout(() => scrollToBottom(false), 0);
     return () => clearTimeout(timeout);
@@ -2644,6 +2713,7 @@ function ChatTimeline({
     latestTimelineItemId,
     latestTimelineItemMine,
     onNearBottomChange,
+    setLatestButtonVisible,
     scrollToBottom
   ]);
 
@@ -2730,15 +2800,25 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  const rowHandlersRef = useRef({ onBeginSelection, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onSelectionPressOut, onToggleSelection });
-  rowHandlersRef.current = { onBeginSelection, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onSelectionPressOut, onToggleSelection };
+  const rowHandlersRef = useRef({ onBeginSelection, onCancelFailedMessage, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onCancelFailedMessage, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleSelection };
   const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
+  const cancelFailedRowMessage = useCallback((message: MemoryMessage) => rowHandlersRef.current.onCancelFailedMessage(message), []);
   const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
   const openRowDish = useCallback((dishId: string) => rowHandlersRef.current.onOpenDish(dishId), []);
   const rateRowDish = useCallback((dishId: string, rating: number) => rowHandlersRef.current.onRateDish(dishId, rating), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
+  const retryFailedRowMessage = useCallback((message: MemoryMessage) => rowHandlersRef.current.onRetryFailedMessage(message), []);
   const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
+  const jumpToLatest = useCallback((animated: boolean) => {
+    followBottomRef.current = true;
+    listNearBottomRef.current = true;
+    setHasUnseenLatest(false);
+    setLatestButtonVisible(false);
+    onNearBottomChange(true);
+    scrollToBottom(animated);
+  }, [onNearBottomChange, scrollToBottom, setLatestButtonVisible]);
 
   const renderTimelineRow = useCallback(({ item }: { item: ChatTimelineRow }) => {
     if (item.type === "date") return <DateDivider label={item.label} />;
@@ -2746,7 +2826,7 @@ function ChatTimeline({
     if (item.type === "unread") {
       return (
         <UnreadDivider
-          onJumpToLatest={() => scrollToBottom(true)}
+          onJumpToLatest={() => jumpToLatest(true)}
         />
       );
     }
@@ -2759,9 +2839,11 @@ function ChatTimeline({
           message={item.value}
           mine={item.mine}
           onBeginSelection={() => beginRowSelection({ type: "message", value: item.value })}
+          onCancelFailed={() => cancelFailedRowMessage(item.value)}
           onOpenMedia={openRowMedia}
           onJumpToMessage={jumpToRepliedMessage}
           onReply={() => replyToRow(item.value)}
+          onRetryFailed={() => retryFailedRowMessage(item.value)}
           onSelectionPressOut={() => finishRowSelectionPress({ type: "message", value: item.value })}
           onToggleSelection={() => toggleRowSelection({ type: "message", value: item.value })}
           editing={editingMessageId === item.value.id}
@@ -2808,9 +2890,11 @@ function ChatTimeline({
     );
   }, [
     beginRowSelection,
+    cancelFailedRowMessage,
     editingMessageId,
     finishRowSelectionPress,
     highlightedMessageId,
+    jumpToLatest,
     jumpToRepliedMessage,
     openRowDish,
     openRowMedia,
@@ -2818,16 +2902,46 @@ function ChatTimeline({
     pendingDishId,
     rateRowDish,
     replyToRow,
-    scrollToBottom,
+    retryFailedRowMessage,
     selectedItemKeys,
     selectionMode,
     toggleRowSelection
   ]);
+  const chatViewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 42,
+    minimumViewTime: 90
+  }).current;
+  const chatViewabilityStateRef = useRef({
+    invertedRowsLength: invertedRows.length,
+    progressiveRowsUnlocked,
+    renderedRowsLength: renderedRows.length
+  });
+  chatViewabilityStateRef.current = {
+    invertedRowsLength: invertedRows.length,
+    progressiveRowsUnlocked,
+    renderedRowsLength: renderedRows.length
+  };
+  const handleChatViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    if (viewableItems.length === 0) return;
+
+    viewableItems.forEach((viewToken) => {
+      const row = viewToken.item as ChatTimelineRow | undefined;
+      if (row) prefetchTimelineRowMedia(row);
+    });
+
+    const state = chatViewabilityStateRef.current;
+    if (state.progressiveRowsUnlocked || state.renderedRowsLength === state.invertedRowsLength) return;
+    if (viewabilityDebounceRef.current) clearTimeout(viewabilityDebounceRef.current);
+    viewabilityDebounceRef.current = setTimeout(() => {
+      viewabilityDebounceRef.current = null;
+      setProgressiveRowsUnlocked(true);
+    }, 250);
+  }).current;
 
   return (
     <View onLayout={onLayoutChange} style={[styles.chatTimelineWrap, hideUntilAnchored && styles.chatTimelineHidden]}>
       <FlatList
-        data={invertedRows}
+        data={renderedRows}
         ref={scrollRef}
         inverted
         contentContainerStyle={[
@@ -2846,17 +2960,18 @@ function ChatTimeline({
               error={olderMessagesError}
               hasMore={hasOlderMessages}
               loading={loadingOlderMessages}
-              onLoad={onLoadOlderMessages}
+              onLoad={requestLoadOlderMessages}
             />
           </View>
         ) : null}
         onEndReached={() => {
           if (initialAnchorReadyRef.current && hasOlderMessages && !loadingOlderMessages) {
-            onLoadOlderMessages();
+            requestLoadOlderMessages();
           }
         }}
         onEndReachedThreshold={0.4}
         maxToRenderPerBatch={CHAT_TIMELINE_MAX_RENDER_BATCH}
+        onViewableItemsChanged={handleChatViewableItemsChanged}
         onScroll={(event) => {
           if (!active) return;
           const { contentOffset } = event.nativeEvent;
@@ -2865,6 +2980,8 @@ function ChatTimeline({
           const isNearBottom = distanceFromBottom < 96;
           listNearBottomRef.current = isNearBottom;
           onNearBottomChange(isNearBottom);
+          setLatestButtonVisible(distanceFromBottom > CHAT_LATEST_BUTTON_OFFSET_THRESHOLD || hasUnseenLatest);
+          if (isNearBottom && hasUnseenLatest) setHasUnseenLatest(false);
           if (!isDraggingRef.current) {
             if (distanceFromBottom < 4) {
               followBottomRef.current = true;
@@ -2895,29 +3012,50 @@ function ChatTimeline({
           if (!firstUnreadItemId) revealInitialAnchor();
         }}
         onScrollToIndexFailed={(info) => {
-          const offset = Math.max(0, info.averageItemLength * info.index - 18);
+          const nearestMeasuredIndex = Math.max(0, Math.min(info.highestMeasuredFrameIndex, info.index));
+          const estimatedOffset = Math.max(0, info.averageItemLength * info.index - 18);
           setTimeout(() => {
-            scrollRef.current?.scrollToOffset({ animated: false, offset });
+            if (info.highestMeasuredFrameIndex > 0) {
+              scrollRef.current?.scrollToIndex({
+                animated: false,
+                index: nearestMeasuredIndex,
+                viewPosition: 0.12
+              });
+              return;
+            }
+            scrollRef.current?.scrollToOffset({ animated: false, offset: estimatedOffset });
             revealInitialAnchor();
           }, 50);
           // The estimated offset mounts rows near the target; retry the exact index once
           // they exist so the entry never strands mid-history.
-          setTimeout(() => {
+          [220, 520].forEach((delay) => setTimeout(() => {
             scrollRef.current?.scrollToIndex({
               animated: false,
               index: info.index,
               viewPosition: 0.12
             });
-          }, 220);
+          }, delay));
         }}
-        removeClippedSubviews={Platform.OS === "android"}
+        removeClippedSubviews={false}
         renderItem={renderTimelineRow}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         style={styles.timelineList}
         updateCellsBatchingPeriod={50}
+        viewabilityConfig={chatViewabilityConfig}
         windowSize={CHAT_TIMELINE_WINDOW_SIZE}
       />
+      {showLatestButton && timelineRows.length > 0 ? (
+        <Pressable
+          accessibilityLabel={hasUnseenLatest ? "Jump to new memory activity" : "Jump to latest memory activity"}
+          accessibilityRole="button"
+          onPress={() => jumpToLatest(true)}
+          style={[styles.chatLatestButton, { bottom: bottomClearance + 12 }]}
+        >
+          <Ionicons name="chevron-down" size={15} color={ROOM_COLORS.onCool} />
+          <Text style={styles.chatLatestButtonText}>{hasUnseenLatest ? "New" : "Latest"}</Text>
+        </Pressable>
+      ) : null}
       {timelineRows.length === 0 ? (
         // Rendered as a sibling (not ListEmptyComponent) so the inverted list's
         // flip never applies — otherwise the empty state shows upside down.
@@ -3073,99 +3211,218 @@ function isOptimisticMemoryMedia(media: MemoryPhoto) {
   return media.id.startsWith("optimistic-media:");
 }
 
-const VIDEO_THUMBNAIL_TIME_SECONDS = 0.1;
-const VIDEO_THUMBNAIL_TIMES_SECONDS = [VIDEO_THUMBNAIL_TIME_SECONDS];
-const VIDEO_THUMBNAIL_MAX_WIDTH = 720;
+const VIDEO_THUMBNAIL_TIME_MS = 100;
 const VIDEO_THUMBNAIL_CACHE_LIMIT = 80;
-const videoThumbnailCache = new Map<string, VideoThumbnail>();
+const videoThumbnailCache = new Map<string, VideoThumbnailsResult>();
+type VideoThumbnailImageSource = { uri: string };
+const videoThumbnailSourceCache = new Map<string, VideoThumbnailImageSource>();
+const videoThumbnailPending = new Map<string, Promise<VideoThumbnailsResult | null>>();
 
-function cacheVideoThumbnail(uri: string, thumbnail: VideoThumbnail) {
-  if (videoThumbnailCache.has(uri)) {
-    videoThumbnailCache.delete(uri);
+function cacheVideoThumbnail(cacheKey: string, thumbnail: VideoThumbnailsResult) {
+  if (videoThumbnailCache.has(cacheKey)) {
+    videoThumbnailCache.delete(cacheKey);
   }
-  videoThumbnailCache.set(uri, thumbnail);
+  videoThumbnailCache.set(cacheKey, thumbnail);
 
   if (videoThumbnailCache.size > VIDEO_THUMBNAIL_CACHE_LIMIT) {
-    const oldestUri = videoThumbnailCache.keys().next().value;
-    if (typeof oldestUri === "string") {
-      videoThumbnailCache.delete(oldestUri);
+    const oldestCacheKey = videoThumbnailCache.keys().next().value;
+    if (typeof oldestCacheKey === "string") {
+      const oldestThumbnail = videoThumbnailCache.get(oldestCacheKey);
+      if (oldestThumbnail) videoThumbnailSourceCache.delete(oldestThumbnail.uri);
+      videoThumbnailCache.delete(oldestCacheKey);
     }
   }
 }
 
+function invalidateVideoThumbnail(cacheKey: string) {
+  const thumbnail = videoThumbnailCache.get(cacheKey);
+  if (thumbnail) videoThumbnailSourceCache.delete(thumbnail.uri);
+  videoThumbnailCache.delete(cacheKey);
+  videoThumbnailPending.delete(cacheKey);
+  prefetchedMemoryMediaKeys.delete(cacheKey);
+}
+
+function getVideoThumbnailImageSource(thumbnail: VideoThumbnailsResult) {
+  const cachedSource = videoThumbnailSourceCache.get(thumbnail.uri);
+  if (cachedSource) return cachedSource;
+  const source = { uri: thumbnail.uri };
+  videoThumbnailSourceCache.set(thumbnail.uri, source);
+  return source;
+}
+
+function generateCachedVideoThumbnail(cacheKey: string, sourceUri: string) {
+  const cachedThumbnail = videoThumbnailCache.get(cacheKey);
+  if (cachedThumbnail) return Promise.resolve(cachedThumbnail);
+
+  const pendingThumbnail = videoThumbnailPending.get(cacheKey);
+  if (pendingThumbnail) return pendingThumbnail;
+
+  const promise = getThumbnailAsync(sourceUri, {
+    quality: 0.82,
+    time: VIDEO_THUMBNAIL_TIME_MS
+  })
+    .then((nextThumbnail) => {
+      if (nextThumbnail) cacheVideoThumbnail(cacheKey, nextThumbnail);
+      return nextThumbnail;
+    })
+    .catch(() => null)
+    .finally(() => {
+      videoThumbnailPending.delete(cacheKey);
+    });
+
+  videoThumbnailPending.set(cacheKey, promise);
+  return promise;
+}
+
 function VideoThumbnailLayer({
+  cacheKey,
   contentFit = "cover",
   uri
 }: {
+  cacheKey: string;
   contentFit?: "contain" | "cover";
   uri: string;
 }) {
-  const [thumbnail, setThumbnail] = useState<VideoThumbnail | null>(() => videoThumbnailCache.get(uri) ?? null);
-  const player = useVideoPlayer(uri, (instance) => {
-    instance.muted = true;
-    instance.volume = 0;
+  if (Platform.OS === "web") {
+    return <WebVideoThumbnailLayer contentFit={contentFit} uri={uri} />;
+  }
+
+  return <NativeVideoThumbnailLayer cacheKey={cacheKey} contentFit={contentFit} uri={uri} />;
+}
+
+function NativeVideoThumbnailLayer({
+  cacheKey,
+  contentFit = "cover",
+  uri
+}: {
+  cacheKey: string;
+  contentFit?: "contain" | "cover";
+  uri: string;
+}) {
+  const [thumbnailState, setThumbnailState] = useState<{ cacheKey: string; thumbnail: VideoThumbnailsResult } | null>(() => {
+    const cachedThumbnail = videoThumbnailCache.get(cacheKey);
+    return cachedThumbnail ? { cacheKey, thumbnail: cachedThumbnail } : null;
   });
+  const [displayedSourceState, setDisplayedSourceState] = useState<{ cacheKey: string; source: VideoThumbnailImageSource } | null>(() => {
+    const cachedThumbnail = videoThumbnailCache.get(cacheKey);
+    return cachedThumbnail ? { cacheKey, source: getVideoThumbnailImageSource(cachedThumbnail) } : null;
+  });
+  const thumbnailErrorRetryRef = useRef(0);
+  const thumbnail = thumbnailState?.cacheKey === cacheKey ? thumbnailState.thumbnail : videoThumbnailCache.get(cacheKey) ?? null;
+  const displayedSource = displayedSourceState?.cacheKey === cacheKey ? displayedSourceState.source : null;
+  const thumbnailSource = thumbnail ? getVideoThumbnailImageSource(thumbnail) : null;
 
   useEffect(() => {
-    const cachedThumbnail = videoThumbnailCache.get(uri);
+    thumbnailErrorRetryRef.current = 0;
+    const cachedThumbnail = videoThumbnailCache.get(cacheKey);
     if (cachedThumbnail) {
-      setThumbnail(cachedThumbnail);
+      setThumbnailState({ cacheKey, thumbnail: cachedThumbnail });
+      setDisplayedSourceState((current) => (
+        current?.cacheKey === cacheKey
+          ? current
+          : { cacheKey, source: getVideoThumbnailImageSource(cachedThumbnail) }
+      ));
       return undefined;
     }
 
-    setThumbnail(null);
-
-    if (Platform.OS === "web") {
-      return undefined;
-    }
+    setThumbnailState((current) => (current?.cacheKey === cacheKey ? current : null));
+    setDisplayedSourceState((current) => (current?.cacheKey === cacheKey ? current : null));
 
     let cancelled = false;
 
-    void player
-      .generateThumbnailsAsync(VIDEO_THUMBNAIL_TIMES_SECONDS, { maxWidth: VIDEO_THUMBNAIL_MAX_WIDTH })
-      .then((thumbnails) => {
-        const nextThumbnail = thumbnails[0] ?? null;
-        if (nextThumbnail) {
-          cacheVideoThumbnail(uri, nextThumbnail);
-        }
+    void generateCachedVideoThumbnail(cacheKey, uri)
+      .then((nextThumbnail) => {
         if (!cancelled) {
-          setThumbnail(nextThumbnail);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setThumbnail(null);
+          setThumbnailState(nextThumbnail ? { cacheKey, thumbnail: nextThumbnail } : null);
+          if (nextThumbnail) {
+            setDisplayedSourceState((current) => (
+              current?.cacheKey === cacheKey
+                ? current
+                : { cacheKey, source: getVideoThumbnailImageSource(nextThumbnail) }
+            ));
+          }
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [player, uri]);
+  }, [cacheKey, uri]);
 
-  if (Platform.OS === "web") {
-    return (
-      <VideoView
-        allowsFullscreen={false}
-        allowsPictureInPicture={false}
-        contentFit={contentFit}
-        nativeControls={false}
-        player={player}
-        playsInline
-        pointerEvents="none"
-        style={styles.videoThumbnailImage}
-      />
-    );
+  if (!displayedSource && !thumbnailSource) return null;
+
+  function handleThumbnailLoad() {
+    if (!thumbnailSource) return;
+    setDisplayedSourceState({ cacheKey, source: thumbnailSource });
   }
 
-  if (!thumbnail) return null;
+  function handleThumbnailError() {
+    if (thumbnailErrorRetryRef.current >= 2) return;
+    thumbnailErrorRetryRef.current += 1;
+    invalidateVideoThumbnail(cacheKey);
+    void generateCachedVideoThumbnail(cacheKey, uri)
+      .then((nextThumbnail) => {
+        if (!nextThumbnail) return;
+        const nextSource = getVideoThumbnailImageSource(nextThumbnail);
+        setThumbnailState({ cacheKey, thumbnail: nextThumbnail });
+        setDisplayedSourceState({ cacheKey, source: nextSource });
+      });
+  }
 
   return (
-    <Image
-      cachePolicy="memory-disk"
+    <View style={styles.videoThumbnailLayer}>
+      {displayedSource ? (
+        <Image
+          cachePolicy="memory-disk"
+          contentFit={contentFit}
+          onError={handleThumbnailError}
+          placeholder={displayedSource}
+          placeholderContentFit={contentFit}
+          priority="high"
+          source={displayedSource}
+          transition={0}
+          style={styles.videoThumbnailImage}
+        />
+      ) : null}
+      {thumbnailSource && thumbnailSource !== displayedSource ? (
+        <Image
+          cachePolicy="memory-disk"
+          contentFit={contentFit}
+          onError={handleThumbnailError}
+          onLoad={handleThumbnailLoad}
+          placeholder={displayedSource ?? thumbnailSource}
+          placeholderContentFit={contentFit}
+          priority="high"
+          source={thumbnailSource}
+          transition={0}
+          style={styles.videoThumbnailImage}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function WebVideoThumbnailLayer({
+  contentFit = "cover",
+  uri
+}: {
+  contentFit?: "contain" | "cover";
+  uri: string;
+}) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.muted = true;
+    instance.volume = 0;
+  });
+
+  return (
+    <VideoView
+      allowsFullscreen={false}
+      allowsPictureInPicture={false}
       contentFit={contentFit}
-      recyclingKey={uri}
-      source={thumbnail}
+      nativeControls={false}
+      player={player}
+      playsInline
+      pointerEvents="none"
       style={styles.videoThumbnailImage}
     />
   );
@@ -3209,12 +3466,6 @@ function UploadProgressOverlay({ progress }: { progress?: number | null }) {
       <Text style={styles.mediaPendingText}>Uploading</Text>
     </View>
   );
-}
-
-function memoryMessageReplyPreview(message: Pick<MemoryMessage, "attachments" | "body">) {
-  const body = message.body.trim();
-  if (body) return body;
-  return message.attachments.length > 0 ? "Media" : "Message";
 }
 
 function ReplyPreviewBlock({
@@ -3355,53 +3606,7 @@ function MessageRow({
   swipeEnabled?: boolean;
 }) {
   const accentColor = senderAccent(senderName);
-  const swipeTranslateX = useRef(new Animated.Value(0)).current;
-  const swipeIndicatorOpacity = swipeTranslateX.interpolate({
-    inputRange: [0, REPLY_SWIPE_TRIGGER_DISTANCE],
-    outputRange: [0, 1],
-    extrapolate: "clamp"
-  });
-  const swipeIndicatorScale = swipeTranslateX.interpolate({
-    inputRange: [0, REPLY_SWIPE_TRIGGER_DISTANCE],
-    outputRange: [0.86, 1],
-    extrapolate: "clamp"
-  });
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => (
-      swipeEnabled &&
-      Boolean(onSwipeRight) &&
-      gesture.dx > 8 &&
-      Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35
-    ),
-    onPanResponderMove: (_event, gesture) => {
-      if (!swipeEnabled || !onSwipeRight) return;
-      swipeTranslateX.setValue(Math.min(REPLY_SWIPE_MAX_TRANSLATE, Math.max(0, gesture.dx)));
-    },
-    onPanResponderRelease: (_event, gesture) => {
-      if (
-        swipeEnabled &&
-        onSwipeRight &&
-        gesture.dx >= REPLY_SWIPE_TRIGGER_DISTANCE &&
-        Math.abs(gesture.dy) < 42
-      ) {
-        onSwipeRight();
-      }
-      Animated.spring(swipeTranslateX, {
-        bounciness: 0,
-        speed: 22,
-        toValue: 0,
-        useNativeDriver: true
-      }).start();
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(swipeTranslateX, {
-        bounciness: 0,
-        speed: 22,
-        toValue: 0,
-        useNativeDriver: true
-      }).start();
-    }
-  }), [onSwipeRight, swipeEnabled, swipeTranslateX]);
+  const swipeableRef = useRef<SwipeableMethods>(null);
 
   const rowContent = mine ? (
     <>
@@ -3446,28 +3651,52 @@ function MessageRow({
   );
 
   if (onSwipeRight) {
+    const renderLeftActions = (progress: SharedValue<number>) => (
+      <ReplySwipeAction progress={progress} />
+    );
+    const handleSwipeableWillOpen = () => {
+      if (swipeEnabled) onSwipeRight();
+    };
+    const handleSwipeableOpen = () => {
+      swipeableRef.current?.close();
+    };
+
     return (
-      <View style={styles.swipeReplyWrap}>
-        <Animated.View style={[
-          styles.swipeReplyIndicator,
-          {
-            opacity: swipeIndicatorOpacity,
-            transform: [{ scale: swipeIndicatorScale }]
-          }
-        ]}>
-          <Ionicons name="arrow-undo-outline" size={17} color={ROOM_COLORS.cool} />
-        </Animated.View>
-        <Animated.View
-          {...panResponder.panHandlers}
-          style={[styles.swipeReplyContent, { transform: [{ translateX: swipeTranslateX }] }]}
-        >
+      <ReanimatedSwipeable
+        ref={swipeableRef}
+        containerStyle={styles.swipeReplyWrap}
+        dragOffsetFromLeftEdge={8}
+        enabled={swipeEnabled}
+        friction={1.35}
+        leftThreshold={REPLY_SWIPE_TRIGGER_DISTANCE}
+        onSwipeableOpen={handleSwipeableOpen}
+        onSwipeableWillOpen={handleSwipeableWillOpen}
+        overshootLeft={false}
+        renderLeftActions={renderLeftActions}
+      >
+        <View style={styles.swipeReplyContent}>
           {rowElement}
-        </Animated.View>
-      </View>
+        </View>
+      </ReanimatedSwipeable>
     );
   }
 
   return rowElement;
+}
+
+function ReplySwipeAction({ progress }: { progress: SharedValue<number> }) {
+  const actionStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(progress.value, 1),
+    transform: [{ scale: Math.min(Math.max(progress.value, 0.86), 1) }]
+  }));
+
+  return (
+    <Reanimated.View style={styles.swipeReplyAction}>
+      <Reanimated.View style={[styles.swipeReplyIndicator, actionStyle]}>
+        <Ionicons name="arrow-undo-outline" size={17} color={ROOM_COLORS.cool} />
+      </Reanimated.View>
+    </Reanimated.View>
+  );
 }
 
 function groupedBubbleCornerStyle(mine: boolean, groupPosition: MessageGroupPosition) {
@@ -3507,11 +3736,46 @@ function MessageMeta({
   );
 }
 
+function MessageDeliveryState({
+  mine,
+  onCancel,
+  onRetry,
+  status
+}: {
+  mine: boolean;
+  onCancel: () => void;
+  onRetry: () => void;
+  status?: MemoryMessage["deliveryStatus"];
+}) {
+  if (status !== "failed") return null;
+
+  return (
+    <View style={[styles.failedMessageActions, mine && styles.failedMessageActionsMine]}>
+      <Text style={styles.failedMessageText}>Not sent</Text>
+      <Pressable accessibilityRole="button" hitSlop={6} onPress={onRetry} style={styles.failedMessageButton}>
+        <Text style={styles.failedMessageButtonText}>Retry</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" hitSlop={6} onPress={onCancel} style={styles.failedMessageButton}>
+        <Text style={styles.failedMessageButtonText}>Cancel</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function timestampReservePlaceholder(time: string) {
+  const reserveUnits = Array.from(time).reduce((total, character) => {
+    if (character === ":") return total + 0.35;
+    if (character === " ") return total + 0.25;
+    return total + 0.9;
+  }, 0);
+
+  return `\u2009${"\u2007".repeat(Math.max(4, Math.ceil(reserveUnits)))}`;
+}
+
 function InlineTimestampText({
   fill = false,
   minWidth,
   nativeAvailableWidth,
-  reserveTextColor,
   text,
   textStyle,
   time,
@@ -3520,7 +3784,6 @@ function InlineTimestampText({
   fill?: boolean;
   minWidth?: number;
   nativeAvailableWidth?: number;
-  reserveTextColor?: string;
   text: string;
   textStyle?: StyleProp<TextStyle>;
   time: string;
@@ -3542,9 +3805,9 @@ function InlineTimestampText({
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[timeStyle, styles.inlineTimestampReserve, reserveTextColor ? { color: reserveTextColor } : null]}
+          style={[timeStyle, styles.inlineTimestampReserve]}
         >
-          {`  ${time}`}
+          {timestampReservePlaceholder(time)}
         </Text>
       </Text>
       <View pointerEvents="none" style={styles.inlineTimestampPinnedMeta}>
@@ -3574,9 +3837,11 @@ function MessageBubble({
   message,
   mine,
   onBeginSelection,
+  onCancelFailed,
   onJumpToMessage,
   onOpenMedia,
   onReply,
+  onRetryFailed,
   onSelectionPressOut,
   rowStyle,
   onToggleSelection,
@@ -3590,9 +3855,11 @@ function MessageBubble({
   message: MemoryMessage;
   mine: boolean;
   onBeginSelection: () => void;
+  onCancelFailed: () => void;
   onJumpToMessage: (messageId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onReply: () => void;
+  onRetryFailed: () => void;
   onSelectionPressOut: () => void;
   rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
@@ -3643,6 +3910,27 @@ function MessageBubble({
     }
   }
 
+  function renderDeliveryState() {
+    return (
+      <MessageDeliveryState
+        mine={mine}
+        onCancel={onCancelFailed}
+        onRetry={onRetryFailed}
+        status={message.deliveryStatus}
+      />
+    );
+  }
+
+  function renderBubbleWithDeliveryState(bubble: ReactNode) {
+    if (message.deliveryStatus !== "failed") return bubble;
+    return (
+      <View style={[styles.messageStatusStack, mine && styles.messageStatusStackMine]}>
+        {bubble}
+        {renderDeliveryState()}
+      </View>
+    );
+  }
+
   function renderTextMessage() {
     const bubble = (
       <MessageBubbleFrame
@@ -3666,7 +3954,6 @@ function MessageBubble({
             fill={shouldFillTextTimestamp}
             minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
             nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
-            reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
             text={body}
             textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
             time={timestampLabel}
@@ -3690,7 +3977,7 @@ function MessageBubble({
         showSenderDetails={showSenderDetails}
         swipeEnabled={!selectionMode}
       >
-        {bubble}
+        {renderBubbleWithDeliveryState(bubble)}
       </MessageRow>
     );
   }
@@ -3708,6 +3995,60 @@ function MessageBubble({
       onOpenMedia(media, message.attachments);
     }
 
+    const bubble = (
+      <MessageBubbleFrame
+        style={{ width: previewSize.width }}
+      >
+        <View
+          style={[
+            styles.singleMediaMessageCard,
+            mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
+            styles.messageMediaCardFill,
+            bubbleCornerStyle
+          ]}
+        >
+          {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
+          {isMediaOnly && message.replyToMessage ? (
+            <View style={styles.mediaReplyHeader}>
+              {renderReplyPreview()}
+            </View>
+          ) : null}
+          <Pressable
+            delayLongPress={280}
+            disabled={selectionMode}
+            onLongPress={!selectionMode ? handleMediaLongPress : undefined}
+            onPress={handleOpenMedia}
+            onPressIn={!selectionMode ? handleMediaPressIn : undefined}
+            onPressOut={() => {
+              handleMediaPressOut();
+              onSelectionPressOut();
+            }}
+            style={styles.mediaMessageContent}
+          >
+            <SingleMediaPreview
+              media={media}
+              sizeOverride={previewSize}
+              timestamp={isMediaOnly ? timestampLabel : undefined}
+              timestampPlacement="bottom-right"
+            />
+          </Pressable>
+          {isMediaWithCaption ? (
+            <View style={styles.mediaCaptionContainer}>
+              {message.replyToMessage ? renderReplyPreview() : null}
+              <InlineTimestampText
+                fill
+                nativeAvailableWidth={Math.max(0, previewSize.width - 24)}
+                text={body}
+                textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
+                time={timestampLabel}
+                timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
+              />
+            </View>
+          ) : null}
+        </View>
+      </MessageBubbleFrame>
+    );
+
     return (
       <MessageRow
         editing={editing}
@@ -3727,58 +4068,7 @@ function MessageBubble({
         showSenderDetails={showSenderDetails}
         swipeEnabled={!selectionMode}
       >
-        <MessageBubbleFrame
-          style={{ width: previewSize.width }}
-        >
-          <View
-            style={[
-              styles.singleMediaMessageCard,
-              mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
-              styles.messageMediaCardFill,
-              bubbleCornerStyle
-            ]}
-          >
-            {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
-            {isMediaOnly && message.replyToMessage ? (
-              <View style={styles.mediaReplyHeader}>
-                {renderReplyPreview()}
-              </View>
-            ) : null}
-            <Pressable
-              delayLongPress={280}
-              disabled={selectionMode}
-              onLongPress={!selectionMode ? handleMediaLongPress : undefined}
-              onPress={handleOpenMedia}
-              onPressIn={!selectionMode ? handleMediaPressIn : undefined}
-              onPressOut={() => {
-                handleMediaPressOut();
-                onSelectionPressOut();
-              }}
-              style={styles.mediaMessageContent}
-            >
-              <SingleMediaPreview
-                media={media}
-                sizeOverride={previewSize}
-                timestamp={isMediaOnly ? timestampLabel : undefined}
-                timestampPlacement="bottom-right"
-              />
-            </Pressable>
-            {isMediaWithCaption ? (
-              <View style={styles.mediaCaptionContainer}>
-                {message.replyToMessage ? renderReplyPreview() : null}
-                <InlineTimestampText
-                  fill
-                  nativeAvailableWidth={Math.max(0, previewSize.width - 24)}
-                  reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
-                  text={body}
-                  textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
-                  time={timestampLabel}
-                  timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
-                />
-              </View>
-            ) : null}
-          </View>
-        </MessageBubbleFrame>
+        {renderBubbleWithDeliveryState(bubble)}
       </MessageRow>
     );
   }
@@ -3786,6 +4076,55 @@ function MessageBubble({
   function renderMultiMediaMessage() {
     const multiMediaCardWidth = getMultiMediaGridWidth(screenWidth);
 
+    const bubble = (
+      <MessageBubbleFrame
+        style={{ width: multiMediaCardWidth }}
+      >
+        <View
+          style={[
+            styles.multiMediaMessageCard,
+            mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
+            styles.messageMediaCardFill,
+            bubbleCornerStyle
+          ]}
+        >
+          {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
+          {isMediaOnly && message.replyToMessage ? (
+            <View style={styles.mediaReplyHeader}>
+              {renderReplyPreview()}
+            </View>
+          ) : null}
+          <MediaAttachmentGrid
+            gridWidth={multiMediaCardWidth}
+            onMediaLongPress={handleMediaLongPress}
+            onMediaPressIn={handleMediaPressIn}
+            onMediaPressOut={() => {
+              handleMediaPressOut();
+              onSelectionPressOut();
+            }}
+            media={message.attachments}
+            onOpenMedia={onOpenMedia}
+            selectionMode={selectionMode}
+            shouldIgnoreMediaOpen={shouldIgnoreMediaOpen}
+            timestamp={isMediaOnly ? timestampLabel : undefined}
+          />
+          {isMediaWithCaption ? (
+            <View style={styles.mediaCaptionContainer}>
+              {message.replyToMessage ? renderReplyPreview() : null}
+              <InlineTimestampText
+                fill
+                nativeAvailableWidth={Math.max(0, multiMediaCardWidth - 24)}
+                text={body}
+                textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
+                time={timestampLabel}
+                timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
+              />
+            </View>
+          ) : null}
+        </View>
+      </MessageBubbleFrame>
+    );
+
     return (
       <MessageRow
         editing={editing}
@@ -3805,53 +4144,7 @@ function MessageBubble({
         showSenderDetails={showSenderDetails}
         swipeEnabled={!selectionMode}
       >
-        <MessageBubbleFrame
-          style={{ width: multiMediaCardWidth }}
-        >
-          <View
-            style={[
-              styles.multiMediaMessageCard,
-              mine ? styles.mediaMessageCardMine : styles.mediaMessageCardOther,
-              styles.messageMediaCardFill,
-              bubbleCornerStyle
-            ]}
-          >
-            {!mine && showSenderDetails ? <MediaSenderHeader name={message.authorDisplayName} /> : null}
-            {isMediaOnly && message.replyToMessage ? (
-              <View style={styles.mediaReplyHeader}>
-                {renderReplyPreview()}
-              </View>
-            ) : null}
-            <MediaAttachmentGrid
-              gridWidth={multiMediaCardWidth}
-              onMediaLongPress={handleMediaLongPress}
-              onMediaPressIn={handleMediaPressIn}
-              onMediaPressOut={() => {
-                handleMediaPressOut();
-                onSelectionPressOut();
-              }}
-              media={message.attachments}
-              onOpenMedia={onOpenMedia}
-              selectionMode={selectionMode}
-              shouldIgnoreMediaOpen={shouldIgnoreMediaOpen}
-              timestamp={isMediaOnly ? timestampLabel : undefined}
-            />
-            {isMediaWithCaption ? (
-              <View style={styles.mediaCaptionContainer}>
-                {message.replyToMessage ? renderReplyPreview() : null}
-                <InlineTimestampText
-                  fill
-                  nativeAvailableWidth={Math.max(0, multiMediaCardWidth - 24)}
-                  reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
-                  text={body}
-                  textStyle={[styles.mediaCaptionText, mine ? styles.messageTextMine : styles.messageTextOther]}
-                  time={timestampLabel}
-                  timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
-                />
-              </View>
-            ) : null}
-          </View>
-        </MessageBubbleFrame>
+        {renderBubbleWithDeliveryState(bubble)}
       </MessageRow>
     );
   }
@@ -3960,7 +4253,6 @@ function DishTimelineCard({
           >
             <InlineTimestampText
               fill
-              reserveTextColor={mine ? CHAT_OWN_BUBBLE_COLOR : CHAT_OTHER_BUBBLE_COLOR}
               text="View table ratings ›"
               textStyle={[styles.dishTimelineRatersText, mine && styles.dishTimelineRatersTextMine]}
               time={formatDisplayTime(dish.createdAt)}
@@ -4266,7 +4558,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   if (media.mediaType === "video") {
     return (
       <View style={styles.gridVideoPreview}>
-        <VideoThumbnailLayer contentFit="contain" uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
           {!uploading ? (
@@ -4350,7 +4642,7 @@ function MediaGallery({
       onEndReached={hasMore && !loadingMore ? onLoadMore : undefined}
       onEndReachedThreshold={0.6}
       maxToRenderPerBatch={MEDIA_GALLERY_MAX_RENDER_BATCH}
-      removeClippedSubviews={Platform.OS !== "web"}
+      removeClippedSubviews={false}
       renderItem={({ index, item: photo }) => (
         <View
           style={[
@@ -5615,7 +5907,7 @@ function MediaViewer({
             }}
             pagingEnabled
             ref={viewerListRef}
-            removeClippedSubviews={Platform.OS !== "web"}
+            removeClippedSubviews={false}
             renderItem={renderViewerItem}
             showsHorizontalScrollIndicator={false}
             style={styles.viewerCarousel}
@@ -5651,7 +5943,7 @@ function MediaViewer({
                 >
                   {media.mediaType === "video" ? (
                     <View style={styles.viewerThumbnailVideo}>
-                      <VideoThumbnailLayer uri={media.publicUrl} />
+                      <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} uri={media.publicUrl} />
                       <View pointerEvents="none" style={styles.videoThumbnailScrim} />
                       <Ionicons name="play" size={14} color={ROOM_COLORS.white} />
                     </View>
@@ -5758,7 +6050,7 @@ function MediaPreview({
   if (media.mediaType === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        <VideoThumbnailLayer contentFit={contentFit} uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
@@ -5785,128 +6077,6 @@ function MediaPreview({
       />
       {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
     </View>
-  );
-}
-
-function Composer({
-  editingLabel,
-  insetStyle,
-  inputRef,
-  mediaError,
-  mediaMutationError,
-  mediaPending,
-  message,
-  messageError,
-  messagePending,
-  onCancelEdit,
-  onCancelReply,
-  onChangeMessage,
-  onLayoutChange,
-  onInputFocus,
-  replyingToMessage,
-  onSend,
-  themeCopy
-}: {
-  editingLabel?: string;
-  insetStyle: StyleProp<ViewStyle>;
-  inputRef: RefObject<TextInput | null>;
-  mediaError?: string;
-  mediaMutationError?: string;
-  mediaPending: boolean;
-  message: string;
-  messageError?: string;
-  messagePending: boolean;
-  onCancelEdit?: () => void;
-  onCancelReply?: () => void;
-  onChangeMessage: (value: string) => void;
-  onLayoutChange: (event: LayoutChangeEvent) => void;
-  onInputFocus: () => void;
-  replyingToMessage?: MemoryMessage | null;
-  onSend: () => void;
-  themeCopy: OccasionTheme["copy"];
-}) {
-  const canSend = Boolean(message.trim()) && !messagePending && !mediaPending;
-  const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
-  const composerCanScroll = composerInputHeight >= COMPOSER_INPUT_MAX_HEIGHT;
-
-  useEffect(() => {
-    if (message.length === 0 && composerInputHeight !== COMPOSER_INPUT_MIN_HEIGHT) {
-      setComposerInputHeight(COMPOSER_INPUT_MIN_HEIGHT);
-    }
-  }, [composerInputHeight, message]);
-
-  function handleComposerContentSizeChange(event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) {
-    const nextHeight = Math.max(
-      COMPOSER_INPUT_MIN_HEIGHT,
-      Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height))
-    );
-    setComposerInputHeight(nextHeight);
-  }
-
-  return (
-    <Reanimated.View style={[styles.composerWrap, insetStyle]}>
-      <View onLayout={onLayoutChange} style={styles.composerContent}>
-        {messageError || mediaError || mediaMutationError ? (
-          <Text style={styles.error}>{messageError || mediaError || mediaMutationError}</Text>
-        ) : null}
-        {editingLabel ? (
-          <View style={styles.editingBanner}>
-            <Text style={styles.editingBannerText}>{editingLabel}</Text>
-            <Pressable hitSlop={8} onPress={onCancelEdit}>
-              <Text style={styles.editingCancelText}>Cancel</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {!editingLabel && replyingToMessage ? (
-          <View style={styles.replyComposerBanner}>
-            <View style={styles.replyComposerAccent} />
-            <View style={styles.replyComposerIcon}>
-              <Ionicons name="arrow-undo-outline" size={14} color={ROOM_COLORS.cool} />
-            </View>
-            <View style={styles.replyComposerCopy}>
-              <Text numberOfLines={1} style={styles.replyComposerLabel}>{replyingToMessage.authorDisplayName}</Text>
-              <Text numberOfLines={2} style={styles.replyComposerPreview}>
-                {memoryMessageReplyPreview(replyingToMessage)}
-              </Text>
-            </View>
-            <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onCancelReply} style={styles.replyComposerClose}>
-              <Ionicons name="close" size={15} color={ROOM_COLORS.muted} />
-            </Pressable>
-          </View>
-        ) : null}
-        <View style={styles.composer}>
-          <View style={styles.messageBox}>
-            <TextInput
-              maxLength={MEMORY_TEXT_MAX_LENGTH}
-              multiline
-              onContentSizeChange={handleComposerContentSizeChange}
-              onChangeText={onChangeMessage}
-              onFocus={onInputFocus}
-              placeholder={themeCopy.composerPlaceholder}
-              placeholderTextColor={ROOM_COLORS.muted}
-              scrollEnabled={composerCanScroll}
-              style={[
-                styles.composerInput,
-                Platform.OS === "web" ? styles.composerInputWeb : styles.composerInputNative,
-                { height: composerInputHeight }
-              ]}
-              ref={inputRef}
-              value={message}
-            />
-          </View>
-          <Pressable
-            accessibilityLabel={editingLabel ? "Save message" : "Send message"}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !canSend }}
-            disabled={!canSend}
-            onPress={onSend}
-            style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          >
-            <Ionicons name={editingLabel ? "checkmark" : "send"} size={Platform.OS === "web" ? 15 : 17} color={ROOM_COLORS.onCool} />
-          </Pressable>
-        </View>
-      </View>
-    </Reanimated.View>
   );
 }
 
@@ -5949,7 +6119,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     left: 0,
     maxWidth: ROOM_MAX_WIDTH,
     paddingBottom: 10,
-    paddingHorizontal: 18,
+    paddingHorizontal: ROOM_HEADER_HORIZONTAL_PADDING,
     paddingTop: spacing.sm,
     position: "absolute",
     right: 0,
@@ -5965,7 +6135,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    minHeight: 34,
+    minHeight: ROOM_HEADER_CONTROL_SIZE,
     zIndex: 2
   },
   headerActions: {
@@ -5977,9 +6147,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
     alignItems: "center",
     backgroundColor: "transparent",
     borderRadius: radius.pill,
-    height: 34,
+    height: ROOM_HEADER_CONTROL_SIZE,
     justifyContent: "center",
-    width: 34
+    width: ROOM_HEADER_CONTROL_SIZE
   },
   headerBackButton: {
     marginLeft: -8
@@ -5994,18 +6164,31 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   sharedRoomTitleLayer: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 1
+    zIndex: 3
   },
   sharedRoomTitle: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
     position: "absolute"
   },
+  expandedRoomTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 20,
+    lineHeight: 27,
+    paddingLeft: ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE,
+    minWidth: 0
+  },
+  expandedRoomTitlePlaceholder: {
+    opacity: 0
+  },
   compactRoomTitle: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
+    flexShrink: 1,
     fontSize: 19,
-    lineHeight: 25
+    lineHeight: 25,
+    minWidth: 0
   },
   membersCompactTitle: {
     fontSize: 19,
@@ -6016,13 +6199,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   roomIdentity: {
     gap: ROOM_HEADER_SECTION_GAP,
-    paddingHorizontal: 8
+    paddingHorizontal: ROOM_HEADER_CONTENT_INSET
   },
   roomMetaRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.base,
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     minWidth: 0
   },
   roomMetaGroup: {
@@ -6030,9 +6213,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexDirection: "row",
     gap: 6,
     minWidth: 0
-  },
-  roomMetaLocationGroup: {
-    flexShrink: 1
   },
   roomMetaIconSlot: {
     alignItems: "center",
@@ -6048,22 +6228,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
   roomMetaDateText: {
     flexShrink: 1,
     minWidth: 0
-  },
-  occasionChip: {
-    alignSelf: "flex-start",
-    backgroundColor: ROOM_COLORS.coolDim,
-    borderColor: ROOM_COLORS.coolBorder,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    maxWidth: "100%",
-    paddingHorizontal: 10,
-    paddingVertical: 5
-  },
-  occasionChipText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.coolOnContainer,
-    fontSize: 11,
-    lineHeight: 14
   },
   roomFriendsRow: {
     alignItems: "center",
@@ -6115,7 +6279,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     backgroundColor: ROOM_COLORS.panel,
     borderRadius: radius.input,
     flexDirection: "row",
-    marginHorizontal: 8,
+    marginHorizontal: ROOM_HEADER_CONTENT_INSET,
     overflow: "hidden",
     padding: 2,
     position: "relative"
@@ -6170,9 +6334,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     zIndex: 1
   },
   roomPager: {
-    flex: 1
+    flex: 1,
+    position: "relative"
   },
   roomPagerPage: {
+    ...StyleSheet.absoluteFillObject,
     flex: 1
   },
   chatBottomOverlay: {
@@ -6269,6 +6435,31 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   chatTimelineHidden: {
     opacity: 0
+  },
+  chatLatestButton: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: spacing.base,
+    position: "absolute",
+    right: spacing.lg,
+    shadowColor: ROOM_COLORS.black,
+    shadowOffset: { height: 5, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    zIndex: 5
+  },
+  chatLatestButtonText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onCool,
+    fontSize: 12,
+    lineHeight: 15
   },
   chatWallpaper: {
     ...StyleSheet.absoluteFillObject,
@@ -6435,6 +6626,12 @@ function createStyles(ROOM_COLORS: RoomColors) {
   swipeReplyContent: {
     width: "100%"
   },
+  swipeReplyAction: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingLeft: CHAT_ROW_SIDE_PADDING,
+    width: REPLY_SWIPE_MAX_TRANSLATE
+  },
   swipeReplyIndicator: {
     alignItems: "center",
     backgroundColor: ROOM_COLORS.surfaceHigh,
@@ -6443,19 +6640,55 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderRadius: radius.pill,
     height: 32,
     justifyContent: "center",
-    left: CHAT_ROW_SIDE_PADDING,
-    marginTop: -16,
-    position: "absolute",
     shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 4, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
-    top: "50%",
     width: 32
   },
   messageBubbleFrame: {
     flexShrink: 1,
     position: "relative"
+  },
+  messageStatusStack: {
+    alignItems: "flex-start",
+    flexShrink: 1,
+    gap: 4
+  },
+  messageStatusStackMine: {
+    alignItems: "flex-end"
+  },
+  failedMessageActions: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.danger,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    marginHorizontal: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5
+  },
+  failedMessageActionsMine: {
+    alignSelf: "flex-end"
+  },
+  failedMessageText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.danger,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  failedMessageButton: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 3,
+    paddingVertical: 1
+  },
+  failedMessageButtonText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    fontSize: 11,
+    lineHeight: 14
   },
   textMessageFrame: {
     maxWidth: Platform.OS === "web" ? "68%" : "73%"
@@ -6704,7 +6937,8 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.onSurface,
     flexShrink: 1,
     flexWrap: "wrap",
-    includeFontPadding: false
+    includeFontPadding: false,
+    minWidth: 0
   },
   inlineTimestampText: {
     ...fontStyles.semiBold,
@@ -6724,7 +6958,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: "transparent",
     fontSize: 11,
     includeFontPadding: false,
-    lineHeight: 13,
+    lineHeight: 5,
     opacity: 0
   },
   inlineTimestampPinnedMeta: {
@@ -6804,6 +7038,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
     width: "100%"
   },
   gridVideoPreview: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: ROOM_COLORS.mediaPanel,
+    height: "100%",
+    overflow: "hidden",
+    width: "100%"
+  },
+  videoThumbnailLayer: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: ROOM_COLORS.mediaPanel,
     height: "100%",

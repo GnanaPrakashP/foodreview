@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { supabase } from "@/api/supabase";
 import {
@@ -50,6 +50,7 @@ const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
 const recentMediaMessageExpiries = new Map<string, number>();
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
 type DeleteMemoryItemsInput = { messageIds?: string[]; photoIds?: string[] };
+type AddMemoryMessageInput = { body: string; clientId?: string; replacesMessageId?: string; replyToMessageId?: string | null };
 type MemoryDeleteSets = {
   messageIds: Set<string>;
   photoIds: Set<string>;
@@ -588,7 +589,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
-    mutationFn: (input: { body: string; clientId?: string; replyToMessageId?: string | null }) => (
+    mutationFn: (input: AddMemoryMessageInput) => (
       addMemoryMessage(roomId, input.body, input.replyToMessageId)
     ),
     onMutate: async (input) => {
@@ -630,9 +631,12 @@ export function useAddMemoryMessageMutation(roomId: string) {
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
         if (!current) return current;
         if (current.messages.some((message) => message.id === optimisticMessage.id)) return current;
+        const messages = input.replacesMessageId
+          ? current.messages.filter((message) => message.id !== input.replacesMessageId)
+          : current.messages;
         return {
           ...current,
-          messages: [...current.messages, optimisticMessage]
+          messages: [...messages, optimisticMessage]
         };
       });
 
@@ -650,11 +654,26 @@ export function useAddMemoryMessageMutation(roomId: string) {
           .sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
       });
 
-      return { previousList, previousRoom };
+      return { optimisticMessage, previousList, previousRoom };
     },
-    onError: (_error, _input, context) => {
-      if (context?.previousRoom) {
-        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+    onError: (_error, input, context) => {
+      if (context?.optimisticMessage) {
+        const failedMessage: MemoryMessage = {
+          ...context.optimisticMessage,
+          deliveryStatus: "failed"
+        };
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+          const base = current ?? context.previousRoom;
+          if (!base) return base;
+          const messages = base.messages.filter((message) => message.id !== input.replacesMessageId);
+          const hasOptimistic = messages.some((message) => message.id === failedMessage.id);
+          return {
+            ...base,
+            messages: hasOptimistic
+              ? messages.map((message) => (message.id === failedMessage.id ? failedMessage : message))
+              : [...messages, failedMessage]
+          };
+        });
       }
       if (context?.previousList) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
@@ -666,6 +685,17 @@ export function useAddMemoryMessageMutation(roomId: string) {
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
+}
+
+export function useDismissFailedMemoryMessage(roomId: string) {
+  const queryClient = useQueryClient();
+  return useCallback((messageId: string) => {
+    queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+      current
+        ? { ...current, messages: current.messages.filter((message) => message.id !== messageId) }
+        : current
+    ));
+  }, [queryClient, roomId]);
 }
 
 export function useEditMemoryMessageMutation(roomId: string) {
@@ -827,6 +857,7 @@ export function useUpdateMemoryStopMutation(roomId: string) {
     mutationFn: (input: Omit<UpdateMemoryStopInput, "roomId">) => updateMemoryStop({ ...input, roomId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
 }

@@ -3,7 +3,7 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { Link } from "expo-router";
 import { usePathname, useRouter } from "expo-router";
 import { Bookmark, Flag, Heart, MapPin, MessageCircle, MoreVertical, Share2, Star, UserX, Utensils } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   useDeletePostMutation,
@@ -52,7 +52,7 @@ function compactLocationLabel(area: string | null, address: string | null) {
   return label.length <= 34 ? label : `${label.slice(0, 32).trimEnd()}...`;
 }
 
-export function PostCard({ post }: PostCardProps) {
+function PostCardComponent({ post }: PostCardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { themeColors } = useThemePreference();
@@ -318,7 +318,16 @@ export function PostCard({ post }: PostCardProps) {
           {primaryMedia.mediaType === "video" ? (
             <PostVideoPreview uri={primaryMedia.publicUrl} />
           ) : (
-            <Image source={{ uri: primaryMedia.publicUrl }} style={styles.image} contentFit="cover" />
+            <Image
+              cachePolicy="memory-disk"
+              contentFit="cover"
+              decodeFormat="rgb"
+              enforceEarlyResizing
+              priority="normal"
+              recyclingKey={primaryMedia.publicUrl}
+              source={{ uri: primaryMedia.publicUrl }}
+              style={styles.image}
+            />
           )}
           {post.media.length > 1 ? (
             <View style={styles.mediaCount}>
@@ -381,6 +390,8 @@ export function PostCard({ post }: PostCardProps) {
     </View>
   );
 }
+
+export const PostCard = memo(PostCardComponent);
 
 function PostVideoPreview({ uri }: { uri: string }) {
   const { themeColors } = useThemePreference();

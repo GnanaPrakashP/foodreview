@@ -1,7 +1,7 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
-import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, mapMemorySummary } from "@/services/memoryMapper";
+import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, mapMemorySummary, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   memoryTablesError,
   normalizeUsername,
@@ -186,6 +186,8 @@ type MemoryRoomSummaryRow = {
   visit_date: string | null;
 };
 
+type MemoryRoomSummaryStopRow = Pick<MemoryStopRow, "created_at" | "name" | "position" | "room_id">;
+
 function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
   if (!createdAt || !id) return null;
   return `${createdAt}${MEMORY_PAGE_CURSOR_SEPARATOR}${id}`;
@@ -247,6 +249,11 @@ function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
     occasionConfidence: occasionConfidenceForRoom(row),
     occasionConfirmedByUser: occasionConfirmedForRoom(row),
     themeKey: themeKeyForRoom(row),
+    placeNames: memoryPlaceNamesForRoom({
+      area: row.area,
+      id: row.id,
+      restaurant_name: row.restaurant_name
+    }),
     restaurantName: row.restaurant_name,
     area: row.area,
     visitDate: row.visit_date,
@@ -280,6 +287,31 @@ async function dishCountsByRoomId(roomIds: string[]): Promise<Map<string, number
     counts.set(row.room_id, (counts.get(row.room_id) ?? 0) + 1);
   }
   return counts;
+}
+
+async function memoryStopsByRoomId(roomIds: string[]): Promise<Map<string, MemoryRoomSummaryStopRow[]>> {
+  const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean)));
+  const stopsByRoomId = new Map<string, MemoryRoomSummaryStopRow[]>();
+  if (uniqueRoomIds.length === 0) return stopsByRoomId;
+
+  const { data, error } = await supabase
+    .from("shared_memory_stops")
+    .select("room_id, name, position, created_at")
+    .in("room_id", uniqueRoomIds)
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true })
+    .returns<MemoryRoomSummaryStopRow[]>();
+
+  if (error) {
+    if (isMissingMemoryStopsSchema(error)) return stopsByRoomId;
+    throw memoryTablesError(error);
+  }
+
+  for (const stop of data ?? []) {
+    stopsByRoomId.set(stop.room_id, [...(stopsByRoomId.get(stop.room_id) ?? []), stop]);
+  }
+
+  return stopsByRoomId;
 }
 
 async function assertMemoryRoomMember(roomId: string, username: string) {
@@ -369,7 +401,7 @@ async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummar
   const roomIds = rooms.map((room) => room.id);
   if (roomIds.length === 0) return [];
 
-  const [members, messages, photos, dishes] = await Promise.all([
+  const [members, messages, photos, dishes, stopsByRoomId] = await Promise.all([
     supabase.from("shared_memory_members").select("room_id").in("room_id", roomIds),
     supabase
       .from("shared_memory_messages")
@@ -377,7 +409,8 @@ async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummar
       .in("room_id", roomIds)
       .order("created_at", { ascending: false }),
     supabase.from("shared_memory_photos").select("room_id").in("room_id", roomIds),
-    supabase.from("shared_memory_dishes").select("room_id").in("room_id", roomIds)
+    supabase.from("shared_memory_dishes").select("room_id").in("room_id", roomIds),
+    memoryStopsByRoomId(roomIds)
   ]);
 
   if (members.error) throw memoryTablesError(members.error);
@@ -401,6 +434,7 @@ async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummar
     messages: messages.data ?? [],
     photos: photos.data ?? [],
     reads,
+    stops: stopsByRoomId.get(room.id) ?? [],
     viewerName: username,
     room
   })).sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
@@ -428,12 +462,22 @@ export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
     }
 
     const rows: MemoryRoomSummaryRow[] = Array.isArray(data) ? data as MemoryRoomSummaryRow[] : [];
-    const dishCounts = await dishCountsByRoomId(rows.map((row) => row.id));
+    const roomIds = rows.map((row) => row.id);
+    const [dishCounts, stopsByRoomId] = await Promise.all([
+      dishCountsByRoomId(roomIds),
+      memoryStopsByRoomId(roomIds)
+    ]);
     summaries.push(...rows.map((row) => {
       const summary = mapMemorySummaryRow(row);
+      const placeNames = memoryPlaceNamesForRoom({
+        area: row.area,
+        id: row.id,
+        restaurant_name: row.restaurant_name
+      }, stopsByRoomId.get(row.id) ?? []);
       return {
         ...summary,
-        dishCount: dishCounts.get(summary.id) ?? summary.dishCount
+        dishCount: dishCounts.get(summary.id) ?? summary.dishCount,
+        placeNames
       };
     }));
     if (rows.length < MEMORY_ROOM_SUMMARY_PAGE_SIZE) break;

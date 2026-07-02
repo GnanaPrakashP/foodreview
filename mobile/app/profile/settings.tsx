@@ -16,8 +16,8 @@ import { confirmAction, notify } from "@/utils/confirm";
 import type { AccountType } from "@/types/models";
 
 // Slide-in/out timing, matched to the table-memory members panel (PeoplePanel).
-const SETTINGS_ENTER_MS = 230;
-const SETTINGS_EXIT_MS = 190;
+const SETTINGS_ENTER_MS = 150;
+const SETTINGS_EXIT_MS = 120;
 const SETTINGS_PANEL_TRAVEL_MAX = 640;
 const SEGMENT_ANIMATION_MS = 180;
 const SEGMENT_GAP = 2;

@@ -21,6 +21,36 @@ function normalizeStopType(value: string): MemoryStopType {
   return (MEMORY_STOP_TYPES as readonly string[]).includes(value) ? (value as MemoryStopType) : "other";
 }
 
+function cleanMemoryPlaceName(value?: string | null) {
+  return value?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+export function memoryPlaceNamesForRoom(
+  room: Pick<MemoryRoomRow, "area" | "id" | "restaurant_name">,
+  stops: Array<Pick<MemoryStopRow, "created_at" | "name" | "position" | "room_id">> = []
+) {
+  const seen = new Set<string>();
+  const stopNames = stops
+    .filter((stop) => stop.room_id === room.id)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map((stop) => cleanMemoryPlaceName(stop.name))
+    .filter((name) => {
+      if (!name) return false;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  if (stopNames.length > 0) return stopNames;
+
+  const restaurantName = cleanMemoryPlaceName(room.restaurant_name);
+  if (restaurantName && restaurantName.toLowerCase() !== "table memory") return [restaurantName];
+
+  const area = cleanMemoryPlaceName(room.area);
+  return area ? [area] : [];
+}
+
 export function mapMemoryStop(stop: MemoryStopRow, namesByUsername: Record<string, string>): MemoryStop {
   return {
     id: stop.id,
@@ -114,6 +144,7 @@ export function mapMemorySummary({
   messages,
   photos,
   reads,
+  stops = [],
   viewerName,
   room
 }: {
@@ -122,6 +153,7 @@ export function mapMemorySummary({
   messages: Array<{ room_id: string; author_name?: string | null; body: string; created_at: string }>;
   photos: Array<{ room_id: string }>;
   reads?: Array<{ room_id: string; last_read_at: string }>;
+  stops?: Array<Pick<MemoryStopRow, "created_at" | "name" | "position" | "room_id">>;
   viewerName?: string;
   room: MemoryRoomRow;
 }): MemoryRoomSummary {
@@ -144,6 +176,7 @@ export function mapMemorySummary({
     occasionConfidence: occasionConfidenceForRoom(room),
     occasionConfirmedByUser: occasionConfirmedForRoom(room),
     themeKey: themeKeyForRoom(room),
+    placeNames: memoryPlaceNamesForRoom(room, stops),
     restaurantName: room.restaurant_name,
     area: room.area,
     visitDate: room.visit_date,
