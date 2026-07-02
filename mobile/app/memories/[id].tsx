@@ -412,8 +412,8 @@ function errorMessage(error: unknown) {
 
 function memoryChatUser(username: string, displayName: string) {
   // No avatar URL is available on room data, so the vendor falls back to its
-  // initials circle for received messages; own messages hide the avatar via
-  // isUserAvatarVisible={false}.
+  // initials circle for received messages; own messages show a bubble tail
+  // instead (isUserAvatarVisible={false} hides the own-side avatar).
   return {
     _id: username || displayName || "unknown",
     name: displayName || username || "Unknown"
@@ -448,6 +448,19 @@ function memoryChatMessageAttachments(message: MemoryChatMainMessage | undefined
   if (message.memoryMessage) return message.memoryMessage.attachments;
   if (message.memoryPhoto) return [message.memoryPhoto];
   return [];
+}
+
+// Same grouping rule the vendor uses for corner rounding: consecutive
+// messages from the same user on the same day form one visual run.
+function memoryChatIsGroupedToPrevious(
+  current: MemoryChatMainMessage | undefined,
+  previous: MemoryChatMainMessage | undefined
+) {
+  return Boolean(
+    current && previous?.user && previous.user._id === current.user._id &&
+    previous.createdAt && current.createdAt &&
+    new Date(current.createdAt).toDateString() === new Date(previous.createdAt).toDateString()
+  );
 }
 
 // Widest a media block can be and still fit inside its bubble: screen minus
@@ -672,19 +685,28 @@ function MemoryChatMainSurface({
     );
   }, []);
 
-  const renderBubble = useCallback((bubbleProps: ChatMainBubbleProps<MemoryChatMainMessage>) => (
-    <ChatMainBubble
-      {...bubbleProps}
-      wrapperStyle={{
-        left: styles.chatMainBubbleLeft,
-        right: styles.chatMainBubbleRight
-      }}
-      bottomContainerStyle={{
-        left: styles.chatMainBubbleBottomHidden,
-        right: styles.chatMainBubbleBottomHidden
-      }}
-    />
-  ), []);
+  // Own messages carry a WhatsApp-style tail at the bubble's top-right corner
+  // on the first message of each group (received messages show the sender's
+  // initials icon instead, so no left tail). The tail itself is rendered by
+  // renderCustomView so it lives INSIDE the vendor's animated wrapper and
+  // scales together with the bubble on long-press.
+  const renderBubble = useCallback((bubbleProps: ChatMainBubbleProps<MemoryChatMainMessage>) => {
+    const showTail = bubbleProps.position === "right" &&
+      !memoryChatIsGroupedToPrevious(bubbleProps.currentMessage, bubbleProps.previousMessage);
+    return (
+      <ChatMainBubble
+        {...bubbleProps}
+        wrapperStyle={{
+          left: styles.chatMainBubbleLeft,
+          right: [styles.chatMainBubbleRight, showTail && styles.chatMainBubbleRightWithTail]
+        }}
+        bottomContainerStyle={{
+          left: styles.chatMainBubbleBottomHidden,
+          right: styles.chatMainBubbleBottomHidden
+        }}
+      />
+    );
+  }, []);
 
   const renderMessageText = useCallback((textProps: ChatMainMessageTextProps<MemoryChatMainMessage>) => {
     const { currentMessage, position = "left" } = textProps;
@@ -771,9 +793,43 @@ function MemoryChatMainSurface({
     );
   }, [onOpenMedia, screenWidth]);
 
-  const renderCustomView = useCallback((props: { currentMessage: MemoryChatMainMessage; position?: "left" | "right" }) => {
-    const { currentMessage, position = "left" } = props;
-    if (position !== "left" || !currentMessage.showSenderDetails) return null;
+  const renderCustomView = useCallback((props: {
+    currentMessage: MemoryChatMainMessage;
+    position?: "left" | "right";
+    previousMessage?: MemoryChatMainMessage;
+  }) => {
+    const { currentMessage, position = "left", previousMessage } = props;
+
+    // Own bubbles: the tail, absolutely positioned inside the bubble wrapper
+    // so it scales with the bubble during the long-press animation. Drawn as
+    // SVG: the fill overlaps ~4px into the bubble to paint over the bubble's
+    // own border at the seam, and the stroke continues that border along the
+    // tail's outer edge only — so box and tail read as one outlined shape.
+    if (position === "right") {
+      if (memoryChatIsGroupedToPrevious(currentMessage, previousMessage)) return null;
+      return (
+        <Svg
+          height={11}
+          pointerEvents="none"
+          style={styles.chatMainBubbleTail}
+          viewBox="0 0 11 11"
+          width={11}
+        >
+          <Path
+            d="M0 0 H10.6 C9.8 3.8 7 7.6 3.2 9.8 L0 9 Z"
+            fill={ROOM_COLORS.sentBubble}
+          />
+          <Path
+            d="M0 0.5 H10.4 C9.6 3.9 6.9 7.5 3.4 9.6"
+            fill="none"
+            stroke={ROOM_COLORS.sentBubbleBorder}
+            strokeWidth={1}
+          />
+        </Svg>
+      );
+    }
+
+    if (!currentMessage.showSenderDetails) return null;
     const name = currentMessage.user?.name ?? "";
     if (!name) return null;
     const hasMedia = memoryChatMessageAttachments(currentMessage).length > 0;
@@ -7323,6 +7379,19 @@ function createStyles(ROOM_COLORS: RoomColors) {
     backgroundColor: ROOM_COLORS.sentBubble,
     borderColor: ROOM_COLORS.sentBubbleBorder,
     borderWidth: 1
+  },
+  // Squared corner behind the tail so the notch sits flush with the bubble.
+  chatMainBubbleRightWithTail: {
+    borderTopRightRadius: 2
+  },
+  // SVG tail anchor: offsets are relative to the bubble's padding box, so
+  // top -1 reaches the outer border edge; right -8 lets the 11px-wide SVG
+  // overlap ~4px into the bubble (covering the border seam) while the tip
+  // protrudes ~7px, WhatsApp-style.
+  chatMainBubbleTail: {
+    position: "absolute",
+    right: -8,
+    top: -1
   },
   chatMainBubbleBottomHidden: {
     height: 0,
