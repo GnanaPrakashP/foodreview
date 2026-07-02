@@ -1,0 +1,79 @@
+// @ts-nocheck
+import { StyleProp, ViewStyle } from 'react-native'
+
+export type Omit<T, K> = Pick<T, Exclude<keyof T, K>>
+
+export interface LeftRightStyle<T> {
+  left?: StyleProp<T>
+  right?: StyleProp<T>
+}
+
+type renderFunction = (x: unknown) => React.ReactNode
+
+export interface User {
+  _id: string | number
+  name?: string
+  // null is meaningful at runtime: Message.renderAvatar treats it as
+  // "render no avatar at all" (vs undefined, which shows the placeholder).
+  avatar?: string | number | renderFunction | null
+}
+
+export interface Reply {
+  title: string
+  value: string
+  messageId?: number | string
+}
+
+export interface QuickReplies {
+  type: 'radio' | 'checkbox'
+  values: Reply[]
+  keepIt?: boolean
+}
+
+export interface ReplyMessage extends Pick<IMessage, '_id' | 'text' | 'user' | 'audio' | 'image'> {}
+
+export interface MessageReaction {
+  /** The emoji character (e.g. '👍') */
+  emoji: string
+  /** IDs of the users who reacted with this emoji */
+  userIds: (string | number)[]
+}
+
+export interface IMessage {
+  _id: string | number
+  text: string
+  createdAt: Date | number
+  user: User
+  image?: string
+  video?: string
+  audio?: string
+  system?: boolean
+  sent?: boolean
+  received?: boolean
+  pending?: boolean
+  /** True while this message's text is still being streamed in (shows a typing cursor) */
+  streaming?: boolean
+  quickReplies?: QuickReplies
+  replyMessage?: ReplyMessage
+  reactions?: MessageReaction[]
+  location?: {
+    latitude: number
+    longitude: number
+  }
+}
+
+export type IChatMessage = IMessage
+
+export interface MessageVideoProps<TMessage extends IMessage> {
+  currentMessage: TMessage
+  containerStyle?: StyleProp<ViewStyle>
+  videoStyle?: StyleProp<ViewStyle>
+  videoProps?: object
+}
+
+export interface MessageAudioProps<TMessage extends IMessage> {
+  currentMessage: TMessage
+  containerStyle?: StyleProp<ViewStyle>
+  audioStyle?: StyleProp<ViewStyle>
+  audioProps?: object
+}

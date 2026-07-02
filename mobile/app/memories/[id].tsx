@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import * as Clipboard from "expo-clipboard";
 import { PenLine, Star, Utensils } from "lucide-react-native";
 import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
@@ -15,9 +16,11 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type TextLayoutEventData,
   Modal,
   Platform,
   Pressable,
@@ -66,7 +69,18 @@ import {
   type MemoryRoomMode as RoomMode,
   type MemoryRoomTabMode as RoomTabMode
 } from "@/features/memories/room/useMemoryRoomController";
-import { MemoryComposer } from "@/features/memories/room/MemoryComposer";
+import {
+  Actions as ChatMainActions,
+  Bubble as ChatMainBubble,
+  Chat as ChatMain,
+  Message as ChatMainMessageRow
+} from "@/vendor/reactNativeChat";
+import type { ActionsProps as ChatMainActionsProps } from "@/vendor/reactNativeChat/Actions";
+import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
+import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
+import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
+import type { IMessage as ChatMainMessage, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
+import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -147,6 +161,7 @@ type OpenMediaHandler = (media: MemoryPhoto, group?: MemoryPhoto[]) => void;
 type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
   | { type: "photo"; value: MemoryPhoto };
+type MemoryReactionState = Record<string, Record<string, Array<string | number>>>;
 type MemoryCaptureAsset = {
   duration?: number | null;
   fileSize?: number | null;
@@ -155,6 +170,14 @@ type MemoryCaptureAsset = {
   type?: string | null;
   uri: string;
   width?: number | null;
+};
+type MemoryChatMainMessage = ChatMainMessage & {
+  kind: "dish" | "media" | "message";
+  memoryDish?: MemoryDish;
+  memoryMessage?: MemoryMessage;
+  memoryPhoto?: MemoryPhoto;
+  extraAttachments?: MemoryPhoto[];
+  showSenderDetails?: boolean;
 };
 const ROOM_MAX_WIDTH = 640;
 // Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
@@ -299,6 +322,14 @@ const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
 const CHAT_TIMELINE_WINDOW_SIZE = 9;
 const CHAT_TIMELINE_LOAD_OLDER_DEBOUNCE_MS = 650;
 const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
+// How far the pinned time hangs below the text's layout box so the visible
+// line under the last text line cuts the time in half: half the time's 13px
+// line height (~6.5) minus the ~3px of line-height slack the 22px text line
+// already leaves below its glyphs.
+const CHAT_TIME_PINNED_DROP = 3;
+// Minimum horizontal gap between the end of the last text line and the time.
+const CHAT_TIME_GAP = 8;
+const MEMORY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😋", "👏"] as const;
 const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
 const MEDIA_GALLERY_WINDOW_SIZE = 7;
@@ -377,6 +408,776 @@ function errorMessage(error: unknown) {
   if (!error) return undefined;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function memoryChatUser(username: string, displayName: string) {
+  // No avatar URL is available on room data, so the vendor falls back to its
+  // initials circle for received messages; own messages hide the avatar via
+  // isUserAvatarVisible={false}.
+  return {
+    _id: username || displayName || "unknown",
+    name: displayName || username || "Unknown"
+  };
+}
+
+function memoryChatReplyMessage(message: MemoryMessage): ChatMainReplyMessage {
+  return {
+    _id: message.id,
+    text: message.body.trim() || (message.attachments.length > 0 ? "Media" : "Message"),
+    user: memoryChatUser(message.authorName, message.authorDisplayName),
+    image: message.attachments.find((attachment) => attachment.mediaType === "image")?.publicUrl ?? undefined
+  };
+}
+
+function memoryChatReactionsForMessage(messageId: string, reactions: MemoryReactionState): ChatMainMessageReaction[] {
+  return Object.entries(reactions[messageId] ?? {})
+    .filter(([, userIds]) => userIds.length > 0)
+    .map(([emoji, userIds]) => ({ emoji, userIds }));
+}
+
+function memoryChatPrimaryMedia(message: MemoryMessage) {
+  return message.attachments[0] ?? null;
+}
+
+function memoryChatMediaUrl(media: MemoryPhoto | null | undefined) {
+  return media?.publicUrl ?? undefined;
+}
+
+function memoryChatMessageAttachments(message: MemoryChatMainMessage | undefined): MemoryPhoto[] {
+  if (!message) return [];
+  if (message.memoryMessage) return message.memoryMessage.attachments;
+  if (message.memoryPhoto) return [message.memoryPhoto];
+  return [];
+}
+
+// Widest a media block can be and still fit inside its bubble: screen minus
+// list padding, the vendor's 8px row margin, bubble border + media frame
+// insets (8), and the 36px avatar column with its 8px gap on received rows
+// (kept symmetric so sent and received media render at the same size).
+function memoryChatMediaWidthBudget(screenWidth: number) {
+  return Math.max(120, Math.floor(screenWidth - CHAT_ROW_SIDE_PADDING * 2 - 60));
+}
+
+function memoryChatSingleMediaSize(media: MemoryPhoto, screenWidth: number): MediaPreviewSize {
+  const size = getSingleMediaPreviewSize({
+    imageHeight: media.imageHeight,
+    imageWidth: media.imageWidth,
+    screenWidth
+  });
+  const budget = memoryChatMediaWidthBudget(screenWidth);
+  if (size.width <= budget) return size;
+  return {
+    height: Math.max(1, Math.round((size.height * budget) / size.width)),
+    width: budget
+  };
+}
+
+function memoryChatGridWidth(screenWidth: number) {
+  return Math.min(getMultiMediaGridWidth(screenWidth), memoryChatMediaWidthBudget(screenWidth));
+}
+
+function memoryChatTimestampLabel(message: MemoryChatMainMessage) {
+  if (message.memoryMessage) return getMessageTimestampLabel(message.memoryMessage);
+  if (!message.createdAt) return "";
+  const value = message.createdAt instanceof Date ? message.createdAt.toISOString() : String(message.createdAt);
+  return formatDisplayTime(value);
+}
+
+function buildMemoryChatMainMessages({
+  data,
+  myUsername,
+  reactions
+}: {
+  data: MemoryRoom;
+  myUsername: string;
+  reactions: MemoryReactionState;
+}): MemoryChatMainMessage[] {
+  const timeline: TimelineItem[] = [
+    ...data.messages.map((message): TimelineItem => ({
+      createdAt: message.createdAt,
+      id: `message:${message.id}`,
+      type: "message",
+      value: message
+    })),
+    ...data.photos.filter((photo) => !photo.messageId).map((photo): TimelineItem => ({
+      createdAt: photo.createdAt,
+      id: `media:${photo.id}`,
+      type: "media",
+      value: photo
+    })),
+    ...data.dishes.map((dish): TimelineItem => ({
+      createdAt: dish.createdAt,
+      id: `dish:${dish.id}`,
+      type: "dish",
+      value: dish
+    }))
+  ];
+
+  // Sorted newest-first for the inverted chat list, so the chronologically
+  // previous item (used for sender grouping) is the NEXT array entry.
+  // Rows with nothing to show (whitespace-only bodies from old data, photos
+  // without any URL) would render as empty bubble shells — drop them before
+  // grouping so sender headers don't anchor to invisible rows.
+  const sorted = timeline
+    .sort((a, b) => timeValue(b.createdAt) - timeValue(a.createdAt))
+    .filter((item) => {
+      if (item.type === "message") return Boolean(item.value.body.trim()) || item.value.attachments.length > 0;
+      if (item.type === "media") return Boolean(item.value.publicUrl);
+      return true;
+    });
+
+  return sorted
+    .map((item, index): MemoryChatMainMessage => {
+      const senderUsername = getTimelineSenderUsername(item);
+      const mine = senderUsername === myUsername;
+      const previousItem = sorted[index + 1] ?? null;
+      const showSenderDetails = !mine && (
+        !previousItem ||
+        previousItem.type === "dish" ||
+        getTimelineSenderUsername(previousItem) !== senderUsername ||
+        getTimelineDateKey(previousItem) !== getTimelineDateKey(item)
+      );
+
+      if (item.type === "message") {
+        const message = item.value;
+        const primaryMedia = memoryChatPrimaryMedia(message);
+        const primaryMediaUrl = memoryChatMediaUrl(primaryMedia);
+
+        return {
+          _id: message.id,
+          createdAt: new Date(message.createdAt),
+          extraAttachments: message.attachments.slice(1),
+          image: primaryMedia?.mediaType === "image" ? primaryMediaUrl : undefined,
+          kind: "message",
+          memoryMessage: message,
+          reactions: memoryChatReactionsForMessage(message.id, reactions),
+          replyMessage: message.replyToMessage
+            ? {
+              _id: message.replyToMessage.id,
+              text: message.replyToMessage.body || "Message",
+              user: memoryChatUser(message.replyToMessage.authorDisplayName, message.replyToMessage.authorDisplayName)
+            }
+            : undefined,
+          showSenderDetails,
+          streaming: message.deliveryStatus === "pending",
+          text: message.body.trim(),
+          user: memoryChatUser(message.authorName, message.authorDisplayName),
+          video: primaryMedia?.mediaType === "video" ? primaryMediaUrl : undefined
+        };
+      }
+
+      if (item.type === "media") {
+        const media = item.value;
+        const mediaUrl = memoryChatMediaUrl(media);
+        return {
+          _id: `media:${media.id}`,
+          createdAt: new Date(media.createdAt),
+          image: media.mediaType === "image" ? mediaUrl : undefined,
+          kind: "media",
+          memoryPhoto: media,
+          showSenderDetails,
+          text: "",
+          user: memoryChatUser(media.uploaderName, media.uploaderDisplayName),
+          video: media.mediaType === "video" ? mediaUrl : undefined
+        };
+      }
+
+      const dish = item.value;
+      return {
+        _id: `dish:${dish.id}`,
+        createdAt: new Date(dish.createdAt),
+        kind: "dish",
+        memoryDish: dish,
+        system: true,
+        text: `${dish.addedByDisplayName} added ${dish.dishName}`,
+        user: memoryChatUser(dish.addedBy, dish.addedByDisplayName)
+      };
+    });
+}
+
+function MemoryChatMainSurface({
+  active,
+  canLoadOlderMessages,
+  data,
+  loadingOlderMessages,
+  message,
+  myUsername,
+  onAddDish,
+  onAddMedia,
+  onAddPeople,
+  onCancelReply,
+  onChangeMessage,
+  onLoadOlderMessages,
+  onOpenDish,
+  onOpenMedia,
+  onReplyMessage,
+  onSend,
+  onToggleReaction,
+  reactions,
+  replyingToMessage,
+  resolvedTheme,
+  themeCopy,
+  typingVisible
+}: {
+  active: boolean;
+  canLoadOlderMessages: boolean;
+  data: MemoryRoom;
+  loadingOlderMessages: boolean;
+  message: string;
+  myUsername: string;
+  onAddDish: () => void;
+  onAddMedia: () => void;
+  onAddPeople: () => void;
+  onCancelReply: () => void;
+  onChangeMessage: (value: string) => void;
+  onLoadOlderMessages: () => void;
+  onOpenDish: (dishId: string) => void;
+  onOpenMedia: OpenMediaHandler;
+  onReplyMessage: (message: MemoryMessage) => void;
+  onSend: (draft?: string) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+  reactions: MemoryReactionState;
+  replyingToMessage: MemoryMessage | null;
+  resolvedTheme: "dark" | "light";
+  themeCopy: OccasionTheme["copy"];
+  typingVisible: boolean;
+}) {
+  const { width: screenWidth } = useWindowDimensions();
+  const chatMessages = useMemo(() => (
+    buildMemoryChatMainMessages({ data, myUsername, reactions })
+  ), [data, myUsername, reactions]);
+  const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
+  const chatActions = useMemo(() => [
+    { title: themeCopy.mediaAction, action: onAddMedia },
+    { title: "Dish", action: onAddDish },
+    { title: "Invite", action: onAddPeople },
+    { title: "Cancel", action: () => undefined }
+  ], [onAddDish, onAddMedia, onAddPeople, themeCopy.mediaAction]);
+
+  const renderActions = useCallback((actionProps: ChatMainActionsProps) => (
+    <ChatMainActions {...actionProps} />
+  ), []);
+
+  // Row-level width caps live on the Message container (whose parent is the
+  // full-width list row, so percentages resolve reliably); the bubble itself
+  // just hugs its content. This replaces the vendor's hardcoded 70% cap.
+  const renderMessage = useCallback((messageProps: ChatMainMessageRowProps<MemoryChatMainMessage>) => {
+    const hasMedia = memoryChatMessageAttachments(messageProps.currentMessage).length > 0;
+    const rowStyle = hasMedia ? styles.chatMainRowMedia : styles.chatMainRowText;
+    return (
+      <ChatMainMessageRow<MemoryChatMainMessage>
+        {...messageProps}
+        containerStyle={{ left: rowStyle, right: rowStyle }}
+      />
+    );
+  }, []);
+
+  const renderBubble = useCallback((bubbleProps: ChatMainBubbleProps<MemoryChatMainMessage>) => (
+    <ChatMainBubble
+      {...bubbleProps}
+      wrapperStyle={{
+        left: styles.chatMainBubbleLeft,
+        right: styles.chatMainBubbleRight
+      }}
+      bottomContainerStyle={{
+        left: styles.chatMainBubbleBottomHidden,
+        right: styles.chatMainBubbleBottomHidden
+      }}
+    />
+  ), []);
+
+  const renderMessageText = useCallback((textProps: ChatMainMessageTextProps<MemoryChatMainMessage>) => {
+    const { currentMessage, position = "left" } = textProps;
+    const body = currentMessage.text?.trim() ?? "";
+    if (!body) return null;
+
+    const mine = position === "right";
+    const time = memoryChatTimestampLabel(currentMessage);
+    const attachments = memoryChatMessageAttachments(currentMessage);
+    const hasMedia = attachments.length > 0;
+    const senderVisible = !hasMedia && !mine && Boolean(currentMessage.showSenderDetails);
+    const bodyStyle = [
+      hasMedia ? styles.mediaCaptionText : styles.textOnlyBubbleText,
+      mine ? styles.messageTextMine : styles.messageTextOther
+    ];
+    // Widest the text content can get: caption width follows the media block,
+    // plain text follows the 80% row cap minus row margin, padding and border.
+    const mediaBlockWidth = !hasMedia
+      ? 0
+      : attachments.length === 1
+        ? memoryChatSingleMediaSize(attachments[0], screenWidth).width
+        : memoryChatGridWidth(screenWidth);
+    const maxContentWidth = hasMedia
+      ? Math.max(80, mediaBlockWidth - 24 + 6)
+      : Math.max(80, Math.round((screenWidth - CHAT_ROW_SIDE_PADDING * 2) * 0.8) - 8 - 24 - (mine ? 0 : 44));
+
+    return (
+      <View
+        style={[
+          hasMedia ? styles.mediaCaptionContainer : styles.chatMainTextContainer,
+          senderVisible && styles.chatMainTextContainerWithSender
+        ]}
+      >
+        <ChatMainBodyWithTime
+          bodyStyle={bodyStyle}
+          linkStyle={mine ? styles.messageLinkTextMine : styles.messageLinkText}
+          maxContentWidth={maxContentWidth}
+          text={body}
+          time={time}
+          timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
+        />
+      </View>
+    );
+  }, [screenWidth]);
+
+  const renderMessageMedia = useCallback((props: { currentMessage: MemoryChatMainMessage }) => {
+    const attachments = memoryChatMessageAttachments(props.currentMessage);
+    if (attachments.length === 0) return null;
+
+    // Media-only messages stamp the time on the media itself; captioned media
+    // gets the inline timestamp at the end of the caption instead.
+    const hasCaption = Boolean(props.currentMessage.text?.trim());
+    const timestamp = hasCaption ? undefined : memoryChatTimestampLabel(props.currentMessage);
+
+    if (attachments.length === 1) {
+      const media = attachments[0];
+      return (
+        <Pressable
+          accessibilityRole="imagebutton"
+          onPress={() => onOpenMedia(media, attachments)}
+          style={styles.chatMainMediaFrame}
+        >
+          <SingleMediaPreview
+            media={media}
+            sizeOverride={memoryChatSingleMediaSize(media, screenWidth)}
+            timestamp={timestamp}
+            timestampPlacement="bottom-right"
+          />
+        </Pressable>
+      );
+    }
+
+    return (
+      <View style={styles.chatMainMediaFrame}>
+        <MediaAttachmentGrid
+          gridWidth={memoryChatGridWidth(screenWidth)}
+          media={attachments}
+          onMediaLongPress={() => undefined}
+          onOpenMedia={onOpenMedia}
+          shouldIgnoreMediaOpen={() => false}
+          timestamp={timestamp}
+        />
+      </View>
+    );
+  }, [onOpenMedia, screenWidth]);
+
+  const renderCustomView = useCallback((props: { currentMessage: MemoryChatMainMessage; position?: "left" | "right" }) => {
+    const { currentMessage, position = "left" } = props;
+    if (position !== "left" || !currentMessage.showSenderDetails) return null;
+    const name = currentMessage.user?.name ?? "";
+    if (!name) return null;
+    const hasMedia = memoryChatMessageAttachments(currentMessage).length > 0;
+    return (
+      <View style={[styles.chatMainSenderHeader, hasMedia && styles.chatMainSenderHeaderMedia]}>
+        <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(name) }]}>
+          {name}
+        </Text>
+      </View>
+    );
+  }, []);
+
+  const renderSystemMessage = useCallback((props: { currentMessage?: MemoryChatMainMessage }) => {
+    const dish = props.currentMessage?.memoryDish;
+    if (!dish) return null;
+    return <MemoryChatMainDishSystemMessage dish={dish} onOpenDish={onOpenDish} />;
+  }, [onOpenDish]);
+
+  return (
+    <View pointerEvents={active ? "auto" : "none"} style={styles.chatMainSurface}>
+      <ChatMain<MemoryChatMainMessage>
+        actions={chatActions}
+        colorScheme={resolvedTheme}
+        disableKeyboardProvider
+        isDayAnimationEnabled
+        isScrollToBottomEnabled
+        isTyping={typingVisible}
+        isUserAvatarVisible={false}
+        keyboardAvoidingViewProps={{ enabled: false }}
+        listProps={{
+          contentContainerStyle: styles.chatMainListContent
+        }}
+        loadEarlierMessagesProps={{
+          isAvailable: canLoadOlderMessages,
+          isInfiniteScrollEnabled: true,
+          isLoading: loadingOlderMessages,
+          onPress: onLoadOlderMessages
+        }}
+        messageTextProps={{
+          hashtag: true,
+          customTextStyle: styles.textOnlyBubbleText,
+          linkStyle: {
+            left: styles.messageLinkText,
+            right: styles.messageLinkTextMine
+          },
+          mention: true,
+          onPress: (_message, url) => {
+            void Linking.openURL(url);
+          },
+          stripPrefix: false,
+          textStyle: {
+            left: styles.messageTextOther,
+            right: styles.messageTextMine
+          }
+        }}
+        messages={chatMessages}
+        messagesContainerStyle={styles.chatMainMessages}
+        onQuickReply={(replies) => {
+          replies.forEach((reply) => {
+            const value = (reply.value || reply.title || "").trim();
+            if (value) onSend(value);
+          });
+        }}
+        onSend={(outgoingMessages) => {
+          const outgoingText = outgoingMessages[0]?.text ?? "";
+          onSend(outgoingText);
+        }}
+        renderActions={renderActions}
+        renderBubble={renderBubble}
+        renderCustomView={renderCustomView}
+        renderMessage={renderMessage}
+        renderMessageImage={renderMessageMedia}
+        renderMessageText={renderMessageText}
+        renderMessageVideo={renderMessageMedia}
+        renderSystemMessage={renderSystemMessage}
+        reply={{
+          message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
+          onClear: onCancelReply,
+          renderMessageReply: (replyProps) => {
+            const reply = replyProps.replyMessage;
+            if (!reply) return null;
+            const authorId = String(reply.user?._id ?? "");
+            const author = authorId && authorId === myUsername ? "You" : reply.user?.name || "Unknown";
+            return (
+              <View style={styles.chatMainReplyWrap}>
+                <ReplyPreviewBlock
+                  author={author}
+                  body={reply.text || "Message"}
+                  mine={replyProps.position === "right"}
+                  style={styles.chatMainReplyBlock}
+                />
+              </View>
+            );
+          },
+          swipe: {
+            direction: "right",
+            isEnabled: true,
+            onSwipe: (target) => {
+              if (target.memoryMessage) onReplyMessage(target.memoryMessage);
+            }
+          }
+        }}
+        reactions={{
+          emojis: [...MEMORY_REACTION_EMOJIS],
+          isEnabled: true,
+          onReactionPress: (target, emoji) => {
+            if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
+          }
+        }}
+        text={message}
+        textInputProps={{
+          onChangeText: onChangeMessage
+        }}
+        user={currentUser}
+      />
+    </View>
+  );
+}
+
+// Timestamp placement rule: the bottom edge of the last text line must cut
+// the single time element in half (half beside the text, half hanging into
+// the bubble's bottom padding). The text reports its wrapped lines via
+// onTextLayout; if the last line leaves room for the time (plus a gap), the
+// time is pinned at the bubble's bottom-right with the half-height drop \u2014
+// for one-liners the wrapper reserves that width via minWidth so the bubble
+// grows instead of the time overlapping the words. Only when the last line
+// has no room does the time move to its own line, tighter than a normal
+// text line.
+function ChatMainBodyWithTime({
+  bodyStyle,
+  linkStyle,
+  maxContentWidth,
+  text,
+  time,
+  timeStyle
+}: {
+  bodyStyle: StyleProp<TextStyle>;
+  linkStyle: StyleProp<TextStyle>;
+  maxContentWidth: number;
+  text: string;
+  time: string;
+  timeStyle: StyleProp<TextStyle>;
+}) {
+  const [lines, setLines] = useState<{ count: number; lastWidth: number } | null>(null);
+  const [timeWidth, setTimeWidth] = useState(0);
+  const [wrapWidth, setWrapWidth] = useState(0);
+  // react-native-web has no reliable onTextLayout, so web always renders the
+  // time on its own line instead of waiting on measurements that never come.
+  const isWeb = Platform.OS === "web";
+
+  const handleTextLayout = useCallback((event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    const textLines = event.nativeEvent.lines;
+    if (!textLines || textLines.length === 0) return;
+    const next = { count: textLines.length, lastWidth: Math.ceil(textLines[textLines.length - 1].width) };
+    setLines((previous) => (
+      previous && previous.count === next.count && previous.lastWidth === next.lastWidth ? previous : next
+    ));
+  }, []);
+
+  const measured = !isWeb && lines !== null && timeWidth > 0;
+  const neededBesideWidth = (lines?.lastWidth ?? 0) + CHAT_TIME_GAP + timeWidth;
+  // Single line: fits unless text + time would exceed the widest allowed
+  // bubble (the text never re-wraps when the wrapper widens via minWidth).
+  // Multi line: fits when the trailing gap of the last line inside the
+  // already-measured wrapper can hold the time (wrapper width is stable, so
+  // this cannot oscillate).
+  const fitsBeside = measured && (
+    lines!.count === 1
+      ? neededBesideWidth <= maxContentWidth
+      : wrapWidth > 0 && wrapWidth - lines!.lastWidth >= CHAT_TIME_GAP + timeWidth
+  );
+  const showBelow = isWeb || (measured && wrapWidth > 0 && !fitsBeside);
+
+  const timeElement = (
+    <Text
+      numberOfLines={1}
+      onLayout={(event) => setTimeWidth(Math.ceil(event.nativeEvent.layout.width))}
+      style={[styles.inlineTimestampText, timeStyle]}
+    >
+      {time}
+    </Text>
+  );
+
+  return (
+    <View
+      onLayout={(event) => setWrapWidth(Math.ceil(event.nativeEvent.layout.width))}
+      style={[
+        styles.chatMainBodyWithTime,
+        fitsBeside && lines!.count === 1
+          ? { minWidth: Math.min(neededBesideWidth, maxContentWidth) }
+          : null
+      ]}
+    >
+      <Text onTextLayout={isWeb ? undefined : handleTextLayout} style={bodyStyle}>
+        <SmartMessageTextContent
+          linkStyle={linkStyle}
+          text={text}
+          textStyle={bodyStyle}
+        />
+      </Text>
+      {showBelow ? (
+        <View style={styles.chatMainTimeBelow}>{timeElement}</View>
+      ) : (
+        <View
+          pointerEvents="none"
+          style={[styles.chatMainTimePinned, !fitsBeside && styles.chatMainTimeMeasuring]}
+        >
+          {timeElement}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MemoryChatMainQuickAction({
+  icon,
+  label,
+  onPress
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.chatMainQuickAction}>
+      <Ionicons name={icon} size={14} color={ROOM_COLORS.cool} />
+      <Text numberOfLines={1} style={styles.chatMainQuickActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function MemoryChatMainDishSystemMessage({
+  dish,
+  onOpenDish
+}: {
+  dish: MemoryDish;
+  onOpenDish: (dishId: string) => void;
+}) {
+  return (
+    <Pressable accessibilityRole="button" onPress={() => onOpenDish(dish.id)} style={styles.chatMainDishSystem}>
+      <View style={styles.chatMainDishIcon}>
+        <Ionicons name="restaurant-outline" size={14} color={ROOM_COLORS.cool} />
+      </View>
+      <Text numberOfLines={1} style={styles.chatMainDishText}>
+        {dish.addedByDisplayName} added {dish.dishName}
+      </Text>
+      {dish.averageRating ? (
+        <View style={styles.chatMainDishRating}>
+          <Ionicons name="star" size={11} color={ROOM_COLORS.gold} />
+          <Text style={styles.chatMainDishRatingText}>{dish.averageRating.toFixed(1)}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+type MemoryChatMenuAction = {
+  destructive?: boolean;
+  icon: keyof typeof Ionicons.glyphMap;
+  key: string;
+  label: string;
+  onPress: () => void;
+};
+
+const CHAT_MENU_EMOJI_SIZE = 44;
+const CHAT_MENU_EMOJI_ROW_HEIGHT = 54;
+const CHAT_MENU_ACTION_HEIGHT = 44;
+const CHAT_MENU_PADDING = 6;
+const CHAT_MENU_OFFSET = 8;
+const CHAT_MENU_MIN_WIDTH = 216;
+
+// Anchored long-press menu for chat bubbles: quick-react emoji row on top,
+// message actions below. Replaces the library's emoji-only ReactionPicker via
+// the reactions.renderReactionPicker override.
+function MemoryChatMessageMenu({
+  actions,
+  showEmojis,
+  ...pickerProps
+}: ChatMainReactionPickerProps<MemoryChatMainMessage> & {
+  actions: MemoryChatMenuAction[];
+  showEmojis: boolean;
+}) {
+  const {
+    visible,
+    emojis,
+    onSelect,
+    onDismiss,
+    position,
+    pageX = 0,
+    pageY = 0,
+    bubbleWidth = 0,
+    bubbleHeight = 0
+  } = pickerProps;
+  const { height: screenHeight, width: screenWidth } = useWindowDimensions();
+
+  if (!visible || (!showEmojis && actions.length === 0)) return null;
+
+  const emojiRowWidth = emojis.length * CHAT_MENU_EMOJI_SIZE + CHAT_MENU_PADDING * 2;
+  const menuWidth = Math.min(
+    screenWidth - 16,
+    Math.max(CHAT_MENU_MIN_WIDTH, showEmojis ? emojiRowWidth : CHAT_MENU_MIN_WIDTH)
+  );
+  const menuHeight =
+    (showEmojis ? CHAT_MENU_EMOJI_ROW_HEIGHT + (actions.length > 0 ? 1 : 0) : 0) +
+    actions.length * CHAT_MENU_ACTION_HEIGHT +
+    CHAT_MENU_PADDING * 2;
+
+  const showAbove = pageY >= menuHeight + CHAT_MENU_OFFSET;
+  let menuTop = showAbove
+    ? pageY - menuHeight - CHAT_MENU_OFFSET
+    : pageY + bubbleHeight + CHAT_MENU_OFFSET;
+  menuTop = Math.max(8, Math.min(menuTop, screenHeight - menuHeight - 8));
+
+  let menuLeft = position === "right" ? pageX + bubbleWidth - menuWidth : pageX;
+  menuLeft = Math.max(8, Math.min(menuLeft, screenWidth - menuWidth - 8));
+
+  function runAction(action: MemoryChatMenuAction) {
+    onDismiss();
+    // Let the modal finish dismissing before follow-up UI (Alert, composer
+    // focus) presents — iOS drops alerts shown over a dismissing modal.
+    setTimeout(action.onPress, Platform.OS === "ios" ? 180 : 0);
+  }
+
+  return (
+    <Modal animationType="fade" onRequestClose={onDismiss} statusBarTranslucent transparent visible={visible}>
+      <Pressable onPress={onDismiss} style={StyleSheet.absoluteFill} />
+      <View style={[styles.chatMainMenu, { left: menuLeft, top: menuTop, width: menuWidth }]}>
+        {showEmojis ? (
+          <View style={styles.chatMainMenuEmojiRow}>
+            {emojis.map((emoji) => (
+              <Pressable
+                accessibilityLabel={`React with ${emoji}`}
+                accessibilityRole="button"
+                key={emoji}
+                onPress={() => {
+                  onSelect(emoji);
+                  onDismiss();
+                }}
+                style={({ pressed }) => [styles.chatMainMenuEmojiButton, pressed && styles.chatMainMenuEmojiButtonPressed]}
+              >
+                <Text style={styles.chatMainMenuEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+        {showEmojis && actions.length > 0 ? <View style={styles.chatMainMenuDivider} /> : null}
+        {actions.map((action) => (
+          <Pressable
+            accessibilityLabel={action.label}
+            accessibilityRole="button"
+            key={action.key}
+            onPress={() => runAction(action)}
+            style={({ pressed }) => [styles.chatMainMenuAction, pressed && styles.chatMainMenuActionPressed]}
+          >
+            <Ionicons
+              name={action.icon}
+              size={17}
+              color={action.destructive ? ROOM_COLORS.danger : ROOM_COLORS.onSurface}
+            />
+            <Text style={[styles.chatMainMenuActionLabel, action.destructive && styles.chatMainMenuActionLabelDestructive]}>
+              {action.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </Modal>
+  );
+}
+
+type SmartTextSegment =
+  | { text: string; type: "text" }
+  | { text: string; type: "link"; url: string };
+
+const SMART_LINK_PATTERN = /(?:https?:\/\/|www\.)[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|#[A-Z0-9_]+|@[A-Z0-9_.-]+|\+?\d[\d\s().-]{6,}\d/gi;
+
+function smartLinkUrl(value: string) {
+  if (/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(value)) return `mailto:${value}`;
+  if (/^#/.test(value)) return `https://www.instagram.com/explore/tags/${encodeURIComponent(value.slice(1))}`;
+  if (/^@/.test(value)) return `https://www.instagram.com/${encodeURIComponent(value.slice(1))}`;
+  if (/^\+?\d[\d\s().-]{6,}\d$/.test(value)) return `tel:${value.replace(/[\s().-]/g, "")}`;
+  if (/^www\./i.test(value)) return `https://${value}`;
+  return value;
+}
+
+function parseSmartTextSegments(text: string): SmartTextSegment[] {
+  const segments: SmartTextSegment[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(SMART_LINK_PATTERN)) {
+    const matchText = match[0];
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, index), type: "text" });
+    }
+    segments.push({ text: matchText, type: "link", url: smartLinkUrl(matchText) });
+    lastIndex = index + matchText.length;
+  }
+  if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), type: "text" });
+  return segments.length > 0 ? segments : [{ text, type: "text" }];
+}
+
+function openSmartLink(url: string) {
+  Linking.openURL(url).catch(() => {
+    Alert.alert("Could not open link", "Please check this link and try again.");
+  });
 }
 
 function getSingleMediaPreviewSize({
@@ -611,6 +1412,8 @@ export default function MemoryDetailScreen() {
   const [editingMessage, setEditingMessage] = useState<MemoryMessage | null>(null);
   const [replyingToMessage, setReplyingToMessage] = useState<MemoryMessage | null>(null);
   const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
+  const [messageReactions, setMessageReactions] = useState<MemoryReactionState>({});
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState("");
   const [cameraOpening, setCameraOpening] = useState(false);
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
@@ -931,6 +1734,8 @@ export default function MemoryDetailScreen() {
     const draftBody = draftOverride ?? messageDraftRef.current;
     try {
       if (editingMessage) {
+        // Never save an edit down to nothing — it would leave an empty bubble.
+        if (!draftBody.trim()) return;
         await editMessage.mutateAsync({ body: draftBody, messageId: editingMessage.id });
         setEditingMessage(null);
       } else {
@@ -990,6 +1795,7 @@ export default function MemoryDetailScreen() {
   function beginEditMessage(target: MemoryMessage) {
     selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
+    setReactionPickerMessageId(null);
     setReplyingToMessage(null);
     setEditingMessage(target);
     updateMessageDraft(target.body);
@@ -999,6 +1805,7 @@ export default function MemoryDetailScreen() {
   function beginReplyMessage(target: MemoryMessage) {
     selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
+    setReactionPickerMessageId(null);
     setEditingMessage(null);
     setReplyingToMessage(target);
     requestRoomMode("chat");
@@ -1018,6 +1825,7 @@ export default function MemoryDetailScreen() {
 
   function beginSelection(target: MemoryActionTarget) {
     const key = memoryActionKey(target);
+    setReactionPickerMessageId(null);
     setEditingMessage(null);
     setReplyingToMessage(null);
     updateMessageDraft("");
@@ -1059,6 +1867,73 @@ export default function MemoryDetailScreen() {
   function cancelSelection() {
     selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
+  }
+
+  function openReactionPicker(messageId: string) {
+    if (selectedItemKeysRef.current.length > 0) return;
+    setReactionPickerMessageId((current) => (current === messageId ? null : messageId));
+  }
+
+  function closeReactionPicker() {
+    setReactionPickerMessageId(null);
+  }
+
+  function toggleMessageReaction(messageId: string, emoji: string) {
+    const userKey = myUsername || "me";
+    setMessageReactions((current) => {
+      const messageState = current[messageId] ?? {};
+      const currentUsers = messageState[emoji] ?? [];
+      const hasReacted = currentUsers.includes(userKey);
+      const nextUsers = hasReacted
+        ? currentUsers.filter((id) => id !== userKey)
+        : [...currentUsers, userKey];
+      const nextMessageState = { ...messageState };
+
+      if (nextUsers.length === 0) {
+        delete nextMessageState[emoji];
+      } else {
+        nextMessageState[emoji] = nextUsers;
+      }
+
+      if (Object.keys(nextMessageState).length === 0) {
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+
+      return {
+        ...current,
+        [messageId]: nextMessageState
+      };
+    });
+    setReactionPickerMessageId(null);
+  }
+
+  function deleteChatTarget(target: MemoryActionTarget) {
+    const label = target.type === "message" ? "message" : "media";
+    Alert.alert(
+      `Delete ${label}?`,
+      "It will be removed for everyone at the table.",
+      [
+        { style: "cancel", text: "Cancel" },
+        {
+          onPress: () => {
+            if (target.type === "message") {
+              if (editingMessage?.id === target.value.id) cancelEditMessage();
+              if (replyingToMessage?.id === target.value.id) setReplyingToMessage(null);
+            }
+            void deleteItems.mutateAsync({
+              messageIds: target.type === "message" ? [target.value.id] : [],
+              photoIds: target.type === "photo" ? [target.value.id] : []
+            }).catch((error) => {
+              Alert.alert("Could not delete", errorMessage(error) ?? "Try again.");
+            });
+          },
+          style: "destructive",
+          text: "Delete"
+        }
+      ]
+    );
   }
 
   function removeSelectedItems() {
@@ -1269,6 +2144,12 @@ export default function MemoryDetailScreen() {
   function openAttachmentActions() {
     setReopenAddMenuOnCancel(false);
     openAttachmentOptions("actions");
+  }
+
+  function openChatDishAction() {
+    setDishTargetStopId(null);
+    setReopenAddMenuOnCancel(false);
+    openAttachmentOptions("dish");
   }
 
   // Cancel path for the attachment sheet. A successful dish add closes the sheet
@@ -1503,44 +2384,30 @@ export default function MemoryDetailScreen() {
                   />
                 </RoomPane>
                 <RoomPane active={paneTabMode === "chat"}>
-                  <Reanimated.View style={[styles.chatListShiftWrap, chatListKeyboardStyle]}>
-                    <ChatTimeline
-                      active={mode === "chat"}
-                      bottomClearance={chatBottomClearance}
-                      data={data}
-                      hasOlderMessages={canLoadOlderMessages}
-                      loadingOlderMessages={olderMessages.isFetchingNextPage}
-                      myUsername={myUsername}
-                      onAddDish={() => requestRoomMode("dishes")}
-                      onAddMedia={openAttachmentActions}
-                      onAddPeople={openPeopleAdd}
-                      onBeginSelection={beginSelection}
-                      onContentHeightChange={(height) => {
-                        chatContentHeightRef.current = height;
-                      }}
-                      onLayoutChange={handleChatTimelineLayout}
-                      onLoadOlderMessages={loadOlderMessages}
-                      onNearBottomChange={handleChatNearBottomChange}
-                      onOpenDish={(dishId) => router.push(`/memories/${roomId}/dish/${dishId}`)}
-                      onOpenMedia={openMediaViewer}
-                      onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                      onCancelFailedMessage={cancelFailedMessage}
-                      onReplyMessage={beginReplyMessage}
-                      onRetryFailedMessage={retryFailedMessage}
-                      onScrollBeginDrag={handleChatScrollBeginDrag}
-                      onSelectionPressOut={finishSelectionPress}
-                      onToggleSelection={toggleSelectedItem}
-                      pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                      scrollToBottom={scrollChatToBottom}
-                      editingMessageId={editingMessage?.id ?? null}
-                      lastReadAt={data.lastReadAt}
-                      olderMessagesError={errorMessage(olderMessages.error)}
-                      scrollRef={scrollRef}
-                      selectedItemKeys={selectedItemKeys}
-                      selectionMode={selectedItemKeys.length > 0}
-                      themeCopy={roomOccasionTheme.copy}
-                    />
-                  </Reanimated.View>
+                  <MemoryChatMainSurface
+                    active={mode === "chat"}
+                    canLoadOlderMessages={canLoadOlderMessages}
+                    data={data}
+                    loadingOlderMessages={olderMessages.isFetchingNextPage}
+                    message={message}
+                    myUsername={myUsername}
+                    onAddDish={openChatDishAction}
+                    onAddMedia={openAttachmentActions}
+                    onAddPeople={openPeopleAdd}
+                    onCancelReply={cancelReplyMessage}
+                    onChangeMessage={updateMessageDraft}
+                    onLoadOlderMessages={loadOlderMessages}
+                    onOpenDish={setDetailDishId}
+                    onOpenMedia={openMediaViewer}
+                    onReplyMessage={beginReplyMessage}
+                    onSend={submitMessage}
+                    onToggleReaction={toggleMessageReaction}
+                    reactions={messageReactions}
+                    replyingToMessage={replyingToMessage}
+                    resolvedTheme={resolvedTheme}
+                    themeCopy={roomOccasionTheme.copy}
+                    typingVisible={addMessage.isPending || addPhoto.isPending}
+                  />
                 </RoomPane>
                 <RoomPane active={paneTabMode === "media"}>
                   <MediaGallery
@@ -1567,46 +2434,6 @@ export default function MemoryDetailScreen() {
               </View>
             </View>
 
-            <PaneReveal
-              active={mode === "chat"}
-              pointerEvents={mode === "chat" ? "auto" : "none"}
-              style={styles.chatBottomOverlay}
-            >
-              {selectedItemKeys.length > 0 ? (
-                <SelectionActionBar
-                  canDelete={canDeleteSelected}
-                  count={selectedItemKeys.length}
-                  insetStyle={composerInsetStyle}
-                  deleting={false}
-                  editableMessage={editableSelectedMessage}
-                  onCancel={cancelSelection}
-                  onDelete={removeSelectedItems}
-                  onEdit={beginEditMessage}
-                  onLayoutChange={handleComposerLayout}
-                />
-              ) : (
-                <MemoryComposer
-                  colors={ROOM_COLORS}
-                  mediaError={mediaError}
-                  mediaPending={addPhoto.isPending}
-                  mediaMutationError={addPhoto.error?.message}
-                  message={message}
-                  messageError={editingMessage ? editMessage.error?.message : undefined}
-                  messagePending={Boolean(editingMessage) && editMessage.isPending}
-                  editingLabel={editingMessage ? `Editing message` : undefined}
-                  insetStyle={composerInsetStyle}
-                  inputRef={messageInputRef}
-                  onCancelEdit={cancelEditMessage}
-                  onCancelReply={cancelReplyMessage}
-                  onChangeMessage={updateMessageDraft}
-                  onLayoutChange={handleComposerLayout}
-                  onInputFocus={handleComposerFocus}
-                  replyingToMessage={replyingToMessage}
-                  onSend={submitMessage}
-                  themeCopy={roomOccasionTheme.copy}
-                />
-              )}
-            </PaneReveal>
           </Reanimated.View>
         </View>
 
@@ -2331,12 +3158,14 @@ function ChatTimeline({
   onAddMedia,
   onAddPeople,
   onBeginSelection,
+  onCloseReactionPicker,
   onContentHeightChange,
   onLayoutChange,
   onLoadOlderMessages,
   onNearBottomChange,
   onOpenDish,
   onOpenMedia,
+  onOpenReactionPicker,
   onRateDish,
   onCancelFailedMessage,
   onReplyMessage,
@@ -2344,14 +3173,18 @@ function ChatTimeline({
   onScrollBeginDrag,
   onSelectionPressOut,
   onToggleSelection,
+  onToggleReaction,
   lastReadAt,
   olderMessagesError,
   pendingDishId,
+  reactionPickerMessageId,
+  reactions,
   scrollRef,
   scrollToBottom,
   selectedItemKeys,
   selectionMode,
-  themeCopy
+  themeCopy,
+  typingVisible
 }: {
   active: boolean;
   bottomClearance: number;
@@ -2364,12 +3197,14 @@ function ChatTimeline({
   onAddMedia: () => void;
   onAddPeople: () => void;
   onBeginSelection: (target: MemoryActionTarget) => void;
+  onCloseReactionPicker: () => void;
   onContentHeightChange: (height: number) => void;
   onLayoutChange: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
+  onOpenReactionPicker: (messageId: string) => void;
   onRateDish: (dishId: string, rating: number) => void;
   onCancelFailedMessage: (message: MemoryMessage) => void;
   onReplyMessage: (message: MemoryMessage) => void;
@@ -2377,14 +3212,18 @@ function ChatTimeline({
   onScrollBeginDrag: () => void;
   onSelectionPressOut: (target: MemoryActionTarget) => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
   lastReadAt: string | null;
   olderMessagesError?: string;
   pendingDishId?: string | null;
+  reactionPickerMessageId: string | null;
+  reactions: MemoryReactionState;
   scrollRef: React.RefObject<FlatList<ChatTimelineRow> | null>;
   scrollToBottom: (animated: boolean) => void;
   selectedItemKeys: string[];
   selectionMode: boolean;
   themeCopy: OccasionTheme["copy"];
+  typingVisible: boolean;
 }) {
   const timeline = useMemo(() => {
     const items: TimelineItem[] = [
@@ -2800,16 +3639,19 @@ function ChatTimeline({
     return () => clearTimeout(timeout);
   }, [revealInitialAnchor, timelineRows.length]);
 
-  const rowHandlersRef = useRef({ onBeginSelection, onCancelFailedMessage, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleSelection });
-  rowHandlersRef.current = { onBeginSelection, onCancelFailedMessage, onOpenDish, onOpenMedia, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleSelection };
+  const rowHandlersRef = useRef({ onBeginSelection, onCancelFailedMessage, onCloseReactionPicker, onOpenDish, onOpenMedia, onOpenReactionPicker, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleReaction, onToggleSelection });
+  rowHandlersRef.current = { onBeginSelection, onCancelFailedMessage, onCloseReactionPicker, onOpenDish, onOpenMedia, onOpenReactionPicker, onRateDish, onReplyMessage, onRetryFailedMessage, onSelectionPressOut, onToggleReaction, onToggleSelection };
   const beginRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onBeginSelection(target), []);
   const cancelFailedRowMessage = useCallback((message: MemoryMessage) => rowHandlersRef.current.onCancelFailedMessage(message), []);
+  const closeRowReactionPicker = useCallback(() => rowHandlersRef.current.onCloseReactionPicker(), []);
   const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
   const openRowDish = useCallback((dishId: string) => rowHandlersRef.current.onOpenDish(dishId), []);
   const rateRowDish = useCallback((dishId: string, rating: number) => rowHandlersRef.current.onRateDish(dishId, rating), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
+  const openRowReactionPicker = useCallback((messageId: string) => rowHandlersRef.current.onOpenReactionPicker(messageId), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
   const retryFailedRowMessage = useCallback((message: MemoryMessage) => rowHandlersRef.current.onRetryFailedMessage(message), []);
+  const toggleRowReaction = useCallback((messageId: string, emoji: string) => rowHandlersRef.current.onToggleReaction(messageId, emoji), []);
   const toggleRowSelection = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onToggleSelection(target), []);
   const jumpToLatest = useCallback((animated: boolean) => {
     followBottomRef.current = true;
@@ -2841,14 +3683,20 @@ function ChatTimeline({
           onBeginSelection={() => beginRowSelection({ type: "message", value: item.value })}
           onCancelFailed={() => cancelFailedRowMessage(item.value)}
           onOpenMedia={openRowMedia}
+          onCloseReactionPicker={closeRowReactionPicker}
           onJumpToMessage={jumpToRepliedMessage}
+          onOpenReactionPicker={() => openRowReactionPicker(item.value.id)}
           onReply={() => replyToRow(item.value)}
           onRetryFailed={() => retryFailedRowMessage(item.value)}
           onSelectionPressOut={() => finishRowSelectionPress({ type: "message", value: item.value })}
+          onToggleReaction={(emoji) => toggleRowReaction(item.value.id, emoji)}
           onToggleSelection={() => toggleRowSelection({ type: "message", value: item.value })}
+          currentUserId={myUsername || "me"}
           editing={editingMessageId === item.value.id}
           groupPosition={item.groupPosition}
           highlighted={highlightedMessageId === item.value.id}
+          reactionPickerOpen={!selectionMode && reactionPickerMessageId === item.value.id}
+          reactions={reactions[item.value.id] ?? {}}
           rowStyle={rowStyle}
           selected={selectedItemKeys.includes(`message:${item.value.id}`)}
           selectionMode={selectionMode}
@@ -2891,6 +3739,7 @@ function ChatTimeline({
   }, [
     beginRowSelection,
     cancelFailedRowMessage,
+    closeRowReactionPicker,
     editingMessageId,
     finishRowSelectionPress,
     highlightedMessageId,
@@ -2898,13 +3747,17 @@ function ChatTimeline({
     jumpToRepliedMessage,
     openRowDish,
     openRowMedia,
+    openRowReactionPicker,
     participantNames,
     pendingDishId,
+    reactionPickerMessageId,
+    reactions,
     rateRowDish,
     replyToRow,
     retryFailedRowMessage,
     selectedItemKeys,
     selectionMode,
+    toggleRowReaction,
     toggleRowSelection
   ]);
   const chatViewabilityConfig = useRef({
@@ -2962,6 +3815,11 @@ function ChatTimeline({
               loading={loadingOlderMessages}
               onLoad={requestLoadOlderMessages}
             />
+          </View>
+        ) : null}
+        ListHeaderComponent={typingVisible ? (
+          <View style={styles.invertedListEdge}>
+            <ChatTypingIndicator label="Updating memory" />
           </View>
         ) : null}
         onEndReached={() => {
@@ -3472,12 +4330,14 @@ function ReplyPreviewBlock({
   author,
   body,
   mine,
-  onPress
+  onPress,
+  style
 }: {
   author: string;
   body: string;
   mine?: boolean;
   onPress?: () => void;
+  style?: StyleProp<ViewStyle>;
 }) {
   const content = (
     <>
@@ -3499,6 +4359,7 @@ function ReplyPreviewBlock({
         style={({ pressed }) => [
           styles.replyPreviewBlock,
           mine && styles.replyPreviewBlockMine,
+          style,
           pressed && styles.replyPreviewBlockPressed
         ]}
       >
@@ -3508,7 +4369,7 @@ function ReplyPreviewBlock({
   }
 
   return (
-    <View style={[styles.replyPreviewBlock, mine && styles.replyPreviewBlockMine]}>
+    <View style={[styles.replyPreviewBlock, mine && styles.replyPreviewBlockMine, style]}>
       {content}
     </View>
   );
@@ -3736,6 +4597,181 @@ function MessageMeta({
   );
 }
 
+function SmartMessageTextContent({
+  linkStyle,
+  text,
+  textStyle
+}: {
+  linkStyle?: StyleProp<TextStyle>;
+  text: string;
+  textStyle?: StyleProp<TextStyle>;
+}) {
+  return (
+    <>
+      {parseSmartTextSegments(text).map((segment, index) => {
+        if (segment.type === "text") {
+          return (
+            <Text key={`text-${index}`} style={textStyle}>
+              {segment.text}
+            </Text>
+          );
+        }
+        return (
+          <Text
+            key={`${segment.url}-${index}`}
+            onPress={() => openSmartLink(segment.url)}
+            style={[textStyle, linkStyle]}
+          >
+            {segment.text}
+          </Text>
+        );
+      })}
+    </>
+  );
+}
+
+function StreamingCursor() {
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { duration: 420, toValue: 0.18, useNativeDriver: true }),
+        Animated.timing(opacity, { duration: 420, toValue: 1, useNativeDriver: true })
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.Text style={[styles.streamingCursor, { opacity }]}>
+      |
+    </Animated.Text>
+  );
+}
+
+function MessageBubbleMeta({
+  mine,
+  status,
+  time
+}: {
+  mine: boolean;
+  status?: MemoryMessage["deliveryStatus"];
+  time: string;
+}) {
+  const pending = status === "pending";
+  const sent = mine && !pending && status !== "failed";
+
+  return (
+    <View style={[styles.messageMetaRow, mine && styles.messageMetaRowMine]}>
+      <Text style={[styles.messageMetaTime, mine ? styles.messageMetaTimeMine : styles.messageMetaTimeOther]}>
+        {time}
+      </Text>
+      {mine ? (
+        <Ionicons
+          name={pending ? "time-outline" : sent ? "checkmark-done" : "checkmark"}
+          size={12}
+          color={mine ? ROOM_COLORS.sentTimestamp : ROOM_COLORS.timestamp}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function ChatTypingIndicator({ label }: { label: string }) {
+  return (
+    <View style={styles.typingIndicatorRow}>
+      <View style={styles.typingIndicatorBubble}>
+        <View style={styles.typingDots}>
+          {[0, 1, 2].map((dot) => (
+            <View key={dot} style={styles.typingDot} />
+          ))}
+        </View>
+        <Text style={styles.typingIndicatorText}>{label}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MessageReactionPills({
+  currentUserId,
+  mine,
+  onToggleReaction,
+  reactions
+}: {
+  currentUserId: string | number;
+  mine: boolean;
+  onToggleReaction: (emoji: string) => void;
+  reactions: Record<string, Array<string | number>>;
+}) {
+  const entries = Object.entries(reactions).filter(([, users]) => users.length > 0);
+  if (entries.length === 0) return null;
+
+  return (
+    <View style={[styles.reactionPillRow, mine && styles.reactionPillRowMine]}>
+      {entries.map(([emoji, users]) => {
+        const active = users.includes(currentUserId);
+        return (
+          <Pressable
+            accessibilityLabel={`React ${emoji}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            key={emoji}
+            onPress={() => onToggleReaction(emoji)}
+            style={[styles.reactionPill, active && styles.reactionPillActive]}
+          >
+            <Text style={styles.reactionPillEmoji}>{emoji}</Text>
+            <Text style={styles.reactionPillCount}>{users.length}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function MessageReactionPicker({
+  mine,
+  onDismiss,
+  onMore,
+  onToggleReaction
+}: {
+  mine: boolean;
+  onDismiss: () => void;
+  onMore: () => void;
+  onToggleReaction: (emoji: string) => void;
+}) {
+  return (
+    <View style={[styles.reactionPicker, mine && styles.reactionPickerMine]}>
+      {MEMORY_REACTION_EMOJIS.map((emoji) => (
+        <Pressable
+          accessibilityLabel={`React with ${emoji}`}
+          accessibilityRole="button"
+          key={emoji}
+          onPress={() => onToggleReaction(emoji)}
+          style={styles.reactionPickerButton}
+        >
+          <Text style={styles.reactionPickerEmoji}>{emoji}</Text>
+        </Pressable>
+      ))}
+      <Pressable
+        accessibilityLabel="More message actions"
+        accessibilityRole="button"
+        onPress={() => {
+          onDismiss();
+          onMore();
+        }}
+        style={styles.reactionPickerMore}
+      >
+        <Ionicons name="ellipsis-horizontal" size={18} color={ROOM_COLORS.onSurface} />
+      </Pressable>
+      <Pressable accessibilityLabel="Close reactions" hitSlop={8} onPress={onDismiss} style={styles.reactionPickerClose}>
+        <Ionicons name="close" size={14} color={ROOM_COLORS.muted} />
+      </Pressable>
+    </View>
+  );
+}
+
 function MessageDeliveryState({
   mine,
   onCancel,
@@ -3801,7 +4837,11 @@ function InlineTimestampText({
       ]}
     >
       <Text style={[styles.inlineTimestampMessageText, textStyle]}>
-        {text}
+        <SmartMessageTextContent
+          linkStyle={styles.messageLinkText}
+          text={text}
+          textStyle={textStyle}
+        />
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
@@ -3831,6 +4871,7 @@ function MediaSenderHeader({ name }: { name: string }) {
 }
 
 function MessageBubble({
+  currentUserId,
   editing,
   groupPosition,
   highlighted,
@@ -3838,17 +4879,23 @@ function MessageBubble({
   mine,
   onBeginSelection,
   onCancelFailed,
+  onCloseReactionPicker,
   onJumpToMessage,
   onOpenMedia,
+  onOpenReactionPicker,
   onReply,
   onRetryFailed,
   onSelectionPressOut,
+  onToggleReaction,
   rowStyle,
   onToggleSelection,
+  reactionPickerOpen,
+  reactions,
   selected,
   selectionMode,
   showSenderDetails
 }: {
+  currentUserId: string | number;
   editing: boolean;
   groupPosition: MessageGroupPosition;
   highlighted: boolean;
@@ -3856,19 +4903,23 @@ function MessageBubble({
   mine: boolean;
   onBeginSelection: () => void;
   onCancelFailed: () => void;
+  onCloseReactionPicker: () => void;
   onJumpToMessage: (messageId: string) => void;
   onOpenMedia: OpenMediaHandler;
+  onOpenReactionPicker: () => void;
   onReply: () => void;
   onRetryFailed: () => void;
   onSelectionPressOut: () => void;
+  onToggleReaction: (emoji: string) => void;
   rowStyle?: StyleProp<ViewStyle>;
   onToggleSelection: () => void;
+  reactionPickerOpen: boolean;
+  reactions: Record<string, Array<string | number>>;
   selected: boolean;
   selectionMode: boolean;
   showSenderDetails: boolean;
 }) {
   const { width: screenWidth } = useWindowDimensions();
-  const [textBubbleWidth, setTextBubbleWidth] = useState(0);
   const body = message.body.trim();
   const mediaCount = message.attachments.length;
   const hasText = body.length > 0;
@@ -3886,11 +4937,6 @@ function MessageBubble({
     shouldIgnoreMediaOpen
   } = useMediaOpenGuard(onBeginSelection);
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
-  const textBubbleContentMinWidth = Math.max(0, (mine ? 64 : 88) - 22);
-  const textBubbleMeasuredContentWidth = textBubbleWidth > 0 ? Math.max(0, textBubbleWidth - 22) : undefined;
-  const shouldFillTextTimestamp = Boolean(
-    message.replyToMessage && (Platform.OS === "web" || textBubbleMeasuredContentWidth)
-  );
 
   function renderReplyPreview() {
     return message.replyToMessage ? (
@@ -3901,13 +4947,6 @@ function MessageBubble({
         onPress={!selectionMode ? () => onJumpToMessage(message.replyToMessage!.id) : undefined}
       />
     ) : null;
-  }
-
-  function handleTextBubbleLayout(event: LayoutChangeEvent) {
-    const nextWidth = Math.floor(event.nativeEvent.layout.width);
-    if (nextWidth > 0 && Math.abs(nextWidth - textBubbleWidth) > 1) {
-      setTextBubbleWidth(nextWidth);
-    }
   }
 
   function renderDeliveryState() {
@@ -3922,11 +4961,32 @@ function MessageBubble({
   }
 
   function renderBubbleWithDeliveryState(bubble: ReactNode) {
-    if (message.deliveryStatus !== "failed") return bubble;
+    const bubbleWithStatus = message.deliveryStatus !== "failed"
+      ? bubble
+      : (
+        <View style={[styles.messageStatusStack, mine && styles.messageStatusStackMine]}>
+          {bubble}
+          {renderDeliveryState()}
+        </View>
+      );
+
     return (
-      <View style={[styles.messageStatusStack, mine && styles.messageStatusStackMine]}>
-        {bubble}
-        {renderDeliveryState()}
+      <View style={[styles.messageBubbleStack, mine && styles.messageBubbleStackMine]}>
+        {bubbleWithStatus}
+        <MessageReactionPills
+          currentUserId={currentUserId}
+          mine={mine}
+          onToggleReaction={onToggleReaction}
+          reactions={reactions}
+        />
+        {reactionPickerOpen ? (
+          <MessageReactionPicker
+            mine={mine}
+            onDismiss={onCloseReactionPicker}
+            onMore={onBeginSelection}
+            onToggleReaction={onToggleReaction}
+          />
+        ) : null}
       </View>
     );
   }
@@ -3937,7 +4997,6 @@ function MessageBubble({
         style={styles.textMessageFrame}
       >
         <View
-          onLayout={message.replyToMessage ? handleTextBubbleLayout : undefined}
           style={[
             styles.textMessageBubble,
             mine ? styles.textMessageBubbleMine : styles.textMessageBubbleOther,
@@ -3950,15 +5009,15 @@ function MessageBubble({
             </Text>
           ) : null}
           {renderReplyPreview()}
-          <InlineTimestampText
-            fill={shouldFillTextTimestamp}
-            minWidth={message.replyToMessage ? undefined : textBubbleContentMinWidth}
-            nativeAvailableWidth={shouldFillTextTimestamp ? textBubbleMeasuredContentWidth : undefined}
-            text={body}
-            textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
-            time={timestampLabel}
-            timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
-          />
+          <Text style={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}>
+            <SmartMessageTextContent
+              linkStyle={mine ? styles.messageLinkTextMine : styles.messageLinkText}
+              text={body}
+              textStyle={[styles.textOnlyBubbleText, mine ? styles.messageTextMine : styles.messageTextOther]}
+            />
+            {message.deliveryStatus === "pending" ? <StreamingCursor /> : null}
+          </Text>
+          <MessageBubbleMeta mine={mine} status={message.deliveryStatus} time={timestampLabel} />
         </View>
       </MessageBubbleFrame>
     );
@@ -3967,7 +5026,7 @@ function MessageBubble({
         editing={editing}
         highlighted={highlighted}
         mine={mine}
-        onLongPress={!selectionMode ? onBeginSelection : undefined}
+        onLongPress={!selectionMode ? onOpenReactionPicker : undefined}
         onPress={selectionMode ? onToggleSelection : undefined}
         onPressOut={onSelectionPressOut}
         onSwipeRight={onReply}
@@ -6107,6 +7166,419 @@ function createStyles(ROOM_COLORS: RoomColors) {
     backgroundColor: ROOM_COLORS.bg,
     overflow: "hidden"
   },
+  chatMainSurface: {
+    backgroundColor: "transparent",
+    flex: 1
+  },
+  chatMainMessages: {
+    backgroundColor: "transparent",
+    flex: 1
+  },
+  chatMainListContent: {
+    backgroundColor: "transparent",
+    flexGrow: 1,
+    paddingBottom: CHAT_HEADER_CLEARANCE,
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    paddingTop: 10
+  },
+  chatMainToolbarShell: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderTopColor: ROOM_COLORS.border,
+    borderTopWidth: 1,
+    gap: 6,
+    paddingBottom: Platform.OS === "android" ? 7 : 8,
+    paddingHorizontal: Platform.OS === "web" ? spacing.md : 12,
+    paddingTop: 7
+  },
+  chatMainToolbar: {
+    backgroundColor: "transparent",
+    borderTopWidth: 0
+  },
+  chatMainToolbarPrimary: {
+    alignItems: "flex-end",
+    gap: spacing.sm
+  },
+  chatMainAccessory: {
+    gap: 6
+  },
+  chatMainError: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.danger,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  chatMainEditingBanner: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 38,
+    paddingHorizontal: spacing.sm
+  },
+  chatMainEditingIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderRadius: radius.pill,
+    height: 24,
+    justifyContent: "center",
+    width: 24
+  },
+  chatMainEditingText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.onSurface,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    minWidth: 0
+  },
+  chatMainEditingCancel: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  chatMainQuickRail: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7
+  },
+  chatMainQuickAction: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 5,
+    minHeight: 30,
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  chatMainQuickActionText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    flexShrink: 1,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  chatMainActionTouchable: {
+    paddingBottom: 1,
+    paddingLeft: 0,
+    paddingRight: 0,
+    paddingTop: 0
+  },
+  chatMainActionButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
+    justifyContent: "center",
+    width: COMPOSER_ACTION_BUTTON_SIZE
+  },
+  chatMainComposerInput: {
+    ...fontStyles.medium,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    color: ROOM_COLORS.onSurface,
+    fontSize: COMPOSER_INPUT_FONT_SIZE,
+    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+    paddingHorizontal: spacing.md,
+    paddingVertical: Platform.OS === "ios" ? 10 : 8
+  },
+  chatMainSendContainer: {
+    justifyContent: "flex-end"
+  },
+  chatMainSendTouchable: {
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  chatMainSendButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
+    justifyContent: "center",
+    width: COMPOSER_ACTION_BUTTON_SIZE
+  },
+  chatMainSendButtonDisabled: {
+    backgroundColor: ROOM_COLORS.glassDim
+  },
+  // Width caps are applied at the Message-row level (chatMainRowText/Media);
+  // the bubble itself hugs its content, so no maxWidth here — nested
+  // percentage caps inside content-sized views resolve unreliably on native.
+  chatMainBubbleLeft: {
+    backgroundColor: ROOM_COLORS.receivedBubble,
+    borderColor: ROOM_COLORS.border,
+    borderWidth: 1
+  },
+  chatMainBubbleRight: {
+    backgroundColor: ROOM_COLORS.sentBubble,
+    borderColor: ROOM_COLORS.sentBubbleBorder,
+    borderWidth: 1
+  },
+  chatMainBubbleBottomHidden: {
+    height: 0,
+    minHeight: 0,
+    overflow: "hidden",
+    paddingBottom: 0,
+    paddingHorizontal: 0
+  },
+  chatMainTimeLeft: {
+    color: ROOM_COLORS.timestamp
+  },
+  chatMainTimeRight: {
+    color: ROOM_COLORS.sentTimestamp
+  },
+  chatMainTicks: {
+    color: ROOM_COLORS.sentTimestamp,
+    fontSize: 10,
+    lineHeight: 12,
+    marginLeft: 4
+  },
+  chatMainTicksPending: {
+    color: ROOM_COLORS.sentTimestamp
+  },
+  chatMainFailedTicks: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 5,
+    marginLeft: 5
+  },
+  // Overrides the vendor Message container's hardcoded 70% row cap. Text rows
+  // cap WhatsApp-style; media rows span free since the media block width is
+  // already clamped in JS (memoryChatMediaWidthBudget).
+  chatMainRowText: {
+    maxWidth: "80%"
+  },
+  chatMainRowMedia: {
+    maxWidth: "100%"
+  },
+  chatMainSenderHeader: {
+    paddingHorizontal: 11,
+    paddingTop: 7
+  },
+  chatMainSenderHeaderMedia: {
+    paddingBottom: 2,
+    paddingHorizontal: 12,
+    paddingTop: 9
+  },
+  // paddingBottom leaves room for the pinned time's overhang
+  // (CHAT_TIME_PINNED_DROP) plus ~5px clearance to the bubble edge.
+  chatMainTextContainer: {
+    paddingBottom: 8,
+    paddingHorizontal: 11,
+    paddingTop: 7
+  },
+  chatMainTextContainerWithSender: {
+    paddingTop: 0
+  },
+  chatMainBodyWithTime: {
+    alignSelf: "stretch",
+    position: "relative"
+  },
+  // Hangs below the text box just enough that the visible line under the
+  // last text line cuts the time in half (the timestamp placement rule).
+  chatMainTimePinned: {
+    bottom: -CHAT_TIME_PINNED_DROP,
+    position: "absolute",
+    right: 0
+  },
+  // Keeps the pinned time invisible for the first frame until the text and
+  // time widths have been measured, so it never flashes over the words.
+  chatMainTimeMeasuring: {
+    opacity: 0
+  },
+  // Fallback line when the last text line has no room: hugs the text with a
+  // gap smaller than the message's normal 22px line spacing. The negative
+  // marginBottom mimics the pinned overhang so the gap between the time and
+  // the bubble's bottom edge matches the pinned case exactly.
+  chatMainTimeBelow: {
+    alignSelf: "flex-end",
+    marginBottom: -CHAT_TIME_PINNED_DROP,
+    marginTop: 2
+  },
+  chatMainReplyWrap: {
+    paddingHorizontal: 5,
+    paddingTop: 5
+  },
+  chatMainReplyBlock: {
+    alignSelf: "stretch",
+    marginBottom: 0
+  },
+  chatMainMediaFrame: {
+    alignSelf: "flex-start",
+    borderRadius: 13,
+    margin: 3,
+    overflow: "hidden"
+  },
+  chatMainDishSystem: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    marginVertical: 6,
+    maxWidth: "84%",
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 7
+  },
+  chatMainDishIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderRadius: radius.pill,
+    height: 22,
+    justifyContent: "center",
+    width: 22
+  },
+  chatMainDishText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.onSurface,
+    flexShrink: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    minWidth: 0
+  },
+  chatMainDishRating: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 3
+  },
+  chatMainDishRatingText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.gold,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  chatMainLoadEarlier: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderWidth: 1
+  },
+  chatMainLoadEarlierText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.coolOnContainer,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  chatMainEmpty: {
+    alignItems: "center",
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    transform: [{ scaleY: -1 }]
+  },
+  chatMainEmptyText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center"
+  },
+  chatMainReplyPreview: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderWidth: 1
+  },
+  chatMainReplyPreviewText: {
+    color: ROOM_COLORS.onSurface
+  },
+  chatMainMessageReplyLeft: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border
+  },
+  chatMainMessageReplyRight: {
+    backgroundColor: ROOM_COLORS.sentReplyBackground,
+    borderColor: ROOM_COLORS.sentReplyBorder
+  },
+  chatMainMessageReplyText: {
+    color: ROOM_COLORS.onSurface
+  },
+  chatMainReactionPicker: {
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.border,
+    borderWidth: 1
+  },
+  chatMainReaction: {
+    backgroundColor: ROOM_COLORS.glass,
+    borderColor: ROOM_COLORS.border
+  },
+  chatMainReactionActive: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.cool
+  },
+  chatMainReactionText: {
+    color: ROOM_COLORS.onSurface
+  },
+  chatMainMenu: {
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    elevation: 8,
+    padding: CHAT_MENU_PADDING,
+    position: "absolute",
+    shadowColor: ROOM_COLORS.black,
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12
+  },
+  chatMainMenuEmojiRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    height: CHAT_MENU_EMOJI_ROW_HEIGHT,
+    justifyContent: "space-between"
+  },
+  chatMainMenuEmojiButton: {
+    alignItems: "center",
+    borderRadius: CHAT_MENU_EMOJI_SIZE / 2,
+    height: CHAT_MENU_EMOJI_SIZE,
+    justifyContent: "center",
+    width: CHAT_MENU_EMOJI_SIZE
+  },
+  chatMainMenuEmojiButtonPressed: {
+    backgroundColor: ROOM_COLORS.glass,
+    transform: [{ scale: 1.15 }]
+  },
+  chatMainMenuEmoji: {
+    fontSize: 24,
+    lineHeight: 30
+  },
+  chatMainMenuDivider: {
+    backgroundColor: ROOM_COLORS.border,
+    height: 1,
+    marginVertical: 0
+  },
+  chatMainMenuAction: {
+    alignItems: "center",
+    borderRadius: 12,
+    flexDirection: "row",
+    gap: 10,
+    height: CHAT_MENU_ACTION_HEIGHT,
+    paddingHorizontal: 10
+  },
+  chatMainMenuActionPressed: {
+    backgroundColor: ROOM_COLORS.glass
+  },
+  chatMainMenuActionLabel: {
+    ...fontStyles.medium,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 14
+  },
+  chatMainMenuActionLabelDestructive: {
+    color: ROOM_COLORS.danger
+  },
   header: {
     alignSelf: "center",
     backgroundColor: ROOM_COLORS.header,
@@ -6504,6 +7976,42 @@ function createStyles(ROOM_COLORS: RoomColors) {
     lineHeight: 16,
     textAlign: "center"
   },
+  typingIndicatorRow: {
+    alignItems: "flex-start",
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    paddingVertical: 7,
+    width: "100%"
+  },
+  typingIndicatorBubble: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingVertical: 7
+  },
+  typingDots: {
+    flexDirection: "row",
+    gap: 3
+  },
+  typingDot: {
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    height: 5,
+    opacity: 0.82,
+    width: 5
+  },
+  typingIndicatorText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14
+  },
   dateDividerRow: {
     alignItems: "center",
     paddingHorizontal: CHAT_ROW_SIDE_PADDING,
@@ -6650,6 +8158,14 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexShrink: 1,
     position: "relative"
   },
+  messageBubbleStack: {
+    alignItems: "flex-start",
+    flexShrink: 1,
+    gap: 4
+  },
+  messageBubbleStackMine: {
+    alignItems: "flex-end"
+  },
   messageStatusStack: {
     alignItems: "flex-start",
     flexShrink: 1,
@@ -6715,6 +8231,43 @@ function createStyles(ROOM_COLORS: RoomColors) {
   textMessageBubbleOther: {
     alignSelf: "flex-start",
     minWidth: 88
+  },
+  messageMetaRow: {
+    alignItems: "center",
+    alignSelf: "flex-end",
+    flexDirection: "row",
+    gap: 4,
+    marginTop: 4
+  },
+  messageMetaRowMine: {
+    alignSelf: "flex-end"
+  },
+  messageMetaTime: {
+    ...fontStyles.semiBold,
+    fontSize: 10,
+    includeFontPadding: false,
+    lineHeight: 12
+  },
+  messageMetaTimeMine: {
+    color: ROOM_COLORS.sentTimestamp
+  },
+  messageMetaTimeOther: {
+    color: ROOM_COLORS.timestamp
+  },
+  messageLinkText: {
+    color: ROOM_COLORS.cool,
+    textDecorationLine: "underline"
+  },
+  messageLinkTextMine: {
+    color: ROOM_COLORS.white,
+    textDecorationLine: "underline"
+  },
+  streamingCursor: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.coolOnContainer,
+    fontSize: 16,
+    includeFontPadding: false,
+    lineHeight: 20
   },
   dishTimelineFrame: {
     maxWidth: Platform.OS === "web" ? "74%" : "78%"
@@ -6876,6 +8429,86 @@ function createStyles(ROOM_COLORS: RoomColors) {
   replyPreviewTextMine: {
     color: ROOM_COLORS.sentReplyText
   },
+  reactionPillRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    maxWidth: Platform.OS === "web" ? 320 : 280,
+    paddingHorizontal: 4
+  },
+  reactionPillRowMine: {
+    justifyContent: "flex-end"
+  },
+  reactionPill: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 3,
+    minHeight: 25,
+    paddingHorizontal: 7,
+    paddingVertical: 3
+  },
+  reactionPillActive: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder
+  },
+  reactionPillEmoji: {
+    fontSize: 13,
+    lineHeight: 16
+  },
+  reactionPillCount: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 10,
+    lineHeight: 12
+  },
+  reactionPicker: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: ROOM_COLORS.surfaceHigh,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 2,
+    padding: 4,
+    shadowColor: ROOM_COLORS.black,
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.24,
+    shadowRadius: 16
+  },
+  reactionPickerMine: {
+    alignSelf: "flex-end"
+  },
+  reactionPickerButton: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    height: 32,
+    justifyContent: "center",
+    width: 32
+  },
+  reactionPickerEmoji: {
+    fontSize: 18,
+    lineHeight: 22
+  },
+  reactionPickerMore: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderRadius: radius.pill,
+    height: 32,
+    justifyContent: "center",
+    width: 32
+  },
+  reactionPickerClose: {
+    alignItems: "center",
+    height: 26,
+    justifyContent: "center",
+    width: 24
+  },
   senderAvatar: {
     alignItems: "center",
     borderColor: ROOM_COLORS.borderStrong,
@@ -6995,7 +8628,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     width: "100%"
   },
   mediaCaptionContainer: {
-    paddingBottom: 10,
+    paddingBottom: 8,
     paddingHorizontal: 12,
     paddingTop: 9,
     width: "100%"
