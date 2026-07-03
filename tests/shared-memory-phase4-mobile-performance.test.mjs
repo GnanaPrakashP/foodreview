@@ -23,7 +23,7 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   assert.match(memoryRoomScreen, /initialNumToRender=\{CHAT_TIMELINE_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{CHAT_TIMELINE_MAX_RENDER_BATCH\}/);
   assert.match(memoryRoomScreen, /windowSize=\{CHAT_TIMELINE_WINDOW_SIZE\}/);
-  assert.match(memoryRoomScreen, /removeClippedSubviews=\{Platform\.OS === "android"\}/);
+  assert.match(memoryRoomScreen, /removeClippedSubviews=\{false\}/);
   assert.match(memoryRoomScreen, /initialNumToRender=\{MEDIA_GALLERY_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{MEDIA_GALLERY_MAX_RENDER_BATCH\}/);
   assert.match(memoryRoomScreen, /windowSize=\{MEDIA_GALLERY_WINDOW_SIZE\}/);
@@ -45,13 +45,13 @@ test("phase 4 media images use disk cache and stable recycling keys", () => {
   assert.match(memoryRoomScreen, /cachePolicy="memory-disk"/);
   assert.match(memoryRoomScreen, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
   assert.match(memoryRoomScreen, /const VIDEO_THUMBNAIL_CACHE_LIMIT = 80/);
-  assert.match(memoryRoomScreen, /recyclingKey=\{uri\}/);
+  assert.match(memoryRoomScreen, /cacheKey=\{memoryMediaCacheKey\(media\)\}/);
 });
 
 test("chat media previews show the whole captured image or video thumbnail", () => {
-  const mediaPreviewBody = memoryRoomScreen.match(/function MediaPreview\([\s\S]*?\nfunction Composer/)?.[0] ?? "";
+  const mediaPreviewBody = memoryRoomScreen.match(/function MediaPreview\([\s\S]*?\nfunction createStyles/)?.[0] ?? "";
   assert.match(mediaPreviewBody, /contentFit = "contain"/);
-  assert.match(mediaPreviewBody, /<VideoThumbnailLayer contentFit=\{contentFit\} uri=\{media\.publicUrl\}/);
+  assert.match(mediaPreviewBody, /<VideoThumbnailLayer cacheKey=\{memoryMediaCacheKey\(media\)\} contentFit=\{contentFit\} uri=\{media\.publicUrl\}/);
   assert.match(mediaPreviewBody, /contentFit=\{contentFit\}/);
   assert.doesNotMatch(mediaPreviewBody, /contentFit="cover"/);
 });
@@ -109,7 +109,7 @@ test("camera preview uploads media directly before returning to chat", () => {
 test("adding a dish from the attachment sheet returns to chat, not the dishes tab", () => {
   const submitDishBody = memoryRoomScreen.match(/async function submitDishFromAttachment\(\)[\s\S]*?\n  }/)?.[0] ?? "";
   assert.match(submitDishBody, /setAttachmentOptionsVisible\(false\)/);
-  assert.match(submitDishBody, /setMode\("chat"\)/);
+  assert.match(submitDishBody, /requestRoomMode\("chat"\)/);
   assert.match(submitDishBody, /scrollChatToBottom\(true\)/);
   assert.doesNotMatch(submitDishBody, /"dishes"/);
   assert.doesNotMatch(submitDishBody, /attachmentOriginMode === "chat"/);

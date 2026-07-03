@@ -2,6 +2,7 @@
 import React, { RefObject } from 'react'
 import {
   TextInput,
+  ImageStyle,
   StyleProp,
   TextStyle,
   ViewStyle,
@@ -63,6 +64,10 @@ export interface ChatProps<TMessage extends IMessage> extends Partial<Omit<Messa
   isAvatarVisibleForEveryMessage?: boolean
   /* Render the message avatar at the top of consecutive messages, rather than the bottom; default is false */
   isAvatarOnTop?: boolean
+  /* Avatar image style */
+  avatarImageStyle?: LeftRightStyle<ImageStyle>
+  /* Avatar initials text style */
+  avatarTextStyle?: StyleProp<TextStyle>
   /* Extra props to be passed to the <Image> component created by the default renderMessageImage */
   imageProps?: MessageImageProps<TMessage>
   /* Minimum height of the input toolbar; default is 44 */

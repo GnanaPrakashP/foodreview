@@ -124,7 +124,7 @@ test("text message over 1000 characters is rejected", () => {
 test("valid message under 1000 characters still works", () => {
   assert.match(phase1Migration, /if new\.body is null or char_length\(new\.body\) > 1000 then/);
   assert.doesNotMatch(phase1Migration, /char_length\(new\.body\) >= 1000/);
-  assert.match(memoryRoute, /maxLength=\{MEMORY_TEXT_MAX_LENGTH\}/);
+  assert.match(memoryRoute, /maxLength:\s*MEMORY_TEXT_MAX_LENGTH/);
 });
 
 test("valid media row with correct room_id, uploader, message_id, and storage_path still works", () => {

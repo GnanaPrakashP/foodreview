@@ -78,7 +78,7 @@ export type MemoryPhotoRow = {
   uploader_name: string;
   public_url: string | null;
   storage_path: string;
-  media_type: "image" | "video" | null;
+  media_type: "audio" | "image" | "video" | null;
   image_width: number | null;
   image_height: number | null;
   upload_intent_id: string | null;

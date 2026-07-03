@@ -1,6 +1,8 @@
 import {
   MEMORY_IMAGE_MAX_RESOLUTION,
   MEMORY_IMAGE_MAX_UPLOAD_BYTES,
+  MEMORY_AUDIO_MAX_DURATION_MS,
+  MEMORY_AUDIO_MAX_UPLOAD_BYTES,
   MEMORY_MEDIA_BUCKET,
   MEMORY_MEDIA_UPLOAD_INTENT_TTL_SECONDS,
   MEMORY_VIDEO_MAX_DURATION_MS,
@@ -78,16 +80,17 @@ export function normalizeMemoryMediaIntentInput(input: MemoryMediaIntentInput): 
   }
 
   const durationMs = normalizeNullablePositiveInteger(input.durationMs);
-  if (kind === "video") {
+  if (kind === "video" || kind === "audio") {
     if (!durationMs) throw new Error("memory_media_duration_required");
-    if (durationMs > MEMORY_VIDEO_MAX_DURATION_MS) throw new Error("memory_media_duration_too_long");
+    const maxDurationMs = kind === "audio" ? MEMORY_AUDIO_MAX_DURATION_MS : MEMORY_VIDEO_MAX_DURATION_MS;
+    if (durationMs > maxDurationMs) throw new Error("memory_media_duration_too_long");
   }
 
   return { durationMs, extension, fileSizeBytes, height, kind, maxBytes, mimeType, roomId, width };
 }
 
 export function normalizeMemoryMediaKind(value: unknown): MemoryMediaKind {
-  if (value === "image" || value === "video") return value;
+  if (value === "audio" || value === "image" || value === "video") return value;
   throw new Error("memory_media_kind_invalid");
 }
 
@@ -114,6 +117,7 @@ export function extensionForMimeType(mimeType: string) {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
+  if (mimeType === "audio/mp4" || mimeType === "audio/x-m4a") return "m4a";
   if (mimeType === "video/mp4") return "mp4";
   if (mimeType === "video/quicktime") return "mov";
   if (mimeType === "video/webm") return "webm";
@@ -179,10 +183,54 @@ export function detectMemoryMediaSignature(buffer: Buffer): { kind: MemoryMediaK
   }
   if (buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp") {
     const brand = buffer.subarray(8, 12).toString("ascii");
+    const tracks = detectMp4TrackKinds(buffer);
+    if (tracks.hasAudio && !tracks.hasVideo) return { kind: "audio", mimeType: "audio/mp4" };
     if (brand === "qt  ") return { kind: "video", mimeType: "video/quicktime" };
     return { kind: "video", mimeType: "video/mp4" };
   }
   return null;
+}
+
+function detectMp4TrackKinds(buffer: Buffer) {
+  const tracks = { hasAudio: false, hasVideo: false };
+  scanMp4Atoms(buffer, 0, buffer.length, (type, start, size) => {
+    if (type !== "hdlr" || size < 24) return;
+    const handlerType = buffer.subarray(start + 16, start + 20).toString("ascii");
+    if (handlerType === "soun") tracks.hasAudio = true;
+    if (handlerType === "vide") tracks.hasVideo = true;
+  });
+  return tracks;
+}
+
+function scanMp4Atoms(
+  buffer: Buffer,
+  start: number,
+  end: number,
+  onAtom: (type: string, start: number, size: number) => void
+) {
+  const containerTypes = new Set(["moov", "trak", "mdia", "minf", "stbl", "edts", "udta", "meta"]);
+  let offset = start;
+  while (offset + 8 <= end) {
+    let size = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > end) return;
+      const largeSize = Number(buffer.readBigUInt64BE(offset + 8));
+      if (!Number.isSafeInteger(largeSize)) return;
+      size = largeSize;
+      headerSize = 16;
+    } else if (size === 0) {
+      size = end - offset;
+    }
+    if (size < headerSize || offset + size > end) return;
+    onAtom(type, offset, size);
+    if (containerTypes.has(type)) {
+      const childStart = type === "meta" ? offset + headerSize + 4 : offset + headerSize;
+      if (childStart < offset + size) scanMp4Atoms(buffer, childStart, offset + size, onAtom);
+    }
+    offset += size;
+  }
 }
 
 export function validateDetectedMemoryMedia({
@@ -197,6 +245,14 @@ export function validateDetectedMemoryMedia({
   const detected = detectMemoryMediaSignature(buffer);
   if (!detected) throw new Error("memory_media_signature_invalid");
   if (detected.kind !== expectedKind) throw new Error("memory_media_signature_kind_mismatch");
+
+  if (expectedKind === "audio") {
+    if (detected.kind !== "audio") throw new Error("memory_media_signature_kind_mismatch");
+    if (expectedMimeType !== "audio/mp4" && expectedMimeType !== "audio/x-m4a") {
+      throw new Error("memory_media_signature_mime_mismatch");
+    }
+    return detected;
+  }
 
   if (expectedMimeType === "video/quicktime") {
     if (detected.mimeType !== "video/quicktime" && detected.mimeType !== "video/mp4") {
@@ -228,6 +284,8 @@ export async function moderateMemoryMediaBuffer({
     process.env.GOOGLE_VISION_API_KEY ??
     process.env.GOOGLE_VIDEO_INTELLIGENCE_API_KEY;
 
+  if (kind === "audio") return { status: "approved" };
+
   if (!apiKey) {
     return { reason: "moderation_provider_not_configured", status: "pending" };
   }
@@ -249,7 +307,8 @@ export function mediaLimitResponse(kind: MemoryMediaKind) {
     acceptedMimeTypes: [...memoryMediaAllowedMimeTypes(kind)],
     bucket: MEMORY_MEDIA_BUCKET,
     maxAllowedSize: memoryMediaMaxBytes(kind),
-    maxDurationMs: kind === "video" ? MEMORY_VIDEO_MAX_DURATION_MS : null,
+    maxDurationMs: kind === "audio" ? MEMORY_AUDIO_MAX_DURATION_MS : kind === "video" ? MEMORY_VIDEO_MAX_DURATION_MS : null,
+    maxAudioBytes: MEMORY_AUDIO_MAX_UPLOAD_BYTES,
     maxImageBytes: MEMORY_IMAGE_MAX_UPLOAD_BYTES,
     maxImageResolution: MEMORY_IMAGE_MAX_RESOLUTION,
     maxVideoBytes: MEMORY_VIDEO_MAX_UPLOAD_BYTES

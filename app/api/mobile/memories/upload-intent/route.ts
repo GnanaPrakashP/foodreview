@@ -44,9 +44,9 @@ function validationMessage(error: unknown) {
     case "memory_media_resolution_too_large":
       return "Photo resolution is too large.";
     case "memory_media_duration_required":
-      return "Video duration is required.";
+      return "Media duration is required.";
     case "memory_media_duration_too_long":
-      return "Video must be 60 seconds or less.";
+      return "Media must be 60 seconds or less.";
     default:
       return "Media upload is not allowed.";
   }

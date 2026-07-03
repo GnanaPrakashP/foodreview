@@ -48,3 +48,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .claude/
+scripts/.chat-timestamp-seed-ids.json

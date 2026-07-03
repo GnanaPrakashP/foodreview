@@ -1,4 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useEvent } from "expo";
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import { PenLine, Star, Utensils } from "lucide-react-native";
@@ -73,14 +75,17 @@ import {
   Actions as ChatMainActions,
   Bubble as ChatMainBubble,
   Chat as ChatMain,
+  Composer as ChatMainComposer,
   Message as ChatMainMessageRow
 } from "@/vendor/reactNativeChat";
 import type { ActionsProps as ChatMainActionsProps } from "@/vendor/reactNativeChat/Actions";
 import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
+import type { ComposerProps as ChatMainComposerProps } from "@/vendor/reactNativeChat/Composer";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
-import type { IMessage as ChatMainMessage, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
+import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
 import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
+import type { SendProps as ChatMainSendProps } from "@/vendor/reactNativeChat/Send";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -111,7 +116,9 @@ import {
 } from "@/services/mediaPicker";
 import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { MEMORY_CHAT_PRELOAD_LIMIT } from "@/services/memories";
+import { MEMORY_CHAT_PRELOAD_LIMIT, type AddMemoryMediaAsset } from "@/services/memories";
+import { MEMORY_AUDIO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
+import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
@@ -269,7 +276,11 @@ const COMPOSER_TOP_GAP = 8;
 const COMPOSER_KEYBOARD_OPEN_GAP = 8;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
 const MEDIA_GRID_GAP = 4;
-const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.lg;
+const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.md;
+const CHAT_SENT_TEXT_ROW_MAX_WIDTH = "80%";
+const CHAT_RECEIVED_TEXT_ROW_MAX_WIDTH = "74%";
+const CHAT_GROUPED_MESSAGE_GAP = 3;
+const CHAT_AVATAR_SIZE = 30;
 const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
 const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
 const COMPOSER_INPUT_VERTICAL_PADDING = 12;
@@ -277,6 +288,8 @@ const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VE
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING;
 const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? 38 : 42;
 const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
+const VOICE_MESSAGE_MIN_DURATION_MS = 700;
+const VOICE_MESSAGE_MIME_TYPE = "audio/mp4";
 const SELECTION_INLINE_BUTTON_SIZE = Platform.OS === "web" ? 30 : 32;
 const SELECTION_SECONDARY_ICON_SIZE = 19;
 const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
@@ -329,6 +342,10 @@ const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
 const CHAT_TIME_PINNED_DROP = 3;
 // Minimum horizontal gap between the end of the last text line and the time.
 const CHAT_TIME_GAP = 8;
+// Height of the invisible width-reserving spacer. When it wraps to its own
+// line it adds exactly the room the pinned time (13px, dropped 3px) needs —
+// tighter than a normal 22px text line, per the placement rule.
+const CHAT_TIME_SPACER_HEIGHT = 13 - CHAT_TIME_PINNED_DROP;
 const MEMORY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😋", "👏"] as const;
 const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
@@ -420,12 +437,43 @@ function memoryChatUser(username: string, displayName: string) {
   };
 }
 
+function memoryMediaKind(media: MemoryPhoto | null | undefined) {
+  return media?.mediaType === "audio" ? "audio" : media?.mediaType === "video" ? "video" : "image";
+}
+
+function memoryMediaLabel(media: MemoryPhoto | null | undefined) {
+  const kind = memoryMediaKind(media);
+  if (kind === "audio") return "audio";
+  if (kind === "video") return "video";
+  return "photo";
+}
+
+function memoryMediaOpenLabel(media: MemoryPhoto | null | undefined) {
+  return `Open ${memoryMediaLabel(media)}`;
+}
+
+function memoryChatIsAudioMedia(media: MemoryPhoto | null | undefined) {
+  return memoryMediaKind(media) === "audio";
+}
+
+function memoryChatPrimaryAudio(message: MemoryMessage) {
+  return message.attachments.find((attachment) => memoryChatIsAudioMedia(attachment)) ?? null;
+}
+
+function memoryChatPrimaryVisualMedia(message: MemoryMessage) {
+  return message.attachments.find((attachment) => !memoryChatIsAudioMedia(attachment)) ?? null;
+}
+
 function memoryChatReplyMessage(message: MemoryMessage): ChatMainReplyMessage {
+  const primaryAudio = memoryChatPrimaryAudio(message);
+  const primaryImage = message.attachments.find((attachment) => memoryMediaKind(attachment) === "image");
+
   return {
     _id: message.id,
-    text: message.body.trim() || (message.attachments.length > 0 ? "Media" : "Message"),
+    audio: memoryChatMediaUrl(primaryAudio),
+    text: message.body.trim() || (primaryAudio ? "Audio" : message.attachments.length > 0 ? "Media" : "Message"),
     user: memoryChatUser(message.authorName, message.authorDisplayName),
-    image: message.attachments.find((attachment) => attachment.mediaType === "image")?.publicUrl ?? undefined
+    image: memoryChatMediaUrl(primaryImage)
   };
 }
 
@@ -435,19 +483,22 @@ function memoryChatReactionsForMessage(messageId: string, reactions: MemoryReact
     .map(([emoji, userIds]) => ({ emoji, userIds }));
 }
 
-function memoryChatPrimaryMedia(message: MemoryMessage) {
-  return message.attachments[0] ?? null;
-}
-
 function memoryChatMediaUrl(media: MemoryPhoto | null | undefined) {
   return media?.publicUrl ?? undefined;
 }
 
 function memoryChatMessageAttachments(message: MemoryChatMainMessage | undefined): MemoryPhoto[] {
   if (!message) return [];
-  if (message.memoryMessage) return message.memoryMessage.attachments;
-  if (message.memoryPhoto) return [message.memoryPhoto];
+  if (message.memoryMessage) return message.memoryMessage.attachments.filter((attachment) => !memoryChatIsAudioMedia(attachment));
+  if (message.memoryPhoto && !memoryChatIsAudioMedia(message.memoryPhoto)) return [message.memoryPhoto];
   return [];
+}
+
+function memoryChatAudioAttachment(message: MemoryChatMainMessage | undefined): MemoryPhoto | null {
+  if (!message) return null;
+  if (message.memoryMessage) return memoryChatPrimaryAudio(message.memoryMessage);
+  if (message.memoryPhoto && memoryChatIsAudioMedia(message.memoryPhoto)) return message.memoryPhoto;
+  return null;
 }
 
 // Same grouping rule the vendor uses for corner rounding: consecutive
@@ -553,14 +604,17 @@ function buildMemoryChatMainMessages({
 
       if (item.type === "message") {
         const message = item.value;
-        const primaryMedia = memoryChatPrimaryMedia(message);
+        const primaryAudio = memoryChatPrimaryAudio(message);
+        const primaryMedia = memoryChatPrimaryVisualMedia(message);
+        const primaryAudioUrl = memoryChatMediaUrl(primaryAudio);
         const primaryMediaUrl = memoryChatMediaUrl(primaryMedia);
 
         return {
           _id: message.id,
+          audio: primaryAudioUrl,
           createdAt: new Date(message.createdAt),
           extraAttachments: message.attachments.slice(1),
-          image: primaryMedia?.mediaType === "image" ? primaryMediaUrl : undefined,
+          image: memoryMediaKind(primaryMedia) === "image" ? primaryMediaUrl : undefined,
           kind: "message",
           memoryMessage: message,
           reactions: memoryChatReactionsForMessage(message.id, reactions),
@@ -575,7 +629,7 @@ function buildMemoryChatMainMessages({
           streaming: message.deliveryStatus === "pending",
           text: message.body.trim(),
           user: memoryChatUser(message.authorName, message.authorDisplayName),
-          video: primaryMedia?.mediaType === "video" ? primaryMediaUrl : undefined
+          video: memoryMediaKind(primaryMedia) === "video" ? primaryMediaUrl : undefined
         };
       }
 
@@ -584,14 +638,15 @@ function buildMemoryChatMainMessages({
         const mediaUrl = memoryChatMediaUrl(media);
         return {
           _id: `media:${media.id}`,
+          audio: memoryMediaKind(media) === "audio" ? mediaUrl : undefined,
           createdAt: new Date(media.createdAt),
-          image: media.mediaType === "image" ? mediaUrl : undefined,
+          image: memoryMediaKind(media) === "image" ? mediaUrl : undefined,
           kind: "media",
           memoryPhoto: media,
           showSenderDetails,
           text: "",
           user: memoryChatUser(media.uploaderName, media.uploaderDisplayName),
-          video: media.mediaType === "video" ? mediaUrl : undefined
+          video: memoryMediaKind(media) === "video" ? mediaUrl : undefined
         };
       }
 
@@ -601,6 +656,7 @@ function buildMemoryChatMainMessages({
         createdAt: new Date(dish.createdAt),
         kind: "dish",
         memoryDish: dish,
+        showSenderDetails,
         system: true,
         text: `${dish.addedByDisplayName} added ${dish.dishName}`,
         user: memoryChatUser(dish.addedBy, dish.addedByDisplayName)
@@ -623,9 +679,12 @@ function MemoryChatMainSurface({
   onLoadOlderMessages,
   onOpenDish,
   onOpenMedia,
+  onRateDish,
   onReplyMessage,
   onSend,
+  onSendAudio,
   onToggleReaction,
+  pendingDishId,
   reactions,
   replyingToMessage,
   resolvedTheme,
@@ -646,9 +705,12 @@ function MemoryChatMainSurface({
   onLoadOlderMessages: () => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
+  onRateDish: (dishId: string, rating: number) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onSend: (draft?: string) => void;
+  onSendAudio: (asset: AddMemoryMediaAsset) => Promise<void>;
   onToggleReaction: (messageId: string, emoji: string) => void;
+  pendingDishId?: string | null;
   reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
@@ -666,38 +728,233 @@ function MemoryChatMainSurface({
     { title: "Invite", action: onAddPeople },
     { title: "Cancel", action: () => undefined }
   ], [onAddDish, onAddMedia, onAddPeople, themeCopy.mediaAction]);
+  const voiceRecordingOptions = useMemo(() => ({
+    ...RecordingPresets.HIGH_QUALITY,
+    isMeteringEnabled: true
+  }), []);
+  const voiceRecorder = useAudioRecorder(voiceRecordingOptions);
+  const voiceRecorderState = useAudioRecorderState(voiceRecorder, 200);
+  const [voiceMode, setVoiceMode] = useState<"idle" | "recording" | "sending">("idle");
+  const voiceModeRef = useRef(voiceMode);
+  const voiceDurationMs = Math.max(
+    voiceRecorderState.durationMillis ?? 0,
+    Math.round((voiceRecorder.currentTime ?? 0) * 1000)
+  );
+  const voiceActive = voiceMode !== "idle";
+  const voiceSending = voiceMode === "sending";
+  const voiceSendDisabled = voiceSending || voiceDurationMs < VOICE_MESSAGE_MIN_DURATION_MS;
 
-  const renderActions = useCallback((actionProps: ChatMainActionsProps) => (
-    <ChatMainActions {...actionProps} />
-  ), []);
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
+
+  const resetVoiceAudioMode = useCallback(async () => {
+    await setAudioModeAsync({
+      allowsRecording: false,
+      interruptionMode: "duckOthers",
+      playsInSilentMode: true
+    }).catch(() => undefined);
+  }, []);
+
+  const cancelVoiceRecording = useCallback(async () => {
+    if (voiceModeRef.current === "idle") return;
+    setVoiceMode("idle");
+    try {
+      if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
+        await voiceRecorder.stop();
+      }
+    } catch {
+      // Cancelling should be quiet; a stale native recorder can already be stopped.
+    } finally {
+      await resetVoiceAudioMode();
+    }
+  }, [resetVoiceAudioMode, voiceRecorder, voiceRecorderState.isRecording]);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (voiceModeRef.current !== "idle" || message.trim().length > 0) return;
+    if (Platform.OS === "web") {
+      Alert.alert("Voice notes are mobile-only", "Use the mobile app to record audio messages.");
+      return;
+    }
+
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Microphone access needed", "Allow microphone access to record an audio message.");
+        return;
+      }
+      await setAudioModeAsync({
+        allowsRecording: true,
+        interruptionMode: "duckOthers",
+        playsInSilentMode: true
+      });
+      await voiceRecorder.prepareToRecordAsync(voiceRecordingOptions);
+      voiceRecorder.record();
+      setVoiceMode("recording");
+    } catch {
+      setVoiceMode("idle");
+      await resetVoiceAudioMode();
+      Alert.alert("Could not start recording", "Please try again.");
+    }
+  }, [message, resetVoiceAudioMode, voiceRecorder, voiceRecordingOptions]);
+
+  const finishAndSendVoiceRecording = useCallback(async () => {
+    if (voiceModeRef.current !== "recording") return;
+    const durationBeforeStopMs = Math.max(
+      voiceRecorderState.durationMillis ?? 0,
+      Math.round((voiceRecorder.currentTime ?? 0) * 1000)
+    );
+    setVoiceMode("sending");
+
+    try {
+      if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
+        await voiceRecorder.stop();
+      }
+      const status = voiceRecorder.getStatus();
+      const durationMs = Math.max(durationBeforeStopMs, status.durationMillis ?? 0);
+      const uri = voiceRecorder.uri ?? status.url ?? voiceRecorderState.url;
+      if (!uri) throw new Error("voice_recording_missing_uri");
+      if (durationMs < VOICE_MESSAGE_MIN_DURATION_MS) {
+        Alert.alert("Audio is too short", "Record for at least a moment before sending.");
+        return;
+      }
+      if (durationMs > MEMORY_AUDIO_MAX_DURATION_MS + 250) {
+        Alert.alert("Audio is too long", "Audio messages must be 60 seconds or less.");
+        return;
+      }
+      await onSendAudio({
+        duration: durationMs,
+        fileSize: null,
+        imageHeight: null,
+        imageWidth: null,
+        mediaMimeType: VOICE_MESSAGE_MIME_TYPE,
+        mediaType: "audio",
+        mediaUri: uri
+      });
+    } catch {
+      Alert.alert("Could not send audio", "Please try recording again.");
+    } finally {
+      setVoiceMode("idle");
+      await resetVoiceAudioMode();
+    }
+  }, [onSendAudio, resetVoiceAudioMode, voiceRecorder, voiceRecorderState.durationMillis, voiceRecorderState.isRecording, voiceRecorderState.url]);
+
+  useEffect(() => {
+    if (voiceMode !== "recording" || voiceDurationMs < MEMORY_AUDIO_MAX_DURATION_MS) return;
+    void finishAndSendVoiceRecording();
+  }, [finishAndSendVoiceRecording, voiceDurationMs, voiceMode]);
+
+  useEffect(() => {
+    if (active || voiceMode !== "recording") return;
+    void cancelVoiceRecording();
+  }, [active, cancelVoiceRecording, voiceMode]);
+
+  useEffect(() => () => {
+    if (voiceModeRef.current === "idle") return;
+    void voiceRecorder.stop().catch(() => undefined);
+    void resetVoiceAudioMode();
+  }, [resetVoiceAudioMode, voiceRecorder]);
+
+  const renderActions = useCallback((actionProps: ChatMainActionsProps) => {
+    if (!voiceActive) return <ChatMainActions {...actionProps} />;
+    return (
+      <Pressable
+        accessibilityLabel="Cancel audio message"
+        accessibilityRole="button"
+        disabled={voiceSending}
+        onPress={() => { void cancelVoiceRecording(); }}
+        style={styles.chatMainActionTouchable}
+      >
+        <View style={[styles.chatMainActionButton, styles.chatMainVoiceCancelButton, voiceSending && styles.chatMainVoiceButtonDisabled]}>
+          <Ionicons name="close" size={20} color={ROOM_COLORS.cool} />
+        </View>
+      </Pressable>
+    );
+  }, [cancelVoiceRecording, voiceActive, voiceSending]);
+
+  const renderComposer = useCallback((composerProps: ChatMainComposerProps) => {
+    if (voiceActive) {
+      return (
+        <MemoryChatMainVoiceComposer
+          durationMs={voiceDurationMs}
+          sending={voiceSending}
+        />
+      );
+    }
+    return (
+      <ChatMainComposer
+        {...composerProps}
+        textInputProps={{
+          ...composerProps.textInputProps,
+          maxLength: MEMORY_TEXT_MAX_LENGTH,
+          style: [styles.chatMainComposerInput, composerProps.textInputProps?.style]
+        }}
+      />
+    );
+  }, [voiceActive, voiceDurationMs, voiceSending]);
+
+  const renderSend = useCallback((sendProps: ChatMainSendProps<MemoryChatMainMessage>) => (
+    <MemoryChatMainSendButton
+      {...sendProps}
+      onSendAudio={() => { void finishAndSendVoiceRecording(); }}
+      onStartAudio={() => { void startVoiceRecording(); }}
+      voiceActive={voiceActive}
+      voiceDisabled={voiceSendDisabled}
+      voiceSending={voiceSending}
+    />
+  ), [finishAndSendVoiceRecording, startVoiceRecording, voiceActive, voiceSendDisabled, voiceSending]);
 
   // Row-level width caps live on the Message container (whose parent is the
   // full-width list row, so percentages resolve reliably); the bubble itself
   // just hugs its content. This replaces the vendor's hardcoded 70% cap.
   const renderMessage = useCallback((messageProps: ChatMainMessageRowProps<MemoryChatMainMessage>) => {
+    const dish = messageProps.currentMessage?.memoryDish;
+    if (dish) {
+      const mine = String(messageProps.user?._id ?? "") === String(messageProps.currentMessage?.user?._id ?? "");
+      return (
+        <DishTimelineCard
+          dish={dish}
+          groupPosition="single"
+          mine={mine}
+          onOpenDish={() => onOpenDish(dish.id)}
+          onRateDish={(rating) => onRateDish(dish.id, rating)}
+          pending={pendingDishId === dish.id}
+          rowStyle={styles.chatMainDishPollRow}
+          showSenderDetails={Boolean(messageProps.currentMessage?.showSenderDetails)}
+        />
+      );
+    }
+
     const hasMedia = memoryChatMessageAttachments(messageProps.currentMessage).length > 0;
-    const rowStyle = hasMedia ? styles.chatMainRowMedia : styles.chatMainRowText;
+    const hasAudio = Boolean(memoryChatAudioAttachment(messageProps.currentMessage));
+    const isGroupedWithNext = memoryChatIsGroupedToPrevious(messageProps.currentMessage, messageProps.nextMessage);
+    const rowStyle = hasMedia || hasAudio
+      ? styles.chatMainRowMedia
+      : messageProps.position === "right"
+        ? styles.chatMainRowTextMine
+        : styles.chatMainRowTextOther;
+    const groupedGapStyle = isGroupedWithNext ? styles.chatMainGroupedRowGap : null;
     return (
       <ChatMainMessageRow<MemoryChatMainMessage>
         {...messageProps}
-        containerStyle={{ left: rowStyle, right: rowStyle }}
+        containerStyle={{
+          left: [rowStyle, styles.chatMainIncomingRowEdge, groupedGapStyle],
+          right: [rowStyle, groupedGapStyle]
+        }}
       />
     );
-  }, []);
+  }, [onOpenDish, onRateDish, pendingDishId]);
 
-  // Own messages carry a WhatsApp-style tail at the bubble's top-right corner
-  // on the first message of each group (received messages show the sender's
-  // initials icon instead, so no left tail). The tail itself is rendered by
-  // renderCustomView so it lives INSIDE the vendor's animated wrapper and
-  // scales together with the bubble on long-press.
+  // Message group tails are rendered by renderCustomView so they live INSIDE
+  // the vendor's animated wrapper and scale together with the bubble on
+  // long-press.
   const renderBubble = useCallback((bubbleProps: ChatMainBubbleProps<MemoryChatMainMessage>) => {
-    const showTail = bubbleProps.position === "right" &&
-      !memoryChatIsGroupedToPrevious(bubbleProps.currentMessage, bubbleProps.previousMessage);
+    const showTail = !memoryChatIsGroupedToPrevious(bubbleProps.currentMessage, bubbleProps.previousMessage);
     return (
       <ChatMainBubble
         {...bubbleProps}
         wrapperStyle={{
-          left: styles.chatMainBubbleLeft,
+          left: [styles.chatMainBubbleLeft, showTail && styles.chatMainBubbleLeftWithTail],
           right: [styles.chatMainBubbleRight, showTail && styles.chatMainBubbleRightWithTail]
         }}
         bottomContainerStyle={{
@@ -715,23 +972,12 @@ function MemoryChatMainSurface({
 
     const mine = position === "right";
     const time = memoryChatTimestampLabel(currentMessage);
-    const attachments = memoryChatMessageAttachments(currentMessage);
-    const hasMedia = attachments.length > 0;
+    const hasMedia = memoryChatMessageAttachments(currentMessage).length > 0;
     const senderVisible = !hasMedia && !mine && Boolean(currentMessage.showSenderDetails);
     const bodyStyle = [
       hasMedia ? styles.mediaCaptionText : styles.textOnlyBubbleText,
       mine ? styles.messageTextMine : styles.messageTextOther
     ];
-    // Widest the text content can get: caption width follows the media block,
-    // plain text follows the 80% row cap minus row margin, padding and border.
-    const mediaBlockWidth = !hasMedia
-      ? 0
-      : attachments.length === 1
-        ? memoryChatSingleMediaSize(attachments[0], screenWidth).width
-        : memoryChatGridWidth(screenWidth);
-    const maxContentWidth = hasMedia
-      ? Math.max(80, mediaBlockWidth - 24 + 6)
-      : Math.max(80, Math.round((screenWidth - CHAT_ROW_SIDE_PADDING * 2) * 0.8) - 8 - 24 - (mine ? 0 : 44));
 
     return (
       <View
@@ -743,14 +989,18 @@ function MemoryChatMainSurface({
         <ChatMainBodyWithTime
           bodyStyle={bodyStyle}
           linkStyle={mine ? styles.messageLinkTextMine : styles.messageLinkText}
-          maxContentWidth={maxContentWidth}
+          // Stretch whenever a sibling can out-width the text (media block,
+          // reply card, or the sender-name header on received group starts),
+          // so the time pins to the bubble's right edge instead of hugging
+          // the text mid-bubble.
+          stretch={hasMedia || Boolean(currentMessage.replyMessage) || senderVisible}
           text={body}
           time={time}
           timeStyle={mine ? styles.inlineTimestampMine : styles.inlineTimestampOther}
         />
       </View>
     );
-  }, [screenWidth]);
+  }, []);
 
   const renderMessageMedia = useCallback((props: { currentMessage: MemoryChatMainMessage }) => {
     const attachments = memoryChatMessageAttachments(props.currentMessage);
@@ -793,6 +1043,10 @@ function MemoryChatMainSurface({
     );
   }, [onOpenMedia, screenWidth]);
 
+  const renderMessageAudio = useCallback((audioProps: ChatMainMessageAudioProps<MemoryChatMainMessage>) => (
+    <ChatMainAudioMessage {...audioProps} />
+  ), []);
+
   const renderCustomView = useCallback((props: {
     currentMessage: MemoryChatMainMessage;
     position?: "left" | "right";
@@ -800,11 +1054,10 @@ function MemoryChatMainSurface({
   }) => {
     const { currentMessage, position = "left", previousMessage } = props;
 
-    // Own bubbles: the tail, absolutely positioned inside the bubble wrapper
-    // so it scales with the bubble during the long-press animation. Drawn as
-    // SVG: the fill overlaps ~4px into the bubble to paint over the bubble's
-    // own border at the seam, and the stroke continues that border along the
-    // tail's outer edge only — so box and tail read as one outlined shape.
+    // Tails are absolutely positioned inside the bubble wrapper. Drawn as SVG:
+    // the fill overlaps ~4px into the bubble to paint over the bubble's own
+    // border at the seam, and the stroke continues that border along the tail's
+    // outer edge only so box and tail read as one outlined shape.
     if (position === "right") {
       if (memoryChatIsGroupedToPrevious(currentMessage, previousMessage)) return null;
       return (
@@ -829,16 +1082,41 @@ function MemoryChatMainSurface({
       );
     }
 
-    if (!currentMessage.showSenderDetails) return null;
     const name = currentMessage.user?.name ?? "";
-    if (!name) return null;
     const hasMedia = memoryChatMessageAttachments(currentMessage).length > 0;
+    const showTail = !memoryChatIsGroupedToPrevious(currentMessage, previousMessage);
+    if (!showTail && (!currentMessage.showSenderDetails || !name)) return null;
+
     return (
-      <View style={[styles.chatMainSenderHeader, hasMedia && styles.chatMainSenderHeaderMedia]}>
-        <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(name) }]}>
-          {name}
-        </Text>
-      </View>
+      <>
+        {showTail ? (
+          <Svg
+            height={11}
+            pointerEvents="none"
+            style={styles.chatMainBubbleTailLeft}
+            viewBox="0 0 11 11"
+            width={11}
+          >
+            <Path
+              d="M11 0 H0.4 C1.2 3.8 4 7.6 7.8 9.8 L11 9 Z"
+              fill={ROOM_COLORS.receivedBubble}
+            />
+            <Path
+              d="M11 0.5 H0.6 C1.4 3.9 4.1 7.5 7.6 9.6"
+              fill="none"
+              stroke={ROOM_COLORS.border}
+              strokeWidth={1}
+            />
+          </Svg>
+        ) : null}
+        {currentMessage.showSenderDetails && name ? (
+          <View style={[styles.chatMainSenderHeader, hasMedia && styles.chatMainSenderHeaderMedia]}>
+            <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(name) }]}>
+              {name}
+            </Text>
+          </View>
+        ) : null}
+      </>
     );
   }, []);
 
@@ -856,8 +1134,11 @@ function MemoryChatMainSurface({
         disableKeyboardProvider
         isDayAnimationEnabled
         isScrollToBottomEnabled
-        isTyping={typingVisible}
+        isTyping={typingVisible || voiceSending}
+        isAvatarOnTop
         isUserAvatarVisible={false}
+        avatarImageStyle={{ left: styles.chatMainAvatarImage }}
+        avatarTextStyle={styles.chatMainAvatarText}
         keyboardAvoidingViewProps={{ enabled: false }}
         listProps={{
           contentContainerStyle: styles.chatMainListContent
@@ -899,11 +1180,14 @@ function MemoryChatMainSurface({
         }}
         renderActions={renderActions}
         renderBubble={renderBubble}
+        renderComposer={renderComposer}
         renderCustomView={renderCustomView}
         renderMessage={renderMessage}
+        renderMessageAudio={renderMessageAudio}
         renderMessageImage={renderMessageMedia}
         renderMessageText={renderMessageText}
         renderMessageVideo={renderMessageMedia}
+        renderSend={renderSend}
         renderSystemMessage={renderSystemMessage}
         reply={{
           message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
@@ -941,6 +1225,7 @@ function MemoryChatMainSurface({
         }}
         text={message}
         textInputProps={{
+          maxLength: MEMORY_TEXT_MAX_LENGTH,
           onChangeText: onChangeMessage
         }}
         user={currentUser}
@@ -951,95 +1236,394 @@ function MemoryChatMainSurface({
 
 // Timestamp placement rule: the bottom edge of the last text line must cut
 // the single time element in half (half beside the text, half hanging into
-// the bubble's bottom padding). The text reports its wrapped lines via
-// onTextLayout; if the last line leaves room for the time (plus a gap), the
-// time is pinned at the bubble's bottom-right with the half-height drop \u2014
-// for one-liners the wrapper reserves that width via minWidth so the bubble
-// grows instead of the time overlapping the words. Only when the last line
-// has no room does the time move to its own line, tighter than a normal
-// text line.
+// the bubble's bottom padding). The space the time needs is reserved by an
+// invisible block-level spacer that flows after the text in a wrapping row,
+// so Yoga itself decides whether the time fits beside the last line (bubble
+// grows to hold it) or wraps onto its own tight line \u2014 no hand-computed
+// width estimates. The visible time is pinned at the wrapper's bottom-right,
+// which is exactly where the spacer reserved room. The only measured inputs
+// are the time's own width and (as a pure optimization) the text's line
+// layout: multi-line texts whose last line already leaves a gap wide enough
+// for the time skip the spacer so the bubble doesn't grow a needless extra
+// line. Every unmeasured/fallback state renders the spacer \u2014 worst case is
+// a slightly taller bubble, never an overlap or a missing time.
 function ChatMainBodyWithTime({
   bodyStyle,
   linkStyle,
-  maxContentWidth,
+  stretch = false,
   text,
   time,
   timeStyle
 }: {
   bodyStyle: StyleProp<TextStyle>;
   linkStyle: StyleProp<TextStyle>;
-  maxContentWidth: number;
+  // Stretch only when a sibling (media block, reply card) defines the bubble
+  // width independently, so the time can pin to the bubble's right edge.
+  // Default hugs content: stretching inside a bubble whose width comes FROM
+  // this wrapper is circular sizing, which Yoga resolves differently across
+  // layout passes — bubbles visibly oscillated between the two answers.
+  stretch?: boolean;
   text: string;
   time: string;
   timeStyle: StyleProp<TextStyle>;
 }) {
-  const [lines, setLines] = useState<{ count: number; lastWidth: number } | null>(null);
-  const [timeWidth, setTimeWidth] = useState(0);
-  const [wrapWidth, setWrapWidth] = useState(0);
-  // react-native-web has no reliable onTextLayout, so web always renders the
-  // time on its own line instead of waiting on measurements that never come.
-  const isWeb = Platform.OS === "web";
+  // The time's measured width is a monotonic latch keyed by the label: it
+  // only ever grows, and resets only when the label itself changes (e.g.
+  // "edited …"). Layout can deliver transient under-reports (down to 0) from
+  // intermediate passes; accepting one would shrink the spacer, re-layout
+  // the bubble, and oscillate. With the latch, no re-report can ever feed
+  // back into the layout.
+  const [measuredTime, setMeasuredTime] = useState<{ label: string; width: number }>({ label: time, width: 0 });
+  const timeWidth = measuredTime.label === time ? measuredTime.width : 0;
+  const spacerWidth = timeWidth + CHAT_TIME_GAP;
 
-  const handleTextLayout = useCallback((event: NativeSyntheticEvent<TextLayoutEventData>) => {
-    const textLines = event.nativeEvent.lines;
-    if (!textLines || textLines.length === 0) return;
-    const next = { count: textLines.length, lastWidth: Math.ceil(textLines[textLines.length - 1].width) };
-    setLines((previous) => (
-      previous && previous.count === next.count && previous.lastWidth === next.lastWidth ? previous : next
-    ));
+  // Android quirks measured on-device (see git history for the logs):
+  // 1. Android intermittently re-measures the text against the bubble's
+  //    stale (narrower) width, transiently wrapping the spacer; relayouts
+  //    relax the constraint and the layout self-heals — so no decision may
+  //    ever freeze a state that only exists mid-recovery.
+  // 2. A multiline Text fills the full available width instead of hugging
+  //    its longest line, leaving dead space right of shorter lines (long
+  //    unbreakable words). Handled by the hug width below.
+  // 3. The lines report appends a phantom trailing "line" for an inline
+  //    view even when it visually shares the last text line; telling a real
+  //    wrapped-spacer line from the phantom needs the element height from
+  //    the SAME pass.
+  // Layout decisions are evaluated on BOTH measurement events (line report
+  // and element layout) via shared refs — evaluating in only one of them
+  // goes blind when the other is the sole event a pass emits (a spacer-width
+  // change can re-flow lines without changing the element's outer size, so
+  // onLayout never re-fires). A ref value from the "other" event is valid
+  // whenever no size change is in flight, and if one IS in flight its own
+  // event lands right after and re-evaluates — so the non-latching outputs
+  // (margin, ownLine) self-correct. The latching hug width additionally
+  // requires CONFIRMATION: a candidate is applied only when a re-evaluation
+  // ~100ms later (after any in-flight corrective layout has landed) computes
+  // the same value, so a transient mismatched pairing can never be frozen.
+  const linesRef = useRef<{ lines: Array<{ height: number; width: number; y: number }>; timeW: number } | null>(null);
+  const boxRef = useRef<{ height: number; width: number } | null>(null);
+  const pendingHugRef = useRef<{ timeW: number; width: number } | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [layoutDecision, setLayoutDecision] = useState<{
+    hugWidth: number; // 0 = no explicit width
+    margin: number; // ≤ 0
+    ownLine: boolean;
+    timeW: number;
+  } | null>(null);
+
+  useEffect(() => () => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
   }, []);
 
-  const measured = !isWeb && lines !== null && timeWidth > 0;
-  const neededBesideWidth = (lines?.lastWidth ?? 0) + CHAT_TIME_GAP + timeWidth;
-  // Single line: fits unless text + time would exceed the widest allowed
-  // bubble (the text never re-wraps when the wrapper widens via minWidth).
-  // Multi line: fits when the trailing gap of the last line inside the
-  // already-measured wrapper can hold the time (wrapper width is stable, so
-  // this cannot oscillate).
-  const fitsBeside = measured && (
-    lines!.count === 1
-      ? neededBesideWidth <= maxContentWidth
-      : wrapWidth > 0 && wrapWidth - lines!.lastWidth >= CHAT_TIME_GAP + timeWidth
-  );
-  const showBelow = isWeb || (measured && wrapWidth > 0 && !fitsBeside);
+  const evaluateMeasurements = useCallback(() => {
+    const snapshot = linesRef.current;
+    const box = boxRef.current;
+    if (!snapshot || !box || snapshot.lines.length === 0) return;
 
-  const timeElement = (
-    <Text
-      numberOfLines={1}
-      onLayout={(event) => setTimeWidth(Math.ceil(event.nativeEvent.layout.width))}
-      style={[styles.inlineTimestampText, timeStyle]}
-    >
-      {time}
-    </Text>
-  );
+    const { lines } = snapshot;
+    const snapshotSpacerWidth = snapshot.timeW + CHAT_TIME_GAP;
+    const last = lines[lines.length - 1];
+    const lastIsSpacerOnly = last.width <= snapshotSpacerWidth + 2;
+    // The lines report appends a phantom trailing "line" for an inline view
+    // even when it visually shares the last text line; a REAL wrapped-spacer
+    // line starts a line-height above the element's bottom edge, a phantom
+    // one starts at (or past) it.
+    const ownLine = lastIsSpacerOnly && box.height - last.y > 4;
+    const margin = ownLine ? -Math.min(14, Math.max(0, box.height - last.y - 11)) : 0;
+    // Hug: a multiline bubble's width should be its longest TEXT line — the
+    // WhatsApp rule. Android's fill-width behavior leaves the element wider
+    // (long unbreakable words), and an inline spacer at the end of the last
+    // line can widen that line beyond every text line; both leave a dead
+    // band right of the text. Shrink to the longest text line (spacer
+    // contribution excluded — if the time then has no room it wraps to its
+    // own line, which is correct), floored at the spacer width so a bubble
+    // is never narrower than its own timestamp. Only when the element is
+    // meaningfully wider than that text width (a settled-state signature,
+    // never a mid-recovery narrow one) and there are at least two real text
+    // lines, so a one-line message can never be hugged at all. Latched per
+    // spacer epoch after confirmation, never removed within the epoch.
+    const realLineCount = lines.length - (lastIsSpacerOnly ? 1 : 0);
+    const textLineWidths = [
+      ...lines.slice(0, -1).map((line) => line.width),
+      ...(lastIsSpacerOnly ? [] : [Math.max(0, last.width - snapshotSpacerWidth)])
+    ];
+    const maxTextLineWidth = textLineWidths.length > 0 ? Math.max(...textLineWidths) : 0;
+    const hugCandidate = !stretch && snapshot.timeW > 0 && realLineCount >= 2 &&
+      maxTextLineWidth > 0 && box.width - maxTextLineWidth > 12
+      ? Math.max(maxTextLineWidth, snapshotSpacerWidth)
+      : 0;
+
+    let confirmedHug = 0;
+    const pending = pendingHugRef.current;
+    if (hugCandidate > 0) {
+      if (pending && pending.timeW === snapshot.timeW && Math.abs(pending.width - hugCandidate) <= 2) {
+        confirmedHug = hugCandidate;
+      } else {
+        pendingHugRef.current = { timeW: snapshot.timeW, width: hugCandidate };
+        if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+        confirmTimerRef.current = setTimeout(evaluateMeasurements, 100);
+      }
+    } else {
+      pendingHugRef.current = null;
+    }
+
+    setLayoutDecision((previous) => {
+      const sameEpoch = previous && previous.timeW === snapshot.timeW;
+      const hugWidth = sameEpoch && previous.hugWidth > 0 ? previous.hugWidth : confirmedHug;
+      const next = { hugWidth, margin, ownLine, timeW: snapshot.timeW };
+      return sameEpoch &&
+        previous.hugWidth === next.hugWidth &&
+        previous.margin === next.margin &&
+        previous.ownLine === next.ownLine
+        ? previous
+        : next;
+    });
+  }, [stretch]);
+
+  const handleTextLayout = useCallback((event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    const eventLines = event.nativeEvent.lines;
+    if (!eventLines || eventLines.length === 0) return;
+    linesRef.current = {
+      lines: eventLines.map((line) => ({
+        height: Math.round(line.height),
+        width: Math.ceil(line.width),
+        y: Math.round(line.y)
+      })),
+      timeW: timeWidth
+    };
+    evaluateMeasurements();
+  }, [timeWidth, evaluateMeasurements]);
+
+  const handleTextBoxLayout = useCallback((event: LayoutChangeEvent) => {
+    boxRef.current = {
+      height: Math.round(event.nativeEvent.layout.height),
+      width: Math.round(event.nativeEvent.layout.width)
+    };
+    evaluateMeasurements();
+  }, [evaluateMeasurements]);
+
+  const activeDecision = layoutDecision && layoutDecision.timeW === timeWidth ? layoutDecision : null;
+  const hugTextWidth = !stretch && activeDecision && activeDecision.hugWidth > 0 ? activeDecision.hugWidth : undefined;
+  const textMarginStyle = activeDecision && activeDecision.margin < 0
+    ? { marginBottom: activeDecision.margin }
+    : null;
 
   return (
-    <View
-      onLayout={(event) => setWrapWidth(Math.ceil(event.nativeEvent.layout.width))}
-      style={[
-        styles.chatMainBodyWithTime,
-        fitsBeside && lines!.count === 1
-          ? { minWidth: Math.min(neededBesideWidth, maxContentWidth) }
-          : null
-      ]}
-    >
-      <Text onTextLayout={isWeb ? undefined : handleTextLayout} style={bodyStyle}>
+    <View style={[styles.chatMainBodyWithTime, stretch && styles.chatMainBodyWithTimeStretch]}>
+      {/* The spacer is an inline view INSIDE the Text, so the text engine's
+          own line-breaker places it: end of the last line when it fits (even
+          in a multi-line trailing gap), wrapped onto its own line when it
+          doesn't. The text is measured as a plain block — no flex siblings
+          that could squeeze it. textBreakStrategy "simple" (greedy) keeps
+          Android's balanced breaker from wrapping the spacer early to
+          even out ragged lines. */}
+      <Text
+        android_hyphenationFrequency="none"
+        onLayout={handleTextBoxLayout}
+        onTextLayout={handleTextLayout}
+        style={[
+          styles.chatMainBodyHostText,
+          hugTextWidth !== undefined && { width: hugTextWidth },
+          textMarginStyle
+        ]}
+        textBreakStrategy="simple"
+      >
         <SmartMessageTextContent
           linkStyle={linkStyle}
           text={text}
           textStyle={bodyStyle}
         />
+        <View style={[styles.chatMainTimeSpacer, { width: spacerWidth }]} />
       </Text>
-      {showBelow ? (
-        <View style={styles.chatMainTimeBelow}>{timeElement}</View>
-      ) : (
-        <View
-          pointerEvents="none"
-          style={[styles.chatMainTimePinned, !fitsBeside && styles.chatMainTimeMeasuring]}
+      <View
+        pointerEvents="none"
+        style={[styles.chatMainTimePinned, timeWidth === 0 && styles.chatMainTimeMeasuring]}
+      >
+        <Text
+          numberOfLines={1}
+          onLayout={(event) => {
+            const next = Math.ceil(event.nativeEvent.layout.width);
+            setMeasuredTime((previous) => {
+              if (previous.label !== time) return { label: time, width: next };
+              return next > previous.width ? { label: time, width: next } : previous;
+            });
+          }}
+          style={[styles.inlineTimestampText, timeStyle]}
         >
-          {timeElement}
+          {time}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function formatAudioPlaybackTime(seconds: number | null | undefined) {
+  const total = Number.isFinite(seconds ?? NaN) ? Math.max(0, Math.floor(seconds ?? 0)) : 0;
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+function audioDurationSeconds(audio: MemoryPhoto | null, playerDuration: number) {
+  if (Number.isFinite(playerDuration) && playerDuration > 0) return playerDuration;
+  const durationMs = audio?.durationMs ?? null;
+  return durationMs && durationMs > 0 ? durationMs / 1000 : 0;
+}
+
+function ChatMainAudioMessage({
+  currentMessage,
+  position = "left"
+}: ChatMainMessageAudioProps<MemoryChatMainMessage> & { position?: "left" | "right" }) {
+  const uri = currentMessage.audio ?? null;
+  const mine = position === "right";
+  const audio = memoryChatAudioAttachment(currentMessage);
+  const hasCaption = Boolean(currentMessage.text?.trim());
+  const timestamp = hasCaption ? "" : memoryChatTimestampLabel(currentMessage);
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.audioMixingMode = "duckOthers";
+    instance.loop = false;
+    instance.timeUpdateEventInterval = 0.25;
+  });
+  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+  const statusEvent = useEvent(player, "statusChange", { status: player.status });
+  const timeEvent = useEvent(player, "timeUpdate");
+  const status = statusEvent?.status ?? player.status;
+  const currentTime = timeEvent?.currentTime ?? player.currentTime;
+  const duration = audioDurationSeconds(audio, player.duration);
+  const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
+  const isError = status === "error";
+
+  useEffect(() => () => {
+    player.pause();
+  }, [player]);
+
+  function togglePlayback() {
+    if (!uri || isError) return;
+    if (player.playing) {
+      player.pause();
+      return;
+    }
+    if (duration > 0 && player.currentTime >= duration - 0.25) {
+      player.currentTime = 0;
+    }
+    player.play();
+  }
+
+  if (!uri) return null;
+
+  return (
+    <View style={styles.chatMainAudioContent}>
+      <VideoView
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
+        nativeControls={false}
+        player={player}
+        pointerEvents="none"
+        style={styles.chatMainAudioHiddenPlayer}
+      />
+      <Pressable
+        accessibilityLabel={isPlaying ? "Pause audio message" : "Play audio message"}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: isError }}
+        disabled={isError}
+        hitSlop={8}
+        onPress={togglePlayback}
+        style={[styles.chatMainAudioButton, mine && styles.chatMainAudioButtonMine, isError && styles.chatMainAudioButtonDisabled]}
+      >
+        <Ionicons name={isPlaying ? "pause" : "play"} size={18} color={mine ? ROOM_COLORS.onSentBubble : ROOM_COLORS.cool} />
+      </Pressable>
+      <View style={styles.chatMainAudioBody}>
+        <View style={styles.chatMainAudioHeader}>
+          <Ionicons name="mic-outline" size={14} color={mine ? ROOM_COLORS.sentReplyText : ROOM_COLORS.muted} />
+          <Text numberOfLines={1} style={[styles.chatMainAudioTitle, mine && styles.chatMainAudioTitleMine]}>
+            {isError ? "Audio unavailable" : "Audio message"}
+          </Text>
         </View>
-      )}
+        <View style={[styles.chatMainAudioTrack, mine && styles.chatMainAudioTrackMine]}>
+          <View style={[styles.chatMainAudioProgress, mine && styles.chatMainAudioProgressMine, { width: `${Math.round(progress * 100)}%` }]} />
+        </View>
+        <View style={styles.chatMainAudioFooter}>
+          <Text style={[styles.chatMainAudioTime, mine && styles.chatMainAudioTimeMine]}>
+            {formatAudioPlaybackTime(currentTime)} / {formatAudioPlaybackTime(duration)}
+          </Text>
+          {timestamp ? (
+            <Text style={[styles.inlineTimestampText, mine ? styles.inlineTimestampMine : styles.inlineTimestampOther]}>
+              {timestamp}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function MemoryChatMainVoiceComposer({
+  durationMs,
+  sending
+}: {
+  durationMs: number;
+  sending: boolean;
+}) {
+  return (
+    <View style={styles.chatMainVoiceComposer}>
+      <View style={[styles.chatMainVoiceDot, sending && styles.chatMainVoiceDotSending]} />
+      <View style={styles.chatMainVoiceCopy}>
+        <Text numberOfLines={1} style={styles.chatMainVoiceTitle}>
+          {sending ? "Sending audio" : "Recording"}
+        </Text>
+        <Text numberOfLines={1} style={styles.chatMainVoiceTime}>
+          {formatAudioPlaybackTime(durationMs / 1000)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function MemoryChatMainSendButton({
+  onSend,
+  onSendAudio,
+  onStartAudio,
+  text,
+  voiceActive,
+  voiceDisabled,
+  voiceSending
+}: ChatMainSendProps<MemoryChatMainMessage> & {
+  onSendAudio: () => void;
+  onStartAudio: () => void;
+  voiceActive: boolean;
+  voiceDisabled: boolean;
+  voiceSending: boolean;
+}) {
+  const trimmedText = text?.trim() ?? "";
+  const hasText = trimmedText.length > 0;
+  const disabled = voiceActive && voiceDisabled;
+  const icon = voiceActive ? (voiceSending ? "hourglass-outline" : "send") : hasText ? "send" : "mic-outline";
+  const label = voiceActive ? "Send audio message" : hasText ? "Send message" : "Record audio message";
+
+  function handlePress() {
+    if (voiceActive) {
+      if (!voiceDisabled) onSendAudio();
+      return;
+    }
+    if (hasText) {
+      onSend?.({ text: trimmedText } as Partial<MemoryChatMainMessage>, true);
+      return;
+    }
+    onStartAudio();
+  }
+
+  return (
+    <View style={styles.chatMainSendContainer}>
+      <Pressable
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={handlePress}
+        style={styles.chatMainSendTouchable}
+      >
+        <View style={[styles.chatMainSendButton, disabled && styles.chatMainSendButtonDisabled]}>
+          <Ionicons name={icon} size={19} color={ROOM_COLORS.onCool} />
+        </View>
+      </Pressable>
     </View>
   );
 }
@@ -2064,6 +2648,31 @@ export default function MemoryDetailScreen() {
     }
   }
 
+  async function sendAudioMessage(asset: AddMemoryMediaAsset) {
+    setMediaError("");
+    if (editingMessage) throw new Error("Finish editing before sending audio.");
+    const validationError = validateMemoryMediaAssets([asset]);
+    if (validationError) {
+      setMediaError(validationError);
+      throw new Error(validationError);
+    }
+
+    try {
+      await addPhoto.mutateAsync({
+        assets: [asset],
+        replyToMessageId: replyingToMessage?.id ?? null,
+        roomId
+      });
+      updateMessageDraft("");
+      setReplyingToMessage(null);
+      requestRoomMode("chat");
+      requestAnimationFrame(() => scrollChatToBottom(true));
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : "Could not send audio.");
+      throw error;
+    }
+  }
+
   async function submitMedia(picker: () => Promise<MemoryMediaPickerResult>) {
     setAttachmentOptionsVisible(false);
     setMediaError("");
@@ -2455,9 +3064,12 @@ export default function MemoryDetailScreen() {
                     onLoadOlderMessages={loadOlderMessages}
                     onOpenDish={setDetailDishId}
                     onOpenMedia={openMediaViewer}
+                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
                     onReplyMessage={beginReplyMessage}
                     onSend={submitMessage}
+                    onSendAudio={sendAudioMessage}
                     onToggleReaction={toggleMessageReaction}
+                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
@@ -3187,6 +3799,7 @@ function prefetchMemoryMedia(media: MemoryPhoto) {
       });
     return;
   }
+  if (memoryMediaKind(media) === "audio") return;
   Image.prefetch(media.publicUrl).catch(() => {
     prefetchedMemoryMediaKeys.delete(cacheKey);
   });
@@ -5642,7 +6255,7 @@ function MediaGridTile({
   selectionMode?: boolean;
   style: MediaPreviewSize;
 }) {
-  const mediaLabel = media.mediaType === "video" ? "Open video" : "Open photo";
+  const mediaLabel = memoryMediaOpenLabel(media);
   const accessibilityLabel = hiddenCount > 0 ? `${mediaLabel}, plus ${hiddenCount} more` : mediaLabel;
 
   return (
@@ -5670,7 +6283,11 @@ function MediaGridTile({
 function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   const uploading = isOptimisticMemoryMedia(media);
 
-  if (media.mediaType === "video") {
+  if (memoryMediaKind(media) === "audio") {
+    return <AudioMediaPreview compact media={media} style={styles.gridMediaFill} />;
+  }
+
+  if (memoryMediaKind(media) === "video") {
     return (
       <View style={styles.gridVideoPreview}>
         <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" uri={media.publicUrl} />
@@ -5766,7 +6383,7 @@ function MediaGallery({
           ]}
         >
           <Pressable
-            accessibilityLabel={photo.mediaType === "video" ? "Open video" : "Open photo"}
+            accessibilityLabel={memoryMediaOpenLabel(photo)}
             accessibilityRole="imagebutton"
             onPress={() => onOpenMedia(photo, [photo])}
             style={styles.galleryMediaButton}
@@ -6968,7 +7585,9 @@ function MediaViewer({
 
   const renderViewerItem = ({ item: media }: { item: MemoryPhoto }) => (
     <View style={[styles.viewerSlide, carouselWidth > 0 && { width: carouselWidth }]}>
-      {media.mediaType === "video" ? (
+      {memoryMediaKind(media) === "audio" ? (
+        <ViewerAudio media={media} />
+      ) : memoryMediaKind(media) === "video" ? (
         <ViewerVideo media={media} />
       ) : (
         <Image
@@ -7056,7 +7675,11 @@ function MediaViewer({
                     index === safeActiveIndex && styles.viewerThumbnailActive
                   ]}
                 >
-                  {media.mediaType === "video" ? (
+                  {memoryMediaKind(media) === "audio" ? (
+                    <View style={styles.viewerThumbnailAudio}>
+                      <Ionicons name="mic-outline" size={16} color={ROOM_COLORS.white} />
+                    </View>
+                  ) : memoryMediaKind(media) === "video" ? (
                     <View style={styles.viewerThumbnailVideo}>
                       <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} uri={media.publicUrl} />
                       <View pointerEvents="none" style={styles.videoThumbnailScrim} />
@@ -7078,6 +7701,62 @@ function MediaViewer({
         ) : null}
       </View>
     </Modal>
+  );
+}
+
+function ViewerAudio({ media }: { media: MemoryPhoto }) {
+  const player = useVideoPlayer(media.publicUrl, (instance) => {
+    instance.audioMixingMode = "duckOthers";
+    instance.loop = false;
+    instance.timeUpdateEventInterval = 0.25;
+  });
+  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+  const timeEvent = useEvent(player, "timeUpdate");
+  const currentTime = timeEvent?.currentTime ?? player.currentTime;
+  const duration = audioDurationSeconds(media, player.duration);
+  const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
+
+  useEffect(() => () => {
+    player.pause();
+  }, [player]);
+
+  function togglePlayback() {
+    if (player.playing) {
+      player.pause();
+      return;
+    }
+    if (duration > 0 && player.currentTime >= duration - 0.25) {
+      player.currentTime = 0;
+    }
+    player.play();
+  }
+
+  return (
+    <View style={styles.viewerAudio}>
+      <VideoView
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
+        nativeControls={false}
+        player={player}
+        pointerEvents="none"
+        style={styles.chatMainAudioHiddenPlayer}
+      />
+      <Pressable
+        accessibilityLabel={isPlaying ? "Pause audio" : "Play audio"}
+        accessibilityRole="button"
+        onPress={togglePlayback}
+        style={styles.viewerAudioPlayButton}
+      >
+        <Ionicons name={isPlaying ? "pause" : "play"} size={32} color={ROOM_COLORS.white} />
+      </Pressable>
+      <Text style={styles.viewerAudioTitle}>Audio</Text>
+      <View style={styles.viewerAudioTrack}>
+        <View style={[styles.viewerAudioProgress, { width: `${Math.round(progress * 100)}%` }]} />
+      </View>
+      <Text style={styles.viewerAudioTime}>
+        {formatAudioPlaybackTime(currentTime)} / {formatAudioPlaybackTime(duration)}
+      </Text>
+    </View>
   );
 }
 
@@ -7151,6 +7830,36 @@ function MediaTimestampOverlay({
   );
 }
 
+function AudioMediaPreview({
+  compact = false,
+  media,
+  style
+}: {
+  compact?: boolean;
+  media: MemoryPhoto;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const uploading = isOptimisticMemoryMedia(media);
+  const duration = media.durationMs ? formatAudioPlaybackTime(media.durationMs / 1000) : "Audio";
+
+  return (
+    <View style={[styles.audioMediaPreview, compact && styles.audioMediaPreviewCompact, style as StyleProp<ViewStyle>]}>
+      <View style={[styles.audioMediaIcon, compact && styles.audioMediaIconCompact]}>
+        <Ionicons name="mic-outline" size={compact ? 18 : 24} color={ROOM_COLORS.cool} />
+      </View>
+      <Text numberOfLines={1} style={[styles.audioMediaTitle, compact && styles.audioMediaTitleCompact]}>
+        Audio
+      </Text>
+      {!compact ? (
+        <Text numberOfLines={1} style={styles.audioMediaDuration}>
+          {duration}
+        </Text>
+      ) : null}
+      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+    </View>
+  );
+}
+
 function MediaPreview({
   contentFit = "contain",
   media,
@@ -7162,7 +7871,11 @@ function MediaPreview({
 }) {
   const uploading = isOptimisticMemoryMedia(media);
 
-  if (media.mediaType === "video") {
+  if (memoryMediaKind(media) === "audio") {
+    return <AudioMediaPreview media={media} style={style} />;
+  }
+
+  if (memoryMediaKind(media) === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
         <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} uri={media.publicUrl} />
@@ -7336,6 +8049,12 @@ function createStyles(ROOM_COLORS: RoomColors) {
     justifyContent: "center",
     width: COMPOSER_ACTION_BUTTON_SIZE
   },
+  chatMainVoiceCancelButton: {
+    backgroundColor: ROOM_COLORS.panelRaised
+  },
+  chatMainVoiceButtonDisabled: {
+    opacity: 0.55
+  },
   chatMainComposerInput: {
     ...fontStyles.medium,
     backgroundColor: ROOM_COLORS.panelRaised,
@@ -7367,7 +8086,46 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainSendButtonDisabled: {
     backgroundColor: ROOM_COLORS.glassDim
   },
-  // Width caps are applied at the Message-row level (chatMainRowText/Media);
+  chatMainVoiceComposer: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+    paddingHorizontal: spacing.md,
+    paddingVertical: Platform.OS === "ios" ? 10 : 8
+  },
+  chatMainVoiceDot: {
+    backgroundColor: ROOM_COLORS.danger,
+    borderRadius: radius.pill,
+    height: 9,
+    width: 9
+  },
+  chatMainVoiceDotSending: {
+    backgroundColor: ROOM_COLORS.cool
+  },
+  chatMainVoiceCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  chatMainVoiceTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  chatMainVoiceTime: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    marginTop: 1
+  },
+  // Width caps are applied at the Message-row level (chatMainRowText*/Media);
   // the bubble itself hugs its content, so no maxWidth here — nested
   // percentage caps inside content-sized views resolve unreliably on native.
   chatMainBubbleLeft: {
@@ -7381,13 +8139,20 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderWidth: 1
   },
   // Squared corner behind the tail so the notch sits flush with the bubble.
+  chatMainBubbleLeftWithTail: {
+    borderTopLeftRadius: 2
+  },
   chatMainBubbleRightWithTail: {
     borderTopRightRadius: 2
   },
-  // SVG tail anchor: offsets are relative to the bubble's padding box, so
-  // top -1 reaches the outer border edge; right -8 lets the 11px-wide SVG
-  // overlap ~4px into the bubble (covering the border seam) while the tip
-  // protrudes ~7px, WhatsApp-style.
+  // SVG tail anchors: offsets are relative to the bubble's padding box, so
+  // top -1 reaches the outer border edge; +/-8 lets the 11px-wide SVG overlap
+  // ~4px into the bubble while the tip protrudes ~7px, WhatsApp-style.
+  chatMainBubbleTailLeft: {
+    left: -8,
+    position: "absolute",
+    top: -1
+  },
   chatMainBubbleTail: {
     position: "absolute",
     right: -8,
@@ -7424,11 +8189,31 @@ function createStyles(ROOM_COLORS: RoomColors) {
   // Overrides the vendor Message container's hardcoded 70% row cap. Text rows
   // cap WhatsApp-style; media rows span free since the media block width is
   // already clamped in JS (memoryChatMediaWidthBudget).
-  chatMainRowText: {
-    maxWidth: "80%"
+  chatMainRowTextMine: {
+    maxWidth: CHAT_SENT_TEXT_ROW_MAX_WIDTH
+  },
+  chatMainRowTextOther: {
+    maxWidth: CHAT_RECEIVED_TEXT_ROW_MAX_WIDTH
   },
   chatMainRowMedia: {
     maxWidth: "100%"
+  },
+  chatMainIncomingRowEdge: {
+    marginLeft: 0
+  },
+  chatMainGroupedRowGap: {
+    marginBottom: CHAT_GROUPED_MESSAGE_GAP
+  },
+  chatMainAvatarImage: {
+    borderRadius: CHAT_AVATAR_SIZE / 2,
+    height: CHAT_AVATAR_SIZE,
+    width: CHAT_AVATAR_SIZE
+  },
+  chatMainAvatarText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.white,
+    fontSize: 11,
+    lineHeight: 14
   },
   chatMainSenderHeader: {
     paddingHorizontal: 11,
@@ -7449,9 +8234,27 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainTextContainerWithSender: {
     paddingTop: 0
   },
+  // Plain block holding the text (with its inline time spacer) and the
+  // pinned time. Hugs content by default; see the `stretch` prop on
+  // ChatMainBodyWithTime for why.
   chatMainBodyWithTime: {
-    alignSelf: "stretch",
+    alignSelf: "flex-start",
     position: "relative"
+  },
+  chatMainBodyWithTimeStretch: {
+    alignSelf: "stretch"
+  },
+  // Inline spacer inside the Text reserving the time's width; when it wraps
+  // it adds only this much height — tighter than a normal 22px text line.
+  chatMainTimeSpacer: {
+    height: CHAT_TIME_SPACER_HEIGHT
+  },
+  // Host Text for the body spans + inline spacer. Tiny font so the metric
+  // floor it imposes on every line stays below the spacer height; all real
+  // text styling lives on the nested spans.
+  chatMainBodyHostText: {
+    fontSize: 4,
+    includeFontPadding: false
   },
   // Hangs below the text box just enough that the visible line under the
   // last text line cuts the time in half (the timestamp placement rule).
@@ -7460,19 +8263,97 @@ function createStyles(ROOM_COLORS: RoomColors) {
     position: "absolute",
     right: 0
   },
-  // Keeps the pinned time invisible for the first frame until the text and
-  // time widths have been measured, so it never flashes over the words.
+  // Keeps the pinned time invisible for the first frame until its width has
+  // been measured, so it never flashes over the words.
   chatMainTimeMeasuring: {
     opacity: 0
   },
-  // Fallback line when the last text line has no room: hugs the text with a
-  // gap smaller than the message's normal 22px line spacing. The negative
-  // marginBottom mimics the pinned overhang so the gap between the time and
-  // the bubble's bottom edge matches the pinned case exactly.
-  chatMainTimeBelow: {
-    alignSelf: "flex-end",
-    marginBottom: -CHAT_TIME_PINNED_DROP,
-    marginTop: 2
+  chatMainAudioContent: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    minWidth: 218,
+    overflow: "hidden",
+    paddingBottom: 8,
+    paddingHorizontal: 11,
+    paddingTop: 9,
+    position: "relative"
+  },
+  chatMainAudioHiddenPlayer: {
+    height: 1,
+    opacity: 0,
+    position: "absolute",
+    width: 1
+  },
+  chatMainAudioButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: "center",
+    width: 34
+  },
+  chatMainAudioButtonMine: {
+    backgroundColor: ROOM_COLORS.sentReplyBackground,
+    borderColor: ROOM_COLORS.sentReplyBorder
+  },
+  chatMainAudioButtonDisabled: {
+    opacity: 0.55
+  },
+  chatMainAudioBody: {
+    flex: 1,
+    gap: 6,
+    minWidth: 0
+  },
+  chatMainAudioHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 5
+  },
+  chatMainAudioTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onReceivedBubble,
+    flexShrink: 1,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  chatMainAudioTitleMine: {
+    color: ROOM_COLORS.onSentBubble
+  },
+  chatMainAudioTrack: {
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderRadius: radius.pill,
+    height: 4,
+    overflow: "hidden"
+  },
+  chatMainAudioTrackMine: {
+    backgroundColor: ROOM_COLORS.sentReplyBorder
+  },
+  chatMainAudioProgress: {
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    height: "100%"
+  },
+  chatMainAudioProgressMine: {
+    backgroundColor: ROOM_COLORS.onSentBubble
+  },
+  chatMainAudioFooter: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10
+  },
+  chatMainAudioTime: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.timestamp,
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 13
+  },
+  chatMainAudioTimeMine: {
+    color: ROOM_COLORS.sentTimestamp
   },
   chatMainReplyWrap: {
     paddingHorizontal: 5,
@@ -8169,6 +9050,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMessageRowMedia: {
     alignItems: "flex-end"
   },
+  chatMainDishPollRow: {
+    marginBottom: 10,
+    paddingHorizontal: 0
+  },
   chatMessageRowAfterBreak: {
     marginTop: 0
   },
@@ -8583,15 +9468,15 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.pill,
     borderWidth: 1,
-    height: 32,
+    height: CHAT_AVATAR_SIZE,
     justifyContent: "center",
-    width: 32
+    width: CHAT_AVATAR_SIZE
   },
   senderAvatarSlot: {
     alignSelf: "flex-start",
     flexShrink: 0,
-    height: 32,
-    width: 32
+    height: CHAT_AVATAR_SIZE,
+    width: CHAT_AVATAR_SIZE
   },
   senderInitial: {
     ...fontStyles.extraBold,
@@ -8602,8 +9487,8 @@ function createStyles(ROOM_COLORS: RoomColors) {
   senderName: {
     ...fontStyles.extraBold,
     flexShrink: 1,
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 15,
     marginBottom: 4,
     maxWidth: "100%"
   },
@@ -8670,13 +9555,16 @@ function createStyles(ROOM_COLORS: RoomColors) {
     position: "absolute",
     right: 0
   },
+  // No maxWidth: "100%" here — inside content-sized bubbles that percentage
+  // is circular (parent width derives from this text) and Yoga resolves it
+  // inconsistently across layout passes. Text wraps against the available
+  // width Yoga propagates from the capped message row.
   textOnlyBubbleText: {
     flexShrink: 1,
     flexWrap: "wrap",
     fontSize: 16,
     includeFontPadding: false,
-    lineHeight: 22,
-    maxWidth: "100%"
+    lineHeight: 22
   },
   messageTextMine: {
     color: ROOM_COLORS.onSentBubble
@@ -8702,14 +9590,14 @@ function createStyles(ROOM_COLORS: RoomColors) {
     paddingTop: 9,
     width: "100%"
   },
+  // Like textOnlyBubbleText: no circular maxWidth percentage.
   mediaCaptionText: {
     flexShrink: 1,
     flexWrap: "wrap",
     fontSize: 14,
     includeFontPadding: false,
     lineHeight: 20,
-    marginTop: 0,
-    maxWidth: "100%"
+    marginTop: 0
   },
   attachmentGridFrame: {
     alignSelf: "flex-start",
@@ -8745,6 +9633,51 @@ function createStyles(ROOM_COLORS: RoomColors) {
     height: "100%",
     overflow: "hidden",
     width: "100%"
+  },
+  audioMediaPreview: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.mediaPanel,
+    gap: 7,
+    justifyContent: "center",
+    overflow: "hidden",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    width: "100%"
+  },
+  audioMediaPreviewCompact: {
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 8
+  },
+  audioMediaIcon: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 46,
+    justifyContent: "center",
+    width: 46
+  },
+  audioMediaIconCompact: {
+    height: 34,
+    width: 34
+  },
+  audioMediaTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  audioMediaTitleCompact: {
+    fontSize: 11,
+    lineHeight: 14
+  },
+  audioMediaDuration: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14
   },
   videoThumbnailLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -9316,6 +10249,47 @@ function createStyles(ROOM_COLORS: RoomColors) {
     justifyContent: "center",
     width: "100%"
   },
+  viewerAudio: {
+    alignItems: "center",
+    flex: 1,
+    gap: 14,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    width: "100%"
+  },
+  viewerAudioPlayButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderRadius: radius.pill,
+    height: 72,
+    justifyContent: "center",
+    width: 72
+  },
+  viewerAudioTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.white,
+    fontSize: 18,
+    lineHeight: 24
+  },
+  viewerAudioTrack: {
+    backgroundColor: ROOM_COLORS.scrimMedium,
+    borderRadius: radius.pill,
+    height: 5,
+    maxWidth: 360,
+    overflow: "hidden",
+    width: "82%"
+  },
+  viewerAudioProgress: {
+    backgroundColor: ROOM_COLORS.white,
+    borderRadius: radius.pill,
+    height: "100%"
+  },
+  viewerAudioTime: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.white,
+    fontSize: 13,
+    lineHeight: 17
+  },
   viewerVideoPlayer: {
     height: "100%",
     width: "100%"
@@ -9368,6 +10342,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   viewerThumbnailImage: {
     height: "100%",
+    width: "100%"
+  },
+  viewerThumbnailAudio: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    height: "100%",
+    justifyContent: "center",
     width: "100%"
   },
   viewerThumbnailVideo: {

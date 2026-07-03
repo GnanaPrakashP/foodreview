@@ -106,10 +106,10 @@ export async function removeMemoryMediaFiles(paths: string[]) {
 
 export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, _username: string) {
   const originalUri = input.mediaUri ?? input.imageUri;
-  if (!originalUri) throw new Error("Choose a photo or video");
+  if (!originalUri) throw new Error("Choose a photo, video, or audio message");
 
   const mimeType = input.mediaMimeType ?? input.imageMimeType ?? null;
-  const mediaType = input.mediaType ?? (mimeType?.startsWith("video/") ? "video" : "image");
+  const mediaType = input.mediaType ?? (mimeType?.startsWith("audio/") ? "audio" : mimeType?.startsWith("video/") ? "video" : "image");
 
   let uploadUri = originalUri;
   let dimensions = normalizedDimensions(input.imageWidth, input.imageHeight);
@@ -306,7 +306,8 @@ function normalizedDurationMs(duration?: number | null) {
   return Math.round(duration > 1000 ? duration : duration * 1000);
 }
 
-function extensionFor(uri: string, mimeType?: string | null, mediaType: "image" | "video" = "image") {
+function extensionFor(uri: string, mimeType?: string | null, mediaType: MemoryMediaKind = "image") {
+  if (mimeType === "audio/mp4" || mimeType === "audio/x-m4a") return "m4a";
   if (mimeType?.includes("mp4")) return "mp4";
   if (mimeType?.includes("quicktime")) return "mov";
   if (mimeType?.includes("webm")) return "webm";
@@ -314,13 +315,16 @@ function extensionFor(uri: string, mimeType?: string | null, mediaType: "image" 
   if (mimeType?.includes("webp")) return "webp";
   const match = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
   const ext = match?.[1]?.toLowerCase();
+  if (ext === "m4a" || ext === "aac") return "m4a";
   if (ext === "mp4" || ext === "mov" || ext === "webm") return ext;
   if (ext === "png" || ext === "webp" || ext === "jpg" || ext === "jpeg") return ext;
+  if (mediaType === "audio") return "m4a";
   if (mediaType === "video") return "mp4";
   return "jpg";
 }
 
-function contentTypeFor(ext: string, mediaType: "image" | "video") {
+function contentTypeFor(ext: string, mediaType: MemoryMediaKind) {
+  if (mediaType === "audio") return "audio/mp4";
   if (ext === "png") return "image/png";
   if (ext === "webp") return "image/webp";
   if (ext === "mp4") return "video/mp4";

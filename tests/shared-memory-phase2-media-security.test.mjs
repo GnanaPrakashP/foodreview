@@ -27,6 +27,10 @@ const finalAuditMigration = readFileSync(
   "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
   "utf8"
 );
+const audioMessagesMigration = readFileSync(
+  "mobile/supabase/migrations/202607030001_shared_memory_audio_messages.sql",
+  "utf8"
+);
 const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
 
 test("root and mobile media policy constants stay in sync", () => {
@@ -37,6 +41,8 @@ test("root and mobile media policy constants stay in sync", () => {
     "MEMORY_IMAGE_THUMBNAIL_WIDTH = 512",
     "MEMORY_VIDEO_MAX_UPLOAD_BYTES = 25 * 1024 * 1024",
     "MEMORY_VIDEO_MAX_DURATION_MS = 60_000",
+    "MEMORY_AUDIO_MAX_UPLOAD_BYTES = 8 * 1024 * 1024",
+    "MEMORY_AUDIO_MAX_DURATION_MS = 60_000",
     "MEMORY_MEDIA_MAX_ITEMS = 4"
   ]) {
     assert.match(rootPolicy, new RegExp(constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -58,7 +64,7 @@ test("upload intent validates auth, membership, blocked users, kind, MIME, exten
   assert.match(roomSecurity, /MemoryRoomBlockedRelationship/);
 });
 
-test("valid image and video intents return immutable user-id storage paths", () => {
+test("valid image, video, and audio intents return immutable user-id storage paths", () => {
   assert.match(serverMedia, /memories\/\$\{roomId\}\/\$\{userId\}\/\$\{intentId\}\/media\.\$\{safeExtension\}/);
   assert.match(uploadIntentRoute, /userId: actor\.userId/);
   assert.match(uploadIntentRoute, /storagePath/);
@@ -66,6 +72,17 @@ test("valid image and video intents return immutable user-id storage paths", () 
   assert.match(serverMedia, /maxAllowedSize/);
   assert.match(rootPolicy, /MEMORY_ALLOWED_IMAGE_MIME_TYPES = \["image\/jpeg", "image\/png", "image\/webp"\]/);
   assert.match(rootPolicy, /MEMORY_ALLOWED_VIDEO_MIME_TYPES = \["video\/mp4", "video\/quicktime", "video\/webm"\]/);
+  assert.match(rootPolicy, /MEMORY_ALLOWED_AUDIO_MIME_TYPES = \["audio\/mp4", "audio\/x-m4a"\]/);
+  assert.match(audioMessagesMigration, /check \(media_type in \('audio', 'image', 'video'\)\)/);
+  assert.match(audioMessagesMigration, /'audio\/mp4'/);
+});
+
+test("audio finalization requires an audio-only MP4 track before approval", () => {
+  assert.match(serverMedia, /function detectMp4TrackKinds/);
+  assert.match(serverMedia, /tracks\.hasAudio && !tracks\.hasVideo/);
+  assert.match(serverMedia, /handlerType === "soun"/);
+  assert.match(serverMedia, /handlerType === "vide"/);
+  assert.match(serverMedia, /if \(kind === "audio"\) return \{ status: "approved" \}/);
 });
 
 test("storage upload policy requires an active upload intent", () => {

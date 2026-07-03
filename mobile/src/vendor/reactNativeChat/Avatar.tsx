@@ -2,6 +2,7 @@
 import React, { ReactNode, useCallback } from 'react'
 import {
   ImageStyle,
+  StyleProp,
   StyleSheet,
   TextStyle,
   View,
@@ -60,6 +61,8 @@ export interface AvatarProps<TMessage extends IMessage> {
   position: 'left' | 'right'
   isAvatarOnTop?: boolean
   isAvatarVisibleForEveryMessage?: boolean
+  avatarImageStyle?: LeftRightStyle<ImageStyle>
+  avatarTextStyle?: StyleProp<TextStyle>
   imageStyle?: LeftRightStyle<ImageStyle>
   containerStyle?: LeftRightStyle<ViewStyle>
   textStyle?: TextStyle
@@ -80,6 +83,8 @@ export function Avatar<TMessage extends IMessage = IMessage> (
     renderAvatar,
     previousMessage,
     nextMessage,
+    avatarImageStyle,
+    avatarTextStyle,
     imageStyle,
     onPressAvatar,
     onLongPressAvatar,
@@ -97,6 +102,8 @@ export function Avatar<TMessage extends IMessage = IMessage> (
         currentMessage,
         previousMessage,
         nextMessage,
+        avatarImageStyle,
+        avatarTextStyle,
         imageStyle,
         onPressAvatar,
         onLongPressAvatar,
@@ -108,7 +115,9 @@ export function Avatar<TMessage extends IMessage = IMessage> (
           avatarStyle={[
             styles[position].image,
             imageStyle?.[position],
+            avatarImageStyle?.[position],
           ]}
+          textStyle={avatarTextStyle}
           user={currentMessage.user}
           onPress={() => onPressAvatar?.(currentMessage.user)}
           onLongPress={() => onLongPressAvatar?.(currentMessage.user)}
@@ -125,6 +134,8 @@ export function Avatar<TMessage extends IMessage = IMessage> (
     currentMessage,
     previousMessage,
     nextMessage,
+    avatarImageStyle,
+    avatarTextStyle,
     imageStyle,
     onPressAvatar,
     onLongPressAvatar,
@@ -151,6 +162,7 @@ export function Avatar<TMessage extends IMessage = IMessage> (
           avatarStyle={[
             styles[position].image,
             imageStyle?.[position],
+            avatarImageStyle?.[position],
           ]}
         />
       </View>

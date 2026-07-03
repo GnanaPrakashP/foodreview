@@ -95,7 +95,7 @@ export type AddMemoryPhotoInput = {
   fileSize?: number | null;
   mediaUri?: string;
   mediaMimeType?: string | null;
-  mediaType?: "image" | "video";
+  mediaType?: "audio" | "image" | "video";
   assets?: AddMemoryMediaAsset[];
 };
 
@@ -105,7 +105,7 @@ export type AddMemoryMediaAsset = {
   imageMimeType?: string | null;
   mediaUri?: string;
   mediaMimeType?: string | null;
-  mediaType?: "image" | "video";
+  mediaType?: "audio" | "image" | "video";
   imageWidth?: number | null;
   imageHeight?: number | null;
   duration?: number | null;

@@ -194,9 +194,10 @@ export type MemoryPhoto = {
   uploaderDisplayName: string;
   publicUrl: string;
   storagePath: string;
-  mediaType: "image" | "video";
+  mediaType: "audio" | "image" | "video";
   imageWidth: number | null;
   imageHeight: number | null;
+  durationMs?: number | null;
   moderationStatus?: "pending" | "approved" | "rejected" | null;
   position: number;
   createdAt: string;
