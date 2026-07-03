@@ -57,6 +57,9 @@ than normal line spacing. Clean up afterwards with `--cleanup`.
 ### 10. Sanitization
 - [ ] The whitespace-only message does **not** appear anywhere
 
+### 12. Short lines via explicit newlines
+- [ ] "Jssjdj / Sbdjdbdk / Jdndjx / Jxjd" (sent + received): bubble hugs the longest line, time on its own line **tight** under the last word — no dead line of space above the time
+
 ### 11. Sender-name lengths (received bubbles)
 - [ ] "Hi" under **Priya Nair**, **Siddharth Rao**, and **Ananya Krishnan**: bubble width driven by the name, time still at the **bubble's** bottom-right edge (not stuck after "Hi")
 - [ ] "Same" under the longest name: same rule

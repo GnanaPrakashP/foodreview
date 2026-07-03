@@ -219,6 +219,11 @@ const CASES = [
   // short body all competing for width.
   { sender: "me", at: 41, body: "Done?", expect: "(setup for reply below)" },
   { sender: "ananya_krishnan", at: 42, body: "Yes", replyTo: 51, expect: "long name + quote card + 3-char body: time at bubble edge" },
+
+  // ── 12. Short lines via explicit newlines (found in the wild 2026-07-04:
+  //        time floated a full line below the last word) ──
+  { sender: "me", at: 43, body: "Jssjdj\nSbdjdbdk\nJdndjx\nJxjd", expect: "4 short newline lines: bubble hugs longest line, time on own line TIGHT under the last word" },
+  { sender: "other", at: 44, body: "Jssjdj\nSbdjdbdk\nJdndjx\nJxjd", expect: "same, received (name header wider than lines)" },
 ];
 
 // Extra usernames used above must exist as room members (the security

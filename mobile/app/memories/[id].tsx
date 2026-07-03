@@ -72,15 +72,15 @@ import {
   type MemoryRoomTabMode as RoomTabMode
 } from "@/features/memories/room/useMemoryRoomController";
 import {
-  Actions as ChatMainActions,
   Bubble as ChatMainBubble,
   Chat as ChatMain,
   Composer as ChatMainComposer,
+  InputToolbar as ChatMainInputToolbar,
   Message as ChatMainMessageRow
 } from "@/vendor/reactNativeChat";
-import type { ActionsProps as ChatMainActionsProps } from "@/vendor/reactNativeChat/Actions";
 import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
 import type { ComposerProps as ChatMainComposerProps } from "@/vendor/reactNativeChat/Composer";
+import type { InputToolbarProps as ChatMainInputToolbarProps } from "@/vendor/reactNativeChat/InputToolbar";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
@@ -275,6 +275,10 @@ const COMPOSER_TOP_GAP = 8;
 // composer's opaque top edge) and below (to the keyboard) when the keyboard is open.
 const COMPOSER_KEYBOARD_OPEN_GAP = 8;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
+const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
+const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
+const COMPOSER_STANDARD_BOTTOM_GAP = spacing.md;
+const COMPOSER_EDGE_TO_EDGE_BOTTOM_GAP = spacing.lg;
 const MEDIA_GRID_GAP = 4;
 const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.md;
 const CHAT_SENT_TEXT_ROW_MAX_WIDTH = "80%";
@@ -283,10 +287,11 @@ const CHAT_GROUPED_MESSAGE_GAP = 3;
 const CHAT_AVATAR_SIZE = 30;
 const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
 const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
-const COMPOSER_INPUT_VERTICAL_PADDING = 12;
-const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING;
-const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING;
-const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? 38 : 42;
+const COMPOSER_INPUT_VERTICAL_PADDING = Platform.OS === "ios" ? 20 : 16;
+const COMPOSER_INPUT_BORDER_HEIGHT = 2;
+const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
+const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
+const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? COMPOSER_INPUT_MIN_HEIGHT : Math.max(42, COMPOSER_INPUT_MIN_HEIGHT);
 const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
 const VOICE_MESSAGE_MIN_DURATION_MS = 700;
 const VOICE_MESSAGE_MIME_TYPE = "audio/mp4";
@@ -335,6 +340,8 @@ const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
 const CHAT_TIMELINE_WINDOW_SIZE = 9;
 const CHAT_TIMELINE_LOAD_OLDER_DEBOUNCE_MS = 650;
 const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
+// TEMPORARY diagnostic (round 2: short-newline-lines case). Remove after.
+const CHAT_TIME_DEBUG = __DEV__;
 // How far the pinned time hangs below the text's layout box so the visible
 // line under the last text line cuts the time in half: half the time's 13px
 // line height (~6.5) minus the ~3px of line-height slack the 22px text line
@@ -671,11 +678,9 @@ function MemoryChatMainSurface({
   loadingOlderMessages,
   message,
   myUsername,
-  onAddDish,
-  onAddMedia,
-  onAddPeople,
   onCancelReply,
   onChangeMessage,
+  onInputToolbarLayout,
   onLoadOlderMessages,
   onOpenDish,
   onOpenMedia,
@@ -688,7 +693,7 @@ function MemoryChatMainSurface({
   reactions,
   replyingToMessage,
   resolvedTheme,
-  themeCopy,
+  toolbarInsetStyle,
   typingVisible
 }: {
   active: boolean;
@@ -697,11 +702,9 @@ function MemoryChatMainSurface({
   loadingOlderMessages: boolean;
   message: string;
   myUsername: string;
-  onAddDish: () => void;
-  onAddMedia: () => void;
-  onAddPeople: () => void;
   onCancelReply: () => void;
   onChangeMessage: (value: string) => void;
+  onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
@@ -714,7 +717,7 @@ function MemoryChatMainSurface({
   reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
-  themeCopy: OccasionTheme["copy"];
+  toolbarInsetStyle: StyleProp<ViewStyle>;
   typingVisible: boolean;
 }) {
   const { width: screenWidth } = useWindowDimensions();
@@ -722,12 +725,6 @@ function MemoryChatMainSurface({
     buildMemoryChatMainMessages({ data, myUsername, reactions })
   ), [data, myUsername, reactions]);
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
-  const chatActions = useMemo(() => [
-    { title: themeCopy.mediaAction, action: onAddMedia },
-    { title: "Dish", action: onAddDish },
-    { title: "Invite", action: onAddPeople },
-    { title: "Cancel", action: () => undefined }
-  ], [onAddDish, onAddMedia, onAddPeople, themeCopy.mediaAction]);
   const voiceRecordingOptions = useMemo(() => ({
     ...RecordingPresets.HIGH_QUALITY,
     isMeteringEnabled: true
@@ -855,8 +852,8 @@ function MemoryChatMainSurface({
     void resetVoiceAudioMode();
   }, [resetVoiceAudioMode, voiceRecorder]);
 
-  const renderActions = useCallback((actionProps: ChatMainActionsProps) => {
-    if (!voiceActive) return <ChatMainActions {...actionProps} />;
+  const renderActions = useCallback(() => {
+    if (!voiceActive) return null;
     return (
       <Pressable
         accessibilityLabel="Cancel audio message"
@@ -872,6 +869,18 @@ function MemoryChatMainSurface({
     );
   }, [cancelVoiceRecording, voiceActive, voiceSending]);
 
+  const renderInputToolbar = useCallback((toolbarProps: ChatMainInputToolbarProps<MemoryChatMainMessage>) => (
+    <Reanimated.View style={[styles.chatMainToolbarShell, toolbarInsetStyle]}>
+      <View onLayout={onInputToolbarLayout}>
+        <ChatMainInputToolbar
+          {...toolbarProps}
+          containerStyle={[styles.chatMainToolbar, toolbarProps.containerStyle]}
+          primaryStyle={[styles.chatMainToolbarPrimary, toolbarProps.primaryStyle]}
+        />
+      </View>
+    </Reanimated.View>
+  ), [onInputToolbarLayout, toolbarInsetStyle]);
+
   const renderComposer = useCallback((composerProps: ChatMainComposerProps) => {
     if (voiceActive) {
       return (
@@ -882,14 +891,7 @@ function MemoryChatMainSurface({
       );
     }
     return (
-      <ChatMainComposer
-        {...composerProps}
-        textInputProps={{
-          ...composerProps.textInputProps,
-          maxLength: MEMORY_TEXT_MAX_LENGTH,
-          style: [styles.chatMainComposerInput, composerProps.textInputProps?.style]
-        }}
-      />
+      <MemoryChatMainComposer {...composerProps} />
     );
   }, [voiceActive, voiceDurationMs, voiceSending]);
 
@@ -1129,7 +1131,6 @@ function MemoryChatMainSurface({
   return (
     <View pointerEvents={active ? "auto" : "none"} style={styles.chatMainSurface}>
       <ChatMain<MemoryChatMainMessage>
-        actions={chatActions}
         colorScheme={resolvedTheme}
         disableKeyboardProvider
         isDayAnimationEnabled
@@ -1182,6 +1183,7 @@ function MemoryChatMainSurface({
         renderBubble={renderBubble}
         renderComposer={renderComposer}
         renderCustomView={renderCustomView}
+        renderInputToolbar={renderInputToolbar}
         renderMessage={renderMessage}
         renderMessageAudio={renderMessageAudio}
         renderMessageImage={renderMessageMedia}
@@ -1348,9 +1350,19 @@ function ChatMainBodyWithTime({
       ...(lastIsSpacerOnly ? [] : [Math.max(0, last.width - snapshotSpacerWidth)])
     ];
     const maxTextLineWidth = textLineWidths.length > 0 ? Math.max(...textLineWidths) : 0;
-    const hugCandidate = !stretch && snapshot.timeW > 0 && realLineCount >= 2 &&
+    // +2px slack: line widths are reported rounded while real glyph runs are
+    // fractional — constraining the text to EXACTLY its measured widest line
+    // makes that line overflow by a subpixel and re-break, orphaning its
+    // last character onto its own line (observed on device: "Sbdjdbdk" at
+    // width 70 became "Sbdjdbd" + a 9px "k" line, adding dead height).
+    // Hug applies in stretch mode too: stretch makes the WRAPPER reach the
+    // bubble's edge (so the time pins there), hug keeps the TEXT element
+    // from claiming the full row — they're orthogonal. Gating hug on
+    // !stretch left received group-start bubbles (sender header → stretch)
+    // permanently un-hugged and full-width.
+    const hugCandidate = snapshot.timeW > 0 && realLineCount >= 2 &&
       maxTextLineWidth > 0 && box.width - maxTextLineWidth > 12
-      ? Math.max(maxTextLineWidth, snapshotSpacerWidth)
+      ? Math.max(maxTextLineWidth, snapshotSpacerWidth) + 2
       : 0;
 
     let confirmedHug = 0;
@@ -1367,6 +1379,13 @@ function ChatMainBodyWithTime({
       pendingHugRef.current = null;
     }
 
+    if (CHAT_TIME_DEBUG) {
+      const linesDump = lines.map((line) => `${line.width}x${line.height}@${line.y}`).join(",");
+      console.log(
+        `[time-debug] len=${text.length} tW=${snapshot.timeW} box=${box.width}x${box.height} lines=${linesDump} own=${ownLine} margin=${margin} cand=${hugCandidate} conf=${confirmedHug}`
+      );
+    }
+
     setLayoutDecision((previous) => {
       const sameEpoch = previous && previous.timeW === snapshot.timeW;
       const hugWidth = sameEpoch && previous.hugWidth > 0 ? previous.hugWidth : confirmedHug;
@@ -1378,7 +1397,7 @@ function ChatMainBodyWithTime({
         ? previous
         : next;
     });
-  }, [stretch]);
+  }, [text.length]);
 
   const handleTextLayout = useCallback((event: NativeSyntheticEvent<TextLayoutEventData>) => {
     const eventLines = event.nativeEvent.lines;
@@ -1403,7 +1422,7 @@ function ChatMainBodyWithTime({
   }, [evaluateMeasurements]);
 
   const activeDecision = layoutDecision && layoutDecision.timeW === timeWidth ? layoutDecision : null;
-  const hugTextWidth = !stretch && activeDecision && activeDecision.hugWidth > 0 ? activeDecision.hugWidth : undefined;
+  const hugTextWidth = activeDecision && activeDecision.hugWidth > 0 ? activeDecision.hugWidth : undefined;
   const textMarginStyle = activeDecision && activeDecision.margin < 0
     ? { marginBottom: activeDecision.margin }
     : null;
@@ -1574,6 +1593,22 @@ function MemoryChatMainVoiceComposer({
         </Text>
       </View>
     </View>
+  );
+}
+
+function MemoryChatMainComposer(composerProps: ChatMainComposerProps) {
+  return (
+    <ChatMainComposer
+      {...composerProps}
+      textInputProps={{
+        ...composerProps.textInputProps,
+        maxLength: MEMORY_TEXT_MAX_LENGTH,
+        style: [
+          styles.chatMainComposerInput,
+          composerProps.textInputProps?.style
+        ]
+      }}
+    />
   );
 }
 
@@ -1900,6 +1935,16 @@ function formatRestaurantDisplayName(name: string) {
   return normalized.replace(/(^|[\s\-\/(\[])([a-z])/g, (_, prefix: string, letter: string) => (
     `${prefix}${letter.toUpperCase()}`
   ));
+}
+
+function getComposerClosedBottomPadding(bottomInset: number) {
+  const hasBottomSafeArea = bottomInset > 0;
+  // Mattermost-style edge-to-edge policy: trust OS safe-area when present, but keep
+  // a tokenized minimum for Android layouts that can report 0 while drawing edge-to-edge.
+  const usesEdgeToEdgeBottom = IS_ANDROID_EDGE_TO_EDGE || (Platform.OS === "ios" && hasBottomSafeArea);
+  const fallbackGap = usesEdgeToEdgeBottom ? COMPOSER_EDGE_TO_EDGE_BOTTOM_GAP : COMPOSER_STANDARD_BOTTOM_GAP;
+
+  return Math.max(bottomInset + COMPOSER_CLOSED_SAFE_GAP, fallbackGap);
 }
 
 // How long (ms) after a fresh open we keep clamping the keyboard height to the
@@ -2229,7 +2274,7 @@ export default function MemoryDetailScreen() {
   const stageKeyboardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: isChatMode ? Math.min(0, keyboardOffset.value) : 0 }]
   }), [isChatMode]);
-  const closedComposerBottomPadding = Math.max(insets.bottom + COMPOSER_CLOSED_SAFE_GAP, 12);
+  const closedComposerBottomPadding = getComposerClosedBottomPadding(insets.bottom);
   // Single source of truth for the bar's bottom offset, per-frame:
   //   keyboard open   → keyboardHeight + COMPOSER_KEYBOARD_OPEN_GAP
   //   keyboard closed → bottom safe-area inset + COMPOSER_CLOSED_SAFE_GAP
@@ -2806,17 +2851,6 @@ export default function MemoryDetailScreen() {
     setAttachmentOptionsVisible(true);
   }
 
-  function openAttachmentActions() {
-    setReopenAddMenuOnCancel(false);
-    openAttachmentOptions("actions");
-  }
-
-  function openChatDishAction() {
-    setDishTargetStopId(null);
-    setReopenAddMenuOnCancel(false);
-    openAttachmentOptions("dish");
-  }
-
   // Cancel path for the attachment sheet. A successful dish add closes the sheet
   // directly (and switches mode), so it never routes through here — only a real
   // dismiss does, which is where we restore the speed-dial.
@@ -3056,11 +3090,9 @@ export default function MemoryDetailScreen() {
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
                     message={message}
                     myUsername={myUsername}
-                    onAddDish={openChatDishAction}
-                    onAddMedia={openAttachmentActions}
-                    onAddPeople={openPeopleAdd}
                     onCancelReply={cancelReplyMessage}
                     onChangeMessage={updateMessageDraft}
+                    onInputToolbarLayout={handleComposerLayout}
                     onLoadOlderMessages={loadOlderMessages}
                     onOpenDish={setDetailDishId}
                     onOpenMedia={openMediaViewer}
@@ -3073,7 +3105,7 @@ export default function MemoryDetailScreen() {
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
-                    themeCopy={roomOccasionTheme.copy}
+                    toolbarInsetStyle={composerInsetStyle}
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
@@ -8064,9 +8096,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.onSurface,
     fontSize: COMPOSER_INPUT_FONT_SIZE,
     lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+    maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
     minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
     paddingHorizontal: spacing.md,
-    paddingVertical: Platform.OS === "ios" ? 10 : 8
+    paddingVertical: Platform.OS === "ios" ? 10 : 8,
+    textAlignVertical: "top"
   },
   chatMainSendContainer: {
     justifyContent: "flex-end"
