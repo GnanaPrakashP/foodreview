@@ -20,6 +20,7 @@ type UnderlineTabBarProps = {
   activeColor: string;
   inactiveColor: string;
   getLabelText: (name: string) => string;
+  getBadgeVisible?: (name: string) => boolean;
   instantPress?: boolean;
   // Mirrors the MaterialTabBar style props the screens already pass, so the
   // surrounding header layout (paddings, bottom border, label font) is unchanged.
@@ -40,6 +41,7 @@ export function UnderlineTabBar({
   activeColor,
   inactiveColor,
   getLabelText,
+  getBadgeVisible,
   instantPress = false,
   style,
   contentContainerStyle,
@@ -75,6 +77,7 @@ export function UnderlineTabBar({
             index={index}
             indexDecimal={indexDecimal}
             key={name}
+            badgeVisible={Boolean(getBadgeVisible?.(name))}
             label={getLabelText(name)}
             labelStyle={labelStyle}
             onPress={() => {
@@ -96,6 +99,7 @@ export function UnderlineTabBar({
 
 function UnderlineTab({
   activeColor,
+  badgeVisible,
   inactiveColor,
   index,
   indexDecimal,
@@ -105,6 +109,7 @@ function UnderlineTab({
   tabStyle
 }: {
   activeColor: string;
+  badgeVisible: boolean;
   inactiveColor: string;
   index: number;
   indexDecimal: SharedValue<number>;
@@ -124,16 +129,30 @@ function UnderlineTab({
 
   return (
     <Pressable accessibilityRole="tab" onPress={onPress} style={tabStyle}>
-      <Reanimated.Text style={[labelStyle, labelColorStyle]}>{label}</Reanimated.Text>
+      <View pointerEvents="none" style={styles.labelWrap}>
+        <Reanimated.Text style={[labelStyle, labelColorStyle]}>{label}</Reanimated.Text>
+        {badgeVisible ? <View style={[styles.badgeDot, { backgroundColor: activeColor }]} /> : null}
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  badgeDot: {
+    borderRadius: 4,
+    height: 7,
+    marginLeft: 5,
+    width: 7
+  },
   indicator: {
     bottom: 0,
     height: 2,
     left: 0,
     position: "absolute"
+  },
+  labelWrap: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center"
   }
 });

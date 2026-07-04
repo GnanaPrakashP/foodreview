@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from "@react-navig
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useMemo } from "react";
+import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { configureReanimatedLogger, ReanimatedLogLevel } from "react-native-reanimated";
@@ -46,6 +47,9 @@ const SLIDE_OVER_ROUTES = [
   "profile/settings/terms"
 ];
 
+const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
+const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
+
 export default function RootLayout() {
   const [fontsLoaded] = useCircleBitesFonts();
   const { resolvedTheme, themeColors } = useThemePreference();
@@ -72,7 +76,10 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ backgroundColor: themeColors.bg, flex: 1 }}>
     <AppProviders>
-      <KeyboardProvider>
+      <KeyboardProvider
+        navigationBarTranslucent={IS_ANDROID_EDGE_TO_EDGE}
+        preserveEdgeToEdge={IS_ANDROID_EDGE_TO_EDGE}
+      >
         <StatusBar
           backgroundColor={themeColors.bg}
           hidden={false}

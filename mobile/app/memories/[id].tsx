@@ -8,7 +8,8 @@ import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbnails";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -31,6 +32,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type TextInputProps,
   type TextStyle,
   useWindowDimensions,
   View,
@@ -39,13 +41,12 @@ import {
 } from "react-native";
 import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardHandler, useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { AndroidSoftInputModes, KeyboardController, useKeyboardContext, useKeyboardHandler } from "react-native-keyboard-controller";
 import Reanimated, {
   Easing as ReanimatedEasing,
   interpolate,
   runOnJS,
   type SharedValue,
-  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -74,18 +75,13 @@ import {
 import {
   Bubble as ChatMainBubble,
   Chat as ChatMain,
-  Composer as ChatMainComposer,
-  InputToolbar as ChatMainInputToolbar,
   Message as ChatMainMessageRow
 } from "@/vendor/reactNativeChat";
 import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
-import type { ComposerProps as ChatMainComposerProps } from "@/vendor/reactNativeChat/Composer";
-import type { InputToolbarProps as ChatMainInputToolbarProps } from "@/vendor/reactNativeChat/InputToolbar";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
 import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
-import type { SendProps as ChatMainSendProps } from "@/vendor/reactNativeChat/Send";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -106,6 +102,7 @@ import {
   useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime,
+  memoryKeys,
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
@@ -122,7 +119,7 @@ import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
-import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryStop, MemoryStopType } from "@/types/models";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
 type MemberCircleStatus = CircleAccessStatus | "loading";
@@ -179,7 +176,7 @@ type MemoryCaptureAsset = {
   width?: number | null;
 };
 type MemoryChatMainMessage = ChatMainMessage & {
-  kind: "dish" | "media" | "message";
+  kind: "dish" | "media" | "message" | "unread";
   memoryDish?: MemoryDish;
   memoryMessage?: MemoryMessage;
   memoryPhoto?: MemoryPhoto;
@@ -395,6 +392,33 @@ function timeValue(value: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function sameUsername(first: string, second: string) {
+  return first.trim().toLowerCase() === second.trim().toLowerCase();
+}
+
+function unreadChatMessageCount(room: MemoryRoom, myUsername: string) {
+  const lastReadTime = room.lastReadAt ? timeValue(room.lastReadAt) : 0;
+  return room.messages.filter((message) => (
+    timeValue(message.createdAt) > lastReadTime &&
+    !sameUsername(message.authorName, myUsername)
+  )).length;
+}
+
+function isVisibleMemoryMessage(message: MemoryMessage) {
+  return Boolean(message.body.trim()) || message.attachments.length > 0;
+}
+
+function firstUnreadMemoryMessageId(messages: MemoryMessage[], lastReadAt: string | null, myUsername: string) {
+  const lastReadTime = lastReadAt ? timeValue(lastReadAt) : 0;
+  return [...messages]
+    .filter(isVisibleMemoryMessage)
+    .sort((a, b) => timeValue(a.createdAt) - timeValue(b.createdAt))
+    .find((message) => (
+      timeValue(message.createdAt) > lastReadTime &&
+      !sameUsername(message.authorName, myUsername)
+    ))?.id ?? null;
+}
+
 function mergeMemoryMessages(...groups: MemoryMessage[][]) {
   const byId = new Map<string, MemoryMessage>();
   for (const group of groups) {
@@ -508,6 +532,34 @@ function memoryChatAudioAttachment(message: MemoryChatMainMessage | undefined): 
   return null;
 }
 
+function memoryChatActionTarget(message: MemoryChatMainMessage | undefined): MemoryActionTarget | null {
+  if (!message) return null;
+  if (message.memoryMessage) return { type: "message", value: message.memoryMessage };
+  if (message.memoryPhoto) return { type: "photo", value: message.memoryPhoto };
+  return null;
+}
+
+function canEditMemoryMessage(message: MemoryMessage, myUsername: string) {
+  return (
+    message.authorName === myUsername &&
+    message.body.trim().length > 0 &&
+    message.attachments.length === 0 &&
+    message.deliveryStatus !== "pending" &&
+    message.deliveryStatus !== "failed"
+  );
+}
+
+function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: string) {
+  if (target.type === "message") {
+    return (
+      target.value.authorName === myUsername &&
+      target.value.deliveryStatus !== "pending" &&
+      target.value.deliveryStatus !== "failed"
+    );
+  }
+  return target.value.uploaderName === myUsername;
+}
+
 // Same grouping rule the vendor uses for corner rounding: consecutive
 // messages from the same user on the same day form one visual run.
 function memoryChatIsGroupedToPrevious(
@@ -557,11 +609,13 @@ function memoryChatTimestampLabel(message: MemoryChatMainMessage) {
 function buildMemoryChatMainMessages({
   data,
   myUsername,
-  reactions
+  reactions,
+  unreadAnchorMessageId
 }: {
   data: MemoryRoom;
   myUsername: string;
   reactions: MemoryReactionState;
+  unreadAnchorMessageId?: string | null;
 }): MemoryChatMainMessage[] {
   const timeline: TimelineItem[] = [
     ...data.messages.map((message): TimelineItem => ({
@@ -597,7 +651,7 @@ function buildMemoryChatMainMessages({
       return true;
     });
 
-  return sorted
+  const messages = sorted
     .map((item, index): MemoryChatMainMessage => {
       const senderUsername = getTimelineSenderUsername(item);
       const mine = senderUsername === myUsername;
@@ -669,17 +723,47 @@ function buildMemoryChatMainMessages({
         user: memoryChatUser(dish.addedBy, dish.addedByDisplayName)
       };
     });
+
+  if (unreadAnchorMessageId) {
+    const anchorIndex = messages.findIndex((message) => message.memoryMessage?.id === unreadAnchorMessageId);
+    if (anchorIndex >= 0) {
+      const anchorMessage = messages[anchorIndex];
+      messages.splice(anchorIndex + 1, 0, {
+        _id: `unread:${unreadAnchorMessageId}`,
+        createdAt: anchorMessage.createdAt,
+        kind: "unread",
+        system: true,
+        text: "Unread messages",
+        user: { _id: "system" }
+      });
+    }
+  }
+
+  return messages;
 }
 
 function MemoryChatMainSurface({
   active,
+  bottomClearance,
   canLoadOlderMessages,
   data,
   loadingOlderMessages,
   message,
   myUsername,
+  canDeleteSelected,
+  deleteError,
+  deletePending,
+  editableSelectedMessage,
+  editingMessage,
+  selectedItemKeys,
+  onBeginSelection,
   onCancelReply,
+  onCancelEdit,
+  onCancelSelection,
   onChangeMessage,
+  onDeleteTarget,
+  onDeleteSelected,
+  onEditMessage,
   onInputToolbarLayout,
   onLoadOlderMessages,
   onOpenDish,
@@ -688,22 +772,37 @@ function MemoryChatMainSurface({
   onReplyMessage,
   onSend,
   onSendAudio,
+  onToggleSelection,
   onToggleReaction,
   pendingDishId,
   reactions,
   replyingToMessage,
   resolvedTheme,
+  listKeyboardStyle,
   toolbarInsetStyle,
   typingVisible
 }: {
   active: boolean;
+  bottomClearance: number;
   canLoadOlderMessages: boolean;
   data: MemoryRoom;
   loadingOlderMessages: boolean;
   message: string;
   myUsername: string;
+  canDeleteSelected: boolean;
+  deleteError?: string;
+  deletePending: boolean;
+  editableSelectedMessage: MemoryMessage | null;
+  editingMessage: MemoryMessage | null;
+  selectedItemKeys: string[];
+  onBeginSelection: (target: MemoryActionTarget) => void;
   onCancelReply: () => void;
+  onCancelEdit: () => void;
+  onCancelSelection: () => void;
   onChangeMessage: (value: string) => void;
+  onDeleteTarget: (target: MemoryActionTarget) => void;
+  onDeleteSelected: () => void;
+  onEditMessage: (message: MemoryMessage) => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onOpenDish: (dishId: string) => void;
@@ -712,19 +811,33 @@ function MemoryChatMainSurface({
   onReplyMessage: (message: MemoryMessage) => void;
   onSend: (draft?: string) => void;
   onSendAudio: (asset: AddMemoryMediaAsset) => Promise<void>;
+  onToggleSelection: (target: MemoryActionTarget) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
   pendingDishId?: string | null;
   reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
+  listKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
   typingVisible: boolean;
 }) {
   const { width: screenWidth } = useWindowDimensions();
+  const unreadAnchorMessageIdRef = useRef<string | null>(
+    active ? firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername) : null
+  );
+  const unreadAnchorVisitRef = useRef({ active, roomId: data.id });
+  if (unreadAnchorVisitRef.current.active !== active || unreadAnchorVisitRef.current.roomId !== data.id) {
+    unreadAnchorVisitRef.current = { active, roomId: data.id };
+    unreadAnchorMessageIdRef.current = active
+      ? firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername)
+      : null;
+  }
+  const unreadAnchorMessageId = active ? unreadAnchorMessageIdRef.current : null;
   const chatMessages = useMemo(() => (
-    buildMemoryChatMainMessages({ data, myUsername, reactions })
-  ), [data, myUsername, reactions]);
+    buildMemoryChatMainMessages({ data, myUsername, reactions, unreadAnchorMessageId })
+  ), [data, myUsername, reactions, unreadAnchorMessageId]);
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
+  const selectionMode = selectedItemKeys.length > 0;
   const voiceRecordingOptions = useMemo(() => ({
     ...RecordingPresets.HIGH_QUALITY,
     isMeteringEnabled: true
@@ -852,59 +965,129 @@ function MemoryChatMainSurface({
     void resetVoiceAudioMode();
   }, [resetVoiceAudioMode, voiceRecorder]);
 
-  const renderActions = useCallback(() => {
-    if (!voiceActive) return null;
-    return (
-      <Pressable
-        accessibilityLabel="Cancel audio message"
-        accessibilityRole="button"
-        disabled={voiceSending}
-        onPress={() => { void cancelVoiceRecording(); }}
-        style={styles.chatMainActionTouchable}
-      >
-        <View style={[styles.chatMainActionButton, styles.chatMainVoiceCancelButton, voiceSending && styles.chatMainVoiceButtonDisabled]}>
-          <Ionicons name="close" size={20} color={ROOM_COLORS.cool} />
-        </View>
-      </Pressable>
-    );
-  }, [cancelVoiceRecording, voiceActive, voiceSending]);
+  const buildMenuActions = useCallback((target: MemoryChatMainMessage | undefined): MemoryChatMenuAction[] => {
+    const actionTarget = memoryChatActionTarget(target);
+    if (!actionTarget) return [];
 
-  const renderInputToolbar = useCallback((toolbarProps: ChatMainInputToolbarProps<MemoryChatMainMessage>) => (
-    <Reanimated.View style={[styles.chatMainToolbarShell, toolbarInsetStyle]}>
-      <View onLayout={onInputToolbarLayout}>
-        <ChatMainInputToolbar
-          {...toolbarProps}
-          containerStyle={[styles.chatMainToolbar, toolbarProps.containerStyle]}
-          primaryStyle={[styles.chatMainToolbarPrimary, toolbarProps.primaryStyle]}
-        />
-      </View>
-    </Reanimated.View>
-  ), [onInputToolbarLayout, toolbarInsetStyle]);
+    const actions: MemoryChatMenuAction[] = [];
 
-  const renderComposer = useCallback((composerProps: ChatMainComposerProps) => {
-    if (voiceActive) {
-      return (
-        <MemoryChatMainVoiceComposer
-          durationMs={voiceDurationMs}
-          sending={voiceSending}
-        />
-      );
+    if (actionTarget.type === "message") {
+      const targetMessage = actionTarget.value;
+      const body = targetMessage.body.trim();
+      actions.push({
+        icon: "arrow-undo-outline",
+        key: "reply",
+        label: "Reply",
+        onPress: () => onReplyMessage(targetMessage)
+      });
+
+      if (body.length > 0) {
+        actions.push({
+          icon: "copy-outline",
+          key: "copy",
+          label: "Copy",
+          onPress: () => {
+            void Clipboard.setStringAsync(targetMessage.body);
+          }
+        });
+      }
+
+      if (canEditMemoryMessage(targetMessage, myUsername)) {
+        actions.push({
+          icon: "create-outline",
+          key: "edit",
+          label: "Edit",
+          onPress: () => onEditMessage(targetMessage)
+        });
+      }
+
+      if (canDeleteMemoryActionTarget(actionTarget, myUsername)) {
+        actions.push({
+          destructive: true,
+          icon: "trash-outline",
+          key: "delete",
+          label: "Delete",
+          onPress: () => onDeleteTarget(actionTarget)
+        });
+      }
+    } else if (canDeleteMemoryActionTarget(actionTarget, myUsername)) {
+      actions.push({
+        destructive: true,
+        icon: "trash-outline",
+        key: "delete",
+        label: "Delete",
+        onPress: () => onDeleteTarget(actionTarget)
+      });
     }
-    return (
-      <MemoryChatMainComposer {...composerProps} />
-    );
-  }, [voiceActive, voiceDurationMs, voiceSending]);
 
-  const renderSend = useCallback((sendProps: ChatMainSendProps<MemoryChatMainMessage>) => (
-    <MemoryChatMainSendButton
-      {...sendProps}
+    actions.push({
+      icon: "checkmark-circle-outline",
+      key: "select",
+      label: "Select",
+      onPress: () => onBeginSelection(actionTarget)
+    });
+
+    return actions;
+  }, [myUsername, onBeginSelection, onDeleteTarget, onEditMessage, onReplyMessage]);
+
+  const chatMainListContentStyle = useMemo(() => [
+    styles.chatMainListContent,
+    { paddingTop: bottomClearance }
+  ], [bottomClearance]);
+
+  const sendToolbarMessage = useCallback((
+    outgoingMessages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[]
+  ) => {
+    const firstMessage = Array.isArray(outgoingMessages) ? outgoingMessages[0] : outgoingMessages;
+    onSend(firstMessage?.text ?? "");
+  }, [onSend]);
+
+  const renderInputToolbar = useCallback(() => null, []);
+
+  const composerToolbar = selectionMode ? (
+    <MemoryChatMainSelectionToolbar
+      canDelete={canDeleteSelected}
+      count={selectedItemKeys.length}
+      deleteError={deleteError}
+      deleting={deletePending}
+      editableMessage={editableSelectedMessage}
+      onCancel={onCancelSelection}
+      onDelete={onDeleteSelected}
+      onEdit={onEditMessage}
+      onInputToolbarLayout={onInputToolbarLayout}
+      toolbarInsetStyle={toolbarInsetStyle}
+    />
+  ) : (
+    <MemoryChatMainInputToolbar
+      editingMessage={editingMessage}
+      myUsername={myUsername}
+      onCancelEdit={onCancelEdit}
+      onCancelVoice={() => { void cancelVoiceRecording(); }}
+      onClearReply={onCancelReply}
+      onInputToolbarLayout={onInputToolbarLayout}
+      onSend={sendToolbarMessage}
       onSendAudio={() => { void finishAndSendVoiceRecording(); }}
       onStartAudio={() => { void startVoiceRecording(); }}
+      replyMessage={replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null}
+      text={message}
+      textInputProps={{
+        maxLength: MEMORY_TEXT_MAX_LENGTH,
+        onChangeText: onChangeMessage
+      }}
+      themeMode={resolvedTheme}
+      toolbarInsetStyle={toolbarInsetStyle}
       voiceActive={voiceActive}
       voiceDisabled={voiceSendDisabled}
+      voiceDurationMs={voiceDurationMs}
       voiceSending={voiceSending}
     />
-  ), [finishAndSendVoiceRecording, startVoiceRecording, voiceActive, voiceSendDisabled, voiceSending]);
+  );
+
+  const handlePressMessage = useCallback((_context: unknown, target: MemoryChatMainMessage) => {
+    if (!selectionMode) return;
+    const actionTarget = memoryChatActionTarget(target);
+    if (actionTarget) onToggleSelection(actionTarget);
+  }, [onToggleSelection, selectionMode]);
 
   // Row-level width caps live on the Message container (whose parent is the
   // full-width list row, so percentages resolve reliably); the bubble itself
@@ -929,6 +1112,8 @@ function MemoryChatMainSurface({
 
     const hasMedia = memoryChatMessageAttachments(messageProps.currentMessage).length > 0;
     const hasAudio = Boolean(memoryChatAudioAttachment(messageProps.currentMessage));
+    const actionTarget = memoryChatActionTarget(messageProps.currentMessage);
+    const selected = actionTarget ? selectedItemKeys.includes(memoryActionKey(actionTarget)) : false;
     const isGroupedWithNext = memoryChatIsGroupedToPrevious(messageProps.currentMessage, messageProps.nextMessage);
     const rowStyle = hasMedia || hasAudio
       ? styles.chatMainRowMedia
@@ -937,15 +1122,17 @@ function MemoryChatMainSurface({
         : styles.chatMainRowTextOther;
     const groupedGapStyle = isGroupedWithNext ? styles.chatMainGroupedRowGap : null;
     return (
-      <ChatMainMessageRow<MemoryChatMainMessage>
-        {...messageProps}
-        containerStyle={{
-          left: [rowStyle, styles.chatMainIncomingRowEdge, groupedGapStyle],
-          right: [rowStyle, groupedGapStyle]
-        }}
-      />
+      <View style={[styles.chatMainRowSelectionFrame, selected && styles.chatMainRowSelectedBackground]}>
+        <ChatMainMessageRow<MemoryChatMainMessage>
+          {...messageProps}
+          containerStyle={{
+            left: [rowStyle, styles.chatMainIncomingRowEdge, groupedGapStyle],
+            right: [rowStyle, groupedGapStyle]
+          }}
+        />
+      </View>
     );
-  }, [onOpenDish, onRateDish, pendingDishId]);
+  }, [onOpenDish, onRateDish, pendingDishId, selectedItemKeys]);
 
   // Message group tails are rendered by renderCustomView so they live INSIDE
   // the vendor's animated wrapper and scale together with the bubble on
@@ -956,8 +1143,14 @@ function MemoryChatMainSurface({
       <ChatMainBubble
         {...bubbleProps}
         wrapperStyle={{
-          left: [styles.chatMainBubbleLeft, showTail && styles.chatMainBubbleLeftWithTail],
-          right: [styles.chatMainBubbleRight, showTail && styles.chatMainBubbleRightWithTail]
+          left: [
+            styles.chatMainBubbleLeft,
+            showTail && styles.chatMainBubbleLeftWithTail
+          ],
+          right: [
+            styles.chatMainBubbleRight,
+            showTail && styles.chatMainBubbleRightWithTail
+          ]
         }}
         bottomContainerStyle={{
           left: styles.chatMainBubbleBottomHidden,
@@ -1061,7 +1254,8 @@ function MemoryChatMainSurface({
     // border at the seam, and the stroke continues that border along the tail's
     // outer edge only so box and tail read as one outlined shape.
     if (position === "right") {
-      if (memoryChatIsGroupedToPrevious(currentMessage, previousMessage)) return null;
+      const showTail = !memoryChatIsGroupedToPrevious(currentMessage, previousMessage);
+      if (!showTail) return null;
       return (
         <Svg
           height={11}
@@ -1087,7 +1281,8 @@ function MemoryChatMainSurface({
     const name = currentMessage.user?.name ?? "";
     const hasMedia = memoryChatMessageAttachments(currentMessage).length > 0;
     const showTail = !memoryChatIsGroupedToPrevious(currentMessage, previousMessage);
-    if (!showTail && (!currentMessage.showSenderDetails || !name)) return null;
+    const showSender = Boolean(currentMessage.showSenderDetails && name);
+    if (!showTail && !showSender) return null;
 
     return (
       <>
@@ -1111,7 +1306,7 @@ function MemoryChatMainSurface({
             />
           </Svg>
         ) : null}
-        {currentMessage.showSenderDetails && name ? (
+        {showSender ? (
           <View style={[styles.chatMainSenderHeader, hasMedia && styles.chatMainSenderHeaderMedia]}>
             <Text numberOfLines={1} style={[styles.senderName, { color: senderAccent(name) }]}>
               {name}
@@ -1123,115 +1318,140 @@ function MemoryChatMainSurface({
   }, []);
 
   const renderSystemMessage = useCallback((props: { currentMessage?: MemoryChatMainMessage }) => {
+    if (props.currentMessage?.kind === "unread") return <UnreadDivider />;
     const dish = props.currentMessage?.memoryDish;
     if (!dish) return null;
     return <MemoryChatMainDishSystemMessage dish={dish} onOpenDish={onOpenDish} />;
   }, [onOpenDish]);
 
+  const renderReactionPicker = useCallback((pickerProps: ChatMainReactionPickerProps<MemoryChatMainMessage>) => {
+    if (selectionMode) return null;
+
+    const target = pickerProps.message;
+    const targetMessage = target?.memoryMessage;
+    const showEmojis = Boolean(
+      targetMessage &&
+      targetMessage.deliveryStatus !== "pending" &&
+      targetMessage.deliveryStatus !== "failed"
+    );
+
+    return (
+      <MemoryChatMessageMenu
+        {...pickerProps}
+        actions={buildMenuActions(target)}
+        showEmojis={showEmojis}
+      />
+    );
+  }, [buildMenuActions, selectionMode]);
+
   return (
     <View pointerEvents={active ? "auto" : "none"} style={styles.chatMainSurface}>
-      <ChatMain<MemoryChatMainMessage>
-        colorScheme={resolvedTheme}
-        disableKeyboardProvider
-        isDayAnimationEnabled
-        isScrollToBottomEnabled
-        isTyping={typingVisible || voiceSending}
-        isAvatarOnTop
-        isUserAvatarVisible={false}
-        avatarImageStyle={{ left: styles.chatMainAvatarImage }}
-        avatarTextStyle={styles.chatMainAvatarText}
-        keyboardAvoidingViewProps={{ enabled: false }}
-        listProps={{
-          contentContainerStyle: styles.chatMainListContent
-        }}
-        loadEarlierMessagesProps={{
-          isAvailable: canLoadOlderMessages,
-          isInfiniteScrollEnabled: true,
-          isLoading: loadingOlderMessages,
-          onPress: onLoadOlderMessages
-        }}
-        messageTextProps={{
-          hashtag: true,
-          customTextStyle: styles.textOnlyBubbleText,
-          linkStyle: {
-            left: styles.messageLinkText,
-            right: styles.messageLinkTextMine
-          },
-          mention: true,
-          onPress: (_message, url) => {
-            void Linking.openURL(url);
-          },
-          stripPrefix: false,
-          textStyle: {
-            left: styles.messageTextOther,
-            right: styles.messageTextMine
-          }
-        }}
-        messages={chatMessages}
-        messagesContainerStyle={styles.chatMainMessages}
-        onQuickReply={(replies) => {
-          replies.forEach((reply) => {
-            const value = (reply.value || reply.title || "").trim();
-            if (value) onSend(value);
-          });
-        }}
-        onSend={(outgoingMessages) => {
-          const outgoingText = outgoingMessages[0]?.text ?? "";
-          onSend(outgoingText);
-        }}
-        renderActions={renderActions}
-        renderBubble={renderBubble}
-        renderComposer={renderComposer}
-        renderCustomView={renderCustomView}
-        renderInputToolbar={renderInputToolbar}
-        renderMessage={renderMessage}
-        renderMessageAudio={renderMessageAudio}
-        renderMessageImage={renderMessageMedia}
-        renderMessageText={renderMessageText}
-        renderMessageVideo={renderMessageMedia}
-        renderSend={renderSend}
-        renderSystemMessage={renderSystemMessage}
-        reply={{
-          message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
-          onClear: onCancelReply,
-          renderMessageReply: (replyProps) => {
-            const reply = replyProps.replyMessage;
-            if (!reply) return null;
-            const authorId = String(reply.user?._id ?? "");
-            const author = authorId && authorId === myUsername ? "You" : reply.user?.name || "Unknown";
-            return (
-              <View style={styles.chatMainReplyWrap}>
-                <ReplyPreviewBlock
-                  author={author}
-                  body={reply.text || "Message"}
-                  mine={replyProps.position === "right"}
-                  style={styles.chatMainReplyBlock}
-                />
-              </View>
-            );
-          },
-          swipe: {
-            direction: "right",
-            isEnabled: true,
-            onSwipe: (target) => {
-              if (target.memoryMessage) onReplyMessage(target.memoryMessage);
+      <Reanimated.View style={[styles.chatMainMessagesLayer, listKeyboardStyle]}>
+        <ChatMain<MemoryChatMainMessage>
+          colorScheme={resolvedTheme}
+          disableKeyboardProvider
+          isDayAnimationEnabled
+          isScrollToBottomEnabled
+          isTyping={typingVisible || voiceSending}
+          isAvatarOnTop
+          isUserAvatarVisible={false}
+          avatarImageStyle={{ left: styles.chatMainAvatarImage }}
+          avatarTextStyle={styles.chatMainAvatarText}
+          keyboardAvoidingViewProps={{ enabled: false }}
+          listProps={{
+            contentContainerStyle: chatMainListContentStyle,
+            extraData: selectedItemKeys.join("|")
+          }}
+          loadEarlierMessagesProps={{
+            isAvailable: canLoadOlderMessages,
+            isInfiniteScrollEnabled: true,
+            isLoading: loadingOlderMessages,
+            onPress: onLoadOlderMessages
+          }}
+          messageTextProps={{
+            hashtag: true,
+            customTextStyle: styles.textOnlyBubbleText,
+            linkStyle: {
+              left: styles.messageLinkText,
+              right: styles.messageLinkTextMine
+            },
+            mention: true,
+            onPress: (_message, url) => {
+              void Linking.openURL(url);
+            },
+            stripPrefix: false,
+            textStyle: {
+              left: styles.messageTextOther,
+              right: styles.messageTextMine
             }
-          }
-        }}
-        reactions={{
-          emojis: [...MEMORY_REACTION_EMOJIS],
-          isEnabled: true,
-          onReactionPress: (target, emoji) => {
-            if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
-          }
-        }}
-        text={message}
-        textInputProps={{
-          maxLength: MEMORY_TEXT_MAX_LENGTH,
-          onChangeText: onChangeMessage
-        }}
-        user={currentUser}
-      />
+          }}
+          messages={chatMessages}
+          messagesContainerStyle={styles.chatMainMessages}
+          onQuickReply={(replies) => {
+            replies.forEach((reply) => {
+              const value = (reply.value || reply.title || "").trim();
+              if (value) onSend(value);
+            });
+          }}
+          onSend={(outgoingMessages) => {
+            const outgoingText = outgoingMessages[0]?.text ?? "";
+            onSend(outgoingText);
+          }}
+          onPressMessage={handlePressMessage}
+          renderBubble={renderBubble}
+          renderCustomView={renderCustomView}
+          renderInputToolbar={renderInputToolbar}
+          renderMessage={renderMessage}
+          renderMessageAudio={renderMessageAudio}
+          renderMessageImage={renderMessageMedia}
+          renderMessageText={renderMessageText}
+          renderMessageVideo={renderMessageMedia}
+          renderSystemMessage={renderSystemMessage}
+          reply={{
+            message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
+            onClear: onCancelReply,
+            renderMessageReply: (replyProps) => {
+              const reply = replyProps.replyMessage;
+              if (!reply) return null;
+              const authorId = String(reply.user?._id ?? "");
+              const author = authorId && authorId === myUsername ? "You" : reply.user?.name || "Unknown";
+              return (
+                <View style={styles.chatMainReplyWrap}>
+                  <ReplyPreviewBlock
+                    author={author}
+                    body={reply.text || "Message"}
+                    mine={replyProps.position === "right"}
+                    style={styles.chatMainReplyBlock}
+                  />
+                </View>
+              );
+            },
+            swipe: {
+              direction: "right",
+              isEnabled: true,
+              onSwipe: (target) => {
+                if (target.memoryMessage) onReplyMessage(target.memoryMessage);
+              }
+            }
+          }}
+          reactions={{
+            emojis: [...MEMORY_REACTION_EMOJIS],
+            isEnabled: true,
+            onReactionPress: (target, emoji) => {
+              if (selectionMode) return;
+              if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
+            },
+            renderReactionPicker
+          }}
+          text={message}
+          textInputProps={{
+            maxLength: MEMORY_TEXT_MAX_LENGTH,
+            onChangeText: onChangeMessage
+          }}
+          user={currentUser}
+        />
+      </Reanimated.View>
+      {composerToolbar}
     </View>
   );
 }
@@ -1596,42 +1816,88 @@ function MemoryChatMainVoiceComposer({
   );
 }
 
-function MemoryChatMainComposer(composerProps: ChatMainComposerProps) {
-  return (
-    <ChatMainComposer
-      {...composerProps}
-      textInputProps={{
-        ...composerProps.textInputProps,
-        maxLength: MEMORY_TEXT_MAX_LENGTH,
-        style: [
-          styles.chatMainComposerInput,
-          composerProps.textInputProps?.style
-        ]
-      }}
-    />
-  );
-}
+type MemoryChatMainToolbarProps = {
+  editingMessage: MemoryMessage | null;
+  myUsername: string;
+  onCancelEdit: () => void;
+  onCancelVoice: () => void;
+  onClearReply?: () => void;
+  onInputToolbarLayout: (event: LayoutChangeEvent) => void;
+  onSend?: (
+    messages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[],
+    shouldResetInputToolbar: boolean
+  ) => void;
+  onSendAudio: () => void;
+  onStartAudio: () => void;
+  replyMessage?: ChatMainReplyMessage | null;
+  text?: string;
+  textInputProps?: Partial<TextInputProps>;
+  toolbarInsetStyle: StyleProp<ViewStyle>;
+  themeMode: "dark" | "light";
+  voiceActive: boolean;
+  voiceDisabled: boolean;
+  voiceDurationMs: number;
+  voiceSending: boolean;
+};
 
-function MemoryChatMainSendButton({
+function MemoryChatMainInputToolbar({
+  editingMessage,
+  myUsername,
+  onCancelEdit,
+  onCancelVoice,
+  onClearReply,
+  onInputToolbarLayout,
   onSend,
   onSendAudio,
   onStartAudio,
+  replyMessage,
   text,
+  textInputProps,
+  themeMode,
+  toolbarInsetStyle,
   voiceActive,
   voiceDisabled,
+  voiceDurationMs,
   voiceSending
-}: ChatMainSendProps<MemoryChatMainMessage> & {
-  onSendAudio: () => void;
-  onStartAudio: () => void;
-  voiceActive: boolean;
-  voiceDisabled: boolean;
-  voiceSending: boolean;
-}) {
-  const trimmedText = text?.trim() ?? "";
+}: MemoryChatMainToolbarProps) {
+  const [draft, setDraft] = useState(text ?? "");
+  const draftRef = useRef(draft);
+  const latestExternalTextRef = useRef(text ?? "");
+  const ignoreExternalTextUntilResetRef = useRef(false);
+  const nativeInputRef = useRef<TextInput>(null);
+  const trimmedText = draft.trim();
   const hasText = trimmedText.length > 0;
   const disabled = voiceActive && voiceDisabled;
   const icon = voiceActive ? (voiceSending ? "hourglass-outline" : "send") : hasText ? "send" : "mic-outline";
   const label = voiceActive ? "Send audio message" : hasText ? "Send message" : "Record audio message";
+  const editingBody = editingMessage?.body.trim() ?? "";
+  const replyAuthorId = String(replyMessage?.user?._id ?? "");
+  const replyAuthor = replyAuthorId && replyAuthorId === myUsername ? "You" : replyMessage?.user?.name || "Unknown";
+  const replyBody = replyMessage?.text || (replyMessage?.image ? "Photo" : replyMessage?.audio ? "Audio" : "Message");
+  const measuredDraft = draft.length > 0 ? `${draft}\n​` : "​";
+
+  useEffect(() => {
+    const externalText = text ?? "";
+    if (ignoreExternalTextUntilResetRef.current) {
+      latestExternalTextRef.current = externalText;
+      if (externalText.length === 0) {
+        ignoreExternalTextUntilResetRef.current = false;
+      }
+      return;
+    }
+    if (externalText === latestExternalTextRef.current) return;
+    latestExternalTextRef.current = externalText;
+    if (externalText === draftRef.current) return;
+    draftRef.current = externalText;
+    setDraft(externalText);
+  }, [text]);
+
+  function handleChangeText(value: string) {
+    draftRef.current = value;
+    latestExternalTextRef.current = value;
+    setDraft(value);
+    textInputProps?.onChangeText?.(value);
+  }
 
   function handlePress() {
     if (voiceActive) {
@@ -1639,27 +1905,183 @@ function MemoryChatMainSendButton({
       return;
     }
     if (hasText) {
-      onSend?.({ text: trimmedText } as Partial<MemoryChatMainMessage>, true);
+      const outgoingText = trimmedText;
+      draftRef.current = "";
+      ignoreExternalTextUntilResetRef.current = true;
+      latestExternalTextRef.current = "";
+      nativeInputRef.current?.clear();
+      setDraft("");
+      onSend?.({ text: outgoingText } as Partial<MemoryChatMainMessage>, true);
       return;
     }
     onStartAudio();
   }
 
   return (
-    <View style={styles.chatMainSendContainer}>
-      <Pressable
-        accessibilityLabel={label}
-        accessibilityRole="button"
-        accessibilityState={{ disabled }}
-        disabled={disabled}
-        onPress={handlePress}
-        style={styles.chatMainSendTouchable}
-      >
-        <View style={[styles.chatMainSendButton, disabled && styles.chatMainSendButtonDisabled]}>
-          <Ionicons name={icon} size={19} color={ROOM_COLORS.onCool} />
+    <Reanimated.View onLayout={onInputToolbarLayout} style={[styles.chatMainToolbarShell, toolbarInsetStyle]}>
+      <View style={styles.chatMainDraftContent}>
+        {!voiceActive && editingMessage ? (
+          <View style={styles.chatMainEditingBanner}>
+            <View style={styles.chatMainEditingIcon}>
+              <Ionicons name="create-outline" size={14} color={ROOM_COLORS.cool} />
+            </View>
+            <Text numberOfLines={1} style={styles.chatMainEditingText}>
+              {editingBody || "Editing message"}
+            </Text>
+            <Pressable accessibilityLabel="Cancel edit" hitSlop={8} onPress={onCancelEdit}>
+              <Text style={styles.chatMainEditingCancel}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {!voiceActive && replyMessage ? (
+          <View style={styles.chatMainDraftReplyBanner}>
+            <View style={styles.replyComposerAccent} />
+            <View style={styles.replyComposerIcon}>
+              <Ionicons name="arrow-undo-outline" size={14} color={ROOM_COLORS.cool} />
+            </View>
+            <View style={styles.replyComposerCopy}>
+              <Text numberOfLines={1} style={styles.replyComposerLabel}>{replyAuthor}</Text>
+              <Text numberOfLines={2} style={styles.replyComposerPreview}>{replyBody}</Text>
+            </View>
+            <Pressable accessibilityLabel="Cancel reply" hitSlop={8} onPress={onClearReply} style={styles.replyComposerClose}>
+              <Ionicons name="close" size={15} color={ROOM_COLORS.muted} />
+            </Pressable>
+          </View>
+        ) : null}
+        <View style={styles.chatMainDraftRow}>
+          {voiceActive ? (
+            <Pressable
+              accessibilityLabel="Cancel audio message"
+              accessibilityRole="button"
+              disabled={voiceSending}
+              onPress={onCancelVoice}
+              style={styles.chatMainActionTouchable}
+            >
+              <View style={[styles.chatMainActionButton, styles.chatMainVoiceCancelButton, voiceSending && styles.chatMainVoiceButtonDisabled]}>
+                <Ionicons name="close" size={20} color={ROOM_COLORS.cool} />
+              </View>
+            </Pressable>
+          ) : null}
+          {voiceActive ? (
+            <MemoryChatMainVoiceComposer
+              durationMs={voiceDurationMs}
+              sending={voiceSending}
+            />
+          ) : (
+            <View style={styles.chatMainDraftMessageBox}>
+              <Text
+                accessible={false}
+                importantForAccessibility="no-hide-descendants"
+                pointerEvents="none"
+                style={styles.chatMainDraftMeasureText}
+              >
+                {measuredDraft}
+              </Text>
+              <TextInput
+                accessible
+                accessibilityLabel="Type a message"
+                autoCapitalize="sentences"
+                blurOnSubmit={false}
+                disableFullscreenUI
+                enablesReturnKeyAutomatically
+                keyboardAppearance={themeMode === "dark" ? "dark" : "default"}
+                maxLength={MEMORY_TEXT_MAX_LENGTH}
+                multiline
+                onChangeText={handleChangeText}
+                placeholder="Type a message"
+                placeholderTextColor={ROOM_COLORS.muted}
+                ref={nativeInputRef}
+                scrollEnabled
+                smartInsertDelete={false}
+                style={styles.chatMainDraftInput}
+                submitBehavior="newline"
+                textContentType="none"
+                underlineColorAndroid="transparent"
+                value={draft}
+              />
+            </View>
+          )}
+          <View style={styles.chatMainSendContainer}>
+            <Pressable
+              accessibilityLabel={label}
+              accessibilityRole="button"
+              accessibilityState={{ disabled }}
+              disabled={disabled}
+              onPress={handlePress}
+              style={styles.chatMainSendTouchable}
+            >
+              <View style={[styles.chatMainSendButton, disabled && styles.chatMainSendButtonDisabled]}>
+                <Ionicons name={icon} size={19} color={ROOM_COLORS.onCool} />
+              </View>
+            </Pressable>
+          </View>
         </View>
-      </Pressable>
-    </View>
+      </View>
+    </Reanimated.View>
+  );
+}
+
+function MemoryChatMainSelectionToolbar({
+  canDelete,
+  count,
+  deleteError,
+  deleting,
+  editableMessage,
+  onCancel,
+  onDelete,
+  onEdit,
+  onInputToolbarLayout,
+  toolbarInsetStyle
+}: {
+  canDelete: boolean;
+  count: number;
+  deleteError?: string;
+  deleting: boolean;
+  editableMessage: MemoryMessage | null;
+  onCancel: () => void;
+  onDelete: () => void;
+  onEdit: (message: MemoryMessage) => void;
+  onInputToolbarLayout: (event: LayoutChangeEvent) => void;
+  toolbarInsetStyle: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Reanimated.View onLayout={onInputToolbarLayout} style={[styles.chatMainToolbarShell, toolbarInsetStyle]}>
+      <View style={styles.chatMainDraftContent}>
+        {deleteError ? <Text style={styles.chatMainError}>{deleteError}</Text> : null}
+        <View style={styles.chatMainDraftRow}>
+          <View style={styles.chatMainSelectionBox}>
+            <Pressable accessibilityLabel="Cancel selection" hitSlop={8} onPress={onCancel} style={styles.selectionInlineButton}>
+              <Ionicons name="close" size={20} color={ROOM_COLORS.onSurface} />
+            </Pressable>
+            <Text numberOfLines={1} style={styles.selectionBarTitle}>
+              {count} selected
+            </Text>
+          </View>
+          {editableMessage ? (
+            <Pressable
+              accessibilityLabel="Edit selected message"
+              accessibilityRole="button"
+              disabled={deleting}
+              onPress={() => onEdit(editableMessage)}
+              style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onCool} />
+            </Pressable>
+          ) : null}
+          {canDelete ? (
+            <Pressable
+              accessibilityLabel="Delete selected items"
+              accessibilityRole="button"
+              disabled={deleting || count === 0}
+              onPress={onDelete}
+              style={[styles.selectionDeleteButton, (deleting || count === 0) && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name={deleting ? "hourglass-outline" : "trash-outline"} size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.white} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    </Reanimated.View>
   );
 }
 
@@ -1947,91 +2369,32 @@ function getComposerClosedBottomPadding(bottomInset: number) {
   return Math.max(bottomInset + COMPOSER_CLOSED_SAFE_GAP, fallbackGap);
 }
 
-// How long (ms) after a fresh open we keep clamping the keyboard height to the
-// default (alphabet) height. Long enough to cover Gboard's stage-2 correction
-// animation (emoji-height -> alphabet-height) on reopen.
-const KEYBOARD_OPEN_SETTLE_MS = 320;
+type KeyboardMotionValues = {
+  offset: SharedValue<number>;
+  progress: SharedValue<number>;
+};
 
-// Smoothed keyboard offset (0 closed -> -keyboardHeight open) that is immune to
-// Gboard's two-stage reopen animation on Android.
-//
-// Binding straight to useReanimatedKeyboardAnimation's raw height faithfully
-// echoes whatever the IME reports each frame. The nasty case: after the emoji
-// panel has grown the keyboard, you collapse it and reopen. Gboard does NOT
-// animate straight to the alphabet height — it first animates up to the cached
-// EMOJI height (stage 1), then runs a SECOND animation back down to the real
-// alphabet height (stage 2). Anything anchored to the raw height therefore
-// shoots up to the old emoji level and drops back down.
-//
-// The fix has three moving parts:
-//   1. On a closed -> open rise, aim the projected curve at the DEFAULT keyboard
-//      height (the smallest settled height we've seen, i.e. the alphabet
-//      keyboard) rather than the last-seen height (which may be the tall emoji).
-//   2. For ~KEYBOARD_OPEN_SETTLE_MS after that open settles, clamp the height to
-//      the default so stage 2's emoji-height transient can't drag the bar up.
-//   3. Once settled past that window, follow the raw height again so a
-//      DELIBERATE emoji expansion (or any genuine resize) still tracks smoothly.
-// Closing always projects from the current settled height so an emoji-height
-// keyboard slides down from where it actually was.
+function useKeyboardMotion(): KeyboardMotionValues {
+  const { reanimated } = useKeyboardContext();
+
+  // The root KeyboardProvider already receives every native keyboard frame to
+  // maintain these shared values. Reusing them avoids registering a second
+  // per-frame worklet listener for chat.
+  return useMemo(() => ({
+    offset: reanimated.height,
+    progress: reanimated.progress
+  }), [reanimated.height, reanimated.progress]);
+}
+
 function useSmoothedKeyboardOffset(): SharedValue<number> {
-  const { height, progress } = useReanimatedKeyboardAnimation();
-  // Last non-zero height the keyboard settled at (alphabet OR emoji).
-  const settledOpenHeight = useSharedValue(0);
-  // Smallest non-zero settled height seen == the plain alphabet keyboard, used as
-  // the destination for a fresh open so we never overshoot toward an emoji height.
-  const defaultOpenHeight = useSharedValue(0);
-  // 1 while we're inside a closed -> open transition (set when fully closed,
-  // cleared once that open's animation ends). Lets us pick the right destination
-  // and only arm the settle-clamp for genuine opens, not emoji resizes.
-  const openingFromClosed = useSharedValue(0);
-  // 1 immediately after a fresh open settles, eased to 0 over the settle window;
-  // while > 0 we clamp the height to the default to swallow stage 2's overshoot.
-  const settleClamp = useSharedValue(0);
-
-  // Mark the start of a fresh open the moment the keyboard is fully closed.
-  useAnimatedReaction(
-    () => progress.value,
-    (p) => { if (p < 0.01) openingFromClosed.value = 1; }
-  );
-
-  useKeyboardHandler({
-    onEnd: (event) => {
-      "worklet";
-      if (event.height <= 0) return; // a close settling; nothing to record
-      settledOpenHeight.value = event.height;
-      defaultOpenHeight.value = defaultOpenHeight.value === 0
-        ? event.height
-        : Math.min(defaultOpenHeight.value, event.height);
-      // Only arm the settle-clamp for an open that came from fully closed — NOT
-      // for an in-place emoji resize (which must be free to grow immediately).
-      if (openingFromClosed.value === 1) {
-        openingFromClosed.value = 0;
-        settleClamp.value = 1;
-        settleClamp.value = withTiming(0, { duration: KEYBOARD_OPEN_SETTLE_MS });
-      }
-    }
-  }, []);
-
-  return useDerivedValue(() => {
-    const raw = Math.max(0, -height.value);
-    const base = defaultOpenHeight.value || settledOpenHeight.value || raw;
-    if (progress.value < 0.999) {
-      // Opening or closing. Opening aims at the default (alphabet) height;
-      // closing slides down from wherever the keyboard actually was.
-      const destination = openingFromClosed.value === 1 ? base : (settledOpenHeight.value || base);
-      return -(destination * progress.value);
-    }
-    // Settled. During the post-open window, hold at the default so Gboard's
-    // stage-2 emoji-height transient can't bounce the bar; otherwise track raw.
-    if (settleClamp.value > 0) return -Math.min(raw, base);
-    return -raw;
-  });
+  return useKeyboardMotion().offset;
 }
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string; tab?: string }>();
   const roomId = params.id ?? "";
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { resolvedTheme } = useThemePreference();
   applyRoomTheme(resolvedTheme, "unknown");
@@ -2056,6 +2419,7 @@ export default function MemoryDetailScreen() {
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<TextInput>(null);
   const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
+  const keyboardVisibleRef = useRef(false);
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
   const chatTimelineHeightRef = useRef(0);
@@ -2203,15 +2567,121 @@ export default function MemoryDetailScreen() {
   }, []);
 
   useEffect(() => {
-    if (mode !== "people") return undefined;
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      keyboardVisibleRef.current = true;
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      keyboardVisibleRef.current = false;
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
+  // ADJUST_RESIZE is required for keyboard show/hide to be trackable per-frame:
+  // with ADJUST_NOTHING, Android treats the window as not IME-aware and never
+  // dispatches the per-frame WindowInsetsAnimation callbacks, so the library only
+  // reports the keyboard at the END of the transition (composer/list snap late).
+  // The window never actually resizes because react-native-keyboard-controller
+  // keeps it edge-to-edge, so ADJUST_RESIZE here only re-enables inset dispatch.
+  useEffect(() => {
+    if (Platform.OS !== "android" || mode !== "chat") return undefined;
+    KeyboardController.setInputMode(AndroidSoftInputModes.SOFT_INPUT_ADJUST_RESIZE);
+    return () => {
+      KeyboardController.setDefaultMode();
+    };
+  }, [mode]);
+
+  useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (!peopleClosing) setPeopleClosing(true);
+      if (selectedMedia) {
+        setSelectedMedia(null);
+        return true;
+      }
+
+      if (roomActionsVisible) {
+        setRoomActionsVisible(false);
+        return true;
+      }
+
+      if (attachmentOptionsVisible) {
+        setAttachmentOptionsVisible(false);
+        if (reopenAddMenuOnCancel) {
+          setReopenAddMenuOnCancel(false);
+          setFloatingAddMenuOpen(true);
+        }
+        return true;
+      }
+
+      if (stopComposerVisible) {
+        setStopComposerVisible(false);
+        return true;
+      }
+
+      if (detailDishId) {
+        setDetailDishId(null);
+        return true;
+      }
+
+      if (floatingAddMenuOpen) {
+        setFloatingAddMenuOpen(false);
+        return true;
+      }
+
+      if (reactionPickerMessageId) {
+        setReactionPickerMessageId(null);
+        return true;
+      }
+
+      if (selectedItemKeysRef.current.length > 0 || selectedItemKeys.length > 0) {
+        selectedItemKeysRef.current = [];
+        setSelectedItemKeys([]);
+        return true;
+      }
+
+      if (editingMessage) {
+        setEditingMessage(null);
+        updateMessageDraft("");
+        return true;
+      }
+
+      if (replyingToMessage) {
+        setReplyingToMessage(null);
+        return true;
+      }
+
+      if (mode === "chat" && keyboardVisibleRef.current) {
+        Keyboard.dismiss();
+        return true;
+      }
+
+      if (mode === "people") {
+        if (!peopleClosing) setPeopleClosing(true);
+        return true;
+      }
+
+      router.dismissTo({ pathname: "/profile", params: { tab: "memories" } });
       return true;
     });
 
     return () => subscription.remove();
-  }, [mode, peopleClosing]);
+  }, [
+    attachmentOptionsVisible,
+    detailDishId,
+    editingMessage,
+    floatingAddMenuOpen,
+    mode,
+    peopleClosing,
+    reactionPickerMessageId,
+    reopenAddMenuOnCancel,
+    replyingToMessage,
+    roomActionsVisible,
+    router,
+    selectedItemKeys.length,
+    selectedMedia,
+    stopComposerVisible
+  ]));
 
   // Deferred so the mutation's cache writes (and the re-renders they trigger) stay out
   // of the tab-transition window; competing commits stall the header collapse animation.
@@ -2259,45 +2729,29 @@ export default function MemoryDetailScreen() {
   }, [markRead, mode, room.data, roomId]);
 
   // Keyboard handling is driven per-frame by react-native-keyboard-controller's
-  // native animation values — synced with the OS keyboard animation, including
-  // emoji-panel height changes and interactive dismissal — instead of discrete
-  // show/hide events with a separate hand-rolled animation.
-  // keyboardOffset runs 0 → -keyboardHeight, ready for translateY. Smoothed so
-  // Gboard's stale emoji-height frame on reopen never bounces the composer.
-  const keyboardOffset = useSmoothedKeyboardOffset();
+  // native move events. The composer is an absolute sibling of the message list,
+  // so only the draft container rides the OS keyboard; the screen itself does
+  // not relayout or chase the animation.
+  const keyboardMotion = useKeyboardMotion();
+  const keyboardOffset = keyboardMotion.offset;
   const isChatMode = mode === "chat";
-  // The whole chat stage (list + composer overlay) rides the keyboard as one
-  // transform, so the input bar and the pinned latest message move together
-  // frame-by-frame with zero per-frame relayout. The stage clips the overflow.
-  // Clamped at 0 so a glitched positive keyboard value (seen after back-button
-  // dismiss on misconfigured Android) can never push the bar below its rest spot.
-  const stageKeyboardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: isChatMode ? Math.min(0, keyboardOffset.value) : 0 }]
-  }), [isChatMode]);
   const closedComposerBottomPadding = getComposerClosedBottomPadding(insets.bottom);
-  // Single source of truth for the bar's bottom offset, per-frame:
-  //   keyboard open   → keyboardHeight + COMPOSER_KEYBOARD_OPEN_GAP
-  //   keyboard closed → bottom safe-area inset + COMPOSER_CLOSED_SAFE_GAP
-  // (the stage translate supplies keyboardHeight; this padding supplies the gap,
-  // blending between the two ends so every transition follows the keyboard curve)
-  const composerInsetStyle = useAnimatedStyle(() => ({
-    paddingBottom: Math.max(
-      closedComposerBottomPadding + keyboardOffset.value,
-      COMPOSER_KEYBOARD_OPEN_GAP
-    )
-  }), [closedComposerBottomPadding]);
-  // The list's bottom clearance is frozen at the closed-state bar height (it is NOT
-  // re-measured during keyboard transitions). As the bar's safe-area padding melts
-  // away, this shifts the list down by exactly the amount the bar shrank — same
-  // shared value, same frame — so the last message keeps its 8px gap with no
-  // JS-lagged re-measure/repin bounce when the keyboard collapses.
-  const chatListKeyboardStyle = useAnimatedStyle(() => {
+  const chatKeyboardShift = useDerivedValue(() => {
+    if (!isChatMode) return 0;
     const keyboardHeight = Math.max(0, -keyboardOffset.value);
-    const barShrink = Math.min(keyboardHeight, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
-    return {
-      transform: [{ translateY: isChatMode ? barShrink : 0 }]
-    };
+    const closedSafeAreaGap = Math.max(0, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
+    const effectiveHeight = Math.max(0, keyboardHeight - (closedSafeAreaGap * keyboardMotion.progress.value));
+    return -effectiveHeight;
   }, [closedComposerBottomPadding, isChatMode]);
+  const chatListKeyboardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: chatKeyboardShift.value }]
+  }), []);
+  const composerKeyboardStyle = useAnimatedStyle(() => {
+    return {
+      paddingBottom: closedComposerBottomPadding,
+      transform: [{ translateY: chatKeyboardShift.value }]
+    };
+  }, [closedComposerBottomPadding]);
 
   function repinChatToBottom() {
     if (!nearBottomRef.current) return;
@@ -2308,11 +2762,7 @@ export default function MemoryDetailScreen() {
     const nextHeight = Math.round(event.nativeEvent.layout.height);
     if (Math.abs(nextHeight - composerHeightRef.current) < 1) return;
     composerHeightRef.current = nextHeight;
-    // nextHeight is the bar's CONTENT height (excludes the animated safe-area
-    // padding), so this only changes for real content growth (multiline input,
-    // banners) — never during keyboard transitions. Closed-state padding is added
-    // statically; the open-state difference is compensated by chatListKeyboardStyle.
-    setChatBottomClearance(nextHeight + closedComposerBottomPadding);
+    setChatBottomClearance(nextHeight);
     repinChatToBottom();
   }
 
@@ -2567,17 +3017,16 @@ export default function MemoryDetailScreen() {
     const userKey = myUsername || "me";
     setMessageReactions((current) => {
       const messageState = current[messageId] ?? {};
-      const currentUsers = messageState[emoji] ?? [];
-      const hasReacted = currentUsers.includes(userKey);
-      const nextUsers = hasReacted
-        ? currentUsers.filter((id) => id !== userKey)
-        : [...currentUsers, userKey];
-      const nextMessageState = { ...messageState };
+      const hasReactedWithEmoji = (messageState[emoji] ?? []).includes(userKey);
+      const nextMessageState: Record<string, Array<string | number>> = {};
 
-      if (nextUsers.length === 0) {
-        delete nextMessageState[emoji];
-      } else {
-        nextMessageState[emoji] = nextUsers;
+      Object.entries(messageState).forEach(([reactionEmoji, users]) => {
+        const nextUsers = users.filter((id) => id !== userKey);
+        if (nextUsers.length > 0) nextMessageState[reactionEmoji] = nextUsers;
+      });
+
+      if (!hasReactedWithEmoji) {
+        nextMessageState[emoji] = [...(nextMessageState[emoji] ?? []), userKey];
       }
 
       if (Object.keys(nextMessageState).length === 0) {
@@ -2594,35 +3043,10 @@ export default function MemoryDetailScreen() {
     setReactionPickerMessageId(null);
   }
 
-  function deleteChatTarget(target: MemoryActionTarget) {
-    const label = target.type === "message" ? "message" : "media";
-    Alert.alert(
-      `Delete ${label}?`,
-      "It will be removed for everyone at the table.",
-      [
-        { style: "cancel", text: "Cancel" },
-        {
-          onPress: () => {
-            if (target.type === "message") {
-              if (editingMessage?.id === target.value.id) cancelEditMessage();
-              if (replyingToMessage?.id === target.value.id) setReplyingToMessage(null);
-            }
-            void deleteItems.mutateAsync({
-              messageIds: target.type === "message" ? [target.value.id] : [],
-              photoIds: target.type === "photo" ? [target.value.id] : []
-            }).catch((error) => {
-              Alert.alert("Could not delete", errorMessage(error) ?? "Try again.");
-            });
-          },
-          style: "destructive",
-          text: "Delete"
-        }
-      ]
-    );
-  }
-
-  function removeSelectedItems() {
-    const keysToDelete = selectedItemKeysRef.current.length > 0 ? selectedItemKeysRef.current : selectedItemKeys;
+  function deleteMemoryItemKeys(
+    keysToDelete: string[],
+    { clearSelection }: { clearSelection: boolean }
+  ) {
     const queuedKeys = keysToDelete.filter((key) => !deletingItemKeysRef.current.has(key));
     if (queuedKeys.length === 0) return;
     queuedKeys.forEach((key) => deletingItemKeysRef.current.add(key));
@@ -2636,14 +3060,19 @@ export default function MemoryDetailScreen() {
     try {
       if (editingMessage && messageIds.includes(editingMessage.id)) cancelEditMessage();
       if (replyingToMessage && messageIds.includes(replyingToMessage.id)) setReplyingToMessage(null);
-      selectedItemKeysRef.current = [];
-      setSelectedItemKeys([]);
+      if (clearSelection) {
+        selectedItemKeysRef.current = [];
+        setSelectedItemKeys([]);
+      }
       void deleteItems.mutateAsync({ messageIds, photoIds }).catch((error) => {
-        if (selectedItemKeysRef.current.length === 0) {
+        if (clearSelection && selectedItemKeysRef.current.length === 0) {
           selectedItemKeysRef.current = queuedKeys;
           setSelectedItemKeys(queuedKeys);
         }
-        Alert.alert("Could not delete", errorMessage(error) ?? "The selected items were restored. Try again.");
+        Alert.alert(
+          "Could not delete",
+          errorMessage(error) ?? (clearSelection ? "The selected items were restored. Try again." : "Try again.")
+        );
       }).finally(() => {
         queuedKeys.forEach((key) => deletingItemKeysRef.current.delete(key));
       });
@@ -2651,6 +3080,49 @@ export default function MemoryDetailScreen() {
       queuedKeys.forEach((key) => deletingItemKeysRef.current.delete(key));
       Alert.alert("Could not delete", errorMessage(error) ?? "Try again.");
     }
+  }
+
+  function confirmDeleteMemoryItemKeys(
+    keysToDelete: string[],
+    { clearSelection, title }: { clearSelection: boolean; title: string }
+  ) {
+    Alert.alert(
+      title,
+      "It will be removed for everyone at the table.",
+      [
+        { style: "cancel", text: "Cancel" },
+        {
+          onPress: () => {
+            deleteMemoryItemKeys(keysToDelete, { clearSelection });
+          },
+          style: "destructive",
+          text: "Delete"
+        }
+      ]
+    );
+  }
+
+  function deleteChatTarget(target: MemoryActionTarget) {
+    const label = target.type === "message" ? "message" : "media";
+    confirmDeleteMemoryItemKeys([memoryActionKey(target)], {
+      clearSelection: false,
+      title: `Delete ${label}?`
+    });
+  }
+
+  function removeSelectedItems() {
+    const keysToDelete = selectedItemKeysRef.current.length > 0 ? selectedItemKeysRef.current : selectedItemKeys;
+    const queuedKeys = keysToDelete.filter((key) => !deletingItemKeysRef.current.has(key));
+    if (queuedKeys.length === 0) return;
+    const messageCount = queuedKeys.filter((key) => key.startsWith("message:")).length;
+    const photoCount = queuedKeys.filter((key) => key.startsWith("photo:")).length;
+    const title = queuedKeys.length === 1
+      ? `Delete ${messageCount === 1 ? "message" : "media"}?`
+      : `Delete ${messageCount + photoCount} items?`;
+    confirmDeleteMemoryItemKeys(queuedKeys, {
+      clearSelection: true,
+      title
+    });
   }
 
   async function sendMediaAssets(selectedAssets: MemoryCaptureAsset[]) {
@@ -3016,23 +3488,22 @@ export default function MemoryDetailScreen() {
   const selectedTargets = selectedItemKeys
     .map((key) => findMemoryActionTarget(data, key))
     .filter((target): target is MemoryActionTarget => Boolean(target));
-  const selectedHasForeignItem = selectedTargets.some((target) => (
-    target.type === "message"
-      ? target.value.authorName !== myUsername
-      : target.value.uploaderName !== myUsername
+  const canDeleteSelected = selectedTargets.length > 0 && selectedTargets.every((target) => (
+    canDeleteMemoryActionTarget(target, myUsername)
   ));
-  const canDeleteSelected = selectedTargets.length > 0 && !selectedHasForeignItem;
   const editableSelectedMessage =
     selectedTargets.length === 1 &&
     selectedTargets[0].type === "message" &&
-    selectedTargets[0].value.authorName === myUsername &&
-    selectedTargets[0].value.body.trim().length > 0 &&
-    selectedTargets[0].value.attachments.length === 0
+    canEditMemoryMessage(selectedTargets[0].value, myUsername)
       ? selectedTargets[0].value
       : null;
   const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
+  const summaryUnreadChatCount = queryClient
+    .getQueryData<MemoryRoomSummary[]>(memoryKeys.list)
+    ?.find((memory) => memory.id === data.id)?.unreadCount;
+  const unreadChatCount = summaryUnreadChatCount ?? unreadChatMessageCount(data, myUsername);
 
   return (
     <Screen padded={false} style={styles.screenContent}>
@@ -3052,6 +3523,7 @@ export default function MemoryDetailScreen() {
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
+        unreadChatCount={unreadChatCount}
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" && mode !== "chat" ? "padding" : undefined}
@@ -3066,7 +3538,7 @@ export default function MemoryDetailScreen() {
           ]}
         >
           <FoodChatWallpaper patternKey={roomOccasionTheme.backgroundPattern} themeKey={`${resolvedTheme}-${roomOccasionTheme.id}`} visible />
-          <Reanimated.View style={[styles.roomStageShift, stageKeyboardStyle]}>
+          <View style={styles.roomStageShift}>
             <View style={styles.body}>
               <View style={styles.roomPager}>
                 <RoomPane active={paneTabMode === "overview"} motion="fade">
@@ -3085,13 +3557,27 @@ export default function MemoryDetailScreen() {
                 <RoomPane active={paneTabMode === "chat"}>
                   <MemoryChatMainSurface
                     active={mode === "chat"}
+                    bottomClearance={chatBottomClearance}
+                    canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
                     data={data}
+                    deleteError={errorMessage(deleteItems.error)}
+                    deletePending={deleteItems.isPending}
+                    editableSelectedMessage={editableSelectedMessage}
+                    editingMessage={editingMessage}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
+                    listKeyboardStyle={chatListKeyboardStyle}
                     message={message}
                     myUsername={myUsername}
+                    selectedItemKeys={selectedItemKeys}
+                    onBeginSelection={beginSelection}
+                    onCancelEdit={cancelEditMessage}
                     onCancelReply={cancelReplyMessage}
+                    onCancelSelection={cancelSelection}
                     onChangeMessage={updateMessageDraft}
+                    onDeleteSelected={removeSelectedItems}
+                    onDeleteTarget={deleteChatTarget}
+                    onEditMessage={beginEditMessage}
                     onInputToolbarLayout={handleComposerLayout}
                     onLoadOlderMessages={loadOlderMessages}
                     onOpenDish={setDetailDishId}
@@ -3100,12 +3586,13 @@ export default function MemoryDetailScreen() {
                     onReplyMessage={beginReplyMessage}
                     onSend={submitMessage}
                     onSendAudio={sendAudioMessage}
+                    onToggleSelection={toggleSelectedItem}
                     onToggleReaction={toggleMessageReaction}
                     pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
-                    toolbarInsetStyle={composerInsetStyle}
+                    toolbarInsetStyle={composerKeyboardStyle}
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
@@ -3134,7 +3621,7 @@ export default function MemoryDetailScreen() {
               </View>
             </View>
 
-          </Reanimated.View>
+          </View>
         </View>
 
         <RoomActionsSheet
@@ -3266,7 +3753,8 @@ function RoomHeader({
   onOpenActions,
   onViewPeople,
   pagerPosition,
-  transitioning
+  transitioning,
+  unreadChatCount
 }: {
   data: MemoryRoom;
   displayRestaurantName: string;
@@ -3281,6 +3769,7 @@ function RoomHeader({
   onViewPeople: () => void;
   pagerPosition: SharedValue<number>;
   transitioning: boolean;
+  unreadChatCount: number;
 }) {
   const roomTitle = data.title?.trim() || displayRestaurantName;
   const roomDateLabel = formatDisplayDate(data.visitDate ?? data.createdAt);
@@ -3483,6 +3972,7 @@ function RoomHeader({
               key={tab.mode}
               label={tab.label}
               onPress={() => onChangeMode(tab.mode)}
+              unreadCount={tab.mode === "chat" ? unreadChatCount : 0}
             />
           ))}
         </View>
@@ -3500,18 +3990,22 @@ function ModeButton({
   active,
   icon,
   label,
-  onPress
+  onPress,
+  unreadCount
 }: {
   active: boolean;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
+  unreadCount?: number;
 }) {
   const iconColor = active ? ROOM_COLORS.onSurface : ROOM_COLORS.muted;
+  const hasUnread = Boolean(unreadCount && unreadCount > 0);
+  const accessibilityLabel = hasUnread ? `${label}, ${unreadCount} unread` : label;
 
   return (
     <Pressable
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       onPress={onPress}
@@ -3523,6 +4017,11 @@ function ModeButton({
     >
       <Ionicons name={icon} size={15} color={iconColor} />
       <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
+      {hasUnread ? (
+        <View pointerEvents="none" style={styles.modeButtonUnreadBadge}>
+          <Text style={styles.modeButtonUnreadText}>{unreadCount && unreadCount > 99 ? "99+" : unreadCount}</Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -4724,15 +5223,17 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({
 function UnreadDivider({
   onJumpToLatest
 }: {
-  onJumpToLatest: () => void;
+  onJumpToLatest?: () => void;
 }) {
   return (
     <View style={styles.unreadDividerRow}>
       <View style={styles.unreadDividerLine} />
-      <Text style={styles.unreadDividerText}>New messages</Text>
-      <Pressable hitSlop={6} onPress={onJumpToLatest} style={styles.unreadDividerButton}>
-        <Text style={styles.unreadDividerButtonText}>Latest</Text>
-      </Pressable>
+      <Text style={styles.unreadDividerText}>Unread messages</Text>
+      {onJumpToLatest ? (
+        <Pressable hitSlop={6} onPress={onJumpToLatest} style={styles.unreadDividerButton}>
+          <Text style={styles.unreadDividerButtonText}>Latest</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.unreadDividerLine} />
     </View>
   );
@@ -7969,6 +8470,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   chatMainSurface: {
     backgroundColor: "transparent",
+    flex: 1,
+    position: "relative"
+  },
+  chatMainMessagesLayer: {
     flex: 1
   },
   chatMainMessages: {
@@ -7980,24 +8485,42 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexGrow: 1,
     paddingBottom: CHAT_HEADER_CLEARANCE,
     paddingHorizontal: CHAT_ROW_SIDE_PADDING,
-    paddingTop: 10
+    paddingTop: 0
   },
   chatMainToolbarShell: {
     backgroundColor: ROOM_COLORS.panel,
     borderTopColor: ROOM_COLORS.border,
     borderTopWidth: 1,
+    bottom: 0,
     gap: 6,
+    left: 0,
     paddingBottom: Platform.OS === "android" ? 7 : 8,
     paddingHorizontal: Platform.OS === "web" ? spacing.md : 12,
-    paddingTop: 7
+    paddingTop: 7,
+    position: "absolute",
+    right: 0,
+    zIndex: 20
   },
-  chatMainToolbar: {
-    backgroundColor: "transparent",
-    borderTopWidth: 0
+  chatMainDraftContent: {
+    gap: 6
   },
-  chatMainToolbarPrimary: {
+  chatMainDraftRow: {
     alignItems: "flex-end",
+    flexDirection: "row",
     gap: spacing.sm
+  },
+  chatMainDraftReplyBanner: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 9,
+    minHeight: 54,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 9
   },
   chatMainAccessory: {
     gap: 6
@@ -8087,20 +8610,41 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainVoiceButtonDisabled: {
     opacity: 0.55
   },
-  chatMainComposerInput: {
-    ...fontStyles.medium,
+  chatMainDraftMessageBox: {
     backgroundColor: ROOM_COLORS.panelRaised,
     borderColor: ROOM_COLORS.borderStrong,
     borderRadius: radius.input,
     borderWidth: 1,
+    flex: 1,
+    maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+    minWidth: 0,
+    overflow: "hidden",
+    position: "relative"
+  },
+  chatMainDraftMeasureText: {
+    ...fontStyles.medium,
     color: ROOM_COLORS.onSurface,
     fontSize: COMPOSER_INPUT_FONT_SIZE,
     lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-    maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
-    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+    opacity: 0,
     paddingHorizontal: spacing.md,
     paddingVertical: Platform.OS === "ios" ? 10 : 8,
     textAlignVertical: "top"
+  },
+  chatMainDraftInput: {
+    ...fontStyles.medium,
+    bottom: 0,
+    color: ROOM_COLORS.onSurface,
+    fontSize: COMPOSER_INPUT_FONT_SIZE,
+    left: 0,
+    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+    paddingHorizontal: spacing.md,
+    paddingVertical: Platform.OS === "ios" ? 10 : 8,
+    position: "absolute",
+    right: 0,
+    textAlignVertical: "top",
+    top: 0
   },
   chatMainSendContainer: {
     justifyContent: "flex-end"
@@ -8132,6 +8676,19 @@ function createStyles(ROOM_COLORS: RoomColors) {
     minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
     paddingHorizontal: spacing.md,
     paddingVertical: Platform.OS === "ios" ? 10 : 8
+  },
+  chatMainSelectionBox: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.input,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+    minWidth: 0,
+    paddingHorizontal: spacing.md
   },
   chatMainVoiceDot: {
     backgroundColor: ROOM_COLORS.danger,
@@ -8165,12 +8722,14 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainBubbleLeft: {
     backgroundColor: ROOM_COLORS.receivedBubble,
     borderColor: ROOM_COLORS.border,
-    borderWidth: 1
+    borderWidth: 1,
+    position: "relative"
   },
   chatMainBubbleRight: {
     backgroundColor: ROOM_COLORS.sentBubble,
     borderColor: ROOM_COLORS.sentBubbleBorder,
-    borderWidth: 1
+    borderWidth: 1,
+    position: "relative"
   },
   // Squared corner behind the tail so the notch sits flush with the bubble.
   chatMainBubbleLeftWithTail: {
@@ -8231,6 +8790,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   chatMainRowMedia: {
     maxWidth: "100%"
+  },
+  chatMainRowSelectionFrame: {
+    marginHorizontal: -CHAT_ROW_SIDE_PADDING,
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING
+  },
+  chatMainRowSelectedBackground: {
+    backgroundColor: ROOM_COLORS.coolDim
   },
   chatMainIncomingRowEdge: {
     marginLeft: 0
@@ -8760,6 +9326,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     gap: 3,
     justifyContent: "center",
     minHeight: 34,
+    position: "relative",
     zIndex: 1
   },
   modeButtonActive: {
@@ -8772,10 +9339,29 @@ function createStyles(ROOM_COLORS: RoomColors) {
   modeButtonText: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.muted,
-    fontSize: 10
+    fontSize: 10,
+    lineHeight: 13
   },
   modeButtonTextActive: {
     color: ROOM_COLORS.onSurface
+  },
+  modeButtonUnreadBadge: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderColor: ROOM_COLORS.panel,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 16,
+    justifyContent: "center",
+    marginLeft: 1,
+    minWidth: 16,
+    paddingHorizontal: 4
+  },
+  modeButtonUnreadText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onCool,
+    fontSize: 8,
+    lineHeight: 10
   },
   body: {
     alignSelf: "center",
@@ -9021,7 +9607,8 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexDirection: "row",
     gap: spacing.sm,
     paddingHorizontal: CHAT_ROW_SIDE_PADDING,
-    paddingVertical: 3,
+    paddingBottom: 11,
+    paddingTop: 5,
     width: "100%"
   },
   unreadDividerLine: {
@@ -9032,8 +9619,8 @@ function createStyles(ROOM_COLORS: RoomColors) {
   unreadDividerText: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.cool,
-    fontSize: 11,
-    lineHeight: 14
+    fontSize: 13,
+    lineHeight: 17
   },
   unreadDividerButton: {
     backgroundColor: ROOM_COLORS.coolDim,

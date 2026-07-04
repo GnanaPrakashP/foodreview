@@ -43,7 +43,7 @@ type ProfileListRow =
   | { type: "posts-error" }
   | { type: "posts-empty" }
   | { type: "memory-month"; id: string; isFirst: boolean; month: string }
-  | { type: "memory"; isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }
+  | { type: "memory"; memory: MemoryRoomSummary }
   | { type: "memories-loading" }
   | { type: "memories-error" }
   | { type: "memories-empty" };
@@ -198,6 +198,10 @@ function ProfileContent({
   }, [posts.isFetchingNextPage]);
 
   const memoryRows = useMemo(() => buildMemoryRows(memoriesData ?? []), [memoriesData]);
+  const hasUnreadMemories = useMemo(
+    () => (memoriesData ?? []).some((memory) => memory.unreadCount > 0),
+    [memoriesData]
+  );
   // The Profile shell mounts immediately; data states render as rows so tabs,
   // refresh, and gestures stay available while profile data loads.
   const postRows = useMemo<ProfileListRow[]>(() => {
@@ -299,7 +303,7 @@ function ProfileContent({
       case "memory":
         return (
           <View style={styles.listInset}>
-            <MemoryTimelineItem isFirst={item.isFirst} isLast={item.isLast} memory={item.memory} />
+            <MemoryTimelineItem memory={item.memory} />
           </View>
         );
       case "memories-loading":
@@ -406,6 +410,7 @@ function ProfileContent({
       activeColor={PROFILE_COLORS.accent}
       inactiveColor={PROFILE_COLORS.muted}
       indicatorStyle={styles.tabIndicator}
+      getBadgeVisible={(name) => name === "memories" && hasUnreadMemories}
       getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
       instantPress
       labelStyle={styles.tabText}
@@ -416,6 +421,7 @@ function ProfileContent({
   ), [
     PROFILE_COLORS.accent,
     PROFILE_COLORS.muted,
+    hasUnreadMemories,
     styles
   ]);
 
@@ -758,22 +764,20 @@ function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
   const sortedMemories = [...memories]
     .sort((a, b) => new Date(b.visitDate ?? b.createdAt).getTime() - new Date(a.visitDate ?? a.createdAt).getTime());
   const groupedMemories = sortedMemories
-    .reduce<Array<{ memories: Array<{ isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }>; month: string }>>((groups, memory, index) => {
+    .reduce<Array<{ memories: MemoryRoomSummary[]; month: string }>>((groups, memory) => {
       const month = timelineMonthLabel(memory.visitDate ?? memory.createdAt);
       const lastGroup = groups[groups.length - 1];
-      const row = {
-        isFirst: index === 0,
-        isLast: index === sortedMemories.length - 1,
-        memory
-      };
-      if (lastGroup?.month === month) lastGroup.memories.push(row);
-      else groups.push({ month, memories: [row] });
+      if (lastGroup?.month === month) lastGroup.memories.push(memory);
+      else groups.push({ month, memories: [memory] });
       return groups;
     }, []);
 
   return groupedMemories.flatMap((group, index) => [
     { type: "memory-month", id: `month-${group.month}`, isFirst: index === 0, month: group.month } as const,
-    ...group.memories.map(({ isFirst, isLast, memory }) => ({ type: "memory", isFirst, isLast, memory } as const))
+    ...group.memories.map((memory) => ({
+      type: "memory",
+      memory
+    } as const))
   ]);
 }
 
@@ -784,22 +788,14 @@ function profileListKey(item: ProfileListRow) {
   return item.type;
 }
 
-function MemoryTimelineItem({ isFirst, isLast, memory }: { isFirst: boolean; isLast: boolean; memory: MemoryRoomSummary }) {
-  const { styles } = useProfileTheme();
+function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
   const router = useRouter();
 
   return (
-    <View style={styles.memoryTimelineRow}>
-      {!isFirst ? <View pointerEvents="none" style={[styles.memoryTimelineLine, styles.memoryTimelineLineAbove]} /> : null}
-      {!isLast ? <View pointerEvents="none" style={[styles.memoryTimelineLine, styles.memoryTimelineLineBelow]} /> : null}
-      <View style={styles.memoryTimelineMarker}>
-        <View style={styles.memoryTimelineDot} />
-      </View>
-      <MemoryRow
-        memory={memory}
-        onPress={() => router.push({ pathname: "/memories/[id]", params: { id: memory.id } })}
-      />
-    </View>
+    <MemoryRow
+      memory={memory}
+      onPress={() => router.push({ pathname: "/memories/[id]", params: { id: memory.id } })}
+    />
   );
 }
 
@@ -1455,45 +1451,6 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   firstMemoryMonthInset: {
     paddingTop: 14
-  },
-  memoryTimelineTrack: {
-    gap: spacing.md,
-    position: "relative"
-  },
-  memoryTimelineLine: {
-    backgroundColor: PROFILE_COLORS.accentBorder,
-    left: 7.5,
-    position: "absolute",
-    width: 1
-  },
-  memoryTimelineLineAbove: {
-    bottom: "50%",
-    top: -spacing.md / 2
-  },
-  memoryTimelineLineBelow: {
-    bottom: -spacing.md / 2,
-    top: "50%"
-  },
-  memoryTimelineRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.md,
-    overflow: "visible"
-  },
-  memoryTimelineMarker: {
-    alignItems: "center",
-    height: 16,
-    justifyContent: "center",
-    width: 16,
-    zIndex: 1
-  },
-  memoryTimelineDot: {
-    backgroundColor: PROFILE_COLORS.accent,
-    borderColor: PROFILE_COLORS.bg,
-    borderRadius: radius.pill,
-    borderWidth: 5,
-    height: 16,
-    width: 16
   },
   memoryCard: {
     backgroundColor: PROFILE_COLORS.card,

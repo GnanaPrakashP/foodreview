@@ -4,7 +4,7 @@ import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ArrowLeft, Bookmark, Briefcase, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, MoreHorizontal, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X, type LucideIcon } from "lucide-react-native";
+import { ArrowLeft, Bookmark, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -63,57 +63,8 @@ type SoloStep = "review" | "details" | "preview";
 
 const MAX_POST_MEDIA = 4;
 
-type CreateMemoryOccasionOption = {
-  accent: string;
-  accentBackground: string;
-  Icon: LucideIcon;
-  label: string;
-  title: string;
-  type: OccasionType;
-};
-
-const createMemoryOccasionOptions: CreateMemoryOccasionOption[] = [
-  {
-    accent: "#B66DFF",
-    accentBackground: "rgba(182, 109, 255, 0.16)",
-    Icon: Utensils,
-    label: "Food",
-    title: "Food",
-    type: "casual"
-  },
-  {
-    accent: "#FF7AAD",
-    accentBackground: "rgba(255, 122, 173, 0.16)",
-    Icon: Heart,
-    label: "Date",
-    title: "Date night",
-    type: "date_night"
-  },
-  {
-    accent: "#39D4C5",
-    accentBackground: "rgba(57, 212, 197, 0.14)",
-    Icon: Users,
-    label: "Friends",
-    title: "Friends",
-    type: "friends_hangout"
-  },
-  {
-    accent: "#FFBB4D",
-    accentBackground: "rgba(255, 187, 77, 0.15)",
-    Icon: Briefcase,
-    label: "Work",
-    title: "Work meal",
-    type: "work_meal"
-  },
-  {
-    accent: "#AFA7A0",
-    accentBackground: "rgba(245, 237, 216, 0.10)",
-    Icon: MoreHorizontal,
-    label: "Other",
-    title: "Other",
-    type: "unknown"
-  }
-];
+const DEFAULT_MEMORY_OCCASION_TITLE = "Occasion";
+const DEFAULT_MEMORY_OCCASION_TYPE: OccasionType = "casual";
 
 const tagOptions: ReviewTag[] = [
   { label: "Hidden gem" },
@@ -191,7 +142,6 @@ export default function ShareScreen() {
   const [visibility, setVisibility] = useState<Visibility>("public");
   const [success, setSuccess] = useState("");
   const [memoryOccasionTitle, setMemoryOccasionTitle] = useState("");
-  const [selectedMemoryOccasionType, setSelectedMemoryOccasionType] = useState<OccasionType>("casual");
   const [memoryParticipants, setMemoryParticipants] = useState("");
   const [memoryParticipantInput, setMemoryParticipantInput] = useState("");
   const [memoryFriendFocused, setMemoryFriendFocused] = useState(false);
@@ -214,7 +164,6 @@ export default function ShareScreen() {
     query: memoryParticipantInput
   });
   const hasSelectedRestaurant = selectedPlaceMatches(restaurantName, restaurantPlace);
-  const selectedMemoryOccasion = createMemoryOccasionOptions.find((option) => option.type === selectedMemoryOccasionType) ?? createMemoryOccasionOptions[0];
   const hasSoloDetails = Boolean(hasSelectedRestaurant && dishes.some((dish) => dish.name.trim() && dish.rating > 0));
   const canAddMoreMedia = mediaItems.length < MAX_POST_MEDIA;
   const canSubmit = Boolean(mediaItems.length > 0 && hasSoloDetails);
@@ -471,15 +420,14 @@ export default function ShareScreen() {
     try {
       const result = await createMemoryRoom.mutateAsync({
         participantUsernames: splitUsernames(memoryParticipants),
-        occasion: memoryOccasionTitle.trim() || selectedMemoryOccasion.title,
+        occasion: memoryOccasionTitle.trim() || DEFAULT_MEMORY_OCCASION_TITLE,
         occasionConfidence: 1,
         occasionConfirmedByUser: true,
-        occasionType: selectedMemoryOccasion.type,
+        occasionType: DEFAULT_MEMORY_OCCASION_TYPE,
         restaurantName: "Table Memory",
-        themeKey: getOccasionTheme(selectedMemoryOccasion.type).id
+        themeKey: getOccasionTheme(DEFAULT_MEMORY_OCCASION_TYPE).id
       });
       setMemoryOccasionTitle("");
-      setSelectedMemoryOccasionType("casual");
       setMemoryParticipants("");
       setMemoryParticipantInput("");
       router.push({ pathname: "/memories/[id]", params: { id: result.id } });
@@ -896,9 +844,7 @@ export default function ShareScreen() {
                 <View style={styles.memorySetup}>
                   <View style={styles.attachmentStack}>
                     <CreateMemoryOccasionPicker
-                      onSelect={setSelectedMemoryOccasionType}
                       onTitleChange={setMemoryOccasionTitle}
-                      selectedType={selectedMemoryOccasionType}
                       titleValue={memoryOccasionTitle}
                     />
 
@@ -1068,94 +1014,28 @@ function ChoiceChip({ accent, label }: { accent: "memory" | "orange"; label: str
 }
 
 function CreateMemoryOccasionPicker({
-  onSelect,
   onTitleChange,
-  selectedType,
   titleValue
 }: {
-  onSelect: (type: OccasionType) => void;
   onTitleChange: (value: string) => void;
-  selectedType: OccasionType;
   titleValue: string;
 }) {
   const { themeColors: c, styles } = useShareTheme();
-  const selectedOption = createMemoryOccasionOptions.find((option) => option.type === selectedType) ?? createMemoryOccasionOptions[0];
-  const SelectedIcon = selectedOption.Icon;
 
   return (
     <View style={styles.occasionPicker}>
       <View style={styles.restaurantAttachment}>
-        <SelectedIcon size={20} color={selectedOption.accent} strokeWidth={1.9} />
+        <PenLine size={20} color={c.orange} strokeWidth={1.9} />
         <TextInput
           onChangeText={onTitleChange}
-          placeholder="Name this memory"
+          placeholder="Occasion name"
           placeholderTextColor={c.muted}
           returnKeyType="done"
           style={styles.fieldInput}
           value={titleValue}
         />
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionPickerContent}>
-        {createMemoryOccasionOptions.map((option) => (
-          <CreateMemoryOccasionButton
-            active={selectedType === option.type}
-            key={option.type}
-            onPress={() => onSelect(option.type)}
-            option={option}
-          />
-        ))}
-      </ScrollView>
     </View>
-  );
-}
-
-function CreateMemoryOccasionButton({
-  active,
-  onPress,
-  option
-}: {
-  active: boolean;
-  onPress: () => void;
-  option: CreateMemoryOccasionOption;
-}) {
-  const { themeColors: c, styles } = useShareTheme();
-  const Icon = option.Icon;
-  const iconColor = active ? option.accent : c.muted;
-
-  return (
-    <Pressable
-      accessibilityLabel={option.label}
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={styles.occasionChoice}
-    >
-      <View
-        style={[
-          styles.occasionIconButton,
-          active && styles.occasionIconButtonActive,
-          active && {
-            backgroundColor: option.accentBackground,
-            borderColor: option.accent
-          }
-        ]}
-      >
-        <Icon color={iconColor} size={26} strokeWidth={active ? 2.4 : 2} />
-      </View>
-      <Text
-        adjustsFontSizeToFit
-        minimumFontScale={0.86}
-        numberOfLines={1}
-        style={[
-          styles.occasionChoiceLabel,
-          active && {
-            color: option.accent
-          }
-        ]}
-      >
-        {option.label}
-      </Text>
-    </Pressable>
   );
 }
 

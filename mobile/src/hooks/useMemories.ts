@@ -372,6 +372,61 @@ export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
   });
 }
 
+export function useMemoryRoomsRealtime(enabled = true) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    let invalidationTimeout: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (invalidationTimeout) clearTimeout(invalidationTimeout);
+      invalidationTimeout = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+      }, 150);
+    };
+
+    const channel = supabase
+      .channel("shared-memory-rooms")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_messages" },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_photos" },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_dishes" },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_dish_ratings" },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_members" },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_rooms" },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    return () => {
+      if (invalidationTimeout) clearTimeout(invalidationTimeout);
+      void supabase.removeChannel(channel);
+    };
+  }, [enabled, queryClient]);
+}
+
 export function useMemoryRoomQuery(roomId: string) {
   return useQuery({
     queryKey: memoryKeys.detail(roomId),

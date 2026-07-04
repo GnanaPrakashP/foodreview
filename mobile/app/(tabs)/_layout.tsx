@@ -1,8 +1,11 @@
 import { Tabs } from "expo-router";
 import { Plus, Search, User, Users, type LucideIcon } from "lucide-react-native";
+import { useMemo } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, typography } from "@/theme";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
@@ -14,7 +17,17 @@ const tabs: Record<string, { title: string; icon: LucideIcon }> = {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const isReady = useSessionStore((state) => state.isReady);
+  const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const { themeColors } = useThemePreference();
+  const shouldLoadMemories = isReady && isAuthenticated;
+  const memoryRooms = useMemoryRoomsQuery({ enabled: shouldLoadMemories });
+  const hasUnreadMemories = useMemo(
+    () => (memoryRooms.data ?? []).some((memory) => memory.unreadCount > 0),
+    [memoryRooms.data]
+  );
+
+  useMemoryRoomsRealtime(shouldLoadMemories);
 
   return (
     <Tabs
@@ -54,6 +67,18 @@ export default function TabLayout() {
                   size={21}
                   strokeWidth={focused ? 2.4 : 1.8}
                 />
+                {route.name === "profile" && hasUnreadMemories ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.profileUnreadDot,
+                      {
+                        backgroundColor: themeColors.orange,
+                        borderColor: themeColors.surface
+                      }
+                    ]}
+                  />
+                ) : null}
               </View>
             );
           },
@@ -85,9 +110,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     height: 24,
     justifyContent: "center",
+    position: "relative",
     width: 42
   },
   iconWrapActive: {
     transform: [{ translateY: 0 }]
+  },
+  profileUnreadDot: {
+    borderRadius: 5,
+    borderWidth: 2,
+    height: 10,
+    position: "absolute",
+    right: 8,
+    top: 0,
+    width: 10
   }
 });

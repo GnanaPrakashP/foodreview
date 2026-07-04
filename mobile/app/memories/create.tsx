@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Briefcase, Heart, MoreHorizontal, Users, Utensils, type LucideIcon } from "lucide-react-native";
+import { PenLine } from "lucide-react-native";
 import { type ReactNode, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { MemoryDateField } from "@/components/memories/MemoryDateField";
@@ -13,57 +13,8 @@ import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, screenLayout, spacing } from "@/theme";
 
-type CreateOccasionOption = {
-  accent: string;
-  accentBackground: string;
-  Icon: LucideIcon;
-  label: string;
-  title: string;
-  type: OccasionType;
-};
-
-const CREATE_OCCASION_OPTIONS: CreateOccasionOption[] = [
-  {
-    accent: "#B66DFF",
-    accentBackground: "rgba(182, 109, 255, 0.16)",
-    Icon: Utensils,
-    label: "Food",
-    title: "Food",
-    type: "casual"
-  },
-  {
-    accent: "#FF7AAD",
-    accentBackground: "rgba(255, 122, 173, 0.16)",
-    Icon: Heart,
-    label: "Date",
-    title: "Date night",
-    type: "date_night"
-  },
-  {
-    accent: "#39D4C5",
-    accentBackground: "rgba(57, 212, 197, 0.14)",
-    Icon: Users,
-    label: "Friends",
-    title: "Friends",
-    type: "friends_hangout"
-  },
-  {
-    accent: "#FFBB4D",
-    accentBackground: "rgba(255, 187, 77, 0.15)",
-    Icon: Briefcase,
-    label: "Work",
-    title: "Work meal",
-    type: "work_meal"
-  },
-  {
-    accent: "#AFA7A0",
-    accentBackground: "rgba(245, 237, 216, 0.10)",
-    Icon: MoreHorizontal,
-    label: "Other",
-    title: "Other",
-    type: "unknown"
-  }
-];
+const DEFAULT_MEMORY_OCCASION_TITLE = "Occasion";
+const DEFAULT_MEMORY_OCCASION_TYPE: OccasionType = "casual";
 
 export default function CreateMemoryScreen() {
   const router = useRouter();
@@ -79,24 +30,22 @@ export default function CreateMemoryScreen() {
   const [restaurantName, setRestaurantName] = useState(params.restaurantName ?? "");
   const [area, setArea] = useState(params.area ?? "");
   const [occasionTitle, setOccasionTitle] = useState("");
-  const [selectedOccasionType, setSelectedOccasionType] = useState<OccasionType>("casual");
   const [visitDate, setVisitDate] = useState("");
   const [sourcePostId, setSourcePostId] = useState(params.sourcePostId ?? "");
   const [participants, setParticipants] = useState<string[]>([]);
   const fromPost = mode === "post";
   const fromPostDeepLink = Boolean(params.sourcePostId);
-  const selectedOccasion = CREATE_OCCASION_OPTIONS.find((option) => option.type === selectedOccasionType) ?? CREATE_OCCASION_OPTIONS[0];
 
   async function submit() {
     try {
       const result = await createRoom.mutateAsync({
         restaurantName,
         area,
-        occasion: occasionTitle.trim() || selectedOccasion.title,
+        occasion: occasionTitle.trim() || DEFAULT_MEMORY_OCCASION_TITLE,
         occasionConfidence: 1,
         occasionConfirmedByUser: true,
-        occasionType: selectedOccasion.type,
-        themeKey: getOccasionTheme(selectedOccasion.type).id,
+        occasionType: DEFAULT_MEMORY_OCCASION_TYPE,
+        themeKey: getOccasionTheme(DEFAULT_MEMORY_OCCASION_TYPE).id,
         visitDate,
         sourcePostId: fromPost ? sourcePostId : undefined,
         participantUsernames: participants
@@ -135,9 +84,7 @@ export default function CreateMemoryScreen() {
           <Field label="Memory" styles={styles}>
             <CreateOccasionPicker
               colors={themeColors}
-              onSelect={setSelectedOccasionType}
               onTitleChange={setOccasionTitle}
-              selectedType={selectedOccasionType}
               styles={styles}
               titleValue={occasionTitle}
             />
@@ -178,105 +125,29 @@ export default function CreateMemoryScreen() {
 
 function CreateOccasionPicker({
   colors,
-  onSelect,
   onTitleChange,
-  selectedType,
   styles,
   titleValue
 }: {
   colors: ReturnType<typeof themeColorsFor>;
-  onSelect: (type: OccasionType) => void;
   onTitleChange: (value: string) => void;
-  selectedType: OccasionType;
   styles: ReturnType<typeof createStyles>;
   titleValue: string;
 }) {
-  const selectedOption = CREATE_OCCASION_OPTIONS.find((option) => option.type === selectedType) ?? CREATE_OCCASION_OPTIONS[0];
-  const SelectedIcon = selectedOption.Icon;
-
   return (
     <View style={styles.occasionPicker}>
       <View style={styles.occasionTitleRow}>
-        <SelectedIcon size={20} color={selectedOption.accent} strokeWidth={1.9} />
+        <PenLine size={20} color={colors.orange} strokeWidth={1.9} />
         <TextInput
           onChangeText={onTitleChange}
-          placeholder="Name this memory"
+          placeholder="Occasion name"
           placeholderTextColor={colors.muted}
           returnKeyType="done"
           style={styles.occasionTitleInput}
           value={titleValue}
         />
       </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.occasionPickerContent}
-      >
-        {CREATE_OCCASION_OPTIONS.map((option) => (
-          <CreateOccasionButton
-            active={selectedType === option.type}
-            colors={colors}
-            key={option.type}
-            onPress={() => onSelect(option.type)}
-            option={option}
-            styles={styles}
-          />
-        ))}
-      </ScrollView>
     </View>
-  );
-}
-
-function CreateOccasionButton({
-  active,
-  colors,
-  onPress,
-  option,
-  styles
-}: {
-  active: boolean;
-  colors: ReturnType<typeof themeColorsFor>;
-  onPress: () => void;
-  option: CreateOccasionOption;
-  styles: ReturnType<typeof createStyles>;
-}) {
-  const Icon = option.Icon;
-  const iconColor = active ? option.accent : colors.muted;
-
-  return (
-    <Pressable
-      accessibilityLabel={option.label}
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={styles.occasionChoice}
-    >
-      <View
-        style={[
-          styles.occasionIconButton,
-          active && styles.occasionIconButtonActive,
-          active && {
-            backgroundColor: option.accentBackground,
-            borderColor: option.accent
-          }
-        ]}
-      >
-        <Icon color={iconColor} size={26} strokeWidth={active ? 2.4 : 2} />
-      </View>
-      <Text
-        adjustsFontSizeToFit
-        minimumFontScale={0.86}
-        numberOfLines={1}
-        style={[
-          styles.occasionChoiceLabel,
-          active && {
-            color: option.accent
-          }
-        ]}
-      >
-        {option.label}
-      </Text>
-    </Pressable>
   );
 }
 
