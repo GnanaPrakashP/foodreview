@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEvent } from "expo";
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from "expo-audio";
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState, type RecordingOptions } from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import { PenLine, Star, Utensils } from "lucide-react-native";
@@ -41,7 +41,12 @@ import {
 } from "react-native";
 import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AndroidSoftInputModes, KeyboardController, useKeyboardContext, useKeyboardHandler } from "react-native-keyboard-controller";
+import {
+  AndroidSoftInputModes,
+  KeyboardController,
+  useKeyboardContext,
+  useKeyboardHandler
+} from "react-native-keyboard-controller";
 import Reanimated, {
   Easing as ReanimatedEasing,
   interpolate,
@@ -291,7 +296,20 @@ const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPU
 const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? COMPOSER_INPUT_MIN_HEIGHT : Math.max(42, COMPOSER_INPUT_MIN_HEIGHT);
 const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
 const VOICE_MESSAGE_MIN_DURATION_MS = 700;
+const VOICE_MESSAGE_SEND_MIN_DURATION_MS = Platform.OS === "android" ? 1500 : VOICE_MESSAGE_MIN_DURATION_MS;
 const VOICE_MESSAGE_MIME_TYPE = "audio/mp4";
+const VOICE_RECORDING_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  bitRate: Platform.OS === "android" ? 64000 : RecordingPresets.HIGH_QUALITY.bitRate,
+  isMeteringEnabled: true,
+  numberOfChannels: Platform.OS === "android" ? 1 : RecordingPresets.HIGH_QUALITY.numberOfChannels,
+  android: {
+    ...RecordingPresets.HIGH_QUALITY.android,
+    audioSource: "mic",
+    extension: ".m4a",
+    sampleRate: 44100
+  }
+};
 const SELECTION_INLINE_BUTTON_SIZE = Platform.OS === "web" ? 30 : 32;
 const SELECTION_SECONDARY_ICON_SIZE = 19;
 const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
@@ -838,21 +856,21 @@ function MemoryChatMainSurface({
   ), [data, myUsername, reactions, unreadAnchorMessageId]);
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
   const selectionMode = selectedItemKeys.length > 0;
-  const voiceRecordingOptions = useMemo(() => ({
-    ...RecordingPresets.HIGH_QUALITY,
-    isMeteringEnabled: true
-  }), []);
-  const voiceRecorder = useAudioRecorder(voiceRecordingOptions);
+  const voiceRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const voiceRecorderState = useAudioRecorderState(voiceRecorder, 200);
   const [voiceMode, setVoiceMode] = useState<"idle" | "recording" | "sending">("idle");
   const voiceModeRef = useRef(voiceMode);
+  const voiceRecordingStartedAtRef = useRef<number | null>(null);
+  const voiceWallDurationMs = voiceMode === "recording" && voiceRecordingStartedAtRef.current
+    ? Date.now() - voiceRecordingStartedAtRef.current
+    : 0;
   const voiceDurationMs = Math.max(
     voiceRecorderState.durationMillis ?? 0,
-    Math.round((voiceRecorder.currentTime ?? 0) * 1000)
+    voiceWallDurationMs
   );
   const voiceActive = voiceMode !== "idle";
   const voiceSending = voiceMode === "sending";
-  const voiceSendDisabled = voiceSending || voiceDurationMs < VOICE_MESSAGE_MIN_DURATION_MS;
+  const voiceSendDisabled = voiceSending || voiceDurationMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS;
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -868,6 +886,8 @@ function MemoryChatMainSurface({
 
   const cancelVoiceRecording = useCallback(async () => {
     if (voiceModeRef.current === "idle") return;
+    voiceModeRef.current = "idle";
+    voiceRecordingStartedAtRef.current = null;
     setVoiceMode("idle");
     try {
       if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
@@ -898,33 +918,48 @@ function MemoryChatMainSurface({
         interruptionMode: "duckOthers",
         playsInSilentMode: true
       });
-      await voiceRecorder.prepareToRecordAsync(voiceRecordingOptions);
+      await voiceRecorder.prepareToRecordAsync(VOICE_RECORDING_OPTIONS);
       voiceRecorder.record();
+      voiceRecordingStartedAtRef.current = Date.now();
+      voiceModeRef.current = "recording";
       setVoiceMode("recording");
-    } catch {
+    } catch (error) {
+      console.warn("[memory-chat] Could not start voice recording", error);
+      voiceRecordingStartedAtRef.current = null;
+      voiceModeRef.current = "idle";
       setVoiceMode("idle");
       await resetVoiceAudioMode();
-      Alert.alert("Could not start recording", "Please try again.");
+      Alert.alert("Could not start recording", error instanceof Error ? error.message : "Please try again.");
     }
-  }, [message, resetVoiceAudioMode, voiceRecorder, voiceRecordingOptions]);
+  }, [message, resetVoiceAudioMode, voiceRecorder]);
 
   const finishAndSendVoiceRecording = useCallback(async () => {
     if (voiceModeRef.current !== "recording") return;
     const durationBeforeStopMs = Math.max(
       voiceRecorderState.durationMillis ?? 0,
-      Math.round((voiceRecorder.currentTime ?? 0) * 1000)
+      voiceRecordingStartedAtRef.current ? Date.now() - voiceRecordingStartedAtRef.current : 0
     );
+    if (durationBeforeStopMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS) return;
+    voiceModeRef.current = "sending";
     setVoiceMode("sending");
 
     try {
       if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
-        await voiceRecorder.stop();
+        try {
+          await voiceRecorder.stop();
+        } catch (error) {
+          if (durationBeforeStopMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS + 500) {
+            Alert.alert("Audio is too short", "Record for a moment longer before sending.");
+            return;
+          }
+          throw error;
+        }
       }
       const status = voiceRecorder.getStatus();
       const durationMs = Math.max(durationBeforeStopMs, status.durationMillis ?? 0);
       const uri = voiceRecorder.uri ?? status.url ?? voiceRecorderState.url;
       if (!uri) throw new Error("voice_recording_missing_uri");
-      if (durationMs < VOICE_MESSAGE_MIN_DURATION_MS) {
+      if (durationMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS) {
         Alert.alert("Audio is too short", "Record for at least a moment before sending.");
         return;
       }
@@ -941,9 +976,12 @@ function MemoryChatMainSurface({
         mediaType: "audio",
         mediaUri: uri
       });
-    } catch {
-      Alert.alert("Could not send audio", "Please try recording again.");
+    } catch (error) {
+      console.warn("[memory-chat] Could not send audio", error);
+      Alert.alert("Could not send audio", error instanceof Error ? error.message : "Please try recording again.");
     } finally {
+      voiceRecordingStartedAtRef.current = null;
+      voiceModeRef.current = "idle";
       setVoiceMode("idle");
       await resetVoiceAudioMode();
     }
@@ -961,6 +999,8 @@ function MemoryChatMainSurface({
 
   useEffect(() => () => {
     if (voiceModeRef.current === "idle") return;
+    voiceModeRef.current = "idle";
+    voiceRecordingStartedAtRef.current = null;
     void voiceRecorder.stop().catch(() => undefined);
     void resetVoiceAudioMode();
   }, [resetVoiceAudioMode, voiceRecorder]);
@@ -1707,6 +1747,14 @@ function audioDurationSeconds(audio: MemoryPhoto | null, playerDuration: number)
   return durationMs && durationMs > 0 ? durationMs / 1000 : 0;
 }
 
+function pauseMediaPlayerQuietly(player: { pause: () => void }) {
+  try {
+    player.pause();
+  } catch {
+    // Expo can release hidden media players before React cleanup runs on Android.
+  }
+}
+
 function ChatMainAudioMessage({
   currentMessage,
   position = "left"
@@ -1731,19 +1779,23 @@ function ChatMainAudioMessage({
   const isError = status === "error";
 
   useEffect(() => () => {
-    player.pause();
+    pauseMediaPlayerQuietly(player);
   }, [player]);
 
   function togglePlayback() {
     if (!uri || isError) return;
-    if (player.playing) {
-      player.pause();
-      return;
+    try {
+      if (player.playing) {
+        player.pause();
+        return;
+      }
+      if (duration > 0 && player.currentTime >= duration - 0.25) {
+        player.currentTime = 0;
+      }
+      player.play();
+    } catch (error) {
+      console.warn("[memory-chat] Could not toggle audio playback", error);
     }
-    if (duration > 0 && player.currentTime >= duration - 0.25) {
-      player.currentTime = 0;
-    }
-    player.play();
   }
 
   if (!uri) return null;
@@ -5439,6 +5491,7 @@ function NativeVideoThumbnailLayer({
           placeholder={displayedSource}
           placeholderContentFit={contentFit}
           priority="high"
+          recyclingKey={cacheKey}
           source={displayedSource}
           transition={0}
           style={styles.videoThumbnailImage}
@@ -5453,6 +5506,7 @@ function NativeVideoThumbnailLayer({
           placeholder={displayedSource ?? thumbnailSource}
           placeholderContentFit={contentFit}
           priority="high"
+          recyclingKey={cacheKey}
           source={thumbnailSource}
           transition={0}
           style={styles.videoThumbnailImage}
@@ -5632,7 +5686,7 @@ function useMediaOpenGuard(onBeginSelection: () => void) {
 
 function getMessageTimestampLabel(message: MemoryMessage) {
   const time = formatDisplayTime(message.createdAt);
-  return message.editedAt ? `edited ${time}` : time;
+  return message.editedAt ? `Edited ${time}` : time;
 }
 
 function MessageRow({
@@ -8250,18 +8304,22 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
   const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
 
   useEffect(() => () => {
-    player.pause();
+    pauseMediaPlayerQuietly(player);
   }, [player]);
 
   function togglePlayback() {
-    if (player.playing) {
-      player.pause();
-      return;
+    try {
+      if (player.playing) {
+        player.pause();
+        return;
+      }
+      if (duration > 0 && player.currentTime >= duration - 0.25) {
+        player.currentTime = 0;
+      }
+      player.play();
+    } catch (error) {
+      console.warn("[memory-chat] Could not toggle viewer audio playback", error);
     }
-    if (duration > 0 && player.currentTime >= duration - 0.25) {
-      player.currentTime = 0;
-    }
-    player.play();
   }
 
   return (

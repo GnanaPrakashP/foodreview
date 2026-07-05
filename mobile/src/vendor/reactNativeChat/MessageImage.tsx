@@ -11,10 +11,13 @@ import {
   ImageURISource,
   LayoutChangeEvent,
   useWindowDimensions,
+  Modal,
   StatusBar,
-  Text } from 'react-native'
+  Text,
+} from 'react-native'
 import { BaseButton, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { OverKeyboardView } from 'react-native-keyboard-controller'
+import { hasKeyboardControllerOverKeyboardView } from '@/utils/nativeViewManagers'
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -120,6 +123,7 @@ export function MessageImage<TMessage extends IMessage = IMessage> ({
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [imageDimensions, setImageDimensions] = useState<{ width: number, height: number }>()
   const windowDimensions = useWindowDimensions()
+  const canUseOverKeyboardView = useMemo(() => hasKeyboardControllerOverKeyboardView(), [])
 
   const imageSource = useMemo(() => ({
     ...imageSourceProps,
@@ -183,6 +187,18 @@ export function MessageImage<TMessage extends IMessage = IMessage> ({
   if (currentMessage == null)
     return null
 
+  const modalContent = (
+    <SafeAreaProvider>
+      <ModalContent
+        isVisible={isModalVisible}
+        imageSource={imageSource}
+        modalImageDimensions={modalImageDimensions}
+        imageProps={imageProps}
+        onClose={handleModalClose}
+      />
+    </SafeAreaProvider>
+  )
+
   return (
     <View style={containerStyle}>
       <TouchableOpacity onPress={handleImagePress}>
@@ -195,17 +211,20 @@ export function MessageImage<TMessage extends IMessage = IMessage> ({
         />
       </TouchableOpacity>
 
-      <OverKeyboardView visible={isModalVisible}>
-        <SafeAreaProvider>
-          <ModalContent
-            isVisible={isModalVisible}
-            imageSource={imageSource}
-            modalImageDimensions={modalImageDimensions}
-            imageProps={imageProps}
-            onClose={handleModalClose}
-          />
-        </SafeAreaProvider>
-      </OverKeyboardView>
+      {canUseOverKeyboardView ? (
+        <OverKeyboardView visible={isModalVisible}>
+          {modalContent}
+        </OverKeyboardView>
+      ) : (
+        <Modal
+          animationType='fade'
+          transparent
+          visible={isModalVisible}
+          onRequestClose={handleModalClose}
+        >
+          {modalContent}
+        </Modal>
+      )}
     </View>
   )
 }

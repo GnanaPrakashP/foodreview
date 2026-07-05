@@ -10,6 +10,10 @@ const finalAuditMigration = readFileSync(
   "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
   "utf8"
 );
+const chatPageMigration = readFileSync(
+  "mobile/supabase/migrations/202607050001_shared_memory_chat_page_rpc.sql",
+  "utf8"
+);
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
 const summaryMigrations = `${phase3Migration}\n${finalAuditMigration}`;
@@ -68,6 +72,31 @@ test("mobile chat and media pagination use id tie-breaker cursors", () => {
   assert.match(memoryService, /parseMemoryPageCursor/);
   assert.match(memoryService, /created_at\.lt\.\$\{cursor\.createdAt\},and\(created_at\.eq\.\$\{cursor\.createdAt\},id\.lt\.\$\{cursor\.id\}\)/);
   assert.match(memoryService, /\.order\("created_at", \{ ascending: false \}\)\s+\.order\("id", \{ ascending: false \}\)/);
+});
+
+test("phase 2 chat page RPC is bounded, member scoped, and mobile preferred", () => {
+  assert.match(chatPageMigration, /create or replace function public\.shared_memory_chat_page/);
+  assert.match(chatPageMigration, /security definer[\s\S]*set search_path = public/);
+  assert.match(chatPageMigration, /least\(greatest\(coalesce\(p_limit, 50\), 1\), 100\)/);
+  assert.match(chatPageMigration, /not public\.can_read_shared_memory\(p_room_id\)/);
+  assert.match(chatPageMigration, /limit \(v_limit \+ 1\)/);
+  assert.match(chatPageMigration, /message\.created_at < p_before_created_at/);
+  assert.match(chatPageMigration, /message\.id < p_before_message_id/);
+  assert.match(chatPageMigration, /coalesce\(photo\.moderation_status, 'approved'\) = 'approved'/);
+  assert.match(chatPageMigration, /photo\.uploader_name = v_user_name/);
+  assert.match(chatPageMigration, /'replyMessages'/);
+  assert.match(chatPageMigration, /'profiles'/);
+  assert.match(chatPageMigration, /revoke all on function public\.shared_memory_chat_page[\s\S]*from anon/);
+  assert.match(chatPageMigration, /grant execute on function public\.shared_memory_chat_page[\s\S]*to authenticated, service_role/);
+
+  assert.match(memoryService, /\.rpc\("shared_memory_chat_page"/);
+  assert.match(memoryService, /fetchMemoryMessagePageBundle/);
+  assert.match(memoryService, /isMissingMemoryChatPageRpc/);
+  assert.match(memoryService, /fetchMemoryMessagePageLegacy/);
+  assert.doesNotMatch(
+    memoryService.match(/export async function getMemoryMessagesPage[\s\S]*?\n}/)?.[0] ?? "",
+    /assertMemoryRoomMember/
+  );
 });
 
 test("phase 3 docs mention the summary RPC rollout and verification", () => {

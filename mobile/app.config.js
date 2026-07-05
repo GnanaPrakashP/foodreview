@@ -30,6 +30,7 @@ module.exports = ({ config: expoConfig } = {}) => {
   };
   const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
   const plugins = [...(config.plugins ?? [])];
+  if (!plugins.includes("expo-sqlite")) plugins.push("expo-sqlite");
 
   if (isLocalHttpUrl(apiBaseUrl)) {
     plugins.push("./plugins/withAndroidCleartextForLocalApi");

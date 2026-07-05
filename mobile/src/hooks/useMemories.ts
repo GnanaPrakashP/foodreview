@@ -13,11 +13,11 @@ import {
   deleteMemoryPhoto,
   deleteMemoryStop,
   editMemoryMessage,
-  getMemoryMediaPage,
-  getMemoryMessagesPage,
-  getMemoryRoom,
+  getMemoryMediaPageOfflineFirst,
+  getMemoryMessagesPageOfflineFirst,
+  getMemoryRoomOfflineFirst,
   leaveMemoryRoom,
-  listMemoryRooms,
+  listMemoryRoomsOfflineFirst,
   markMemoryRoomRead,
   setMemoryDishRating,
   updateMemoryRoomOccasion,
@@ -36,6 +36,7 @@ import {
   type UpdateMemoryStopInput
 } from "@/services/memories";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
+import { deleteOfflineMemoryMessage, deleteOfflineMemoryPhoto, saveOfflineMemoryRoom } from "@/services/memoryOfflineStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 
@@ -47,13 +48,73 @@ export const memoryKeys = {
 };
 
 const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
+const REALTIME_RECONCILE_DELAY_MS = 1_500;
 const recentMediaMessageExpiries = new Map<string, number>();
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
+const OPTIMISTIC_TEXT_MESSAGE_PREFIX = "optimistic-message:";
 type DeleteMemoryItemsInput = { messageIds?: string[]; photoIds?: string[] };
 type AddMemoryMessageInput = { body: string; clientId?: string; replacesMessageId?: string; replyToMessageId?: string | null };
 type MemoryDeleteSets = {
   messageIds: Set<string>;
   photoIds: Set<string>;
+};
+type MemoryMessageRealtimePayload = {
+  eventType: "DELETE" | "INSERT" | "UPDATE";
+  new: Partial<{
+    author_name: string;
+    body: string;
+    created_at: string;
+    edited_at: string | null;
+    id: string;
+    reply_to_message_id: string | null;
+    room_id: string;
+  }>;
+  old: Partial<{
+    author_name: string;
+    body: string;
+    created_at: string;
+    edited_at: string | null;
+    id: string;
+    reply_to_message_id: string | null;
+    room_id: string;
+  }>;
+};
+type MemoryPhotoRealtimePayload = {
+  eventType: "DELETE" | "INSERT" | "UPDATE";
+  new: Partial<{
+    created_at: string;
+    duration_ms: number | null;
+    id: string;
+    image_height: number | null;
+    image_width: number | null;
+    media_type: "audio" | "image" | "video" | null;
+    message_id: string | null;
+    moderation_status: "approved" | "pending" | "rejected" | null;
+    position: number | null;
+    public_url: string | null;
+    room_id: string;
+    stop_id: string | null;
+    storage_path: string;
+    uploader_id: string | null;
+    uploader_name: string;
+  }>;
+  old: Partial<{
+    created_at: string;
+    duration_ms: number | null;
+    id: string;
+    image_height: number | null;
+    image_width: number | null;
+    media_type: "audio" | "image" | "video" | null;
+    message_id: string | null;
+    moderation_status: "approved" | "pending" | "rejected" | null;
+    position: number | null;
+    public_url: string | null;
+    room_id: string;
+    stop_id: string | null;
+    storage_path: string;
+    uploader_id: string | null;
+    uploader_name: string;
+  }>;
 };
 const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>>();
 
@@ -137,6 +198,41 @@ function isOptimisticMediaMessage(message: MemoryMessage) {
   return message.id.startsWith(OPTIMISTIC_MEDIA_MESSAGE_PREFIX) && message.attachments.length > 0;
 }
 
+function isOptimisticTextMessage(message: MemoryMessage) {
+  return message.id.startsWith(OPTIMISTIC_TEXT_MESSAGE_PREFIX);
+}
+
+function timeFromIso(value: string) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function sortMemoryMessages(messages: MemoryMessage[]) {
+  return [...messages].sort((first, second) => (
+    timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
+    first.id.localeCompare(second.id)
+  ));
+}
+
+function sortMemoryPhotos(photos: MemoryPhoto[]) {
+  return [...photos].sort((first, second) => (
+    timeFromIso(second.createdAt) - timeFromIso(first.createdAt) ||
+    first.position - second.position ||
+    first.id.localeCompare(second.id)
+  ));
+}
+
+function upsertMemoryPhoto(photos: MemoryPhoto[], photo: MemoryPhoto) {
+  let inserted = false;
+  const next = photos.map((current) => {
+    if (current.id !== photo.id) return current;
+    inserted = true;
+    return { ...current, ...photo };
+  });
+  if (!inserted) next.push(photo);
+  return sortMemoryPhotos(next);
+}
+
 function isCompatibleMediaMessage(previousMessage: MemoryMessage, nextMessage: MemoryMessage) {
   if (previousMessage.authorName !== nextMessage.authorName) return false;
   if (previousMessage.body.trim() !== nextMessage.body.trim()) return false;
@@ -147,6 +243,462 @@ function isCompatibleMediaMessage(previousMessage: MemoryMessage, nextMessage: M
   if (!Number.isFinite(previousTime) || !Number.isFinite(nextTime)) return true;
 
   return nextTime >= previousTime - 5_000 && nextTime - previousTime < 15 * 60_000;
+}
+
+function isCompatibleOptimisticTextMessage(previousMessage: MemoryMessage, nextMessage: MemoryMessage) {
+  if (!isOptimisticTextMessage(previousMessage)) return false;
+  if (previousMessage.authorName !== nextMessage.authorName) return false;
+  if (previousMessage.body.trim() !== nextMessage.body.trim()) return false;
+  if ((previousMessage.replyToMessageId ?? null) !== (nextMessage.replyToMessageId ?? null)) return false;
+
+  const previousTime = timeFromIso(previousMessage.createdAt);
+  const nextTime = timeFromIso(nextMessage.createdAt);
+  if (!previousTime || !nextTime) return true;
+
+  return nextTime >= previousTime - 5_000 && nextTime - previousTime < 5 * 60_000;
+}
+
+function sameUsername(first: string, second: string) {
+  return first.toLowerCase() === second.toLowerCase();
+}
+
+function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], currentRoom: MemoryRoom): MemoryMessage | null {
+  const {
+    author_name: authorName,
+    body,
+    created_at: createdAt,
+    edited_at: editedAt,
+    id,
+    reply_to_message_id: replyToMessageId,
+    room_id: rowRoomId
+  } = row;
+  if (!id || !rowRoomId || !authorName || typeof body !== "string" || !createdAt) return null;
+
+  const authorDisplayName = currentRoom.participants.find((participant) => sameUsername(participant.username, authorName))?.displayName ??
+    currentRoom.messages.find((message) => sameUsername(message.authorName, authorName))?.authorDisplayName ??
+    authorName;
+  const replyToMessage = replyToMessageId
+    ? currentRoom.messages.find((message) => message.id === replyToMessageId) ?? null
+    : null;
+
+  return {
+    attachments: [],
+    authorDisplayName,
+    authorName,
+    body,
+    createdAt,
+    deliveryStatus: "sent",
+    editedAt: editedAt ?? null,
+    id,
+    replyToMessage: replyToMessage
+      ? {
+        authorDisplayName: replyToMessage.authorDisplayName,
+        body: replyToMessage.body || "Media",
+        id: replyToMessage.id
+      }
+      : null,
+    replyToMessageId: replyToMessageId ?? null,
+    roomId: rowRoomId
+  };
+}
+
+function applyRealtimeMessageInsert(currentRoom: MemoryRoom, realtimeMessage: MemoryMessage) {
+  let didInsertOrReplace = false;
+  const messages = currentRoom.messages.flatMap((message) => {
+    if (message.id === realtimeMessage.id || isCompatibleOptimisticTextMessage(message, realtimeMessage)) {
+      if (didInsertOrReplace) return [];
+      didInsertOrReplace = true;
+      return [{
+        ...realtimeMessage,
+        attachments: message.attachments.length > 0 ? message.attachments : realtimeMessage.attachments
+      }];
+    }
+    return [message];
+  });
+
+  if (!didInsertOrReplace) messages.push(realtimeMessage);
+
+  return {
+    ...currentRoom,
+    messages: sortMemoryMessages(messages)
+  };
+}
+
+function applyRealtimeMessageUpdate(currentRoom: MemoryRoom, realtimeMessage: MemoryMessage) {
+  let changed = false;
+  const messages = currentRoom.messages.map((message) => {
+    if (message.id === realtimeMessage.id) {
+      changed = true;
+      return {
+        ...message,
+        body: realtimeMessage.body,
+        editedAt: realtimeMessage.editedAt,
+        replyToMessage: realtimeMessage.replyToMessage,
+        replyToMessageId: realtimeMessage.replyToMessageId
+      };
+    }
+    if (message.replyToMessageId === realtimeMessage.id) {
+      changed = true;
+      return {
+        ...message,
+        replyToMessage: {
+          authorDisplayName: realtimeMessage.authorDisplayName,
+          body: realtimeMessage.body || "Media",
+          id: realtimeMessage.id
+        }
+      };
+    }
+    return message;
+  });
+  return changed ? { ...currentRoom, messages } : currentRoom;
+}
+
+function applyRealtimeMessageDelete(currentRoom: MemoryRoom, messageId: string) {
+  return {
+    ...currentRoom,
+    messages: currentRoom.messages.flatMap((message) => {
+      if (message.id === messageId) return [];
+      if (message.replyToMessageId !== messageId) return [message];
+      return [{
+        ...message,
+        replyToMessage: null,
+        replyToMessageId: null
+      }];
+    }),
+    photos: currentRoom.photos.filter((photo) => photo.messageId !== messageId)
+  };
+}
+
+function updateMessageInPages(
+  current: InfiniteData<MemoryMessagesPage> | undefined,
+  message: MemoryMessage
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      messages: page.messages.map((currentMessage) => (
+        currentMessage.id === message.id
+          ? {
+            ...currentMessage,
+            body: message.body,
+            editedAt: message.editedAt,
+            replyToMessage: message.replyToMessage,
+            replyToMessageId: message.replyToMessageId
+          }
+          : currentMessage.replyToMessageId === message.id
+            ? {
+              ...currentMessage,
+              replyToMessage: {
+                authorDisplayName: message.authorDisplayName,
+                body: message.body || "Media",
+                id: message.id
+              }
+            }
+            : currentMessage
+      ))
+    }))
+  };
+}
+
+function deleteMessageFromPages(
+  current: InfiniteData<MemoryMessagesPage> | undefined,
+  messageId: string
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      messages: page.messages.flatMap((message) => {
+        if (message.id === messageId) return [];
+        if (message.replyToMessageId !== messageId) return [message];
+        return [{
+          ...message,
+          replyToMessage: null,
+          replyToMessageId: null
+        }];
+      })
+    }))
+  };
+}
+
+function applyRealtimeMessageToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryMessageRealtimePayload["new"],
+  viewerUsername?: string
+) {
+  const { author_name: authorName, body, created_at: createdAt, room_id: rowRoomId } = row;
+  if (!current || !rowRoomId || !createdAt || typeof body !== "string") return current;
+  return current
+    .map((memory) => {
+      if (memory.id !== rowRoomId) return memory;
+      const alreadyReflected = timeFromIso(memory.latestActivityAt) >= timeFromIso(createdAt) &&
+        memory.latestMessage === body;
+      const fromViewer = authorName && viewerUsername ? sameUsername(authorName, viewerUsername) : false;
+
+      return {
+        ...memory,
+        latestActivityAt: timeFromIso(memory.latestActivityAt) > timeFromIso(createdAt)
+          ? memory.latestActivityAt
+          : createdAt,
+        latestMessage: body,
+        messageCount: alreadyReflected || fromViewer ? memory.messageCount : memory.messageCount + 1,
+        unreadCount: alreadyReflected || fromViewer ? memory.unreadCount : memory.unreadCount + 1
+      };
+    })
+    .sort((a, b) => timeFromIso(b.latestActivityAt) - timeFromIso(a.latestActivityAt));
+}
+
+function applyRealtimeMessageUpdateToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryMessageRealtimePayload["new"]
+) {
+  const { body, created_at: createdAt, room_id: rowRoomId } = row;
+  if (!current || !rowRoomId || !createdAt || typeof body !== "string") return current;
+  return current.map((memory) => (
+    memory.id === rowRoomId && timeFromIso(memory.latestActivityAt) <= timeFromIso(createdAt)
+      ? { ...memory, latestMessage: body }
+      : memory
+  ));
+}
+
+function applyRealtimeMessageDeleteToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryMessageRealtimePayload["old"],
+  viewerUsername?: string
+) {
+  const { author_name: authorName, room_id: rowRoomId } = row;
+  if (!current || !rowRoomId || !authorName) return current;
+  const fromViewer = authorName && viewerUsername ? sameUsername(authorName, viewerUsername) : false;
+  return current.map((memory) => (
+    memory.id === rowRoomId
+      ? {
+        ...memory,
+        messageCount: fromViewer ? memory.messageCount : Math.max(0, memory.messageCount - 1),
+        unreadCount: fromViewer ? memory.unreadCount : Math.max(0, memory.unreadCount - 1)
+      }
+      : memory
+  ));
+}
+
+function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], currentRoom: MemoryRoom): MemoryPhoto | null {
+  const {
+    created_at: createdAt,
+    duration_ms: durationMs,
+    id,
+    image_height: imageHeight,
+    image_width: imageWidth,
+    media_type: mediaType,
+    message_id: messageId,
+    moderation_status: moderationStatus,
+    position,
+    public_url: publicUrl,
+    room_id: rowRoomId,
+    stop_id: stopId,
+    storage_path: storagePath,
+    uploader_id: uploaderId,
+    uploader_name: uploaderName
+  } = row;
+  if (!id || !rowRoomId || !storagePath || !uploaderName || !createdAt) return null;
+
+  const uploaderDisplayName = currentRoom.participants.find((participant) => sameUsername(participant.username, uploaderName))?.displayName ??
+    currentRoom.messages.find((message) => sameUsername(message.authorName, uploaderName))?.authorDisplayName ??
+    currentRoom.photos.find((photo) => sameUsername(photo.uploaderName, uploaderName))?.uploaderDisplayName ??
+    uploaderName;
+
+  return {
+    createdAt,
+    durationMs: durationMs ?? null,
+    id,
+    imageHeight: imageHeight ?? null,
+    imageWidth: imageWidth ?? null,
+    mediaType: mediaType === "audio" || mediaType === "video" ? mediaType : "image",
+    messageId: messageId ?? null,
+    moderationStatus: moderationStatus ?? "approved",
+    position: position ?? 0,
+    publicUrl: publicUrl || storagePath,
+    roomId: rowRoomId,
+    stopId: stopId ?? null,
+    storagePath,
+    uploaderId: uploaderId ?? null,
+    uploaderDisplayName,
+    uploaderName
+  };
+}
+
+function placeholderMessageForPhoto(photo: MemoryPhoto): MemoryMessage | null {
+  if (!photo.messageId) return null;
+  return {
+    attachments: [photo],
+    authorDisplayName: photo.uploaderDisplayName,
+    authorName: photo.uploaderName,
+    body: "",
+    createdAt: photo.createdAt,
+    deliveryStatus: "sent",
+    editedAt: null,
+    id: photo.messageId,
+    replyToMessage: null,
+    replyToMessageId: null,
+    roomId: photo.roomId
+  };
+}
+
+function upsertPhotoInMessage(message: MemoryMessage, photo: MemoryPhoto) {
+  return {
+    ...message,
+    attachments: upsertMemoryPhoto(message.attachments, photo).sort((first, second) => (
+      first.position - second.position ||
+      timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
+      first.id.localeCompare(second.id)
+    ))
+  };
+}
+
+function applyRealtimePhotoUpsert(currentRoom: MemoryRoom, photo: MemoryPhoto) {
+  let attachedToMessage = false;
+  const messages = currentRoom.messages.map((message) => {
+    if (message.id !== photo.messageId) return message;
+    attachedToMessage = true;
+    return upsertPhotoInMessage(message, photo);
+  });
+  const placeholder = !attachedToMessage ? placeholderMessageForPhoto(photo) : null;
+  const nextMessages = placeholder ? sortMemoryMessages([...messages, placeholder]) : messages;
+
+  return {
+    ...currentRoom,
+    messages: nextMessages,
+    photos: upsertMemoryPhoto(currentRoom.photos, photo)
+  };
+}
+
+function applyRealtimePhotoDelete(currentRoom: MemoryRoom, photoId: string) {
+  return {
+    ...currentRoom,
+    messages: currentRoom.messages.map((message) => ({
+      ...message,
+      attachments: message.attachments.filter((photo) => photo.id !== photoId)
+    })),
+    photos: currentRoom.photos.filter((photo) => photo.id !== photoId)
+  };
+}
+
+function upsertPhotoInMessagePages(
+  current: InfiniteData<MemoryMessagesPage> | undefined,
+  photo: MemoryPhoto
+) {
+  if (!current || !photo.messageId) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      messages: page.messages.map((message) => (
+        message.id === photo.messageId ? upsertPhotoInMessage(message, photo) : message
+      ))
+    }))
+  };
+}
+
+function deletePhotoFromMessagePages(
+  current: InfiniteData<MemoryMessagesPage> | undefined,
+  photoId: string
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      messages: page.messages.map((message) => ({
+        ...message,
+        attachments: message.attachments.filter((photo) => photo.id !== photoId)
+      }))
+    }))
+  };
+}
+
+function upsertPhotoInMediaPages(
+  current: InfiniteData<MemoryMediaPage> | undefined,
+  photo: MemoryPhoto
+) {
+  if (!current) return current;
+  let replaced = false;
+  const pages = current.pages.map((page) => {
+    const photos = page.photos.map((currentPhoto) => {
+      if (currentPhoto.id !== photo.id) return currentPhoto;
+      replaced = true;
+      return { ...currentPhoto, ...photo };
+    });
+    return {
+      ...page,
+      photos: sortMemoryPhotos(photos)
+    };
+  });
+  if (!replaced && pages[0]) {
+    pages[0] = {
+      ...pages[0],
+      photos: upsertMemoryPhoto(pages[0].photos, photo)
+    };
+  }
+  return { ...current, pages };
+}
+
+function deletePhotoFromMediaPages(
+  current: InfiniteData<MemoryMediaPage> | undefined,
+  photoId: string
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      photos: page.photos.filter((photo) => photo.id !== photoId)
+    }))
+  };
+}
+
+function deleteMessagePhotosFromMediaPages(
+  current: InfiniteData<MemoryMediaPage> | undefined,
+  messageId: string
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      photos: page.photos.filter((photo) => photo.messageId !== messageId)
+    }))
+  };
+}
+
+function applyRealtimePhotoInsertToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryPhotoRealtimePayload["new"],
+  viewerUsername?: string
+) {
+  const { room_id: rowRoomId, uploader_name: uploaderName } = row;
+  if (!current || !rowRoomId || !uploaderName) return current;
+  const fromViewer = uploaderName && viewerUsername ? sameUsername(uploaderName, viewerUsername) : false;
+  return current.map((memory) => (
+    memory.id === rowRoomId
+      ? { ...memory, photoCount: fromViewer ? memory.photoCount : memory.photoCount + 1 }
+      : memory
+  ));
+}
+
+function applyRealtimePhotoDeleteToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryPhotoRealtimePayload["old"],
+  viewerUsername?: string
+) {
+  const { room_id: rowRoomId, uploader_name: uploaderName } = row;
+  if (!current || !rowRoomId) return current;
+  const fromViewer = uploaderName && viewerUsername ? sameUsername(uploaderName, viewerUsername) : false;
+  return current.map((memory) => (
+    memory.id === rowRoomId
+      ? { ...memory, photoCount: fromViewer ? memory.photoCount : Math.max(0, memory.photoCount - 1) }
+      : memory
+  ));
 }
 
 function mapPreservedAttachments(messageId: string, createdAt: string, attachments: MemoryPhoto[]) {
@@ -367,7 +919,7 @@ function applyOptimisticSummaryDelete(
 export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: memoryKeys.list,
-    queryFn: listMemoryRooms,
+    queryFn: listMemoryRoomsOfflineFirst,
     enabled: options.enabled ?? true
   });
 }
@@ -430,10 +982,15 @@ export function useMemoryRoomsRealtime(enabled = true) {
 export function useMemoryRoomQuery(roomId: string) {
   return useQuery({
     queryKey: memoryKeys.detail(roomId),
-    queryFn: () => getMemoryRoom(roomId),
+    queryFn: () => getMemoryRoomOfflineFirst(roomId),
     enabled: Boolean(roomId),
-    refetchInterval: 8_000,
-    refetchIntervalInBackground: false,
+    // Live updates come from realtime (useMemoryRoomRealtime). On top of that we refetch
+    // when the app returns to the foreground or the network reconnects, to catch anything
+    // realtime dropped while backgrounded/offline. This replaces the old 8s poll, which
+    // re-downloaded the entire room (members, dishes, all messages, all photos) every 8s.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 0,
     structuralSharing: preserveRecentMediaAttachments
   });
 }
@@ -441,7 +998,7 @@ export function useMemoryRoomQuery(roomId: string) {
 export function useMemoryMessagePagesQuery(roomId: string, before: string | null) {
   return useInfiniteQuery({
     queryKey: [...memoryKeys.chat(roomId), before ?? "initial"] as const,
-    queryFn: ({ pageParam }) => getMemoryMessagesPage(roomId, {
+    queryFn: ({ pageParam }) => getMemoryMessagesPageOfflineFirst(roomId, {
       before: typeof pageParam === "string" && pageParam ? pageParam : before
     }),
     initialPageParam: before ?? "",
@@ -453,7 +1010,7 @@ export function useMemoryMessagePagesQuery(roomId: string, before: string | null
 export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
   return useInfiniteQuery({
     queryKey: memoryKeys.media(roomId),
-    queryFn: ({ pageParam }) => getMemoryMediaPage(roomId, {
+    queryFn: ({ pageParam }) => getMemoryMediaPageOfflineFirst(roomId, {
       before: typeof pageParam === "string" && pageParam ? pageParam : null
     }),
     initialPageParam: "",
@@ -464,6 +1021,7 @@ export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
 
 export function useMemoryRoomRealtime(roomId: string) {
   const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
 
   useEffect(() => {
     if (!roomId) return;
@@ -476,25 +1034,170 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
       }, 150);
     };
+    const scheduleReconcile = () => {
+      if (invalidationTimeout) clearTimeout(invalidationTimeout);
+      invalidationTimeout = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+        queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
+        queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
+        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+      }, REALTIME_RECONCILE_DELAY_MS);
+    };
+    const persistOfflineRoom = () => {
+      const current = queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId));
+      if (current) void saveOfflineMemoryRoom(current);
+    };
+    const handleMessageChange = (payload: MemoryMessageRealtimePayload) => {
+      if (payload.eventType === "INSERT") {
+        const row = payload.new;
+        if (row.room_id !== roomId) {
+          scheduleRefresh();
+          return;
+        }
+
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+          if (!current) return current;
+          const message = memoryMessageFromRealtimeRow(row, current);
+          return message ? applyRealtimeMessageInsert(current, message) : current;
+        });
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimeMessageToSummaries(current, row, profile?.username)
+        ));
+        persistOfflineRoom();
+        scheduleReconcile();
+        return;
+      }
+
+      if (payload.eventType === "UPDATE") {
+        const row = payload.new;
+        if (row.room_id !== roomId) {
+          scheduleRefresh();
+          return;
+        }
+
+        let mappedMessage: MemoryMessage | null = null;
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+          if (!current) return current;
+          mappedMessage = memoryMessageFromRealtimeRow(row, current);
+          return mappedMessage ? applyRealtimeMessageUpdate(current, mappedMessage) : current;
+        });
+        if (mappedMessage) {
+          queryClient.setQueriesData<InfiniteData<MemoryMessagesPage>>(
+            { queryKey: memoryKeys.chat(roomId) },
+            (current) => updateMessageInPages(current, mappedMessage as MemoryMessage)
+          );
+        }
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimeMessageUpdateToSummaries(current, row)
+        ));
+        persistOfflineRoom();
+        scheduleReconcile();
+        return;
+      }
+
+      if (payload.eventType === "DELETE") {
+        const row = payload.old;
+        if ((row.room_id && row.room_id !== roomId) || !row.id) {
+          scheduleRefresh();
+          return;
+        }
+
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+          current ? applyRealtimeMessageDelete(current, row.id as string) : current
+        ));
+        queryClient.setQueriesData<InfiniteData<MemoryMessagesPage>>(
+          { queryKey: memoryKeys.chat(roomId) },
+          (current) => deleteMessageFromPages(current, row.id as string)
+        );
+        queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
+          deleteMessagePhotosFromMediaPages(current, row.id as string)
+        ));
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimeMessageDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
+        ));
+        void deleteOfflineMemoryMessage(row.id as string);
+        persistOfflineRoom();
+        scheduleReconcile();
+        return;
+      }
+
+      scheduleRefresh();
+    };
+    const handlePhotoChange = (payload: MemoryPhotoRealtimePayload) => {
+      if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+        const row = payload.new;
+        if (row.room_id !== roomId) {
+          scheduleRefresh();
+          return;
+        }
+
+        let mappedPhoto: MemoryPhoto | null = null;
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+          if (!current) return current;
+          mappedPhoto = memoryPhotoFromRealtimeRow(row, current);
+          return mappedPhoto ? applyRealtimePhotoUpsert(current, mappedPhoto) : current;
+        });
+        if (mappedPhoto) {
+          queryClient.setQueriesData<InfiniteData<MemoryMessagesPage>>(
+            { queryKey: memoryKeys.chat(roomId) },
+            (current) => upsertPhotoInMessagePages(current, mappedPhoto as MemoryPhoto)
+          );
+          queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
+            upsertPhotoInMediaPages(current, mappedPhoto as MemoryPhoto)
+          ));
+        }
+        if (payload.eventType === "INSERT") {
+          queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+            applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
+          ));
+        }
+        persistOfflineRoom();
+        scheduleReconcile();
+        return;
+      }
+
+      if (payload.eventType === "DELETE") {
+        const row = payload.old;
+        if ((row.room_id && row.room_id !== roomId) || !row.id) {
+          scheduleRefresh();
+          return;
+        }
+
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+          current ? applyRealtimePhotoDelete(current, row.id as string) : current
+        ));
+        queryClient.setQueriesData<InfiniteData<MemoryMessagesPage>>(
+          { queryKey: memoryKeys.chat(roomId) },
+          (current) => deletePhotoFromMessagePages(current, row.id as string)
+        );
+        queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
+          deletePhotoFromMediaPages(current, row.id as string)
+        ));
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimePhotoDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
+        ));
+        void deleteOfflineMemoryPhoto(row.id as string);
+        persistOfflineRoom();
+        scheduleReconcile();
+        return;
+      }
+
+      scheduleRefresh();
+    };
 
     const channel = supabase
       .channel(`shared-memory-room:${roomId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_messages", filter: `room_id=eq.${roomId}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-          scheduleRefresh();
-        }
+        // INSERT is applied directly so live chat is instant; the delayed
+        // invalidation still reconciles edits, attachments, and any missed fields.
+        handleMessageChange
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_photos", filter: `room_id=eq.${roomId}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-          queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-          scheduleRefresh();
-        }
+        handlePhotoChange
       )
       .on(
         "postgres_changes",
@@ -522,7 +1225,7 @@ export function useMemoryRoomRealtime(roomId: string) {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       void supabase.removeChannel(channel);
     };
-  }, [queryClient, roomId]);
+  }, [profile?.username, queryClient, roomId]);
 }
 
 export function useCreateMemoryRoomMutation() {
@@ -986,7 +1689,11 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       const optimisticPhotos: MemoryPhoto[] = usableAssets.map((asset, index) => {
         const uri = asset.mediaUri || asset.imageUri || "";
         const mediaType: MemoryPhoto["mediaType"] =
-          asset.mediaType === "video" || asset.mediaMimeType?.startsWith("video/") ? "video" : "image";
+          asset.mediaType === "audio" || asset.mediaMimeType?.startsWith("audio/")
+            ? "audio"
+            : asset.mediaType === "video" || asset.mediaMimeType?.startsWith("video/")
+              ? "video"
+              : "image";
         return {
           createdAt: now,
           id: `optimistic-media:${asset.clientId}`,

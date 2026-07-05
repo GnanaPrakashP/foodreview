@@ -310,6 +310,17 @@ function Chat<TMessage extends IMessage = IMessage> (
     [actionSheet, locale, colorScheme]
   )
 
+  const keyboardAvoidingDisabled = props.keyboardAvoidingViewProps?.enabled === false
+  const chatContent = (
+    <>
+      <View style={[stylesCommon.fill, !isInitialized && styles.hidden]}>
+        {renderMessages}
+        {inputToolbarFragment}
+      </View>
+      {!isInitialized && renderComponentOrElement(renderLoading, {})}
+    </>
+  )
+
   useEffect(() => {
     if (props.text != null)
       setText(props.text)
@@ -323,18 +334,22 @@ function Chat<TMessage extends IMessage = IMessage> (
           style={[stylesCommon.fill, styles.contentContainer]}
           onLayout={onInitialLayoutViewLayout}
         >
-          <KeyboardAvoidingView
-            behavior='translate-with-padding'
-            keyboardVerticalOffset={insets.top}
-            style={stylesCommon.fill}
-            {...props.keyboardAvoidingViewProps}
-          >
-            <View style={[stylesCommon.fill, !isInitialized && styles.hidden]}>
-              {renderMessages}
-              {inputToolbarFragment}
-            </View>
-            {!isInitialized && renderComponentOrElement(renderLoading, {})}
-          </KeyboardAvoidingView>
+          {keyboardAvoidingDisabled
+            ? (
+              <View style={[stylesCommon.fill, props.keyboardAvoidingViewProps?.style]}>
+                {chatContent}
+              </View>
+            )
+            : (
+              <KeyboardAvoidingView
+                behavior='translate-with-padding'
+                keyboardVerticalOffset={insets.top}
+                style={stylesCommon.fill}
+                {...props.keyboardAvoidingViewProps}
+              >
+                {chatContent}
+              </KeyboardAvoidingView>
+            )}
         </View>
       </ActionSheetProvider>
     </ChatContext.Provider>

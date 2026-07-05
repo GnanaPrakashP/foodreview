@@ -31,9 +31,10 @@ mobile/supabase/migrations/202606180003_shared_memory_phase2_media_upload_harden
 mobile/supabase/migrations/202606180004_shared_memory_phase2_1_trust_boundary.sql
 mobile/supabase/migrations/202606180005_shared_memory_phase2_2_cleanup_verification.sql
 mobile/supabase/migrations/202606180006_shared_memory_phase3_scalability.sql
+mobile/supabase/migrations/202607050001_shared_memory_chat_page_rpc.sql
 ```
 
-The migrations create the `shared_memory_*` tables, RLS policies, transactional create-room RPC, media typing needed by `mobile/src/services/memories.ts`, pending table invites, the indexed profile-search RPC used by people pickers, and private member-only memory media storage.
+The migrations create the `shared_memory_*` tables, RLS policies, transactional create-room RPC, media typing needed by `mobile/src/services/memories.ts`, pending table invites, the indexed profile-search RPC used by people pickers, private member-only memory media storage, and bounded RPCs for room summaries and chat pages.
 
 `202606140002_settings_account_management.sql` adds the Settings screen's account-management backend: the `notification_settings` and `blocked_users` tables (with RLS), the `notification_category_enabled(user_name, category)` helper used by notification senders to respect a recipient's preferences, and the `delete_current_account()` RPC used by "Delete account". Apply this file with the postgres/admin role (the Supabase SQL editor) — the RPCs are `security definer` (the delete RPC removes the caller's row from `auth.users`, and the preference helper reads another user's settings row), so the owner needs the right privileges.
 
@@ -605,6 +606,34 @@ drop index if exists public.shared_memory_photos_room_visible_created_idx;
 drop index if exists public.shared_memory_members_user_room_idx;
 drop index if exists public.shared_memory_rooms_created_id_desc_idx;
 drop index if exists public.shared_memory_reads_user_room_idx;
+```
+
+`202607050001_shared_memory_chat_page_rpc.sql` adds the Phase 2 chat-page RPC:
+
+- Adds `shared_memory_chat_page()`, a bounded member-scoped RPC used by the mobile chat loader.
+- Returns one page of messages, visible media attachments, out-of-page reply snippets, display names, and the next cursor in one RPC payload.
+- Preserves media moderation visibility: approved media is visible to room members, pending media is visible only to the uploader.
+- The mobile app keeps a legacy fallback until this migration is applied.
+
+Phase 2 chat page verification:
+
+```sql
+select routine_name, security_type
+from information_schema.routines
+where routine_schema = 'public'
+  and routine_name = 'shared_memory_chat_page';
+
+select grantee, privilege_type
+from information_schema.routine_privileges
+where routine_schema = 'public'
+  and routine_name = 'shared_memory_chat_page'
+order by grantee;
+```
+
+Rollback for `202607050001_shared_memory_chat_page_rpc.sql`:
+
+```sql
+drop function if exists public.shared_memory_chat_page(uuid, timestamptz, uuid, integer);
 ```
 
 ## Phase 5 monitoring and operations

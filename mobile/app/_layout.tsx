@@ -79,12 +79,13 @@ export default function RootLayout() {
       <KeyboardProvider
         navigationBarTranslucent={IS_ANDROID_EDGE_TO_EDGE}
         preserveEdgeToEdge={IS_ANDROID_EDGE_TO_EDGE}
+        statusBarTranslucent={IS_ANDROID_EDGE_TO_EDGE}
       >
         <StatusBar
-          backgroundColor={themeColors.bg}
+          backgroundColor="transparent"
           hidden={false}
           style={resolvedTheme === "light" ? "dark" : "light"}
-          translucent={false}
+          translucent={IS_ANDROID_EDGE_TO_EDGE}
         />
         <ThemeProvider value={navigationTheme}>
           <Stack

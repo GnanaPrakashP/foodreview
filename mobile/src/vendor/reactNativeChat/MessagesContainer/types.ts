@@ -1,11 +1,11 @@
 // @ts-nocheck
 import { RefObject } from 'react'
 import {
+  FlatList,
   FlatListProps,
   StyleProp,
   ViewStyle,
 } from 'react-native'
-import { FlatList } from 'react-native-gesture-handler'
 import Animated, { ScrollEvent } from 'react-native-reanimated'
 
 import { DayProps } from '../Day'
@@ -16,14 +16,13 @@ import { ReactionsProps } from '../Reactions'
 import { ReplyProps } from '../Reply'
 import { TypingIndicatorProps } from '../TypingIndicator/types'
 
-/** Animated FlatList created from react-native-gesture-handler's FlatList */
-const RNGHAnimatedFlatList = Animated.createAnimatedComponent(FlatList)
+/** Animated FlatList backed by React Native's native vertical scroll view. */
+const RNAnimatedFlatList = Animated.createAnimatedComponent(FlatList)
 
 /**
  * Typed AnimatedFlatList component that preserves generic type parameter.
- * Uses react-native-gesture-handler's FlatList which respects keyboardShouldPersistTaps.
  */
-export const AnimatedFlatList = RNGHAnimatedFlatList as <TMessage>(
+export const AnimatedFlatList = RNAnimatedFlatList as <TMessage>(
   props: FlatListProps<TMessage> & {
     ref?: RefObject<FlatList<TMessage>>
   }

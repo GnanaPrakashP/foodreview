@@ -75,14 +75,14 @@ function normalizeApiBaseUrl(value: string) {
       return url.toString().replace(/\/$/, "");
     }
 
-    if (Platform.OS === "android" && shouldUseAndroidEmulatorHost(url.hostname)) {
-      url.hostname = "10.0.2.2";
-      return url.toString().replace(/\/$/, "");
-    }
-
     const expoHost = expoDevServerHostname();
     if (expoHost && !isLoopbackHostname(expoHost)) {
       url.hostname = expoHost;
+      return url.toString().replace(/\/$/, "");
+    }
+
+    if (Platform.OS === "android" && shouldUseAndroidEmulatorHost(url.hostname)) {
+      url.hostname = "10.0.2.2";
     }
 
     return url.toString().replace(/\/$/, "");

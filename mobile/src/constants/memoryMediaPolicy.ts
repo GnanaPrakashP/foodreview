@@ -1,7 +1,11 @@
 // Keep these values in sync with lib/memory-media-policy.ts.
 export const MEMORY_MEDIA_UPLOAD_INTENT_TTL_SECONDS = 15 * 60;
 export const MEMORY_MEDIA_PENDING_REVIEW_TTL_HOURS = 24;
-export const MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
+// Must exceed the on-device cache lifetimes (React Query MMKV persistence ~7d and the
+// SQLite offline store's OFFLINE_CACHE_MAX_AGE_MS 7d) so cached/persisted media URLs stay
+// valid while still being served from cache. Was 60 * 60 (1h) — URLs expired long before
+// the caches evicted them, so restored rows pointed at dead URLs (broken images).
+export const MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS = 8 * 24 * 60 * 60;
 export const MEMORY_MEDIA_MAX_ITEMS = 4;
 
 export const MEMORY_IMAGE_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;

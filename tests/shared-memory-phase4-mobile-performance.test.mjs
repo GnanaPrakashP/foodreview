@@ -5,6 +5,12 @@ import test from "node:test";
 const memoryRoomScreen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
 const memoryPreviewScreen = readFileSync("mobile/src/components/memories/camera/MediaPreviewScreen.tsx", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
+const memoryHooks = readFileSync("mobile/src/hooks/useMemories.ts", "utf8");
+const memoryOfflineStore = readFileSync("mobile/src/services/memoryOfflineStore.ts", "utf8");
+const appProviders = readFileSync("mobile/src/providers/AppProviders.tsx", "utf8");
+const appConfig = readFileSync("mobile/app.config.js", "utf8");
+const queryPersistence = readFileSync("mobile/src/providers/queryPersistence.ts", "utf8");
+const packageJson = readFileSync("mobile/package.json", "utf8");
 const memoryStorage = readFileSync("mobile/src/services/memoryStorage.ts", "utf8");
 const memoryValidation = readFileSync("mobile/src/services/memoryMediaValidation.ts", "utf8");
 
@@ -41,11 +47,52 @@ test("phase 4 media viewer is virtualized instead of mounting every media item",
   assert.doesNotMatch(carouselBody, /<ScrollView/);
 });
 
+test("phase 4 room panes lazy-mount inactive heavy tabs", () => {
+  const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
+  assert.match(roomPaneBody, /lazy = true/);
+  assert.match(roomPaneBody, /const \[hasMounted, setHasMounted\] = useState\(active \|\| !lazy\)/);
+  assert.match(roomPaneBody, /if \(lazy && !hasMounted\) return null/);
+});
+
 test("phase 4 media images use disk cache and stable recycling keys", () => {
   assert.match(memoryRoomScreen, /cachePolicy="memory-disk"/);
   assert.match(memoryRoomScreen, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
   assert.match(memoryRoomScreen, /const VIDEO_THUMBNAIL_CACHE_LIMIT = 80/);
   assert.match(memoryRoomScreen, /cacheKey=\{memoryMediaCacheKey\(media\)\}/);
+});
+
+test("phase 4 media gallery warms the first media assets on activation", () => {
+  assert.match(memoryRoomScreen, /const MEDIA_GALLERY_PREFETCH_COUNT = 12/);
+  assert.match(memoryRoomScreen, /if \(mode !== "media"\) return/);
+  assert.match(memoryRoomScreen, /galleryPhotos\.slice\(0, MEDIA_GALLERY_PREFETCH_COUNT\)\.forEach\(prefetchMemoryMedia\)/);
+});
+
+test("phase 3 persists memory React Query cache with MMKV", () => {
+  assert.match(packageJson, /"@tanstack\/react-query-persist-client"/);
+  assert.match(packageJson, /"react-native-mmkv"/);
+  assert.match(queryPersistence, /createMMKV/);
+  assert.match(queryPersistence, /circlebites\.query-cache/);
+  assert.match(appProviders, /PersistQueryClientProvider/);
+  assert.match(appProviders, /query\.queryKey\[0\] === "memories"/);
+  assert.match(appProviders, /maxAge: QUERY_CACHE_MAX_AGE_MS/);
+});
+
+test("phase 5 adds SQLite offline store and offline-first memory hooks", () => {
+  assert.match(packageJson, /"expo-sqlite"/);
+  assert.match(appConfig, /plugins\.push\("expo-sqlite"\)/);
+  assert.match(memoryOfflineStore, /SQLite\.openDatabaseAsync/);
+  assert.match(memoryOfflineStore, /create table if not exists memory_room_snapshots/);
+  assert.match(memoryOfflineStore, /create table if not exists memory_messages/);
+  assert.match(memoryOfflineStore, /create table if not exists memory_photos/);
+  assert.match(memoryService, /listMemoryRoomsOfflineFirst/);
+  assert.match(memoryService, /getMemoryRoomOfflineFirst/);
+  assert.match(memoryService, /getMemoryMessagesPageOfflineFirst/);
+  assert.match(memoryService, /getMemoryMediaPageOfflineFirst/);
+  assert.match(memoryHooks, /listMemoryRoomsOfflineFirst/);
+  assert.match(memoryHooks, /getMemoryRoomOfflineFirst/);
+  assert.match(memoryHooks, /getMemoryMessagesPageOfflineFirst/);
+  assert.match(memoryHooks, /getMemoryMediaPageOfflineFirst/);
+  assert.match(memoryHooks, /saveOfflineMemoryRoom/);
 });
 
 test("chat media previews show the whole captured image or video thumbnail", () => {

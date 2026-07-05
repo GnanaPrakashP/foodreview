@@ -28,6 +28,16 @@ import {
   removeMemoryMediaFiles,
   uploadMemoryPhoto
 } from "@/services/memoryStorage";
+import {
+  readOfflineMemoryMediaPage,
+  readOfflineMemoryMessagesPage,
+  readOfflineMemoryRoom,
+  readOfflineMemorySummaries,
+  saveOfflineMemoryMediaPage,
+  saveOfflineMemoryMessagePage,
+  saveOfflineMemoryRoom,
+  saveOfflineMemorySummaries
+} from "@/services/memoryOfflineStore";
 import { assertValidMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { getCurrentUserProfile, getProfileByUsername } from "@/services/profiles";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
@@ -188,6 +198,31 @@ type MemoryRoomSummaryRow = {
 
 type MemoryRoomSummaryStopRow = Pick<MemoryStopRow, "created_at" | "name" | "position" | "room_id">;
 
+type MemoryChatPageProfileRow = {
+  first_name: string | null;
+  last_name: string | null;
+  username: string;
+};
+
+type MemoryChatPageRpcPayload = {
+  messages?: MemoryMessageRow[];
+  nextCursor?: string | null;
+  photos?: MemoryPhotoRow[];
+  profiles?: MemoryChatPageProfileRow[];
+  replyMessages?: MemoryMessageRow[];
+};
+
+type MemoryMessageRowsPage = {
+  nextCursor: string | null;
+  rows: MemoryMessageRow[];
+};
+
+type MemoryMessagePageBundle = MemoryMessageRowsPage & {
+  namesByUsername?: Record<string, string>;
+  photos: MemoryPhotoRow[];
+  replyMessages: MemoryMessageRow[];
+};
+
 function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
   if (!createdAt || !id) return null;
   return `${createdAt}${MEMORY_PAGE_CURSOR_SEPARATOR}${id}`;
@@ -218,6 +253,16 @@ async function displayNameMap(usernames: string[]) {
   for (const row of data ?? []) {
     const display = [row.first_name, row.last_name].filter(Boolean).join(" ").trim();
     map[row.username] = display || row.username;
+  }
+  return map;
+}
+
+function displayNameMapFromProfiles(profiles: MemoryChatPageProfileRow[] = []) {
+  const map: Record<string, string> = {};
+  for (const profile of profiles) {
+    if (!profile.username) continue;
+    const display = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+    map[profile.username] = display || profile.username;
   }
   return map;
 }
@@ -565,6 +610,12 @@ function isMissingMemoryDishRatingsTable(error: { message?: string; code?: strin
     /shared_memory_dish_ratings|schema cache|could not find .*shared_memory_dish_ratings|relation .*shared_memory_dish_ratings.* does not exist/i.test(message);
 }
 
+function isMissingMemoryChatPageRpc(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "PGRST202" ||
+    /shared_memory_chat_page|schema cache|could not find the function|function .* does not exist/i.test(message);
+}
+
 // True when the shared_memory_stops table or the stop_id columns added alongside
 // it are not present yet (migration 202606220001 not applied). Lets rooms keep
 // working with room-level dishes/photos until the stops migration is run.
@@ -584,7 +635,7 @@ async function fetchMemoryMessageRowsPage({
   before?: string | null;
   limit: number;
   roomId: string;
-}): Promise<{ nextCursor: string | null; rows: MemoryMessageRow[] }> {
+}): Promise<MemoryMessageRowsPage> {
   const pageLimit = limit + 1;
   const cursor = parseMemoryPageCursor(before);
   let messagesQuery = supabase
@@ -745,6 +796,89 @@ async function fetchMemoryPhotosForMessages(roomId: string, messageIds: string[]
 
   if (photosError) throw memoryTablesError(photosError);
   return photos;
+}
+
+function rpcArray<T>(value: T[] | undefined) {
+  return Array.isArray(value) ? value : [];
+}
+
+async function fetchMemoryMessagePageViaRpc({
+  before,
+  limit,
+  roomId
+}: {
+  before?: string | null;
+  limit: number;
+  roomId: string;
+}): Promise<MemoryMessagePageBundle | null> {
+  const cursor = parseMemoryPageCursor(before);
+  const { data, error } = await supabase.rpc("shared_memory_chat_page", {
+    p_before_created_at: cursor?.createdAt ?? null,
+    p_before_message_id: cursor?.id ?? null,
+    p_limit: limit,
+    p_room_id: roomId
+  });
+
+  if (error) {
+    if (isMissingMemoryChatPageRpc(error)) return null;
+    throw memoryTablesError(error);
+  }
+
+  const payload = (data ?? {}) as MemoryChatPageRpcPayload;
+  const photos = await signMemoryPhotoRows(rpcArray(payload.photos));
+
+  return {
+    namesByUsername: displayNameMapFromProfiles(rpcArray(payload.profiles)),
+    nextCursor: typeof payload.nextCursor === "string" ? payload.nextCursor : null,
+    photos,
+    replyMessages: rpcArray(payload.replyMessages),
+    rows: rpcArray(payload.messages)
+  };
+}
+
+async function fetchMemoryMessagePageLegacy({
+  before,
+  limit,
+  roomId
+}: {
+  before?: string | null;
+  limit: number;
+  roomId: string;
+}): Promise<MemoryMessagePageBundle> {
+  const messagePage = await fetchMemoryMessageRowsPage({ before, limit, roomId });
+  const photos = await signMemoryPhotoRows(
+    await fetchMemoryPhotosForMessages(roomId, messagePage.rows.map((message) => message.id))
+  );
+  const replyMessages = await fetchMissingReplyRows(roomId, messagePage.rows);
+
+  return {
+    nextCursor: messagePage.nextCursor,
+    photos,
+    replyMessages,
+    rows: messagePage.rows
+  };
+}
+
+async function fetchMemoryMessagePageBundle({
+  before,
+  legacyMemberCheck = false,
+  limit,
+  roomId
+}: {
+  before?: string | null;
+  legacyMemberCheck?: boolean;
+  limit: number;
+  roomId: string;
+}): Promise<MemoryMessagePageBundle> {
+  const rpcPage = await fetchMemoryMessagePageViaRpc({ before, limit, roomId });
+  if (rpcPage) return rpcPage;
+
+  if (legacyMemberCheck) {
+    const username = await myUsername();
+    await assertMemoryRoomMember(roomId, username);
+  }
+
+  return fetchMemoryMessagePageLegacy({ before, limit, roomId });
 }
 
 async function fetchMemoryMediaRowsPage({
@@ -918,10 +1052,10 @@ export async function updateMemoryRoomOccasion(roomId: string, input: UpdateMemo
 }
 
 async function fetchRoomParts(roomId: string, username: string) {
-  const [roomResult, membersResult, messagesPage, stopsResult, dishesResult, dishRatingsResult, readResult] = await Promise.all([
+  const [roomResult, membersResult, messagePage, stopsResult, dishesResult, dishRatingsResult, readResult] = await Promise.all([
     supabase.from("shared_memory_rooms").select(ROOM_SELECT).eq("id", roomId).maybeSingle<MemoryRoomRow>(),
     supabase.from("shared_memory_members").select("id, room_id, user_name, role, created_at").eq("room_id", roomId).returns<MemoryMemberRow[]>(),
-    fetchMemoryMessageRowsPage({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
+    fetchMemoryMessagePageBundle({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
     supabase
       .from("shared_memory_stops")
       .select("id, room_id, stop_type, name, note, position, created_by, created_at")
@@ -948,10 +1082,6 @@ async function fetchRoomParts(roomId: string, username: string) {
       .eq("user_name", username)
       .maybeSingle<MemoryReadRow>()
   ]);
-  const photos = await signMemoryPhotoRows(
-    await fetchMemoryPhotosForMessages(roomId, messagesPage.rows.map((message) => message.id))
-  );
-  const replyMessages = await fetchMissingReplyRows(roomId, messagesPage.rows);
 
   if (roomResult.error) throw memoryTablesError(roomResult.error);
   if (membersResult.error) throw memoryTablesError(membersResult.error);
@@ -993,15 +1123,14 @@ async function fetchRoomParts(roomId: string, username: string) {
     dishRatings: dishRatingsResult.error ? [] : dishRatingsResult.data ?? [],
     lastReadAt: readResult.error ? null : readResult.data?.last_read_at ?? null,
     members: membersResult.data ?? [],
-    messages: messagesPage.rows,
-    photos,
-    replyMessages
+    messages: messagePage.rows,
+    photos: messagePage.photos,
+    replyMessages: messagePage.replyMessages
   };
 }
 
 export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
   const username = await myUsername();
-  await assertMemoryRoomMember(roomId, username);
   const parts = await fetchRoomParts(roomId, username);
   assertLoadedMemoryRoomMember(parts.members, username);
   const names = [
@@ -1034,30 +1163,25 @@ export async function getMemoryMessagesPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMessagesPage> {
-  const username = await myUsername();
-  await assertMemoryRoomMember(roomId, username);
-  const messagePage = await fetchMemoryMessageRowsPage({
+  const messagePage = await fetchMemoryMessagePageBundle({
     before: input.before,
+    legacyMemberCheck: true,
     limit: input.limit ?? MEMORY_CHAT_PAGE_SIZE,
     roomId
   });
-  const photos = await signMemoryPhotoRows(
-    await fetchMemoryPhotosForMessages(roomId, messagePage.rows.map((message) => message.id))
-  );
-  const replyMessages = await fetchMissingReplyRows(roomId, messagePage.rows);
-  const namesByUsername = await displayNameMap([
+  const namesByUsername = messagePage.namesByUsername ?? await displayNameMap([
     ...messagePage.rows.map((message) => message.author_name),
-    ...replyMessages.map((message) => message.author_name),
-    ...photos.map((photo) => photo.uploader_name)
+    ...messagePage.replyMessages.map((message) => message.author_name),
+    ...messagePage.photos.map((photo) => photo.uploader_name)
   ]);
-  const mappedPhotos = mapMemoryPhotos({ namesByUsername, photos });
+  const mappedPhotos = mapMemoryPhotos({ namesByUsername, photos: messagePage.photos });
 
   return {
     messages: mapMemoryMessages({
       messages: messagePage.rows,
       namesByUsername,
       photos: mappedPhotos,
-      replyMessages
+      replyMessages: messagePage.replyMessages
     }),
     nextCursor: messagePage.nextCursor
   };
@@ -1081,6 +1205,60 @@ export async function getMemoryMediaPage(
     nextCursor: mediaPage.nextCursor,
     photos: mapMemoryPhotos({ namesByUsername, photos: rows })
   };
+}
+
+export async function listMemoryRoomsOfflineFirst(): Promise<MemoryRoomSummary[]> {
+  try {
+    const summaries = await listMemoryRooms();
+    void saveOfflineMemorySummaries(summaries);
+    return summaries;
+  } catch (error) {
+    const cached = await readOfflineMemorySummaries();
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+export async function getMemoryRoomOfflineFirst(roomId: string): Promise<MemoryRoom> {
+  try {
+    const room = await getMemoryRoom(roomId);
+    void saveOfflineMemoryRoom(room);
+    return room;
+  } catch (error) {
+    const cached = await readOfflineMemoryRoom(roomId);
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+export async function getMemoryMessagesPageOfflineFirst(
+  roomId: string,
+  input: { before?: string | null; limit?: number } = {}
+): Promise<MemoryMessagesPage> {
+  try {
+    const page = await getMemoryMessagesPage(roomId, input);
+    void saveOfflineMemoryMessagePage(roomId, page);
+    return page;
+  } catch (error) {
+    const cached = await readOfflineMemoryMessagesPage(roomId, input);
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+export async function getMemoryMediaPageOfflineFirst(
+  roomId: string,
+  input: { before?: string | null; limit?: number } = {}
+): Promise<MemoryMediaPage> {
+  try {
+    const page = await getMemoryMediaPage(roomId, input);
+    void saveOfflineMemoryMediaPage(roomId, page);
+    return page;
+  } catch (error) {
+    const cached = await readOfflineMemoryMediaPage(roomId, input);
+    if (cached) return cached;
+    throw error;
+  }
 }
 
 export async function markMemoryRoomRead(roomId: string) {

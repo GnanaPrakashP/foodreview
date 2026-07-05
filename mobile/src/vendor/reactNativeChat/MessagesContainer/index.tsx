@@ -13,7 +13,7 @@ import { warning } from '../logging'
 import { IMessage } from '../Models'
 import stylesCommon from '../styles'
 import { TypingIndicator } from '../TypingIndicator'
-import { isSameDay, useCallbackThrottled } from '../utils'
+import { isSameDay } from '../utils'
 import { DayAnimated } from './components/DayAnimated'
 import { Item } from './components/Item'
 import { ItemProps } from './components/Item/types'
@@ -50,6 +50,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
   const scrollToBottomOpacity = useSharedValue(0)
   const isScrollingDown = useSharedValue(false)
   const lastScrolledY = useSharedValue(0)
+  const isScrollToBottomVisibleOnUI = useSharedValue(false)
   const [isScrollToBottomVisible, setIsScrollToBottomVisible] = useState(false)
   const scrollToBottomStyleAnim = useAnimatedStyle(() => ({
     opacity: scrollToBottomOpacity.value,
@@ -93,8 +94,8 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     return null
   }, [loadEarlierMessagesProps, renderLoadEarlierProp])
 
-  const changeScrollToBottomVisibility: (isVisible: boolean) => void = useCallbackThrottled((isVisible: boolean) => {
-    if (isScrollingDown.value && isVisible)
+  const changeScrollToBottomVisibility = useCallback((isVisible: boolean, scrollingTowardBottom = false) => {
+    if (scrollingTowardBottom && isVisible)
       return
 
     if (isVisible)
@@ -104,7 +105,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
       if (isFinished && !isVisible)
         runOnJS(setIsScrollToBottomVisible)(false)
     })
-  }, [scrollToBottomOpacity, isScrollingDown], 50)
+  }, [scrollToBottomOpacity])
 
   const scrollTo = useCallback((options: { animated?: boolean, offset: number }) => {
     if (options)
@@ -123,33 +124,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
 
   const handleOnScroll = useCallback((event: ScrollEvent) => {
     listPropsOnScrollProp?.(event)
-
-    const {
-      contentOffset: { y: contentOffsetY },
-      contentSize: { height: contentSizeHeight },
-      layoutMeasurement: { height: layoutMeasurementHeight },
-    } = event
-
-    isScrollingDown.value =
-      (isInverted && lastScrolledY.value > contentOffsetY) ||
-      (!isInverted && lastScrolledY.value < contentOffsetY)
-
-    lastScrolledY.value = contentOffsetY
-    contentHeight.value = contentSizeHeight
-
-    if (isInverted)
-      if (contentOffsetY > scrollToBottomOffset!)
-        changeScrollToBottomVisibility(true)
-      else
-        changeScrollToBottomVisibility(false)
-    else if (
-      contentOffsetY < scrollToBottomOffset! &&
-      contentSizeHeight - layoutMeasurementHeight > scrollToBottomOffset!
-    )
-      changeScrollToBottomVisibility(false)
-    else
-      changeScrollToBottomVisibility(false)
-  }, [isInverted, scrollToBottomOffset, changeScrollToBottomVisibility, isScrollingDown, lastScrolledY, contentHeight, listPropsOnScrollProp])
+  }, [listPropsOnScrollProp])
 
   // Auto-scroll to the newest message when it arrives in a non-inverted list.
   // Inverted lists keep the newest message visible on their own, but a
@@ -392,11 +367,35 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     )
   }, [daysPositions, isInverted, isDayAnimationEnabled])
 
+  const hasListPropsOnScroll = Boolean(listPropsOnScrollProp)
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: event => {
-      scrolledY.value = event.contentOffset.y
+      const contentOffsetY = event.contentOffset.y
+      const contentSizeHeight = event.contentSize.height
+      const layoutMeasurementHeight = event.layoutMeasurement.height
+      const scrollingTowardBottom =
+        (isInverted && lastScrolledY.value > contentOffsetY) ||
+        (!isInverted && lastScrolledY.value < contentOffsetY)
 
-      runOnJS(handleOnScroll)(event)
+      scrolledY.value = contentOffsetY
+      isScrollingDown.value = scrollingTowardBottom
+      lastScrolledY.value = contentOffsetY
+      contentHeight.value = contentSizeHeight
+
+      if (isScrollToBottomEnabled) {
+        const nextScrollToBottomVisible = isInverted
+          ? contentOffsetY > scrollToBottomOffset!
+          : contentOffsetY >= scrollToBottomOffset! &&
+            contentSizeHeight - layoutMeasurementHeight > scrollToBottomOffset!
+
+        if (isScrollToBottomVisibleOnUI.value !== nextScrollToBottomVisible) {
+          isScrollToBottomVisibleOnUI.value = nextScrollToBottomVisible
+          runOnJS(changeScrollToBottomVisibility)(nextScrollToBottomVisible, scrollingTowardBottom)
+        }
+      }
+
+      if (hasListPropsOnScroll)
+        runOnJS(handleOnScroll)(event)
     },
     onBeginDrag: () => {
       isScrollActive.value = true
@@ -412,7 +411,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     onMomentumEnd: () => {
       isScrollActive.value = false
     },
-  }, [handleOnScroll, isScrollActive])
+  }, [changeScrollToBottomVisibility, handleOnScroll, hasListPropsOnScroll, isInverted, isScrollToBottomEnabled, scrollToBottomOffset, isScrollActive])
 
   // removes unrendered days positions when messages are added/removed
   useEffect(() => {
@@ -463,7 +462,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
         ListHeaderComponent={
           isInverted ? <>{ListFooterComponent}</> : ListHeaderComponent
         }
-        scrollEventThrottle={1}
+        scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.1}
         keyboardDismissMode='interactive'
