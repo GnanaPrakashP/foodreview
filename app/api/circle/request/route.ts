@@ -21,6 +21,7 @@ async function createCircleNotification(
   notification: {
     recipient_name: string;
     actor_name: string;
+    actor_display_name?: string;
     type: "CIRCLE_REQUEST_RECEIVED" | "ADDED_TO_CIRCLE";
     message: string;
     requestId?: string | null;
@@ -32,6 +33,7 @@ async function createCircleNotification(
     await upsertCircleRequestNotification(supabase, {
       recipientName: notification.recipient_name,
       actorName: notification.actor_name,
+      actorDisplayName: notification.actor_display_name,
       message: notification.message,
       requestId: notification.requestId ?? null,
     });
@@ -40,6 +42,7 @@ async function createCircleNotification(
   await createNotificationForNames(supabase, {
     recipientName: notification.recipient_name,
     actorName: notification.actor_name,
+    actorDisplayName: notification.actor_display_name,
     type: notification.type,
     title: "Circle",
     message: notification.message,
@@ -52,6 +55,7 @@ async function createCircleNotification(
       status: "accepted",
     },
     dedupe: true,
+    push: true,
   });
 }
 
@@ -113,6 +117,7 @@ async function handleCircleRequest(req: NextRequest) {
     await createCircleNotification(admin, {
       recipient_name: receiver,
       actor_name: sender,
+      actor_display_name: senderDisplay,
       type: "ADDED_TO_CIRCLE",
       message: `${senderDisplay} joined your circle`,
     });
@@ -144,6 +149,7 @@ async function handleCircleRequest(req: NextRequest) {
       await createCircleNotification(admin, {
         recipient_name: receiver,
         actor_name: sender,
+        actor_display_name: senderDisplay,
         type: "CIRCLE_REQUEST_RECEIVED",
         message: `${senderDisplay} requested to join your circle`,
         requestId,
@@ -177,6 +183,7 @@ async function handleCircleRequest(req: NextRequest) {
   await createCircleNotification(admin, {
     recipient_name: receiver,
     actor_name: sender,
+    actor_display_name: senderDisplay,
     type: "CIRCLE_REQUEST_RECEIVED",
     message: `${senderDisplay} requested to join your circle`,
     requestId,

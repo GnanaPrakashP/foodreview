@@ -15,13 +15,14 @@ function transpile(src) {
   return outputText;
 }
 
-function loadNotifications(hasCircleAccess = async () => false) {
+function loadNotifications(hasCircleAccess = async () => false, options = {}) {
   const source = readFileSync(new URL("../lib/notifications.ts", import.meta.url), "utf8");
   const mod = { exports: {} };
   vm.runInNewContext(transpile(source), {
     module: mod,
     exports: mod.exports,
     console,
+    fetch: options.fetch ?? globalThis.fetch,
     require(id) {
       if (id === "@/lib/circle-db") return { hasCircleAccess };
       if (id === "@/lib/profile-names") {
@@ -495,4 +496,179 @@ test("resolveProfiles: empty names list skips DB entirely", async () => {
 
   assert.equal(result, null);
   assert.equal(db._calls.length, 0, "no DB calls should be made for self-notifications");
+});
+
+test("createNotificationForNames sends sanitized Expo push messages when enabled", async () => {
+  const fetchCalls = [];
+  const fetchMock = async (url, init) => {
+    fetchCalls.push({ init, url });
+    return { ok: true, status: 200 };
+  };
+  const { createNotificationForNames } = loadNotifications(async () => false, { fetch: fetchMock });
+  const db = spyDb(
+    {
+      data: [
+        { id: "recipient-id", first_name: "Alice", last_name: "Ate", username: "alice", avatar_url: null },
+        { id: "actor-id", first_name: "Bob", last_name: "Bite", username: "bob", avatar_url: null },
+      ],
+      error: null,
+    },
+    {
+      data: {
+        id: "notif-1",
+        actor_name: "bob",
+        entity_id: "post-1",
+        entity_type: "POST",
+        post_id: "post-1",
+        recipient_name: "alice",
+        type: "POST_LIKED",
+      },
+      error: null,
+    },
+    {
+      data: {
+        circle_activity: true,
+        memory_activity: true,
+        post_engagement: true,
+        push_enabled: true,
+      },
+      error: null,
+    },
+    {
+      data: [
+        { expo_push_token: "ExponentPushToken[token-a]" },
+        { expo_push_token: "ExponentPushToken[token-b]" },
+        { expo_push_token: "ExponentPushToken[token-a]" },
+        { expo_push_token: null },
+      ],
+      error: null,
+    }
+  );
+
+  const result = await createNotificationForNames(db, {
+    actorDisplayName: "Bob Bite",
+    actorName: "bob",
+    content: "this comment preview must stay out of the push payload",
+    entityId: "post-1",
+    entityType: "POST",
+    message: "Bob Bite liked your post",
+    metadata: { restaurantName: "Cafe One", thumbnailUrl: "https://example.com/photo.jpg" },
+    postId: "post-1",
+    push: true,
+    recipientName: "alice",
+    restaurantName: "Cafe One",
+    title: "New like",
+    type: "POST_LIKED",
+  });
+
+  assert.equal(result.id, "notif-1");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].url, "https://exp.host/--/api/v2/push/send");
+  assert.equal(fetchCalls[0].init.method, "POST");
+  assert.equal(fetchCalls[0].init.headers["Content-Type"], "application/json");
+
+  const payload = JSON.parse(fetchCalls[0].init.body);
+  assert.equal(payload.length, 2, "duplicate Expo push tokens should be collapsed");
+  assert.deepEqual(payload.map((message) => message.to), [
+    "ExponentPushToken[token-a]",
+    "ExponentPushToken[token-b]",
+  ]);
+  assert.equal(payload[0].title, "New like");
+  assert.equal(payload[0].body, "Bob Bite liked your post");
+  assert.equal(payload[0].sound, "default");
+  assert.deepEqual(payload[0].data, {
+    actorName: "bob",
+    entityId: "post-1",
+    entityType: "POST",
+    notificationId: "notif-1",
+    notificationType: "POST_LIKED",
+    postId: "post-1",
+    type: "social-notification",
+  });
+});
+
+test("push fanout respects disabled notification settings", async () => {
+  const fetchCalls = [];
+  const { createNotificationForNames } = loadNotifications(async () => false, {
+    fetch: async (url, init) => {
+      fetchCalls.push({ init, url });
+      return { ok: true, status: 200 };
+    },
+  });
+  const db = spyDb(
+    { data: [], error: null },
+    { data: { id: "notif-1" }, error: null },
+    {
+      data: {
+        circle_activity: true,
+        memory_activity: true,
+        post_engagement: false,
+        push_enabled: true,
+      },
+      error: null,
+    },
+    {
+      data: [{ expo_push_token: "ExponentPushToken[token-a]" }],
+      error: null,
+    }
+  );
+
+  const result = await createNotificationForNames(db, {
+    actorDisplayName: "Bob Bite",
+    actorName: "bob",
+    entityId: "post-1",
+    entityType: "POST",
+    message: "Bob Bite commented on your post",
+    postId: "post-1",
+    push: true,
+    recipientName: "alice",
+    title: "New comment",
+    type: "POST_COMMENTED",
+  });
+
+  assert.equal(result.id, "notif-1");
+  assert.equal(fetchCalls.length, 0);
+  assert.equal(
+    db._calls.some((call) => call.table === "push_tokens"),
+    false,
+    "tokens should not be queried when the recipient disabled the category"
+  );
+});
+
+test("push delivery failure never blocks durable in-app notification creation", async () => {
+  const { createNotificationForNames } = loadNotifications(async () => false, {
+    fetch: async () => ({ ok: false, status: 500 }),
+  });
+  const db = spyDb(
+    { data: [], error: null },
+    { data: { id: "notif-1", type: "POST_LIKED" }, error: null },
+    {
+      data: {
+        circle_activity: true,
+        memory_activity: true,
+        post_engagement: true,
+        push_enabled: true,
+      },
+      error: null,
+    },
+    {
+      data: [{ expo_push_token: "ExponentPushToken[token-a]" }],
+      error: null,
+    }
+  );
+
+  const result = await createNotificationForNames(db, {
+    actorDisplayName: "Bob Bite",
+    actorName: "bob",
+    entityId: "post-1",
+    entityType: "POST",
+    message: "Bob Bite liked your post",
+    postId: "post-1",
+    push: true,
+    recipientName: "alice",
+    title: "New like",
+    type: "POST_LIKED",
+  });
+
+  assert.equal(result.id, "notif-1");
 });

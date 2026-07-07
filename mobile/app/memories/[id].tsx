@@ -51,6 +51,7 @@ import Reanimated, {
   Easing as ReanimatedEasing,
   interpolate,
   runOnJS,
+  type ScrollEvent,
   type SharedValue,
   useAnimatedStyle,
   useDerivedValue,
@@ -85,6 +86,7 @@ import {
 import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
+import type { AnimatedList as ChatMainAnimatedList } from "@/vendor/reactNativeChat/MessagesContainer";
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
 import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
@@ -768,6 +770,8 @@ function MemoryChatMainSurface({
   loadingOlderMessages,
   message,
   myUsername,
+  inputRef,
+  listRef,
   canDeleteSelected,
   deleteError,
   deletePending,
@@ -782,14 +786,17 @@ function MemoryChatMainSurface({
   onDeleteTarget,
   onDeleteSelected,
   onEditMessage,
+  onInputFocus,
   onInputToolbarLayout,
   onLoadOlderMessages,
+  onNearBottomChange,
   onOpenDish,
   onOpenMedia,
   onRateDish,
   onReplyMessage,
   onSend,
   onSendAudio,
+  scrollToBottom,
   onToggleSelection,
   onToggleReaction,
   pendingDishId,
@@ -807,6 +814,8 @@ function MemoryChatMainSurface({
   loadingOlderMessages: boolean;
   message: string;
   myUsername: string;
+  inputRef: RefObject<TextInput | null>;
+  listRef: RefObject<ChatMainAnimatedList<MemoryChatMainMessage> | null>;
   canDeleteSelected: boolean;
   deleteError?: string;
   deletePending: boolean;
@@ -821,14 +830,17 @@ function MemoryChatMainSurface({
   onDeleteTarget: (target: MemoryActionTarget) => void;
   onDeleteSelected: () => void;
   onEditMessage: (message: MemoryMessage) => void;
+  onInputFocus: () => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
+  onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onRateDish: (dishId: string, rating: number) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onSend: (draft?: string) => void;
   onSendAudio: (asset: AddMemoryMediaAsset) => Promise<void>;
+  scrollToBottom: (animated: boolean) => void;
   onToggleSelection: (target: MemoryActionTarget) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
   pendingDishId?: string | null;
@@ -855,7 +867,16 @@ function MemoryChatMainSurface({
     buildMemoryChatMainMessages({ data, myUsername, reactions, unreadAnchorMessageId })
   ), [data, myUsername, reactions, unreadAnchorMessageId]);
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
+  const latestChatMessage = chatMessages[0] ?? null;
+  const latestChatMessageId = latestChatMessage?._id != null ? String(latestChatMessage._id) : null;
+  const latestChatMessageMine = latestChatMessage
+    ? String(latestChatMessage.user?._id ?? "") === String(currentUser._id ?? "")
+    : false;
   const selectionMode = selectedItemKeys.length > 0;
+  const chatMainNearBottomRef = useRef(true);
+  const chatMainFollowBottomRef = useRef(true);
+  const chatMainDraggingRef = useRef(false);
+  const latestChatMessageIdRef = useRef(latestChatMessageId);
   const voiceRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const voiceRecorderState = useAudioRecorderState(voiceRecorder, 200);
   const [voiceMode, setVoiceMode] = useState<"idle" | "recording" | "sending">("idle");
@@ -1005,6 +1026,60 @@ function MemoryChatMainSurface({
     void resetVoiceAudioMode();
   }, [resetVoiceAudioMode, voiceRecorder]);
 
+  useEffect(() => {
+    chatMainNearBottomRef.current = true;
+    chatMainFollowBottomRef.current = true;
+    latestChatMessageIdRef.current = latestChatMessageId;
+    // Room switches reset the anchor baseline; new-message changes are handled
+    // by the follow-bottom effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.id]);
+
+  useEffect(() => {
+    const previousLatestMessageId = latestChatMessageIdRef.current;
+    latestChatMessageIdRef.current = latestChatMessageId;
+    if (!active || !latestChatMessageId || previousLatestMessageId === latestChatMessageId) return;
+    if (!latestChatMessageMine && !chatMainNearBottomRef.current && !chatMainFollowBottomRef.current) return;
+    chatMainFollowBottomRef.current = true;
+    chatMainNearBottomRef.current = true;
+    onNearBottomChange(true);
+    const timeout = setTimeout(() => scrollToBottom(false), 0);
+    return () => clearTimeout(timeout);
+  }, [active, latestChatMessageId, latestChatMessageMine, onNearBottomChange, scrollToBottom]);
+
+  const handleChatMainScroll = useCallback((event: ScrollEvent) => {
+    if (!active) return;
+    const distanceFromBottom = event.contentOffset.y;
+    const isNearBottom = distanceFromBottom < 96;
+    chatMainNearBottomRef.current = isNearBottom;
+    onNearBottomChange(isNearBottom);
+    if (!chatMainDraggingRef.current) {
+      if (distanceFromBottom < 4) {
+        chatMainFollowBottomRef.current = true;
+      } else if (chatMainFollowBottomRef.current) {
+        scrollToBottom(false);
+      }
+    }
+  }, [active, onNearBottomChange, scrollToBottom]);
+
+  const handleChatMainScrollBeginDrag = useCallback(() => {
+    chatMainDraggingRef.current = true;
+    chatMainFollowBottomRef.current = false;
+  }, []);
+
+  const handleChatMainScrollEndDrag = useCallback(() => {
+    chatMainDraggingRef.current = false;
+  }, []);
+
+  const handleChatMainContentSizeChange = useCallback(() => {
+    if (!active) return;
+    if (!chatMainFollowBottomRef.current && !chatMainNearBottomRef.current) return;
+    chatMainFollowBottomRef.current = true;
+    chatMainNearBottomRef.current = true;
+    scrollToBottom(false);
+    onNearBottomChange(true);
+  }, [active, onNearBottomChange, scrollToBottom]);
+
   const buildMenuActions = useCallback((target: MemoryChatMainMessage | undefined): MemoryChatMenuAction[] => {
     const actionTarget = memoryChatActionTarget(target);
     if (!actionTarget) return [];
@@ -1100,10 +1175,12 @@ function MemoryChatMainSurface({
   ) : (
     <MemoryChatMainInputToolbar
       editingMessage={editingMessage}
+      inputRef={inputRef}
       myUsername={myUsername}
       onCancelEdit={onCancelEdit}
       onCancelVoice={() => { void cancelVoiceRecording(); }}
       onClearReply={onCancelReply}
+      onInputFocus={onInputFocus}
       onInputToolbarLayout={onInputToolbarLayout}
       onSend={sendToolbarMessage}
       onSendAudio={() => { void finishAndSendVoiceRecording(); }}
@@ -1400,7 +1477,11 @@ function MemoryChatMainSurface({
           keyboardAvoidingViewProps={{ enabled: false }}
           listProps={{
             contentContainerStyle: chatMainListContentStyle,
-            extraData: selectedItemKeys.join("|")
+            extraData: selectedItemKeys.join("|"),
+            onContentSizeChange: handleChatMainContentSizeChange,
+            onScroll: handleChatMainScroll,
+            onScrollBeginDrag: handleChatMainScrollBeginDrag,
+            onScrollEndDrag: handleChatMainScrollEndDrag
           }}
           loadEarlierMessagesProps={{
             isAvailable: canLoadOlderMessages,
@@ -1426,6 +1507,7 @@ function MemoryChatMainSurface({
             }
           }}
           messages={chatMessages}
+          messagesContainerRef={listRef as RefObject<ChatMainAnimatedList<MemoryChatMainMessage>>}
           messagesContainerStyle={styles.chatMainMessages}
           onQuickReply={(replies) => {
             replies.forEach((reply) => {
@@ -1870,10 +1952,12 @@ function MemoryChatMainVoiceComposer({
 
 type MemoryChatMainToolbarProps = {
   editingMessage: MemoryMessage | null;
+  inputRef: RefObject<TextInput | null>;
   myUsername: string;
   onCancelEdit: () => void;
   onCancelVoice: () => void;
   onClearReply?: () => void;
+  onInputFocus: () => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onSend?: (
     messages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[],
@@ -1894,10 +1978,12 @@ type MemoryChatMainToolbarProps = {
 
 function MemoryChatMainInputToolbar({
   editingMessage,
+  inputRef,
   myUsername,
   onCancelEdit,
   onCancelVoice,
   onClearReply,
+  onInputFocus,
   onInputToolbarLayout,
   onSend,
   onSendAudio,
@@ -1916,7 +2002,6 @@ function MemoryChatMainInputToolbar({
   const draftRef = useRef(draft);
   const latestExternalTextRef = useRef(text ?? "");
   const ignoreExternalTextUntilResetRef = useRef(false);
-  const nativeInputRef = useRef<TextInput>(null);
   const trimmedText = draft.trim();
   const hasText = trimmedText.length > 0;
   const disabled = voiceActive && voiceDisabled;
@@ -1961,7 +2046,7 @@ function MemoryChatMainInputToolbar({
       draftRef.current = "";
       ignoreExternalTextUntilResetRef.current = true;
       latestExternalTextRef.current = "";
-      nativeInputRef.current?.clear();
+      inputRef.current?.clear();
       setDraft("");
       onSend?.({ text: outgoingText } as Partial<MemoryChatMainMessage>, true);
       return;
@@ -2040,9 +2125,10 @@ function MemoryChatMainInputToolbar({
                 maxLength={MEMORY_TEXT_MAX_LENGTH}
                 multiline
                 onChangeText={handleChangeText}
+                onFocus={onInputFocus}
                 placeholder="Type a message"
                 placeholderTextColor={ROOM_COLORS.muted}
-                ref={nativeInputRef}
+                ref={inputRef}
                 scrollEnabled
                 smartInsertDelete={false}
                 style={styles.chatMainDraftInput}
@@ -2470,18 +2556,16 @@ export default function MemoryDetailScreen() {
   addMessageMutateAsyncRef.current = addMessage.mutateAsync;
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<TextInput>(null);
-  const scrollRef = useRef<FlatList<ChatTimelineRow>>(null);
+  const chatMainListRef = useRef<ChatMainAnimatedList<MemoryChatMainMessage>>(null);
   const keyboardVisibleRef = useRef(false);
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
-  const chatTimelineHeightRef = useRef(0);
-  const chatContentHeightRef = useRef(0);
-  // While a just-sent message settles in, animate the bottom pin so the existing
-  // chat glides up to make room instead of snapping.
-  // The chat list is inverted (bottom-anchored), so the newest message lives at
-  // scroll offset 0. Scrolling there is exact and never lands short of a padding.
+  const pendingComposerHeightRef = useRef<number | null>(null);
+  const composerHeightFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Active chat uses the vendored inverted AnimatedFlatList (newest at offset 0).
+  // Keep bottom-follow wired to that live list, not the inactive ChatTimeline.
   const scrollChatToBottom = useCallback((animated: boolean) => {
-    scrollRef.current?.scrollToOffset({ animated, offset: 0 });
+    chatMainListRef.current?.scrollToOffset({ animated, offset: 0 });
   }, []);
   const readMarkerRef = useRef<string | null>(null);
   const markReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2614,6 +2698,7 @@ export default function MemoryDetailScreen() {
   }, [attachmentOptionsVisible, dishKeyboardProgress]);
 
   useEffect(() => () => {
+    if (composerHeightFlushTimeoutRef.current) clearTimeout(composerHeightFlushTimeoutRef.current);
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
     if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
   }, []);
@@ -2810,28 +2895,56 @@ export default function MemoryDetailScreen() {
     requestAnimationFrame(() => scrollChatToBottom(false));
   }
 
-  function handleComposerLayout(event: LayoutChangeEvent) {
-    const nextHeight = Math.round(event.nativeEvent.layout.height);
+  function isChatKeyboardTransitioning() {
+    if (!isChatMode) return false;
+    const progress = keyboardMotion.progress.value;
+    return progress > 0.001 && progress < 0.999;
+  }
+
+  function commitComposerHeight(nextHeight: number) {
     if (Math.abs(nextHeight - composerHeightRef.current) < 1) return;
     composerHeightRef.current = nextHeight;
     setChatBottomClearance(nextHeight);
     repinChatToBottom();
   }
 
-  function handleChatTimelineLayout(event: LayoutChangeEvent) {
+  function schedulePendingComposerHeightFlush() {
+    if (composerHeightFlushTimeoutRef.current) clearTimeout(composerHeightFlushTimeoutRef.current);
+    composerHeightFlushTimeoutRef.current = setTimeout(() => {
+      composerHeightFlushTimeoutRef.current = null;
+      flushPendingComposerHeight();
+    }, 260);
+  }
+
+  function flushPendingComposerHeight() {
+    const pendingHeight = pendingComposerHeightRef.current;
+    if (pendingHeight == null) return;
+    if (isChatKeyboardTransitioning()) {
+      schedulePendingComposerHeightFlush();
+      return;
+    }
+    pendingComposerHeightRef.current = null;
+    commitComposerHeight(pendingHeight);
+  }
+
+  function handleComposerLayout(event: LayoutChangeEvent) {
     const nextHeight = Math.round(event.nativeEvent.layout.height);
-    if (Math.abs(nextHeight - chatTimelineHeightRef.current) < 1) return;
-    chatTimelineHeightRef.current = nextHeight;
-    repinChatToBottom();
+    if (Math.abs(nextHeight - composerHeightRef.current) < 1) {
+      pendingComposerHeightRef.current = null;
+      return;
+    }
+    if (isChatKeyboardTransitioning()) {
+      pendingComposerHeightRef.current = nextHeight;
+      schedulePendingComposerHeightFlush();
+      return;
+    }
+    pendingComposerHeightRef.current = null;
+    commitComposerHeight(nextHeight);
   }
 
   function handleChatNearBottomChange(isNearBottom: boolean) {
     nearBottomRef.current = isNearBottom;
     if (isNearBottom) markLatestRoomRead();
-  }
-
-  function handleChatScrollBeginDrag() {
-    // Bottom-follow release is handled inside ChatTimeline's drag handler.
   }
 
   function handleComposerFocus() {
@@ -2943,9 +3056,8 @@ export default function MemoryDetailScreen() {
         }).catch(() => {
           // The failed optimistic row stays visible with retry/cancel actions.
         });
-        // The list pins to the new message from onContentSizeChange (which has the
-        // correct post-layout height) — scrolling here too would use a stale height
-        // and make the bubble appear low, then jump up.
+        // The active vendored list pins from MemoryChatMainSurface after the new
+        // row/layout exists, so avoid a second stale-height scroll here.
         requestAnimationFrame(() => {
           messageInputRef.current?.focus();
         });
@@ -3577,11 +3689,7 @@ export default function MemoryDetailScreen() {
         transitioning={mode === "people"}
         unreadChatCount={unreadChatCount}
       />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" && mode !== "chat" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
-        style={styles.keyboard}
-      >
+      <RoomKeyboardContainer chatMode={mode === "chat"}>
         <View
           style={[
             styles.roomStage,
@@ -3617,6 +3725,8 @@ export default function MemoryDetailScreen() {
                     deletePending={deleteItems.isPending}
                     editableSelectedMessage={editableSelectedMessage}
                     editingMessage={editingMessage}
+                    inputRef={messageInputRef}
+                    listRef={chatMainListRef}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
                     listKeyboardStyle={chatListKeyboardStyle}
                     message={message}
@@ -3630,8 +3740,10 @@ export default function MemoryDetailScreen() {
                     onDeleteSelected={removeSelectedItems}
                     onDeleteTarget={deleteChatTarget}
                     onEditMessage={beginEditMessage}
+                    onInputFocus={handleComposerFocus}
                     onInputToolbarLayout={handleComposerLayout}
                     onLoadOlderMessages={loadOlderMessages}
+                    onNearBottomChange={handleChatNearBottomChange}
                     onOpenDish={setDetailDishId}
                     onOpenMedia={openMediaViewer}
                     onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
@@ -3644,6 +3756,7 @@ export default function MemoryDetailScreen() {
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
+                    scrollToBottom={scrollChatToBottom}
                     toolbarInsetStyle={composerKeyboardStyle}
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
@@ -3687,7 +3800,7 @@ export default function MemoryDetailScreen() {
           onMediaError={refreshSelectedMedia}
           selection={selectedMedia}
         />
-      </KeyboardAvoidingView>
+      </RoomKeyboardContainer>
       {/* Scrim for the speed-dial only. The dish/media sheet carries its own
           backdrop (attachSheetBackdrop) that fades in/out with its slide, so we
           don't dim here for it — that would stack a second, abrupt black layer. */}
@@ -3789,6 +3902,22 @@ export default function MemoryDetailScreen() {
         />
       ) : null}
     </Screen>
+  );
+}
+
+function RoomKeyboardContainer({ chatMode, children }: { chatMode: boolean; children: ReactNode }) {
+  if (chatMode) {
+    return <View style={styles.keyboard}>{children}</View>;
+  }
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
+      style={styles.keyboard}
+    >
+      {children}
+    </KeyboardAvoidingView>
   );
 }
 
@@ -4398,6 +4527,10 @@ function prefetchTimelineRowMedia(row: ChatTimelineRow) {
   }
 }
 
+// Inactive legacy chat list. The memory room currently renders
+// MemoryChatMainSurface above, which wraps the vendored ChatMain AnimatedFlatList.
+// Keep keyboard/bottom-follow fixes on that active path unless this component is
+// deliberately wired back in.
 function ChatTimeline({
   active,
   bottomClearance,

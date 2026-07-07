@@ -31,12 +31,6 @@ function mapComment(row: CommentRow, displayName: string): PostComment {
   };
 }
 
-async function viewerName() {
-  const profile = await getCurrentUserProfile();
-  if (!profile) throw new Error("Log in before commenting");
-  return profile.username;
-}
-
 async function authToken() {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new Error(error.message);
@@ -87,18 +81,15 @@ export async function addPostComment(input: { postId: string; content: string })
   if (!content) throw new Error("Comment is required");
   if (content.length > 500) throw new Error("Comment is too long");
 
-  const name = await viewerName();
   const data = await authorizedJson<CommentRow>("/api/comments", {
     method: "POST",
     body: JSON.stringify({ postId: input.postId, content })
   });
 
-  const displayNames = await fetchDisplayNames([data.user_name || name]);
-  return mapComment(data, displayNames[data.user_name] ?? data.user_name ?? name);
+  return mapComment(data, data.user_name);
 }
 
 export async function deletePostComment(input: { commentId: string }) {
-  await viewerName();
   await authorizedJson<{ ok: true }>(`/api/comments/${encodeURIComponent(input.commentId)}`, {
     method: "DELETE"
   });

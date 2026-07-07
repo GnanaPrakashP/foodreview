@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -77,7 +77,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "postId or restaurantName is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

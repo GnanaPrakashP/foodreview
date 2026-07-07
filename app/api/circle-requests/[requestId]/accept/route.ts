@@ -46,6 +46,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
   await createNotificationForNames(admin, {
     recipientName: request.sender_name,
     actorName: request.receiver_name,
+    actorDisplayName: request.receiver_name,
     type: "CIRCLE_REQUEST_ACCEPTED",
     title: "Circle request accepted",
     message: `${request.receiver_name} accepted your circle request`,
@@ -53,6 +54,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ re
     entityId: request.id,
     metadata: { requestId: request.id, senderName: request.sender_name, receiverName: request.receiver_name, status: "accepted" },
     dedupe: true,
+    push: true,
   });
 
   await admin

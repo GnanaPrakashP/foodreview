@@ -227,7 +227,8 @@ export async function POST(
           inviteId: invite.id || null,
           status: "pending"
         },
-        dedupe: true
+        dedupe: true,
+        push: true
       })));
     }
 

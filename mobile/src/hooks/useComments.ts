@@ -1,23 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { feedKeys } from "@/hooks/useFeeds";
-import { profileKeys } from "@/hooks/useProfiles";
 import { addPostComment, deletePostComment, getPostComments } from "@/services/comments";
+import type { PostComment } from "@/types/models";
 
 export const commentKeys = {
   post: (postId: string) => ["comments", postId] as const
 };
-
-function useInvalidatePostComments(postId: string) {
-  const queryClient = useQueryClient();
-
-  return () => {
-    queryClient.invalidateQueries({ queryKey: commentKeys.post(postId) });
-    queryClient.invalidateQueries({ queryKey: feedKeys.circle });
-    queryClient.invalidateQueries({ queryKey: feedKeys.public });
-    queryClient.invalidateQueries({ queryKey: feedKeys.review(postId) });
-    queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
-  };
-}
 
 export function usePostCommentsQuery(postId: string) {
   return useQuery({
@@ -28,19 +15,37 @@ export function usePostCommentsQuery(postId: string) {
 }
 
 export function useAddPostCommentMutation(postId: string) {
-  const invalidate = useInvalidatePostComments(postId);
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (content: string) => addPostComment({ postId, content }),
-    onSettled: invalidate
+    onSuccess: (comment) => {
+      queryClient.setQueryData<PostComment[]>(commentKeys.post(postId), (current = []) => [...current, comment]);
+    }
   });
 }
 
 export function useDeletePostCommentMutation(postId: string) {
-  const invalidate = useInvalidatePostComments(postId);
+  const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (commentId: string) => deletePostComment({ commentId }),
-    onSettled: invalidate
+    mutationFn: async (commentId: string) => {
+      await deletePostComment({ commentId });
+      return commentId;
+    },
+    onMutate: async (commentId) => {
+      const queryKey = commentKeys.post(postId);
+      await queryClient.cancelQueries({ queryKey });
+      const previousComments = queryClient.getQueryData<PostComment[]>(queryKey);
+      queryClient.setQueryData<PostComment[]>(queryKey, (current = []) => (
+        current.filter((comment) => comment.id !== commentId)
+      ));
+      return { previousComments };
+    },
+    onError: (_error, _commentId, context) => {
+      if (context?.previousComments) {
+        queryClient.setQueryData(commentKeys.post(postId), context.previousComments);
+      }
+    }
   });
 }

@@ -6,6 +6,7 @@ import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { configureReanimatedLogger, ReanimatedLogLevel } from "react-native-reanimated";
+import { PostCommentsSheetHost } from "@/components/posts/PostCommentsSheet";
 import { AppProviders } from "@/providers/AppProviders";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useCircleBitesFonts } from "@/theme";
@@ -112,6 +113,10 @@ export default function RootLayout() {
               <Stack.Screen key={name} name={name} options={SLIDE_OVER_OPTIONS} />
             ))}
           </Stack>
+          {/* In-tree overlay host for post comments: must live in the main
+              window (not a RN Modal) so the composer can track the keyboard
+              per-frame via the root KeyboardProvider. */}
+          <PostCommentsSheetHost />
         </ThemeProvider>
       </KeyboardProvider>
     </AppProviders>

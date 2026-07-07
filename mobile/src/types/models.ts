@@ -72,12 +72,72 @@ export type ReviewPost = {
   likedByMe: boolean;
   bookmarkedByMe: boolean;
   circleRequestStatus?: "idle" | "loading" | "pending" | "joined";
+  feedContextLabel?: string;
+  feedSectionLabel?: string;
   isPublicDiscovery?: boolean;
 };
 
 export type FeedPage = {
+  nextCursor?: string | null;
   posts: ReviewPost[];
   viewerName: string;
+};
+
+export type NotificationType =
+  | "CIRCLE_REQUEST_RECEIVED"
+  | "CIRCLE_REQUEST_ACCEPTED"
+  | "CIRCLE_REQUEST_REJECTED"
+  | "ADDED_TO_CIRCLE"
+  | "MUTUAL_CIRCLE_CREATED"
+  | "POST_LIKED"
+  | "POST_COMMENTED"
+  | "THREAD_REPLY"
+  | "CIRCLE_POST_CREATED"
+  | "TABLE_MEMORY_INVITE"
+  | "COMMON_RESTAURANT_SCORE_UPDATED"
+  | "ACHIEVEMENT_UNLOCKED"
+  | "SYSTEM_ANNOUNCEMENT"
+  | "circle_request"
+  | "circle_accepted"
+  | "circle_added"
+  | "circle_post"
+  | "like"
+  | "comment"
+  | "also_commented";
+
+export type AppNotification = {
+  id: string;
+  recipientUserId: string | null;
+  actorUserId: string | null;
+  recipientName: string;
+  actorName: string | null;
+  actorDisplayName: string;
+  actorAvatarUrl: string | null;
+  type: NotificationType | string;
+  title: string | null;
+  message: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  metadata: Record<string, unknown>;
+  isRead: boolean;
+  postId: string | null;
+  restaurantName: string | null;
+  content: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  thumbnailUrl: string | null;
+  displayMessage: string;
+  destination:
+    | { type: "notification" }
+    | { type: "person"; username: string }
+    | { type: "post"; postId: string };
+  circleRequestStatus: "pending" | "accepted" | "rejected" | "none";
+};
+
+export type NotificationsPage = {
+  notifications: AppNotification[];
+  unreadCount: number;
 };
 
 export type PostComment = {

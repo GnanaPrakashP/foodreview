@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { notificationKeys } from "@/hooks/useNotifications";
 import {
   cancelCircleRequest,
   getProfileCircleRelationship,
@@ -48,6 +49,8 @@ function useInvalidateCircleQueries() {
     queryClient.invalidateQueries({ queryKey: ["circle"] });
     queryClient.invalidateQueries({ queryKey: ["profile"] });
     queryClient.invalidateQueries({ queryKey: ["feed"] });
+    queryClient.invalidateQueries({ queryKey: notificationKeys.list });
+    queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
   };
 }
 

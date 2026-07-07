@@ -19,6 +19,9 @@ import type { OccasionTheme } from "@/features/occasions/occasionThemes";
 import { fontStyles, radius, spacing } from "@/theme";
 import type { MemoryMessage } from "@/types/models";
 
+// Inactive for the current memory-room chat tab. The active composer is
+// MemoryChatMainInputToolbar in mobile/app/memories/[id].tsx, rendered through
+// MemoryChatMainSurface and the vendored ChatMain list path.
 const ROOM_MAX_WIDTH = 640;
 const COMPOSER_TOP_GAP = 8;
 const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;

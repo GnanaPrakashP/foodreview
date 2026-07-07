@@ -2,6 +2,10 @@ export const TASTE_TRUST_MIN_CONFIRMATIONS = 5;
 export const TASTE_TRUST_STARTING_SCORE = 20;
 export const TASTE_TRUST_CONFIDENCE_PRIOR = 15;
 export const TASTE_TRUST_MAX_SCORE = 100;
+export const TASTE_TRUST_PERFECT_FEEDBACK_TARGET = 99;
+export const TASTE_TRUST_POST_VOLUME_BASE_WEIGHT = 0.5;
+export const TASTE_TRUST_POST_VOLUME_LOG_WEIGHT = 0.5;
+export const TASTE_TRUST_POST_VOLUME_MAX_WEIGHT = 3;
 
 export const TASTE_TRUST_DECAY_WINDOWS = [
   { maxAgeDays: 60, weight: 1 },
@@ -11,14 +15,12 @@ export const TASTE_TRUST_DECAY_WINDOWS = [
 ] as const;
 
 export const TASTE_TRUST_FEEDBACK_OPTIONS = [
-  { label: "Strongly agree", value: 1.0 },
-  { label: "Agree", value: 0.7 },
-  { label: "Neutral", value: 0.3 },
-  { label: "Disagree", value: -0.5 },
-  { label: "Strongly disagree", value: -1.0 },
+  { label: "Must Try", value: 1.0 },
+  { label: "Not Worth It", value: -0.5 },
 ] as const;
 
 export type TasteTrustFeedbackLabel = typeof TASTE_TRUST_FEEDBACK_OPTIONS[number]["label"];
+export type TasteTrustFeedbackCounts = Record<TasteTrustFeedbackLabel, number>;
 
 export type TasteTrustLevel =
   | "New Reviewer"
@@ -29,6 +31,8 @@ export type TasteTrustLevel =
   | "Highly Trusted";
 
 export type TasteTrustFeedbackRow = {
+  feedback_label?: string | null;
+  post_id?: string | null;
   feedback_value: number | string | null;
   created_at?: string | Date | null;
   updated_at?: string | Date | null;
@@ -61,6 +65,7 @@ export type PostTasteTrustSummary = {
   okay_count: number;
   disagreed_count: number;
   agreement_percentage: number | null;
+  feedback_counts: TasteTrustFeedbackCounts;
 };
 
 export const DEFAULT_TASTE_TRUST_SUMMARY: TasteTrustSummary = {
@@ -77,6 +82,35 @@ export const DEFAULT_TASTE_TRUST_SUMMARY: TasteTrustSummary = {
 const feedbackValueByLabel = new Map<string, number>(
   TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => [option.label, option.value])
 );
+
+const legacyFeedbackLabelMap = new Map<string, TasteTrustFeedbackLabel>([
+  ["strongly agree", "Must Try"],
+  ["agree", "Must Try"],
+  ["craving", "Must Try"],
+  ["disagree", "Not Worth It"],
+  ["strongly disagree", "Not Worth It"],
+]);
+
+const storageFeedbackLabelByLabel = new Map<TasteTrustFeedbackLabel, string>([
+  ["Must Try", "Strongly agree"],
+  ["Not Worth It", "Strongly disagree"],
+]);
+
+function emptyFeedbackCounts(): TasteTrustFeedbackCounts {
+  return Object.fromEntries(
+    TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => [option.label, 0])
+  ) as TasteTrustFeedbackCounts;
+}
+
+function feedbackCountLabel(row: TasteTrustFeedbackRow, value: number): TasteTrustFeedbackLabel | null {
+  const label = typeof row.feedback_label === "string" ? row.feedback_label.trim() : "";
+  if (feedbackValueByLabel.has(label)) return label as TasteTrustFeedbackLabel;
+  const legacyLabel = legacyFeedbackLabelMap.get(label.toLowerCase());
+  if (legacyLabel) return legacyLabel;
+  if (value >= 0.7) return "Must Try";
+  if (value < 0) return "Not Worth It";
+  return null;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -108,6 +142,17 @@ export function feedbackValueForLabel(label: unknown): number | null {
   return feedbackValueByLabel.get(label) ?? null;
 }
 
+export function displayFeedbackLabelForLabel(label: unknown): TasteTrustFeedbackLabel | null {
+  if (typeof label !== "string") return null;
+  const trimmed = label.trim();
+  if (feedbackValueByLabel.has(trimmed)) return trimmed as TasteTrustFeedbackLabel;
+  return legacyFeedbackLabelMap.get(trimmed.toLowerCase()) ?? null;
+}
+
+export function storageFeedbackLabelForLabel(label: TasteTrustFeedbackLabel): string {
+  return storageFeedbackLabelByLabel.get(label) ?? label;
+}
+
 export function trustLevelFor(score: number, confirmedCount: number): TasteTrustLevel {
   if (confirmedCount < TASTE_TRUST_MIN_CONFIRMATIONS) return "New Reviewer";
   if (score < 20) return "Low Trust";
@@ -121,14 +166,64 @@ function confidenceFor(confirmedCount: number) {
   return confirmedCount / (confirmedCount + TASTE_TRUST_CONFIDENCE_PRIOR);
 }
 
+function targetScoreForAverageFeedback(averageFeedback: number) {
+  const feedback = clamp(averageFeedback, -1, 1);
+  if (feedback >= 0) {
+    return 40 + (TASTE_TRUST_PERFECT_FEEDBACK_TARGET - 40) * feedback;
+  }
+  return TASTE_TRUST_STARTING_SCORE + TASTE_TRUST_STARTING_SCORE * feedback;
+}
+
+function postVolumeWeightForReactionCount(count: number) {
+  if (count <= 0) return 0;
+  return Math.min(
+    TASTE_TRUST_POST_VOLUME_MAX_WEIGHT,
+    TASTE_TRUST_POST_VOLUME_BASE_WEIGHT + Math.log2(count) * TASTE_TRUST_POST_VOLUME_LOG_WEIGHT
+  );
+}
+
+function groupedFeedbackSignals(rows: TasteTrustFeedbackRow[], now: Date) {
+  const groups = new Map<string, {
+    count: number;
+    weightedConfirmations: number;
+    weightedPoints: number;
+  }>();
+
+  rows.forEach((row, index) => {
+    const value = typeof row.feedback_value === "number"
+      ? row.feedback_value
+      : Number(row.feedback_value);
+    if (!Number.isFinite(value)) return;
+    const groupKey = row.post_id?.trim() || `feedback:${index}`;
+    const weight = tasteTrustDecayWeightForDate(row.updated_at ?? row.created_at, now);
+    const group = groups.get(groupKey) ?? { count: 0, weightedConfirmations: 0, weightedPoints: 0 };
+    group.count += 1;
+    group.weightedConfirmations += weight;
+    group.weightedPoints += value * weight;
+    groups.set(groupKey, group);
+  });
+
+  let weightedPoints = 0;
+  let weightedConfirmations = 0;
+
+  for (const group of groups.values()) {
+    if (group.count === 0 || group.weightedConfirmations === 0) continue;
+    const averageFeedback = group.weightedPoints / group.weightedConfirmations;
+    const averageFreshnessWeight = group.weightedConfirmations / group.count;
+    const signalWeight = postVolumeWeightForReactionCount(group.count) * averageFreshnessWeight;
+    weightedPoints += averageFeedback * signalWeight;
+    weightedConfirmations += signalWeight;
+  }
+
+  return { postCount: groups.size, weightedConfirmations, weightedPoints };
+}
+
 export function calculateTasteTrustFromFeedback(
   rows: TasteTrustFeedbackRow[],
   now: Date = new Date()
 ): TasteTrustSummary {
   const confirmedCount = rows.length;
   let totalPoints = 0;
-  let weightedPoints = 0;
-  let weightedConfirmations = 0;
   let positiveCount = 0;
   let negativeCount = 0;
 
@@ -137,22 +232,20 @@ export function calculateTasteTrustFromFeedback(
       ? row.feedback_value
       : Number(row.feedback_value);
     if (!Number.isFinite(value)) continue;
-    const weight = tasteTrustDecayWeightForDate(row.updated_at ?? row.created_at, now);
     totalPoints += value;
-    weightedPoints += value * weight;
-    weightedConfirmations += weight;
     if (value >= 0.7) positiveCount += 1;
     if (value < 0) negativeCount += 1;
   }
 
+  const { postCount, weightedConfirmations, weightedPoints } = groupedFeedbackSignals(rows, now);
   const averageFeedback = weightedConfirmations === 0 ? 0 : weightedPoints / weightedConfirmations;
-  const qualityScore = (clamp(averageFeedback, -1, 1) + 1) / 2;
+  const targetScore = targetScoreForAverageFeedback(averageFeedback);
   const confidence = confidenceFor(weightedConfirmations);
   const rawScore = confirmedCount === 0
     ? TASTE_TRUST_STARTING_SCORE
-    : TASTE_TRUST_STARTING_SCORE * (1 - confidence) + TASTE_TRUST_MAX_SCORE * qualityScore * confidence;
+    : TASTE_TRUST_STARTING_SCORE * (1 - confidence) + targetScore * confidence;
   const trustScore = roundScore(clamp(rawScore, 0, 100));
-  const trustLevel = trustLevelFor(trustScore, confirmedCount);
+  const trustLevel = trustLevelFor(trustScore, postCount);
 
   return {
     trust_score: trustScore,
@@ -164,7 +257,7 @@ export function calculateTasteTrustFromFeedback(
     agreement_percentage: confirmedCount === 0
       ? null
       : Math.round((positiveCount / confirmedCount) * 100),
-    public_trust_level: confirmedCount < TASTE_TRUST_MIN_CONFIRMATIONS ? "New Reviewer" : trustLevel,
+    public_trust_level: postCount < TASTE_TRUST_MIN_CONFIRMATIONS ? "New Reviewer" : trustLevel,
   };
 }
 
@@ -190,6 +283,7 @@ export function summarizePostFeedback(rows: TasteTrustFeedbackRow[]): PostTasteT
   let agreedCount = 0;
   let okayCount = 0;
   let disagreedCount = 0;
+  const feedbackCounts = emptyFeedbackCounts();
 
   for (const row of rows) {
     const value = typeof row.feedback_value === "number"
@@ -199,6 +293,9 @@ export function summarizePostFeedback(rows: TasteTrustFeedbackRow[]): PostTasteT
     if (value >= 0.7) agreedCount += 1;
     else if (value === 0.3) okayCount += 1;
     else if (value < 0) disagreedCount += 1;
+
+    const label = feedbackCountLabel(row, value);
+    if (label) feedbackCounts[label] += 1;
   }
 
   return {
@@ -208,5 +305,6 @@ export function summarizePostFeedback(rows: TasteTrustFeedbackRow[]): PostTasteT
     okay_count: okayCount,
     disagreed_count: disagreedCount,
     agreement_percentage: rows.length === 0 ? null : Math.round((agreedCount / rows.length) * 100),
+    feedback_counts: feedbackCounts,
   };
 }

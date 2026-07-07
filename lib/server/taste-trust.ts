@@ -11,6 +11,7 @@ type SupabaseLike = {
 };
 
 type FeedbackValueRow = {
+  feedback_label?: string | null;
   feedback_value: number | string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -35,8 +36,9 @@ export async function recalculateTasteTrust(
 ): Promise<TasteTrustSummary> {
   const { data: feedbackRows, error: feedbackError } = await db
     .from("recommendation_feedback")
-    .select("feedback_value, created_at, updated_at")
-    .eq("reviewer_user_id", reviewerUserId);
+    .select("post_id, feedback_value, created_at, updated_at")
+    .eq("reviewer_user_id", reviewerUserId)
+    .neq("feedback_user_id", reviewerUserId);
 
   if (feedbackError) throw new Error(feedbackError.message);
 
@@ -85,7 +87,7 @@ export async function getPostTasteTrustSummary(
 ): Promise<PostTasteTrustSummary> {
   const { data, error } = await db
     .from("recommendation_feedback")
-    .select("feedback_value")
+    .select("feedback_label, feedback_value")
     .eq("post_id", postId);
 
   if (error) throw new Error(error.message);
@@ -101,7 +103,7 @@ export async function getPostTasteTrustSummaryMap(
 
   const { data, error } = await db
     .from("recommendation_feedback")
-    .select("post_id, feedback_value")
+    .select("post_id, feedback_label, feedback_value")
     .in("post_id", uniquePostIds);
 
   if (error) throw new Error(error.message);
@@ -110,7 +112,7 @@ export async function getPostTasteTrustSummaryMap(
   for (const row of (data ?? []) as PostFeedbackValueRow[]) {
     if (!row.post_id) continue;
     const rows = grouped.get(row.post_id) ?? [];
-    rows.push({ feedback_value: row.feedback_value });
+    rows.push({ feedback_label: row.feedback_label, feedback_value: row.feedback_value });
     grouped.set(row.post_id, rows);
   }
 

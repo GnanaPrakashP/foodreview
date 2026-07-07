@@ -42,6 +42,7 @@ type ProfileRow = {
 type CreateNotificationInput = {
   recipientName: string;
   actorName?: string | null;
+  actorDisplayName?: string | null;
   type: NotificationType;
   title?: string;
   message: string;
@@ -52,7 +53,22 @@ type CreateNotificationInput = {
   content?: string | null;
   metadata?: Record<string, Json | undefined>;
   dedupe?: boolean;
+  push?: boolean;
 };
+
+type PushSettingsRow = {
+  circle_activity?: boolean | null;
+  memory_activity?: boolean | null;
+  post_engagement?: boolean | null;
+  push_enabled?: boolean | null;
+};
+
+type PushTokenRow = {
+  expo_push_token: string | null;
+};
+
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const EXPO_PUSH_BATCH_SIZE = 100;
 
 function isNotificationSchemaError(error: SupabaseLikeError): boolean {
   const message = error?.message ?? "";
@@ -167,6 +183,143 @@ async function isNotificationCategoryEnabled(db: NotificationDb, recipientName: 
   }
 }
 
+function pushPreferenceColumnForType(type: string): keyof PushSettingsRow | null {
+  if (type === "TABLE_MEMORY_INVITE") return "memory_activity";
+  return notificationCategoryForType(type);
+}
+
+async function isPushNotificationEnabled(db: NotificationDb, recipientName: string, type: string): Promise<boolean> {
+  const category = pushPreferenceColumnForType(type);
+  if (!category) return false;
+
+  try {
+    const { data, error } = await db
+      .from("notification_settings")
+      .select("push_enabled, memory_activity, circle_activity, post_engagement")
+      .eq("user_name", recipientName)
+      .maybeSingle();
+
+    if (error || !data) return true;
+
+    const settings = data as PushSettingsRow;
+    if (settings.push_enabled === false) return false;
+    return settings[category] !== false;
+  } catch {
+    return true;
+  }
+}
+
+function socialPushCopy(input: CreateNotificationInput): { body: string; title: string } | null {
+  const actor = input.actorDisplayName?.trim() || input.actorName?.trim() || "Someone";
+
+  switch (input.type) {
+    case "POST_LIKED":
+      return { title: "New like", body: `${actor} liked your post` };
+    case "POST_COMMENTED":
+      return { title: "New comment", body: `${actor} commented on your post` };
+    case "THREAD_REPLY":
+      return { title: "New reply", body: `${actor} replied in a discussion you joined` };
+    case "CIRCLE_REQUEST_RECEIVED":
+      return { title: "Circle request", body: `${actor} requested to join your circle` };
+    case "CIRCLE_REQUEST_ACCEPTED":
+      return { title: "Circle request accepted", body: `${actor} accepted your circle request` };
+    case "ADDED_TO_CIRCLE":
+    case "MUTUAL_CIRCLE_CREATED":
+      return { title: "Circle", body: `${actor} joined your circle` };
+    case "CIRCLE_POST_CREATED":
+      return { title: "New circle post", body: `${actor} shared a new food post` };
+    case "TABLE_MEMORY_INVITE":
+      return { title: "Table Memory", body: "You have a new memory room invite." };
+    default:
+      return null;
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function compactPushData(data: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(data)
+      .map(([key, value]) => [key, stringValue(value)] as const)
+      .filter(([, value]) => Boolean(value))
+  );
+}
+
+async function expoPushTokensForRecipient(db: NotificationDb, recipientName: string): Promise<string[]> {
+  try {
+    const { data, error } = await db
+      .from("push_tokens")
+      .select("expo_push_token")
+      .eq("user_name", recipientName);
+
+    if (error) return [];
+    return Array.from(new Set(
+      ((data ?? []) as PushTokenRow[])
+        .map((row) => row.expo_push_token)
+        .filter((token): token is string => Boolean(token))
+    ));
+  } catch {
+    return [];
+  }
+}
+
+async function sendExpoPushMessages(messages: Array<Record<string, unknown>>) {
+  for (let index = 0; index < messages.length; index += EXPO_PUSH_BATCH_SIZE) {
+    const batch = messages.slice(index, index + EXPO_PUSH_BATCH_SIZE);
+    const response = await fetch(EXPO_PUSH_URL, {
+      body: JSON.stringify(batch),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    if (!response.ok) throw new Error(`expo_push_failed_${response.status}`);
+  }
+}
+
+async function sendPushForNotification(
+  db: NotificationDb,
+  input: CreateNotificationInput,
+  notification: Pick<Notification, "id"> | null | undefined
+): Promise<void> {
+  try {
+    const recipientName = input.recipientName.trim();
+    if (!recipientName) return;
+
+    const copy = socialPushCopy(input);
+    if (!copy) return;
+    if (!(await isPushNotificationEnabled(db, recipientName, input.type))) return;
+
+    const tokens = await expoPushTokensForRecipient(db, recipientName);
+    if (tokens.length === 0) return;
+
+    const roomId = input.entityType === "TABLE_MEMORY" ? input.entityId : null;
+    const data = compactPushData({
+      actorName: input.actorName,
+      entityId: input.entityId ?? input.postId,
+      entityType: input.entityType,
+      notificationId: notification?.id,
+      notificationType: input.type,
+      postId: input.postId ?? (input.entityType === "POST" ? input.entityId : null),
+      roomId,
+      type: input.entityType === "TABLE_MEMORY" ? "table-memory" : "social-notification",
+    });
+
+    await sendExpoPushMessages(tokens.map((to) => ({
+      body: copy.body,
+      data,
+      sound: "default",
+      title: copy.title,
+      to,
+    })));
+  } catch {
+    // Push is best-effort; the durable in-app notification remains the source of truth.
+  }
+}
+
 export async function createNotificationForNames(
   db: NotificationDb,
   input: CreateNotificationInput
@@ -278,12 +431,21 @@ export async function createNotificationForNames(
         .select(LEGACY_NOTIFICATION_SELECT)
         .single();
 
-      if (!legacyError) return legacyData as Notification;
+      if (!legacyError) {
+        if (input.push) {
+          await sendPushForNotification(db, input, legacyData as Pick<Notification, "id">);
+        }
+        return legacyData as Notification;
+      }
       console.warn("[notifications] legacy insert failed:", legacyError.message, legacyError.code, legacyError.details);
       return null;
     }
     console.warn("[notifications] insert failed:", error.message, error.code, error.details);
     return null;
+  }
+
+  if (input.push) {
+    await sendPushForNotification(db, input, data as Notification);
   }
 
   return data as Notification;
@@ -294,10 +456,12 @@ export async function createNotificationForNames(
 export async function upsertCircleRequestNotification(
   db: NotificationDb,
   input: {
+    actorDisplayName?: string | null;
     recipientName: string;
     actorName: string;
     message: string;
     requestId: string | null;
+    push?: boolean;
   }
 ): Promise<void> {
   if (!(await isNotificationCategoryEnabled(db, input.recipientName, "CIRCLE_REQUEST_RECEIVED"))) return;
@@ -313,14 +477,26 @@ export async function upsertCircleRequestNotification(
   // Look for any existing notification (including soft-deleted) for this pair
   const { data: existing } = await db
     .from("notifications")
-    .select("id")
+    .select("id, entity_id, deleted_at")
     .eq("recipient_name", input.recipientName)
     .eq("actor_name", input.actorName)
     .in("type", ["CIRCLE_REQUEST_RECEIVED", "circle_request"])
     .order("created_at", { ascending: false })
     .limit(1);
 
-  const row = existing?.[0] as { id: string } | undefined;
+  const row = existing?.[0] as { deleted_at?: string | null; entity_id?: string | null; id: string } | undefined;
+  const shouldPush = !row || Boolean(row.deleted_at) || (input.requestId && row.entity_id !== input.requestId);
+  const pushInput: CreateNotificationInput = {
+    actorDisplayName: input.actorDisplayName,
+    actorName: input.actorName,
+    entityId: input.requestId,
+    entityType: "CIRCLE_REQUEST",
+    message: input.message,
+    metadata,
+    recipientName: input.recipientName,
+    title: "Circle request",
+    type: "CIRCLE_REQUEST_RECEIVED",
+  };
 
   if (row) {
     const { error } = await db
@@ -345,10 +521,13 @@ export async function upsertCircleRequestNotification(
         })
         .eq("id", row.id);
     }
+    if (input.push !== false && shouldPush) {
+      await sendPushForNotification(db, pushInput, row);
+    }
     return;
   }
 
-  const { error } = await db.from("notifications").insert({
+  const { data: inserted, error } = await db.from("notifications").insert({
     recipient_name: input.recipientName,
     actor_name: input.actorName,
     type: "CIRCLE_REQUEST_RECEIVED",
@@ -359,16 +538,24 @@ export async function upsertCircleRequestNotification(
     metadata,
     is_read: false,
     read: false,
-  });
+  }).select("id").maybeSingle();
   if (isNotificationSchemaError(error)) {
-    await db.from("notifications").insert({
+    const { data: legacyInserted } = await db.from("notifications").insert({
       recipient_name: input.recipientName,
       actor_name: input.actorName,
       type: "circle_request",
       post_id: null,
       content: input.message,
       read: false,
-    });
+    }).select("id").maybeSingle();
+    if (input.push !== false) {
+      await sendPushForNotification(db, pushInput, legacyInserted as Pick<Notification, "id"> | null);
+    }
+    return;
+  }
+
+  if (input.push !== false) {
+    await sendPushForNotification(db, pushInput, inserted as Pick<Notification, "id"> | null);
   }
 }
 
@@ -425,9 +612,10 @@ export async function createPostLikeNotification(db: NotificationDb, review: Rev
   if (review.visibility === "me") return null;
   if (!(await canViewReview(db, review, actorName))) return null;
   const displayName = actorDisplayName || actorName;
-  return createNotificationForNames(db, {
+  const input: CreateNotificationInput = {
     recipientName: review.reviewer_name,
     actorName,
+    actorDisplayName: displayName,
     type: "POST_LIKED",
     title: "New like",
     message: `${displayName} liked your post`,
@@ -440,7 +628,10 @@ export async function createPostLikeNotification(db: NotificationDb, review: Rev
       thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
     },
     dedupe: true,
-  });
+  };
+  const notification = await createNotificationForNames(db, input);
+  if (notification) await sendPushForNotification(db, input, notification);
+  return notification;
 }
 
 export async function createPostCommentNotifications(
@@ -456,9 +647,10 @@ export async function createPostCommentNotifications(
 
   const displayName = actorDisplayName || actorName;
   const preview = comment.content.slice(0, 80);
-  await createNotificationForNames(db, {
+  const ownerInput: CreateNotificationInput = {
     recipientName: review.reviewer_name,
     actorName,
+    actorDisplayName: displayName,
     type: "POST_COMMENTED",
     title: "New comment",
     message: `${displayName} commented on your post`,
@@ -472,26 +664,37 @@ export async function createPostCommentNotifications(
       restaurantName: review.restaurant_name,
       thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
     },
-  });
+  };
+  const ownerNotification = await createNotificationForNames(db, ownerInput);
 
   const recipients = Array.from(new Set(priorCommenters)).filter((name) => name && name !== actorName && name !== review.reviewer_name);
-  await Promise.all(recipients.map((recipientName) => createNotificationForNames(db, {
-    recipientName,
-    actorName,
-    type: "THREAD_REPLY",
-    title: "New reply",
-    message: `${displayName} replied in a discussion you joined`,
-    entityType: "POST",
-    entityId: review.id,
-    postId: review.id,
-    restaurantName: review.restaurant_name,
-    content: preview,
-    metadata: {
-      commentId: comment.id,
+  const threadNotifications = await Promise.all(recipients.map(async (recipientName) => {
+    const threadInput: CreateNotificationInput = {
+      recipientName,
+      actorName,
+      actorDisplayName: displayName,
+      type: "THREAD_REPLY",
+      title: "New reply",
+      message: `${displayName} replied in a discussion you joined`,
+      entityType: "POST",
+      entityId: review.id,
+      postId: review.id,
       restaurantName: review.restaurant_name,
-      thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
-    },
-  })));
+      content: preview,
+      metadata: {
+        commentId: comment.id,
+        restaurantName: review.restaurant_name,
+        thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
+      },
+    };
+    const notification = await createNotificationForNames(db, threadInput);
+    return { input: threadInput, notification };
+  }));
+
+  await Promise.all([
+    { input: ownerInput, notification: ownerNotification },
+    ...threadNotifications,
+  ].map(({ input, notification }) => notification ? sendPushForNotification(db, input, notification) : Promise.resolve()));
 }
 
 export async function createCirclePostNotifications(db: NotificationDb, review: Review) {
@@ -515,20 +718,31 @@ export async function createCirclePostNotifications(db: NotificationDb, review: 
   const recipients = Array.from(new Set(((data ?? []) as { member_name: string }[]).map((row) => row.member_name)))
     .filter((name) => name && name !== review.reviewer_name);
 
-  await Promise.all(recipients.map((recipientName) => createNotificationForNames(db, {
-    recipientName,
-    actorName: review.reviewer_name,
-    type: "CIRCLE_POST_CREATED",
-    title: "New circle post",
-    message: `${reviewerDisplay} posted about ${review.restaurant_name}`,
-    entityType: "POST",
-    entityId: review.id,
-    postId: review.id,
-    restaurantName: review.restaurant_name,
-    metadata: {
+  const notifications = await Promise.all(recipients.map(async (recipientName) => {
+    const input: CreateNotificationInput = {
+      recipientName,
+      actorName: review.reviewer_name,
+      actorDisplayName: reviewerDisplay,
+      type: "CIRCLE_POST_CREATED",
+      title: "New circle post",
+      message: `${reviewerDisplay} posted about ${review.restaurant_name}`,
+      entityType: "POST",
+      entityId: review.id,
+      postId: review.id,
       restaurantName: review.restaurant_name,
-      thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
-    },
-    dedupe: true,
-  })));
+      metadata: {
+        restaurantName: review.restaurant_name,
+        thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
+      },
+      dedupe: true,
+    };
+    const notification = await createNotificationForNames(db, input);
+    return { input, notification };
+  }));
+
+  await Promise.all(
+    notifications.map(({ input, notification }) =>
+      notification ? sendPushForNotification(db, input, notification) : Promise.resolve()
+    )
+  );
 }

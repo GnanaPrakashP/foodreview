@@ -904,7 +904,6 @@ create table if not exists public.recommendation_feedback (
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
   constraint recommendation_feedback_unique_user_post unique (post_id, feedback_user_id),
-  constraint recommendation_feedback_not_self check (feedback_user_id <> reviewer_user_id),
   constraint recommendation_feedback_value_check check (feedback_value in (1.0, 0.7, 0.3, -0.5, -1.0)),
   constraint recommendation_feedback_label_check check (feedback_label in ('Strongly agree', 'Agree', 'Neutral', 'Disagree', 'Strongly disagree'))
 );
@@ -927,7 +926,6 @@ create policy "Users can insert own recommendation feedback"
   on public.recommendation_feedback for insert to authenticated
   with check (
     feedback_user_id = auth.uid()
-    and feedback_user_id <> reviewer_user_id
     and public.can_read_review_id(post_id)
     and exists (
       select 1
@@ -936,7 +934,6 @@ create policy "Users can insert own recommendation feedback"
       where r.id = post_id
         and p.id = reviewer_user_id
         and r.visibility in ('public', 'circle')
-        and r.reviewer_name <> public.current_profile_name()
     )
   );
 
@@ -946,7 +943,6 @@ create policy "Users can update own recommendation feedback"
   using (feedback_user_id = auth.uid())
   with check (
     feedback_user_id = auth.uid()
-    and feedback_user_id <> reviewer_user_id
     and public.can_read_review_id(post_id)
     and exists (
       select 1
@@ -955,7 +951,6 @@ create policy "Users can update own recommendation feedback"
       where r.id = post_id
         and p.id = reviewer_user_id
         and r.visibility in ('public', 'circle')
-        and r.reviewer_name <> public.current_profile_name()
     )
   );
 

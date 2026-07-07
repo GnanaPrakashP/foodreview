@@ -19,6 +19,7 @@
     "validate:android-profile": "node scripts/android-profile-login.mjs",
     "validate:android-profile:installed": "node scripts/android-installed-profile-login.mjs --restart-server",
     "validate:ios-profile": "node scripts/ios-profile-login.mjs",
+    "mobile:reinstall:phone": "npm --prefix mobile run android:reinstall:phone",
     "start": "next start"
   },
   "dependencies": {

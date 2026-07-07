@@ -278,7 +278,7 @@ test("schema: recommendation feedback is limited to visible public or circle pos
   assert.ok(updateBlocks.some((b) => /feedback_user_id\s*=\s*auth\.uid\(\)/.test(b)));
   assert.ok(insertBlocks.some((b) => /r\.visibility in \('public', 'circle'\)/i.test(b)));
   assert.ok(updateBlocks.some((b) => /r\.visibility in \('public', 'circle'\)/i.test(b)));
-  assert.ok(schema.includes("recommendation_feedback_not_self"));
+  assert.ok(!schema.includes("recommendation_feedback_not_self"));
 });
 
 test("schema: user tried items are private-capable owner records with source-post uniqueness", () => {

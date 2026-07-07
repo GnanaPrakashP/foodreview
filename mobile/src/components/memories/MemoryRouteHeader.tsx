@@ -12,6 +12,7 @@ type MemoryRouteHeaderProps = {
   subtitle?: string;
   themeColors?: HeaderThemeColors;
   title: string;
+  titleVariant?: "default" | "compact";
   titleWeight?: "regular" | "bold" | "extraBold";
 };
 
@@ -22,15 +23,19 @@ export function MemoryRouteHeader({
   subtitle,
   themeColors: providedThemeColors,
   title,
+  titleVariant = "default",
   titleWeight = "extraBold"
 }: MemoryRouteHeaderProps) {
   const { themeColors: defaultThemeColors } = useThemePreference();
   const themeColors = providedThemeColors ?? defaultThemeColors;
-  const titleStyle = titleWeight === "regular"
-    ? styles.titleRegular
-    : titleWeight === "bold"
-      ? styles.titleBold
-      : styles.title;
+  const titleStyle = titleVariant === "compact"
+    ? styles.titleCompact
+    : titleWeight === "regular"
+      ? styles.titleRegular
+      : titleWeight === "bold"
+        ? styles.titleBold
+        : styles.title;
+  const hasHeaderText = Boolean(kicker || title || subtitle);
 
   return (
     <View style={styles.header}>
@@ -48,11 +53,13 @@ export function MemoryRouteHeader({
       >
         <Ionicons name="arrow-back" size={20} color={themeColors.cream} />
       </Pressable>
-      <View style={styles.headerText}>
-        {kicker ? <Text style={[styles.kicker, { color: themeColors.orange }]}>{kicker}</Text> : null}
-        <Text style={[titleStyle, { color: themeColors.cream }]}>{title}</Text>
-        {subtitle ? <Text style={[styles.subtitle, { color: themeColors.muted }]}>{subtitle}</Text> : null}
-      </View>
+      {hasHeaderText ? (
+        <View style={styles.headerText}>
+          {kicker ? <Text style={[styles.kicker, { color: themeColors.orange }]}>{kicker}</Text> : null}
+          {title ? <Text style={[titleStyle, { color: themeColors.cream }]}>{title}</Text> : null}
+          {subtitle ? <Text style={[styles.subtitle, { color: themeColors.muted }]}>{subtitle}</Text> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -93,6 +100,11 @@ const styles = StyleSheet.create({
   title: {
     ...fontStyles.extraBold,
     fontSize: typography.title
+  },
+  titleCompact: {
+    ...fontStyles.bold,
+    fontSize: typography.section,
+    lineHeight: 21
   },
   titleRegular: {
     ...fontStyles.regular,

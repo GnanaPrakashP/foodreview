@@ -24,20 +24,14 @@ function useInvalidateEngagementQueries() {
 }
 
 export function useTogglePostLikeMutation() {
-  const invalidate = useInvalidateEngagementQueries();
-
   return useMutation({
-    mutationFn: (input: ToggleLikeInput) => togglePostLike(input),
-    onSettled: invalidate
+    mutationFn: (input: ToggleLikeInput) => togglePostLike(input)
   });
 }
 
 export function useTogglePostBookmarkMutation() {
-  const invalidate = useInvalidateEngagementQueries();
-
   return useMutation({
-    mutationFn: (input: ToggleBookmarkInput) => togglePostBookmark(input),
-    onSettled: invalidate
+    mutationFn: (input: ToggleBookmarkInput) => togglePostBookmark(input)
   });
 }
 

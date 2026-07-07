@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
     await createNotificationForNames(admin, {
       recipientName: sender,
       actorName: me,
+      actorDisplayName: meDisplay,
       type: "CIRCLE_REQUEST_ACCEPTED",
       title: "Circle request accepted",
       message: `${meDisplay} accepted your circle request`,
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         status: "accepted",
       },
       dedupe: true,
+      push: true,
     });
   }
 

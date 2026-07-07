@@ -5,7 +5,12 @@ import { canActorReadPost } from "@/lib/server/review-access";
 import { getPostTasteTrustSummary, recalculateTasteTrust } from "@/lib/server/taste-trust";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { feedbackValueForLabel } from "@/lib/taste-trust";
+import {
+  displayFeedbackLabelForLabel,
+  feedbackValueForLabel,
+  storageFeedbackLabelForLabel,
+  type TasteTrustFeedbackLabel,
+} from "@/lib/taste-trust";
 import { refreshUserReputationFoundation, updateUserStreaks } from "@/lib/server/reputation";
 
 type ReviewFeedbackRow = {
@@ -22,6 +27,9 @@ type ReviewFeedbackRow = {
 
 type ProfileIdRow = {
   id: string;
+  username?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
 };
 
 type IdRow = {
@@ -51,6 +59,88 @@ function normalizedVisibility(review: ReviewFeedbackRow) {
   if (review.visibility === "circle") return "circle";
   if (review.visibility === "me" || review.visibility === "private") return "private";
   return "public";
+}
+
+function normalizeProfileLookupName(value: string) {
+  return value
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/[_\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function usernameCandidateForReviewerName(value: string) {
+  const username = value
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return /^[a-z0-9_]{3,20}$/.test(username) ? username : "";
+}
+
+function firstNameCandidates(value: string) {
+  const firstName = value.trim().replace(/^@+/, "").split(/\s+/)[0] ?? "";
+  if (!firstName) return [];
+  const lower = firstName.toLowerCase();
+  return Array.from(new Set([
+    firstName,
+    lower,
+    `${lower.slice(0, 1).toUpperCase()}${lower.slice(1)}`
+  ]));
+}
+
+function reviewerProfileDisplayName(profile: ProfileIdRow) {
+  return [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim() || profile.username || "";
+}
+
+async function resolveReviewerProfile(db: { from: (table: string) => any }, reviewerName: string): Promise<ProfileIdRow | null> {
+  const trimmedName = reviewerName.trim();
+  if (!trimmedName) return null;
+
+  const { data: exactUsernameRow, error: exactUsernameError } = await db
+    .from("profiles")
+    .select("id, username, first_name, last_name")
+    .eq("username", trimmedName)
+    .maybeSingle();
+
+  if (exactUsernameError) throw new Error(exactUsernameError.message);
+  if ((exactUsernameRow as ProfileIdRow | null)?.id) return exactUsernameRow as ProfileIdRow;
+
+  const candidate = usernameCandidateForReviewerName(trimmedName);
+  if (candidate && candidate !== trimmedName.toLowerCase()) {
+    const { data: candidateUsernameRow, error: candidateUsernameError } = await db
+      .from("profiles")
+      .select("id, username, first_name, last_name")
+      .eq("username", candidate)
+      .maybeSingle();
+
+    if (candidateUsernameError) throw new Error(candidateUsernameError.message);
+    if ((candidateUsernameRow as ProfileIdRow | null)?.id) return candidateUsernameRow as ProfileIdRow;
+  }
+
+  const firstNames = firstNameCandidates(trimmedName);
+  if (firstNames.length === 0) return null;
+
+  const normalizedReviewerName = normalizeProfileLookupName(trimmedName);
+  for (const firstName of firstNames) {
+    const { data: displayRows, error: displayError } = await db
+      .from("profiles")
+      .select("id, username, first_name, last_name")
+      .eq("first_name", firstName);
+
+    if (displayError) throw new Error(displayError.message);
+
+    const match = ((displayRows ?? []) as ProfileIdRow[]).find((row) => {
+      const displayName = reviewerProfileDisplayName(row);
+      return normalizeProfileLookupName(displayName) === normalizedReviewerName;
+    });
+    if (match?.id) return match;
+  }
+
+  return null;
 }
 
 async function canReadPostSummary(db: { from: (table: string) => any }, review: ReviewFeedbackRow, actorName: string | null) {
@@ -164,7 +254,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   const db = createAdminClient();
   const review = await loadReview(db, postId);
   if (!review) {
@@ -185,7 +275,7 @@ export async function GET(req: NextRequest) {
         .eq("post_id", postId)
         .eq("feedback_user_id", actor.userId)
         .maybeSingle();
-      myFeedbackLabel = typeof data?.feedback_label === "string" ? data.feedback_label : null;
+      myFeedbackLabel = displayFeedbackLabelForLabel(data?.feedback_label);
     }
     return NextResponse.json({ summary, myFeedbackLabel });
   } catch (error) {
@@ -199,15 +289,16 @@ export async function POST(req: NextRequest) {
   const postId = typeof body.postId === "string" ? body.postId.trim() : "";
   const feedbackLabel = typeof body.feedbackLabel === "string" ? body.feedbackLabel.trim() : "";
   const feedbackValue = feedbackValueForLabel(feedbackLabel);
+  const displayFeedbackLabel = displayFeedbackLabelForLabel(feedbackLabel);
 
   if (!postId) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
-  if (feedbackValue === null) {
+  if (feedbackValue === null || !displayFeedbackLabel) {
     return NextResponse.json({ error: "Invalid Taste Trust feedback" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -227,33 +318,23 @@ export async function POST(req: NextRequest) {
   if (visibility === "private") {
     return NextResponse.json({ error: "Taste Trust feedback is not available for private posts" }, { status: 403 });
   }
-  if (review.reviewer_name === actor.actorName) {
-    return NextResponse.json({ error: "You cannot give Taste Trust feedback on your own post" }, { status: 403 });
-  }
+  const reviewerProfile = await resolveReviewerProfile(db, review.reviewer_name);
 
-  const { data: reviewerProfile, error: reviewerError } = await db
-    .from("profiles")
-    .select("id")
-    .eq("username", review.reviewer_name)
-    .maybeSingle<ProfileIdRow>();
-
-  if (reviewerError || !reviewerProfile?.id) {
+  if (!reviewerProfile?.id) {
     return NextResponse.json({ error: "Reviewer profile not found" }, { status: 404 });
-  }
-  if (reviewerProfile.id === actor.userId) {
-    return NextResponse.json({ error: "You cannot give Taste Trust feedback on your own post" }, { status: 403 });
   }
 
   const dishId = typeof body.dishId === "string" && body.dishId.trim()
     ? body.dishId.trim()
     : review.items?.find((item) => item?.name?.trim())?.name?.trim() ?? null;
+  const triedSourceUserId = reviewerProfile.id === actor.userId ? null : reviewerProfile.id;
   const feedbackRow = {
     post_id: postId,
     reviewer_user_id: reviewerProfile.id,
     feedback_user_id: actor.userId,
     place_id: review.restaurant_id,
     dish_id: dishId,
-    feedback_label: feedbackLabel,
+    feedback_label: storageFeedbackLabelForLabel(displayFeedbackLabel as TasteTrustFeedbackLabel),
     feedback_value: feedbackValue,
   };
 
@@ -273,7 +354,7 @@ export async function POST(req: NextRequest) {
       place_id: review.restaurant_id,
       dish_id: dishId,
       source_post_id: postId,
-      source_user_id: reviewerProfile.id,
+      source_user_id: triedSourceUserId,
       feedback_id: feedbackId,
     });
 
@@ -300,7 +381,7 @@ export async function POST(req: NextRequest) {
       triedItem,
       trustSummary,
       postSummary,
-      myFeedbackLabel: feedbackLabel,
+      myFeedbackLabel: displayFeedbackLabel,
     });
   } catch (error) {
     console.error("[taste-trust/feedback] failed to submit:", error);
@@ -314,7 +395,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -329,10 +410,6 @@ export async function DELETE(req: NextRequest) {
   if (!review) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
-  if (review.reviewer_name === actor.actorName) {
-    return NextResponse.json({ error: "You cannot remove Taste Trust feedback from your own post" }, { status: 403 });
-  }
-
   try {
     const { data: existing, error: existingError } = await db
       .from("recommendation_feedback")

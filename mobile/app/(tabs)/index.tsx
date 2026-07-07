@@ -1,9 +1,11 @@
 import { useRouter } from "expo-router";
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { useCircleFeedQuery } from "@/hooks/useFeeds";
+import { useCircleFeedInfiniteQuery } from "@/hooks/useFeeds";
+import { useUnreadNotificationCountQuery } from "@/hooks/useNotifications";
+import { markCircleFeedPostsSeen } from "@/services/feeds";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing } from "@/theme";
@@ -14,10 +16,23 @@ export default function CircleScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const feed = useCircleFeedQuery({ enabled: isReady && isAuthenticated });
-  const unreadNotificationCount = 0;
+  const feed = useCircleFeedInfiniteQuery({ enabled: isReady && isAuthenticated });
+  const notifications = useUnreadNotificationCountQuery({ enabled: isReady && isAuthenticated });
+  const seenPostIdsRef = useRef(new Set<string>());
+  const posts = useMemo(() => feed.data?.pages.flatMap((page) => page.posts) ?? [], [feed.data?.pages]);
+  const unreadNotificationCount = notifications.data ?? 0;
   const notificationBadge = unreadNotificationCount > 9 ? "9+" : String(unreadNotificationCount);
   const canRefresh = isReady && isAuthenticated;
+  const loadMorePosts = useCallback(() => {
+    if (!feed.hasNextPage || feed.isFetchingNextPage) return;
+    void feed.fetchNextPage();
+  }, [feed.fetchNextPage, feed.hasNextPage, feed.isFetchingNextPage]);
+  const markPostsViewed = useCallback((postIds: string[]) => {
+    const nextPostIds = postIds.filter((postId) => !seenPostIdsRef.current.has(postId));
+    if (nextPostIds.length === 0) return;
+    for (const postId of nextPostIds) seenPostIdsRef.current.add(postId);
+    void markCircleFeedPostsSeen(nextPostIds);
+  }, []);
   const circleHeader = (
     <View collapsable={false}>
       <View style={styles.header}>
@@ -63,14 +78,20 @@ export default function CircleScreen() {
           ListHeaderComponent={circleHeader}
           emptyMessage="Follow people or share your first bite to start seeing trusted food picks here."
           emptyTitle="Your circle is quiet"
+          endReachedLabel="You're caught up"
           errorMessage="We couldn't load your circle feed. Please try again."
-          isError={feed.isError}
-          isLoading={feed.isLoading}
+          hasMore={Boolean(feed.hasNextPage)}
+          isError={feed.isError && posts.length === 0}
+          isFetchingMore={feed.isFetchingNextPage}
+          isLoading={feed.isLoading && posts.length === 0}
+          onEndReached={loadMorePosts}
+          onPostsViewed={markPostsViewed}
           onRefresh={canRefresh ? () => { void feed.refetch(); } : undefined}
           onRetry={() => feed.refetch()}
-          posts={feed.data?.posts}
-          refreshing={canRefresh && feed.isRefetching}
+          posts={posts}
+          refreshing={canRefresh && feed.isRefetching && !feed.isFetchingNextPage}
           scrollEnabled
+          showSectionLabels
         />
       )}
     </Screen>

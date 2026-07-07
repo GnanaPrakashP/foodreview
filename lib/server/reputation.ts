@@ -115,12 +115,15 @@ function feedbackCounts() {
 function feedbackBucket(row: FeedbackRow): keyof FeedbackCounts {
   const label = (row.feedback_label ?? "").toLowerCase();
   // New labels
+  if (label === "must try") return "SA";
+  if (label === "not worth it") return "SD";
+  // Legacy labels
   if (label === "strongly agree") return "SA";
   if (label === "agree") return "A";
+  if (label === "craving") return "A";
   if (label === "neutral") return "N";
   if (label === "disagree") return "D";
   if (label === "strongly disagree") return "SD";
-  // Legacy labels (existing rows in DB before migration)
   if (label.includes("totally")) return "SA";
   if (label.includes("mostly")) return "A";
   if (label.includes("okay")) return "N";

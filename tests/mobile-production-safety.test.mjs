@@ -10,10 +10,13 @@ test("mobile saved-post and block writes go through trusted API routes", () => {
   const engagement = source("mobile/src/services/engagement.ts");
   const settings = source("mobile/src/services/settings.ts");
   const blocksRoute = source("app/api/mobile/blocks/route.ts");
+  const wishlistRoute = source("app/api/wishlist/route.ts");
 
   assert.match(engagement, /authorizedJson\("\/api\/wishlist"/);
   assert.doesNotMatch(engagement, /from\("wishlist"\)[\s\S]*\.insert/);
   assert.doesNotMatch(engagement, /from\("wishlist"\)[\s\S]*\.delete/);
+  assert.match(wishlistRoute, /getRouteActor\(req\)/);
+  assert.doesNotMatch(wishlistRoute, /getRouteActor\(\)/);
   assert.match(settings, /authorizedSettingsJson\("\/api\/mobile\/blocks"/);
   assert.doesNotMatch(settings, /from\("blocked_users"\)[\s\S]*\.upsert/);
   assert.match(blocksRoute, /getRouteActor\(\)/);

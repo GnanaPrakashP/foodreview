@@ -180,6 +180,8 @@ export function mapReviewPost(
     likedByMe?: boolean;
     bookmarkedByMe?: boolean;
     circleRequestStatus?: ReviewPost["circleRequestStatus"];
+    feedContextLabel?: string;
+    feedSectionLabel?: string;
     isPublicDiscovery?: boolean;
   } = {}
 ): ReviewPost {
@@ -208,6 +210,8 @@ export function mapReviewPost(
     likedByMe: options.likedByMe ?? false,
     bookmarkedByMe: options.bookmarkedByMe ?? false,
     circleRequestStatus: options.circleRequestStatus,
+    feedContextLabel: options.feedContextLabel,
+    feedSectionLabel: options.feedSectionLabel,
     isPublicDiscovery: options.isPublicDiscovery
   };
 }

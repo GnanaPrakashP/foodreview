@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Flame, ThumbsDown, type LucideIcon } from "lucide-react";
 import { TASTE_TRUST_FEEDBACK_OPTIONS, type PostTasteTrustSummary } from "@/lib/taste-trust";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
@@ -29,14 +30,15 @@ const EMPTY_SUMMARY: PostTasteTrustSummary = {
   okay_count: 0,
   disagreed_count: 0,
   agreement_percentage: null,
+  feedback_counts: {
+    "Must Try": 0,
+    "Not Worth It": 0,
+  },
 };
 
-const FEEDBACK_EMOJIS: Record<string, string> = {
-  "Strongly agree": "😍",
-  "Agree": "🙂",
-  "Neutral": "😐",
-  "Disagree": "🙁",
-  "Strongly disagree": "😖",
+const FEEDBACK_ICONS: Record<string, LucideIcon> = {
+  "Must Try": Flame,
+  "Not Worth It": ThumbsDown,
 };
 
 function invalidateTasteTrustCaches() {
@@ -46,12 +48,17 @@ function invalidateTasteTrustCaches() {
 }
 
 const FEEDBACK_LABELS: Record<string, string> = {
-  "Strongly agree": "Strong",
-  "Agree": "Agree",
-  "Neutral": "Neutral",
-  "Disagree": "Disagree",
-  "Strongly disagree": "Strong",
+  "Must Try": "Must Try",
+  "Not Worth It": "Not Worth It",
 };
+
+function feedbackCountFor(summary: PostTasteTrustSummary, label: string) {
+  const count = summary.feedback_counts?.[label as keyof typeof summary.feedback_counts];
+  if (typeof count === "number" && Number.isFinite(count)) return count;
+  if (label === "Must Try") return summary.agree_count ?? summary.agreed_count ?? 0;
+  if (label === "Not Worth It") return summary.disagreed_count;
+  return 0;
+}
 
 export default function RecommendationFeedback({
   postId,
@@ -152,7 +159,6 @@ export default function RecommendationFeedback({
       ? [
           `${summary.tried_count} tried`,
           agreeCount > 0 ? `${agreeCount} agreed` : "",
-          summary.okay_count > 0 ? `${summary.okay_count} okay` : "",
           summary.disagreed_count > 0 ? `${summary.disagreed_count} disagreed` : "",
         ].filter(Boolean).join(" · ")
       : "";
@@ -168,7 +174,7 @@ export default function RecommendationFeedback({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
         <div style={{ minWidth: 0 }}>
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: compact ? "12px" : "13px", fontWeight: 900, color: "var(--cream)", margin: 0, lineHeight: 1.25 }}>
-            Do you agree?
+            React to this bite
           </p>
           {subtitle && (
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: selectedLabel ? "var(--orange)" : "var(--muted)", margin: "3px 0 0", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -186,13 +192,15 @@ export default function RecommendationFeedback({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
           gap: "7px",
         }}
       >
         {TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => {
           const selected = selectedLabel === option.label;
           const busy = submittingLabel === option.label;
+          const count = feedbackCountFor(summary, option.label);
+          const FeedbackIcon = FEEDBACK_ICONS[option.label];
           return (
             <button
               key={option.label}
@@ -222,11 +230,11 @@ export default function RecommendationFeedback({
                 gap: "6px",
               }}
             >
-              <span style={{ fontSize: compact ? "19px" : "22px", lineHeight: 1 }}>
-                {busy ? "..." : FEEDBACK_EMOJIS[option.label]}
+              <span style={{ color: selected ? "var(--orange)" : "var(--muted)", lineHeight: 1 }}>
+                {busy ? "..." : <FeedbackIcon size={compact ? 20 : 23} strokeWidth={selected ? 2.4 : 2.05} />}
               </span>
               <span style={{ fontSize: "10px", fontWeight: 800, color: selected ? "var(--orange)" : "var(--muted)", lineHeight: 1 }}>
-                {FEEDBACK_LABELS[option.label]}
+                {FEEDBACK_LABELS[option.label]} {count}
               </span>
             </button>
           );

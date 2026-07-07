@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   getCircleFeed,
   getDishFeed,
@@ -13,6 +13,7 @@ import { getExploreDiscovery } from "@/services/exploreDiscovery";
 
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
+  circlePages: ["feed", "circle", "pages"] as const,
   dish: (dishName: string) => ["feed", "dish", dishName] as const,
   exploreDiscovery: (input: ExploreFeedInput = {}) => ["feed", "explore-discovery", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
   explore: (input: ExploreFeedInput = {}) => ["feed", "explore", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
@@ -24,8 +25,18 @@ export const feedKeys = {
 export function useCircleFeedQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: feedKeys.circle,
-    queryFn: getCircleFeed,
+    queryFn: () => getCircleFeed(),
     enabled: options.enabled ?? true
+  });
+}
+
+export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) {
+  return useInfiniteQuery({
+    queryKey: feedKeys.circlePages,
+    queryFn: ({ pageParam }) => getCircleFeed(pageParam),
+    enabled: options.enabled ?? true,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null
   });
 }
 
