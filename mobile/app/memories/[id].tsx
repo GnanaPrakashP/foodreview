@@ -90,6 +90,7 @@ import type { AnimatedList as ChatMainAnimatedList } from "@/vendor/reactNativeC
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
 import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
+import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
@@ -2865,20 +2866,23 @@ export default function MemoryDetailScreen() {
     markLatestRoomRead();
   }, [markRead, mode, room.data, roomId]);
 
-  // Keyboard handling is driven per-frame by react-native-keyboard-controller's
-  // native move events. The composer is an absolute sibling of the message list,
-  // so only the draft container rides the OS keyboard; the screen itself does
-  // not relayout or chase the animation.
+  // Keyboard handling: the composer is an absolute sibling of the message
+  // list, so only the draft container rides the OS keyboard; the screen itself
+  // does not relayout. The shift is derived from the DRIVEN keyboard height
+  // (pre-calculated open animation, gated per-frame close) rather than the raw
+  // per-frame events — raw-following was proven on-device to hop/judder at the
+  // top of the open because display frames drop until the IME animation
+  // completes. See useDrivenKeyboardHeight for the forensics. The safe-area
+  // gap is a flat subtraction from that single value (not blended by a second
+  // progress signal — two signals settling on different frames wiggles).
   const keyboardMotion = useKeyboardMotion();
-  const keyboardOffset = keyboardMotion.offset;
+  const { height: drivenKeyboardHeight } = useDrivenKeyboardHeight();
   const isChatMode = mode === "chat";
   const closedComposerBottomPadding = getComposerClosedBottomPadding(insets.bottom);
   const chatKeyboardShift = useDerivedValue(() => {
     if (!isChatMode) return 0;
-    const keyboardHeight = Math.max(0, -keyboardOffset.value);
     const closedSafeAreaGap = Math.max(0, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
-    const effectiveHeight = Math.max(0, keyboardHeight - (closedSafeAreaGap * keyboardMotion.progress.value));
-    return -effectiveHeight;
+    return -Math.max(0, drivenKeyboardHeight.value - closedSafeAreaGap);
   }, [closedComposerBottomPadding, isChatMode]);
   const chatListKeyboardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: chatKeyboardShift.value }]

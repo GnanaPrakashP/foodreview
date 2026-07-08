@@ -16,7 +16,6 @@ import {
   View
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { useKeyboardHandler } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
   runOnJS,
@@ -29,6 +28,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { avatarColor, timeAgo } from "@/components/posts/PostCard";
 import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
+import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useReportContentMutation } from "@/hooks/useReports";
 import { useBlockUserMutation } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -52,13 +52,6 @@ function initialsForName(name: string) {
 }
 
 function noopCommentCountChange() {}
-
-// TEMPORARY diagnostics for the composer/keyboard sync: logs transition
-// boundaries only (never per-frame), so the logging itself cannot cause jank.
-// Remove once the open animation is verified on-device.
-function logCommentsKeyboardEvent(phase: string, eventHeight: number, shiftNow: number) {
-  console.log(`[comments-kb] ${phase} eventHeight=${Math.round(eventHeight)} shiftNow=${Math.round(shiftNow)}`);
-}
 
 // Mounted once in the root layout so the sheet renders in the main window,
 // under the app's single root KeyboardProvider — never inside a RN Modal,
@@ -122,16 +115,9 @@ function PostCommentsSheet({
   const sheetSlide = useSharedValue(screenHeight);
   const backdropFade = useSharedValue(0);
   const dragY = useSharedValue(0);
-  // Gated keyboard signal. The raw per-frame heights Android IMEs report are
-  // not a clean ramp: Gboard can re-report mid-open and the height can briefly
-  // count the nav-bar inset near the end, so raw-following overshoots and
-  // settles back (a visible wiggle at the top). onStart announces the final
-  // height up front, so per transition we latch that target plus a direction,
-  // clamp every onMove frame to never pass the target and never reverse, and
-  // let onEnd reconcile any genuine retarget with one short glide.
-  const keyboardShift = useSharedValue(0); // gated keyboard height, positive
-  const keyboardTarget = useSharedValue(0); // final height announced by onStart
-  const keyboardDirection = useSharedValue(0); // 1 opening, -1 closing, 0 idle
+  // Wiggle-free keyboard signal (pre-calculated open, gated close) — see the
+  // hook for the full on-device forensics behind it.
+  const { height: keyboardShift, settled: keyboardSettled } = useDrivenKeyboardHeight();
   const commentsData = comments.data ?? [];
   const canSendComment = Boolean(viewerName && commentText.trim()) && !addComment.isPending;
   const composerName = viewerDisplayName || viewerName || "me";
@@ -153,78 +139,6 @@ function PostCommentsSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useKeyboardHandler({
-    onStart: (event) => {
-      "worklet";
-      const target = Math.max(0, event.height);
-      keyboardTarget.value = target;
-      if (target > keyboardShift.value) {
-        keyboardDirection.value = 1;
-        // Opening is PRE-CALCULATED, not chased: on-device logs show the
-        // announced target and final height agree exactly (378 == 378), yet
-        // chasing per-frame IME events still shimmied at the top — events
-        // arrive on the event clock, not the render clock, and this pipeline
-        // drops frames during the slide. A time-based animation to the known
-        // destination samples cleanly at every rendered frame instead.
-        // Curve mirrors AOSP's IME sync animation (PathInterpolator(0.2, 0,
-        // 0, 1)); duration comes from the event MINUS ~60ms: frame-by-frame
-        // screen captures show this device drops frames right until the IME
-        // animation completes, which eats the curve's slow final crawl and
-        // replays it as a late visible hop. Landing early parks the composer
-        // while frames still render; the keyboard closes the last sliver
-        // beneath it unnoticed.
-        const duration = event.duration > 0
-          ? Math.max(120, Math.min(event.duration, 1000) - 60)
-          : 225;
-        keyboardShift.value = withTiming(target, {
-          duration,
-          easing: Easing.bezier(0.2, 0, 0, 1)
-        });
-      } else if (target < keyboardShift.value) {
-        keyboardDirection.value = -1;
-      } else {
-        keyboardDirection.value = 0;
-      }
-      runOnJS(logCommentsKeyboardEvent)("start", target, keyboardShift.value);
-    },
-    onMove: (event) => {
-      "worklet";
-      if (keyboardDirection.value > 0) return; // opening: timing animation owns the value
-      const raw = Math.max(0, event.height);
-      if (keyboardDirection.value < 0) {
-        // Closing follows the keyboard per frame (verified smooth on-device):
-        // only ever move down, and never below the announced target.
-        keyboardShift.value = Math.max(
-          Math.min(keyboardShift.value, raw),
-          keyboardTarget.value
-        );
-      } else {
-        keyboardShift.value = raw;
-      }
-    },
-    onEnd: (event) => {
-      "worklet";
-      const finalHeight = Math.max(0, event.height);
-      runOnJS(logCommentsKeyboardEvent)("end", finalHeight, keyboardShift.value);
-      // A cancelled/superseded transition also fires onEnd — with the OLD
-      // animation's height (device logs showed end(0) mid-open followed 1ms
-      // later by a fresh start(378)). Reconciling toward that stale height
-      // dove the composer 60px+ mid-slide. Only honor an end that matches the
-      // transition we are actually tracking; a fresh onStart re-drives the
-      // rest.
-      if (Math.abs(finalHeight - keyboardTarget.value) > 1) return;
-      keyboardDirection.value = 0;
-      if (Math.abs(keyboardShift.value - finalHeight) > 1) {
-        keyboardShift.value = withTiming(finalHeight, {
-          duration: 120,
-          easing: Easing.out(Easing.quad)
-        });
-      } else {
-        keyboardShift.value = finalHeight;
-      }
-    }
-  }, []);
-
   const backdropStyle = useAnimatedStyle(() => ({ opacity: backdropFade.value }));
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: sheetSlide.value + dragY.value }]
@@ -242,11 +156,12 @@ function PostCommentsSheet({
     return { transform: [{ translateY: -shift }] };
   }, [composerBottomPadding]);
   // Scroll reserve so bottom comments can still be scrolled above the open
-  // keyboard: a footer spacer sized on the UI thread straight from the
-  // announced keyboard target. No React state, so opening the keyboard causes
-  // ZERO commits from this component — a commit landing mid-slide can disturb
-  // the composer's in-flight transform for a frame.
-  const listReserveStyle = useAnimatedStyle(() => ({ height: keyboardTarget.value }));
+  // keyboard: a footer spacer sized on the UI thread from the SETTLED keyboard
+  // height. No React state (a commit landing mid-slide can disturb the
+  // composer's in-flight transform) and no layout during the slide either —
+  // the settled value only changes after a transition completes, so the app
+  // does zero work in the frames where the slide is rendering.
+  const listReserveStyle = useAnimatedStyle(() => ({ height: keyboardSettled.value }));
 
   function closeSheet() {
     if (closingRef.current) return;
