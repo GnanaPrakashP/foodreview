@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams } from "expo-router";
+import { CalendarDays } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
@@ -45,6 +46,12 @@ function formatTrustScore(score: number | string | null | undefined) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
+function joinedLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `Joined ${new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(date)}`;
+}
+
 export default function PersonProfileScreen() {
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
@@ -83,19 +90,12 @@ export default function PersonProfileScreen() {
     leaveCircle.isPending ||
     respondToCircleRequest.isPending;
   const relationshipDisabled = relationshipBusy;
-  const relationshipLabel = relationshipBusy
-    ? relationshipAction === "cancel"
-      ? "Cancelling"
-      : relationshipAction === "leave"
-        ? "Leaving"
-        : relationshipAction === "accept" || relationshipAction === "reject"
-          ? "Updating"
-          : "Requesting"
-    : relationshipStatus === "pending"
-      ? "Requested"
-      : relationshipStatus === "joined"
-        ? "In Circle"
-        : "Request";
+  const relationshipLabel = relationshipStatus === "pending"
+    ? "Requested"
+    : relationshipStatus === "joined"
+      ? "In Circle"
+      : "Request";
+  const joinedAt = page.data ? joinedLabel(page.data.profile.createdAt) : "";
 
   useEffect(() => {
     setRelationshipOverride(null);
@@ -140,7 +140,6 @@ export default function PersonProfileScreen() {
       } else if (result !== "joined" && optimisticStatus === "joined") {
         setCircleCountOverride(previousCount);
       }
-      await reconcileRelationship();
     } catch (error) {
       setRelationshipOverride(previousStatus);
       setCircleCountOverride(previousCount);
@@ -335,6 +334,12 @@ export default function PersonProfileScreen() {
                 <View style={styles.identity}>
                   <Text numberOfLines={1} style={styles.name}>{page.data.displayName}</Text>
                   <Text numberOfLines={1} style={styles.handle}>@{page.data.profile.username}</Text>
+                  {joinedAt ? (
+                    <View style={styles.joinedRow}>
+                      <CalendarDays size={13} color={themeColors.muted} strokeWidth={2} />
+                      <Text style={styles.joinedText}>{joinedAt}</Text>
+                    </View>
+                  ) : null}
                   {page.data.profile.bio ? <Text style={styles.bio}>{page.data.profile.bio}</Text> : null}
                 </View>
               </View>
@@ -509,6 +514,18 @@ function createStyles(c: ThemeColors) {
       fontSize: 13,
       lineHeight: 18,
       marginTop: 2
+    },
+    joinedRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 5,
+      marginTop: 4
+    },
+    joinedText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      fontSize: 12,
+      lineHeight: 16
     },
     relationshipButton: {
       alignItems: "center",

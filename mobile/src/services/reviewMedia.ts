@@ -188,6 +188,33 @@ async function prepareImageForUpload(input: UploadReviewMediaInput): Promise<Pre
   }
 }
 
+const SUPPORTED_SOURCE_VIDEO_MIME_EXTENSIONS: Record<string, string> = {
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/webm": "webm"
+};
+const REVIEW_VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+
+// Videos upload as recorded — no client-side re-encode is available, so the
+// only preparation is reading the bytes and validating type and size.
+async function prepareVideoForUpload(input: UploadReviewMediaInput): Promise<PreparedReviewMedia> {
+  const mimeType = normalizedMimeType(input.mimeType) || "video/mp4";
+  const extension = SUPPORTED_SOURCE_VIDEO_MIME_EXTENSIONS[mimeType];
+  if (!extension) throw new Error("Videos must be MP4, MOV, or WebM.");
+
+  const body = await fileBodyFromUri(input.uri);
+  if (body.byteLength <= 0) throw new Error("Selected video could not be read.");
+  if (body.byteLength > REVIEW_VIDEO_MAX_BYTES) throw new Error("Videos must be 50 MB or less.");
+
+  return {
+    body,
+    extension,
+    height: input.height ?? null,
+    mimeType,
+    width: input.width ?? null
+  };
+}
+
 function assertJpegSignature(body: ArrayBuffer) {
   const bytes = new Uint8Array(body.slice(0, 3));
   if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
@@ -300,9 +327,10 @@ function storageUploadErrorMessage(xhr: XMLHttpRequest) {
 
 export async function uploadReviewMedia(input: UploadReviewMediaInput): Promise<UploadedReviewMedia> {
   const mediaKind = resolveMediaKind(input);
-  if (mediaKind === "video") throw new Error("Video uploads are temporarily unavailable");
   input.onUploadProgress?.(0.03);
-  const prepared = await prepareImageForUpload(input);
+  const prepared = mediaKind === "video"
+    ? await prepareVideoForUpload(input)
+    : await prepareImageForUpload(input);
   input.onUploadProgress?.(0.12);
   const intent = await createReviewMediaUploadIntent({
     category: input.category,

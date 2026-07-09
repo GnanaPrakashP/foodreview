@@ -15,8 +15,8 @@ export const TASTE_TRUST_DECAY_WINDOWS = [
 ] as const;
 
 export const TASTE_TRUST_FEEDBACK_OPTIONS = [
-  { label: "Must Try", value: 1.0 },
-  { label: "Not Worth It", value: -0.5 },
+  { label: "Helpful", value: 1.0 },
+  { label: "Disagree", value: -0.5 },
 ] as const;
 
 export type TasteTrustFeedbackLabel = typeof TASTE_TRUST_FEEDBACK_OPTIONS[number]["label"];
@@ -83,32 +83,15 @@ const feedbackValueByLabel = new Map<string, number>(
   TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => [option.label, option.value])
 );
 
-const legacyFeedbackLabelMap = new Map<string, TasteTrustFeedbackLabel>([
-  ["strongly agree", "Must Try"],
-  ["agree", "Must Try"],
-  ["craving", "Must Try"],
-  ["disagree", "Not Worth It"],
-  ["strongly disagree", "Not Worth It"],
-]);
-
-const storageFeedbackLabelByLabel = new Map<TasteTrustFeedbackLabel, string>([
-  ["Must Try", "Strongly agree"],
-  ["Not Worth It", "Strongly disagree"],
-]);
-
 function emptyFeedbackCounts(): TasteTrustFeedbackCounts {
   return Object.fromEntries(
     TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => [option.label, 0])
   ) as TasteTrustFeedbackCounts;
 }
 
-function feedbackCountLabel(row: TasteTrustFeedbackRow, value: number): TasteTrustFeedbackLabel | null {
+function feedbackCountLabel(row: TasteTrustFeedbackRow): TasteTrustFeedbackLabel | null {
   const label = typeof row.feedback_label === "string" ? row.feedback_label.trim() : "";
   if (feedbackValueByLabel.has(label)) return label as TasteTrustFeedbackLabel;
-  const legacyLabel = legacyFeedbackLabelMap.get(label.toLowerCase());
-  if (legacyLabel) return legacyLabel;
-  if (value >= 0.7) return "Must Try";
-  if (value < 0) return "Not Worth It";
   return null;
 }
 
@@ -139,18 +122,19 @@ export function formatTrustScore(score: number | string | null | undefined) {
 
 export function feedbackValueForLabel(label: unknown): number | null {
   if (typeof label !== "string") return null;
-  return feedbackValueByLabel.get(label) ?? null;
+  const trimmed = label.trim();
+  return feedbackValueByLabel.get(trimmed) ?? null;
 }
 
 export function displayFeedbackLabelForLabel(label: unknown): TasteTrustFeedbackLabel | null {
   if (typeof label !== "string") return null;
   const trimmed = label.trim();
   if (feedbackValueByLabel.has(trimmed)) return trimmed as TasteTrustFeedbackLabel;
-  return legacyFeedbackLabelMap.get(trimmed.toLowerCase()) ?? null;
+  return null;
 }
 
 export function storageFeedbackLabelForLabel(label: TasteTrustFeedbackLabel): string {
-  return storageFeedbackLabelByLabel.get(label) ?? label;
+  return label;
 }
 
 export function trustLevelFor(score: number, confirmedCount: number): TasteTrustLevel {
@@ -294,7 +278,7 @@ export function summarizePostFeedback(rows: TasteTrustFeedbackRow[]): PostTasteT
     else if (value === 0.3) okayCount += 1;
     else if (value < 0) disagreedCount += 1;
 
-    const label = feedbackCountLabel(row, value);
+    const label = feedbackCountLabel(row);
     if (label) feedbackCounts[label] += 1;
   }
 

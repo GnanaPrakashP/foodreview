@@ -7,7 +7,8 @@ import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/l
 import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 import { REVIEW_MEDIA_BUCKET, REVIEW_POST_MAX_ITEMS, type ReviewMediaKind } from "@/lib/server/review-media";
 
-const MAX_REVIEW_VIDEO_DURATION_SECONDS = 10;
+// Matches the mobile camera's 30s recording cap.
+const MAX_REVIEW_VIDEO_DURATION_SECONDS = 30;
 const MAX_REVIEW_TAGS = 5;
 const MAX_REVIEW_TAG_LENGTH = 28;
 
@@ -146,9 +147,6 @@ export async function POST(req: NextRequest) {
   if (incomingMediaItems.length === 0) {
     return NextResponse.json({ error: "Add at least one photo or video" }, { status: 400 });
   }
-  if (incomingMediaItems.some((item) => item.mediaType === "video")) {
-    return NextResponse.json({ error: "Video uploads are temporarily unavailable" }, { status: 400 });
-  }
   const oversizedVideo = incomingMediaItems.find(
     (item) =>
       item.mediaType === "video" &&
@@ -158,7 +156,7 @@ export async function POST(req: NextRequest) {
         item.durationSeconds > MAX_REVIEW_VIDEO_DURATION_SECONDS)
   );
   if (oversizedVideo) {
-    return NextResponse.json({ error: "Videos must be 10 seconds or less" }, { status: 400 });
+    return NextResponse.json({ error: `Videos must be ${MAX_REVIEW_VIDEO_DURATION_SECONDS} seconds or less` }, { status: 400 });
   }
 
   // reviewer_name is always derived from the authenticated session — never from the request body

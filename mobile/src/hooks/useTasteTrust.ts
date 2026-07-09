@@ -1,4 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { patchCachedPostEngagementFields } from "@/hooks/useFeeds";
 import {
   getTasteTrustFeedback,
   removeTasteTrustFeedback,
@@ -20,13 +21,37 @@ export function usePostTasteTrustQuery(postId: string, options: { enabled?: bool
 }
 
 export function useSubmitPostTasteTrustMutation(postId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (feedbackLabel: TasteTrustFeedbackLabel) => submitTasteTrustFeedback({ postId, feedbackLabel })
+    mutationFn: (feedbackLabel: TasteTrustFeedbackLabel) => submitTasteTrustFeedback({ postId, feedbackLabel }),
+    onSuccess: (state) => {
+      queryClient.setQueryData(tasteTrustKeys.post(postId), state);
+      if (state.engagement) {
+        patchCachedPostEngagementFields(queryClient, {
+          foodReaction: state.engagement.foodReaction,
+          mustTryCount: state.engagement.mustTryCount,
+          notWorthItCount: state.engagement.notWorthItCount,
+          postId: state.engagement.postId
+        });
+      }
+    }
   });
 }
 
 export function useRemovePostTasteTrustMutation(postId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => removeTasteTrustFeedback(postId)
+    mutationFn: () => removeTasteTrustFeedback(postId),
+    onSuccess: (state) => {
+      queryClient.setQueryData(tasteTrustKeys.post(postId), state);
+      if (state.engagement) {
+        patchCachedPostEngagementFields(queryClient, {
+          foodReaction: state.engagement.foodReaction,
+          mustTryCount: state.engagement.mustTryCount,
+          notWorthItCount: state.engagement.notWorthItCount,
+          postId: state.engagement.postId
+        });
+      }
+    }
   });
 }

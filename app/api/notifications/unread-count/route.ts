@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   createRouteSupabase,
   filterValidNotifications,
@@ -36,8 +36,8 @@ function isUnread(notification: Notification): boolean {
   return !(notification.is_read || notification.read);
 }
 
-export async function GET() {
-  const supabase = await createRouteSupabase();
+export async function GET(req: NextRequest) {
+  const supabase = await createRouteSupabase(req);
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 

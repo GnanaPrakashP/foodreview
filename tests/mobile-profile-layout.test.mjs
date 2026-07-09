@@ -27,7 +27,6 @@ const normalTopGapSources = new Map([
   ["mobile/app/(tabs)/share.tsx", readFileSync("mobile/app/(tabs)/share.tsx", "utf8")],
   ["mobile/app/dishes/[dish].tsx", readFileSync("mobile/app/dishes/[dish].tsx", "utf8")],
   ["mobile/app/memories/[id]/dish/[dishId].tsx", readFileSync("mobile/app/memories/[id]/dish/[dishId].tsx", "utf8")],
-  ["mobile/app/memories/create.tsx", readFileSync("mobile/app/memories/create.tsx", "utf8")],
   ["mobile/app/notifications.tsx", readFileSync("mobile/app/notifications.tsx", "utf8")],
   ["mobile/app/people/[username].tsx", readFileSync("mobile/app/people/[username].tsx", "utf8")],
   ["mobile/app/restaurants/[placeId].tsx", readFileSync("mobile/app/restaurants/[placeId].tsx", "utf8")],
@@ -180,6 +179,7 @@ test("Profile tab uses one vertical scroll owner with scoped horizontal gestures
   assert.doesNotMatch(profileTabSource, /ListHeaderComponent=\{renderProfileHeader\}/);
   assert.doesNotMatch(profileTabSource, /ListHeaderComponent=\{profileHeader\}/);
 });
+
 
 test("Profile swipe to Create uses the stable tab route", () => {
   assert.match(profileTabSource, /const openCreate = useCallback/);

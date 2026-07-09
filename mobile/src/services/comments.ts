@@ -1,8 +1,5 @@
-import { apiUrl } from "@/api/config";
-import { supabase } from "@/api/supabase";
-import { fetchDisplayNames, getBlockedUsernames } from "@/services/feeds";
-import { getCurrentUserProfile } from "@/services/profiles";
-import type { PostComment } from "@/types/models";
+import { authorizedJson as authorizedApiJson } from "@/api/client";
+import type { PostComment, PostEngagementState } from "@/types/models";
 
 type CommentRow = {
   id: string;
@@ -10,6 +7,15 @@ type CommentRow = {
   user_name: string;
   content: string;
   created_at: string;
+};
+
+export type CommentMutationResult = PostComment & {
+  engagement?: PostEngagementState;
+};
+
+type CommentsApiResponse = {
+  comments: CommentRow[];
+  profileMap?: Record<string, string>;
 };
 
 function initialsForName(name: string) {
@@ -31,66 +37,36 @@ function mapComment(row: CommentRow, displayName: string): PostComment {
   };
 }
 
-async function authToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before commenting");
-  return token;
-}
-
-async function authorizedJson<T>(path: string, init: RequestInit & { body?: string }): Promise<T> {
-  const token = await authToken();
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(init.headers ?? {})
-    }
-  });
-  const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
-  if (!response.ok || !payload) throw new Error(payload?.error ?? "Could not update comments");
-  return payload;
-}
-
 export async function getPostComments(postId: string): Promise<PostComment[]> {
   if (!postId) return [];
 
-  const viewer = await getCurrentUserProfile();
-  const [{ data, error }, blockedNames] = await Promise.all([
-    supabase
-      .from("comments")
-      .select("id, post_id, user_name, content, created_at")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true })
-      .returns<CommentRow[]>(),
-    getBlockedUsernames(viewer?.username ?? "")
-  ]);
+  const payload = await authorizedApiJson<CommentsApiResponse>(
+    `/api/comments?postId=${encodeURIComponent(postId)}`,
+    { method: "GET" },
+    { action: "loading comments", timeoutMs: 10_000 }
+  );
 
-  if (error) throw new Error(error.message);
-
-  const blockedSet = new Set(blockedNames);
-  const rows = (data ?? []).filter((row) => !blockedSet.has(row.user_name));
-  const displayNames = await fetchDisplayNames(rows.map((row) => row.user_name));
-  return rows.map((row) => mapComment(row, displayNames[row.user_name] ?? row.user_name));
+  return (payload.comments ?? []).map((row) => mapComment(row, payload.profileMap?.[row.user_name] ?? row.user_name));
 }
 
-export async function addPostComment(input: { postId: string; content: string }): Promise<PostComment> {
+export async function addPostComment(input: { postId: string; content: string }): Promise<CommentMutationResult> {
   const content = input.content.trim();
   if (!content) throw new Error("Comment is required");
   if (content.length > 500) throw new Error("Comment is too long");
 
-  const data = await authorizedJson<CommentRow>("/api/comments", {
+  const data = await authorizedApiJson<CommentRow & {
+    engagement?: PostEngagementState;
+    profileMap?: Record<string, string>;
+  }>("/api/comments", {
     method: "POST",
     body: JSON.stringify({ postId: input.postId, content })
-  });
+  }, { action: "commenting", timeoutMs: 10_000 });
 
-  return mapComment(data, data.user_name);
+  return { ...mapComment(data, data.profileMap?.[data.user_name] ?? data.user_name), engagement: data.engagement };
 }
 
-export async function deletePostComment(input: { commentId: string }) {
-  await authorizedJson<{ ok: true }>(`/api/comments/${encodeURIComponent(input.commentId)}`, {
+export async function deletePostComment(input: { commentId: string }): Promise<{ engagement?: PostEngagementState }> {
+  return authorizedApiJson<{ ok: true; engagement?: PostEngagementState }>(`/api/comments/${encodeURIComponent(input.commentId)}`, {
     method: "DELETE"
-  });
+  }, { action: "deleting comment", timeoutMs: 10_000 });
 }

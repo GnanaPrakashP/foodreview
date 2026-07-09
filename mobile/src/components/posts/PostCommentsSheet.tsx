@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { MessageCircle, MoreHorizontal, Send, X } from "lucide-react-native";
+import { MessageCircle, Send, Trash2 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -29,13 +29,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { avatarColor, timeAgo } from "@/components/posts/PostCard";
 import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
 import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
-import { useReportContentMutation } from "@/hooks/useReports";
-import { useBlockUserMutation } from "@/hooks/useSettings";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, spacing, typography } from "@/theme";
-import { chooseReportReason } from "@/utils/reporting";
 import type { PostComment } from "@/types/models";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -53,12 +50,17 @@ function initialsForName(name: string) {
 
 function noopCommentCountChange() {}
 
+function sameUsername(first?: string | null, second?: string | null) {
+  return Boolean(first && second && first.trim().toLowerCase() === second.trim().toLowerCase());
+}
+
 // Mounted once in the root layout so the sheet renders in the main window,
 // under the app's single root KeyboardProvider — never inside a RN Modal,
 // whose separate Android window would starve the composer of per-frame
 // keyboard callbacks (composer then lags/misplaces against the IME).
 export function PostCommentsSheetHost() {
   const postId = useCommentsSheetStore((state) => state.postId);
+  const postAuthorName = useCommentsSheetStore((state) => state.postAuthorName);
   const onCommentCountChange = useCommentsSheetStore((state) => state.onCommentCountChange);
   const closeCommentsSheet = useCommentsSheetStore((state) => state.closeCommentsSheet);
   const viewerProfile = useSessionStore((state) => state.profile);
@@ -73,6 +75,7 @@ export function PostCommentsSheetHost() {
       onClose={closeCommentsSheet}
       onCommentCountChange={onCommentCountChange ?? noopCommentCountChange}
       postId={postId}
+      postAuthorName={postAuthorName}
       viewerDisplayName={viewerDisplayName}
       viewerName={viewerName}
     />
@@ -83,12 +86,14 @@ function PostCommentsSheet({
   onClose,
   onCommentCountChange,
   postId,
+  postAuthorName,
   viewerDisplayName,
   viewerName
 }: {
   onClose: () => void;
   onCommentCountChange: (updater: (count: number) => number) => void;
   postId: string;
+  postAuthorName: string | null;
   viewerDisplayName: string;
   viewerName: string;
 }) {
@@ -105,8 +110,6 @@ function PostCommentsSheet({
   const comments = usePostCommentsQuery(postId);
   const addComment = useAddPostCommentMutation(postId);
   const deleteComment = useDeletePostCommentMutation(postId);
-  const reportContent = useReportContentMutation();
-  const blockUser = useBlockUserMutation();
   const [commentText, setCommentText] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const listRef = useRef<FlatList<PostComment>>(null);
@@ -203,7 +206,7 @@ function PostCommentsSheet({
     // The overlay sits above the whole navigator, so it must close as the
     // profile screen opens (the old per-card Modal had the same stacking).
     closeSheet();
-    if (comment.userName.toLowerCase() === viewerName.toLowerCase()) {
+    if (sameUsername(comment.userName, viewerName)) {
       router.push("/profile");
       return;
     }
@@ -215,8 +218,9 @@ function PostCommentsSheet({
     if (!content || addComment.isPending) return;
     try {
       setCommentText("");
-      await addComment.mutateAsync(content);
-      onCommentCountChange((count) => count + 1);
+      const comment = await addComment.mutateAsync(content);
+      if (comment.engagement) onCommentCountChange(() => comment.engagement?.commentCount ?? 0);
+      else onCommentCountChange((count) => count + 1);
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     } catch (error) {
       setCommentText(content);
@@ -233,8 +237,9 @@ function PostCommentsSheet({
         style: "destructive",
         onPress: async () => {
           try {
-            await deleteComment.mutateAsync(commentId);
-            onCommentCountChange((count) => Math.max(0, count - 1));
+            const result = await deleteComment.mutateAsync(commentId);
+            if (result.engagement) onCommentCountChange(() => result.engagement?.commentCount ?? 0);
+            else onCommentCountChange((count) => Math.max(0, count - 1));
           } catch (error) {
             Alert.alert("Could not delete comment", error instanceof Error ? error.message : "Please try again.");
           }
@@ -243,79 +248,36 @@ function PostCommentsSheet({
     ]);
   }
 
-  async function reportComment(comment: PostComment) {
-    if (reportContent.isPending) return;
-    const reason = await chooseReportReason("comment");
-    if (!reason) return;
-    try {
-      await reportContent.mutateAsync({ targetId: comment.id, targetType: "comment", reason });
-      Alert.alert("Report sent", "Thanks. FoodReview moderation will review it.");
-    } catch (error) {
-      Alert.alert("Could not send report", error instanceof Error ? error.message : "Please try again.");
-    }
-  }
-
-  function confirmBlockCommentAuthor(comment: PostComment) {
-    if (blockUser.isPending) return;
-    Alert.alert("Block @" + comment.userName + "?", "You won't see each other's posts, comments, or circle activity.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: blockUser.isPending ? "Blocking..." : "Block",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await blockUser.mutateAsync(comment.userName);
-            Alert.alert("Blocked", "@" + comment.userName + " has been added to your block list.");
-          } catch (error) {
-            Alert.alert("Could not block", error instanceof Error ? error.message : "Please try again.");
-          }
-        }
-      }
-    ]);
-  }
-
-  function openCommentActions(comment: PostComment) {
-    if (comment.userName === viewerName) {
-      confirmDeleteComment(comment.id);
-      return;
-    }
-
-    Alert.alert("Comment options", "Choose an action for @" + comment.userName + ".", [
-      { text: "Report comment", style: "destructive", onPress: () => void reportComment(comment) },
-      { text: "Block @" + comment.userName, style: "destructive", onPress: () => confirmBlockCommentAuthor(comment) },
-      { text: "Cancel", style: "cancel" }
-    ]);
-  }
-
   function renderComment(comment: PostComment) {
-    const isOwnComment = comment.userName === viewerName;
+    const isOwnComment = sameUsername(comment.userName, viewerName);
+    const canDeleteComment = isOwnComment || sameUsername(postAuthorName, viewerName);
     const relativeTime = timeAgo(comment.createdAt);
+    const visibleName = comment.authorName || comment.userName;
 
     return (
       <Pressable
-        accessibilityLabel={`Comment by ${comment.authorName}`}
-        onLongPress={() => openCommentActions(comment)}
+        accessibilityLabel={`Comment by ${visibleName}`}
         style={styles.drawerCommentRow}
       >
         <Pressable
-          accessibilityLabel={`Open ${comment.authorName}'s profile`}
+          accessibilityLabel={`Open ${visibleName}'s profile`}
           accessibilityRole="button"
           hitSlop={8}
           onPress={() => openCommentAuthor(comment)}
-          style={[styles.drawerCommentAvatar, { backgroundColor: avatarColor(comment.authorName) }]}
+          style={[styles.drawerCommentAvatar, { backgroundColor: avatarColor(visibleName) }]}
         >
           <Text style={styles.drawerCommentAvatarText}>{comment.authorInitials}</Text>
         </Pressable>
         <View style={styles.drawerCommentBody}>
           <View style={styles.drawerCommentTopRow}>
             <Pressable
-              accessibilityLabel={`Open ${comment.authorName}'s profile`}
+              accessibilityLabel={`Open ${visibleName}'s profile`}
               accessibilityRole="button"
               hitSlop={6}
               onPress={() => openCommentAuthor(comment)}
               style={styles.drawerCommentMeta}
             >
-              <Text numberOfLines={1} style={styles.drawerCommentAuthor}>{comment.authorName}</Text>
+              <Text numberOfLines={1} style={styles.drawerCommentAuthor}>{visibleName}</Text>
               {isOwnComment ? (
                 <View style={styles.drawerCommentYouBadge}>
                   <Text style={styles.drawerCommentYouBadgeText}>You</Text>
@@ -323,14 +285,18 @@ function PostCommentsSheet({
               ) : null}
               {relativeTime ? <Text style={styles.drawerCommentTime}>{relativeTime}</Text> : null}
             </Pressable>
-            <Pressable
-              accessibilityLabel={isOwnComment ? "Delete comment" : "Comment options"}
-              hitSlop={8}
-              onPress={() => openCommentActions(comment)}
-              style={styles.drawerCommentAction}
-            >
-              <MoreHorizontal size={16} color={themeColors.muted} strokeWidth={2.2} />
-            </Pressable>
+            {canDeleteComment ? (
+              <Pressable
+                accessibilityLabel={`Delete comment by ${visibleName}`}
+                accessibilityRole="button"
+                disabled={deleteComment.isPending}
+                hitSlop={8}
+                onPress={() => confirmDeleteComment(comment.id)}
+                style={styles.drawerCommentDelete}
+              >
+                <Trash2 size={15} color={themeColors.muted} strokeWidth={2.2} />
+              </Pressable>
+            ) : null}
           </View>
           <Text style={styles.drawerCommentContent}>{comment.content}</Text>
         </View>
@@ -361,7 +327,6 @@ function PostCommentsSheet({
           <MessageCircle size={22} color={themeColors.muted} strokeWidth={2} />
         </View>
         <Text style={styles.drawerEmptyTitle}>No comments yet</Text>
-        <Text style={styles.drawerEmptySubtitle}>Be the first to share your take.</Text>
       </View>
     );
   }
@@ -385,15 +350,6 @@ function PostCommentsSheet({
                   />
                 ) : null}
                 <Text style={styles.commentDrawerTitle}>Comments</Text>
-                <Pressable
-                  accessibilityLabel="Close comments"
-                  accessibilityRole="button"
-                  hitSlop={10}
-                  onPress={closeSheet}
-                  style={styles.commentsSheetClose}
-                >
-                  <X size={16} color={themeColors.cream} strokeWidth={2.2} />
-                </Pressable>
               </View>
             </View>
           </GestureDetector>
@@ -582,18 +538,6 @@ function createStyles(c: ThemeColors) {
       left: 0,
       position: "absolute"
     },
-    commentsSheetClose: {
-      alignItems: "center",
-      backgroundColor: c.surface,
-      borderColor: c.border,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      height: 30,
-      justifyContent: "center",
-      position: "absolute",
-      right: 0,
-      width: 30
-    },
     commentsSheetScroll: {
       flex: 1
     },
@@ -696,7 +640,6 @@ function createStyles(c: ThemeColors) {
       borderWidth: 1,
       height: 34,
       justifyContent: "center",
-      marginTop: 1,
       width: 34
     },
     drawerCommentAvatarText: {
@@ -710,7 +653,7 @@ function createStyles(c: ThemeColors) {
       minWidth: 0
     },
     drawerCommentTopRow: {
-      alignItems: "center",
+      alignItems: "flex-start",
       flexDirection: "row",
       gap: spacing.sm
     },
@@ -749,12 +692,13 @@ function createStyles(c: ThemeColors) {
       fontSize: 11,
       lineHeight: 15
     },
-    drawerCommentAction: {
+    drawerCommentDelete: {
       alignItems: "center",
       borderRadius: radius.pill,
       height: 26,
       justifyContent: "center",
       marginRight: -4,
+      marginTop: -4,
       width: 26
     },
     drawerCommentContent: {

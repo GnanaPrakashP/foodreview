@@ -904,8 +904,8 @@ create table if not exists public.recommendation_feedback (
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
   constraint recommendation_feedback_unique_user_post unique (post_id, feedback_user_id),
-  constraint recommendation_feedback_value_check check (feedback_value in (1.0, 0.7, 0.3, -0.5, -1.0)),
-  constraint recommendation_feedback_label_check check (feedback_label in ('Strongly agree', 'Agree', 'Neutral', 'Disagree', 'Strongly disagree'))
+  constraint recommendation_feedback_value_check check (feedback_value in (1.0, -0.5)),
+  constraint recommendation_feedback_label_check check (feedback_label in ('Helpful', 'Disagree'))
 );
 create index if not exists recommendation_feedback_post_id_idx on public.recommendation_feedback(post_id);
 create index if not exists recommendation_feedback_reviewer_user_id_idx on public.recommendation_feedback(reviewer_user_id);

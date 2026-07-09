@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { NOTIFICATION_OWNERSHIP_SELECT } from "@/lib/selects";
 import { createRouteSupabase, getNotificationViewer, isNotificationSchemaError, unauthorized } from "../../_utils";
 
-export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ notificationId: string }> }) {
-  const supabase = await createRouteSupabase();
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ notificationId: string }> }) {
+  const supabase = await createRouteSupabase(req);
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 

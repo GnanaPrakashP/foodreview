@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createRouteSupabase, getNotificationViewer, isNotificationSchemaError, unauthorized } from "../_utils";
 
-export async function PATCH() {
-  const supabase = await createRouteSupabase();
+export async function PATCH(req: NextRequest) {
+  const supabase = await createRouteSupabase(req);
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 

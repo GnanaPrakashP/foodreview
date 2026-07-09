@@ -1,6 +1,5 @@
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { Link } from "expo-router";
 import { usePathname, useRouter } from "expo-router";
 import {
   Bookmark,
@@ -18,11 +17,13 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Linking,
+  Share,
   Pressable,
   StyleSheet,
   Text,
   View
 } from "react-native";
+import { publicWebUrl } from "@/api/config";
 import {
   ReactionBar,
   type FoodReactionCounts,
@@ -30,7 +31,7 @@ import {
 } from "@/components/reactions/ReactionBar";
 import {
   useDeletePostMutation,
-  useRequestCircleAccessMutation,
+  useSetCircleAccessStatusMutation,
   useTogglePostBookmarkMutation,
   useTogglePostLikeMutation
 } from "@/hooks/useEngagement";
@@ -60,13 +61,32 @@ type PostCardProps = {
 };
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
+type CircleRequestVisualStatus = "idle" | "pending" | "joined";
 
 const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 
 const reactionFeedbackLabelByType: Record<FoodReactionType, TasteTrustFeedbackLabel> = {
-  mustTry: "Must Try",
-  notWorthIt: "Not Worth It"
+  mustTry: "Helpful",
+  notWorthIt: "Disagree"
 };
+
+function initialCircleRequestStatus(
+  circleRequestStatus: ReviewPost["circleRequestStatus"],
+  isPublicDiscovery: ReviewPost["isPublicDiscovery"]
+): CircleRequestVisualStatus {
+  if (circleRequestStatus === "pending" || circleRequestStatus === "joined") return circleRequestStatus;
+  return isPublicDiscovery ? "idle" : "joined";
+}
+
+function optimisticCircleRequestStatus(post: ReviewPost): "pending" | "joined" {
+  return post.circleRequestAccountType === "public" ? "joined" : "pending";
+}
+
+function circleRequestLabel(status: CircleRequestVisualStatus) {
+  if (status === "pending") return "Requested";
+  if (status === "joined") return "In Circle";
+  return "Request";
+}
 
 export function avatarColor(name: string) {
   let hash = 0;
@@ -95,27 +115,58 @@ function compactLocationLabel(area: string | null, address: string | null) {
 function feedbackCountFor(summary: PostTasteTrustSummary, label: TasteTrustFeedbackLabel) {
   const count = summary.feedback_counts?.[label];
   if (typeof count === "number" && Number.isFinite(count)) return count;
-  if (label === "Must Try") return summary.agree_count ?? summary.agreed_count ?? 0;
-  if (label === "Not Worth It") return summary.disagreed_count;
+  if (label === "Helpful") return summary.agree_count ?? summary.agreed_count ?? 0;
+  if (label === "Disagree") return summary.disagreed_count;
   return 0;
 }
 
 function reactionTypeForFeedbackLabel(label: TasteTrustFeedbackLabel | null): FoodReactionType | null {
-  if (label === "Must Try") return "mustTry";
-  if (label === "Not Worth It") return "notWorthIt";
+  if (label === "Helpful") return "mustTry";
+  if (label === "Disagree") return "notWorthIt";
   return null;
 }
 
 function foodReactionCountsFor(summary: PostTasteTrustSummary): FoodReactionCounts {
   return {
-    mustTry: feedbackCountFor(summary, "Must Try"),
-    notWorthIt: feedbackCountFor(summary, "Not Worth It")
+    mustTry: feedbackCountFor(summary, "Helpful"),
+    notWorthIt: feedbackCountFor(summary, "Disagree")
   };
 }
 
 function foodReactionTotalFor(summary: PostTasteTrustSummary) {
   const counts = foodReactionCountsFor(summary);
   return counts.mustTry + counts.notWorthIt;
+}
+
+function tasteTrustStateFromValues(
+  foodReaction: ReviewPost["foodReaction"],
+  mustTryCountValue: number | undefined,
+  notWorthItCountValue: number | undefined
+): TasteTrustFeedbackState {
+  const mustTryCount = mustTryCountValue ?? 0;
+  const notWorthItCount = notWorthItCountValue ?? 0;
+  return {
+    summary: {
+      ...EMPTY_POST_TASTE_TRUST_SUMMARY,
+      agree_count: mustTryCount,
+      agreed_count: mustTryCount,
+      disagreed_count: notWorthItCount,
+      feedback_counts: {
+        Helpful: mustTryCount,
+        Disagree: notWorthItCount
+      },
+      tried_count: mustTryCount + notWorthItCount
+    },
+    myFeedbackLabel: foodReaction === "MUST_TRY"
+      ? "Helpful"
+      : foodReaction === "NOT_WORTH_IT"
+        ? "Disagree"
+        : null
+  };
+}
+
+function tasteTrustStateFromPost(post: ReviewPost): TasteTrustFeedbackState {
+  return tasteTrustStateFromValues(post.foodReaction, post.mustTryCount, post.notWorthItCount);
 }
 
 function optimisticTasteTrustState(
@@ -151,7 +202,7 @@ function PostCardComponent({ post }: PostCardProps) {
   const deletePostMutation = useDeletePostMutation();
   const reportMutation = useReportContentMutation();
   const blockUserMutation = useBlockUserMutation();
-  const requestCircleMutation = useRequestCircleAccessMutation();
+  const requestCircleMutation = useSetCircleAccessStatusMutation();
   const viewerProfile = useSessionStore((state) => state.profile);
   const viewerName = viewerProfile?.username ?? "";
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
@@ -165,37 +216,75 @@ function PostCardComponent({ post }: PostCardProps) {
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [commentCount, setCommentCount] = useState(post.commentCount);
   const [bookmarked, setBookmarked] = useState(post.bookmarkedByMe);
-  const [requestStatus, setRequestStatus] = useState(post.circleRequestStatus ?? "joined");
+  const [requestStatus, setRequestStatus] = useState(
+    initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery)
+  );
+  const [requestInteracted, setRequestInteracted] = useState(false);
   const [showPostActions, setShowPostActions] = useState(false);
   const likedRef = useRef(post.likedByMe);
   const likeCountRef = useRef(post.likeCount);
+  const syncedLikedRef = useRef(post.likedByMe);
+  const syncedLikeCountRef = useRef(post.likeCount);
+  const desiredLikedRef = useRef(post.likedByMe);
+  const likeInFlightRef = useRef(false);
   const bookmarkedRef = useRef(post.bookmarkedByMe);
-  const likeRequestSeq = useRef(0);
-  const bookmarkRequestSeq = useRef(0);
+  const syncedBookmarkedRef = useRef(post.bookmarkedByMe);
+  const desiredBookmarkedRef = useRef(post.bookmarkedByMe);
+  const bookmarkInFlightRef = useRef(false);
+  const requestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
+  const syncedRequestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
+  const desiredRequestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
+  const requestInFlightRef = useRef(false);
   const hasReviewContent = Boolean(post.body) || post.tags.length > 0 || post.items.length > 0;
   const isPrivatePost = post.visibility === "me";
   const feedbackQuery = usePostTasteTrustQuery(post.id, { enabled: !isPrivatePost });
   const [visualTasteTrustState, setVisualTasteTrustState] = useState<TasteTrustFeedbackState | undefined>();
+  const fallbackTasteTrustState = useMemo(() => tasteTrustStateFromPost(post), [post]);
   const foodReactionTotal = foodReactionTotalFor(
-    visualTasteTrustState?.summary ?? feedbackQuery.data?.summary ?? EMPTY_POST_TASTE_TRUST_SUMMARY
+    visualTasteTrustState?.summary ?? feedbackQuery.data?.summary ?? fallbackTasteTrustState.summary
   );
   const targetUsername = post.reviewerUsername || post.reviewerName;
   const isOwnPost = Boolean(viewerName) && targetUsername.toLowerCase() === viewerName.toLowerCase();
-  const showRequestButton = !isOwnPost && post.isPublicDiscovery && requestStatus !== "joined";
+  const showRequestButton = !isOwnPost && post.isPublicDiscovery && (requestStatus !== "joined" || requestInteracted);
   const postActionsBusy = deletePostMutation.isPending || reportMutation.isPending || blockUserMutation.isPending;
 
   useEffect(() => {
-    setVisualTasteTrustState(undefined);
     likedRef.current = post.likedByMe;
     likeCountRef.current = post.likeCount;
-    bookmarkedRef.current = post.bookmarkedByMe;
+    syncedLikedRef.current = post.likedByMe;
+    syncedLikeCountRef.current = post.likeCount;
+    desiredLikedRef.current = post.likedByMe;
     setLiked(post.likedByMe);
     setLikeCount(post.likeCount);
-    setCommentCount(post.commentCount);
+  }, [post.id, post.likeCount, post.likedByMe]);
+
+  useEffect(() => {
+    bookmarkedRef.current = post.bookmarkedByMe;
+    syncedBookmarkedRef.current = post.bookmarkedByMe;
+    desiredBookmarkedRef.current = post.bookmarkedByMe;
     setBookmarked(post.bookmarkedByMe);
-    setRequestStatus(post.circleRequestStatus ?? "joined");
+  }, [post.bookmarkedByMe, post.id]);
+
+  useEffect(() => {
+    setCommentCount(post.commentCount);
+  }, [post.commentCount, post.id]);
+
+  useEffect(() => {
+    const nextStatus = initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery);
+    requestStatusRef.current = nextStatus;
+    syncedRequestStatusRef.current = nextStatus;
+    desiredRequestStatusRef.current = nextStatus;
+    setRequestStatus(nextStatus);
+    setRequestInteracted(false);
+  }, [post.circleRequestStatus, post.id, post.isPublicDiscovery]);
+
+  useEffect(() => {
+    setVisualTasteTrustState(undefined);
+  }, [post.foodReaction, post.id, post.mustTryCount, post.notWorthItCount]);
+
+  useEffect(() => {
     setShowPostActions(false);
-  }, [post.bookmarkedByMe, post.circleRequestStatus, post.commentCount, post.id, post.likeCount, post.likedByMe]);
+  }, [post.id]);
 
   useEffect(() => {
     setVisualTasteTrustState(feedbackQuery.data);
@@ -243,50 +332,115 @@ function PostCardComponent({ post }: PostCardProps) {
     });
   }
 
-  async function toggleLike() {
-    const requestId = likeRequestSeq.current + 1;
-    likeRequestSeq.current = requestId;
-    const previousLiked = likedRef.current;
-    const previousLikeCount = likeCountRef.current;
-    const nextLiked = !previousLiked;
-    const nextLikeCount = nextLiked ? previousLikeCount + 1 : Math.max(0, previousLikeCount - 1);
+  async function sharePost() {
+    let postUrl: string;
+    try {
+      postUrl = publicWebUrl(`/reviews/${encodeURIComponent(post.id)}`);
+    } catch (error) {
+      Alert.alert("Could not share post", error instanceof Error ? error.message : "Please try again.");
+      return;
+    }
+    const title = `${post.restaurantName} on CircleBites`;
+    const dishNames = post.items.map((item) => item.name).filter(Boolean).slice(0, 2).join(", ");
+    const fallbackMessage = dishNames
+      ? `Check out ${dishNames} at ${post.restaurantName}`
+      : `Check out this spot: ${post.restaurantName}`;
+    const message = [
+      post.body?.trim() || fallbackMessage,
+      postUrl
+    ].filter(Boolean).join("\n\n");
+
+    try {
+      await Share.share({
+        message,
+        title,
+        url: postUrl
+      });
+    } catch {
+      Alert.alert("Could not share post", "Please try again.");
+    }
+  }
+
+  function setVisualLike(nextLiked: boolean, nextLikeCount: number) {
     likedRef.current = nextLiked;
     likeCountRef.current = nextLikeCount;
     setLiked(nextLiked);
     setLikeCount(nextLikeCount);
+  }
+
+  async function flushLikeRequest() {
+    if (likeInFlightRef.current) return;
+    const targetLiked = desiredLikedRef.current;
+    if (targetLiked === syncedLikedRef.current) return;
+
+    likeInFlightRef.current = true;
     try {
-      await likeMutation.mutateAsync({ liked: previousLiked, postId: post.id });
+      const engagement = await likeMutation.mutateAsync({ liked: !targetLiked, postId: post.id });
+      syncedLikedRef.current = engagement.likedByMe;
+      syncedLikeCountRef.current = engagement.likeCount;
+      if (desiredLikedRef.current === targetLiked) {
+        setVisualLike(engagement.likedByMe, engagement.likeCount);
+      }
     } catch (error) {
-      if (requestId === likeRequestSeq.current) {
-        likedRef.current = previousLiked;
-        likeCountRef.current = previousLikeCount;
-        setLiked(previousLiked);
-        setLikeCount(previousLikeCount);
+      if (desiredLikedRef.current === targetLiked) {
+        setVisualLike(syncedLikedRef.current, syncedLikeCountRef.current);
         Alert.alert("Could not update like", error instanceof Error ? error.message : "Please try again.");
+      }
+    } finally {
+      likeInFlightRef.current = false;
+      if (desiredLikedRef.current !== syncedLikedRef.current) {
+        void flushLikeRequest();
       }
     }
   }
 
-  async function toggleBookmark() {
-    const requestId = bookmarkRequestSeq.current + 1;
-    bookmarkRequestSeq.current = requestId;
-    const previousBookmarked = bookmarkedRef.current;
-    const nextBookmarked = !previousBookmarked;
+  function toggleLike() {
+    const nextLiked = !likedRef.current;
+    const nextLikeCount = nextLiked ? likeCountRef.current + 1 : Math.max(0, likeCountRef.current - 1);
+    desiredLikedRef.current = nextLiked;
+    setVisualLike(nextLiked, nextLikeCount);
+    void flushLikeRequest();
+  }
+
+  function setVisualBookmark(nextBookmarked: boolean) {
     bookmarkedRef.current = nextBookmarked;
     setBookmarked(nextBookmarked);
+  }
+
+  async function flushBookmarkRequest() {
+    if (bookmarkInFlightRef.current) return;
+    const targetBookmarked = desiredBookmarkedRef.current;
+    if (targetBookmarked === syncedBookmarkedRef.current) return;
+
+    bookmarkInFlightRef.current = true;
     try {
-      await bookmarkMutation.mutateAsync({
-        bookmarked: previousBookmarked,
+      const engagement = await bookmarkMutation.mutateAsync({
+        bookmarked: !targetBookmarked,
         postId: post.id,
         restaurantName: post.restaurantName
       });
+      syncedBookmarkedRef.current = engagement.bookmarkedByMe;
+      if (desiredBookmarkedRef.current === targetBookmarked) {
+        setVisualBookmark(engagement.bookmarkedByMe);
+      }
     } catch (error) {
-      if (requestId === bookmarkRequestSeq.current) {
-        bookmarkedRef.current = previousBookmarked;
-        setBookmarked(previousBookmarked);
+      if (desiredBookmarkedRef.current === targetBookmarked) {
+        setVisualBookmark(syncedBookmarkedRef.current);
         Alert.alert("Could not update save", error instanceof Error ? error.message : "Please try again.");
       }
+    } finally {
+      bookmarkInFlightRef.current = false;
+      if (desiredBookmarkedRef.current !== syncedBookmarkedRef.current) {
+        void flushBookmarkRequest();
+      }
     }
+  }
+
+  function toggleBookmark() {
+    const nextBookmarked = !bookmarkedRef.current;
+    desiredBookmarkedRef.current = nextBookmarked;
+    setVisualBookmark(nextBookmarked);
+    void flushBookmarkRequest();
   }
 
   function confirmDeletePost() {
@@ -342,16 +496,50 @@ function PostCardComponent({ post }: PostCardProps) {
     ]);
   }
 
-  async function requestCircle() {
-    if (!showRequestButton || requestCircleMutation.isPending) return;
-    setRequestStatus("loading");
+  function setVisualRequestStatus(nextStatus: CircleRequestVisualStatus) {
+    requestStatusRef.current = nextStatus;
+    setRequestStatus(nextStatus);
+  }
+
+  async function flushCircleRequest() {
+    if (requestInFlightRef.current) return;
+    const targetStatus = desiredRequestStatusRef.current;
+    const currentStatus = syncedRequestStatusRef.current;
+    if (targetStatus === currentStatus) return;
+
+    requestInFlightRef.current = true;
+    setRequestInteracted(true);
     try {
-      const result = await requestCircleMutation.mutateAsync({ receiverName: targetUsername });
-      setRequestStatus(result === "joined" ? "joined" : "pending");
+      const result = await requestCircleMutation.mutateAsync({
+        currentStatus,
+        desiredStatus: targetStatus,
+        receiverName: targetUsername
+      });
+      syncedRequestStatusRef.current = result;
+      if (desiredRequestStatusRef.current === targetStatus) {
+        desiredRequestStatusRef.current = result;
+        setVisualRequestStatus(result);
+      }
     } catch (error) {
-      setRequestStatus(post.circleRequestStatus ?? "idle");
-      Alert.alert("Could not request access", error instanceof Error ? error.message : "Please try again.");
+      if (desiredRequestStatusRef.current === targetStatus) {
+        setVisualRequestStatus(syncedRequestStatusRef.current);
+        Alert.alert("Could not update circle request", error instanceof Error ? error.message : "Please try again.");
+      }
+    } finally {
+      requestInFlightRef.current = false;
+      if (desiredRequestStatusRef.current !== syncedRequestStatusRef.current) {
+        void flushCircleRequest();
+      }
     }
+  }
+
+  function toggleCircleRequest() {
+    if (!showRequestButton) return;
+    const nextStatus = requestStatusRef.current === "idle" ? optimisticCircleRequestStatus(post) : "idle";
+    setRequestInteracted(true);
+    desiredRequestStatusRef.current = nextStatus;
+    setVisualRequestStatus(nextStatus);
+    void flushCircleRequest();
   }
 
   return (
@@ -384,14 +572,11 @@ function PostCardComponent({ post }: PostCardProps) {
         </View>
         {showRequestButton ? (
           <Pressable
-            disabled={requestStatus === "loading" || requestStatus === "pending"}
             hitSlop={8}
-            onPress={requestCircle}
-            style={[styles.requestButton, requestStatus !== "idle" && styles.requestButtonMuted]}
+            onPress={toggleCircleRequest}
+            style={styles.requestButton}
           >
-            <Text style={styles.requestButtonText}>
-              {requestStatus === "loading" ? "Requesting" : requestStatus === "pending" ? "Requested" : "Request"}
-            </Text>
+            <Text style={styles.requestButtonText}>{circleRequestLabel(requestStatus)}</Text>
           </Pressable>
         ) : null}
         <View style={styles.postActionsWrap}>
@@ -539,7 +724,14 @@ function PostCardComponent({ post }: PostCardProps) {
 
       <View style={styles.actions}>
         <View style={styles.actionCluster}>
-          <Pressable hitSlop={8} onPress={toggleLike} style={styles.action}>
+          <Pressable
+            accessibilityLabel={liked ? `Unlike post, ${likeCount} likes` : `Like post, ${likeCount} likes`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: liked }}
+            hitSlop={8}
+            onPress={toggleLike}
+            style={styles.action}
+          >
             <Heart
               size={19}
               color={liked ? themeColors.danger : themeColors.muted}
@@ -555,7 +747,7 @@ function PostCardComponent({ post }: PostCardProps) {
             hitSlop={8}
             onPress={() => {
               if (commentsOpen) closeCommentsSheet();
-              else openCommentsSheet(post.id, setCommentCount);
+              else openCommentsSheet(post.id, setCommentCount, post.reviewerUsername || post.reviewerName);
             }}
             style={styles.action}
           >
@@ -571,7 +763,14 @@ function PostCardComponent({ post }: PostCardProps) {
             <Text style={styles.actionText}>{foodReactionTotal}</Text>
           </View>
         </View>
-        <Pressable hitSlop={8} onPress={toggleBookmark} style={styles.iconButton}>
+        <Pressable
+          accessibilityLabel={bookmarked ? "Remove saved post" : "Save post"}
+          accessibilityRole="button"
+          accessibilityState={{ selected: bookmarked }}
+          hitSlop={8}
+          onPress={toggleBookmark}
+          style={styles.iconButton}
+        >
           <Bookmark
             size={19}
             color={bookmarked ? themeColors.orange : themeColors.muted}
@@ -579,21 +778,9 @@ function PostCardComponent({ post }: PostCardProps) {
             strokeWidth={2}
           />
         </Pressable>
-        <Link
-          href={{
-            pathname: "/memories/create",
-            params: {
-              sourcePostId: post.id,
-              restaurantName: post.restaurantName,
-              area: post.area ?? ""
-            }
-          }}
-          asChild
-        >
-          <Pressable hitSlop={8} style={styles.iconButton}>
-            <Share2 size={18} color={themeColors.muted} strokeWidth={2} />
-          </Pressable>
-        </Link>
+        <Pressable accessibilityLabel="Share post" accessibilityRole="button" hitSlop={8} onPress={() => void sharePost()} style={styles.iconButton}>
+          <Share2 size={18} color={themeColors.muted} strokeWidth={2} />
+        </Pressable>
       </View>
 
       <TasteTrustFeedback
@@ -629,10 +816,11 @@ function TasteTrustFeedback({
   const submitFeedback = useSubmitPostTasteTrustMutation(post.id);
   const removeFeedback = useRemovePostTasteTrustMutation(post.id);
   const [statusText, setStatusText] = useState("");
-  const initialFeedbackState = feedbackState ?? {
-    summary: EMPTY_POST_TASTE_TRUST_SUMMARY,
-    myFeedbackLabel: null
-  };
+  const fallbackFeedbackState = useMemo(
+    () => tasteTrustStateFromValues(post.foodReaction, post.mustTryCount, post.notWorthItCount),
+    [post.foodReaction, post.mustTryCount, post.notWorthItCount]
+  );
+  const initialFeedbackState = feedbackState ?? fallbackFeedbackState;
   const [localFeedbackState, setLocalFeedbackState] = useState<TasteTrustFeedbackState>(initialFeedbackState);
   const localFeedbackStateRef = useRef<TasteTrustFeedbackState>(initialFeedbackState);
   const latestFeedbackStateRef = useRef<TasteTrustFeedbackState | undefined>(feedbackState);
@@ -649,16 +837,13 @@ function TasteTrustFeedback({
 
   useEffect(() => {
     hasLocalReactionInteraction.current = false;
-    const nextState = latestFeedbackStateRef.current ?? {
-      summary: EMPTY_POST_TASTE_TRUST_SUMMARY,
-      myFeedbackLabel: null
-    };
+    const nextState = latestFeedbackStateRef.current ?? fallbackFeedbackState;
     localFeedbackStateRef.current = nextState;
     syncedFeedbackStateRef.current = nextState;
     desiredFeedbackLabelRef.current = nextState.myFeedbackLabel;
     setLocalFeedbackState(nextState);
     onVisualStateChange(nextState);
-  }, [onVisualStateChange, post.id]);
+  }, [fallbackFeedbackState, onVisualStateChange, post.id]);
 
   useEffect(() => {
     if (hasLocalReactionInteraction.current || !feedbackState) return;

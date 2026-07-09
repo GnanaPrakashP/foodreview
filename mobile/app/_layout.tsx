@@ -2,7 +2,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from "@react-navig
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useMemo } from "react";
-import { Platform } from "react-native";
+import { LogBox, Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { configureReanimatedLogger, ReanimatedLogLevel } from "react-native-reanimated";
@@ -16,7 +16,11 @@ configureReanimatedLogger({
   strict: false
 });
 
-// The Explore detail screens, circle screen, settings, and every settings
+// expo-router internally calls navigate with the deprecated object signature
+// (fires on dismissTo/replace); the banner is noise until the library updates.
+LogBox.ignoreLogs(["Passing an object as the argument to 'navigate' is deprecated"]);
+
+// The Explore detail screens, notifications, circle screen, settings, and every settings
 // sub-screen present over the screen beneath them and drive their own custom
 // slide. Native animation is disabled and
 // the container is transparent so the screen underneath shows during the slide.
@@ -32,6 +36,7 @@ const SLIDE_OVER_ROUTES = [
   "restaurants/by-name/[restaurant]",
   "dishes/[dish]",
   "people/[username]",
+  "notifications",
   "memories/[id]/dish/[dishId]",
   "profile/circle",
   "profile/settings",
@@ -104,6 +109,7 @@ export default function RootLayout() {
                 feels instant; a quick fade also hides the brief sensor warm-up. */}
             <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
             <Stack.Screen name="share/camera" options={{ animation: "fade", animationDuration: 150 }} />
+            <Stack.Screen name="share/crop" options={{ animation: "fade", animationDuration: 150 }} />
             {/* Settings and its sub-screens present over the screen beneath them and
                 drive their own custom slide. Native
                 animation is disabled because native transparentModal ignores

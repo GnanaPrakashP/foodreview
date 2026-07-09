@@ -6,6 +6,9 @@
 --   3. engagement/media score
 --   4. recency
 
+-- Legacy-only migration kept for historical deployments/backfill.
+-- Runtime mobile Circle feed loading now uses /api/feed/circle, not this RPC.
+
 create or replace function public.circle_feed_page_v1(
   p_cursor text default null,
   p_limit integer default 24

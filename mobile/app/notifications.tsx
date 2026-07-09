@@ -1,15 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  BackHandler,
+  Easing,
   Pressable,
   RefreshControl,
   SectionList,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View
 } from "react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
@@ -35,6 +39,10 @@ type NotificationSection = {
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 const avatarColors = ["#C04020", "#7C3AED", "#0F766E", "#A96F04", "#BE185D", "#2563EB"];
+const EMPTY_NOTIFICATIONS: AppNotification[] = [];
+const NOTIFICATIONS_ENTER_MS = 300;
+const NOTIFICATIONS_EXIT_MS = 120;
+const NOTIFICATIONS_PANEL_TRAVEL_MAX = 640;
 
 function effectiveDate(notification: AppNotification) {
   return notification.updatedAt || notification.createdAt;
@@ -110,6 +118,10 @@ export default function NotificationsScreen() {
   const router = useRouter();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const { width } = useWindowDimensions();
+  const enterProgress = useRef(new Animated.Value(0)).current;
+  const isClosingRef = useRef(false);
+  const autoReadAttemptedCountRef = useRef<number | null>(null);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const notifications = useNotificationsQuery({ enabled: isReady && isAuthenticated });
@@ -119,10 +131,74 @@ export default function NotificationsScreen() {
   const respondToCircle = useRespondToCircleRequestMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const items = notifications.data?.notifications ?? [];
+  const items = notifications.data?.notifications ?? EMPTY_NOTIFICATIONS;
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const sections = useMemo(() => buildSections(items), [items]);
   const refreshing = notifications.isFetching && !notifications.isLoading;
+  const panelTranslateX = enterProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Math.min(width, NOTIFICATIONS_PANEL_TRAVEL_MAX), 0]
+  });
+  const panelOpacity = enterProgress.interpolate({
+    inputRange: [0, 0.35, 1],
+    outputRange: [0.92, 1, 1]
+  });
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      Animated.timing(enterProgress, {
+        duration: NOTIFICATIONS_ENTER_MS,
+        easing: Easing.out(Easing.cubic),
+        toValue: 1,
+        useNativeDriver: true
+      }).start();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [enterProgress]);
+
+  useEffect(() => {
+    if (!isReady || !isAuthenticated || notifications.isLoading || unreadCount <= 0) {
+      if (unreadCount === 0) autoReadAttemptedCountRef.current = null;
+      return;
+    }
+    if (markAllRead.isPending || autoReadAttemptedCountRef.current === unreadCount) return;
+
+    autoReadAttemptedCountRef.current = unreadCount;
+    markAllRead.mutate(undefined, {
+      onError: (error) => {
+        console.warn("[notifications] auto mark read failed:", error);
+      }
+    });
+  }, [isAuthenticated, isReady, markAllRead, notifications.isLoading, unreadCount]);
+
+  const performBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.dismissTo("/");
+  }, [router]);
+
+  const close = useCallback(() => {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+    Animated.timing(enterProgress, {
+      duration: NOTIFICATIONS_EXIT_MS,
+      easing: Easing.in(Easing.cubic),
+      toValue: 0,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (finished) performBack();
+    });
+  }, [enterProgress, performBack]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+        close();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [close])
+  );
 
   async function openNotification(notification: AppNotification) {
     if (!notification.isRead) {
@@ -252,90 +328,100 @@ export default function NotificationsScreen() {
     );
   }
 
-  const subtitle = !isAuthenticated
-    ? "Sign in to view activity"
-    : unreadCount === 0
-      ? "All caught up"
-      : `${unreadCount} unread`;
-
   return (
-    <Screen padded={false} style={styles.screen}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerMain}>
-          <MemoryRouteHeader kicker="Circle" onBack={() => router.back()} subtitle={subtitle} title="Notifications" />
-        </View>
-        {unreadCount > 0 ? (
-          <Pressable
-            accessibilityRole="button"
-            disabled={markAllRead.isPending}
-            onPress={() => void markAll()}
-            style={({ pressed }) => [styles.markAllButton, pressed && styles.pressed, markAllRead.isPending && styles.disabledAction]}
-          >
-            <Ionicons name="checkmark-done" size={15} color={themeColors.cream} />
-            <Text style={styles.markAllText}>Mark all</Text>
-          </Pressable>
-        ) : null}
-      </View>
-
-      {!isReady ? (
-        <View style={styles.stateWrap}>
-          <LoadingState message="Checking your session." title="Loading notifications" />
-        </View>
-      ) : !isAuthenticated ? (
-        <View style={styles.stateWrap}>
-          <EmptyState
-            icon="notifications-outline"
-            message="Sign in to see likes, comments, and circle requests."
-            title="Notifications are private"
-          />
-        </View>
-      ) : notifications.isLoading ? (
-        <View style={styles.stateWrap}>
-          <LoadingState message="Fetching likes, comments, and circle activity." title="Loading notifications" />
-        </View>
-      ) : notifications.isError ? (
-        <View style={styles.stateWrap}>
-          <ErrorState
-            actionLabel="Try again"
-            message="We couldn't load your activity inbox."
-            onAction={() => notifications.refetch()}
-            title="Notifications unavailable"
-          />
-        </View>
-      ) : sections.length === 0 ? (
-        <View style={styles.stateWrap}>
-          <EmptyState
-            icon="notifications-outline"
-            message="Circle requests, likes, comments, and circle posts will show here."
-            title="No notifications yet"
-          />
-        </View>
-      ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => item.id}
-          renderItem={renderNotification}
-          renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
-          refreshControl={(
-            <RefreshControl
-              colors={[themeColors.orange]}
-              onRefresh={() => notifications.refetch()}
-              progressBackgroundColor={themeColors.card}
-              refreshing={refreshing}
-              tintColor={themeColors.orange}
+    <Animated.View style={[
+      styles.slideRoot,
+      {
+        opacity: panelOpacity,
+        transform: [{ translateX: panelTranslateX }]
+      }
+    ]}>
+      <Screen padded={false} style={styles.screen}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerMain}>
+            <MemoryRouteHeader
+              backButtonVariant="plain"
+              onBack={close}
+              title="Notifications"
+              titleWeight="regular"
             />
-          )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          stickySectionHeadersEnabled={false}
-        />
-      )}
-    </Screen>
+          </View>
+          {unreadCount > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={markAllRead.isPending}
+              onPress={() => void markAll()}
+              style={({ pressed }) => [styles.markAllButton, pressed && styles.pressed, markAllRead.isPending && styles.disabledAction]}
+            >
+              <Ionicons name="checkmark-done" size={15} color={themeColors.cream} />
+              <Text style={styles.markAllText}>Mark all</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {!isReady ? (
+          <View style={styles.stateWrap}>
+            <LoadingState message="Checking your session." title="Loading notifications" />
+          </View>
+        ) : !isAuthenticated ? (
+          <View style={styles.stateWrap}>
+            <EmptyState
+              icon="notifications-outline"
+              message="Sign in to see likes, comments, and circle requests."
+              title="Notifications are private"
+            />
+          </View>
+        ) : notifications.isLoading ? (
+          <View style={styles.stateWrap}>
+            <LoadingState message="Fetching likes, comments, and circle activity." title="Loading notifications" />
+          </View>
+        ) : notifications.isError ? (
+          <View style={styles.stateWrap}>
+            <ErrorState
+              actionLabel="Try again"
+              message="We couldn't load your activity inbox."
+              onAction={() => notifications.refetch()}
+              title="Notifications unavailable"
+            />
+          </View>
+        ) : sections.length === 0 ? (
+          <View style={styles.stateWrap}>
+            <EmptyState
+              icon="notifications-outline"
+              message="Circle requests, likes, comments, and circle posts will show here."
+              title="No notifications yet"
+            />
+          </View>
+        ) : (
+          <SectionList
+            sections={sections}
+            keyExtractor={(item) => item.id}
+            renderItem={renderNotification}
+            renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
+            refreshControl={(
+              <RefreshControl
+                colors={[themeColors.orange]}
+                onRefresh={() => notifications.refetch()}
+                progressBackgroundColor={themeColors.card}
+                refreshing={refreshing}
+                tintColor={themeColors.orange}
+              />
+            )}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            stickySectionHeadersEnabled={false}
+          />
+        )}
+      </Screen>
+    </Animated.View>
   );
 }
 
 function createStyles(themeColors: ThemeColors) {
   return StyleSheet.create({
+    slideRoot: {
+      flex: 1
+    },
     screen: {
       flex: 1,
       paddingHorizontal: spacing.lg,

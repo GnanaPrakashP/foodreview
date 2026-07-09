@@ -3,7 +3,43 @@ import { MEMORY_MEDIA_MAX_ITEMS, MEMORY_VIDEO_MAX_DURATION_MS } from "@/constant
 
 const imageMediaTypes: ImagePicker.MediaType[] = ["images"];
 const allMediaTypes: ImagePicker.MediaType[] = ["images", "videos"];
-const POST_VIDEO_MAX_DURATION_MS = 10_000;
+const POST_VIDEO_MAX_DURATION_MS = 30_000;
+
+export type PostMediaPickerResult = {
+  assets: ImagePicker.ImagePickerAsset[];
+  error: string | null;
+};
+
+// Multi-select gallery pick for the Post-a-Bite flow. selectionLimit should
+// be the post's remaining free media slots.
+export async function pickPostMediaFromGallery(selectionLimit: number): Promise<PostMediaPickerResult> {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    return {
+      assets: [],
+      error: "Photo library permission was not granted."
+    };
+  }
+
+  const limit = Math.max(1, Math.floor(selectionLimit));
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsEditing: false,
+    allowsMultipleSelection: limit > 1,
+    mediaTypes: allMediaTypes,
+    quality: 0.9,
+    selectionLimit: limit,
+    videoMaxDuration: POST_VIDEO_MAX_DURATION_MS / 1000
+  });
+
+  if (result.canceled) {
+    return { assets: [], error: null };
+  }
+
+  return {
+    assets: result.assets.slice(0, limit),
+    error: null
+  };
+}
 
 export type RecentPostImage = {
   id: string;
@@ -26,8 +62,7 @@ export async function pickPostImageFromGallery() {
   }
 
   const result = await ImagePicker.launchImageLibraryAsync({
-    allowsEditing: true,
-    aspect: [4, 5],
+    allowsEditing: false,
     mediaTypes: imageMediaTypes,
     quality: 0.9,
     selectionLimit: 1

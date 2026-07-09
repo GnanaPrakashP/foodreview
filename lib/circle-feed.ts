@@ -155,6 +155,7 @@ export type CircleFeedPage = {
   tasteTrustSummaryMap: Record<string, PostTasteTrustSummary>;
   profileMap: Record<string, string>;
   myName: string;
+  viewerUserId: string;
   joinedCircles: string[];
   mutualMembers: string[];
   hasMore: boolean;
@@ -232,20 +233,20 @@ async function loadCircleFeedPageForNames(
   const myName = candidateNames[0] ?? "";
   const joinedCircles = Array.from(joinedCircleSet);
   const mutualMembers = Array.from(mutualMemberSet);
-  const feedReviewerNames = Array.from(new Set(joinedCircles.filter(Boolean)));
+  const trustedReviewerNames = Array.from(new Set([myName, ...joinedCircles].filter(Boolean)));
+  const trustedReviewerSet = new Set(trustedReviewerNames);
   const excludePostIdSet = await loadSeenPostIdsForUser(readDb, userId, excludePostIds);
 
   const visibleRows: Review[] = [];
   const seenFallbackRows: Review[] = [];
   let scanCursor = cursor;
-  let exhausted = feedReviewerNames.length === 0;
+  let exhausted = !myName;
   const batchSize = Math.min(100, Math.max(limit + 1, limit * 2));
 
   while (!exhausted && visibleRows.length <= limit) {
     let query = readDb
       .from("reviews")
       .select(REVIEW_SELECT)
-      .in("reviewer_name", feedReviewerNames)
       .is("deleted_at", null)
       .is("hidden_at", null)
       .is("reported_at", null)
@@ -268,10 +269,18 @@ async function loadCircleFeedPageForNames(
       break;
     }
 
-    const visibleBatch = filterCircleTrendingReviews(batch, {
-      viewerName: myName,
-      circleOwnerNames: joinedCircles,
-    });
+    const trustedVisibleBatch = filterCircleTrendingReviews(
+      batch.filter((review) => trustedReviewerSet.has(review.reviewer_name)),
+      {
+        viewerName: myName,
+        circleOwnerNames: joinedCircles,
+      }
+    );
+    const trustedVisibleIds = new Set(trustedVisibleBatch.map((review) => review.id));
+    const visibleBatch = batch.filter((review) =>
+      trustedVisibleIds.has(review.id) ||
+      (!trustedReviewerSet.has(review.reviewer_name) && review.visibility !== "circle" && review.visibility !== "me")
+    );
 
     for (const review of visibleBatch) {
       if (excludePostIdSet.has(review.id)) {
@@ -346,6 +355,7 @@ async function loadCircleFeedPageForNames(
     tasteTrustSummaryMap,
     profileMap,
     myName,
+    viewerUserId: userId ?? "",
     joinedCircles,
     mutualMembers,
     hasMore,

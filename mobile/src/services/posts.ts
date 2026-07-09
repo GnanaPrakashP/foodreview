@@ -6,8 +6,6 @@ import { getCurrentUserProfile } from "@/services/profiles";
 import { uploadReviewMedia } from "@/services/reviewMedia";
 import type { FoodItem, Visibility } from "@/types/models";
 
-const REVIEW_VIDEO_DISABLED_MESSAGE = "Video uploads are temporarily unavailable";
-
 export type CreatePostMediaInput = {
   uri: string;
   mimeType?: string | null;
@@ -79,11 +77,6 @@ function mediaInputs(input: CreatePostInput): CreatePostMediaInput[] {
 function validateInput(input: CreatePostInput) {
   const items = mediaInputs(input);
   if (items.length === 0) throw new Error("Choose a photo or video");
-  for (const media of items) {
-    if (resolveMediaType(media) === "video") {
-      throw new Error(REVIEW_VIDEO_DISABLED_MESSAGE);
-    }
-  }
   if (!input.restaurantName.trim()) throw new Error("Restaurant name is required");
   const dishes = normalizedDishes(input);
   if (dishes.length === 0) throw new Error("Add at least one dish");
@@ -146,7 +139,6 @@ async function uploadOneWithProgress(
   onUploadProgress?: (progress: number) => void
 ): Promise<UploadedMedia> {
   const mediaType = resolveMediaType(media);
-  if (mediaType === "video") throw new Error(REVIEW_VIDEO_DISABLED_MESSAGE);
   const uploaded = await uploadReviewMedia({
     category: "post",
     durationMs: media.durationMs,
@@ -161,14 +153,14 @@ async function uploadOneWithProgress(
 
   return {
     durationMs: media.durationMs ?? null,
-    height: media.height ?? null,
+    height: uploaded.height ?? media.height ?? null,
     intentId: uploaded.intentId,
     mediaType,
     mimeType: uploaded.mimeType,
     publicUrl: uploaded.publicUrl,
     sizeBytes: uploaded.fileSizeBytes,
     storagePath: uploaded.storagePath,
-    width: media.width ?? null
+    width: uploaded.width ?? media.width ?? null
   };
 }
 

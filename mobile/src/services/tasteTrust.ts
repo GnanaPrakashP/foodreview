@@ -1,9 +1,9 @@
-import { apiUrl } from "@/api/config";
-import { supabase } from "@/api/supabase";
+import { authorizedJson } from "@/api/client";
+import type { PostEngagementState } from "@/types/models";
 
 export const TASTE_TRUST_FEEDBACK_OPTIONS = [
-  { label: "Must Try", value: 1.0 },
-  { label: "Not Worth It", value: -0.5 }
+  { label: "Helpful", value: 1.0 },
+  { label: "Disagree", value: -0.5 }
 ] as const;
 
 export type TasteTrustFeedbackLabel = typeof TASTE_TRUST_FEEDBACK_OPTIONS[number]["label"];
@@ -20,11 +20,13 @@ export type PostTasteTrustSummary = {
 };
 
 export type TasteTrustFeedbackState = {
+  engagement?: PostEngagementState;
   summary: PostTasteTrustSummary;
   myFeedbackLabel: TasteTrustFeedbackLabel | null;
 };
 
 type FeedbackPayload = {
+  engagement?: PostEngagementState;
   error?: string;
   myFeedbackLabel?: unknown;
   postSummary?: unknown;
@@ -39,19 +41,12 @@ export const EMPTY_POST_TASTE_TRUST_SUMMARY: PostTasteTrustSummary = {
   disagreed_count: 0,
   agreement_percentage: null,
   feedback_counts: {
-    "Must Try": 0,
-    "Not Worth It": 0
+    Helpful: 0,
+    Disagree: 0
   }
 };
 
 const feedbackLabels = new Set<string>(TASTE_TRUST_FEEDBACK_OPTIONS.map((option) => option.label));
-const legacyFeedbackLabelMap = new Map<string, TasteTrustFeedbackLabel>([
-  ["strongly agree", "Must Try"],
-  ["agree", "Must Try"],
-  ["craving", "Must Try"],
-  ["disagree", "Not Worth It"],
-  ["strongly disagree", "Not Worth It"]
-]);
 
 function isFeedbackLabel(value: unknown): value is TasteTrustFeedbackLabel {
   return typeof value === "string" && feedbackLabels.has(value);
@@ -59,8 +54,7 @@ function isFeedbackLabel(value: unknown): value is TasteTrustFeedbackLabel {
 
 function displayFeedbackLabel(value: unknown): TasteTrustFeedbackLabel | null {
   if (isFeedbackLabel(value)) return value;
-  if (typeof value !== "string") return null;
-  return legacyFeedbackLabelMap.get(value.trim().toLowerCase()) ?? null;
+  return null;
 }
 
 function numberValue(value: unknown) {
@@ -70,13 +64,14 @@ function numberValue(value: unknown) {
 
 function normalizeFeedbackCounts(value: unknown): TasteTrustFeedbackCounts {
   const counts: TasteTrustFeedbackCounts = {
-    "Must Try": 0,
-    "Not Worth It": 0
+    Helpful: 0,
+    Disagree: 0
   };
   if (!value || typeof value !== "object") return counts;
   const candidate = value as Record<string, unknown>;
-  for (const option of TASTE_TRUST_FEEDBACK_OPTIONS) {
-    counts[option.label] = numberValue(candidate[option.label]);
+  for (const [rawLabel, rawCount] of Object.entries(candidate)) {
+    const label = displayFeedbackLabel(rawLabel);
+    if (label) counts[label] += numberValue(rawCount);
   }
   return counts;
 }
@@ -99,34 +94,49 @@ function normalizePostSummary(value: unknown): PostTasteTrustSummary {
   };
 }
 
-function normalizeFeedbackPayload(payload: FeedbackPayload | null): TasteTrustFeedbackState {
+function feedbackLabelFromEngagement(engagement?: PostEngagementState): TasteTrustFeedbackLabel | null {
+  if (engagement?.foodReaction === "MUST_TRY") return "Helpful";
+  if (engagement?.foodReaction === "NOT_WORTH_IT") return "Disagree";
+  return null;
+}
+
+function summaryFromEngagement(engagement: PostEngagementState): PostTasteTrustSummary {
   return {
+    ...EMPTY_POST_TASTE_TRUST_SUMMARY,
+    agree_count: engagement.mustTryCount,
+    agreed_count: engagement.mustTryCount,
+    disagreed_count: engagement.notWorthItCount,
+    feedback_counts: {
+      Helpful: engagement.mustTryCount,
+      Disagree: engagement.notWorthItCount
+    },
+    tried_count: engagement.mustTryCount + engagement.notWorthItCount
+  };
+}
+
+function normalizeFeedbackPayload(payload: FeedbackPayload | null): TasteTrustFeedbackState {
+  if (payload?.engagement) {
+    return {
+      engagement: payload.engagement,
+      summary: summaryFromEngagement(payload.engagement),
+      myFeedbackLabel: feedbackLabelFromEngagement(payload.engagement)
+    };
+  }
+
+  return {
+    engagement: payload?.engagement,
     summary: normalizePostSummary(payload?.postSummary ?? payload?.summary),
     myFeedbackLabel: displayFeedbackLabel(payload?.myFeedbackLabel)
   };
 }
 
-async function sessionToken(action: string, required: boolean) {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token && required) throw new Error(`Log in before ${action}`);
-  return token ?? null;
-}
-
-async function parseJson(response: Response): Promise<FeedbackPayload | null> {
-  return response.json().catch(() => null) as Promise<FeedbackPayload | null>;
-}
-
 export async function getTasteTrustFeedback(postId: string): Promise<TasteTrustFeedbackState> {
   if (!postId) return normalizeFeedbackPayload(null);
-  const token = await sessionToken("checking Taste Trust feedback", false);
-  const response = await fetch(apiUrl(`/api/taste-trust/feedback?postId=${encodeURIComponent(postId)}`), {
-    cache: "no-store",
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
-  });
-  const payload = await parseJson(response);
-  if (!response.ok) throw new Error(payload?.error ?? "Could not load Taste Trust feedback");
+  const payload = await authorizedJson<FeedbackPayload>(
+    `/api/taste-trust/feedback?postId=${encodeURIComponent(postId)}`,
+    { method: "GET" },
+    { action: "checking Taste Trust feedback", timeoutMs: 10_000 }
+  );
   return normalizeFeedbackPayload(payload);
 }
 
@@ -137,30 +147,19 @@ export async function submitTasteTrustFeedback(input: {
   if (!input.postId) throw new Error("Post is required");
   if (!isFeedbackLabel(input.feedbackLabel)) throw new Error("Invalid Taste Trust feedback");
 
-  const token = await sessionToken("adding Taste Trust feedback", true);
-  const response = await fetch(apiUrl("/api/taste-trust/feedback"), {
+  const payload = await authorizedJson<FeedbackPayload>("/api/taste-trust/feedback", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({ postId: input.postId, feedbackLabel: input.feedbackLabel })
-  });
-  const payload = await parseJson(response);
-  if (!response.ok) throw new Error(payload?.error ?? "Could not save Taste Trust feedback");
+  }, { action: "adding Taste Trust feedback", timeoutMs: 10_000 });
   return normalizeFeedbackPayload(payload);
 }
 
 export async function removeTasteTrustFeedback(postId: string): Promise<TasteTrustFeedbackState> {
   if (!postId) throw new Error("Post is required");
-  const token = await sessionToken("removing Taste Trust feedback", true);
-  const response = await fetch(apiUrl(`/api/taste-trust/feedback?postId=${encodeURIComponent(postId)}`), {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
-  const payload = await parseJson(response);
-  if (!response.ok) throw new Error(payload?.error ?? "Could not remove Taste Trust feedback");
+  const payload = await authorizedJson<FeedbackPayload>(
+    `/api/taste-trust/feedback?postId=${encodeURIComponent(postId)}`,
+    { method: "DELETE" },
+    { action: "removing Taste Trust feedback", timeoutMs: 10_000 }
+  );
   return normalizeFeedbackPayload(payload);
 }

@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { canActorReadPost } from "@/lib/server/review-access";
 import { recalculateUserReputation } from "@/lib/server/reputation";
+import { getPostEngagementState } from "@/lib/server/post-engagement-state";
 
 async function refreshPostAuthorReputation(db: { from: (table: string) => any }, postId: unknown): Promise<string> {
   if (typeof postId !== "string" || !postId.trim()) return "";
@@ -28,6 +29,19 @@ async function refreshPostAuthorReputation(db: { from: (table: string) => any },
     console.error("[wishlist] Failed to refresh author reputation:", error);
   }
   return reviewerName;
+}
+
+function scheduleWishlistSideEffects(input: {
+  actorName: string;
+  postId: unknown;
+}) {
+  after(async () => {
+    const writeDb = createAdminClient();
+    const reviewerName = await refreshPostAuthorReputation(writeDb, input.postId);
+    const names = [input.actorName];
+    if (reviewerName && reviewerName !== input.actorName) names.push(reviewerName);
+    invalidateSocialCachesForNames(names);
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -61,11 +75,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const reviewerName = await refreshPostAuthorReputation(writeDb, postId);
-  const names = [actor.actorName];
-  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
-  invalidateSocialCachesForNames(names);
-  return NextResponse.json({ ok: true });
+  scheduleWishlistSideEffects({ actorName: actor.actorName, postId });
+  const engagement = typeof postId === "string" && postId.trim()
+    ? await getPostEngagementState(writeDb, postId.trim(), actor)
+    : null;
+  return NextResponse.json({ ok: true, engagement, ...(engagement ?? {}) });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -98,9 +112,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const reviewerName = await refreshPostAuthorReputation(writeDb, postId);
-  const names = [actor.actorName];
-  if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
-  invalidateSocialCachesForNames(names);
-  return NextResponse.json({ ok: true });
+  scheduleWishlistSideEffects({ actorName: actor.actorName, postId });
+  const engagement = typeof postId === "string" && postId.trim()
+    ? await getPostEngagementState(writeDb, postId.trim(), actor)
+    : null;
+  return NextResponse.json({ ok: true, engagement, ...(engagement ?? {}) });
 }

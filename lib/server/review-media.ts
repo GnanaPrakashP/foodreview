@@ -39,8 +39,7 @@ export type NormalizedReviewMediaIntent = {
 
 const ALLOWED_AVATAR_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_POST_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const ALLOWED_POST_VIDEO_MIME_TYPES = new Set<string>();
-export const REVIEW_VIDEO_DISABLED_ERROR = "review_media_video_not_supported";
+const ALLOWED_POST_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const MIME_EXTENSION: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -91,7 +90,6 @@ export function normalizeReviewMediaIntentInput(input: NormalizeReviewMediaInten
   const mimeType = normalizeMimeType(input.mimeType);
   const kind = normalizeKind(input.mediaKind, mimeType);
 
-  if (kind === "video") throw new Error(REVIEW_VIDEO_DISABLED_ERROR);
   if (category === "avatar" && kind !== "image") throw new Error("review_media_avatar_must_be_image");
   if (!allowedMimeTypesFor(category, kind).has(mimeType)) {
     throw new Error("review_media_mime_type_not_allowed");

@@ -242,7 +242,7 @@ test("browser refresh bypasses only the first-page Circle server feed cache", ()
 
 test("seen posts are persisted server-side for same-user cross-browser feeds", () => {
   assert.match(postViewsRouteSource, /export async function POST/);
-  assert.match(postViewsRouteSource, /getRouteActor\(\)/);
+  assert.match(postViewsRouteSource, /getRouteActor\(req\)/);
   assert.match(postViewsRouteSource, /recordSeenPostIdsForUser\(createAdminClient\(\), actor\.userId, postIds\)/);
   assert.match(postViewsSource, /from\("post_views"\)/);
   assert.match(postViewsSource, /\.eq\("user_id", userId\)/);

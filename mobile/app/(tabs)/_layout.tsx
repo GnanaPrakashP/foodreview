@@ -5,6 +5,7 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, typography } from "@/theme";
 
@@ -20,6 +21,7 @@ export default function TabLayout() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const { themeColors } = useThemePreference();
+  const composing = useComposerStore((state) => state.composing);
   const shouldLoadMemories = isReady && isAuthenticated;
   const memoryRooms = useMemoryRoomsQuery({ enabled: shouldLoadMemories });
   const hasUnreadMemories = useMemo(
@@ -44,6 +46,8 @@ export default function TabLayout() {
             backgroundColor: themeColors.surface,
             borderTopColor: themeColors.border,
             borderTopWidth: 1,
+            // Hidden for the whole Post-a-Bite composer flow (until posted).
+            display: composing ? "none" : "flex",
             height: 58 + Math.max(insets.bottom, 8),
             paddingBottom: Math.max(insets.bottom, 8),
             paddingTop: 6

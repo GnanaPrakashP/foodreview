@@ -329,7 +329,7 @@ function ProfileContent({
                 actionLabel="Create memory"
                 icon="images-outline"
                 message="Create a private memory for a meal with friends."
-                onAction={() => router.push("/memories/create")}
+                onAction={() => router.push("/share")}
                 title="No memories yet"
               />
             </ListState>

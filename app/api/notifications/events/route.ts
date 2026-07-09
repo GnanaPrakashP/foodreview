@@ -24,7 +24,7 @@ const SERVER_OWNED_ENGAGEMENT_EVENTS = new Set([
 ]);
 
 export async function POST(req: NextRequest) {
-  const supabase = await createRouteSupabase();
+  const supabase = await createRouteSupabase(req);
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 

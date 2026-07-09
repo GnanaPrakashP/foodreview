@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const apiConfigSource = readFileSync(new URL("../mobile/src/api/config.ts", import.meta.url), "utf8");
 const supabaseConfigSource = readFileSync(new URL("../mobile/src/api/supabase.ts", import.meta.url), "utf8");
+const postCardSource = readFileSync(new URL("../mobile/src/components/posts/PostCard.tsx", import.meta.url), "utf8");
 
 test("mobile API config preserves explicit remote hosts and supports both Android local API paths", () => {
   assert.match(apiConfigSource, /function isLoopbackHostname/);
@@ -19,6 +20,17 @@ test("mobile API config preserves explicit remote hosts and supports both Androi
     /const expoHost = expoDevServerHostname\(\);\s*if \(expoHost\)\s*{\s*url\.hostname = expoHost;/,
     "native API URLs must not be blindly rewritten to the Expo dev-server host"
   );
+});
+
+test("mobile public share URLs are separate from API/dev base URLs", () => {
+  assert.match(apiConfigSource, /EXPO_PUBLIC_WEB_BASE_URL/);
+  assert.match(apiConfigSource, /export function publicWebUrl\(path: string\)/);
+  assert.match(apiConfigSource, /Missing EXPO_PUBLIC_WEB_BASE_URL for public links/);
+  assert.match(apiConfigSource, /Missing EXPO_PUBLIC_API_BASE_URL for API requests/);
+  assert.match(postCardSource, /import \{ publicWebUrl \} from "@\/api\/config"/);
+  assert.match(postCardSource, /publicWebUrl\(`\/reviews\/\$\{encodeURIComponent\(post\.id\)\}`\)/);
+  assert.doesNotMatch(postCardSource, /apiUrl\(`\/reviews/);
+  assert.doesNotMatch(postCardSource, /apiBaseUrl/);
 });
 
 test("mobile Supabase config maps Android loopback to emulator host without changing remote hosts", () => {

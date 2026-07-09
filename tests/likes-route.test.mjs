@@ -86,7 +86,7 @@ function loadRoute(code, { db, authName }) {
     require(id) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
-      if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "next/server") return { after: () => undefined, NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/notifications") {
         return {
@@ -100,6 +100,20 @@ function loadRoute(code, { db, authName }) {
       if (id === "@/lib/types") return {};
       if (id === "@/lib/server/review-access") {
         return { canActorReadPost: async () => ({ allowed: true }) };
+      }
+      if (id === "@/lib/server/post-engagement-state") {
+        return {
+          getPostEngagementState: async (_db, postId) => ({
+            postId,
+            likedByMe: true,
+            likeCount: 1,
+            bookmarkedByMe: false,
+            commentCount: 0,
+            foodReaction: null,
+            mustTryCount: 0,
+            notWorthItCount: 0,
+          }),
+        };
       }
       if (id === "@/lib/server/cache-invalidation") {
         return {

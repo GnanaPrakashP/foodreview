@@ -1,5 +1,8 @@
 -- Persist per-viewer feed impressions so the Circle feed can rank unseen posts first.
 
+-- Legacy-only migration kept for historical deployments/backfill.
+-- Runtime Circle seen/view tracking is now canonicalized through public.post_views.
+
 create table if not exists public.post_impressions (
   id uuid primary key default gen_random_uuid(),
   post_id uuid not null references public.reviews(id) on delete cascade,

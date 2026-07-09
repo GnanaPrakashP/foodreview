@@ -122,34 +122,27 @@ test("one viral post helps more than one vote but cannot create trust alone", ()
 
 test("post feedback summary returns counts for the two MVP reaction labels", () => {
   const summary = tasteTrust.summarizePostFeedback([
-    { feedback_label: "Must Try", feedback_value: 1 },
-    { feedback_label: "Craving", feedback_value: 0.7 },
-    { feedback_label: "Not Worth It", feedback_value: -1 },
-    { feedback_label: "Quote", feedback_value: 0.3 },
-    { feedback_label: "Strongly agree", feedback_value: 1 },
+    { feedback_label: "Helpful", feedback_value: 1 },
+    { feedback_label: "Disagree", feedback_value: -0.5 },
   ]);
-  assert.equal(summary.feedback_counts["Must Try"], 3);
-  assert.equal(summary.feedback_counts["Not Worth It"], 1);
-  assert.equal(summary.feedback_counts["Craving"], undefined);
-  assert.equal(summary.feedback_counts["Quote"], undefined);
-  assert.equal(summary.agree_count, 3);
-  assert.equal(summary.okay_count, 1);
+  assert.equal(summary.feedback_counts.Helpful, 1);
+  assert.equal(summary.feedback_counts.Disagree, 1);
+  assert.equal(summary.agree_count, 1);
+  assert.equal(summary.okay_count, 0);
   assert.equal(summary.disagreed_count, 1);
 });
 
 test("MVP reaction labels map to current database-safe storage labels", () => {
-  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Must Try"), "Must Try");
-  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Strongly agree"), "Must Try");
-  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Not Worth It"), "Not Worth It");
-  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Strongly disagree"), "Not Worth It");
-  assert.equal(tasteTrust.storageFeedbackLabelForLabel("Must Try"), "Strongly agree");
-  assert.equal(tasteTrust.storageFeedbackLabelForLabel("Not Worth It"), "Strongly disagree");
+  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Helpful"), "Helpful");
+  assert.equal(tasteTrust.displayFeedbackLabelForLabel("Disagree"), "Disagree");
+  assert.equal(tasteTrust.storageFeedbackLabelForLabel("Helpful"), "Helpful");
+  assert.equal(tasteTrust.storageFeedbackLabelForLabel("Disagree"), "Disagree");
 });
 
 test("feedback value lookup only accepts the two public MVP labels", () => {
-  assert.equal(tasteTrust.feedbackValueForLabel("Must Try"), 1);
-  assert.equal(tasteTrust.feedbackValueForLabel("Not Worth It"), -0.5);
-  assert.equal(tasteTrust.feedbackValueForLabel("Strongly agree"), null);
+  assert.equal(tasteTrust.feedbackValueForLabel("Helpful"), 1);
+  assert.equal(tasteTrust.feedbackValueForLabel("Disagree"), -0.5);
+  assert.equal(tasteTrust.feedbackValueForLabel("helpful"), null);
 });
 
 function spyDb(...responses) {
@@ -208,6 +201,18 @@ function loadFeedbackRoute({ db, authName = "Alice", userId = "alice-id", recalc
     "@/lib/circle-db": { hasCircleAccess: async () => true },
     "@/lib/server/cache-invalidation": { invalidateSocialCachesForNames() {} },
     "@/lib/server/review-access": { canActorReadPost: async () => ({ allowed: true }) },
+    "@/lib/server/post-engagement-state": {
+      getPostEngagementState: async (_db, postId) => ({
+        postId,
+        likedByMe: false,
+        likeCount: 0,
+        bookmarkedByMe: false,
+        commentCount: 0,
+        foodReaction: null,
+        mustTryCount: 1,
+        notWorthItCount: 0,
+      }),
+    },
     "@/lib/server/taste-trust": {
       getPostTasteTrustSummary: async () => ({
         tried_count: 1,
@@ -216,7 +221,7 @@ function loadFeedbackRoute({ db, authName = "Alice", userId = "alice-id", recalc
         okay_count: 0,
         disagreed_count: 0,
         agreement_percentage: 100,
-        feedback_counts: { "Must Try": 1, "Not Worth It": 0 },
+        feedback_counts: { Helpful: 1, Disagree: 0 },
       }),
       recalculateTasteTrust: async (_db, reviewerUserId) => {
         recalcCalls.push(reviewerUserId);
@@ -280,7 +285,7 @@ test("POST /taste-trust/feedback allows own post feedback", async () => {
     }
   );
   const { POST } = loadFeedbackRoute({ db, recalcCalls });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Must Try" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Helpful" }));
   assert.equal(res.status, 200);
   assert.equal(res.body.feedback.reviewer_user_id, "alice-id");
   assert.equal(res.body.feedback.feedback_user_id, "alice-id");
@@ -304,7 +309,7 @@ test("POST /taste-trust/feedback rejects private posts", async () => {
     error: null,
   });
   const { POST } = loadFeedbackRoute({ db, recalcCalls: [] });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Not Worth It" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Disagree" }));
   assert.equal(res.status, 403);
   assert.match(res.body.error, /private posts/i);
 });
@@ -348,12 +353,12 @@ test("POST /taste-trust/feedback updates existing feedback and tried history ins
     }
   );
   const { POST } = loadFeedbackRoute({ db, recalcCalls });
-  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Not Worth It" }));
+  const res = await POST(makeReq({ postId: "post-1", feedbackLabel: "Disagree" }));
   assert.equal(res.status, 200);
   assert.ok(updateCall(db), "expected existing feedback to be updated");
   assert.equal(insertCall(db), undefined);
-  assert.equal(updateCall(db).ops.find(([op]) => op === "update")[1].feedback_label, "Strongly disagree");
-  assert.equal(res.body.myFeedbackLabel, "Not Worth It");
+  assert.equal(updateCall(db).ops.find(([op]) => op === "update")[1].feedback_label, "Disagree");
+  assert.equal(res.body.myFeedbackLabel, "Disagree");
   assert.ok(triedItemCall(db), "expected private tried history to be inserted or updated");
   assert.equal(res.body.triedItem.visibility, "private");
   assert.deepEqual(recalcCalls, ["bob-id"]);

@@ -1,11 +1,10 @@
 import { supabase } from "@/api/supabase";
+import { authorizedJson } from "@/api/client";
 import type { FeedPage, ReviewPost } from "@/types/models";
 import { dishSearchMatches, normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
 
 const PAGE_SIZE = 24;
-const CIRCLE_FEED_SCAN_SIZE = PAGE_SIZE * 3;
-const PUBLIC_DISCOVERY_SCAN_SIZE = PAGE_SIZE;
 const DISH_SCAN_SIZE = 400;
 const PUBLIC_REVIEW_BATCH_SIZE = 1000;
 const EXPLORE_REVIEW_SCAN_LIMIT = 30;
@@ -35,28 +34,6 @@ type ViewerIdentity = {
 };
 
 type ReviewerIdentityRow = Pick<ProfileRow, "first_name" | "last_name" | "username">;
-
-type PostImpressionRow = {
-  post_id: string;
-  seen_at: string | null;
-};
-
-type CircleFeedSource = "circle" | "public_discovery" | "self";
-
-type CircleFeedRpcRow = ReviewRow & {
-  bookmarked_by_me?: boolean | null;
-  comment_count?: number | string | null;
-  feed_source?: CircleFeedSource | string | null;
-  has_seen?: boolean | null;
-  liked_by_me?: boolean | null;
-  like_count?: number | string | null;
-};
-
-type CircleFeedRpcPayload = {
-  nextCursor?: string | null;
-  rows?: CircleFeedRpcRow[];
-  viewerName?: string | null;
-};
 
 export type RestaurantFeedInput = {
   placeId?: string | null;
@@ -123,30 +100,6 @@ function firstNameCandidates(value: string) {
     lower,
     `${lower.slice(0, 1).toUpperCase()}${lower.slice(1)}`
   ]));
-}
-
-function numericValue(value: number | string | null | undefined) {
-  const numeric = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function normalizedCircleFeedSource(value: string | null | undefined): CircleFeedSource {
-  if (value === "circle" || value === "self") return value;
-  return "public_discovery";
-}
-
-function circleFeedSectionLabel(row: { feed_source?: string | null; has_seen?: boolean | null }) {
-  if (row.has_seen) return "Seen earlier";
-  return normalizedCircleFeedSource(row.feed_source) === "public_discovery"
-    ? "Suggested for you"
-    : "Circles you're in";
-}
-
-function circleFeedContextLabel(row: { feed_source?: string | null; has_seen?: boolean | null }) {
-  const source = normalizedCircleFeedSource(row.feed_source);
-  if (source === "public_discovery") return "suggested by CircleBites";
-  if (source === "self") return row.has_seen ? "your post, seen earlier" : "your post";
-  return row.has_seen ? "from your circle, seen earlier" : "from your circle";
 }
 
 export async function fetchReviewerIdentities(names: string[]): Promise<Record<string, ReviewerIdentity>> {
@@ -334,18 +287,6 @@ async function getJoinedCircleOwners(viewerName: string): Promise<string[]> {
   return Array.from(new Set((data ?? []).map((row) => row.user_name).filter(Boolean)));
 }
 
-async function getPendingSentRequests(viewerName: string): Promise<string[]> {
-  if (!viewerName) return [];
-  const { data, error } = await supabase
-    .from("circle_requests")
-    .select("receiver_name")
-    .eq("sender_name", viewerName)
-    .eq("status", "pending");
-
-  if (error) return [];
-  return Array.from(new Set((data ?? []).map((row) => row.receiver_name).filter(Boolean)));
-}
-
 // Usernames the viewer has blocked. RLS only exposes the viewer's own block
 // rows, so this is the "I don't want to see them" direction. Errors (e.g. the
 // table not yet deployed) degrade gracefully to "nobody blocked".
@@ -360,106 +301,17 @@ export async function getBlockedUsernames(viewerName: string): Promise<string[]>
   return Array.from(new Set((data ?? []).map((row) => row.blocked_name).filter(Boolean)));
 }
 
-async function fetchSeenPostIds(postIds: string[], viewerUserId: string): Promise<Map<string, string>> {
-  if (postIds.length === 0 || !viewerUserId) return new Map();
-
-  const { data, error } = await supabase
-    .from("post_impressions")
-    .select("post_id, seen_at")
-    .eq("viewer_user_id", viewerUserId)
-    .in("post_id", postIds)
-    .returns<PostImpressionRow[]>();
-
-  if (error) return new Map();
-  return new Map((data ?? []).map((row) => [row.post_id, row.seen_at ?? ""]));
-}
-
-function rowCreatedAtMs(row: ReviewRow) {
-  const value = new Date(row.created_at).getTime();
-  return Number.isFinite(value) ? value : 0;
-}
-
-function rankScoreForRow(row: ReviewRow, engagement: EngagementMaps) {
-  const likes = engagement.likeCountMap[row.id] ?? 0;
-  const comments = engagement.commentCountMap[row.id] ?? 0;
-  const mediaCount = (row.review_photos?.length ?? 0) + (row.photo_urls?.length ?? 0) + (row.photo_url ? 1 : 0);
-  const ageHours = Math.max(0, (Date.now() - rowCreatedAtMs(row)) / 3_600_000);
-  const recencyScore = Math.max(0, 72 - ageHours) / 72;
-
-  return (comments * 3) + (likes * 2) + Math.min(mediaCount, 3) + recencyScore;
-}
-
-function rankCircleFeedRows(
-  circleRows: ReviewRow[],
-  publicRows: ReviewRow[],
-  input: {
-    engagement: EngagementMaps;
-    joinedCircleOwners: Set<string>;
-    seenPostIds: Map<string, string>;
-    viewerName: string;
-  }
-) {
-  const candidates = [
-    ...circleRows.map((row, index) => ({ row, originalIndex: index, source: "circle" as const })),
-    ...publicRows.map((row, index) => ({ row, originalIndex: circleRows.length + index, source: "public" as const }))
-  ];
-
-  return candidates
-    .sort((left, right) => {
-      const leftSeen = input.seenPostIds.has(left.row.id);
-      const rightSeen = input.seenPostIds.has(right.row.id);
-      if (leftSeen !== rightSeen) return leftSeen ? 1 : -1;
-
-      const leftAuthorPriority = left.source === "circle"
-        ? input.joinedCircleOwners.has(left.row.reviewer_name)
-          ? 2
-          : left.row.reviewer_name === input.viewerName
-            ? 1
-            : 0
-        : 0;
-      const rightAuthorPriority = right.source === "circle"
-        ? input.joinedCircleOwners.has(right.row.reviewer_name)
-          ? 2
-          : right.row.reviewer_name === input.viewerName
-            ? 1
-            : 0
-        : 0;
-      if (leftAuthorPriority !== rightAuthorPriority) return rightAuthorPriority - leftAuthorPriority;
-
-      const scoreDiff = rankScoreForRow(right.row, input.engagement) - rankScoreForRow(left.row, input.engagement);
-      if (scoreDiff !== 0) return scoreDiff;
-
-      const createdDiff = rowCreatedAtMs(right.row) - rowCreatedAtMs(left.row);
-      if (createdDiff !== 0) return createdDiff;
-
-      return left.originalIndex - right.originalIndex;
-    })
-    .map((candidate) => candidate.row);
-}
-
 export async function markCircleFeedPostsSeen(postIds: string[]): Promise<void> {
   const uniquePostIds = Array.from(new Set(postIds.filter(Boolean)));
   if (uniquePostIds.length === 0) return;
 
-  const viewer = await getViewerIdentity();
-  if (!viewer) return;
-
-  const seenAt = new Date().toISOString();
-  const { error } = await supabase
-    .from("post_impressions")
-    .upsert(
-      uniquePostIds.map((postId) => ({
-        post_id: postId,
-        seen_at: seenAt,
-        updated_at: seenAt,
-        viewer_name: viewer.username,
-        viewer_user_id: viewer.userId
-      })),
-      { onConflict: "post_id,viewer_user_id" }
-    );
-
-  if (error) {
-    console.warn("Unable to record seen posts", error.message);
+  try {
+    await authorizedJson<{ ok: true; count: number }>("/api/post-views", {
+      method: "POST",
+      body: JSON.stringify({ postIds: uniquePostIds })
+    }, { action: "recording viewed posts", timeoutMs: 8_000 });
+  } catch (error) {
+    console.warn("Unable to record seen posts", error instanceof Error ? error.message : error);
   }
 }
 
@@ -580,174 +432,30 @@ async function scanPublicReviewRows(
   return rows;
 }
 
-function isMissingCircleFeedRpc(error: { code?: string; message?: string } | null | undefined) {
-  const message = error?.message ?? "";
-  return error?.code === "42883" ||
-    error?.code === "PGRST202" ||
-    /circle_feed_page_v1|schema cache|function .*circle_feed_page_v1/i.test(message);
-}
-
-function engagementMapsFromCircleRows(rows: CircleFeedRpcRow[]): EngagementMaps {
-  const likeCountMap: Record<string, number> = {};
-  const commentCountMap: Record<string, number> = {};
-  const likedByMeMap: Record<string, boolean> = {};
-  const bookmarkedByMeMap: Record<string, boolean> = {};
-
-  for (const row of rows) {
-    likeCountMap[row.id] = numericValue(row.like_count);
-    commentCountMap[row.id] = numericValue(row.comment_count);
-    likedByMeMap[row.id] = Boolean(row.liked_by_me);
-    bookmarkedByMeMap[row.id] = Boolean(row.bookmarked_by_me);
-  }
-
-  return { likeCountMap, commentCountMap, likedByMeMap, bookmarkedByMeMap };
-}
-
-async function mapCircleFeedRpcRows(rows: CircleFeedRpcRow[], viewerName: string): Promise<ReviewPost[]> {
-  const publicDiscoveryNames = new Set(
-    rows
-      .filter((row) => normalizedCircleFeedSource(row.feed_source) === "public_discovery")
-      .map((row) => row.reviewer_name)
-  );
-  const feedMetadataByPostId = Object.fromEntries(rows.map((row) => [
-    row.id,
-    {
-      contextLabel: circleFeedContextLabel(row),
-      sectionLabel: circleFeedSectionLabel(row)
-    }
-  ]));
-
-  return addEngagementToRows(rows, viewerName, undefined, {
-    engagementMaps: engagementMapsFromCircleRows(rows),
-    feedMetadataByPostId,
-    publicDiscoveryNames,
-    requestStatusMaps: {
-      joinedOwners: new Set(),
-      pendingSent: new Set()
-    }
-  });
-}
-
-async function getCircleFeedFromRpc(cursor?: string | null): Promise<FeedPage> {
-  const { data, error } = await supabase.rpc("circle_feed_page_v1", {
-    p_cursor: cursor ?? null,
-    p_limit: PAGE_SIZE
-  });
-
-  if (error) throw error;
-
-  const payload = (data ?? {}) as CircleFeedRpcPayload;
-  const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const viewerName = typeof payload.viewerName === "string" ? payload.viewerName : "";
-
-  return {
-    nextCursor: typeof payload.nextCursor === "string" ? payload.nextCursor : null,
-    posts: await mapCircleFeedRpcRows(rows, viewerName),
-    viewerName
-  };
-}
-
-async function getCircleFeedLocally(): Promise<FeedPage> {
-  const viewer = await getViewerIdentity();
-  const viewerName = viewer?.username ?? "";
-  const [joinedCircleOwners, pendingSentOwners, blockedNames] = await Promise.all([
-    getJoinedCircleOwners(viewerName),
-    getPendingSentRequests(viewerName),
-    getBlockedUsernames(viewerName)
-  ]);
-  const blockedSet = new Set(blockedNames);
-  const reviewerNames = Array.from(new Set([viewerName, ...joinedCircleOwners].filter(Boolean)))
-    .filter((name) => name === viewerName || !blockedSet.has(name));
-
-  if (!viewerName || reviewerNames.length === 0) {
-    return { posts: [], viewerName };
-  }
-
-  const excludedPublicReviewers = Array.from(new Set([...reviewerNames, ...pendingSentOwners, ...blockedNames]));
-  const [circleResult, publicResult] = await Promise.all([
-    supabase
-      .from("reviews")
-      .select(REVIEW_SELECT)
-      .in("reviewer_name", reviewerNames)
-      .in("visibility", ["public", "circle"])
-      .is("deleted_at", null)
-      .is("hidden_at", null)
-      .is("reported_at", null)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(CIRCLE_FEED_SCAN_SIZE)
-      .returns<ReviewRow[]>(),
-    supabase
-      .from("reviews")
-      .select(REVIEW_SELECT)
-      .eq("visibility", "public")
-      .not("reviewer_name", "in", `(${excludedPublicReviewers.map((name) => `"${name}"`).join(",")})`)
-      .is("deleted_at", null)
-      .is("hidden_at", null)
-      .is("reported_at", null)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(PUBLIC_DISCOVERY_SCAN_SIZE)
-      .returns<ReviewRow[]>()
-  ]);
-
-  if (circleResult.error) throw new Error(circleResult.error.message);
-  if (publicResult.error) throw new Error(publicResult.error.message);
-
-  const circleRows = circleResult.data ?? [];
-  const publicRows = publicResult.data ?? [];
-  const publicDiscoveryNames = new Set(publicRows.map((row) => row.reviewer_name));
-  const candidateRows = [...circleRows, ...publicRows];
-  const [seenPostIds, engagement] = await Promise.all([
-    viewer ? fetchSeenPostIds(candidateRows.map((row) => row.id), viewer.userId) : Promise.resolve(new Map<string, string>()),
-    fetchEngagementMaps(candidateRows.map((row) => row.id), viewerName)
-  ]);
-  const rows = rankCircleFeedRows(circleRows, publicRows, {
-    engagement,
-    joinedCircleOwners: new Set(joinedCircleOwners),
-    seenPostIds,
-    viewerName
-  }).slice(0, PAGE_SIZE);
-  const feedMetadataByPostId = Object.fromEntries(rows.map((row) => [
-    row.id,
-    {
-      contextLabel: circleFeedContextLabel({
-        feed_source: publicDiscoveryNames.has(row.reviewer_name) ? "public_discovery" : row.reviewer_name === viewerName ? "self" : "circle",
-        has_seen: seenPostIds.has(row.id)
-      }),
-      sectionLabel: circleFeedSectionLabel({
-        feed_source: publicDiscoveryNames.has(row.reviewer_name) ? "public_discovery" : row.reviewer_name === viewerName ? "self" : "circle",
-        has_seen: seenPostIds.has(row.id)
-      })
-    }
-  ]));
-
-  return {
-    nextCursor: null,
-    posts: await addEngagementToRows(rows, viewerName, undefined, {
-      engagementMaps: engagement,
-      feedMetadataByPostId,
-      publicDiscoveryNames,
-      requestStatusMaps: {
-        joinedOwners: new Set(joinedCircleOwners),
-        pendingSent: new Set(pendingSentOwners)
-      }
-    }),
-    viewerName
-  };
-}
-
 export async function getCircleFeed(cursor?: string | null): Promise<FeedPage> {
-  try {
-    return await getCircleFeedFromRpc(cursor);
-  } catch (error) {
-    if (isMissingCircleFeedRpc(error as { code?: string; message?: string })) {
-      return getCircleFeedLocally();
-    }
-    throw error;
-  }
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+  if (cursor) params.set("cursor", cursor);
+  const page = await authorizedJson<FeedPage & {
+    myName?: string;
+    nextCursorString?: string | null;
+    nextCursor?: string | { createdAt: string; id: string } | null;
+  }>(`/api/feed/circle?${params.toString()}`, { method: "GET" }, {
+    action: "loading your circle feed",
+    timeoutMs: 12_000
+  });
+
+  const nextCursor = page.nextCursorString ??
+    (typeof page.nextCursor === "string"
+      ? page.nextCursor
+      : page.nextCursor
+        ? JSON.stringify(page.nextCursor)
+        : null);
+
+  return {
+    nextCursor,
+    posts: page.posts ?? [],
+    viewerName: page.viewerName ?? page.myName ?? ""
+  };
 }
 
 export async function getReviewPostById(postId: string): Promise<ReviewPost | null> {

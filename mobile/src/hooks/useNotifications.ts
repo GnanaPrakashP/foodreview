@@ -7,6 +7,8 @@ import {
   markNotificationRead
 } from "@/services/notifications";
 
+type NotificationListResult = Awaited<ReturnType<typeof listNotifications>>;
+
 export const notificationKeys = {
   list: ["notifications", "list"] as const,
   unreadCount: ["notifications", "unread-count"] as const
@@ -52,9 +54,38 @@ export function useMarkNotificationReadMutation() {
 
 export function useMarkAllNotificationsReadMutation() {
   const invalidate = useInvalidateNotificationQueries();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: markAllNotificationsRead,
+    onMutate: async () => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: notificationKeys.list }),
+        queryClient.cancelQueries({ queryKey: notificationKeys.unreadCount })
+      ]);
+
+      const previousUnreadCount = queryClient.getQueryData<number>(notificationKeys.unreadCount);
+      const previousLists = queryClient.getQueriesData<NotificationListResult>({ queryKey: notificationKeys.list });
+
+      queryClient.setQueryData(notificationKeys.unreadCount, 0);
+      queryClient.setQueriesData<NotificationListResult>({ queryKey: notificationKeys.list }, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          notifications: current.notifications.map((notification) => ({ ...notification, isRead: true })),
+          unreadCount: 0
+        };
+      });
+
+      return { previousLists, previousUnreadCount };
+    },
+    onError: (_error, _variables, context) => {
+      if (!context) return;
+      queryClient.setQueryData(notificationKeys.unreadCount, context.previousUnreadCount);
+      for (const [queryKey, data] of context.previousLists) {
+        queryClient.setQueryData(queryKey, data);
+      }
+    },
     onSettled: invalidate
   });
 }

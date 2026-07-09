@@ -9,6 +9,6 @@ export type FoodReactionDefinition = {
 };
 
 export const foodReactionDefinitions: FoodReactionDefinition[] = [
-  { accessibilityName: "Must Try", label: "Must Try", type: "mustTry" },
-  { accessibilityName: "Not Worth It", label: "Not Worth It", type: "notWorthIt" }
+  { accessibilityName: "Helpful", label: "Helpful", type: "mustTry" },
+  { accessibilityName: "Disagree", label: "Disagree", type: "notWorthIt" }
 ];

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { addPostComment, deletePostComment, getPostComments } from "@/services/comments";
+import { patchCachedPostEngagementFields } from "@/hooks/useFeeds";
 import type { PostComment } from "@/types/models";
 
 export const commentKeys = {
@@ -21,6 +22,12 @@ export function useAddPostCommentMutation(postId: string) {
     mutationFn: (content: string) => addPostComment({ postId, content }),
     onSuccess: (comment) => {
       queryClient.setQueryData<PostComment[]>(commentKeys.post(postId), (current = []) => [...current, comment]);
+      if (comment.engagement) {
+        patchCachedPostEngagementFields(queryClient, {
+          commentCount: comment.engagement.commentCount,
+          postId: comment.engagement.postId
+        });
+      }
     }
   });
 }
@@ -29,10 +36,7 @@ export function useDeletePostCommentMutation(postId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (commentId: string) => {
-      await deletePostComment({ commentId });
-      return commentId;
-    },
+    mutationFn: (commentId: string) => deletePostComment({ commentId }),
     onMutate: async (commentId) => {
       const queryKey = commentKeys.post(postId);
       await queryClient.cancelQueries({ queryKey });
@@ -42,9 +46,17 @@ export function useDeletePostCommentMutation(postId: string) {
       ));
       return { previousComments };
     },
-    onError: (_error, _commentId, context) => {
+    onError: (_error, _variables, context) => {
       if (context?.previousComments) {
         queryClient.setQueryData(commentKeys.post(postId), context.previousComments);
+      }
+    },
+    onSuccess: (result) => {
+      if (result.engagement) {
+        patchCachedPostEngagementFields(queryClient, {
+          commentCount: result.engagement.commentCount,
+          postId: result.engagement.postId
+        });
       }
     }
   });

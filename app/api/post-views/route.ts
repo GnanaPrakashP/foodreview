@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { recordSeenPostIdsForUser } from "@/lib/server/post-views";
 
 export async function POST(req: NextRequest) {
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

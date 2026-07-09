@@ -71,16 +71,31 @@ export type ReviewPost = {
   commentCount: number;
   likedByMe: boolean;
   bookmarkedByMe: boolean;
+  circleRequestAccountType?: AccountType | null;
   circleRequestStatus?: "idle" | "loading" | "pending" | "joined";
   feedContextLabel?: string;
   feedSectionLabel?: string;
   isPublicDiscovery?: boolean;
+  foodReaction?: "MUST_TRY" | "NOT_WORTH_IT" | null;
+  mustTryCount?: number;
+  notWorthItCount?: number;
 };
 
 export type FeedPage = {
   nextCursor?: string | null;
   posts: ReviewPost[];
   viewerName: string;
+};
+
+export type PostEngagementState = {
+  postId: string;
+  likedByMe: boolean;
+  likeCount: number;
+  bookmarkedByMe: boolean;
+  commentCount: number;
+  foodReaction: "MUST_TRY" | "NOT_WORTH_IT" | null;
+  mustTryCount: number;
+  notWorthItCount: number;
 };
 
 export type NotificationType =

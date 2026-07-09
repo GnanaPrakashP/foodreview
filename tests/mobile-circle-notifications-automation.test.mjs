@@ -10,88 +10,108 @@ const circleTabSource = source("mobile/app/(tabs)/index.tsx");
 const postFeedSource = source("mobile/src/components/feeds/PostFeed.tsx");
 const feedHookSource = source("mobile/src/hooks/useFeeds.ts");
 const feedServiceSource = source("mobile/src/services/feeds.ts");
+const apiClientSource = source("mobile/src/api/client.ts");
+const postViewsRouteSource = source("app/api/post-views/route.ts");
+const circleFeedRouteSource = source("app/api/feed/circle/route.ts");
+const circleFeedServerSource = source("lib/circle-feed.ts");
 const notificationHookSource = source("mobile/src/hooks/useNotifications.ts");
 const notificationScreenSource = source("mobile/app/notifications.tsx");
 const notificationServiceSource = source("mobile/src/services/notifications.ts");
+const notificationListRouteSource = source("app/api/notifications/route.ts");
+const notificationUnreadRouteSource = source("app/api/notifications/unread-count/route.ts");
 const pushBootstrapSource = source("mobile/src/providers/PushNotificationBootstrap.tsx");
 const serverNotificationSource = source("lib/notifications.ts");
-const seenMigrationSource = source("mobile/supabase/migrations/202607060001_circle_feed_seen_ranking.sql");
-const feedRpcMigrationSource = source("mobile/supabase/migrations/202607060002_circle_feed_page_rpc.sql");
+const hardeningMigrationSource = source("mobile/supabase/migrations/202607080001_circle_production_hardening.sql");
 
-test("circle feed automation covers production ranking, refresh, pagination, and seen state", () => {
-  assert.match(feedRpcMigrationSource, /create or replace function public\.circle_feed_page_v1/);
-  assert.match(feedRpcMigrationSource, /p_cursor text default null/);
-  assert.match(feedRpcMigrationSource, /p_limit integer default 24/);
-  assert.match(feedRpcMigrationSource, /left join public\.post_impressions impression/);
-  assert.match(feedRpcMigrationSource, /order by seen_bucket asc, author_priority desc, rank_score desc, created_at desc, id desc/);
-  assert.match(feedRpcMigrationSource, /grant execute on function public\.circle_feed_page_v1\(text, integer\) to authenticated, service_role/);
+test("circle feed automation uses server APIs, cursor pagination, and canonical post_views", () => {
+  assert.match(apiClientSource, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(apiClientSource, /AbortController/);
+  assert.match(apiClientSource, /timeoutMs/);
 
-  assert.match(seenMigrationSource, /create table if not exists public\.post_impressions/);
-  assert.match(seenMigrationSource, /constraint post_impressions_unique_viewer_post unique \(post_id, viewer_user_id\)/);
-  assert.match(seenMigrationSource, /viewer_user_id = auth\.uid\(\)/);
-  assert.match(seenMigrationSource, /public\.can_read_review_id\(post_id\)/);
+  assert.match(feedServiceSource, /authorizedJson/);
+  assert.match(feedServiceSource, /`\/api\/feed\/circle\?\$\{params\.toString\(\)\}`/);
+  assert.match(feedServiceSource, /nextCursorString/);
+  assert.match(feedServiceSource, /\/api\/post-views/);
+  assert.doesNotMatch(feedServiceSource, /circle_feed_page_v1/);
+  assert.doesNotMatch(feedServiceSource, /post_impressions/);
+  assert.doesNotMatch(feedServiceSource, /supabase\.rpc\("circle_feed_page_v1"/);
 
-  assert.match(feedServiceSource, /supabase\.rpc\("circle_feed_page_v1"/);
-  assert.match(feedServiceSource, /p_cursor: cursor \?\? null/);
-  assert.match(feedServiceSource, /nextCursor: typeof payload\.nextCursor === "string" \? payload\.nextCursor : null/);
-  assert.match(feedServiceSource, /function rankCircleFeedRows/);
-  assert.match(feedServiceSource, /leftSeen !== rightSeen/);
-  assert.match(feedServiceSource, /return leftSeen \? 1 : -1/);
-  assert.match(feedServiceSource, /markCircleFeedPostsSeen/);
-  assert.match(feedServiceSource, /\.from\("post_impressions"\)\s+\.upsert/s);
+  assert.match(circleFeedRouteSource, /createRouteSupabase\(req\)/);
+  assert.match(circleFeedRouteSource, /getCircleFeedPage/);
+  assert.match(circleFeedRouteSource, /buildPageEngagementStates/);
+  assert.match(circleFeedRouteSource, /\.from\("recommendation_feedback"\)[\s\S]*\.eq\("feedback_user_id", page\.viewerUserId\)[\s\S]*\.in\("post_id", postIds\)/);
+  assert.match(circleFeedRouteSource, /foodReaction/);
+  assert.match(circleFeedRouteSource, /nextCursorString: serializeCircleFeedCursor/);
+  assert.match(circleFeedRouteSource, /buildCircleRequestStatusMap/);
+  assert.match(circleFeedRouteSource, /buildReviewerAccountTypeMap/);
+  assert.match(circleFeedRouteSource, /circleRequestAccountType: accountTypeByReviewer\.get\(review\.reviewer_name\) \?\? null/);
+  assert.match(circleFeedRouteSource, /\.from\("circle_requests"\)[\s\S]*\.eq\("sender_name", page\.myName\)[\s\S]*\.in\("receiver_name", requestableNames\)/);
+  assert.match(circleFeedRouteSource, /circleRequestStatus: requestStatusByReviewer\.get\(review\.reviewer_name\) \?\? "idle"/);
+  assert.match(circleFeedServerSource, /const trustedReviewerNames = Array\.from\(new Set\(\[myName, \.\.\.joinedCircles\]/);
+  assert.match(circleFeedServerSource, /trustedVisibleIds\.has\(review\.id\)/);
+  assert.match(circleFeedServerSource, /!trustedReviewerSet\.has\(review\.reviewer_name\) && review\.visibility !== "circle" && review\.visibility !== "me"/);
+
+  assert.match(postViewsRouteSource, /getRouteActor\(req\)/);
+  assert.match(postViewsRouteSource, /recordSeenPostIdsForUser/);
+  assert.match(hardeningMigrationSource, /insert into public\.post_views/);
+  assert.match(hardeningMigrationSource, /from public\.post_impressions/);
+  assert.match(hardeningMigrationSource, /create unique index if not exists post_views_user_post_unique/);
+  assert.match(hardeningMigrationSource, /circle_hardening_preflight_failed/);
 
   assert.match(feedHookSource, /useInfiniteQuery/);
   assert.match(feedHookSource, /getNextPageParam: \(lastPage\) => lastPage\.nextCursor \?\? undefined/);
   assert.match(feedHookSource, /initialPageParam: null as string \| null/);
+  assert.match(feedHookSource, /patchCircleFeedPostEngagement/);
+  assert.match(feedHookSource, /setQueryData<InfiniteData<FeedPage>>\(feedKeys\.circlePages/);
 
   assert.match(circleTabSource, /useCircleFeedInfiniteQuery/);
-  assert.match(circleTabSource, /feed\.fetchNextPage\(\)/);
+  assert.match(circleTabSource, /const fetchNextPage = feed\.fetchNextPage/);
+  assert.match(circleTabSource, /void fetchNextPage\(\)/);
   assert.match(circleTabSource, /onEndReached=\{loadMorePosts\}/);
   assert.match(circleTabSource, /onRefresh=\{canRefresh \? \(\) => \{ void feed\.refetch\(\); \} : undefined\}/);
-  assert.match(circleTabSource, /refreshing=\{canRefresh && feed\.isRefetching && !feed\.isFetchingNextPage\}/);
   assert.match(circleTabSource, /onPostsViewed=\{markPostsViewed\}/);
-  assert.match(circleTabSource, /showSectionLabels/);
 
   assert.match(postFeedSource, /RefreshControl/);
   assert.match(postFeedSource, /onEndReached=\{hasMore && !isFetchingMore \? onEndReached : undefined\}/);
   assert.match(postFeedSource, /onEndReachedThreshold=\{0\.65\}/);
   assert.match(postFeedSource, /viewabilityConfig=\{viewabilityConfigRef\.current\}/);
   assert.match(postFeedSource, /onViewableItemsChanged=\{onViewableItemsChangedRef\.current\}/);
-  assert.doesNotMatch(postFeedSource, /onViewableItemsChanged=\{onPostsViewed \?/);
-  assert.match(postFeedSource, /renderSectionLabel/);
 });
 
-test("notification inbox automation covers badge source, read states, actions, and routing", () => {
+test("notification inbox automation uses backend list and unread-count truth", () => {
   assert.match(circleTabSource, /useUnreadNotificationCountQuery/);
   assert.match(circleTabSource, /unreadNotificationCount > 9 \? "9\+" : String\(unreadNotificationCount\)/);
   assert.match(circleTabSource, /router\.push\("\/notifications"\)/);
+  assert.match(circleTabSource, /color=\{themeColors\.cream\}/);
+  assert.doesNotMatch(circleTabSource, /notificationsOpening \? themeColors\.orange : themeColors\.cream/);
+  assert.doesNotMatch(circleTabSource, /notificationButtonPressed/);
 
   assert.match(notificationHookSource, /useNotificationsQuery/);
   assert.match(notificationHookSource, /useUnreadNotificationCountQuery/);
   assert.match(notificationHookSource, /refetchInterval: 30_000/);
+  assert.match(notificationHookSource, /queryClient\.setQueryData\(notificationKeys\.unreadCount, 0\)/);
   assert.match(notificationHookSource, /invalidateQueries\(\{ queryKey: notificationKeys\.unreadCount \}\)/);
+
+  assert.match(notificationServiceSource, /authorizedJson<NotificationsApiResponse>/);
+  assert.match(notificationServiceSource, /\/api\/notifications\?limit=/);
+  assert.match(notificationServiceSource, /\/api\/notifications\/unread-count/);
+  assert.doesNotMatch(notificationServiceSource, /\.from\("notifications"\)/);
+  assert.doesNotMatch(notificationServiceSource, /filter\(.*!notification\.isRead/);
+
+  assert.match(notificationListRouteSource, /createRouteSupabase\(req\)/);
+  assert.match(notificationListRouteSource, /filterValidNotifications/);
+  assert.match(notificationUnreadRouteSource, /createRouteSupabase\(req\)/);
+  assert.match(notificationUnreadRouteSource, /filterValidNotifications/);
 
   assert.match(notificationScreenSource, /SectionList/);
   assert.match(notificationScreenSource, /RefreshControl/);
+  assert.match(notificationScreenSource, /const NOTIFICATIONS_ENTER_MS = 300/);
+  assert.match(notificationScreenSource, /requestAnimationFrame\(\(\) => \{/);
+  assert.doesNotMatch(notificationScreenSource, /useLayoutEffect/);
   assert.match(notificationScreenSource, /useMarkNotificationReadMutation/);
   assert.match(notificationScreenSource, /useMarkAllNotificationsReadMutation/);
   assert.match(notificationScreenSource, /useDeleteNotificationMutation/);
   assert.match(notificationScreenSource, /useRespondToCircleRequestMutation/);
-  assert.match(notificationScreenSource, /markRead\.mutate\(notification\.id\)/);
-  assert.match(notificationScreenSource, /markAllRead\.mutateAsync\(\)/);
-  assert.match(notificationScreenSource, /deleteNotification\.mutateAsync\(notification\.id\)/);
-  assert.match(notificationScreenSource, /respond\(item, "accept"\)/);
-  assert.match(notificationScreenSource, /respond\(item, "reject"\)/);
-  assert.match(notificationScreenSource, /router\.push\(`\/reviews\/\$\{encodeURIComponent\(notification\.destination\.postId\)\}`\)/);
-  assert.match(notificationScreenSource, /router\.push\(`\/people\/\$\{encodeURIComponent\(notification\.destination\.username\)\}`\)/);
-
-  assert.match(notificationServiceSource, /export async function listNotifications/);
-  assert.match(notificationServiceSource, /validateCircleRequestNotifications/);
-  assert.match(notificationServiceSource, /profileMapForNotifications/);
-  assert.match(notificationServiceSource, /export async function markNotificationRead/);
-  assert.match(notificationServiceSource, /export async function markAllNotificationsRead/);
-  assert.match(notificationServiceSource, /export async function deleteNotification/);
-  assert.match(notificationServiceSource, /export async function getUnreadNotificationCount/);
 });
 
 test("push notification automation covers token registration, server fanout, preferences, and deep links", () => {

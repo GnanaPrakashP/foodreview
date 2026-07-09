@@ -21,25 +21,31 @@ const reactionIcons = source("mobile/src/components/reactions/reactionIcons.tsx"
 const reactionTypes = source("mobile/src/components/reactions/reactionTypes.ts");
 const reviewDetail = source("mobile/app/reviews/[id].tsx");
 const postFeed = source("mobile/src/components/feeds/PostFeed.tsx");
+const feedHook = source("mobile/src/hooks/useFeeds.ts");
 const feedService = source("mobile/src/services/feeds.ts");
+const circleFeedRoute = source("app/api/feed/circle/route.ts");
 
 test("mobile Taste Trust feedback labels match the web contract", () => {
   assert.deepEqual(optionLabels(mobileTasteTrust), optionLabels(webTasteTrust));
   assert.deepEqual(optionLabels(mobileTasteTrust), [
-    "Must Try",
-    "Not Worth It"
+    "Helpful",
+    "Disagree"
   ]);
 });
 
 test("mobile Taste Trust feedback goes through the existing server endpoint", () => {
-  assert.match(mobileTasteTrust, /apiUrl\(`\/api\/taste-trust\/feedback\?postId=\$\{encodeURIComponent\(postId\)\}`\)/);
-  assert.match(mobileTasteTrust, /apiUrl\("\/api\/taste-trust\/feedback"\)/);
+  assert.match(mobileTasteTrust, /authorizedJson<FeedbackPayload>/);
+  assert.match(mobileTasteTrust, /`\/api\/taste-trust\/feedback\?postId=\$\{encodeURIComponent\(postId\)\}`/);
+  assert.match(mobileTasteTrust, /"\/api\/taste-trust\/feedback"/);
   assert.match(mobileTasteTrust, /method:\s*"POST"/);
   assert.match(mobileTasteTrust, /method:\s*"DELETE"/);
-  assert.match(mobileTasteTrust, /Authorization:\s*`Bearer \$\{token\}`/);
-  assert.match(mobileTasteTrust, /legacyFeedbackLabelMap/);
-  assert.match(mobileTasteTrust, /\["strongly agree", "Must Try"\]/);
-  assert.match(mobileTasteTrust, /\["strongly disagree", "Not Worth It"\]/);
+  assert.match(mobileTasteTrust, /timeoutMs: 10_000/);
+  assert.match(mobileTasteTrust, /function feedbackLabelFromEngagement/);
+  assert.match(mobileTasteTrust, /function summaryFromEngagement/);
+  assert.match(mobileTasteTrust, /if \(payload\?\.engagement\)/);
+  assert.doesNotMatch(mobileTasteTrust, /legacyFeedbackLabelMap/);
+  assert.doesNotMatch(mobileTasteTrust, /apiUrl/);
+  assert.doesNotMatch(mobileTasteTrust, /Authorization:\s*`Bearer \$\{token\}`/);
   assert.doesNotMatch(mobileTasteTrust, /\.from\("recommendation_feedback"\)/);
   assert.doesNotMatch(mobileTasteTrust, /\.from\("user_tried_items"\)/);
 });
@@ -54,17 +60,30 @@ test("mobile feed cards render the two MVP reaction options", () => {
   assert.match(reviewDetail, /<PostCard post=\{post\.data\} \/>/);
   assert.doesNotMatch(postFeed, /showTasteTrustFeedback/);
   assert.match(reactionTypes, /export type FoodReactionType = "mustTry" \| "notWorthIt"/);
-  assert.match(reactionTypes, /\{ accessibilityName: "Must Try", label: "Must Try", type: "mustTry" \}/);
-  assert.match(reactionTypes, /\{ accessibilityName: "Not Worth It", label: "Not Worth It", type: "notWorthIt" \}/);
+  assert.match(reactionTypes, /\{ accessibilityName: "Helpful", label: "Helpful", type: "mustTry" \}/);
+  assert.match(reactionTypes, /\{ accessibilityName: "Disagree", label: "Disagree", type: "notWorthIt" \}/);
   assert.doesNotMatch(reactionTypes, /crave|quote|Crave|Quote/);
   assert.match(postCard, /reactionFeedbackLabelByType: Record<FoodReactionType, TasteTrustFeedbackLabel>/);
   assert.match(postCard, /function optimisticTasteTrustState/);
   assert.match(postCard, /const selectedReaction = reactionTypeForFeedbackLabel\(selectedLabel\)/);
   assert.match(postCard, /const reactionCounts = foodReactionCountsFor\(summary\)/);
   assert.match(postCard, /function foodReactionTotalFor\(summary: PostTasteTrustSummary\)/);
-  assert.match(postCard, /visualTasteTrustState\?\.summary \?\? feedbackQuery\.data\?\.summary \?\? EMPTY_POST_TASTE_TRUST_SUMMARY/);
+  assert.match(postCard, /visualTasteTrustState\?\.summary \?\? feedbackQuery\.data\?\.summary \?\? fallbackTasteTrustState\.summary/);
   assert.match(postCard, /const targetUsername = post\.reviewerUsername \|\| post\.reviewerName/);
   assert.match(postCard, /const isOwnPost = Boolean\(viewerName\) && targetUsername\.toLowerCase\(\) === viewerName\.toLowerCase\(\)/);
+  assert.match(postCard, /function initialCircleRequestStatus\(\s*circleRequestStatus: ReviewPost\["circleRequestStatus"\],\s*isPublicDiscovery: ReviewPost\["isPublicDiscovery"\]\s*\)/);
+  assert.match(postCard, /if \(circleRequestStatus === "pending" \|\| circleRequestStatus === "joined"\) return circleRequestStatus/);
+  assert.match(postCard, /return isPublicDiscovery \? "idle" : "joined"/);
+  assert.match(postCard, /function optimisticCircleRequestStatus\(post: ReviewPost\): "pending" \| "joined"/);
+  assert.match(postCard, /return post\.circleRequestAccountType === "public" \? "joined" : "pending"/);
+  assert.match(postCard, /function circleRequestLabel\(status: CircleRequestVisualStatus\)/);
+  assert.match(postCard, /const \[requestInteracted, setRequestInteracted\] = useState\(false\)/);
+  assert.match(postCard, /requestStatus !== "joined" \|\| requestInteracted/);
+  assert.match(postCard, /const requestInFlightRef = useRef\(false\)/);
+  assert.match(postCard, /desiredRequestStatusRef\.current = nextStatus/);
+  assert.match(postCard, /if \(desiredRequestStatusRef\.current !== syncedRequestStatusRef\.current\)/);
+  assert.match(postCard, /useSetCircleAccessStatusMutation/);
+  assert.doesNotMatch(postCard, /disabled=\{requestStatus !== "idle" \|\| requestCircleMutation\.isPending\}/);
   assert.match(postCard, /<Text style=\{styles\.sharedContext\}>shared a spot<\/Text>/);
   assert.doesNotMatch(postCard, /post\.feedContextLabel \?\? "shared a spot"/);
   assert.match(postCard, /<Text style=\{styles\.actionText\}>\{foodReactionTotal\}<\/Text>/);
@@ -73,17 +92,18 @@ test("mobile feed cards render the two MVP reaction options", () => {
   assert.doesNotMatch(postCard, /You cannot react to your own post\./);
   assert.match(postCard, /Log in to react to this post\./);
   assert.doesNotMatch(postCard, /Do you agree\?/);
+  assert.doesNotMatch(postCard, /Requesting/);
 });
 
 test("mobile circle feed labels use current copy and compact section spacing", () => {
-  assert.match(feedService, /"Suggested for you"/);
-  assert.match(feedService, /"Circles you're in"/);
-  assert.doesNotMatch(feedService, /"New from your circle"/);
+  assert.match(circleFeedRoute, /"Suggested for you"/);
+  assert.match(circleFeedRoute, /"Circles you're in"/);
+  assert.doesNotMatch(circleFeedRoute, /"New from your circle"/);
   assert.match(postFeed, /paddingTop: spacing\.xs/);
 });
 
 test("mobile post cards only route explicit tap targets", () => {
-  assert.match(postCard, /import \{ Alert, Linking, Pressable, StyleSheet, Text, View \} from "react-native"/);
+  assert.match(postCard, /Share,[\s\S]*Pressable,[\s\S]*StyleSheet,[\s\S]*Text,[\s\S]*View[\s\S]*from "react-native"/);
   assert.match(postCard, /function openProfile\(\)/);
   assert.match(postCard, /pathname: "\/people\/\[username\]"/);
   assert.match(postCard, /function openRestaurant\(\)/);
@@ -104,10 +124,10 @@ test("mobile post cards only route explicit tap targets", () => {
 
 test("mobile reaction row uses premium animated two-pill buttons", () => {
   assert.match(reactionIcons, /import Svg, \{ G, Path \} from "react-native-svg"/);
-  assert.match(reactionIcons, /export function MustTryReactionIcon/);
+  assert.match(reactionIcons, /export function HelpfulReactionIcon/);
   assert.match(reactionIcons, /export function NotWorthItReactionIcon/);
   assert.match(reactionIcons, /reactionIcons = \{/);
-  assert.match(reactionIcons, /mustTry: MustTryReactionIcon/);
+  assert.match(reactionIcons, /mustTry: HelpfulReactionIcon/);
   assert.match(reactionIcons, /notWorthIt: NotWorthItReactionIcon/);
   assert.doesNotMatch(reactionIcons, /CraveReaction|QuoteReaction|crave|quote/i);
   assert.doesNotMatch(reactionIcons, /🔥|😋|👎|💬/);
@@ -127,17 +147,27 @@ test("mobile reaction row uses premium animated two-pill buttons", () => {
   assert.doesNotMatch(postCard, /Do you agree\?/);
 });
 
-test("mobile Taste Trust hooks leave visual optimism to the post card without refreshing feed surfaces", () => {
+test("mobile Taste Trust hooks patch Circle cache without refreshing feed surfaces", () => {
   assert.match(mobileTasteTrustHook, /usePostTasteTrustQuery/);
   assert.match(mobileTasteTrustHook, /useSubmitPostTasteTrustMutation/);
   assert.match(mobileTasteTrustHook, /useRemovePostTasteTrustMutation/);
+  assert.match(mobileTasteTrustHook, /useQueryClient/);
+  assert.match(mobileTasteTrustHook, /queryClient\.setQueryData\(tasteTrustKeys\.post\(postId\), state\)/);
+  assert.match(mobileTasteTrustHook, /patchCachedPostEngagementFields/);
+  assert.match(feedHook, /export function patchCachedPostById/);
+  assert.match(feedHook, /queryClient\.setQueriesData<unknown>/);
+  assert.match(feedHook, /scope === "feed" \|\| scope === "profile"/);
+  assert.match(feedHook, /Array\.isArray\(current\.pages\)/);
+  assert.match(feedHook, /Array\.isArray\(current\.posts\)/);
+  assert.match(mobileTasteTrustHook, /foodReaction: state\.engagement\.foodReaction/);
+  assert.match(mobileTasteTrustHook, /mustTryCount: state\.engagement\.mustTryCount/);
+  assert.match(mobileTasteTrustHook, /notWorthItCount: state\.engagement\.notWorthItCount/);
+  assert.doesNotMatch(mobileTasteTrustHook, /likedByMe: state\.engagement\.likedByMe/);
   assert.match(postCard, /function optimisticTasteTrustState/);
   assert.match(postCard, /const \[visualTasteTrustState, setVisualTasteTrustState\] = useState<TasteTrustFeedbackState \| undefined>\(\)/);
   assert.match(postCard, /desiredFeedbackLabelRef\.current = label/);
   assert.match(postCard, /if \(desiredFeedbackLabelRef\.current !== syncedFeedbackStateRef\.current\.myFeedbackLabel\)/);
   assert.doesNotMatch(mobileTasteTrustHook, /function optimisticState/);
-  assert.doesNotMatch(mobileTasteTrustHook, /queryClient\.setQueryData/);
-  assert.doesNotMatch(mobileTasteTrustHook, /feedKeys\./);
   assert.doesNotMatch(mobileTasteTrustHook, /profileKeys\./);
   assert.doesNotMatch(mobileTasteTrustHook, /invalidateQueries/);
 });
@@ -148,12 +178,25 @@ test("mobile social taps use Pixelfed-style optimistic updates without pending l
   assert.doesNotMatch(postCard, /const busy = submitFeedback\.isPending \|\| removeFeedback\.isPending/);
   assert.doesNotMatch(postCard, /disabled=\{busy\}/);
   assert.match(postCard, /const likedRef = useRef\(post\.likedByMe\)/);
-  assert.match(postCard, /const bookmarkRequestSeq = useRef\(0\)/);
-  assert.match(postCard, /if \(requestId === likeRequestSeq\.current\)/);
+  assert.match(postCard, /const desiredLikedRef = useRef\(post\.likedByMe\)/);
+  assert.match(postCard, /const likeInFlightRef = useRef\(false\)/);
+  assert.match(postCard, /const desiredBookmarkedRef = useRef\(post\.bookmarkedByMe\)/);
+  assert.match(postCard, /const bookmarkInFlightRef = useRef\(false\)/);
+  assert.match(postCard, /if \(desiredLikedRef\.current !== syncedLikedRef\.current\)/);
+  assert.match(postCard, /if \(desiredBookmarkedRef\.current !== syncedBookmarkedRef\.current\)/);
   assert.match(postCard, /hasLocalReactionInteraction\.current = true/);
   assert.match(postCard, /const reactionInFlightRef = useRef\(false\)/);
   assert.match(mobileEngagementHook, /export function useTogglePostLikeMutation\(\)[\s\S]*mutationFn: \(input: ToggleLikeInput\) => togglePostLike\(input\)[\s\S]*\}\);/);
   assert.match(mobileEngagementHook, /export function useTogglePostBookmarkMutation\(\)[\s\S]*mutationFn: \(input: ToggleBookmarkInput\) => togglePostBookmark\(input\)[\s\S]*\}\);/);
+  assert.match(mobileEngagementHook, /patchCachedPostEngagementFields\(queryClient, \{[\s\S]*likedByMe: engagement\.likedByMe[\s\S]*likeCount: engagement\.likeCount/);
+  assert.match(mobileEngagementHook, /patchCachedPostEngagementFields\(queryClient, \{[\s\S]*bookmarkedByMe: engagement\.bookmarkedByMe/);
+  assert.doesNotMatch(mobileEngagementHook, /foodReaction: engagement\.foodReaction/);
+  assert.match(mobileEngagementHook, /useSetCircleAccessStatusMutation/);
+  assert.match(mobileEngagementHook, /cancelCircleAccess/);
+  assert.match(mobileEngagementHook, /leaveCircleAccess/);
+  const likeMutationBlock = mobileEngagementHook.match(/export function useTogglePostLikeMutation\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.doesNotMatch(likeMutationBlock, /bookmarkedByMe: engagement\.bookmarkedByMe/);
   assert.doesNotMatch(mobileEngagementHook, /useTogglePostLikeMutation\(\)[\s\S]{0,220}onSettled/);
   assert.doesNotMatch(mobileEngagementHook, /useTogglePostBookmarkMutation\(\)[\s\S]{0,220}onSettled/);
+  assert.doesNotMatch(mobileEngagementHook, /useRequestCircleAccessMutation\(\)[\s\S]*onSettled/);
 });

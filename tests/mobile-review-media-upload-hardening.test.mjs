@@ -41,6 +41,10 @@ test("mobile review media upload uses progress aware retry-safe storage writes",
 test("mobile post flow rejects video early and uploads media sequentially", () => {
   const posts = source("mobile/src/services/posts.ts");
   const share = source("mobile/app/(tabs)/share.tsx");
+  const shareCamera = source("mobile/app/share/camera.tsx");
+  const shareCrop = source("mobile/app/share/crop.tsx");
+  const mediaPicker = source("mobile/src/services/mediaPicker.ts");
+  const postCaptureSession = source("mobile/src/services/postCaptureSession.ts");
 
   assert.match(posts, /REVIEW_VIDEO_DISABLED_MESSAGE = "Video uploads are temporarily unavailable"/);
   assert.match(posts, /if \(resolveMediaType\(media\) === "video"\) \{\s*throw new Error\(REVIEW_VIDEO_DISABLED_MESSAGE\)/);
@@ -48,10 +52,49 @@ test("mobile post flow rejects video early and uploads media sequentially", () =
   assert.match(posts, /for \(const \[index, media\] of items\.entries\(\)\)/);
   assert.match(posts, /uploadPostMediaItems\(items, input\.onUploadProgress\)/);
   assert.doesNotMatch(posts, /Promise\.all\(items\.map/);
-  assert.match(share, /captured\.mediaType === "video"/);
+  assert.match(share, /router\.push\("\/share\/camera"\)/);
+  assert.match(share, /consumePendingPostCapture\(\)/);
+  assert.match(share, /contentFit="contain" source=\{\{ uri: media\.uri \}\} style=\{styles\.reviewMainImage\}/);
+  assert.doesNotMatch(share, /pickPostImageFromCamera\(\)/);
+  assert.match(shareCamera, /allowVideo=\{false\}/);
+  assert.match(shareCamera, /autoCropPhotoToGuide/);
+  assert.match(shareCamera, /photoGuideAspectRatio=\{POST_BITE_CAMERA_ASPECT_RATIO\}/);
+  assert.match(shareCamera, /asset\.source === "gallery"/);
+  assert.match(shareCamera, /setPostCaptureDraft\(asset\)/);
+  assert.match(shareCamera, /router\.replace\("\/share\/crop"\)/);
+  assert.match(shareCamera, /setPendingPostCapture\(asset\)/);
+  assert.match(shareCamera, /router\.dismissTo\("\/share"\)/);
+  assert.match(shareCrop, /ImageManipulator, SaveFormat/);
+  assert.match(shareCrop, /context\.crop\(crop\)/);
+  assert.match(shareCrop, /setPendingPostCapture\(/);
+  assert.match(shareCrop, /router\.dismissTo\("\/share"\)/);
+  assert.match(mediaPicker, /export async function pickPostImageFromGallery\(\)[\s\S]*allowsEditing: false/);
+  assert.match(postCaptureSession, /setPostCaptureDraft/);
+  assert.match(postCaptureSession, /readPostCaptureDraft/);
   assert.match(share, /Video uploads are temporarily unavailable\. Add a photo instead\./);
   assert.match(share, /onUploadProgress: setUploadProgress/);
   assert.match(share, /Posting \$\{uploadPercent\}%/);
+  assert.match(posts, /height: uploaded\.height \?\? media\.height \?\? null/);
+  assert.match(posts, /width: uploaded\.width \?\? media\.width \?\? null/);
+});
+
+test("mobile in-app camera retries raw capture when Android post-processing fails", () => {
+  const cameraScreen = source("mobile/src/components/memories/camera/CameraScreen.tsx");
+
+  assert.match(cameraScreen, /takePhotoWithProcessingFallback/);
+  assert.match(cameraScreen, /skipProcessing: false/);
+  assert.match(cameraScreen, /skipProcessing: true/);
+  assert.match(cameraScreen, /await emitCapturedPhoto\(photo\)/);
+  assert.match(cameraScreen, /ImageManipulator, SaveFormat/);
+  assert.match(cameraScreen, /PhotoCropGuide/);
+  assert.match(cameraScreen, /cropCapturedPhotoToGuide/);
+  assert.match(cameraScreen, /cropRectForVisibleFrame/);
+  assert.match(cameraScreen, /GUIDED_PHOTO_CAMERA_RATIO: CameraRatio = "4:3"/);
+  assert.match(cameraScreen, /ratio=\{guidedPhotoMode && Platform\.OS === "android" \? GUIDED_PHOTO_CAMERA_RATIO : undefined\}/);
+  assert.match(cameraScreen, /pictureSize=\{guidedPhotoMode \? undefined : pictureSize\}/);
+  assert.match(cameraScreen, /const width = viewport\.width/);
+  assert.match(cameraScreen, /top: \(viewport\.height - height\) \/ 2/);
+  assert.match(cameraScreen, /previewScaleMode === "fit"/);
 });
 
 test("mobile avatar uploads pass picker metadata into the hardened media service", () => {

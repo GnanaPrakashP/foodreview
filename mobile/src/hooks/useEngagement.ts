@@ -1,8 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { feedKeys } from "@/hooks/useFeeds";
+import { feedKeys, patchCachedPostEngagementFields } from "@/hooks/useFeeds";
 import { profileKeys } from "@/hooks/useProfiles";
 import {
+  cancelCircleAccess,
   deletePost,
+  leaveCircleAccess,
   requestCircleAccess,
   togglePostBookmark,
   togglePostLike,
@@ -24,14 +26,25 @@ function useInvalidateEngagementQueries() {
 }
 
 export function useTogglePostLikeMutation() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: ToggleLikeInput) => togglePostLike(input)
+    mutationFn: (input: ToggleLikeInput) => togglePostLike(input),
+    onSuccess: (engagement) => patchCachedPostEngagementFields(queryClient, {
+      likedByMe: engagement.likedByMe,
+      likeCount: engagement.likeCount,
+      postId: engagement.postId
+    })
   });
 }
 
 export function useTogglePostBookmarkMutation() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: ToggleBookmarkInput) => togglePostBookmark(input)
+    mutationFn: (input: ToggleBookmarkInput) => togglePostBookmark(input),
+    onSuccess: (engagement) => patchCachedPostEngagementFields(queryClient, {
+      bookmarkedByMe: engagement.bookmarkedByMe,
+      postId: engagement.postId
+    })
   });
 }
 
@@ -45,10 +58,23 @@ export function useDeletePostMutation() {
 }
 
 export function useRequestCircleAccessMutation() {
-  const invalidate = useInvalidateEngagementQueries();
-
   return useMutation({
-    mutationFn: (input: RequestCircleInput) => requestCircleAccess(input),
-    onSettled: invalidate
+    mutationFn: (input: RequestCircleInput) => requestCircleAccess(input)
+  });
+}
+
+export function useSetCircleAccessStatusMutation() {
+  return useMutation({
+    mutationFn: (input: RequestCircleInput & {
+      currentStatus: "idle" | "pending" | "joined";
+      desiredStatus: "idle" | "pending" | "joined";
+    }) => {
+      if (input.desiredStatus === "idle") {
+        if (input.currentStatus === "pending") return cancelCircleAccess(input);
+        if (input.currentStatus === "joined") return leaveCircleAccess(input);
+        return Promise.resolve("idle" as const);
+      }
+      return requestCircleAccess(input);
+    }
   });
 }

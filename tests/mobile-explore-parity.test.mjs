@@ -453,10 +453,9 @@ test("mobile explore detail screens use the settings-style slide-over animation"
 
 test("mobile root and memory surfaces use the active theme", () => {
   const layout = source("mobile/app/_layout.tsx");
-  const createMemory = source("mobile/app/memories/create.tsx");
   const memoryRouteHeader = source("mobile/src/components/memories/MemoryRouteHeader.tsx");
   const themedMemorySurfaces = [
-    "mobile/app/memories/create.tsx",
+    "mobile/app/(tabs)/share.tsx",
     "mobile/src/components/memories/MemoryInput.tsx",
     "mobile/src/components/memories/MemoryCenterState.tsx",
     "mobile/src/components/memories/MemoryStatsGrid.tsx",
@@ -470,9 +469,9 @@ test("mobile root and memory surfaces use the active theme", () => {
   assert.match(layout, /const baseTheme = resolvedTheme === "light" \? DefaultTheme : DarkTheme/);
   assert.match(layout, /background: themeColors\.bg/);
   assert.match(layout, /<GestureHandlerRootView style=\{\{ backgroundColor: themeColors\.bg, flex: 1 \}\}>/);
-  assert.match(layout, /<StatusBar[\s\S]*backgroundColor=\{themeColors\.bg\}[\s\S]*style=\{resolvedTheme === "light" \? "dark" : "light"\}[\s\S]*\/>/);
+  assert.match(layout, /<StatusBar[\s\S]*backgroundColor="transparent"[\s\S]*style=\{resolvedTheme === "light" \? "dark" : "light"\}[\s\S]*\/>/);
   assert.match(layout, /<StatusBar[\s\S]*hidden=\{false\}/);
-  assert.match(layout, /<StatusBar[\s\S]*translucent=\{false\}/);
+  assert.match(layout, /<StatusBar[\s\S]*translucent=\{IS_ANDROID_EDGE_TO_EDGE\}/);
   assert.match(layout, /contentStyle: \{ backgroundColor: themeColors\.bg \}/);
   assert.doesNotMatch(layout, /colors\.dark\.bg/);
 
@@ -480,10 +479,6 @@ test("mobile root and memory surfaces use the active theme", () => {
   assert.match(memoryRouteHeader, /const \{ themeColors: defaultThemeColors \} = useThemePreference\(\)/);
   assert.match(memoryRouteHeader, /const themeColors = providedThemeColors \?\? defaultThemeColors/);
   assert.doesNotMatch(memoryRouteHeader, /themeColors = colors\.dark/);
-
-  assert.match(createMemory, /const \{ themeColors \} = useThemePreference\(\)/);
-  assert.match(createMemory, /const styles = useMemo\(\(\) => createStyles\(themeColors\), \[themeColors\]\)/);
-  assert.match(createMemory, /<MemoryRouteHeader kicker="Create" onBack=\{\(\) => router\.back\(\)\} themeColors=\{themeColors\} title="Table Memory" \/>/);
 
   for (const relativePath of themedMemorySurfaces) {
     const fileSource = source(relativePath);
@@ -495,29 +490,27 @@ test("mobile root and memory surfaces use the active theme", () => {
 
 test("mobile table memory creation preserves occasion title and sends occasion metadata", () => {
   const share = source("mobile/app/(tabs)/share.tsx");
-  const createMemory = source("mobile/app/memories/create.tsx");
   const memoryService = source("mobile/src/services/memories.ts");
   const classifier = source("mobile/src/features/occasions/classifyOccasion.ts");
   const patterns = source("mobile/src/features/occasions/occasionPatterns.ts");
   const themes = source("mobile/src/features/occasions/occasionThemes.ts");
 
-  assert.match(share, /const createMemoryOccasionOptions: CreateMemoryOccasionOption\[\]/);
+  assert.match(share, /const DEFAULT_MEMORY_OCCASION_TITLE = "Occasion"/);
+  assert.match(share, /const DEFAULT_MEMORY_OCCASION_TYPE: OccasionType = "casual"/);
   assert.match(share, /const \[memoryOccasionTitle, setMemoryOccasionTitle\] = useState\(""\)/);
-  assert.match(share, /const \[selectedMemoryOccasionType, setSelectedMemoryOccasionType\] = useState<OccasionType>\("casual"\)/);
   assert.match(share, /const canCreateMemory = Boolean\(memoryParticipantNames\.length > 0\)/);
   assert.match(share, /<CreateMemoryOccasionPicker/);
   assert.doesNotMatch(share, /occasionPickerTitle/);
   assert.doesNotMatch(share, />Occasion<\/Text>/);
-  assert.match(share, /placeholder="Name this memory"/);
-  assert.match(share, /const SelectedIcon = selectedOption\.Icon/);
+  assert.match(share, /placeholder="Occasion name"/);
   assert.match(share, /style=\{styles\.restaurantAttachment\}/);
   assert.doesNotMatch(share, /What's the occasion\?/);
   assert.doesNotMatch(share, /placeholder="Occasion"/);
   assert.doesNotMatch(share, /useOccasionDraft/);
-  assert.match(share, /occasion: memoryOccasionTitle\.trim\(\) \|\| selectedMemoryOccasion\.title/);
+  assert.match(share, /occasion: memoryOccasionTitle\.trim\(\) \|\| DEFAULT_MEMORY_OCCASION_TITLE/);
   assert.match(share, /occasionConfirmedByUser: true/);
-  assert.match(share, /occasionType: selectedMemoryOccasion\.type/);
-  assert.match(share, /themeKey: getOccasionTheme\(selectedMemoryOccasion\.type\)\.id/);
+  assert.match(share, /occasionType: DEFAULT_MEMORY_OCCASION_TYPE/);
+  assert.match(share, /themeKey: getOccasionTheme\(DEFAULT_MEMORY_OCCASION_TYPE\)\.id/);
   assert.doesNotMatch(share, /Save the place you visited with friends\./);
   assert.doesNotMatch(share, /Save this table memory with friends\./);
   assert.match(share, /styles\.memoryFriendAddedText/);
@@ -527,28 +520,6 @@ test("mobile table memory creation preserves occasion title and sends occasion m
   assert.doesNotMatch(share, /Private memory/);
   assert.doesNotMatch(share, /placeholder="Where did you go\?"/);
   assert.match(share, /restaurantName: "Table Memory"/);
-
-  assert.match(createMemory, /const CREATE_OCCASION_OPTIONS: CreateOccasionOption\[\]/);
-  assert.match(createMemory, /label: "Food"/);
-  assert.match(createMemory, /type: "casual"/);
-  assert.match(createMemory, /const \[occasionTitle, setOccasionTitle\] = useState\(""\)/);
-  assert.match(createMemory, /const \[selectedOccasionType, setSelectedOccasionType\] = useState<OccasionType>\("casual"\)/);
-  assert.match(createMemory, /<CreateOccasionPicker/);
-  assert.doesNotMatch(createMemory, /occasionPickerTitle/);
-  assert.doesNotMatch(createMemory, />Occasion<\/Text>/);
-  assert.match(createMemory, /placeholder="Name this memory"/);
-  assert.match(createMemory, /const SelectedIcon = selectedOption\.Icon/);
-  assert.match(createMemory, /style=\{styles\.occasionTitleRow\}/);
-  assert.doesNotMatch(createMemory, /What's the occasion\?/);
-  assert.doesNotMatch(createMemory, /placeholder="Occasion"/);
-  assert.match(createMemory, /occasion: occasionTitle\.trim\(\) \|\| selectedOccasion\.title/);
-  assert.match(createMemory, /occasionConfirmedByUser: true/);
-  assert.match(createMemory, /occasionType: selectedOccasion\.type/);
-  assert.match(createMemory, /themeKey: getOccasionTheme\(selectedOccasion\.type\)\.id/);
-  assert.ok(
-    createMemory.indexOf("<CreateOccasionPicker") < createMemory.indexOf('placeholder={mode === "post" ? "Restaurant name override (optional)" : "Restaurant name"}'),
-    "table memory occasion picker should appear before place in the standalone create form"
-  );
 
   assert.match(memoryService, /occasion\?: string/);
   assert.match(memoryService, /occasionType\?: OccasionType/);

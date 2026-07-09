@@ -1,10 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Camera, CameraView, type FocusMode } from "expo-camera";
+import { Camera, CameraView, type FocusMode, type PictureRef } from "expo-camera";
+import { Image } from "expo-image";
+import * as MediaLibrary from "expo-media-library";
 import * as Haptics from "expo-haptics";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -13,6 +16,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -31,7 +35,7 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import { useInAppCameraPermissions } from "@/hooks/useInAppCameraPermissions";
-import { pickSingleMemoryMediaFromGallery } from "@/services/mediaPicker";
+import { pickPostImageFromGallery, pickPostMediaFromGallery, pickSingleMemoryMediaFromGallery } from "@/services/mediaPicker";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 
@@ -56,6 +60,21 @@ const AnimatedCircle = Reanimated.createAnimatedComponent(Circle);
 type CaptureMode = "picture" | "video";
 type Facing = "back" | "front";
 type FocusPoint = { nonce: number; x: number; y: number };
+type CapturedPhoto = {
+  height?: number;
+  uri?: string;
+  width?: number;
+};
+type CropGuideFrame = {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+};
+type ViewportSize = {
+  height: number;
+  width: number;
+};
 
 const ZOOM_LEVELS = [
   { label: "1×", value: 0 },
@@ -74,14 +93,30 @@ const haptics = {
 };
 
 export function CameraScreen({
+  allowVideo = true,
+  autoCropPhotoToGuide = false,
+  gallerySelectionLimit = 1,
   onCapture,
-  onClose
+  onClose,
+  onGalleryAssets,
+  photoGuideAspectRatio,
+  photoGuideFrame: photoGuideFrameOverride
 }: {
+  allowVideo?: boolean;
+  autoCropPhotoToGuide?: boolean;
+  /** Max items a multi-select gallery pick may return (used with onGalleryAssets). */
+  gallerySelectionLimit?: number;
   onCapture: (asset: MemoryCapturedMediaInput) => void;
   onClose?: () => void;
+  /** When set, the gallery button multi-selects and delivers the batch here instead of onCapture. */
+  onGalleryAssets?: (assets: MemoryCapturedMediaInput[]) => void;
+  photoGuideAspectRatio?: number;
+  /** Exact window-coordinate frame for the crop guide; wins over the centered frame derived from photoGuideAspectRatio. */
+  photoGuideFrame?: CropGuideFrame | null;
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
   const cameraRef = useRef<CameraView>(null);
   const closingRef = useRef(false);
   const appActiveRef = useRef(AppState.currentState === "active");
@@ -105,6 +140,15 @@ export function CameraScreen({
   const [focusPoint, setFocusPoint] = useState<FocusPoint | null>(null);
   const [appActive, setAppActive] = useState(appActiveRef.current);
   const [cameraError, setCameraError] = useState("");
+  // Viewfinder blackout: hides the live feed the instant the shutter fires
+  // (pausing the preview natively would kill the in-flight capture on
+  // Android, so an overlay stands in for a true frozen frame).
+  const [captureBlackout, setCaptureBlackout] = useState(false);
+  const [galleryThumbNonce, setGalleryThumbNonce] = useState(0);
+
+  // The memories flow pushes a preview screen over this one and can come
+  // back for a retake, so the blackout must lift when focus returns.
+  useFocusEffect(useCallback(() => setCaptureBlackout(false), []));
 
   const cameraPermission = useInAppCameraPermissions(true);
   const cameraActive = cameraPermission.granted && appActive && !closingRef.current;
@@ -112,6 +156,19 @@ export function CameraScreen({
   const shutterUnavailable = !cameraReady || !cameraPermission.granted || (cameraBusy && !recording);
   const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, 42);
   const bottomInset = Platform.OS === "web" ? spacing.xl : Math.max(insets.bottom + spacing.lg, 28);
+  const viewport = useMemo<ViewportSize>(() => ({
+    height: viewportHeight,
+    width: viewportWidth
+  }), [viewportHeight, viewportWidth]);
+  const photoGuideFrame = useMemo(() => {
+    // An explicit frame stays visible in video mode too: video records
+    // full-frame, but posts display it cover-cropped to the same frame, so
+    // the guide is an honest composition aid. Photo capture still crops.
+    if (photoGuideFrameOverride) return photoGuideFrameOverride;
+    if (!photoGuideAspectRatio || captureMode !== "picture") return null;
+    return createPhotoGuideFrame(viewport, photoGuideAspectRatio);
+  }, [captureMode, photoGuideAspectRatio, photoGuideFrameOverride, viewport]);
+  const guidedPhotoMode = Boolean(photoGuideFrame);
 
   // A latest-handler ref keeps the memoized tap gesture from capturing a stale
   // `cameraReady`/state closure without rebuilding the gesture every render.
@@ -189,6 +246,7 @@ export function CameraScreen({
   }
 
   function selectMode(nextMode: CaptureMode) {
+    if (!allowVideo && nextMode === "video") return;
     if (captureMode === nextMode || cameraBusy) return;
     haptics.selection();
     markReady(false);
@@ -209,7 +267,9 @@ export function CameraScreen({
     setCameraError("");
     try {
       const sizes = await cameraRef.current?.getAvailablePictureSizesAsync();
-      const selectedSize = chooseMemoryPictureSize(sizes ?? []);
+      const selectedSize = guidedPhotoMode
+        ? chooseGuidedPictureSize(sizes ?? [])
+        : chooseMemoryPictureSize(sizes ?? []);
       if (selectedSize) setPictureSize(selectedSize);
     } catch {
       // The camera can still capture with the platform default size.
@@ -219,29 +279,106 @@ export function CameraScreen({
   async function capturePhotoNow() {
     if (!cameraReady || !cameraPermission.granted || capturing || recordingRef.current || captureMode !== "picture") return;
     setCapturing(true);
+    setCaptureBlackout(true);
     setCameraError("");
     haptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const photo = await cameraRef.current?.takePictureAsync({
-        exif: true,
-        quality: 0.92,
-        skipProcessing: false
-      });
-      if (photo?.uri && !closingRef.current && appActiveRef.current) {
-        onCapture({
-          height: photo.height,
-          mediaType: "image",
-          mimeType: "image/jpeg",
-          source: "camera",
-          uri: photo.uri,
-          width: photo.width
-        });
-      }
-    } catch {
+      const photo = await takeProcessedPhoto();
+      // On success the blackout stays up until this screen leaves, so the
+      // live feed never reappears between capture and the next screen.
+      if (emitCapturedPhoto(photo)) return;
+      setCaptureBlackout(false);
+      if (!closingRef.current && appActiveRef.current) setCameraError("Could not save photo.");
+    } catch (error) {
+      console.warn("[camera] photo capture failed", error);
+      setCaptureBlackout(false);
       setCameraError("Could not capture photo.");
     } finally {
       setCapturing(false);
     }
+  }
+
+  // Produces the final photo handed to onCapture. Guided mode prefers the
+  // in-memory capture path and falls back to the file-based pipeline if the
+  // camera stack rejects it.
+  async function takeProcessedPhoto(): Promise<CapturedPhoto | null | undefined> {
+    const guideFrame = autoCropPhotoToGuide ? photoGuideFrame : null;
+    if (guideFrame) {
+      const fastPhoto = await takeCroppedPhotoInMemory(guideFrame);
+      if (fastPhoto) return fastPhoto;
+    }
+    const photo = await takePhotoWithProcessingFallback();
+    if (photo?.uri && guideFrame) {
+      return cropCapturedPhotoToGuide(photo, viewport, guideFrame);
+    }
+    return photo;
+  }
+
+  // pictureRef keeps the capture in native memory, so the guided flow does one
+  // decode (capture) and one encode (final cropped save) instead of writing,
+  // re-reading, and re-encoding a full-resolution intermediate JPEG. This is
+  // what makes shutter-to-review-screen fast.
+  async function takeCroppedPhotoInMemory(frame: CropGuideFrame): Promise<CapturedPhoto | null> {
+    let picture: PictureRef | undefined;
+    try {
+      picture = await cameraRef.current?.takePictureAsync({ exif: false, pictureRef: true });
+      if (!picture) return null;
+      const crop = cropRectForVisibleFrame(
+        { height: picture.height, width: picture.width },
+        viewport,
+        frame
+      );
+      const context = ImageManipulator.manipulate(picture);
+      context.crop(crop);
+      const rendered = await context.renderAsync();
+      const result = await rendered.saveAsync({ compress: 0.9, format: SaveFormat.JPEG });
+      rendered.release();
+      return {
+        height: result.height ?? crop.height,
+        uri: result.uri,
+        width: result.width ?? crop.width
+      };
+    } catch (error) {
+      console.warn("[camera] in-memory guided capture failed, falling back to file path", error);
+      return null;
+    } finally {
+      picture?.release();
+    }
+  }
+
+  async function takePhotoWithProcessingFallback() {
+    try {
+      // exif must stay off: requesting exif makes Android skip rotating the
+      // bitmap upright, so the saved file and reported width/height stay in
+      // sensor-landscape orientation.
+      return await cameraRef.current?.takePictureAsync({
+        exif: false,
+        quality: 0.92,
+        skipProcessing: false
+      });
+    } catch (error) {
+      console.warn("[camera] processed capture failed, retrying with skipProcessing", error);
+      // Some Android camera stacks fail during Expo's post-processing step even
+      // though raw capture succeeds. The upload pipeline re-encodes images later.
+      return cameraRef.current?.takePictureAsync({
+        exif: false,
+        quality: 0.88,
+        skipProcessing: true
+      });
+    }
+  }
+
+  function emitCapturedPhoto(photo: CapturedPhoto | null | undefined) {
+    if (!photo?.uri || closingRef.current || !appActiveRef.current) return false;
+    onCapture({
+      height: photo.height,
+      mediaType: "image",
+      mimeType: "image/jpeg",
+      source: "camera",
+      uri: photo.uri,
+      width: photo.width
+    });
+    return true;
   }
 
   async function ensureMicrophonePermission() {
@@ -313,13 +450,26 @@ export function CameraScreen({
     if (cameraBusy) return;
     haptics.selection();
     setCameraError("");
-    const result = await pickSingleMemoryMediaFromGallery();
+    if (onGalleryAssets) {
+      await openGalleryMulti();
+      return;
+    }
+    const result = allowVideo
+      ? await pickSingleMemoryMediaFromGallery()
+      : await pickPostImageFromGallery();
+    // The picker may have just granted library access; let the gallery
+    // button pick up its latest-photo thumbnail.
+    setGalleryThumbNonce((nonce) => nonce + 1);
     if (result.error) {
       setCameraError(result.error);
       return;
     }
     const asset = result.asset;
     if (!asset?.uri) return;
+    if (!allowVideo && (asset.type === "video" || asset.mimeType?.startsWith("video/"))) {
+      setCameraError("Video uploads are temporarily unavailable. Add a photo instead.");
+      return;
+    }
     onCapture({
       duration: asset.duration ?? null,
       fileSize: asset.fileSize ?? null,
@@ -330,6 +480,26 @@ export function CameraScreen({
       uri: asset.uri,
       width: asset.width ?? null
     });
+  }
+
+  async function openGalleryMulti() {
+    const result = await pickPostMediaFromGallery(gallerySelectionLimit);
+    setGalleryThumbNonce((nonce) => nonce + 1);
+    if (result.error) {
+      setCameraError(result.error);
+      return;
+    }
+    if (result.assets.length === 0) return;
+    onGalleryAssets?.(result.assets.map((asset) => ({
+      duration: asset.duration ?? null,
+      fileSize: asset.fileSize ?? null,
+      height: asset.height ?? null,
+      mediaType: asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" as const : "image" as const,
+      mimeType: asset.mimeType ?? null,
+      source: "gallery" as const,
+      uri: asset.uri,
+      width: asset.width ?? null
+    })));
   }
 
   function closeCamera() {
@@ -387,7 +557,7 @@ export function CameraScreen({
       <GestureDetector gesture={cameraGesture}>
         <CameraView
           active={cameraActive}
-          animateShutter
+          animateShutter={false}
           autofocus={autoFocus}
           enableTorch={flashEnabled && captureMode === "video" && facing === "back"}
           facing={facing}
@@ -406,8 +576,13 @@ export function CameraScreen({
         />
       </GestureDetector>
 
-      {gridEnabled ? <CameraGrid /> : null}
+      {photoGuideFrame ? <PhotoCropGuide frame={photoGuideFrame} /> : gridEnabled ? <CameraGrid /> : null}
       <FocusReticle point={focusPoint} />
+      {captureBlackout ? (
+        <View style={styles.captureBlackout}>
+          <ActivityIndicator color={colors.dark.white} />
+        </View>
+      ) : null}
 
       <LinearGradient
         colors={["rgba(0,0,0,0.45)", "rgba(0,0,0,0)"]}
@@ -436,17 +611,19 @@ export function CameraScreen({
           >
             <Ionicons name={flashEnabled ? "flash" : "flash-off-outline"} size={21} color={colors.dark.white} />
           </Pressable>
-          <Pressable
-            accessibilityLabel={gridEnabled ? "Hide camera grid" : "Show camera grid"}
-            disabled={recording}
-            onPress={() => {
-              haptics.selection();
-              setGridEnabled((current) => !current);
-            }}
-            style={[styles.iconButton, gridEnabled && styles.iconButtonActive, recording && styles.disabledControl]}
-          >
-            <Ionicons name="grid-outline" size={20} color={colors.dark.white} />
-          </Pressable>
+          {!photoGuideFrame ? (
+            <Pressable
+              accessibilityLabel={gridEnabled ? "Hide camera grid" : "Show camera grid"}
+              disabled={recording}
+              onPress={() => {
+                haptics.selection();
+                setGridEnabled((current) => !current);
+              }}
+              style={[styles.iconButton, gridEnabled && styles.iconButtonActive, recording && styles.disabledControl]}
+            >
+              <Ionicons name="grid-outline" size={20} color={colors.dark.white} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -465,16 +642,9 @@ export function CameraScreen({
           </View>
         ) : null}
         <ZoomRail disabled={cameraBusy} selectedZoom={zoom} onSelect={selectZoomPreset} />
-        <ModeRail disabled={cameraBusy} mode={captureMode} onSelect={selectMode} />
+        {allowVideo ? <ModeRail disabled={cameraBusy} mode={captureMode} onSelect={selectMode} /> : null}
         <View style={styles.bottomActionRow}>
-          <Pressable
-            accessibilityLabel="Choose from gallery"
-            disabled={cameraBusy}
-            onPress={openGallery}
-            style={[styles.sideActionButton, cameraBusy && styles.disabledControl]}
-          >
-            <Ionicons name="images-outline" size={24} color={colors.dark.white} />
-          </Pressable>
+          <GalleryButton disabled={cameraBusy} onPress={openGallery} refreshNonce={galleryThumbNonce} />
           <Pressable
             accessibilityLabel={recording ? "Stop recording" : captureMode === "video" ? "Start recording" : "Take photo"}
             disabled={shutterUnavailable && !recording}
@@ -502,6 +672,63 @@ function CameraShell({ children }: { children: React.ReactNode }) {
   return <View style={styles.screen}>{children}</View>;
 }
 
+// Gallery entry showing the newest library photo as a framed thumbnail
+// (falls back to an icon until library access has been granted). Permission
+// is only read, never requested — the picker itself asks on first use, and
+// refreshNonce re-checks after it closes.
+function GalleryButton({
+  disabled,
+  onPress,
+  refreshNonce
+}: {
+  disabled: boolean;
+  onPress: () => void;
+  refreshNonce: number;
+}) {
+  const [thumbUri, setThumbUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const permission = await MediaLibrary.getPermissionsAsync();
+        if (!permission.granted) {
+          if (alive) setThumbUri(null);
+          return;
+        }
+        const assets = await MediaLibrary.getAssetsAsync({
+          first: 1,
+          mediaType: [MediaLibrary.MediaType.photo],
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]]
+        });
+        if (alive) setThumbUri(assets.assets[0]?.uri ?? null);
+      } catch {
+        if (alive) setThumbUri(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [refreshNonce]);
+
+  return (
+    <Pressable
+      accessibilityLabel="Choose from gallery"
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.sideActionButton, disabled && styles.disabledControl]}
+    >
+      {thumbUri ? (
+        <Image alt="Latest gallery photo" contentFit="cover" source={{ uri: thumbUri }} style={styles.galleryThumb} transition={120} />
+      ) : (
+        <View style={styles.galleryThumbPlaceholder}>
+          <Ionicons name="images-outline" size={20} color={colors.dark.white} />
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 function CameraGrid() {
   return (
     <View pointerEvents="none" style={styles.gridOverlay}>
@@ -509,6 +736,25 @@ function CameraGrid() {
       <View style={[styles.gridLineVertical, { left: "66.666%" }]} />
       <View style={[styles.gridLineHorizontal, { top: "33.333%" }]} />
       <View style={[styles.gridLineHorizontal, { top: "66.666%" }]} />
+    </View>
+  );
+}
+
+function PhotoCropGuide({ frame }: { frame: CropGuideFrame }) {
+  const frameBottom = Math.max(0, frame.top + frame.height);
+  const frameRight = Math.max(0, frame.left + frame.width);
+  return (
+    <View pointerEvents="none" style={styles.photoGuideOverlay}>
+      <View style={[styles.guideDim, { height: frame.top, left: 0, right: 0, top: 0 }]} />
+      <View style={[styles.guideDim, { bottom: 0, left: 0, right: 0, top: frameBottom }]} />
+      <View style={[styles.guideDim, { height: frame.height, left: 0, top: frame.top, width: frame.left }]} />
+      <View style={[styles.guideDim, { height: frame.height, left: frameRight, right: 0, top: frame.top }]} />
+      <View style={[styles.photoGuideFrame, frame]}>
+        <View style={[styles.photoGuideLineVertical, { left: frame.width / 3 }]} />
+        <View style={[styles.photoGuideLineVertical, { left: (frame.width / 3) * 2 }]} />
+        <View style={[styles.photoGuideLineHorizontal, { top: frame.height / 3 }]} />
+        <View style={[styles.photoGuideLineHorizontal, { top: (frame.height / 3) * 2 }]} />
+      </View>
     </View>
   );
 }
@@ -700,19 +946,29 @@ function factorToZoom(factor: number) {
   return ((factor - 1) / (ZOOM_DISPLAY_MAX_FACTOR - 1)) * MAX_CAMERA_ZOOM;
 }
 
-function chooseMemoryPictureSize(sizes: string[]) {
-  const parsed = sizes
+type ParsedPictureSize = {
+  longEdge: number;
+  shortEdge: number;
+  size: string;
+};
+
+function parsePictureSizes(sizes: string[]): ParsedPictureSize[] {
+  return sizes
     .map((size) => {
       const [rawWidth, rawHeight] = size.split("x");
       const width = Number(rawWidth);
       const height = Number(rawHeight);
       const longEdge = Math.max(width, height);
-      return Number.isFinite(width) && Number.isFinite(height) && longEdge > 0
-        ? { longEdge, size }
+      const shortEdge = Math.min(width, height);
+      return Number.isFinite(width) && Number.isFinite(height) && shortEdge > 0
+        ? { longEdge, shortEdge, size }
         : null;
     })
-    .filter((size): size is { longEdge: number; size: string } => Boolean(size));
+    .filter((size): size is ParsedPictureSize => Boolean(size));
+}
 
+function chooseMemoryPictureSize(sizes: string[]) {
+  const parsed = parsePictureSizes(sizes);
   if (parsed.length === 0) return undefined;
   const targetBand = parsed
     .filter((size) => size.longEdge >= 2048 && size.longEdge <= 2560)
@@ -721,6 +977,103 @@ function chooseMemoryPictureSize(sizes: string[]) {
 
   return parsed
     .sort((a, b) => Math.abs(a.longEdge - 2560) - Math.abs(b.longEdge - 2560))[0]?.size;
+}
+
+// Guided capture crops to the on-screen guide, so what-you-see must equal
+// what-you-get: the capture aspect has to match the preview stream's sensor
+// aspect (4:3), or the cover mapping between them drifts. Within 4:3 sizes,
+// prefer a ~2048-2688 long edge — full sensor resolution (12MP+) roughly
+// triples shutter-to-screen latency for pixels the upload pipeline discards.
+function chooseGuidedPictureSize(sizes: string[]) {
+  const fourThree = parsePictureSizes(sizes).filter(
+    (size) => Math.abs(size.longEdge / size.shortEdge - 4 / 3) < 0.02 && size.longEdge >= 1920
+  );
+  if (fourThree.length === 0) return undefined;
+  const targetBand = fourThree
+    .filter((size) => size.longEdge >= 2048 && size.longEdge <= 2688)
+    .sort((a, b) => b.longEdge - a.longEdge);
+  if (targetBand[0]) return targetBand[0].size;
+
+  return fourThree
+    .sort((a, b) => Math.abs(a.longEdge - 2560) - Math.abs(b.longEdge - 2560))[0]?.size;
+}
+
+function createPhotoGuideFrame(viewport: ViewportSize, aspectRatio: number): CropGuideFrame | null {
+  if (viewport.width <= 0 || viewport.height <= 0 || aspectRatio <= 0) return null;
+  const width = viewport.width;
+  const height = width / aspectRatio;
+  return {
+    height,
+    left: (viewport.width - width) / 2,
+    top: (viewport.height - height) / 2,
+    width
+  };
+}
+
+async function cropCapturedPhotoToGuide(
+  photo: CapturedPhoto,
+  viewport: ViewportSize,
+  frame: CropGuideFrame
+): Promise<CapturedPhoto> {
+  if (!photo.uri || viewport.width <= 0 || viewport.height <= 0) return photo;
+  try {
+    // Never trust the camera's reported width/height for crop math: Android
+    // can report pre-rotation (sensor-landscape) dimensions while the loader
+    // below applies EXIF rotation, which pushes the crop rect out of bounds.
+    // Loading first and measuring the same bitmap that gets cropped keeps the
+    // rect in bounds by construction on every platform and capture path.
+    const loaded = await ImageManipulator.manipulate(photo.uri).renderAsync();
+    const crop = cropRectForVisibleFrame(
+      { height: loaded.height, width: loaded.width },
+      viewport,
+      frame
+    );
+    const context = ImageManipulator.manipulate(loaded);
+    context.crop(crop);
+    const rendered = await context.renderAsync();
+    const result = await rendered.saveAsync({
+      compress: 0.9,
+      format: SaveFormat.JPEG
+    });
+    return {
+      height: result.height ?? crop.height,
+      uri: result.uri,
+      width: result.width ?? crop.width
+    };
+  } catch (error) {
+    console.warn("[camera] guide crop failed, using uncropped photo", error);
+    // A failed crop should not lose the shot; hand back the full photo.
+    return photo;
+  }
+}
+
+// Maps the on-screen guide frame back onto the captured image, assuming the
+// preview cover-fills the viewport (FILL_CENTER on Android, aspect-fill on
+// iOS): the image is scaled up to cover the screen and center-cropped.
+function cropRectForVisibleFrame(
+  source: ViewportSize,
+  viewport: ViewportSize,
+  frame: CropGuideFrame
+) {
+  const scale = Math.max(viewport.width / source.width, viewport.height / source.height);
+  const displayedWidth = source.width * scale;
+  const displayedHeight = source.height * scale;
+  const displayedLeft = (viewport.width - displayedWidth) / 2;
+  const displayedTop = (viewport.height - displayedHeight) / 2;
+  const rawOriginX = (frame.left - displayedLeft) / scale;
+  const rawOriginY = (frame.top - displayedTop) / scale;
+  const rawWidth = frame.width / scale;
+  const rawHeight = frame.height / scale;
+  const originX = Math.max(0, Math.min(source.width - 1, rawOriginX));
+  const originY = Math.max(0, Math.min(source.height - 1, rawOriginY));
+  const width = Math.max(1, Math.min(source.width - originX, rawWidth));
+  const height = Math.max(1, Math.min(source.height - originY, rawHeight));
+  return {
+    height: Math.round(height),
+    originX: Math.round(originX),
+    originY: Math.round(originY),
+    width: Math.round(width)
+  };
 }
 
 const CAMERA_COLORS = {
@@ -817,6 +1170,13 @@ const styles = StyleSheet.create({
     width: FOCUS_RETICLE_SIZE,
     zIndex: 2
   },
+  captureBlackout: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    backgroundColor: colors.dark.black,
+    justifyContent: "center",
+    zIndex: 2
+  },
   gridOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1
@@ -834,6 +1194,36 @@ const styles = StyleSheet.create({
     left: 0,
     position: "absolute",
     right: 0
+  },
+  guideDim: {
+    backgroundColor: "rgba(0,0,0,0.34)",
+    position: "absolute",
+    zIndex: 1
+  },
+  photoGuideFrame: {
+    borderColor: "rgba(255,255,255,0.86)",
+    borderWidth: 1.5,
+    overflow: "hidden",
+    position: "absolute",
+    zIndex: 2
+  },
+  photoGuideOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1
+  },
+  photoGuideLineHorizontal: {
+    backgroundColor: "rgba(255,255,255,0.36)",
+    height: StyleSheet.hairlineWidth,
+    left: 0,
+    position: "absolute",
+    right: 0
+  },
+  photoGuideLineVertical: {
+    backgroundColor: "rgba(255,255,255,0.36)",
+    bottom: 0,
+    position: "absolute",
+    top: 0,
+    width: StyleSheet.hairlineWidth
   },
   bottomControls: {
     bottom: 0,
@@ -919,6 +1309,23 @@ const styles = StyleSheet.create({
     height: 54,
     justifyContent: "center",
     width: 54
+  },
+  galleryThumb: {
+    borderColor: "rgba(255,255,255,0.92)",
+    borderRadius: 10,
+    borderWidth: 1.5,
+    height: 40,
+    width: 40
+  },
+  galleryThumbPlaceholder: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderColor: "rgba(255,255,255,0.6)",
+    borderRadius: 10,
+    borderWidth: 1.5,
+    height: 40,
+    justifyContent: "center",
+    width: 40
   },
   shutterButton: {
     alignItems: "center",

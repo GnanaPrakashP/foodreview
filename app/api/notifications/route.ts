@@ -70,7 +70,7 @@ async function buildNotificationProfileMap(
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createRouteSupabase();
+  const supabase = await createRouteSupabase(req);
   const viewer = await getNotificationViewer(supabase);
   if (!viewer) return unauthorized();
 

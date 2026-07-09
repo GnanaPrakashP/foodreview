@@ -16,7 +16,9 @@ import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
-import { consumePendingPostCapture } from "@/services/postCaptureSession";
+import { POST_BITE_ASPECT_RATIO } from "@/constants/postCaptureLayout";
+import { consumePendingPostCaptures, subscribeToPostCaptures } from "@/services/postCaptureSession";
+import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 import {
   autocompletePlaces,
   compactPlaceLocation,
@@ -27,6 +29,7 @@ import {
   type SelectedPlace
 } from "@/services/places";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
@@ -62,6 +65,8 @@ type ShareMode = "choice" | "solo" | "friends";
 type SoloStep = "review" | "details" | "preview";
 
 const MAX_POST_MEDIA = 4;
+// Matches the camera's recording cap and the API's duration limit.
+const MAX_POST_VIDEO_MS = 30_000;
 
 const DEFAULT_MEMORY_OCCASION_TITLE = "Occasion";
 const DEFAULT_MEMORY_OCCASION_TYPE: OccasionType = "casual";
@@ -189,6 +194,15 @@ export default function ShareScreen() {
     .join("") || "Y";
   const previewTags = selectedTags;
   const previewLocation = compactPlaceLocation(restaurantPlace);
+  const setComposing = useComposerStore((state) => state.setComposing);
+  // The tab bar stays hidden for the whole composer flow: from the first
+  // captured photo through review/details/preview, until posted or abandoned
+  // (removing the last photo re-shows it).
+  const composing = Boolean(isReady && isAuthenticated && shareMode === "solo" && mediaItems.length > 0);
+  useEffect(() => {
+    setComposing(composing);
+    return () => setComposing(false);
+  }, [composing, setComposing]);
 
   function cancelShareMode() {
     setShareMode("choice");
@@ -198,22 +212,41 @@ export default function ShareScreen() {
     setUploadProgress(null);
   }
 
-  // Solo posting now leads with the camera: opening solo pushes the capture
-  // screen first, and only a successful capture drops us into the review step.
   function openSolo() {
     setSoloStep("review");
     setImageError("");
+    setUploadProgress(null);
     router.push("/share/camera");
+  }
+
+  // remaining tells the camera how many gallery items may still be picked.
+  function openCameraForMore() {
+    setImageError("");
+    router.push({
+      pathname: "/share/camera",
+      params: { remaining: String(Math.max(1, MAX_POST_MEDIA - mediaItemsRef.current.length)) }
+    });
   }
 
   function addMorePhotos() {
     if (!canAddMoreMedia) return;
-    setImageError("");
-    router.push("/share/camera");
+    openCameraForMore();
   }
 
   function removeMediaAt(index: number) {
-    setMediaItems((current) => current.filter((_, position) => position !== index));
+    const next = mediaItemsRef.current.filter((_, position) => position !== index);
+    // Removing the last item mid-flow reopens the camera to reshoot instead
+    // of stranding the user on an empty review screen. No state changes here:
+    // any mutation renders under the camera's push transition and flashes the
+    // empty review UI. The stale item stays mounted out of sight until the
+    // next capture replaces it (or the camera closes without one).
+    if (next.length === 0 && shareMode === "solo" && soloStep === "review") {
+      retakePendingRef.current = true;
+      // The next capture replaces everything, so all slots are free.
+      router.push({ pathname: "/share/camera", params: { remaining: String(MAX_POST_MEDIA) } });
+      return;
+    }
+    setMediaItems(next);
   }
 
   function toggleMuteAt(index: number) {
@@ -224,38 +257,74 @@ export default function ShareScreen() {
     ));
   }
 
-  // The in-app camera route stays pushed over this (still-mounted) tab; on
-  // return it leaves the capture here, which we append to the review step.
-  // A video is a single-item post; images accumulate up to MAX_POST_MEDIA.
-  // No capture (user backed out) leaves shareMode on "choice".
-  useFocusEffect(
-    useCallback(() => {
-      const captured = consumePendingPostCapture();
-      if (!captured) return;
-      setUploadProgress(null);
-      if (captured.mediaType === "video") {
-        setShareMode("solo");
-        setSoloStep("review");
-        setImageError("Video uploads are temporarily unavailable. Add a photo instead.");
-        return;
-      }
-      const picked: PickedMedia = {
-        duration: captured.duration ?? null,
-        fileSize: captured.fileSize ?? null,
-        height: captured.height ?? null,
-        mediaType: captured.mediaType,
-        mimeType: captured.mimeType ?? null,
-        uri: captured.uri,
-        width: captured.width ?? null
-      };
-      // Photos and videos can be mixed in one post (up to MAX_POST_MEDIA).
-      const next = [...mediaItemsRef.current, picked].slice(0, MAX_POST_MEDIA);
-      setMediaItems(next);
-      setSelectedMediaIndex(next.length - 1);
+  const appendCapturedPostMedia = useCallback((capturedList: PickedMedia[]) => {
+    if (capturedList.length === 0) return;
+    const pickedList: PickedMedia[] = capturedList.map((captured) => ({
+      duration: captured.duration ?? null,
+      fileSize: captured.fileSize ?? null,
+      height: captured.height ?? null,
+      mediaType: captured.mediaType,
+      mimeType: captured.mimeType ?? null,
+      uri: captured.uri,
+      width: captured.width ?? null
+    }));
+    // A pending retake means the last item was "deleted" but kept mounted
+    // while the camera was up (see removeMediaAt) — replace instead of append.
+    const base = retakePendingRef.current ? [] : mediaItemsRef.current;
+    retakePendingRef.current = false;
+    const next = [...base, ...pickedList].slice(0, MAX_POST_MEDIA);
+    setMediaItems(next);
+    setSelectedMediaIndex(next.length - 1);
+    setShareMode("solo");
+    setSoloStep("review");
+    setImageError("");
+  }, []);
+
+  const receiveCapturedPostMedia = useCallback((capturedItems: MemoryCapturedMediaInput[]) => {
+    setUploadProgress(null);
+    // The API rejects longer clips; gallery picks can exceed the camera's cap.
+    const isTooLong = (item: MemoryCapturedMediaInput) =>
+      item.mediaType === "video" && (item.duration ?? 0) > MAX_POST_VIDEO_MS + 500;
+    const usable = capturedItems.filter((item) => !isTooLong(item));
+    appendCapturedPostMedia(usable.map((captured) => ({
+      duration: captured.duration ?? null,
+      fileSize: captured.fileSize ?? null,
+      height: captured.height ?? null,
+      mediaType: captured.mediaType,
+      mimeType: captured.mimeType ?? null,
+      uri: captured.uri,
+      width: captured.width ?? null
+    })));
+    if (usable.length < capturedItems.length) {
       setShareMode("solo");
       setSoloStep("review");
-      setImageError("");
-    }, [])
+      setImageError(`Videos must be ${MAX_POST_VIDEO_MS / 1000} seconds or less.`);
+    }
+  }, [appendCapturedPostMedia]);
+
+  // Captures are pushed here while the camera/crop screen still covers this
+  // tab, so the review tree swap commits before that screen dismisses (see
+  // postCaptureSession for the Fabric mounting race this avoids).
+  useEffect(() => subscribeToPostCaptures(receiveCapturedPostMedia), [receiveCapturedPostMedia]);
+
+  // Set when the last media item is removed: its state clear is deferred so
+  // nothing re-renders in view during the camera push (see removeMediaAt).
+  const retakePendingRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      const captured = consumePendingPostCaptures();
+      if (captured.length > 0) {
+        receiveCapturedPostMedia(captured);
+        return;
+      }
+      // Back from the camera without capturing after a last-item removal:
+      // finish the deferred delete now, landing on the empty review exit.
+      if (retakePendingRef.current) {
+        retakePendingRef.current = false;
+        setMediaItems([]);
+      }
+    }, [receiveCapturedPostMedia])
   );
 
   // Keep the large preview's selection in range as media is added or removed.
@@ -441,9 +510,15 @@ export default function ShareScreen() {
       <Screen padded={false} style={styles.screenContent}>
         <View style={styles.reviewScreen}>
           <View collapsable={false} style={styles.reviewHeaderRow}>
-            <Pressable accessibilityLabel="Cancel share" onPress={cancelShareMode} style={styles.headerCancelButton}>
-              <X size={20} color={c.cream} strokeWidth={2.4} />
-            </Pressable>
+            {mediaItems.length > 0 ? (
+              <Pressable accessibilityLabel="Back to camera" onPress={openCameraForMore} style={styles.headerCancelButton}>
+                <ArrowLeft size={20} color={c.cream} strokeWidth={2.4} />
+              </Pressable>
+            ) : (
+              <Pressable accessibilityLabel="Cancel share" onPress={cancelShareMode} style={styles.headerCancelButton}>
+                <X size={20} color={c.cream} strokeWidth={2.4} />
+              </Pressable>
+            )}
             <Pressable
               disabled={soloHeaderActionDisabled}
               onPress={handleSoloHeaderAction}
@@ -467,17 +542,19 @@ export default function ShareScreen() {
                 style={StyleSheet.absoluteFill}
               >
                 {mediaItems.map((media, index) => (
-                  <View key={`${media.uri}-${index}`} style={{ width: pagerWidth, height: "100%" }}>
+                  <View key={`${media.uri}-${index}`} style={{ width: pagerWidth, height: "100%", justifyContent: "center" }}>
                     {media.mediaType === "video" ? (
+                      // Videos review in the same 4:5 cover crop the feed
+                      // shows, matching the camera guide and post preview.
                       <SelectedPostVideo
                         active={index === selectedMediaIndex}
                         muted={media.muted}
                         onToggleMute={() => toggleMuteAt(index)}
-                        style={styles.reviewMainImage}
+                        style={{ height: pagerWidth / POST_BITE_ASPECT_RATIO, width: pagerWidth }}
                         uri={media.uri}
                       />
                     ) : (
-                      <Image alt="Captured photo" contentFit="cover" source={{ uri: media.uri }} style={styles.reviewMainImage} />
+                      <Image alt="Captured photo" contentFit="contain" source={{ uri: media.uri }} style={styles.reviewMainImage} />
                     )}
                   </View>
                 ))}
@@ -549,10 +626,7 @@ export default function ShareScreen() {
             ) : shareMode === "solo" ? (
               soloStep === "preview" ? <Text style={styles.title}>Preview</Text> : null
             ) : (
-              <>
-                <Text style={styles.title}>Create</Text>
-                <Text style={styles.subtitle}>Choose how you want to capture this meal.</Text>
-              </>
+              <Text style={styles.title}>Create</Text>
             )}
           </View>
           {isReady && isAuthenticated && shareMode === "solo" ? (

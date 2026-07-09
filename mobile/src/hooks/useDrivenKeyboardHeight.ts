@@ -50,18 +50,21 @@ export function useDrivenKeyboardHeight(): DrivenKeyboardHeight {
         if (event.duration > 0) {
           // PARK, don't ride: the destination is predetermined (onStart
           // announces the exact final height), so the composer makes one
-          // quick one-directional move and is stationary before the IME is
-          // halfway up. Riding the keyboard is impossible to render
+          // one-directional move and is stationary before the IME's final,
+          // drop-prone frames. Riding the keyboard is impossible to render
           // faithfully on devices that freeze app frames at slide start
           // (measured ~4 frames on the Motorola Edge 70 Fusion) — every
           // chase/catch-up variant showed as relative wiggle against the
-          // OS-rendered keyboard. A parked composer cannot wiggle: nothing
-          // moves once it lands, and the freeze can only delay (never
-          // distort) a motion this short. Cost: a brief dark band under the
-          // parked composer until the keyboard closes the gap.
+          // OS-rendered keyboard. A parked composer cannot wiggle.
+          // The move spans MOST of the keyboard's announced duration and
+          // lands ~60ms early: a much faster move (140ms was tried) leaves
+          // the two arrivals far apart and reads as a "two-stop" sequence —
+          // composer lands, dead air, keyboard docks. Overlapping the
+          // motions with the same AOSP curve makes it one continuous event
+          // in which the composer simply leads.
           height.value = withTiming(nextTarget, {
-            duration: 140,
-            easing: Easing.out(Easing.cubic)
+            duration: Math.max(120, Math.min(event.duration - 60, 240)),
+            easing: Easing.bezier(0.2, 0, 0, 1)
           });
         } else {
           // Instant/fallback transitions (e.g. emoji<->text panel snaps)

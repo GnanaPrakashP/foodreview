@@ -114,22 +114,9 @@ function feedbackCounts() {
 
 function feedbackBucket(row: FeedbackRow): keyof FeedbackCounts {
   const label = (row.feedback_label ?? "").toLowerCase();
-  // New labels
-  if (label === "must try") return "SA";
-  if (label === "not worth it") return "SD";
-  // Legacy labels
-  if (label === "strongly agree") return "SA";
-  if (label === "agree") return "A";
-  if (label === "craving") return "A";
-  if (label === "neutral") return "N";
+  if (label === "helpful") return "SA";
   if (label === "disagree") return "D";
-  if (label === "strongly disagree") return "SD";
-  if (label.includes("totally")) return "SA";
-  if (label.includes("mostly")) return "A";
-  if (label.includes("okay")) return "N";
-  if (label.includes("not really")) return "D";
-  if (label.includes("not worth")) return "SD";
-  // Final fallback: use numeric value
+
   const value = Number(row.feedback_value);
   if (value >= 1) return "SA";
   if (value >= 0.7) return "A";
@@ -426,7 +413,7 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
       badgeId: "good_call",
       badgeType: "permanent",
       badgeName: "Good Call",
-      badgeDescription: "Received an Agree or Strongly Agree on a post.",
+      badgeDescription: "Received a Helpful reaction on a post.",
       badgeIcon: "badge-check",
       badgeCategory: "credibility",
     });
@@ -462,7 +449,7 @@ function buildBadgeCandidates(ctx: ReputationContext): BadgeCandidate[] {
       badgeId: "crowd_approved",
       badgeType: "permanent",
       badgeName: "Crowd Approved",
-      badgeDescription: "One post received ten Strongly Agree reactions.",
+      badgeDescription: "One post received ten Helpful reactions.",
       badgeIcon: "users",
       badgeCategory: "credibility",
     });
@@ -559,7 +546,7 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
     addProgress(progress, { badgeId: "photo_first", badgeName: "Photo First", current: ctx.reviews.some(hasPhoto) ? 1 : 0, target: 1, label: `${ctx.reviews.some(hasPhoto) ? 1 : 0}/1 photo`, badgeIcon: "camera", badgeDescription: "Add a photo or video to any review." });
   }
   if (!earnedBadgeIds.has("good_call")) {
-    addProgress(progress, { badgeId: "good_call", badgeName: "Good Call", current: maxSA, target: 1, label: `${Math.min(maxSA, 1)}/1`, badgeIcon: "badge-check", badgeDescription: "Get a Strongly Agree on any post." });
+    addProgress(progress, { badgeId: "good_call", badgeName: "Good Call", current: maxSA, target: 1, label: `${Math.min(maxSA, 1)}/1`, badgeIcon: "badge-check", badgeDescription: "Get a Helpful reaction on any post." });
   }
   if (!earnedBadgeIds.has("food_explorer")) {
     addProgress(progress, { badgeId: "food_explorer", badgeName: "Food Explorer", current: ctx.reviews.length, target: 3, label: `${ctx.reviews.length}/3 reviews`, badgeIcon: "compass", badgeDescription: "Post three reviews." });
@@ -573,7 +560,7 @@ function buildBadgeProgress(ctx: ReputationContext, earnedBadgeIds: Set<string>)
   }
 
   if (!earnedBadgeIds.has("crowd_approved")) {
-    addProgress(progress, { badgeId: "crowd_approved", badgeName: "Crowd Approved", current: maxSA, target: 10, label: `${maxSA}/10`, badgeIcon: "users", badgeDescription: "Get ten Strongly Agree reactions on one post." });
+    addProgress(progress, { badgeId: "crowd_approved", badgeName: "Crowd Approved", current: maxSA, target: 10, label: `${maxSA}/10`, badgeIcon: "users", badgeDescription: "Get ten Helpful reactions on one post." });
   }
   if (!earnedBadgeIds.has("hidden_gem_finder")) {
     addProgress(progress, { badgeId: "hidden_gem_finder", badgeName: "Hidden Gem Finder", current: maxHiddenGemAgrees, target: 10, label: `${maxHiddenGemAgrees}/10 agrees`, badgeIcon: "gem", badgeDescription: "Get ten agrees for a place with fewer than 20 posts." });

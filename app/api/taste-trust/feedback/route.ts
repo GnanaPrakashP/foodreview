@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { canActorReadPost } from "@/lib/server/review-access";
+import { getPostEngagementState } from "@/lib/server/post-engagement-state";
 import { getPostTasteTrustSummary, recalculateTasteTrust } from "@/lib/server/taste-trust";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -358,9 +359,10 @@ export async function POST(req: NextRequest) {
       feedback_id: feedbackId,
     });
 
-    const [trustSummary, postSummary] = await Promise.all([
+    const [trustSummary, postSummary, engagement] = await Promise.all([
       recalculateTasteTrust(db, reviewerProfile.id),
       getPostTasteTrustSummary(db, postId),
+      getPostEngagementState(db, postId, actor),
     ]);
     try {
       await Promise.all([
@@ -381,6 +383,7 @@ export async function POST(req: NextRequest) {
       triedItem,
       trustSummary,
       postSummary,
+      engagement,
       myFeedbackLabel: displayFeedbackLabel,
     });
   } catch (error) {
@@ -420,13 +423,17 @@ export async function DELETE(req: NextRequest) {
 
     if (existingError) throw new Error(existingError.message);
     if (!existing?.id) {
-      const postSummary = await getPostTasteTrustSummary(db, postId);
+      const [postSummary, engagement] = await Promise.all([
+        getPostTasteTrustSummary(db, postId),
+        getPostEngagementState(db, postId, actor),
+      ]);
       return NextResponse.json({
         ok: true,
         feedback: null,
         triedItem: null,
         trustSummary: null,
         postSummary,
+        engagement,
         myFeedbackLabel: null,
       });
     }
@@ -448,9 +455,10 @@ export async function DELETE(req: NextRequest) {
       .select("id, user_id, place_id, dish_id, source_post_id, source_user_id, feedback_id, tried_status, visibility, created_at, updated_at")
       .maybeSingle<TriedItemRow>();
 
-    const [trustSummary, postSummary] = await Promise.all([
+    const [trustSummary, postSummary, engagement] = await Promise.all([
       recalculateTasteTrust(db, reviewerUserId),
       getPostTasteTrustSummary(db, postId),
+      getPostEngagementState(db, postId, actor),
     ]);
     try {
       await refreshUserReputationFoundation(db, reviewerUserId);
@@ -465,6 +473,7 @@ export async function DELETE(req: NextRequest) {
       triedItem: triedItem ?? null,
       trustSummary,
       postSummary,
+      engagement,
       myFeedbackLabel: null,
     });
   } catch (error) {

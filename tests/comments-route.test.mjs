@@ -1,11 +1,11 @@
 /**
  * Security and validation tests for:
  *   POST   /api/comments       (create a comment)
- *   DELETE /api/comments/[id]  (delete — owner only)
+ *   DELETE /api/comments/[id]  (delete — comment owner or post owner)
  *
  * Key invariants:
  *   - user_name is always the authenticated actor — never from the request body.
- *   - Only the comment owner can delete their own comment.
+ *   - Only the comment owner or post owner can delete a comment.
  */
 
 import assert from "node:assert/strict";
@@ -115,7 +115,7 @@ function loadRoute(code, { db, authName }) {
     require(id) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
-      if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "next/server") return { after: () => undefined, NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/notifications") {
         return {
@@ -129,6 +129,20 @@ function loadRoute(code, { db, authName }) {
       if (id === "@/lib/types") return {};
       if (id === "@/lib/server/review-access") {
         return { canActorReadPost: async () => ({ allowed: true }) };
+      }
+      if (id === "@/lib/server/post-engagement-state") {
+        return {
+          getPostEngagementState: async (_db, postId) => ({
+            postId,
+            likedByMe: false,
+            likeCount: 0,
+            bookmarkedByMe: false,
+            commentCount: 1,
+            foodReaction: null,
+            mustTryCount: 0,
+            notWorthItCount: 0,
+          }),
+        };
       }
       if (id === "@/lib/server/cache-invalidation") {
         return {
@@ -292,14 +306,14 @@ test("DELETE /comments/[id]: comment not found returns 404", async () => {
 test("DELETE /comments/[id]: another user cannot delete someone else's comment", async () => {
   const { DELETE } = loadRoute(src.deleteById, {
     db: mockDb(
-      { data: { user_name: "Bob" }, error: null },
-      { data: null, error: null }
+      { data: { user_name: "Bob", post_id: "post-1" }, error: null },
+      { data: { reviewer_name: "Carol" }, error: null }
     ),
     authName: "Alice",
   });
   const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
   assert.equal(status(res), 403);
-  assert.match(body(res).error, /not your comment/i);
+  assert.match(body(res).error, /not allowed/i);
 });
 
 test("DELETE /comments/[id]: owner can delete their own comment", async () => {
@@ -315,7 +329,21 @@ test("DELETE /comments/[id]: owner can delete their own comment", async () => {
   assert.equal(body(res).ok, true);
 });
 
-test("DELETE /comments/[id]: delete uses both id and user_name filters", async () => {
+test("DELETE /comments/[id]: post owner can delete another user's comment", async () => {
+  const { DELETE } = loadRoute(src.deleteById, {
+    db: mockDb(
+      { data: { user_name: "Bob", post_id: "post-1" }, error: null },
+      { data: { reviewer_name: "Alice" }, error: null },
+      { data: null, error: null }
+    ),
+    authName: "Alice",
+  });
+  const res = await DELETE(makeReq({}), { params: Promise.resolve({ id: "33333333-3333-4333-8333-333333333333" }) });
+  assert.equal(status(res), 200);
+  assert.equal(body(res).ok, true);
+});
+
+test("DELETE /comments/[id]: delete uses the authorized comment id after permission check", async () => {
   const db = spyDb(
     { data: { user_name: "Alice" }, error: null },
     { data: null, error: null }
@@ -326,7 +354,7 @@ test("DELETE /comments/[id]: delete uses both id and user_name filters", async (
   const deleteEntry = db._calls.find((call) => call.ops.some(([op]) => op === "delete"));
   assert.ok(deleteEntry, "Expected a delete call");
   assert.equal(eqFilters(deleteEntry).id, "33333333-3333-4333-8333-333333333333");
-  assert.equal(eqFilters(deleteEntry).user_name, "Alice");
+  assert.equal(eqFilters(deleteEntry).user_name, undefined);
 });
 
 test("DELETE /comments/[id]: DB delete error returns 500", async () => {

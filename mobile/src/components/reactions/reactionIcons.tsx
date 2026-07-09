@@ -10,7 +10,7 @@ export type ReactionIconProps = {
   strokeWidth?: number;
 };
 
-export function MustTryReactionIcon({
+export function HelpfulReactionIcon({
   color,
   fillColor,
   selected = false,
@@ -20,8 +20,11 @@ export function MustTryReactionIcon({
   return (
     <Svg height={size} viewBox="0 0 24 24" width={size}>
       <G fill={selected ? fillColor : "none"} stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth}>
-        <Path d="M12.2 21c3.9 0 6.7-2.7 6.7-6.7 0-2.9-1.5-5.1-4-7.7-.2 2.3-1.2 3.8-2.8 5.1.2-3.3-1.3-5.9-4-8.5.2 3.9-2.9 6.3-2.9 11C5.2 18.2 8.1 21 12.2 21Z" />
-        <Path d="M12.4 18.2c1.8 0 3.1-1.2 3.1-2.9 0-1.2-.7-2.3-1.8-3.4-.2 1.2-.8 2-1.7 2.7.1-1.6-.7-2.8-2-4.1.1 2.3-1.4 3.6-1.4 5.2 0 1.5 1.4 2.5 3.8 2.5Z" fill={selected ? fillColor : "none"} />
+        <Path d="M7.6 10.2v10.2" fill="none" />
+        <Path d="M3.2 10.7h3.3c.6 0 1.1.5 1.1 1.1v7.5c0 .6-.5 1.1-1.1 1.1H3.2c-.6 0-1.1-.5-1.1-1.1v-7.5c0-.6.5-1.1 1.1-1.1Z" />
+        <Path d="M7.8 11.1 11.7 4c.3-.6.9-.9 1.5-.9 1.1 0 1.9 1 1.6 2l-.8 3.4h4.8c1.7 0 2.9 1.6 2.5 3.2l-1.1 5.6a3.8 3.8 0 0 1-3.7 3.1H8.8c-.7 0-1.2-.5-1.2-1.2v-7c0-.4.1-.7.2-1.1Z" />
+        <Path d="m18.7 3.5.8-1.4" fill="none" />
+        <Path d="m20.7 6 1.4-.7" fill="none" />
       </G>
     </Svg>
   );
@@ -46,6 +49,6 @@ export function NotWorthItReactionIcon({
 }
 
 export const reactionIcons = {
-  mustTry: MustTryReactionIcon,
+  mustTry: HelpfulReactionIcon,
   notWorthIt: NotWorthItReactionIcon
 } satisfies Record<FoodReactionType, (props: ReactionIconProps) => ReactElement>;

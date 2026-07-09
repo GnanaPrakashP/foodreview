@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { fontStyles, radius } from "@/theme";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { reactionIcons } from "./reactionIcons";

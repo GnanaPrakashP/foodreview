@@ -8,6 +8,7 @@
     "android": "expo run:android",
     "android:reinstall:phone": "node scripts/reinstall-android-phone.mjs",
     "ios": "expo run:ios",
+    "lint": "cd .. && eslint mobile/app mobile/src --ignore-pattern 'mobile/src/vendor/**'",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/patch-collapsible-tab-view-sync.mjs && node scripts/patch-keyboard-controller-constants.mjs"

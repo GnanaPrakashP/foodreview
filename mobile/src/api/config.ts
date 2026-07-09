@@ -93,8 +93,20 @@ function normalizeApiBaseUrl(value: string) {
 }
 
 export const apiBaseUrl = normalizeApiBaseUrl(runtimeEnvValue("EXPO_PUBLIC_API_BASE_URL") ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
+export const publicWebBaseUrl = normalizeApiBaseUrl(
+  runtimeEnvValue("EXPO_PUBLIC_WEB_BASE_URL") ??
+  process.env.EXPO_PUBLIC_WEB_BASE_URL ??
+  runtimeEnvValue("NEXT_PUBLIC_SITE_URL") ??
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  ""
+);
 
 export function apiUrl(path: string) {
-  if (!apiBaseUrl) return path;
+  if (!apiBaseUrl) throw new Error("Missing EXPO_PUBLIC_API_BASE_URL for API requests");
   return `${apiBaseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+}
+
+export function publicWebUrl(path: string) {
+  if (!publicWebBaseUrl) throw new Error("Missing EXPO_PUBLIC_WEB_BASE_URL for public links");
+  return `${publicWebBaseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }

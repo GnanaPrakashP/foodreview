@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, type QueryClient, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   getCircleFeed,
   getDishFeed,
@@ -10,6 +10,7 @@ import {
   type RestaurantFeedInput
 } from "@/services/feeds";
 import { getExploreDiscovery } from "@/services/exploreDiscovery";
+import type { PostEngagementState, ReviewPost } from "@/types/models";
 
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
@@ -38,6 +39,107 @@ export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) 
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: null as string | null
   });
+}
+
+export function applyEngagementPatchToPost(
+  post: ReviewPost,
+  patch: Partial<PostEngagementState> & { postId: string }
+): ReviewPost {
+  if (post.id !== patch.postId) return post;
+  return {
+    ...post,
+    bookmarkedByMe: patch.bookmarkedByMe ?? post.bookmarkedByMe,
+    commentCount: patch.commentCount ?? post.commentCount,
+    foodReaction: patch.foodReaction === undefined ? post.foodReaction : patch.foodReaction,
+    likedByMe: patch.likedByMe ?? post.likedByMe,
+    likeCount: patch.likeCount ?? post.likeCount,
+    mustTryCount: patch.mustTryCount ?? post.mustTryCount,
+    notWorthItCount: patch.notWorthItCount ?? post.notWorthItCount
+  };
+}
+
+function isReviewPost(value: unknown): value is ReviewPost {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof (value as Partial<ReviewPost>).id === "string" &&
+    typeof (value as Partial<ReviewPost>).restaurantName === "string" &&
+    Array.isArray((value as Partial<ReviewPost>).media)
+  );
+}
+
+function patchPostArray(
+  posts: unknown[],
+  postId: string,
+  updater: (post: ReviewPost) => ReviewPost
+) {
+  let changed = false;
+  const nextPosts = posts.map((post) => {
+    if (!isReviewPost(post) || post.id !== postId) return post;
+    const nextPost = updater(post);
+    changed = changed || nextPost !== post;
+    return nextPost;
+  });
+  return changed ? nextPosts : posts;
+}
+
+function patchPostCacheValue(
+  value: unknown,
+  postId: string,
+  updater: (post: ReviewPost) => ReviewPost
+): unknown {
+  if (!value) return value;
+  if (isReviewPost(value)) return value.id === postId ? updater(value) : value;
+  if (Array.isArray(value)) return patchPostArray(value, postId, updater);
+  if (typeof value !== "object") return value;
+
+  const current = value as Record<string, unknown>;
+  let changed = false;
+  const next: Record<string, unknown> = { ...current };
+
+  if (Array.isArray(current.posts)) {
+    const nextPosts = patchPostArray(current.posts, postId, updater);
+    if (nextPosts !== current.posts) {
+      next.posts = nextPosts;
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(current.pages)) {
+    const pages = current.pages;
+    const nextPages = pages.map((page) => patchPostCacheValue(page, postId, updater));
+    const pagesChanged = nextPages.some((page, index) => page !== pages[index]);
+    if (pagesChanged) {
+      next.pages = nextPages;
+      changed = true;
+    }
+  }
+
+  return changed ? next : value;
+}
+
+export function patchCachedPostById(
+  queryClient: QueryClient,
+  postId: string,
+  updater: (post: ReviewPost) => ReviewPost
+) {
+  queryClient.setQueriesData<unknown>(
+    {
+      predicate: (query) => {
+        const key = query.queryKey;
+        const scope = Array.isArray(key) ? key[0] : null;
+        return scope === "feed" || scope === "profile";
+      }
+    },
+    (current: unknown) => patchPostCacheValue(current, postId, updater)
+  );
+}
+
+export function patchCachedPostEngagementFields(
+  queryClient: QueryClient,
+  patch: Partial<PostEngagementState> & { postId: string }
+) {
+  patchCachedPostById(queryClient, patch.postId, (post) => applyEngagementPatchToPost(post, patch));
 }
 
 export function usePublicFeedQuery(options: { enabled?: boolean } = {}) {

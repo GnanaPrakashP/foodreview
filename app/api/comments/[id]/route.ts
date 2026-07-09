@@ -4,15 +4,11 @@ import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation"
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPostEngagementState } from "@/lib/server/post-engagement-state";
 
 async function fetchPostReviewerName(db: ReturnType<typeof createAdminClient>, postId: string): Promise<string> {
   const { data } = await db.from("reviews").select("reviewer_name").eq("id", postId).maybeSingle();
   return typeof data?.reviewer_name === "string" ? data.reviewer_name : "";
-}
-
-async function fetchCommentCount(db: ReturnType<typeof createAdminClient>, postId: string) {
-  const { data } = await db.from("comments").select("id").eq("post_id", postId);
-  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function DELETE(
@@ -40,15 +36,18 @@ export async function DELETE(
     return NextResponse.json({ error: "Comment not found" }, { status: 404 });
   }
 
+  let reviewerName = "";
   if (comment.user_name !== actor.actorName) {
-    return NextResponse.json({ error: "Not your comment" }, { status: 403 });
+    reviewerName = await fetchPostReviewerName(writeDb, comment.post_id);
+    if (reviewerName !== actor.actorName) {
+      return NextResponse.json({ error: "Not allowed to delete this comment" }, { status: 403 });
+    }
   }
 
   const { error } = await writeDb
     .from("comments")
     .delete()
-    .eq("id", id)
-    .eq("user_name", actor.actorName);
+    .eq("id", id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -58,10 +57,10 @@ export async function DELETE(
     console.error("[comments] Failed to remove notification:", notificationError);
   });
 
-  const reviewerName = await fetchPostReviewerName(writeDb, comment.post_id);
+  reviewerName = reviewerName || await fetchPostReviewerName(writeDb, comment.post_id);
   const names = [actor.actorName];
   if (reviewerName && reviewerName !== actor.actorName) names.push(reviewerName);
   invalidateSocialCachesForNames(names);
-  const commentCount = await fetchCommentCount(writeDb, comment.post_id);
-  return NextResponse.json({ ok: true, commentCount });
+  const engagement = await getPostEngagementState(writeDb, comment.post_id, actor);
+  return NextResponse.json({ ok: true, commentCount: engagement.commentCount, engagement });
 }

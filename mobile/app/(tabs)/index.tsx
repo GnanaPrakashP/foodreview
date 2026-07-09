@@ -1,5 +1,7 @@
-import { useRouter } from "expo-router";
-import { useCallback, useMemo, useRef } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
@@ -14,6 +16,7 @@ export default function CircleScreen() {
   const router = useRouter();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const [notificationsOpening, setNotificationsOpening] = useState(false);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const feed = useCircleFeedInfiniteQuery({ enabled: isReady && isAuthenticated });
@@ -23,10 +26,24 @@ export default function CircleScreen() {
   const unreadNotificationCount = notifications.data ?? 0;
   const notificationBadge = unreadNotificationCount > 9 ? "9+" : String(unreadNotificationCount);
   const canRefresh = isReady && isAuthenticated;
+  const fetchNextPage = feed.fetchNextPage;
+  const hasNextPage = feed.hasNextPage;
+  const isFetchingNextPage = feed.isFetchingNextPage;
   const loadMorePosts = useCallback(() => {
-    if (!feed.hasNextPage || feed.isFetchingNextPage) return;
-    void feed.fetchNextPage();
-  }, [feed.fetchNextPage, feed.hasNextPage, feed.isFetchingNextPage]);
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  useFocusEffect(
+    useCallback(() => {
+      setNotificationsOpening(false);
+    }, [])
+  );
+  const openNotifications = useCallback(() => {
+    if (notificationsOpening) return;
+    setNotificationsOpening(true);
+    void Haptics.selectionAsync().catch(() => {});
+    router.push("/notifications");
+  }, [notificationsOpening, router]);
   const markPostsViewed = useCallback((postIds: string[]) => {
     const nextPostIds = postIds.filter((postId) => !seenPostIdsRef.current.has(postId));
     if (nextPostIds.length === 0) return;
@@ -41,8 +58,19 @@ export default function CircleScreen() {
             What they're <Text style={styles.titleAccent}>eating</Text>
           </Text>
         </View>
-        <Pressable hitSlop={8} onPress={() => router.push("/notifications")} style={styles.notificationButton}>
-          <Text style={styles.notificationIcon}>🔔</Text>
+        <Pressable
+          accessibilityLabel="Open notifications"
+          accessibilityRole="button"
+          disabled={notificationsOpening}
+          hitSlop={8}
+          onPress={openNotifications}
+          style={styles.notificationButton}
+        >
+          <Ionicons
+            color={themeColors.cream}
+            name={unreadNotificationCount > 0 ? "notifications" : "notifications-outline"}
+            size={22}
+          />
           {unreadNotificationCount > 0 ? (
             <View style={styles.notificationBadge}>
               <Text style={styles.notificationBadgeText}>{notificationBadge}</Text>
@@ -80,16 +108,16 @@ export default function CircleScreen() {
           emptyTitle="Your circle is quiet"
           endReachedLabel="You're caught up"
           errorMessage="We couldn't load your circle feed. Please try again."
-          hasMore={Boolean(feed.hasNextPage)}
+          hasMore={Boolean(hasNextPage)}
           isError={feed.isError && posts.length === 0}
-          isFetchingMore={feed.isFetchingNextPage}
+          isFetchingMore={isFetchingNextPage}
           isLoading={feed.isLoading && posts.length === 0}
           onEndReached={loadMorePosts}
           onPostsViewed={markPostsViewed}
           onRefresh={canRefresh ? () => { void feed.refetch(); } : undefined}
           onRetry={() => feed.refetch()}
           posts={posts}
-          refreshing={canRefresh && feed.isRefetching && !feed.isFetchingNextPage}
+          refreshing={canRefresh && feed.isRefetching && !isFetchingNextPage}
           scrollEnabled
           showSectionLabels
         />
@@ -130,10 +158,6 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       justifyContent: "center",
       position: "relative",
       width: 40
-    },
-    notificationIcon: {
-      fontSize: 20,
-      lineHeight: 24
     },
     notificationBadge: {
       alignItems: "center",

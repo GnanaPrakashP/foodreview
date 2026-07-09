@@ -4,8 +4,9 @@ type CommentCountUpdater = (updater: (count: number) => number) => void;
 
 type CommentsSheetState = {
   postId: string | null;
+  postAuthorName: string | null;
   onCommentCountChange: CommentCountUpdater | null;
-  openCommentsSheet: (postId: string, onCommentCountChange: CommentCountUpdater) => void;
+  openCommentsSheet: (postId: string, onCommentCountChange: CommentCountUpdater, postAuthorName?: string | null) => void;
   closeCommentsSheet: () => void;
 };
 
@@ -15,7 +16,12 @@ type CommentsSheetState = {
 // track the IME only reach the main window's KeyboardProvider.
 export const useCommentsSheetStore = create<CommentsSheetState>((set) => ({
   postId: null,
+  postAuthorName: null,
   onCommentCountChange: null,
-  openCommentsSheet: (postId, onCommentCountChange) => set({ postId, onCommentCountChange }),
-  closeCommentsSheet: () => set({ postId: null, onCommentCountChange: null })
+  openCommentsSheet: (postId, onCommentCountChange, postAuthorName = null) => set({
+    postAuthorName,
+    postId,
+    onCommentCountChange
+  }),
+  closeCommentsSheet: () => set({ postAuthorName: null, postId: null, onCommentCountChange: null })
 }));
