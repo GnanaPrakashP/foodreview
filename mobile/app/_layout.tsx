@@ -109,7 +109,6 @@ export default function RootLayout() {
                 feels instant; a quick fade also hides the brief sensor warm-up. */}
             <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
             <Stack.Screen name="share/camera" options={{ animation: "fade", animationDuration: 150 }} />
-            <Stack.Screen name="share/crop" options={{ animation: "fade", animationDuration: 150 }} />
             {/* Settings and its sub-screens present over the screen beneath them and
                 drive their own custom slide. Native
                 animation is disabled because native transparentModal ignores

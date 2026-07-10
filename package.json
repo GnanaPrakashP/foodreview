@@ -16,6 +16,8 @@
     "test:coverage:html": "npm run test:coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "media:worker": "node scripts/media-worker.mjs",
+    "media:process-once": "MEDIA_WORKER_ONCE=1 node scripts/media-worker.mjs",
     "validate:android-profile": "node scripts/android-profile-login.mjs",
     "validate:android-profile:installed": "node scripts/android-installed-profile-login.mjs --restart-server",
     "validate:ios-profile": "node scripts/ios-profile-login.mjs",

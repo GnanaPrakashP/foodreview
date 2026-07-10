@@ -2,8 +2,8 @@ import { Platform } from "react-native";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { normalizeDishInput } from "@/services/dishNormalizer";
+import { uploadPostMediaAsset, type MediaCropRect } from "@/services/mediaPipeline";
 import { getCurrentUserProfile } from "@/services/profiles";
-import { uploadReviewMedia } from "@/services/reviewMedia";
 import type { FoodItem, Visibility } from "@/types/models";
 
 export type CreatePostMediaInput = {
@@ -13,6 +13,7 @@ export type CreatePostMediaInput = {
   durationMs?: number | null;
   fileSize?: number | null;
   height?: number | null;
+  cropRect?: MediaCropRect | null;
   width?: number | null;
   // When true on a video, the audio track is stripped before upload.
   muted?: boolean;
@@ -123,7 +124,8 @@ function normalizedDishes(input: CreatePostInput): FoodItem[] {
 }
 
 type UploadedMedia = {
-  intentId: string;
+  assetId?: string;
+  intentId?: string;
   mimeType: string;
   publicUrl: string;
   sizeBytes: number;
@@ -139,8 +141,8 @@ async function uploadOneWithProgress(
   onUploadProgress?: (progress: number) => void
 ): Promise<UploadedMedia> {
   const mediaType = resolveMediaType(media);
-  const uploaded = await uploadReviewMedia({
-    category: "post",
+  const uploaded = await uploadPostMediaAsset({
+    cropRect: media.cropRect,
     durationMs: media.durationMs,
     fileSize: media.fileSize,
     height: media.height,
@@ -152,9 +154,9 @@ async function uploadOneWithProgress(
   });
 
   return {
+    assetId: uploaded.assetId,
     durationMs: media.durationMs ?? null,
     height: uploaded.height ?? media.height ?? null,
-    intentId: uploaded.intentId,
     mediaType,
     mimeType: uploaded.mimeType,
     publicUrl: uploaded.publicUrl,
@@ -193,6 +195,7 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
       body: input.caption,
       items: normalizedDishes(input),
       media: uploaded.map((item) => ({
+        assetId: item.assetId,
         durationSeconds: item.durationMs ? item.durationMs / 1000 : undefined,
         height: item.height ?? undefined,
         intentId: item.intentId,

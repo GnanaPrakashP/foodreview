@@ -1,11 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Camera, CameraView, type FocusMode, type PictureRef } from "expo-camera";
+import { Camera, CameraView, type FocusMode } from "expo-camera";
 import { Image } from "expo-image";
 import * as MediaLibrary from "expo-media-library";
 import * as Haptics from "expo-haptics";
-import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -36,6 +36,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import { useInAppCameraPermissions } from "@/hooks/useInAppCameraPermissions";
 import { pickPostImageFromGallery, pickPostMediaFromGallery, pickSingleMemoryMediaFromGallery } from "@/services/mediaPicker";
+import type { MediaCropRect } from "@/services/mediaPipeline";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 
@@ -283,7 +284,7 @@ export function CameraScreen({
     setCameraError("");
     haptics.impact(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const photo = await takeProcessedPhoto();
+      const photo = await takePhotoWithProcessingFallback();
       // On success the blackout stays up until this screen leaves, so the
       // live feed never reappears between capture and the next screen.
       if (emitCapturedPhoto(photo)) return;
@@ -295,54 +296,6 @@ export function CameraScreen({
       setCameraError("Could not capture photo.");
     } finally {
       setCapturing(false);
-    }
-  }
-
-  // Produces the final photo handed to onCapture. Guided mode prefers the
-  // in-memory capture path and falls back to the file-based pipeline if the
-  // camera stack rejects it.
-  async function takeProcessedPhoto(): Promise<CapturedPhoto | null | undefined> {
-    const guideFrame = autoCropPhotoToGuide ? photoGuideFrame : null;
-    if (guideFrame) {
-      const fastPhoto = await takeCroppedPhotoInMemory(guideFrame);
-      if (fastPhoto) return fastPhoto;
-    }
-    const photo = await takePhotoWithProcessingFallback();
-    if (photo?.uri && guideFrame) {
-      return cropCapturedPhotoToGuide(photo, viewport, guideFrame);
-    }
-    return photo;
-  }
-
-  // pictureRef keeps the capture in native memory, so the guided flow does one
-  // decode (capture) and one encode (final cropped save) instead of writing,
-  // re-reading, and re-encoding a full-resolution intermediate JPEG. This is
-  // what makes shutter-to-review-screen fast.
-  async function takeCroppedPhotoInMemory(frame: CropGuideFrame): Promise<CapturedPhoto | null> {
-    let picture: PictureRef | undefined;
-    try {
-      picture = await cameraRef.current?.takePictureAsync({ exif: false, pictureRef: true });
-      if (!picture) return null;
-      const crop = cropRectForVisibleFrame(
-        { height: picture.height, width: picture.width },
-        viewport,
-        frame
-      );
-      const context = ImageManipulator.manipulate(picture);
-      context.crop(crop);
-      const rendered = await context.renderAsync();
-      const result = await rendered.saveAsync({ compress: 0.9, format: SaveFormat.JPEG });
-      rendered.release();
-      return {
-        height: result.height ?? crop.height,
-        uri: result.uri,
-        width: result.width ?? crop.width
-      };
-    } catch (error) {
-      console.warn("[camera] in-memory guided capture failed, falling back to file path", error);
-      return null;
-    } finally {
-      picture?.release();
     }
   }
 
@@ -370,12 +323,20 @@ export function CameraScreen({
 
   function emitCapturedPhoto(photo: CapturedPhoto | null | undefined) {
     if (!photo?.uri || closingRef.current || !appActiveRef.current) return false;
+    // Non-destructive framing: the full photo is kept; the guide's position
+    // is recorded as a relative crop rect for display and derivatives, and
+    // the screen-visible region bounds all later re-framing (the sensor
+    // captures more than the cover-filled preview showed).
+    const guided = autoCropPhotoToGuide && photoGuideFrame && photo.width && photo.height;
+    const sourceSize = guided ? { height: photo.height ?? 1, width: photo.width ?? 1 } : null;
     onCapture({
+      cropRect: sourceSize && photoGuideFrame ? relativeCropRectForVisibleFrame(sourceSize, viewport, photoGuideFrame) : null,
       height: photo.height,
       mediaType: "image",
       mimeType: "image/jpeg",
       source: "camera",
       uri: photo.uri,
+      visibleRect: sourceSize ? relativeCropRectForVisibleFrame(sourceSize, viewport, viewportFrame(viewport)) : null,
       width: photo.width
     });
     return true;
@@ -413,12 +374,17 @@ export function CameraScreen({
       const video = await recordingPromise;
 
       if (video?.uri && !closingRef.current && appActiveRef.current) {
+        const framing = await videoGuideFraming(video.uri, viewport, photoGuideFrame);
         onCapture({
+          cropRect: framing?.cropRect ?? null,
           duration: Math.min(Date.now() - recordingStartRef.current, MAX_VIDEO_MS),
+          height: framing?.height ?? null,
           mediaType: "video",
           mimeType: "video/mp4",
           source: "camera",
-          uri: video.uri
+          uri: video.uri,
+          visibleRect: framing?.visibleRect ?? null,
+          width: framing?.width ?? null
         });
       } else if (!closingRef.current && appActiveRef.current) {
         setCameraError("Could not save video.");
@@ -1010,51 +976,39 @@ function createPhotoGuideFrame(viewport: ViewportSize, aspectRatio: number): Cro
   };
 }
 
-async function cropCapturedPhotoToGuide(
-  photo: CapturedPhoto,
-  viewport: ViewportSize,
-  frame: CropGuideFrame
-): Promise<CapturedPhoto> {
-  if (!photo.uri || viewport.width <= 0 || viewport.height <= 0) return photo;
+function viewportFrame(viewport: ViewportSize): CropGuideFrame {
+  return { height: viewport.height, left: 0, top: 0, width: viewport.width };
+}
+
+// Recorded video dimensions aren't reported by the camera; a first-frame
+// thumbnail reveals them so the guide and screen-visible regions can be
+// mapped onto the file. Returns null (default framing) if probing fails.
+async function videoGuideFraming(uri: string, viewport: ViewportSize, guideFrame: CropGuideFrame | null) {
+  if (!guideFrame) return null;
   try {
-    // Never trust the camera's reported width/height for crop math: Android
-    // can report pre-rotation (sensor-landscape) dimensions while the loader
-    // below applies EXIF rotation, which pushes the crop rect out of bounds.
-    // Loading first and measuring the same bitmap that gets cropped keeps the
-    // rect in bounds by construction on every platform and capture path.
-    const loaded = await ImageManipulator.manipulate(photo.uri).renderAsync();
-    const crop = cropRectForVisibleFrame(
-      { height: loaded.height, width: loaded.width },
-      viewport,
-      frame
-    );
-    const context = ImageManipulator.manipulate(loaded);
-    context.crop(crop);
-    const rendered = await context.renderAsync();
-    const result = await rendered.saveAsync({
-      compress: 0.9,
-      format: SaveFormat.JPEG
-    });
+    const thumb = await VideoThumbnails.getThumbnailAsync(uri, { time: 0 });
+    if (!thumb.width || !thumb.height) return null;
+    const size = { height: thumb.height, width: thumb.width };
     return {
-      height: result.height ?? crop.height,
-      uri: result.uri,
-      width: result.width ?? crop.width
+      cropRect: relativeCropRectForVisibleFrame(size, viewport, guideFrame),
+      height: thumb.height,
+      visibleRect: relativeCropRectForVisibleFrame(size, viewport, viewportFrame(viewport)),
+      width: thumb.width
     };
-  } catch (error) {
-    console.warn("[camera] guide crop failed, using uncropped photo", error);
-    // A failed crop should not lose the shot; hand back the full photo.
-    return photo;
+  } catch {
+    return null;
   }
 }
 
-// Maps the on-screen guide frame back onto the captured image, assuming the
-// preview cover-fills the viewport (FILL_CENTER on Android, aspect-fill on
-// iOS): the image is scaled up to cover the screen and center-cropped.
-function cropRectForVisibleFrame(
+// Maps the on-screen guide frame back onto the captured image as a relative
+// (0..1) crop rect, assuming the preview cover-fills the viewport
+// (FILL_CENTER on Android, aspect-fill on iOS): the image is scaled up to
+// cover the screen and center-cropped.
+function relativeCropRectForVisibleFrame(
   source: ViewportSize,
   viewport: ViewportSize,
   frame: CropGuideFrame
-) {
+): MediaCropRect {
   const scale = Math.max(viewport.width / source.width, viewport.height / source.height);
   const displayedWidth = source.width * scale;
   const displayedHeight = source.height * scale;
@@ -1069,10 +1023,11 @@ function cropRectForVisibleFrame(
   const width = Math.max(1, Math.min(source.width - originX, rawWidth));
   const height = Math.max(1, Math.min(source.height - originY, rawHeight));
   return {
-    height: Math.round(height),
-    originX: Math.round(originX),
-    originY: Math.round(originY),
-    width: Math.round(width)
+    height: height / source.height,
+    targetAspect: frame.width / frame.height,
+    width: width / source.width,
+    x: originX / source.width,
+    y: originY / source.height
   };
 }
 

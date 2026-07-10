@@ -17,6 +17,7 @@ const cleanupHelper = readFileSync("lib/server/account-media-cleanup.ts", "utf8"
 const usernameRoute = readFileSync("app/api/mobile/profile/username/route.ts", "utf8");
 const profileService = readFileSync("mobile/src/services/profiles.ts", "utf8");
 const postService = readFileSync("mobile/src/services/posts.ts", "utf8");
+const mobileMediaPipeline = readFileSync("mobile/src/services/mediaPipeline.ts", "utf8");
 const mobileReviewMedia = readFileSync("mobile/src/services/reviewMedia.ts", "utf8");
 const profileScreen = readFileSync("mobile/app/(tabs)/profile.tsx", "utf8");
 const profileHooks = readFileSync("mobile/src/hooks/useProfiles.ts", "utf8");
@@ -38,15 +39,14 @@ test("review media upload intents use generated owner-prefixed paths and trusted
   assert.match(reviewMedia, /REVIEW_POST_VIDEO_MAX_BYTES = 50 \* 1024 \* 1024/);
   assert.match(reviewMedia, /REVIEW_MEDIA_INTENT_TTL_MS = 10 \* 60 \* 1000/);
   assert.match(reviewMedia, /REVIEW_MEDIA_QUARANTINE_BUCKET = "review-media-quarantine"/);
-  assert.match(reviewMedia, /REVIEW_VIDEO_DISABLED_ERROR = "review_media_video_not_supported"/);
-  assert.match(reviewMedia, /ALLOWED_POST_VIDEO_MIME_TYPES = new Set<string>\(\)/);
+  assert.match(reviewMedia, /ALLOWED_POST_VIDEO_MIME_TYPES = new Set\(\["video\/mp4", "video\/quicktime", "video\/webm"\]\)/);
   assert.match(reviewMedia, /REVIEW_IMAGE_MAX_WIDTH = 6000/);
   assert.match(reviewMedia, /REVIEW_IMAGE_MAX_PIXELS = 25_000_000/);
   assert.match(reviewMedia, /const prefix = category === "avatar" \? "avatars" : "posts"/);
   assert.match(reviewMedia, /quarantineStoragePath: `pending\/\$\{userId\}\/\$\{intentId\}\/original\.\$\{extension\}`/);
   assert.match(reviewMedia, /storagePath: `\$\{prefix\}\/\$\{userId\}\/\$\{intentId\}\/\$\{finalName\}`/);
   assert.match(reviewMedia, /review_media_avatar_must_be_image/);
-  assert.match(reviewMedia, /if \(kind === "video"\) throw new Error\(REVIEW_VIDEO_DISABLED_ERROR\)/);
+  assert.match(reviewMedia, /return kind === "video" \? ALLOWED_POST_VIDEO_MIME_TYPES : ALLOWED_POST_IMAGE_MIME_TYPES/);
   assert.match(reviewMedia, /review_media_mime_type_not_allowed/);
   assert.match(reviewMedia, /review_media_extension_not_allowed/);
   assert.match(reviewMedia, /review_media_file_too_large/);
@@ -111,17 +111,24 @@ test("avatar replacement updates profile through trusted finalization and record
   assert.doesNotMatch(profileService, /storage\.from\("review-photos"\)\.upload/);
 });
 
-test("review creation accepts only finalized post intents and does not trust client URLs or storage paths", () => {
+test("review creation accepts only ready media assets or finalized post intents and does not trust client URLs or storage paths", () => {
   assert.match(reviewsRoute, /REVIEW_POST_MAX_ITEMS/);
   assert.match(reviewsRoute, /typeof \(p as IncomingMedia\)\.intentId === "string"/);
+  assert.match(reviewsRoute, /typeof \(p as IncomingMedia\)\.assetId === "string"/);
   assert.match(reviewsRoute, /loadFinalizedReviewMedia\(writeDb, actor, incomingMediaItems\)/);
   assert.match(reviewsRoute, /Video uploads are temporarily unavailable/);
+  assert.match(reviewsRoute, /\.from\("media_assets"\)/);
+  assert.match(reviewsRoute, /asset\.surface !== "post"/);
+  assert.match(reviewsRoute, /asset\.status !== "ready"/);
+  assert.match(reviewsRoute, /\.from\("media_derivatives"\)/);
+  assert.match(reviewsRoute, /MEDIA_PUBLIC_BUCKET/);
   assert.match(reviewsRoute, /intent\.user_id !== actor\.userId/);
   assert.match(reviewsRoute, /intent\.user_name !== actor\.actorName/);
   assert.match(reviewsRoute, /intent\.category !== "post"/);
   assert.match(reviewsRoute, /intent\.status !== "finalized"/);
   assert.match(reviewsRoute, /admin\.storage\.from\(REVIEW_MEDIA_BUCKET\)\.getPublicUrl\(intent\.storage_path\)/);
   assert.match(reviewsRoute, /upload_intent_id: p\.intentId/);
+  assert.match(reviewsRoute, /media_asset_id: p\.mediaAssetId/);
   assert.match(reviewsRoute, /owner_id: actor\.userId/);
   assert.match(reviewsRoute, /mime_type: p\.mimeType/);
   assert.match(reviewsRoute, /file_size_bytes: p\.sizeBytes/);
@@ -136,7 +143,6 @@ test("review creation accepts only finalized post intents and does not trust cli
 
 test("mobile post and avatar uploads use the authorized upload/finalize flow", () => {
   assert.match(mobileReviewMedia, /\/api\/mobile\/review-media\/upload-intent/);
-  assert.match(mobileReviewMedia, /if \(mediaKind === "video"\) throw new Error\("Video uploads are temporarily unavailable"\)/);
   assert.match(mobileReviewMedia, /ImageManipulator\.manipulate\(input\.uri\)/);
   assert.match(mobileReviewMedia, /format: SaveFormat\.JPEG/);
   assert.match(mobileReviewMedia, /assertJpegSignature\(body\)/);
@@ -144,10 +150,15 @@ test("mobile post and avatar uploads use the authorized upload/finalize flow", (
   assert.match(mobileReviewMedia, /uploadFileBody\(\{[\s\S]*bucket: intent\.uploadBucket[\s\S]*path: intent\.uploadPath/);
   assert.match(mobileReviewMedia, /\/api\/mobile\/review-media\/finalize-upload/);
   assert.doesNotMatch(mobileReviewMedia, /\.from\("review-photos"\)\.upload/);
-  assert.match(postService, /uploadReviewMedia\(\{\s+category: "post"/);
+  assert.match(mobileMediaPipeline, /\/api\/media\/upload-intent/);
+  assert.match(mobileMediaPipeline, /\/api\/media\/finalize-upload/);
+  assert.match(mobileMediaPipeline, /\/api\/media\/status\?ids=/);
+  assert.match(mobileMediaPipeline, /function defaultCropRect/);
+  assert.match(mobileMediaPipeline, /waitForReadyMedia/);
+  assert.match(postService, /uploadPostMediaAsset\(\{/);
   assert.match(postService, /uploadPostMediaItems\(items, input\.onUploadProgress\)/);
   assert.doesNotMatch(postService, /Promise\.all\(items\.map/);
-  assert.match(postService, /intentId: item\.intentId/);
+  assert.match(postService, /assetId: item\.assetId/);
   assert.doesNotMatch(postService, /storage\.from\("review-photos"\)\.upload/);
   assert.doesNotMatch(postService, /\.from\("reviews"\)[\s\S]{0,260}\.insert/);
 });

@@ -5,6 +5,12 @@ import {
   REVIEW_MEDIA_BUCKET,
   REVIEW_MEDIA_QUARANTINE_BUCKET
 } from "@/lib/server/review-media";
+import {
+  MEDIA_PRIVATE_BUCKET,
+  MEDIA_PUBLIC_BUCKET,
+  MEDIA_SOURCE_BUCKET,
+  isOwnedGenericMediaPath
+} from "@/lib/server/media-pipeline";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -54,6 +60,9 @@ export function isOwnedAccountStoragePath({
 }) {
   if (bucketId === REVIEW_MEDIA_BUCKET) return isOwnedReviewMediaPath(path, userId);
   if (bucketId === REVIEW_MEDIA_QUARANTINE_BUCKET) return isOwnedReviewMediaQuarantinePath(path, userId);
+  if (bucketId === MEDIA_SOURCE_BUCKET || bucketId === MEDIA_PUBLIC_BUCKET || bucketId === MEDIA_PRIVATE_BUCKET) {
+    return isOwnedGenericMediaPath(path, userId);
+  }
   if (bucketId !== MEMORY_MEDIA_BUCKET) return false;
 
   const parts = path.split("/");

@@ -149,15 +149,19 @@ test("review media intent validation rejects HEIC and one byte above the image l
   );
 });
 
-test("review media intent validation rejects videos until trusted transcoding exists", () => {
-  assert.throws(
-    () => normalizeReviewMediaIntentInput({
-      category: "post",
-      fileName: "media.mp4",
-      fileSizeBytes: 100,
-      mediaKind: "video",
-      mimeType: "video/mp4"
-    }),
-    /review_media_video_not_supported/
-  );
+test("review media intent validation accepts post video metadata for quarantine", () => {
+  const intent = normalizeReviewMediaIntentInput({
+    category: "post",
+    durationMs: 12_345,
+    fileName: "media.mp4",
+    fileSizeBytes: 100,
+    mediaKind: "video",
+    mimeType: "video/mp4"
+  });
+
+  assert.equal(intent.kind, "video");
+  assert.equal(intent.durationMs, 12_345);
+  assert.equal(intent.extension, "mp4");
+  assert.equal(intent.finalExtension, "mp4");
+  assert.equal(intent.maxBytes, reviewMediaMaxBytes("post", "video"));
 });

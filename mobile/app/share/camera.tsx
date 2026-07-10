@@ -4,7 +4,7 @@ import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { postBiteGuideFrame } from "@/constants/postCaptureLayout";
-import { setPendingPostCapture, setPostCaptureDraftQueue } from "@/services/postCaptureSession";
+import { requestPostComposerReset, setPendingPostCapture, setPendingPostCaptures } from "@/services/postCaptureSession";
 
 const MAX_POST_MEDIA = 4;
 
@@ -36,12 +36,16 @@ export default function ShareCameraRoute() {
         setPendingPostCapture(asset);
         setTimeout(() => router.back(), 48);
       }}
-      onClose={() => router.back()}
+      onClose={() => {
+        // X abandons the whole post (clears any photos already on review).
+        requestPostComposerReset();
+        router.back();
+      }}
       onGalleryAssets={(assets) => {
-        // The crop route works through the batch: images get the manual 4:5
-        // crop one at a time, videos pass straight through.
-        setPostCaptureDraftQueue(assets);
-        router.replace("/share/crop");
+        // Straight to review: framing is non-destructive and editable there,
+        // so no crop ceremony up front. Items start on the default center 4:5.
+        setPendingPostCaptures(assets);
+        setTimeout(() => router.back(), 48);
       }}
       photoGuideFrame={guideFrame}
     />

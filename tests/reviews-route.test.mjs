@@ -216,6 +216,13 @@ function loadRoute(code, { db, adminDb, authName }) {
           isOwnedReviewMediaPath: (path, userId) => path?.includes(`/${userId}/`) ?? false,
         };
       }
+      if (id === "@/lib/server/media-pipeline") {
+        return {
+          MEDIA_PRIVATE_BUCKET: "media-private",
+          MEDIA_PUBLIC_BUCKET: "media-public",
+          MEDIA_SOURCE_BUCKET: "media-sources",
+        };
+      }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminDb ?? db };
       if (id === "@/lib/circle-auth") {
         return {
@@ -311,21 +318,21 @@ test("POST /reviews: more than four media items returns 400", async () => {
   assert.match(body(res).error, /Maximum 4 media/i);
 });
 
-test("POST /reviews: videos are disabled before duration validation", async () => {
+test("POST /reviews: videos over the post duration limit are rejected before media lookup", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const media = [{
     intentId: "intent-video",
     mediaType: "video",
-    durationSeconds: 10.1,
+    durationSeconds: 31,
   }];
 
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
   assert.equal(status(res), 400);
-  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
+  assert.match(body(res).error, /Videos must be 30 seconds or less/i);
 });
 
-test("POST /reviews: videos without duration are disabled", async () => {
+test("POST /reviews: videos without duration are rejected before media lookup", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const media = [{
     intentId: "intent-video",
@@ -335,7 +342,7 @@ test("POST /reviews: videos without duration are disabled", async () => {
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
   assert.equal(status(res), 400);
-  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
+  assert.match(body(res).error, /Videos must be 30 seconds or less/i);
 });
 
 test("POST /reviews: finalized video intents are rejected until trusted transcoding exists", async () => {

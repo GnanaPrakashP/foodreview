@@ -4,11 +4,13 @@ import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ArrowLeft, Bookmark, Camera, ChevronRight, Globe, Heart, Lock, MapPin, MessageCircle, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X } from "lucide-react-native";
+import { ArrowLeft, Bookmark, Camera, ChevronRight, Crop, Globe, Heart, Lock, MapPin, MessageCircle, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
+import { CropRectEditor } from "@/components/posts/CropRectEditor";
+import { CropRegionImage } from "@/components/posts/CropRegionImage";
 import { ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useCreatePostMutation } from "@/hooks/useCreatePost";
@@ -17,7 +19,8 @@ import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
 import { POST_BITE_ASPECT_RATIO } from "@/constants/postCaptureLayout";
-import { consumePendingPostCaptures, subscribeToPostCaptures } from "@/services/postCaptureSession";
+import type { MediaCropRect } from "@/services/mediaPipeline";
+import { consumePendingPostCaptures, consumePostComposerReset, subscribeToPostCaptures } from "@/services/postCaptureSession";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 import {
   autocompletePlaces,
@@ -43,6 +46,11 @@ function useShareTheme() {
 }
 
 type PickedMedia = {
+  // Non-destructive framing (relative 0..1); null shows/derives the default
+  // center 4:5. Editable per item from the review step.
+  cropRect?: MediaCropRect | null;
+  // Screen-visible region at capture time; framing can't reach outside it.
+  visibleRect?: MediaCropRect | null;
   duration?: number | null;
   fileSize?: number | null;
   height?: number | null;
@@ -130,6 +138,25 @@ export default function ShareScreen() {
   const [soloStep, setSoloStep] = useState<SoloStep>("review");
   const [mediaItems, setMediaItems] = useState<PickedMedia[]>([]);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+  // The item whose framing is being edited in the crop overlay. For videos,
+  // uri is a first-frame still (same dimensions as the video), since the
+  // editor renders images; the resulting rect applies to the video.
+  const [cropEdit, setCropEdit] = useState<{ index: number; uri: string } | null>(null);
+
+  async function openCropEditor(index: number) {
+    const media = mediaItemsRef.current[index];
+    if (!media) return;
+    if (media.mediaType === "image") {
+      setCropEdit({ index, uri: media.uri });
+      return;
+    }
+    try {
+      const still = await VideoThumbnails.getThumbnailAsync(media.uri, { time: 0 });
+      setCropEdit({ index, uri: still.uri });
+    } catch {
+      setImageError("Could not open video framing. Try again.");
+    }
+  }
   const [imageError, setImageError] = useState("");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const mediaItemsRef = useRef(mediaItems);
@@ -260,6 +287,8 @@ export default function ShareScreen() {
   const appendCapturedPostMedia = useCallback((capturedList: PickedMedia[]) => {
     if (capturedList.length === 0) return;
     const pickedList: PickedMedia[] = capturedList.map((captured) => ({
+      cropRect: captured.cropRect ?? null,
+      visibleRect: captured.visibleRect ?? null,
       duration: captured.duration ?? null,
       fileSize: captured.fileSize ?? null,
       height: captured.height ?? null,
@@ -287,6 +316,8 @@ export default function ShareScreen() {
       item.mediaType === "video" && (item.duration ?? 0) > MAX_POST_VIDEO_MS + 500;
     const usable = capturedItems.filter((item) => !isTooLong(item));
     appendCapturedPostMedia(usable.map((captured) => ({
+      cropRect: captured.cropRect ?? null,
+      visibleRect: captured.visibleRect ?? null,
       duration: captured.duration ?? null,
       fileSize: captured.fileSize ?? null,
       height: captured.height ?? null,
@@ -316,6 +347,12 @@ export default function ShareScreen() {
       const captured = consumePendingPostCaptures();
       if (captured.length > 0) {
         receiveCapturedPostMedia(captured);
+        return;
+      }
+      // The camera's X abandons the whole post — reset to the Create tab.
+      if (consumePostComposerReset()) {
+        retakePendingRef.current = false;
+        cancelShareMode();
         return;
       }
       // Back from the camera without capturing after a last-item removal:
@@ -446,6 +483,7 @@ export default function ShareScreen() {
         dishes: normalizedDishes,
         dishName: firstDish?.name ?? "",
         mediaItems: mediaItems.map((media) => ({
+          cropRect: media.cropRect,
           durationMs: media.duration,
           fileSize: media.fileSize,
           height: media.height,
@@ -544,17 +582,49 @@ export default function ShareScreen() {
                 {mediaItems.map((media, index) => (
                   <View key={`${media.uri}-${index}`} style={{ width: pagerWidth, height: "100%", justifyContent: "center" }}>
                     {media.mediaType === "video" ? (
-                      // Videos review in the same 4:5 cover crop the feed
-                      // shows, matching the camera guide and post preview.
-                      <SelectedPostVideo
-                        active={index === selectedMediaIndex}
-                        muted={media.muted}
-                        onToggleMute={() => toggleMuteAt(index)}
-                        style={{ height: pagerWidth / POST_BITE_ASPECT_RATIO, width: pagerWidth }}
-                        uri={media.uri}
-                      />
+                      // Videos review in the same 4:5 crop the feed shows.
+                      // Tapping the video toggles playback, so framing gets
+                      // its own explicit badge button instead.
+                      <View style={styles.reviewCropPressable}>
+                        <SelectedPostVideo
+                          active={index === selectedMediaIndex}
+                          cropRect={media.cropRect}
+                          muted={media.muted}
+                          onToggleMute={() => toggleMuteAt(index)}
+                          sourceHeight={media.height}
+                          sourceWidth={media.width}
+                          style={{ height: pagerWidth / POST_BITE_ASPECT_RATIO, width: pagerWidth }}
+                          uri={media.uri}
+                        />
+                        {/* Top corner: the mute/time controls own the bottom edge. */}
+                        <Pressable
+                          accessibilityLabel="Adjust video framing"
+                          onPress={() => void openCropEditor(index)}
+                          style={styles.cropHintBadgeTop}
+                        >
+                          <Crop size={13} color="#fff" strokeWidth={2.2} />
+                          <Text style={styles.cropHintText}>Adjust</Text>
+                        </Pressable>
+                      </View>
                     ) : (
-                      <Image alt="Captured photo" contentFit="contain" source={{ uri: media.uri }} style={styles.reviewMainImage} />
+                      <Pressable
+                        accessibilityLabel="Adjust photo framing"
+                        onPress={() => void openCropEditor(index)}
+                        style={styles.reviewCropPressable}
+                      >
+                        <CropRegionImage
+                          boxHeight={pagerWidth / POST_BITE_ASPECT_RATIO}
+                          boxWidth={pagerWidth}
+                          cropRect={media.cropRect}
+                          sourceHeight={media.height}
+                          sourceWidth={media.width}
+                          uri={media.uri}
+                        />
+                        <View pointerEvents="none" style={styles.cropHintBadgeTop}>
+                          <Crop size={13} color="#fff" strokeWidth={2.2} />
+                          <Text style={styles.cropHintText}>Adjust</Text>
+                        </View>
+                      </Pressable>
                     )}
                   </View>
                 ))}
@@ -594,6 +664,24 @@ export default function ShareScreen() {
               </Pressable>
             ) : null}
           </View>
+
+          {cropEdit !== null && mediaItems[cropEdit.index] ? (
+            <CropRectEditor
+              boundsRect={mediaItems[cropEdit.index].visibleRect}
+              initialCropRect={mediaItems[cropEdit.index].cropRect}
+              onCancel={() => setCropEdit(null)}
+              onConfirm={(rect) => {
+                setMediaItems((current) => current.map((media, position) => (
+                  position === cropEdit.index ? { ...media, cropRect: rect } : media
+                )));
+                setCropEdit(null);
+              }}
+              sourceHeight={mediaItems[cropEdit.index].height}
+              sourceWidth={mediaItems[cropEdit.index].width}
+              uri={cropEdit.uri}
+              videoUri={mediaItems[cropEdit.index].mediaType === "video" ? mediaItems[cropEdit.index].uri : null}
+            />
+          ) : null}
         </View>
       </Screen>
     );
@@ -841,13 +929,23 @@ export default function ShareScreen() {
                                   {media.mediaType === "video" ? (
                                     <SelectedPostVideo
                                       active={index === previewMediaIndex}
+                                      cropRect={media.cropRect}
                                       muted={media.muted}
                                       onToggleMute={() => toggleMuteAt(index)}
+                                      sourceHeight={media.height}
+                                      sourceWidth={media.width}
                                       style={styles.previewImage}
                                       uri={media.uri}
                                     />
                                   ) : (
-                                    <Image alt="Post photo" contentFit="cover" source={{ uri: media.uri }} style={styles.previewImage} />
+                                    <CropRegionImage
+                                      boxHeight={windowWidth / POST_BITE_ASPECT_RATIO}
+                                      boxWidth={windowWidth}
+                                      cropRect={media.cropRect}
+                                      sourceHeight={media.height}
+                                      sourceWidth={media.width}
+                                      uri={media.uri}
+                                    />
                                   )}
                                 </View>
                               ))}
@@ -1362,18 +1460,41 @@ function formatVideoTime(seconds: number) {
 // (no fullscreen, PiP, or scrubber).
 function SelectedPostVideo({
   active = true,
+  cropRect,
   muted = false,
   onToggleMute,
+  sourceHeight,
+  sourceWidth,
   style,
   uri
 }: {
   active?: boolean;
+  cropRect?: MediaCropRect | null;
   muted?: boolean;
   onToggleMute?: () => void;
+  sourceHeight?: number | null;
+  sourceWidth?: number | null;
   style?: StyleProp<ViewStyle>;
   uri: string;
 }) {
   const { styles } = useShareTheme();
+  // With a crop rect and known dimensions the video is scaled/offset so the
+  // rect fills the (overflow-hidden) container; otherwise cover center-crop.
+  const [boxSize, setBoxSize] = useState<{ height: number; width: number } | null>(null);
+  const videoWidth = Number(sourceWidth ?? 0);
+  const videoHeight = Number(sourceHeight ?? 0);
+  const regionStyle = cropRect && boxSize && videoWidth > 0 && videoHeight > 0
+    ? (() => {
+      const scale = boxSize.width / (cropRect.width * videoWidth);
+      return {
+        height: videoHeight * scale,
+        left: -cropRect.x * videoWidth * scale,
+        position: "absolute" as const,
+        top: -cropRect.y * videoHeight * scale,
+        width: videoWidth * scale
+      };
+    })()
+    : null;
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.timeUpdateEventInterval = 0.25;
@@ -1398,8 +1519,19 @@ function SelectedPostVideo({
   }
 
   return (
-    <View style={[styles.videoContainer, style ?? styles.previewVideo]}>
-      <VideoView contentFit="cover" nativeControls={false} player={player} style={StyleSheet.absoluteFill} />
+    <View
+      onLayout={(event) => {
+        const { height, width } = event.nativeEvent.layout;
+        setBoxSize({ height, width });
+      }}
+      style={[styles.videoContainer, style ?? styles.previewVideo]}
+    >
+      <VideoView
+        contentFit={regionStyle ? "fill" : "cover"}
+        nativeControls={false}
+        player={player}
+        style={regionStyle ?? StyleSheet.absoluteFill}
+      />
       <Pressable onPress={togglePlay} style={styles.videoTapLayer}>
         {!isPlaying ? (
           <View style={styles.videoPlayButton}>
@@ -1928,6 +2060,27 @@ function createStyles(c: ThemeColors) {
   reviewMainImage: {
     height: "100%",
     width: "100%"
+  },
+  reviewCropPressable: {
+    alignSelf: "center"
+  },
+  cropHintBadgeTop: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderRadius: radius.pill,
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    position: "absolute",
+    right: 12,
+    top: 12
+  },
+  cropHintText: {
+    ...fontStyles.semiBold,
+    color: "#fff",
+    fontSize: 11,
+    letterSpacing: 0.2
   },
   videoContainer: {
     backgroundColor: c.black,
