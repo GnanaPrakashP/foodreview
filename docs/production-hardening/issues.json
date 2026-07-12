@@ -4,7 +4,7 @@
   "updatedAt": "2026-07-13",
   "sourceCommit": "18b608bbfe77ffd10bc31b903b00048e1e64cef1",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/02-account-deletion",
+  "currentBranch": "hardening/03-cache-isolation",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -66,10 +66,10 @@
       "id": "PH-103",
       "title": "Isolate persisted and offline caches by authenticated account",
       "severity": "P0",
-      "status": "open",
+      "status": "complete",
       "phase": "1C",
       "branch": "hardening/03-cache-isolation",
-      "affectedFiles": ["mobile/src/providers/queryPersistence.ts", "mobile/src/services/memoryOfflineStore.ts", "mobile/src/hooks/useAuth.ts", "mobile/android/app/src/main"],
+      "affectedFiles": ["mobile/src/providers/AccountSessionBoundary.tsx", "mobile/src/providers/queryPersistence.ts", "mobile/src/services/localDataIsolation.ts", "mobile/src/services/memoryOfflineStore.ts", "mobile/src/services/accountFileStore.ts", "mobile/src/hooks/useAuth.ts", "mobile/android/app/src/main/res/xml"],
       "dependencies": [],
       "acceptanceCriteria": ["Persisted data has a verified owner ID", "Logout, session invalidation and deletion clear private caches", "Alice data cannot hydrate for Bob", "Android backups exclude private cache material"]
     },

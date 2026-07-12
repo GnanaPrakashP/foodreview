@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
 import { loadNotificationsModule, registerForPushNotifications } from "@/services/notifications";
 import { useSessionStore } from "@/stores/sessionStore";
+import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 
 type NotificationResponseLike = {
   notification: {
@@ -27,17 +28,18 @@ function stringData(response: NotificationResponseLike | null | undefined, key: 
 export function PushNotificationBootstrap() {
   const router = useRouter();
   const username = useSessionStore((state) => state.profile?.username ?? "");
+  const userId = useSessionStore((state) => state.session?.user.id ?? "");
   const handledNotificationRef = useRef<string | null>(null);
   const registeredUsernameRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!username || registeredUsernameRef.current === username) return;
+    if (!username || !userId || registeredUsernameRef.current === userId) return;
 
     let alive = true;
     registerForPushNotifications(username)
       .then((result) => {
         if (!alive) return;
-        if (result.granted) registeredUsernameRef.current = username;
+        if (result.granted) registeredUsernameRef.current = userId;
       })
       .catch(() => {
         if (alive) registeredUsernameRef.current = null;
@@ -46,13 +48,28 @@ export function PushNotificationBootstrap() {
     return () => {
       alive = false;
     };
-  }, [username]);
+  }, [userId, username]);
 
   useEffect(() => {
+    if (!username || !userId) {
+      handledNotificationRef.current = null;
+      return;
+    }
+    const ownerGeneration = getActiveCacheGeneration();
     let alive = true;
     let subscription: { remove: () => void } | null = null;
 
     function openNotificationTarget(response: NotificationResponseLike | null | undefined) {
+      if (!alive || !isCacheGenerationActive(ownerGeneration)) return;
+      const recipientUserId = stringData(response, "recipientUserId");
+      const recipientName = stringData(response, "recipientName");
+      // Old/unowned notifications are intentionally discarded. New pushes carry
+      // a recipient assertion, preventing an Alice notification from routing Bob.
+      if (recipientUserId) {
+        if (recipientUserId !== userId) return;
+      } else if (!recipientName || recipientName.toLowerCase() !== username.toLowerCase()) {
+        return;
+      }
       const notificationId = response?.notification.request.identifier;
       const stableId =
         notificationId ||
@@ -100,7 +117,7 @@ export function PushNotificationBootstrap() {
       alive = false;
       subscription?.remove();
     };
-  }, [router]);
+  }, [router, userId, username]);
 
   return null;
 }

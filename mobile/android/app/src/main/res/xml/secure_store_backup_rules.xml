@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+  <!-- Auth/session and account-scoped preferences must never leave this install. -->
+  <exclude domain="sharedpref" path="SecureStore"/>
+  <!-- MMKV contains the owner marker, cleanup journal, and private query caches. -->
+  <exclude domain="file" path="mmkv/"/>
+  <!-- Databases are local/offline derivatives and are rebuilt after sign-in. -->
+  <exclude domain="database" path="."/>
+</full-backup-content>

@@ -1,6 +1,7 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
+import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
 import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, mapMemorySummary, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   memoryTablesError,
@@ -387,9 +388,10 @@ async function signMemoryPhotoRows(rows: MemoryPhotoRow[]) {
   if (privatePaths.length === 0) return rows;
 
   const urls = await createSignedMemoryMediaUrls(privatePaths);
+  const signedUrlExpiresAt = new Date(Date.now() + MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000).toISOString();
   return rows.map((row) => {
     const signedUrl = urls.get(row.storage_path);
-    return signedUrl ? { ...row, public_url: signedUrl } : row;
+    return signedUrl ? { ...row, public_url: signedUrl, signed_url_expires_at: signedUrlExpiresAt } : row;
   });
 }
 

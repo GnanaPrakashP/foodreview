@@ -12,6 +12,8 @@ import {
   type NotificationSettings
 } from "@/services/settings";
 import { useSessionStore } from "@/stores/sessionStore";
+import { cleanupCurrentLocalData } from "@/services/localDataIsolation";
+import { logout } from "@/services/auth";
 
 export const settingsKeys = {
   blocked: ["settings", "blocked"] as const,
@@ -96,7 +98,12 @@ export function useDeleteAccountMutation() {
   const clearSession = useSessionStore((state) => state.clearSession);
 
   return useMutation({
-    mutationFn: deleteCurrentAccount,
+    mutationFn: async () => {
+      const accepted = await deleteCurrentAccount();
+      await cleanupCurrentLocalData("account_deletion", queryClient);
+      await logout();
+      return accepted;
+    },
     onSuccess: () => {
       clearSession();
       queryClient.clear();

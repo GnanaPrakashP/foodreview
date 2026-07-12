@@ -37,6 +37,7 @@ import { pickPostImageFromGallery, pickPostMediaFromGallery, pickSingleMemoryMed
 import type { MediaCropRect } from "@/services/mediaPipeline";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
+import { discardTemporaryAccountFile, stageAccountFile } from "@/services/accountFileStore";
 
 const MAX_VIDEO_MS = 30_000;
 const SHUTTER_SIZE = 86;
@@ -284,11 +285,11 @@ export function CameraScreen({
       const photo = await takePhotoWithProcessingFallback();
       // On success the blackout stays up until this screen leaves, so the
       // live feed never reappears between capture and the next screen.
-      if (emitCapturedPhoto(photo)) return;
+      if (await emitCapturedPhoto(photo)) return;
       setCaptureBlackout(false);
       if (!closingRef.current && appActiveRef.current) setCameraError("Could not save photo.");
-    } catch (error) {
-      console.warn("[camera] photo capture failed", error);
+    } catch {
+      console.warn("[camera] photo capture failed");
       setCaptureBlackout(false);
       setCameraError("Could not capture photo.");
     } finally {
@@ -306,8 +307,8 @@ export function CameraScreen({
         quality: 0.92,
         skipProcessing: false
       });
-    } catch (error) {
-      console.warn("[camera] processed capture failed, retrying with skipProcessing", error);
+    } catch {
+      console.warn("[camera] processed capture failed, retrying with skipProcessing");
       // Some Android camera stacks fail during Expo's post-processing step even
       // though raw capture succeeds. The upload pipeline re-encodes images later.
       return cameraRef.current?.takePictureAsync({
@@ -318,7 +319,7 @@ export function CameraScreen({
     }
   }
 
-  function emitCapturedPhoto(photo: CapturedPhoto | null | undefined) {
+  async function emitCapturedPhoto(photo: CapturedPhoto | null | undefined) {
     if (!photo?.uri || closingRef.current || !appActiveRef.current) return false;
     // Non-destructive framing: the full photo is kept; the guide's position
     // is recorded as a relative crop rect for display and derivatives, and
@@ -326,13 +327,14 @@ export function CameraScreen({
     // captures more than the cover-filled preview showed).
     const guided = autoCropPhotoToGuide && photoGuideFrame && photo.width && photo.height;
     const sourceSize = guided ? { height: photo.height ?? 1, width: photo.width ?? 1 } : null;
+    const scopedUri = await stageAccountFile(photo.uri, "camera-photo");
     onCapture({
       cropRect: sourceSize && photoGuideFrame ? relativeCropRectForVisibleFrame(sourceSize, viewport, photoGuideFrame) : null,
       height: photo.height,
       mediaType: "image",
       mimeType: "image/jpeg",
       source: "camera",
-      uri: photo.uri,
+      uri: scopedUri,
       visibleRect: sourceSize ? relativeCropRectForVisibleFrame(sourceSize, viewport, viewportFrame(viewport)) : null,
       width: photo.width
     });
@@ -372,6 +374,7 @@ export function CameraScreen({
 
       if (video?.uri && !closingRef.current && appActiveRef.current) {
         const framing = await videoGuideFraming(video.uri, viewport, photoGuideFrame);
+        const scopedUri = await stageAccountFile(video.uri, "camera-video");
         onCapture({
           cropRect: framing?.cropRect ?? null,
           duration: Math.min(Date.now() - recordingStartRef.current, MAX_VIDEO_MS),
@@ -379,7 +382,7 @@ export function CameraScreen({
           mediaType: "video",
           mimeType: "video/mp4",
           source: "camera",
-          uri: video.uri,
+          uri: scopedUri,
           visibleRect: framing?.visibleRect ?? null,
           width: framing?.width ?? null
         });
@@ -942,14 +945,19 @@ async function videoGuideFraming(uri: string, viewport: ViewportSize, guideFrame
   if (!guideFrame) return null;
   try {
     const thumb = await VideoThumbnails.getThumbnailAsync(uri, { time: 0 });
-    if (!thumb.width || !thumb.height) return null;
+    if (!thumb.width || !thumb.height) {
+      await discardTemporaryAccountFile(thumb.uri).catch(() => {});
+      return null;
+    }
     const size = { height: thumb.height, width: thumb.width };
-    return {
+    const framing = {
       cropRect: relativeCropRectForVisibleFrame(size, viewport, guideFrame),
       height: thumb.height,
       visibleRect: relativeCropRectForVisibleFrame(size, viewport, viewportFrame(viewport)),
       width: thumb.width
     };
+    await discardTemporaryAccountFile(thumb.uri).catch(() => {});
+    return framing;
   } catch {
     return null;
   }

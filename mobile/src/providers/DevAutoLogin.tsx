@@ -16,13 +16,12 @@ import { devAutoLoginEmail, devAutoLoginEnabled, devAutoLoginPassword } from "@/
 export function DevAutoLogin() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const setSession = useSessionStore((state) => state.setSession);
   const resolveAutoLogin = useSessionStore((state) => state.resolveAutoLogin);
   const attemptedRef = useRef(false);
 
   useEffect(() => {
     if (!devAutoLoginEnabled) return;
-    // Wait until AuthBootstrap has settled so we know whether a session exists.
+    // Wait until the account boundary has settled so we know whether a session exists.
     if (!isReady) return;
     if (attemptedRef.current) return;
 
@@ -36,9 +35,7 @@ export function DevAutoLogin() {
 
     // No session: sign in once from a clean signed-out state.
     login({ email: devAutoLoginEmail, password: devAutoLoginPassword })
-      .then((result) => {
-        if (result) setSession(result.session, result.profile);
-      })
+      .then(() => {})
       .catch(() => {
         console.warn("[DevAutoLogin] automatic sign-in failed. Check local dev credentials.");
       })
@@ -46,7 +43,7 @@ export function DevAutoLogin() {
         // Release the routing gate whether or not sign-in succeeded.
         resolveAutoLogin();
       });
-  }, [isAuthenticated, isReady, resolveAutoLogin, setSession]);
+  }, [isAuthenticated, isReady, resolveAutoLogin]);
 
   return null;
 }

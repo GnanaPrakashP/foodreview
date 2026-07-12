@@ -49,3 +49,8 @@ export function removeMemoryCapture(id: string) {
   pendingPosts.delete(id);
   captures.delete(id);
 }
+
+export function clearMemoryCaptureSession() {
+  captures.clear();
+  pendingPosts.clear();
+}

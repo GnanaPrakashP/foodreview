@@ -4,6 +4,12 @@ import { Platform } from "react-native";
 import { apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { compactLocationLabel, isGenericLocationLabel } from "@/services/locationLabels";
+import {
+  getActiveCacheGeneration,
+  getActiveCacheOwner,
+  isCacheGenerationActive,
+  isValidCacheOwnerScope
+} from "@/security/cacheOwnership";
 
 export type UserLocationSource = "device" | "manual";
 
@@ -32,6 +38,8 @@ export const USER_LOCATION_UPDATED_AT_STORAGE_KEY = "user_location_updated_at";
 export const LEGACY_USER_LOCATION_LAT_STORAGE_KEY = "trending_loc_lat";
 export const LEGACY_USER_LOCATION_LNG_STORAGE_KEY = "trending_loc_lng";
 export const LEGACY_USER_LOCATION_LABEL_STORAGE_KEY = "trending_loc_label";
+const ACCOUNT_LOCATION_KEY_VERSION = 2;
+let activeLocationOwnerScope: string | null = null;
 
 const MAX_LOCATION_LABEL_LENGTH = 80;
 const FALLBACK_USER_LOCATION_LABEL = "Nearby area";
@@ -81,6 +89,16 @@ async function removeStoredValue(key: string) {
   }
 
   await SecureStore.deleteItemAsync(key);
+}
+
+function scopedLocationKey(key: string, ownerScope = activeLocationOwnerScope) {
+  if (!isValidCacheOwnerScope(ownerScope)) return null;
+  return `${key}:v${ACCOUNT_LOCATION_KEY_VERSION}:${ownerScope}`;
+}
+
+export function setUserLocationOwnerScope(ownerScope: string | null) {
+  if (ownerScope && !isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_location_cache_owner");
+  activeLocationOwnerScope = ownerScope;
 }
 
 export function normalizeUserLocationLabel(raw: string | null | undefined) {
@@ -211,13 +229,19 @@ export function createManualUserLocation(input: {
 
 export async function loadSavedUserLocation(): Promise<UserLocation | null> {
   try {
+    const ownerScope = activeLocationOwnerScope;
+    const ownerGeneration = getActiveCacheGeneration();
+    const keys = [
+      USER_LOCATION_LAT_STORAGE_KEY,
+      USER_LOCATION_LNG_STORAGE_KEY,
+      USER_LOCATION_LABEL_STORAGE_KEY,
+      USER_LOCATION_SOURCE_STORAGE_KEY,
+      USER_LOCATION_PLACE_ID_STORAGE_KEY,
+      USER_LOCATION_UPDATED_AT_STORAGE_KEY
+    ].map((key) => scopedLocationKey(key));
+    if (keys.some((key) => !key)) return null;
     const [rawLat, rawLng, rawLabel, rawSource, rawPlaceId, rawUpdatedAt] = await Promise.all([
-      getStoredValue(USER_LOCATION_LAT_STORAGE_KEY),
-      getStoredValue(USER_LOCATION_LNG_STORAGE_KEY),
-      getStoredValue(USER_LOCATION_LABEL_STORAGE_KEY),
-      getStoredValue(USER_LOCATION_SOURCE_STORAGE_KEY),
-      getStoredValue(USER_LOCATION_PLACE_ID_STORAGE_KEY),
-      getStoredValue(USER_LOCATION_UPDATED_AT_STORAGE_KEY)
+      ...keys.map((key) => getStoredValue(key as string))
     ]);
     const savedLocation = normalizeUserLocation({
       lat: Number(rawLat),
@@ -227,22 +251,9 @@ export async function loadSavedUserLocation(): Promise<UserLocation | null> {
       source: rawSource,
       updatedAt: rawUpdatedAt
     });
-    if (savedLocation) return savedLocation;
-
-    const [legacyLat, legacyLng, legacyLabel] = await Promise.all([
-      getStoredValue(LEGACY_USER_LOCATION_LAT_STORAGE_KEY),
-      getStoredValue(LEGACY_USER_LOCATION_LNG_STORAGE_KEY),
-      getStoredValue(LEGACY_USER_LOCATION_LABEL_STORAGE_KEY)
-    ]);
-    const legacyLocation = normalizeUserLocation({
-      lat: Number(legacyLat),
-      lng: Number(legacyLng),
-      label: legacyLabel,
-      source: "manual",
-      updatedAt: new Date().toISOString()
-    });
-    if (legacyLocation) await saveUserLocation(legacyLocation);
-    return legacyLocation;
+    return getActiveCacheOwner()?.scope === ownerScope && isCacheGenerationActive(ownerGeneration)
+      ? savedLocation
+      : null;
   } catch {
     return null;
   }
@@ -253,23 +264,52 @@ export async function saveUserLocation(location: UserLocation) {
   if (!normalized) return;
 
   try {
+    const ownerScope = activeLocationOwnerScope;
+    const ownerGeneration = getActiveCacheGeneration();
+    if (!ownerScope || getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(ownerGeneration)) return;
+    const entries: Array<[string, string]> = [
+      [USER_LOCATION_LAT_STORAGE_KEY, String(normalized.lat)],
+      [USER_LOCATION_LNG_STORAGE_KEY, String(normalized.lng)],
+      [USER_LOCATION_LABEL_STORAGE_KEY, normalized.label],
+      [USER_LOCATION_SOURCE_STORAGE_KEY, normalized.source],
+      [USER_LOCATION_PLACE_ID_STORAGE_KEY, normalized.placeId ?? ""],
+      [USER_LOCATION_UPDATED_AT_STORAGE_KEY, normalized.updatedAt]
+    ];
+    const scopedEntries = entries.map(([key, value]) => [scopedLocationKey(key, ownerScope), value] as const);
+    if (scopedEntries.some(([key]) => !key)) return;
     await Promise.all([
-      setStoredValue(USER_LOCATION_LAT_STORAGE_KEY, String(normalized.lat)),
-      setStoredValue(USER_LOCATION_LNG_STORAGE_KEY, String(normalized.lng)),
-      setStoredValue(USER_LOCATION_LABEL_STORAGE_KEY, normalized.label),
-      setStoredValue(USER_LOCATION_SOURCE_STORAGE_KEY, normalized.source),
-      setStoredValue(USER_LOCATION_PLACE_ID_STORAGE_KEY, normalized.placeId ?? ""),
-      setStoredValue(USER_LOCATION_UPDATED_AT_STORAGE_KEY, normalized.updatedAt),
-      setStoredValue(LEGACY_USER_LOCATION_LAT_STORAGE_KEY, String(normalized.lat)),
-      setStoredValue(LEGACY_USER_LOCATION_LNG_STORAGE_KEY, String(normalized.lng)),
-      setStoredValue(LEGACY_USER_LOCATION_LABEL_STORAGE_KEY, normalized.label)
+      ...scopedEntries.map(([key, value]) => setStoredValue(key as string, value))
     ]);
+    if (getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(ownerGeneration)) {
+      await clearSavedUserLocationForScope(ownerScope);
+    }
   } catch {
     // Local persistence is best-effort; the in-memory app location still updates.
   }
 }
 
 export async function clearSavedUserLocation() {
+  if (!activeLocationOwnerScope) return;
+  await clearSavedUserLocationForScope(activeLocationOwnerScope);
+}
+
+export async function clearSavedUserLocationForScope(ownerScope: string) {
+  if (!isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_location_cache_owner");
+  try {
+    await Promise.all([
+      removeStoredValue(scopedLocationKey(USER_LOCATION_LAT_STORAGE_KEY, ownerScope) as string),
+      removeStoredValue(scopedLocationKey(USER_LOCATION_LNG_STORAGE_KEY, ownerScope) as string),
+      removeStoredValue(scopedLocationKey(USER_LOCATION_LABEL_STORAGE_KEY, ownerScope) as string),
+      removeStoredValue(scopedLocationKey(USER_LOCATION_SOURCE_STORAGE_KEY, ownerScope) as string),
+      removeStoredValue(scopedLocationKey(USER_LOCATION_PLACE_ID_STORAGE_KEY, ownerScope) as string),
+      removeStoredValue(scopedLocationKey(USER_LOCATION_UPDATED_AT_STORAGE_KEY, ownerScope) as string)
+    ]);
+  } catch {
+    throw new Error("location_cache_delete_failed");
+  }
+}
+
+export async function clearLegacyUnownedUserLocation() {
   try {
     await Promise.all([
       removeStoredValue(USER_LOCATION_LAT_STORAGE_KEY),
@@ -283,7 +323,7 @@ export async function clearSavedUserLocation() {
       removeStoredValue(LEGACY_USER_LOCATION_LABEL_STORAGE_KEY)
     ]);
   } catch {
-    // Clearing local storage is best-effort.
+    throw new Error("legacy_location_cache_delete_failed");
   }
 }
 

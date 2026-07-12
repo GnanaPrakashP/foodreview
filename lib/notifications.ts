@@ -283,7 +283,8 @@ async function sendExpoPushMessages(messages: Array<Record<string, unknown>>) {
 async function sendPushForNotification(
   db: NotificationDb,
   input: CreateNotificationInput,
-  notification: Pick<Notification, "id"> | null | undefined
+  notification: Pick<Notification, "id"> | null | undefined,
+  recipientUserId?: string | null
 ): Promise<void> {
   try {
     const recipientName = input.recipientName.trim();
@@ -304,6 +305,8 @@ async function sendPushForNotification(
       notificationId: notification?.id,
       notificationType: input.type,
       postId: input.postId ?? (input.entityType === "POST" ? input.entityId : null),
+      recipientName,
+      recipientUserId,
       roomId,
       type: input.entityType === "TABLE_MEMORY" ? "table-memory" : "social-notification",
     });
@@ -433,7 +436,7 @@ export async function createNotificationForNames(
 
       if (!legacyError) {
         if (input.push) {
-          await sendPushForNotification(db, input, legacyData as Pick<Notification, "id">);
+          await sendPushForNotification(db, input, legacyData as Pick<Notification, "id">, recipientProfile?.id);
         }
         return legacyData as Notification;
       }
@@ -445,7 +448,7 @@ export async function createNotificationForNames(
   }
 
   if (input.push) {
-    await sendPushForNotification(db, input, data as Notification);
+    await sendPushForNotification(db, input, data as Notification, recipientProfile?.id);
   }
 
   return data as Notification;

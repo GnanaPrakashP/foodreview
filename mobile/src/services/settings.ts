@@ -375,8 +375,5 @@ export async function deleteCurrentAccount(): Promise<AccountDeletionAccepted> {
   if (!response.ok) throw new Error(payload?.error ?? "Could not delete account");
   if (!payload?.accepted || !payload.jobId) throw new Error("Account deletion was not accepted");
 
-  // The durable server job has already frozen the account. Sign out immediately
-  // so a retry, backgrounded app, or delayed worker cannot keep an active UI.
-  await supabase.auth.signOut().catch(() => {});
   return payload as AccountDeletionAccepted;
 }

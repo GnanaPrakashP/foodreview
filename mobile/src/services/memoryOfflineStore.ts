@@ -1,8 +1,17 @@
 import * as SQLite from "expo-sqlite";
+import * as FileSystem from "expo-file-system/legacy";
+import { accountFileDirectoryForScope, ensureAccountFileDirectory } from "@/services/accountFileStore";
+import { isValidCacheOwnerScope, LOCAL_DATA_SCHEMA_VERSION } from "@/security/cacheOwnership";
 import type { MemoryMediaPage, MemoryMessagesPage } from "@/services/memories";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import {
+  sanitizeOfflineMemoryMessage,
+  sanitizeOfflineMemoryPhoto,
+  sanitizeOfflineMemoryRoom
+} from "@/security/offlineMemorySecurity";
 
-const DB_NAME = "circlebites-memory-offline.db";
+const DB_NAME = `circlebites-memory-offline-v${LOCAL_DATA_SCHEMA_VERSION}.db`;
+const LEGACY_DB_NAME = "circlebites-memory-offline.db";
 const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
 const DEFAULT_CHAT_PAGE_LIMIT = 50;
 const DEFAULT_MEDIA_PAGE_LIMIT = 30;
@@ -20,7 +29,135 @@ type StoredCursorRow = StoredPayloadRow & {
   id: string;
 };
 
-let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let dbState: { ownerScope: string; promise: Promise<SQLite.SQLiteDatabase> } | null = null;
+
+async function closeActiveDb() {
+  const current = dbState;
+  dbState = null;
+  if (!current) return;
+  try {
+    await (await current.promise).closeAsync();
+  } catch {
+    // A missing/already-closed database is an idempotent close.
+  }
+}
+
+export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
+  if (ownerScope && !isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_memory_cache_owner");
+  if (dbState?.ownerScope === ownerScope) return;
+  await closeActiveDb();
+  if (!ownerScope) return;
+  const directory = await ensureAccountFileDirectory(ownerScope);
+  const promise = SQLite.openDatabaseAsync(DB_NAME, {}, directory).then(async (db) => {
+    await db.execAsync(`
+      create table if not exists local_cache_meta (
+        singleton integer primary key not null check (singleton = 1),
+        owner_scope text not null,
+        schema_version integer not null
+      );
+      create table if not exists memory_room_summaries (
+        room_id text primary key not null,
+        latest_activity_at text,
+        payload text not null,
+        updated_at integer not null
+      );
+      create table if not exists memory_room_snapshots (
+        room_id text primary key not null,
+        latest_activity_at text,
+        payload text not null,
+        updated_at integer not null
+      );
+      create table if not exists memory_messages (
+        message_id text primary key not null,
+        room_id text not null,
+        created_at text not null,
+        payload text not null,
+        updated_at integer not null
+      );
+      create index if not exists memory_messages_room_created_id_desc_idx
+        on memory_messages(room_id, created_at desc, message_id desc);
+      create table if not exists memory_photos (
+        photo_id text primary key not null,
+        room_id text not null,
+        message_id text,
+        created_at text not null,
+        payload text not null,
+        updated_at integer not null
+      );
+      create index if not exists memory_photos_room_created_id_desc_idx
+        on memory_photos(room_id, created_at desc, photo_id desc);
+      create index if not exists memory_photos_message_idx
+        on memory_photos(room_id, message_id);
+    `);
+    const meta = await db.getFirstAsync<{ owner_scope: string; schema_version: number }>(
+      "select owner_scope, schema_version from local_cache_meta where singleton = 1"
+    );
+    if (meta && (meta.owner_scope !== ownerScope || meta.schema_version !== LOCAL_DATA_SCHEMA_VERSION)) {
+      await db.closeAsync();
+      throw new Error("memory_cache_owner_mismatch");
+    }
+    await db.runAsync(
+      `insert into local_cache_meta(singleton, owner_scope, schema_version) values (1, ?, ?)
+       on conflict(singleton) do update set owner_scope = excluded.owner_scope, schema_version = excluded.schema_version`,
+      ownerScope,
+      LOCAL_DATA_SCHEMA_VERSION
+    );
+    void pruneOfflineMemoryStore(db);
+    return db;
+  });
+  dbState = { ownerScope, promise };
+}
+
+export async function clearMemoryOfflineOwnerScope(ownerScope: string) {
+  if (!isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_memory_cache_owner");
+  if (dbState?.ownerScope === ownerScope) await closeActiveDb();
+  const directory = accountFileDirectoryForScope(ownerScope);
+  try {
+    await SQLite.deleteDatabaseAsync(DB_NAME, directory);
+  } catch {
+    const info = await FileSystem.getInfoAsync(`${directory}/${DB_NAME}`);
+    if (info.exists) throw new Error("memory_cache_delete_failed");
+  }
+}
+
+export async function clearLegacyGlobalMemoryDatabase() {
+  try {
+    await SQLite.deleteDatabaseAsync(LEGACY_DB_NAME);
+  } catch {
+    const possibleLegacyPaths = [
+      `${FileSystem.documentDirectory ?? ""}SQLite/${LEGACY_DB_NAME}`,
+      `${FileSystem.documentDirectory ?? ""}${LEGACY_DB_NAME}`
+    ];
+    const checks = await Promise.all(possibleLegacyPaths.map((path) => FileSystem.getInfoAsync(path)));
+    if (checks.some((info) => info.exists)) throw new Error("legacy_memory_cache_delete_failed");
+  }
+}
+
+export async function legacyGlobalMemoryDatabasePresent() {
+  const possibleLegacyPaths = [
+    `${FileSystem.documentDirectory ?? ""}SQLite/${LEGACY_DB_NAME}`,
+    `${FileSystem.documentDirectory ?? ""}${LEGACY_DB_NAME}`
+  ];
+  try {
+    const checks = await Promise.all(possibleLegacyPaths.map((path) => FileSystem.getInfoAsync(path)));
+    return checks.some((info) => info.exists);
+  } catch {
+    return true;
+  }
+}
+
+export async function memoryOfflineDiagnostics() {
+  if (!dbState) return { namespaceCount: 0, signedUrlRecordCount: 0 };
+  try {
+    const db = await offlineDb();
+    const row = await db.getFirstAsync<{ count: number }>(
+      `select count(*) as count from memory_photos where payload like '%"signedUrlExpiresAt":%'`
+    );
+    return { namespaceCount: 1, signedUrlRecordCount: Number(row?.count ?? 0) };
+  } catch {
+    return { namespaceCount: 0, signedUrlRecordCount: 0 };
+  }
+}
 
 function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
   if (!createdAt || !id) return null;
@@ -60,49 +197,14 @@ async function pruneOfflineMemoryStore(db: SQLite.SQLiteDatabase) {
 }
 
 async function offlineDb() {
-  if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync(DB_NAME).then(async (db) => {
-      await db.execAsync(`
-        create table if not exists memory_room_summaries (
-          room_id text primary key not null,
-          latest_activity_at text,
-          payload text not null,
-          updated_at integer not null
-        );
-        create table if not exists memory_room_snapshots (
-          room_id text primary key not null,
-          latest_activity_at text,
-          payload text not null,
-          updated_at integer not null
-        );
-        create table if not exists memory_messages (
-          message_id text primary key not null,
-          room_id text not null,
-          created_at text not null,
-          payload text not null,
-          updated_at integer not null
-        );
-        create index if not exists memory_messages_room_created_id_desc_idx
-          on memory_messages(room_id, created_at desc, message_id desc);
-        create table if not exists memory_photos (
-          photo_id text primary key not null,
-          room_id text not null,
-          message_id text,
-          created_at text not null,
-          payload text not null,
-          updated_at integer not null
-        );
-        create index if not exists memory_photos_room_created_id_desc_idx
-          on memory_photos(room_id, created_at desc, photo_id desc);
-        create index if not exists memory_photos_message_idx
-          on memory_photos(room_id, message_id);
-      `);
-      void pruneOfflineMemoryStore(db);
-      return db;
-    });
+  if (!dbState) throw new Error("memory_cache_owner_unresolved");
+  const state = dbState;
+  const db = await state.promise;
+  if (dbState !== state) {
+    await db.closeAsync().catch(() => {});
+    throw new Error("memory_cache_owner_changed");
   }
-
-  return dbPromise;
+  return db;
 }
 
 function photosFromMessages(messages: MemoryMessage[]) {
@@ -233,7 +335,7 @@ export async function readOfflineMemoryRoom(roomId: string) {
       roomId
     );
     const room = rows[0] ? safeParse<MemoryRoom>(rows[0].payload) : null;
-    return room?.id === roomId ? room : null;
+    return room?.id === roomId ? sanitizeOfflineMemoryRoom(room) : null;
   } catch {
     return null;
   }
@@ -287,6 +389,7 @@ export async function readOfflineMemoryMessagesPage(
     const messages = selectedRows
       .map((row) => safeParse<MemoryMessage>(row.payload))
       .filter((message): message is MemoryMessage => Boolean(message))
+      .map((message) => sanitizeOfflineMemoryMessage(message))
       .reverse();
 
     if (messages.length === 0) return null;
@@ -346,7 +449,8 @@ export async function readOfflineMemoryMediaPage(
     const selectedRows = rows.slice(0, limit);
     const photos = selectedRows
       .map((row) => safeParse<MemoryPhoto>(row.payload))
-      .filter((photo): photo is MemoryPhoto => Boolean(photo));
+      .filter((photo): photo is MemoryPhoto => Boolean(photo))
+      .map((photo) => sanitizeOfflineMemoryPhoto(photo));
 
     if (photos.length === 0) return null;
 

@@ -122,7 +122,11 @@ export async function POST(req: NextRequest) {
       return mobileJson({ sent: 0 });
     }
 
-    const [{ data: tokens, error: tokensError }, { data: prefs, error: prefsError }] = await Promise.all([
+    const [
+      { data: tokens, error: tokensError },
+      { data: prefs, error: prefsError },
+      { data: recipientProfiles, error: recipientProfilesError }
+    ] = await Promise.all([
       admin
         .from("push_tokens")
         .select("expo_push_token, user_name")
@@ -130,11 +134,19 @@ export async function POST(req: NextRequest) {
       admin
         .from("notification_settings")
         .select("user_name, push_enabled, memory_activity")
-        .in("user_name", recipients)
+        .in("user_name", recipients),
+      admin
+        .from("profiles")
+        .select("id, username")
+        .in("username", recipients)
     ]);
 
     if (tokensError) throw tokensError;
     if (prefsError) throw prefsError;
+    if (recipientProfilesError) throw recipientProfilesError;
+    const recipientUserIds = new Map(
+      (recipientProfiles ?? []).map((profile: { id: string; username: string }) => [profile.username, profile.id])
+    );
 
     // Respect each recipient's notification preferences. Missing rows default to
     // enabled, so users who never opened settings still receive notifications.
@@ -146,18 +158,19 @@ export async function POST(req: NextRequest) {
 
     const pushMessages = (tokens ?? [])
       .filter((token: { expo_push_token: string; user_name: string }) => !mutedRecipients.has(token.user_name))
-      .map((token: { expo_push_token: string; user_name: string }) => token.expo_push_token)
-      .filter(Boolean)
-      .map((to: string) => ({
+      .filter((token: { expo_push_token: string; user_name: string }) => Boolean(token.expo_push_token))
+      .map((token: { expo_push_token: string; user_name: string }) => ({
         body: MEMORY_NOTIFICATION_BODY,
         data: {
           kind,
+          recipientName: token.user_name,
+          recipientUserId: recipientUserIds.get(token.user_name),
           roomId,
           type: "table-memory"
         },
         sound: "default",
         title: MEMORY_NOTIFICATION_TITLE,
-        to
+        to: token.expo_push_token
       }));
 
     await sendExpoPush(pushMessages);

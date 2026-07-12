@@ -106,9 +106,11 @@ test("phase 3 persists memory React Query cache with MMKV", () => {
   assert.match(packageJson, /"react-native-mmkv"/);
   assert.match(queryPersistence, /createMMKV/);
   assert.match(queryPersistence, /circlebites\.query-cache/);
-  assert.match(appProviders, /PersistQueryClientProvider/);
-  assert.match(appProviders, /query\.queryKey\[0\] === "memories"/);
-  assert.match(appProviders, /maxAge: QUERY_CACHE_MAX_AGE_MS/);
+  assert.match(appProviders, /AccountSessionBoundary/);
+  assert.match(queryPersistence, /persistQueryClientRestore/);
+  assert.match(queryPersistence, /query\.queryKey\[0\] === "memories"/);
+  assert.match(queryPersistence, /maxAge: QUERY_CACHE_MAX_AGE_MS/);
+  assert.match(queryPersistence, /ownerScope/);
 });
 
 test("phase 5 adds SQLite offline store and offline-first memory hooks", () => {

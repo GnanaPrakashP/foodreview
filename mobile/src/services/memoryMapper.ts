@@ -74,6 +74,7 @@ export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<st
     uploaderName: photo.uploader_name,
     uploaderDisplayName: namesByUsername[photo.uploader_name] ?? photo.uploader_name,
     publicUrl: photo.public_url || photo.storage_path,
+    signedUrlExpiresAt: photo.signed_url_expires_at ?? null,
     storagePath: photo.storage_path,
     stopId: photo.stop_id ?? null,
     mediaType: photo.media_type === "audio" ? "audio" : photo.media_type === "video" ? "video" : "image",

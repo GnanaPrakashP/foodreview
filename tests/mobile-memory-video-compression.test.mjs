@@ -11,7 +11,7 @@ test("memory video compression keeps native compressor enabled with original-fil
 
   assert.match(compressVideoBody, /require\("react-native-compressor"\)/);
   assert.match(compressVideoBody, /Video\.compress\(uri, \{ compressionMethod: "auto" \}/);
-  assert.match(compressVideoBody, /return \{ encoded: true, height, uri: compressedUri, width \}/);
+  assert.match(compressVideoBody, /stageAccountFile\(compressedUri, "memory-upload-video"\)/);
   assert.match(compressVideoBody, /catch \{[\s\S]*return \{ encoded: false, height: dimensions\.height, uri, width: dimensions\.width \}/);
   assert.doesNotMatch(memoryStorageSource, /memory video(?:s)? (?:disabled|unsupported)/i);
 });

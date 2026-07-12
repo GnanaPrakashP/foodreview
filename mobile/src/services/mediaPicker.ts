@@ -1,9 +1,17 @@
 import * as ImagePicker from "expo-image-picker";
 import { MEMORY_MEDIA_MAX_ITEMS, MEMORY_VIDEO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
+import { stageAccountFile } from "@/services/accountFileStore";
 
 const imageMediaTypes: ImagePicker.MediaType[] = ["images"];
 const allMediaTypes: ImagePicker.MediaType[] = ["images", "videos"];
 const POST_VIDEO_MAX_DURATION_MS = 30_000;
+
+async function scopePickerAssets(assets: ImagePicker.ImagePickerAsset[], category: string) {
+  return Promise.all(assets.map(async (asset) => ({
+    ...asset,
+    uri: await stageAccountFile(asset.uri, category)
+  })));
+}
 
 export type PostMediaPickerResult = {
   assets: ImagePicker.ImagePickerAsset[];
@@ -36,7 +44,7 @@ export async function pickPostMediaFromGallery(selectionLimit: number): Promise<
   }
 
   return {
-    assets: result.assets.slice(0, limit),
+    assets: await scopePickerAssets(result.assets.slice(0, limit), "post-picker"),
     error: null
   };
 }
@@ -73,7 +81,7 @@ export async function pickPostImageFromGallery() {
   }
 
   return {
-    asset: result.assets[0] ?? null,
+    asset: (await scopePickerAssets(result.assets.slice(0, 1), "post-image"))[0] ?? null,
     error: null
   };
 }
@@ -100,7 +108,7 @@ export async function pickAvatarFromGallery() {
   }
 
   return {
-    asset: result.assets[0] ?? null,
+    asset: (await scopePickerAssets(result.assets.slice(0, 1), "avatar"))[0] ?? null,
     error: null
   };
 }
@@ -128,9 +136,10 @@ export async function pickMemoryMediaFromGallery(): Promise<MemoryMediaPickerRes
     return { asset: null, assets: [], error: null };
   }
 
+  const assets = await scopePickerAssets(result.assets, "memory-picker");
   return {
-    asset: result.assets[0] ?? null,
-    assets: result.assets,
+    asset: assets[0] ?? null,
+    assets,
     error: null
   };
 }
@@ -158,7 +167,7 @@ export async function pickSingleMemoryMediaFromGallery(): Promise<MemoryMediaPic
     return { asset: null, assets: [], error: null };
   }
 
-  const asset = result.assets[0] ?? null;
+  const asset = (await scopePickerAssets(result.assets.slice(0, 1), "memory-picker"))[0] ?? null;
   return {
     asset,
     assets: asset ? [asset] : [],
@@ -187,9 +196,10 @@ export async function pickMemoryMediaFromCamera(): Promise<MemoryMediaPickerResu
     return { asset: null, assets: [], error: null };
   }
 
+  const assets = await scopePickerAssets(result.assets, "memory-camera");
   return {
-    asset: result.assets[0] ?? null,
-    assets: result.assets,
+    asset: assets[0] ?? null,
+    assets,
     error: null
   };
 }
@@ -215,7 +225,7 @@ export async function pickPostMediaFromCamera() {
   }
 
   return {
-    asset: result.assets[0] ?? null,
+    asset: (await scopePickerAssets(result.assets.slice(0, 1), "post-camera"))[0] ?? null,
     error: null
   };
 }
@@ -241,7 +251,7 @@ export async function pickPostImageFromCamera() {
   }
 
   return {
-    asset: result.assets[0] ?? null,
+    asset: (await scopePickerAssets(result.assets.slice(0, 1), "post-camera"))[0] ?? null,
     error: null
   };
 }
@@ -311,7 +321,7 @@ export async function imageFromRecentAsset(asset: RecentPostImage) {
   return {
     asset: {
       mimeType: null,
-      uri: info.localUri ?? asset.uri
+      uri: await stageAccountFile(info.localUri ?? asset.uri, "recent-post")
     },
     error: null
   };

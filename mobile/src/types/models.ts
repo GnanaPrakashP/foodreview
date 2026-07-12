@@ -279,6 +279,7 @@ export type MemoryPhoto = {
   uploaderName: string;
   uploaderDisplayName: string;
   publicUrl: string;
+  signedUrlExpiresAt?: string | null;
   storagePath: string;
   mediaType: "audio" | "image" | "video";
   imageWidth: number | null;

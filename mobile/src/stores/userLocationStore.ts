@@ -27,6 +27,7 @@ type UserLocationState = {
   clearLocation: () => Promise<void>;
   hydrate: () => Promise<void>;
   refreshDeviceLocation: (options?: RefreshDeviceLocationOptions) => Promise<UserLocation | null>;
+  resetForAccountTransition: () => void;
   setLocation: (location: UserLocation) => Promise<void>;
   syncRemoteLocation: () => Promise<void>;
 };
@@ -83,6 +84,13 @@ export const useUserLocationStore = create<UserLocationState>((set, get) => ({
     void persistLocation(result.location);
     return result.location;
   },
+  resetForAccountTransition: () => set({
+    error: null,
+    hydrated: false,
+    isRefreshingDeviceLocation: false,
+    lastDeviceRefreshAt: 0,
+    location: null
+  }),
   setLocation: async (location) => {
     const normalized = normalizeUserLocation(location);
     if (!normalized) return;

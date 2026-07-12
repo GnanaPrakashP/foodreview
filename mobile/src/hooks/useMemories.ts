@@ -45,6 +45,8 @@ import {
 } from "@/services/memoryOfflineStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
+import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 
 export const memoryKeys = {
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
@@ -56,6 +58,7 @@ export const memoryKeys = {
 const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
 const REALTIME_RECONCILE_DELAY_MS = 1_500;
 const recentMediaMessageExpiries = new Map<string, number>();
+registerSensitiveResourceCleanup(() => recentMediaMessageExpiries.clear());
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
 const OPTIMISTIC_TEXT_MESSAGE_PREFIX = "optimistic-message:";
 type DeleteMemoryItemsInput = { messageIds?: string[]; photoIds?: string[] };
@@ -123,6 +126,7 @@ type MemoryPhotoRealtimePayload = {
   }>;
 };
 const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>>();
+registerSensitiveResourceCleanup(() => pendingMemoryDeleteBatches.clear());
 
 function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAsset[] {
   const uploadBatchId = input.uploadBatchId ?? `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -951,10 +955,13 @@ export function useMemoryRoomsRealtime(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
 
+    const ownerGeneration = getActiveCacheGeneration();
     let invalidationTimeout: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       invalidationTimeout = setTimeout(() => {
+        if (!isCacheGenerationActive(ownerGeneration)) return;
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
       }, 150);
     };
@@ -1061,17 +1068,22 @@ export function useMemoryRoomRealtime(roomId: string) {
   useEffect(() => {
     if (!roomId) return;
 
+    const ownerGeneration = getActiveCacheGeneration();
     let invalidationTimeout: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       invalidationTimeout = setTimeout(() => {
+        if (!isCacheGenerationActive(ownerGeneration)) return;
         queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
       }, 150);
     };
     const scheduleReconcile = () => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       invalidationTimeout = setTimeout(() => {
+        if (!isCacheGenerationActive(ownerGeneration)) return;
         queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
         queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
         queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
@@ -1079,10 +1091,12 @@ export function useMemoryRoomRealtime(roomId: string) {
       }, REALTIME_RECONCILE_DELAY_MS);
     };
     const persistOfflineRoom = () => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       const current = queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId));
       if (current) void saveOfflineMemoryRoom(current);
     };
     const handleMessageChange = (payload: MemoryMessageRealtimePayload) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       if (payload.eventType === "INSERT") {
         const row = payload.new;
         if (row.room_id !== roomId) {
@@ -1159,6 +1173,7 @@ export function useMemoryRoomRealtime(roomId: string) {
       scheduleRefresh();
     };
     const handlePhotoChange = (payload: MemoryPhotoRealtimePayload) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
       if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
         const row = payload.new;
         if (row.room_id !== roomId) {

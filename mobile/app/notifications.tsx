@@ -166,8 +166,8 @@ export default function NotificationsScreen() {
 
     autoReadAttemptedCountRef.current = unreadCount;
     markAllRead.mutate(undefined, {
-      onError: (error) => {
-        console.warn("[notifications] auto mark read failed:", error);
+      onError: () => {
+        console.warn("[notifications] auto mark read failed");
       }
     });
   }, [isAuthenticated, isReady, markAllRead, notifications.isLoading, unreadCount]);

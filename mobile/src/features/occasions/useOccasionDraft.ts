@@ -17,11 +17,11 @@ export type OccasionDraftState = {
 export function useOccasionDraft({
   participantCount,
   title,
-  userName
+  userId
 }: {
   participantCount?: number;
   title: string;
-  userName?: string | null;
+  userId?: string | null;
 }): OccasionDraftState {
   const [corrections, setCorrections] = useState<OccasionCorrection[]>([]);
   const [confirmedType, setConfirmedType] = useState<OccasionType | null>(null);
@@ -30,13 +30,13 @@ export function useOccasionDraft({
 
   useEffect(() => {
     let active = true;
-    loadOccasionCorrections(userName).then((saved) => {
+    loadOccasionCorrections(userId).then((saved) => {
       if (active) setCorrections(saved);
     });
     return () => {
       active = false;
     };
-  }, [userName]);
+  }, [userId]);
 
   useEffect(() => {
     if (title === previousTitleRef.current) return;
@@ -73,8 +73,8 @@ export function useOccasionDraft({
 
   const confirmOccasion = useCallback((type: OccasionType) => {
     setConfirmedType(type);
-    void saveOccasionCorrection({ phrase: title, type, userName });
-  }, [title, userName]);
+    void saveOccasionCorrection({ phrase: title, type, userId });
+  }, [title, userId]);
 
   const resetConfirmation = useCallback(() => {
     setConfirmedType(null);

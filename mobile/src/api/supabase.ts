@@ -234,3 +234,14 @@ export const supabase = createClient(
     }
   }
 );
+
+export async function clearSupabaseLocalSessionStorage() {
+  supabase.auth.stopAutoRefresh();
+  const results = await Promise.allSettled([
+    supabaseStorageAdapter.removeItem(supabaseAuthStorageKey),
+    supabaseStorageAdapter.removeItem(`${supabaseAuthStorageKey}-code-verifier`)
+  ]);
+  if (results.some((result) => result.status === "rejected")) {
+    throw new Error("local_auth_storage_delete_failed");
+  }
+}

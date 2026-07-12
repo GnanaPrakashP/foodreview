@@ -54,3 +54,8 @@ export function consumePostComposerReset() {
   composerResetRequested = false;
   return requested;
 }
+
+export function clearPostCaptureSession() {
+  pendingCaptures = [];
+  composerResetRequested = false;
+}

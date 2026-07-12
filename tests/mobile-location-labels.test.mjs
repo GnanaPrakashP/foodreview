@@ -63,6 +63,12 @@ function loadUserLocation({ fetchImpl, reverseGeocodeAsync }) {
     if (specifier === "react-native") return { Platform: { OS: "android" } };
     if (specifier === "@/api/config") return { apiUrl: (path) => `https://app.test${path}` };
     if (specifier === "@/api/supabase") return { supabase: {} };
+    if (specifier === "@/security/cacheOwnership") return {
+      getActiveCacheGeneration: () => 0,
+      getActiveCacheOwner: () => null,
+      isCacheGenerationActive: () => false,
+      isValidCacheOwnerScope: () => false,
+    };
     if (specifier === "@/services/locationLabels") return loadLocationLabels();
     throw new Error(`Unexpected import: ${specifier}`);
   };

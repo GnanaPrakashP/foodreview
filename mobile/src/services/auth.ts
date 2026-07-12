@@ -1,8 +1,8 @@
-import type { Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { apiBaseUrl, apiUrl } from "@/api/config";
-import { assertSupabaseConfigured, isSupabaseConfigured, supabase } from "@/api/supabase";
+import { assertSupabaseConfigured, clearSupabaseLocalSessionStorage, isSupabaseConfigured, supabase } from "@/api/supabase";
 import { actorFromProfile, getCurrentUserProfile } from "@/services/profiles";
 import type { ActorProfile, AuthSnapshot } from "@/types/models";
 
@@ -29,6 +29,7 @@ export type ResolveEmailAuthModeInput = {
 };
 
 export type ResolvedEmailAuthMode = "sign_in" | "sign_up";
+export type AccountLifecycleStatus = "active" | "deleting" | "missing";
 
 type OAuthResult = {
   session: Session;
@@ -96,6 +97,29 @@ export async function getAuthSnapshot(): Promise<AuthSnapshot> {
     session: data.session,
     profile: profile ? actorFromProfile(profile) : null
   };
+}
+
+export async function getAccountLifecycleStatus(accessToken: string): Promise<AccountLifecycleStatus> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(apiUrl("/api/mobile/auth/account-status"), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => null) as { status?: string } | null;
+    if (response.status === 401 || response.status === 403) throw new Error("account_status_unauthenticated");
+    if (!response.ok) throw new Error("account_status_unavailable");
+    if (payload?.status === "active" || payload?.status === "deleting" || payload?.status === "missing") {
+      return payload.status;
+    }
+    throw new Error("account_status_unavailable");
+  } catch (error) {
+    if (error instanceof Error && error.message === "account_status_unauthenticated") throw error;
+    throw new Error("account_status_unavailable");
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function login(input: LoginInput): Promise<{ session: Session; profile: ActorProfile | null }> {
@@ -194,8 +218,11 @@ export async function signup(input: SignupInput): Promise<{ session: Session | n
 
 export async function logout() {
   assertSupabaseConfigured();
-  const { error } = await supabase.auth.signOut();
-  if (error) throw new Error(error.message);
+  await Promise.race([
+    supabase.auth.signOut({ scope: "local" }).catch(() => ({ error: null })),
+    new Promise<{ error: null }>((resolve) => setTimeout(() => resolve({ error: null }), 2_000))
+  ]);
+  await clearSupabaseLocalSessionStorage();
 }
 
 export async function sendPasswordReset(input: ResetPasswordInput) {
@@ -206,14 +233,14 @@ export async function sendPasswordReset(input: ResetPasswordInput) {
 }
 
 export function onAuthStateChange(
-  callback: (snapshot: { session: Session | null }) => void
+  callback: (snapshot: { event: AuthChangeEvent; session: Session | null }) => void
 ) {
   if (!isSupabaseConfigured) {
     return () => {};
   }
 
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback({ session });
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    callback({ event, session });
   });
   return () => data.subscription.unsubscribe();
 }

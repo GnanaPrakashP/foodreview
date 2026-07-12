@@ -1,6 +1,7 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { stageAccountFile } from "@/services/accountFileStore";
 
 const REVIEW_AVATAR_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const REVIEW_POST_IMAGE_MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -167,7 +168,8 @@ async function prepareImageForUpload(input: UploadReviewMediaInput): Promise<Pre
       compress: REVIEW_IMAGE_COMPRESS_QUALITY,
       format: SaveFormat.JPEG
     });
-    const body = await fileBodyFromUri(result.uri);
+    const stagedUri = await stageAccountFile(result.uri, `${input.category}-upload-image`);
+    const body = await fileBodyFromUri(stagedUri);
     assertJpegSignature(body);
 
     if (body.byteLength <= 0) throw new Error("Selected photo could not be processed.");
@@ -328,9 +330,13 @@ function storageUploadErrorMessage(xhr: XMLHttpRequest) {
 export async function uploadReviewMedia(input: UploadReviewMediaInput): Promise<UploadedReviewMedia> {
   const mediaKind = resolveMediaKind(input);
   input.onUploadProgress?.(0.03);
+  const scopedInput = {
+    ...input,
+    uri: await stageAccountFile(input.uri, `${input.category}-upload-source`)
+  };
   const prepared = mediaKind === "video"
-    ? await prepareVideoForUpload(input)
-    : await prepareImageForUpload(input);
+    ? await prepareVideoForUpload(scopedInput)
+    : await prepareImageForUpload(scopedInput);
   input.onUploadProgress?.(0.12);
   const intent = await createReviewMediaUploadIntent({
     category: input.category,

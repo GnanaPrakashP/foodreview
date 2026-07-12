@@ -192,5 +192,6 @@ test("arbitrary or mismatched public_url is rejected while nullable public_url i
 test("media display keeps using storage_path-derived signed URLs", () => {
   assert.match(memoryService, /const privatePaths = rows\s+\.map\(\(row\) => row\.storage_path\)/);
   assert.match(memoryService, /createSignedMemoryMediaUrls\(privatePaths\)/);
-  assert.match(memoryService, /signedUrl \? \{ \.\.\.row, public_url: signedUrl \} : row/);
+  assert.match(memoryService, /signedUrl \? \{ \.\.\.row, public_url: signedUrl, signed_url_expires_at: signedUrlExpiresAt \} : row/);
+  assert.match(memoryService, /MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS \* 1000/);
 });

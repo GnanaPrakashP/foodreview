@@ -23,6 +23,7 @@
     "media:visibility-backfill": "node scripts/post-media-visibility-backfill.mjs --apply",
     "validate:post-media-phase1a": "node tests/supabase-post-media-phase1a-runtime-validation.mjs",
     "validate:account-deletion-phase1b": "node tests/supabase-account-deletion-phase1b-runtime-validation.mjs",
+    "test:cache-isolation-phase1c": "node --test tests/mobile-cache-isolation-phase1c.test.mjs",
     "account:deletion-report": "node scripts/account-deletion-reconcile.mjs",
     "account:deletion-worker": "node scripts/account-deletion-worker.mjs",
     "dish:backfill-mentions": "node scripts/backfill-review-dish-mentions.mjs",

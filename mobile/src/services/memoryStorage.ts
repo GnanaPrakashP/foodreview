@@ -12,6 +12,7 @@ import {
 import type { AddMemoryMediaAsset } from "@/services/memories";
 import { assertValidMemoryUploadSize } from "@/services/memoryMediaValidation";
 import type { MemoryPhotoRow } from "@/services/memoryShared";
+import { stageAccountFile } from "@/services/accountFileStore";
 
 // Cap the longest edge and re-encode photos before upload. Re-encoding also drops
 // all EXIF (incl. GPS/device) metadata, and keeps chat media small to load.
@@ -105,8 +106,9 @@ export async function removeMemoryMediaFiles(paths: string[]) {
 }
 
 export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, _username: string) {
-  const originalUri = input.mediaUri ?? input.imageUri;
-  if (!originalUri) throw new Error("Choose a photo, video, or audio message");
+  const sourceUri = input.mediaUri ?? input.imageUri;
+  if (!sourceUri) throw new Error("Choose a photo, video, or audio message");
+  const originalUri = await stageAccountFile(sourceUri, "memory-upload-source");
 
   const mimeType = input.mediaMimeType ?? input.imageMimeType ?? null;
   const mediaType = input.mediaType ?? (mimeType?.startsWith("audio/") ? "audio" : mimeType?.startsWith("video/") ? "video" : "image");
@@ -239,7 +241,7 @@ async function compressImageForUpload(
     return {
       encoded: true,
       height: result.height ?? height ?? null,
-      uri: result.uri,
+      uri: await stageAccountFile(result.uri, "memory-upload-image"),
       width: result.width ?? width ?? null
     };
   } catch {
@@ -272,7 +274,12 @@ async function compressVideoForUpload(
     } catch {
       // Metadata is best-effort; the source asset's dimensions remain the fallback.
     }
-    return { encoded: true, height, uri: compressedUri, width };
+    return {
+      encoded: true,
+      height,
+      uri: await stageAccountFile(compressedUri, "memory-upload-video"),
+      width
+    };
   } catch {
     // Never block a send on compression — fall back to the original file.
     const dimensions = await readVideoDimensions(uri);

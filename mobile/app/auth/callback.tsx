@@ -5,7 +5,6 @@ import { StyleSheet, Text, View } from "react-native";
 import { AuthButton, AuthCard, AuthShell, ErrorMessage } from "@/components/auth/AuthUi";
 import { completeOAuthSessionFromUrl } from "@/services/auth";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, spacing } from "@/theme";
 
 export default function AuthCallbackScreen() {
@@ -13,7 +12,6 @@ export default function AuthCallbackScreen() {
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const activeUrl = Linking.useURL();
-  const setSession = useSessionStore((state) => state.setSession);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -24,10 +22,9 @@ export default function AuthCallbackScreen() {
         const initialUrl = activeUrl ?? await Linking.getInitialURL();
         if (!initialUrl) throw new Error("Missing Google sign-in callback URL");
 
-        const { session, profile } = await completeOAuthSessionFromUrl(initialUrl);
+        const { profile } = await completeOAuthSessionFromUrl(initialUrl);
         if (cancelled) return;
 
-        setSession(session, profile);
         router.replace(profile ? "/" : "/onboarding/profile");
       } catch (sessionError) {
         if (cancelled) return;
@@ -40,7 +37,7 @@ export default function AuthCallbackScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeUrl, router, setSession]);
+  }, [activeUrl, router]);
 
   return (
     <AuthShell>

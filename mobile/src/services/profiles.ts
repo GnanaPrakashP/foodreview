@@ -168,10 +168,14 @@ export async function getCurrentUserProfile(): Promise<Profile | null> {
   const user = userData.user;
   if (!user) return null;
 
+  return getProfileForVerifiedUserId(user.id);
+}
+
+export async function getProfileForVerifiedUserId(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
     .select(PROFILE_SELECT)
-    .eq("id", user.id)
+    .eq("id", userId)
     .maybeSingle<ProfileRow>();
 
   if (error) throw new Error(error.message);

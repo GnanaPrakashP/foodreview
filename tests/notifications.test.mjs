@@ -583,6 +583,8 @@ test("createNotificationForNames sends sanitized Expo push messages when enabled
     notificationId: "notif-1",
     notificationType: "POST_LIKED",
     postId: "post-1",
+    recipientName: "alice",
+    recipientUserId: "recipient-id",
     type: "social-notification",
   });
 });

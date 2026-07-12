@@ -2,12 +2,20 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { normalizeOccasionText } from "./normalizeOccasionText";
 import { isOccasionType, type OccasionCorrection, type OccasionType } from "./occasionTypes";
+import {
+  cacheOwnerForUserId,
+  getActiveCacheGeneration,
+  getActiveCacheOwner,
+  isCacheGenerationActive,
+  isValidCacheOwnerScope
+} from "@/security/cacheOwnership";
 
 const STORAGE_PREFIX = "table_memory_occasion_corrections";
 const MAX_CORRECTIONS = 80;
 
-function storageKey(userName: string) {
-  return `${STORAGE_PREFIX}:${normalizeOccasionText(userName)}`;
+function storageKeyForScope(ownerScope: string) {
+  if (!isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_occasion_cache_owner");
+  return `${STORAGE_PREFIX}:v2:${ownerScope}`;
 }
 
 function safeParseCorrections(value: string | null): OccasionCorrection[] {
@@ -38,10 +46,14 @@ async function writeItem(key: string, value: string) {
   await SecureStore.setItemAsync(key, value);
 }
 
-export async function loadOccasionCorrections(userName: string | null | undefined): Promise<OccasionCorrection[]> {
-  if (!userName) return [];
+export async function loadOccasionCorrections(userId: string | null | undefined): Promise<OccasionCorrection[]> {
+  if (!userId) return [];
   try {
-    return safeParseCorrections(await readItem(storageKey(userName)));
+    const ownerScope = cacheOwnerForUserId(userId).scope;
+    const generation = getActiveCacheGeneration();
+    if (getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) return [];
+    const corrections = safeParseCorrections(await readItem(storageKeyForScope(ownerScope)));
+    return getActiveCacheOwner()?.scope === ownerScope && isCacheGenerationActive(generation) ? corrections : [];
   } catch {
     return [];
   }
@@ -50,17 +62,20 @@ export async function loadOccasionCorrections(userName: string | null | undefine
 export async function saveOccasionCorrection({
   phrase,
   type,
-  userName
+  userId
 }: {
   phrase: string;
   type: OccasionType;
-  userName: string | null | undefined;
+  userId: string | null | undefined;
 }) {
   const normalizedText = normalizeOccasionText(phrase);
-  if (!userName || !normalizedText || type === "unknown") return;
+  if (!userId || !normalizedText || type === "unknown") return;
 
-  const key = storageKey(userName);
-  const current = await loadOccasionCorrections(userName);
+  const key = storageKeyForScope(cacheOwnerForUserId(userId).scope);
+  const ownerScope = cacheOwnerForUserId(userId).scope;
+  const generation = getActiveCacheGeneration();
+  if (getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) return;
+  const current = await loadOccasionCorrections(userId);
   const next: OccasionCorrection = {
     normalizedText,
     type,
@@ -73,7 +88,19 @@ export async function saveOccasionCorrection({
 
   try {
     await writeItem(key, JSON.stringify(merged));
+    if (getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) {
+      await clearOccasionCorrectionsForScope(ownerScope);
+    }
   } catch {
     // Occasion corrections improve personalization only; the memory itself still saves without them.
   }
+}
+
+export async function clearOccasionCorrectionsForScope(ownerScope: string) {
+  const key = storageKeyForScope(ownerScope);
+  if (Platform.OS === "web" && typeof localStorage !== "undefined") {
+    localStorage.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
 }

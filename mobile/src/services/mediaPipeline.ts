@@ -1,6 +1,7 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
+import { stageAccountFile } from "@/services/accountFileStore";
 import type { Visibility } from "@/types/models";
 
 export type MediaSurface = "post" | "avatar" | "memory";
@@ -140,7 +141,7 @@ async function downscaleImageForUpload(uri: string): Promise<DownscaledImage | n
     if (!result.uri || !result.width || !result.height) return null;
     return {
       height: result.height,
-      uri: result.uri,
+      uri: await stageAccountFile(result.uri, "post-upload-image"),
       width: result.width
     };
   } catch {
@@ -310,9 +311,10 @@ function storageUploadErrorMessage(xhr: XMLHttpRequest) {
 export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Promise<UploadedMediaAsset> {
   const mediaKind = resolveMediaKind(input);
   input.onUploadProgress?.(0.03);
-  const downscaled = mediaKind === "image" ? await downscaleImageForUpload(input.uri) : null;
+  const sourceUri = await stageAccountFile(input.uri, "post-upload-source");
+  const downscaled = mediaKind === "image" ? await downscaleImageForUpload(sourceUri) : null;
   const mimeType = downscaled ? "image/jpeg" : defaultMimeType(mediaKind, input.mimeType);
-  const body = await fileBodyFromUri(downscaled?.uri ?? input.uri);
+  const body = await fileBodyFromUri(downscaled?.uri ?? sourceUri);
   input.onUploadProgress?.(0.1);
   const extension = extensionFor(mimeType, mediaKind);
   const intent = await createMediaUploadIntent({

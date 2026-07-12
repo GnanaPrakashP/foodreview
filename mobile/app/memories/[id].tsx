@@ -69,6 +69,9 @@ import Reanimated, {
   withTiming
 } from "react-native-reanimated";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
+import { discardTemporaryAccountFile, stageAccountFile } from "@/services/accountFileStore";
+import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
+import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import {
   getOccasionTheme,
   occasionThemeToMemoryRoomTokens,
@@ -939,9 +942,10 @@ function MemoryChatMainSurface({
     } catch {
       // Cancelling should be quiet; a stale native recorder can already be stopped.
     } finally {
+      await discardTemporaryAccountFile(voiceRecorder.uri ?? voiceRecorderState.url).catch(() => {});
       await resetVoiceAudioMode();
     }
-  }, [resetVoiceAudioMode, voiceRecorder, voiceRecorderState.isRecording]);
+  }, [resetVoiceAudioMode, voiceRecorder, voiceRecorderState.isRecording, voiceRecorderState.url]);
 
   const startVoiceRecording = useCallback(async () => {
     if (voiceModeRef.current !== "idle" || message.trim().length > 0) return;
@@ -967,7 +971,7 @@ function MemoryChatMainSurface({
       voiceModeRef.current = "recording";
       setVoiceMode("recording");
     } catch (error) {
-      console.warn("[memory-chat] Could not start voice recording", error);
+      console.warn("[memory-chat] Could not start voice recording");
       voiceRecordingStartedAtRef.current = null;
       voiceModeRef.current = "idle";
       setVoiceMode("idle");
@@ -1020,9 +1024,10 @@ function MemoryChatMainSurface({
         mediaUri: uri
       });
     } catch (error) {
-      console.warn("[memory-chat] Could not send audio", error);
+      console.warn("[memory-chat] Could not send audio");
       Alert.alert("Could not send audio", error instanceof Error ? error.message : "Please try recording again.");
     } finally {
+      await discardTemporaryAccountFile(voiceRecorder.uri ?? voiceRecorderState.url).catch(() => {});
       voiceRecordingStartedAtRef.current = null;
       voiceModeRef.current = "idle";
       setVoiceMode("idle");
@@ -1905,8 +1910,8 @@ function ChatMainAudioMessage({
         return;
       }
       player.play();
-    } catch (error) {
-      console.warn("[memory-chat] Could not toggle audio playback", error);
+    } catch {
+      console.warn("[memory-chat] Could not toggle audio playback");
     }
   }
 
@@ -5542,7 +5547,10 @@ function cacheVideoThumbnail(cacheKey: string, thumbnail: VideoThumbnailsResult)
     const oldestCacheKey = videoThumbnailCache.keys().next().value;
     if (typeof oldestCacheKey === "string") {
       const oldestThumbnail = videoThumbnailCache.get(oldestCacheKey);
-      if (oldestThumbnail) videoThumbnailSourceCache.delete(oldestThumbnail.uri);
+      if (oldestThumbnail) {
+        videoThumbnailSourceCache.delete(oldestThumbnail.uri);
+        void discardTemporaryAccountFile(oldestThumbnail.uri).catch(() => {});
+      }
       videoThumbnailCache.delete(oldestCacheKey);
     }
   }
@@ -5550,7 +5558,10 @@ function cacheVideoThumbnail(cacheKey: string, thumbnail: VideoThumbnailsResult)
 
 function invalidateVideoThumbnail(cacheKey: string) {
   const thumbnail = videoThumbnailCache.get(cacheKey);
-  if (thumbnail) videoThumbnailSourceCache.delete(thumbnail.uri);
+  if (thumbnail) {
+    videoThumbnailSourceCache.delete(thumbnail.uri);
+    void discardTemporaryAccountFile(thumbnail.uri).catch(() => {});
+  }
   videoThumbnailCache.delete(cacheKey);
   videoThumbnailPending.delete(cacheKey);
   prefetchedMemoryMediaKeys.delete(cacheKey);
@@ -5571,13 +5582,23 @@ function generateCachedVideoThumbnail(cacheKey: string, sourceUri: string) {
   const pendingThumbnail = videoThumbnailPending.get(cacheKey);
   if (pendingThumbnail) return pendingThumbnail;
 
+  const ownerGeneration = getActiveCacheGeneration();
   const promise = getThumbnailAsync(sourceUri, {
     quality: 0.82,
     time: VIDEO_THUMBNAIL_TIME_MS
   })
-    .then((nextThumbnail) => {
-      if (nextThumbnail) cacheVideoThumbnail(cacheKey, nextThumbnail);
-      return nextThumbnail;
+    .then(async (nextThumbnail) => {
+      if (!nextThumbnail) return null;
+      const scopedThumbnail = {
+        ...nextThumbnail,
+        uri: await stageAccountFile(nextThumbnail.uri, "memory-thumbnail")
+      };
+      if (!isCacheGenerationActive(ownerGeneration)) {
+        await discardTemporaryAccountFile(scopedThumbnail.uri).catch(() => {});
+        return null;
+      }
+      cacheVideoThumbnail(cacheKey, scopedThumbnail);
+      return scopedThumbnail;
     })
     .catch(() => null)
     .finally(() => {
@@ -8516,8 +8537,8 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
         return;
       }
       player.play();
-    } catch (error) {
-      console.warn("[memory-chat] Could not toggle viewer audio playback", error);
+    } catch {
+      console.warn("[memory-chat] Could not toggle viewer audio playback");
     }
   }
 
@@ -12234,6 +12255,16 @@ function createStyles(ROOM_COLORS: RoomColors) {
 
 let styles = createStyles(ROOM_COLORS);
 const ROOM_THEME_CACHE = new Map<string, { colors: RoomColors; styles: ReturnType<typeof createStyles> }>();
+
+registerSensitiveResourceCleanup(async () => {
+  const thumbnailUris = Array.from(videoThumbnailCache.values(), (thumbnail) => thumbnail.uri);
+  videoThumbnailCache.clear();
+  videoThumbnailSourceCache.clear();
+  videoThumbnailPending.clear();
+  prefetchedMemoryMediaKeys.clear();
+  ROOM_THEME_CACHE.clear();
+  await Promise.allSettled(thumbnailUris.map((uri) => discardTemporaryAccountFile(uri)));
+});
 
 function roomThemeFor(resolvedTheme: keyof typeof memoryRoomTokens, occasionType: OccasionType) {
   const key = `${resolvedTheme}:${occasionType}`;

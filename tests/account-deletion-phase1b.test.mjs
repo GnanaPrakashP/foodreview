@@ -186,7 +186,10 @@ test("mobile deletion accepts background completion and immediately clears activ
   const hook = source("mobile/src/hooks/useSettings.ts");
   const screen = source("mobile/app/profile/settings.tsx");
   assert.match(service, /payload\?\.accepted/);
-  assert.match(service, /await supabase\.auth\.signOut/);
+  assert.doesNotMatch(service, /auth\.signOut/);
+  const cleanup = hook.indexOf('cleanupCurrentLocalData("account_deletion"');
+  const localLogout = hook.indexOf("await logout()", cleanup);
+  assert.ok(cleanup >= 0 && localLogout > cleanup);
   assert.match(hook, /clearSession\(\)/);
   assert.match(hook, /queryClient\.clear\(\)/);
   assert.match(screen, /Deletion started/);

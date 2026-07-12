@@ -15,6 +15,7 @@ import {
   type SignupInput
 } from "@/services/auth";
 import { useSessionStore } from "@/stores/sessionStore";
+import { cleanupCurrentLocalData } from "@/services/localDataIsolation";
 
 export const authKeys = {
   snapshot: ["auth", "snapshot"] as const
@@ -33,7 +34,9 @@ export function useAuthSessionListener() {
 
   useEffect(() => {
     return onAuthStateChange(({ session }) => {
-      if (!session) clearSession();
+      if (!session) {
+        void cleanupCurrentLocalData("session_invalid", queryClient).finally(clearSession);
+      }
       queryClient.invalidateQueries({ queryKey: authKeys.snapshot });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
@@ -43,27 +46,19 @@ export function useAuthSessionListener() {
 
 export function useLoginMutation() {
   const queryClient = useQueryClient();
-  const setSession = useSessionStore((state) => state.setSession);
 
   return useMutation({
     mutationFn: (input: LoginInput) => login(input),
-    onSuccess: ({ session, profile }) => {
-      setSession(session, profile);
-      queryClient.invalidateQueries();
-    }
+    onSuccess: () => queryClient.invalidateQueries()
   });
 }
 
 export function useGoogleLoginMutation() {
   const queryClient = useQueryClient();
-  const setSession = useSessionStore((state) => state.setSession);
 
   return useMutation({
     mutationFn: signInWithGoogle,
-    onSuccess: ({ session, profile }) => {
-      setSession(session, profile);
-      queryClient.invalidateQueries();
-    }
+    onSuccess: () => queryClient.invalidateQueries()
   });
 }
 
@@ -75,14 +70,10 @@ export function useResolveEmailAuthModeMutation() {
 
 export function useSignupMutation() {
   const queryClient = useQueryClient();
-  const setSession = useSessionStore((state) => state.setSession);
 
   return useMutation({
     mutationFn: (input: SignupInput) => signup(input),
-    onSuccess: ({ session, profile }) => {
-      setSession(session, profile);
-      queryClient.invalidateQueries();
-    }
+    onSuccess: () => queryClient.invalidateQueries()
   });
 }
 
@@ -91,7 +82,10 @@ export function useLogoutMutation() {
   const clearSession = useSessionStore((state) => state.clearSession);
 
   return useMutation({
-    mutationFn: logout,
+    mutationFn: async () => {
+      await cleanupCurrentLocalData("explicit_logout", queryClient);
+      await logout();
+    },
     onSuccess: () => {
       clearSession();
       queryClient.clear();

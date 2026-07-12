@@ -12,6 +12,7 @@ type SessionState = {
   // for it so we never flash the login screen before the fresh sign-in lands.
   isAutoLoginPending: boolean;
   setReady: () => void;
+  beginTransition: () => void;
   setSession: (session: Session | null, profile: ActorProfile | null) => void;
   setProfile: (profile: ActorProfile | null) => void;
   clearSession: () => void;
@@ -25,6 +26,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   isReady: false,
   isAutoLoginPending: devAutoLoginEnabled,
   setReady: () => set({ isReady: true }),
+  beginTransition: () => set({ session: null, profile: null, isAuthenticated: false, isReady: false }),
   setSession: (session, profile) => set({ session, profile, isAuthenticated: Boolean(session), isReady: true }),
   setProfile: (profile) => set({ profile }),
   clearSession: () => set({ session: null, profile: null, isAuthenticated: false, isReady: true }),

@@ -4,6 +4,7 @@ import {
   searchUserProfiles,
   type UserSearchResult
 } from "@/services/profiles";
+import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 
 const USER_SEARCH_MIN_LENGTH = 2;
 const USER_SEARCH_DEBOUNCE_MS = 260;
@@ -16,6 +17,7 @@ type UserSearchCacheEntry = {
 };
 
 const userSearchCache = new Map<string, UserSearchCacheEntry>();
+registerSensitiveResourceCleanup(() => userSearchCache.clear());
 
 type UseUserProfileSearchOptions = {
   debounceMs?: number;

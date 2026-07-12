@@ -2,15 +2,27 @@
 
 Current phase: Final production-readiness audit
 
-Production-hardening program phase: Phase 1B — complete account deletion
+Production-hardening program phase: Phase 1C — account-isolated mobile caches and session cleanup
 
-Phase 1B implementation status: PASS locally on `hardening/02-account-deletion`. The durable freeze/inventory/Storage/database/Auth-last workflow passes real local Auth/RLS/Storage/HTTP validation 9/9.
+Phase 1C implementation status: PASS locally on `hardening/03-cache-isolation`. Account-scoped Query/MMKV/SQLite/files/preferences, a crash-resumable cleanup journal, local-first logout, invalid-session/freeze containment, and the auth/cache render gate pass focused behavior and changed-path validation.
 
-Phase 1B release verification status: BLOCKED pending the disposable hosted-staging deletion/interruption/retry/reconciliation matrix, worker scheduling and alerting verification, PH-301 migration-root resolution, and the pre-existing Phase 1A production blockers. No hosted project was mutated.
+Phase 1C release verification status: BLOCKED pending disposable two-account Android/iOS runtime, backup/restore and crash-injection staging; Phase 1B hosted deletion verification; PH-301 migration-root resolution; and the pre-existing Phase 1A production blockers. No hosted project was mutated.
 
 Next required phase: Authenticated staging smoke verification
 
-Production-hardening next required phase: Execute the Phase 1A hosted prerequisites and the Phase 1B disposable-staging gate in `docs/production-hardening/PHASE_1B_ACCOUNT_DELETION.md`. Do not start Phase 1C automatically.
+Production-hardening next required phase: Execute the Phase 1A hosted prerequisites plus the Phase 1B and Phase 1C disposable-staging/native gates. Do not start Phase 2 automatically.
+
+## Production Hardening Phase 1C — Account-Isolated Mobile Caches (2026-07-13)
+
+- Added a UUID-owned auth/cache boundary that withholds the authenticated React/navigation tree until session identity, cleanup recovery, legacy deletion, account status, and matching owner hydration are resolved.
+- Replaced the global QueryClient/MMKV cache with per-owner v2 Query envelopes and fresh Query clients. Only the existing successful Memory query policy remains persisted.
+- Moved Memory SQLite, staged camera/picker/voice/upload media, generated crops/transcodes/thumbnails, Query MMKV and the cleanup journal into account-aware/cache-safe locations. Legacy global Query, SQLite and location data are deleted, never assigned.
+- Added a central local-first coordinator and minimal MMKV journal covering logout, switching, invalid/expired sessions, account freeze/deletion, owner mismatch and startup recovery. The active generation is revoked before async cleanup, and corrupt/exhausted state fails closed.
+- Added signed-URL expiry metadata and offline stripping, realtime generation guards, recipient-bound push routing, draft/buffer resets, media viewer release, navigation reset, bounded local sign-out, foreground account-status validation and a foreground token-expiry timer.
+- Added Android backup/data-extraction XML excluding SecureStore, MMKV and databases while leaving backup enabled for harmless data. The release APK compiled the resources and merged references. iOS account caches use `cacheDirectory`; no native iOS project is checked in.
+- Phase 1C behavior tests pass 8/8; Phase 1A and Phase 1B focused tests each remain 6/6; changed Memory security/operations tests pass 25/25; root/mobile typecheck, zero-error lint, Next build, Android/iOS production exports, Android release build, and an isolated generated iOS arm64 device Release build pass.
+- The full suite moves from 1042/1062 to 1050/1070 only because eight new Phase 1C tests pass; the same 20 PH-002 failures remain. Memory remains at the existing 71/72 baseline.
+- Two-account native runtime, native backup/restore, authenticated iOS runtime, real process-kill injection, framework cache byte inspection and hosted freeze/deletion validation remain unverified release gates. See `docs/production-hardening/PHASE_1C_CACHE_ISOLATION.md`.
 
 ## Production Hardening Phase 1B — Complete Account Deletion (2026-07-13)
 
