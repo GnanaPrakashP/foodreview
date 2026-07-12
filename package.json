@@ -21,6 +21,7 @@
     "media:process-once": "MEDIA_WORKER_ONCE=1 node scripts/media-worker.mjs",
     "media:visibility-report": "node scripts/post-media-visibility-backfill.mjs",
     "media:visibility-backfill": "node scripts/post-media-visibility-backfill.mjs --apply",
+    "validate:post-media-phase1a": "node tests/supabase-post-media-phase1a-runtime-validation.mjs",
     "dish:backfill-mentions": "node scripts/backfill-review-dish-mentions.mjs",
     "dish:backfill-mapped-profiles": "node scripts/backfill-mapped-profile-dish-mentions.mjs",
     "dish:identity-report": "node scripts/dish-identity-report.mjs",

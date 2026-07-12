@@ -2,9 +2,9 @@
 
 ## Gate
 
-**Status: BLOCKED pending disposable-staging database, Storage, backfill, and native-client verification.**
+**Status: BLOCKED pending hosted disposable-staging, credential-owner rotation assessment, and native iOS verification.**
 
-The repository implementation is complete and passes its focused local gates. It must not be deployed until the manual checks below prove the migration against the real Supabase Storage/CDN behavior and the production data shape. This document deliberately does not authorize Phase 1B, 1C, or any later hardening work.
+The repository implementation and real local Auth/RLS/Storage/HTTP gate are complete. The Android native development-client path and Android release artifact also pass. It must not be deployed until the checks below prove the migration against hosted Supabase Storage/CDN behavior and a production-like data shape, the credential owner completes the possible privileged-key assessment, and the native iOS client is exercised. This document deliberately does not authorize Phase 1B, 1C, or any later hardening work.
 
 ## Architecture decision
 
@@ -103,13 +103,32 @@ Run this before production and retain sanitized command output:
 9. Test Circle, public, Profile, Explore, detail, notification, and share surfaces with image/video/empty media. Confirm no response or log contains a storage path or privileged credential.
 10. Run native Android and iOS release builds: cold start, foreground refresh after four minutes, visibility change while cached, membership removal, block, logout/login, and signed-URL expiry.
 
-The gate remains BLOCKED until this matrix is executed. Local mocks prove policy behavior but do not prove the hosted Storage/CDN or existing production data.
+The gate remains BLOCKED until the remaining hosted and iOS portions of this matrix are executed. Local mocks and the real local Supabase gate prove repository behavior, but neither proves hosted Storage/CDN behavior nor the actual production data distribution.
+
+Hosted execution was not possible from this checkout because the Supabase CLI has no access token/project session. No production or staging project was linked, migrated, or mutated during Phase 1A validation.
+
+## Repeatable real-local verification
+
+The Phase 1A validator uses real local Supabase Auth users, RLS, Storage objects, and active Next routes. Because PH-301 still leaves the generic-media and Profile/block prerequisites in different migration roots, the validator applies an explicitly test-only compatibility fixture after a clean root reset. That fixture is not a deployable migration and is not a substitute for resolving PH-301.
+
+```bash
+npx supabase start
+npx supabase db reset
+npx supabase db query --local --file tests/fixtures/phase1a-root-runtime-compat.sql
+npx supabase status -o json > /private/tmp/foodreview-phase1a-supabase-status.json
+POST_MEDIA_SUPABASE_STATUS_FILE=/private/tmp/foodreview-phase1a-supabase-status.json \
+  npm run validate:post-media-phase1a
+```
+
+The validator creates disposable Owner, Member, Stranger, and Blocked users and verifies 13 grouped gates: private derivative creation for public/circle/me posts; status DTO redaction; direct private-object denial to anonymous and authenticated clients; authorized delivery and `private, no-store`; all six visibility transitions; service-role-only transition RPC; membership removal; either-direction blocking and suppression; deletion; legacy inventory; public-to-private copy, recovery, deletion, and idempotency; a one-second Storage expiry probe; and the route-issued URL remaining valid inside but failing after the exact 300-second window. The latest run passed **13/13**.
+
+The root migration chain resets cleanly through Phase 1A. A clean reset from `mobile/supabase` currently stops at its pre-existing `202607080001_circle_production_hardening.sql` because `public.post_views` is absent from that history. That is concrete PH-301 evidence and must not be hidden with a Phase 1A migration rewrite.
 
 ## Credential containment preflight
 
-Tracked mobile code uses `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`. No tracked source, example, EAS configuration, or generated reference uses a privileged Supabase public variable. The local ignored `mobile/.env.local` contains the forbidden variable name `EXPO_PUBLIC_SUPABASE_SERVICE_KEY`; its value was not read, printed, decoded, or placed in this report, and repository/bundle exposure was not proven.
+Tracked mobile code uses `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`. No tracked source, example, EAS configuration, generated reference, final Android bundle, or production Expo Android/iOS export contains a privileged Supabase public variable name. The forbidden local `EXPO_PUBLIC_SUPABASE_SERVICE_KEY` entry was removed mechanically from the ignored environment file without reading, printing, or decoding its value.
 
-`mobile/app.config.js` now rejects that exact name, other public service-role/secret names, and privileged names placed in Expo `extra`, without reading or printing values. Production is blocked until the credential owner removes the local variable, determines whether its value was privileged, rotates it if necessary, and verifies a release export/bundle contains neither the variable name nor a privileged JWT.
+`mobile/app.config.js` rejects that exact name, other public service-role/secret names, privileged names placed in Expo `extra`, and development auto-login variables in production/EAS builds, without reading or printing values. Development auto-login values are also statically guarded by `__DEV__`; ignored local copies were removed after a release-artifact scan proved they had previously been embedded. The rebuilt Android release bundle and both production Expo exports contain none of the forbidden privileged or auto-login variable names. Production remains blocked until the credential owner determines whether the removed Supabase value was privileged and rotates/revokes it if necessary; Phase 1A deliberately does not rotate cloud credentials automatically.
 
 ## Roll-forward and rollback
 
@@ -119,6 +138,10 @@ Application rollback is safe only to code that does not write post media publicl
 
 ## Local evidence and remaining risks
 
-Focused policy, transition, route, upload, processor, DTO, consumer, Expo containment, and migration/backfill source tests pass. A clean local Supabase reset applied the full root chain through the Phase 1A migration. Database lint completed with pre-existing `extensions`/pgTAP findings and no Phase 1A `public`-schema finding; the project still has zero pgTAP files. Root/mobile typecheck and zero-error lint pass. The full test/build/export result is recorded in the branch handoff.
+Focused policy, transition, route, upload, processor, DTO, consumer, Expo containment, and migration/backfill source tests pass. The real local Auth/RLS/Storage/HTTP and backfill rehearsal passes 13/13, including exact signed-URL expiry. A clean local Supabase reset applied the full root chain through the Phase 1A migration. Database lint completed with pre-existing `extensions`/pgTAP findings and no Phase 1A `public`-schema finding; the project still has zero pgTAP files. Root/mobile typecheck, zero-error lint, Next production build, and production Android/iOS Expo exports pass.
 
-Remaining risks are hosted Storage/CDN behavior, production data ambiguity, the unresolved dual migration histories (PH-301), absence of real database/Storage policy tests (PH-302), the unremoved ignored environment name (PH-001), the five-minute unavoidable lifetime of already issued URLs, device image caches retaining already downloaded bytes, and later-phase account deletion/cache isolation/worker availability work. None of those is represented as completed by Phase 1A.
+A physical Android device (`com.circlebites.mobile`) passed native development-client login, authenticated Circle feed media hydration, and Profile navigation against the local stack. The production Android Gradle APK built successfully and its JavaScript asset passed privileged-name and development-auto-login scans. The repository has no checked-in `mobile/ios` native project, so an isolated temporary Expo prebuild was used without changing the repository: CocoaPods resolved the Nitro/MMKV modules, the arm64 Release simulator app built with normal local signing, passed the same forbidden-name scan, installed on an iPhone 17 simulator, and cold-launched to the login UI. The temporary build intentionally had no real staging configuration, so authenticated iOS media/revocation behavior remains an external gate. Expo Go is not a valid substitute because it lacks the required native modules.
+
+Repository-wide baseline failures remain reproducible and are not represented as Phase 1A passes: `npm test` is **1030/1051** and `npm run test:memory-hardening` is **71/72**. The focused Phase 1A test is 6/6. Root lint is 94 warnings/0 errors and mobile lint is 43 warnings/0 errors.
+
+Remaining risks are hosted Storage/CDN behavior, production data ambiguity, the unresolved dual migration histories (PH-301), absence of committed pgTAP coverage despite the real runtime validator (PH-302), the credential-owner rotation assessment (PH-001), authenticated native iOS media/revocation validation, the five-minute unavoidable lifetime of already issued URLs, device image caches retaining already downloaded bytes, and later-phase account deletion/cache isolation/worker availability work. None of those is represented as completed by Phase 1A.

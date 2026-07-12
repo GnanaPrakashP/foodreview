@@ -182,6 +182,25 @@ test("Expo configuration rejects privileged public Supabase variable names witho
   assert.notEqual(blocked.status, 0);
   assert.match(blocked.stderr, /Privileged Supabase environment name is forbidden/);
   assert.doesNotMatch(blocked.stderr, /not-a-real-key/);
+
+  const productionAutologin = spawnSync(process.execPath, ["-e", "require('./app.config.js')({config:{}})"], {
+    cwd,
+    env: {
+      ...process.env,
+      EAS_BUILD: "true",
+      EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL: "local@example.test",
+      EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD: "not-a-real-password",
+      EXPO_PUBLIC_SUPABASE_SERVICE_KEY: undefined
+    },
+    encoding: "utf8"
+  });
+  assert.notEqual(productionAutologin.status, 0);
+  assert.match(productionAutologin.stderr, /Development auto-login configuration is forbidden/);
+  assert.doesNotMatch(productionAutologin.stderr, /not-a-real-password/);
+
+  const autoLoginSource = source("mobile/src/providers/devAutoLoginConfig.ts");
+  assert.match(autoLoginSource, /devAutoLoginEmail = __DEV__/);
+  assert.match(autoLoginSource, /devAutoLoginPassword = __DEV__/);
 });
 
 test("Phase 1A migration and backfill are mirrored and fail closed", () => {

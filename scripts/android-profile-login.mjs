@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mobileDir = resolve(rootDir, "mobile");
 
+// Optional local Phase 1A runtime bridge. The temporary file is produced by
+// `supabase status -o json`; values stay in the child environment and are never
+// printed by this validator.
+if (process.env.POST_MEDIA_SUPABASE_STATUS_FILE) {
+  const localStatus = JSON.parse(readFileSync(process.env.POST_MEDIA_SUPABASE_STATUS_FILE, "utf8"));
+  process.env.EXPO_PUBLIC_SUPABASE_URL = process.env.PHASE1A_ANDROID_SUPABASE_URL ?? localStatus.API_URL;
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = localStatus.ANON_KEY;
+}
+
 const args = new Set(process.argv.slice(2));
 const noMetro = args.has("--no-metro");
 const keepMetro = args.has("--keep-metro");

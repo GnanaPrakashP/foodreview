@@ -4,7 +4,7 @@ Current phase: Final production-readiness audit
 
 Production-hardening program phase: Phase 1A — visibility-aware post media
 
-Phase 1A status: BLOCKED on `hardening/01-private-media` pending hosted Supabase migration, Storage/CDN, backfill, credential-owner, and native-client validation.
+Phase 1A status: BLOCKED on `hardening/01-private-media` pending hosted Supabase migration/Storage/backfill, credential-owner rotation assessment, PH-301 migration-root resolution, and native iOS validation. Real local Auth/RLS/Storage/HTTP, Android native-device, and Android release-artifact gates pass.
 
 Next required phase: Authenticated staging smoke verification
 
@@ -16,8 +16,12 @@ Production-hardening next required phase: Execute the Phase 1A disposable-stagin
 - Added owner-bound visibility-aware upload intents, exact post-creation attachment validation, batched mobile access, web authorization redirects, fail-closed suppression/block/membership checks, and a service-role-only atomic visibility transition RPC.
 - Added byte-identical root/mobile migrations and an operator-run, paginated, durable, retryable legacy backfill. Public post objects must be removed only after private replacement verification.
 - Updated active public/Circle/Profile/Explore/detail consumers to use canonical authorized media DTOs. Status/access responses expose no raw Storage path.
-- Added Expo configuration containment that rejects public privileged Supabase variable names. The ignored local forbidden variable name still requires credential-owner removal/assessment and possible rotation; no value was inspected and bundle exposure was not proven.
-- Focused repository gates and a clean root Supabase reset through the Phase 1A migration pass. Database lint reports only pre-existing `extensions`/pgTAP findings and the project has no pgTAP files. Production remains blocked because hosted Storage/CDN revocation and existing-data backfill were not exercised, native release clients were not tested, PH-301/PH-302 remain open, and the five-minute previously-issued URL window is intentional.
+- Added Expo configuration containment that rejects public privileged Supabase names and production/EAS development auto-login variables. The ignored forbidden Supabase entry and local auto-login entries were removed without reading or printing values. An Android release scan found the auto-login exposure before containment; the rebuilt Android asset and production Android/iOS exports are clean. Credential-owner assessment and possible cloud rotation remain mandatory because Phase 1A does not rotate credentials automatically.
+- Added a repeatable real local validator using four Auth users, actual RLS/Storage objects, active Next routes, and the operator backfill. It passes 13/13, including private direct-read denial, all six visibility transitions, membership/block/suppression/deletion revocation, interrupted-state recovery/idempotency, and exact 300-second URL expiry.
+- A clean root Supabase reset through Phase 1A passes. The mobile migration root still fails at its known pre-Phase-1A `post_views` dependency, confirming PH-301. The runtime gate therefore uses a clearly test-only root compatibility fixture; no migration history was concealed or rewritten.
+- Physical Android native development-client login/feed/Profile validation passes, the Android Gradle release APK builds, and production Android/iOS Expo exports pass. An isolated temporary iOS prebuild also resolves Nitro/MMKV, builds and locally signs the arm64 Release simulator app, passes the forbidden-name scan, installs, and cold-launches on an iPhone 17 simulator. Authenticated iOS media/revocation validation remains blocked because there is no checked-in native iOS project or staging configuration; Expo Go is not a valid substitute.
+- Focused Phase 1A tests pass 6/6; root/mobile typecheck, zero-error lint, and Next production build pass. Existing suite baselines remain `npm test` 1030/1051 and Memory 71/72. Production remains blocked on hosted Storage/CDN and production-like backfill, credential assessment, PH-301/PH-302, and native iOS; the five-minute previously-issued URL window is intentional.
+- The hosted matrix was not run because this checkout has no Supabase CLI access token or linked staging session; no hosted project was mutated.
 
 ## Production Hardening Phase 0 Baseline (2026-07-12)
 

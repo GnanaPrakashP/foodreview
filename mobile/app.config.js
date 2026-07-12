@@ -2,6 +2,7 @@ const appJson = require("./app.json");
 
 const FORBIDDEN_PUBLIC_SUPABASE_NAME = /^EXPO_PUBLIC_.*SUPABASE.*(?:SERVICE(?:_ROLE|_KEY)?|SECRET|ADMIN|PRIVATE_KEY)/i;
 const FORBIDDEN_CLIENT_CONFIG_NAME = /SUPABASE.*(?:SERVICE(?:_ROLE|_KEY)?|SECRET|ADMIN|PRIVATE_KEY)/i;
+const DEV_AUTOLOGIN_NAMES = ["EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL", "EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD"];
 
 function validateClientConfiguration(env = process.env, extra = {}) {
   const forbiddenEnvironmentName = Object.keys(env).find((name) =>
@@ -13,6 +14,11 @@ function validateClientConfiguration(env = process.env, extra = {}) {
   const forbiddenExtraName = Object.keys(extra ?? {}).find((name) => FORBIDDEN_CLIENT_CONFIG_NAME.test(name));
   if (forbiddenExtraName) {
     throw new Error(`Privileged Supabase configuration is forbidden in Expo extra: ${forbiddenExtraName}`);
+  }
+  const productionBuild = env.EAS_BUILD === "true" || env.NODE_ENV === "production";
+  const releaseDevCredential = productionBuild && DEV_AUTOLOGIN_NAMES.find((name) => Boolean(env[name]));
+  if (releaseDevCredential) {
+    throw new Error(`Development auto-login configuration is forbidden in production client builds: ${releaseDevCredential}`);
   }
 }
 
