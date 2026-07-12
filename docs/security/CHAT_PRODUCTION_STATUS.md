@@ -2,7 +2,24 @@
 
 Current phase: Final production-readiness audit
 
+Production-hardening program phase: Phase 0 — baseline and control plane
+
+Phase 0 status: PASS locally on `hardening/00-baseline`; GitHub Actions execution is not yet observed.
+
 Next required phase: Authenticated staging smoke verification
+
+Production-hardening next required phase: Review the Phase 0 handoff, then Phase 1A — visibility-aware post media. Do not start automatically.
+
+## Production Hardening Phase 0 Baseline (2026-07-12)
+
+- Created parent branch `production-hardening` and bounded branch `hardening/00-baseline` from commit `18b608bbfe77ffd10bc31b903b00048e1e64cef1`.
+- Added canonical issue register `docs/production-hardening/issues.json` and validation command `npm run validate:hardening-register`.
+- Added application-wide, non-path-filtered CI at `.github/workflows/application-ci.yml` for register validation, root/mobile lint, root/mobile typecheck, Memory tests, full tests, Next production build, and Expo Android production export.
+- Root lint now excludes generated `mobile/dist`, generated `mobile/.expo`, and the explicitly vendored `mobile/src/vendor` tree. First-party/test warnings remain visible; the scoped result is 94 warnings and zero errors.
+- Recorded the reproducible command matrix and failure classification in `docs/production-hardening/PHASE_0_BASELINE.md`.
+- No runtime, API, migration, RLS, Storage, media, authentication, navigation, or product-test behaviour was changed.
+- Security observation: local Expo environment loading reported `EXPO_PUBLIC_SUPABASE_SERVICE_KEY`. The value was not inspected, no tracked reference or exported variable name was found, and bundle exposure was not proven. `PH-001` blocks production until the unsafe public configuration is removed and any privileged value is rotated.
+- Current baseline remains red by design: `npm test` is 998/1044 and `npm run test:memory-hardening` is 71/72. Phase 0 categorizes these failures and does not weaken or rewrite tests to hide them.
 
 ## Profile Hardening Blocker Fixes
 
