@@ -105,6 +105,16 @@ export async function resolvePostMediaAccess(
   const reviewById = new Map(((reviews ?? []) as ReviewAccessRow[]).map((review) => [review.id, review]));
   const ownerNames = Array.from(new Set(((reviews ?? []) as ReviewAccessRow[]).map((review) => review.reviewer_name).filter(Boolean)));
 
+  const { data: activeProfiles, error: profileError } = ownerNames.length > 0
+    ? await admin.from("profiles")
+      .select("username")
+      .in("username", ownerNames)
+      .eq("account_status", "active")
+      .is("deletion_started_at", null)
+    : { data: [], error: null };
+  if (profileError) throw new Error("post_media_owner_status_lookup_failed");
+  const activeOwnerNames = new Set((activeProfiles ?? []).map((profile: { username: string }) => profile.username));
+
   const circleMemberships = new Set<string>();
   const blockedPairs = new Set<string>();
   if (viewerName && ownerNames.length > 0) {
@@ -126,6 +136,7 @@ export async function resolvePostMediaAccess(
     const link = linkByAssetId.get(assetId);
     const review = link ? reviewById.get(link.review_id) : undefined;
     if (!asset || !link || !review) continue;
+    if (!activeOwnerNames.has(review.reviewer_name)) continue;
     if (asset.surface !== "post" || asset.status !== "ready" || asset.privacy_state !== "stable" || asset.owner_name !== review.reviewer_name) continue;
     if (!accessClassMatchesReview(asset, review)) continue;
     if (!canViewerAccessPostMedia({ blockedPairs, circleMemberships, review, viewerName })) continue;

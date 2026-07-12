@@ -50,6 +50,7 @@ function accessDb({ blocked = false, member = true, privacyState = "stable", vis
     reviews: [review(visibility, { status })],
     circle_memberships: member ? [{ user_name: "owner", member_name: "member" }] : [],
     blocked_users: blocked ? [{ blocker_name: "owner", blocked_name: "member" }] : [],
+    profiles: [{ username: "owner" }],
     media_derivatives: [{ asset_id: "asset-1", blurhash: "hash", bucket_id: "media-private", duration_ms: null, height: 1350, kind: "canonical", mime_type: "image/jpeg", storage_path: "private-posts/owner/asset-1/canonical.jpg", width: 1080 }]
   };
   return {
@@ -58,7 +59,7 @@ function accessDb({ blocked = false, member = true, privacyState = "stable", vis
       const chain = {
         then(resolve) { return Promise.resolve({ data: rows[table] ?? [], error: null }).then(resolve); }
       };
-      for (const method of ["select", "in", "eq"]) chain[method] = () => chain;
+      for (const method of ["select", "in", "eq", "is"]) chain[method] = () => chain;
       return chain;
     },
     storage: {

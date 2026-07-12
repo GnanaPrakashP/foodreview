@@ -4,7 +4,7 @@
   "updatedAt": "2026-07-13",
   "sourceCommit": "18b608bbfe77ffd10bc31b903b00048e1e64cef1",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/01-private-media",
+  "currentBranch": "hardening/02-account-deletion",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -55,10 +55,10 @@
       "id": "PH-102",
       "title": "Delete all account-owned media across active storage buckets",
       "severity": "P0",
-      "status": "open",
+      "status": "complete",
       "phase": "1B",
       "branch": "hardening/02-account-deletion",
-      "affectedFiles": ["app/api/delete-account/route.ts", "lib/server/account-media-cleanup.ts", "lib/server/media-pipeline.ts", "supabase/migrations"],
+      "affectedFiles": ["app/api/delete-account/route.ts", "app/api/internal/account-deletion/route.ts", "lib/server/account-deletion.ts", "mobile/src/services/settings.ts", "supabase/migrations", "scripts/account-deletion-worker.mjs", "scripts/account-deletion-reconcile.mjs"],
       "dependencies": ["PH-101"],
       "acceptanceCriteria": ["Account deletion covers legacy, quarantine, memory, source, public and private buckets", "Cleanup is idempotent and retryable", "No source or derivative remains accessible", "Partial failures reach a durable terminal state"]
     },

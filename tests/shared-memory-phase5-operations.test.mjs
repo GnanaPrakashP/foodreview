@@ -54,7 +54,7 @@ test("phase 5 memory routes emit sanitized operation events", () => {
     [cleanupRoute, "upload_cleanup.run"],
     [notifyRoute, "memory_notification.send"],
     [participantsRoute, "memory_participants.invite"],
-    [accountDeleteRoute, "account_delete.run"]
+    [accountDeleteRoute, "account_delete.request"]
   ]) {
     assert.match(route, /recordMemoryOperation/);
     assert.match(route, new RegExp(event.replace(".", "\\.")));

@@ -102,21 +102,36 @@ test("circle-auth: uses username as actor name and full name as display name", a
   assert.equal(eqFilters(db._calls[0]).id, "user-1");
 });
 
-test("circle-auth: falls back to metadata username, then email prefix for actor name", async () => {
+test("circle-auth: uses the persisted active profile and never reconstructs a missing profile", async () => {
   assert.equal((await getAuthenticatedCircleActor(spyDb({
     user: { id: "user-1", user_metadata: { full_name: "  Alice Meta  " }, email: "alice@example.com" },
     profile: { first_name: "", last_name: "", username: "alice" },
   }))).actorName, "alice");
 
-  assert.equal((await getAuthenticatedCircleActor(spyDb({
+  assert.equal(await getAuthenticatedCircleActor(spyDb({
     user: { id: "user-2", user_metadata: { username: "  bob_name  ", name: "  Bob Name  " }, email: "bob@example.com" },
     profile: null,
-  }))).actorName, "bob_name");
+  })), null);
 
-  assert.equal((await getAuthenticatedCircleActor(spyDb({
+  assert.equal(await getAuthenticatedCircleActor(spyDb({
     user: { id: "user-3", user_metadata: {}, email: "cara@example.com" },
     profile: null,
-  }))).actorName, "cara");
+  })), null);
+});
+
+test("circle-auth: rejects an account frozen for deletion", async () => {
+  const db = spyDb({
+    user: { id: "user-1", user_metadata: { full_name: "Alice" }, email: "alice@example.com" },
+    profile: {
+      first_name: "Alice",
+      last_name: "Ate",
+      username: "alice",
+      account_status: "deleting",
+      deletion_started_at: "2026-07-13T00:00:00.000Z",
+    },
+  });
+
+  assert.equal(await getAuthenticatedCircleActor(db), null);
 });
 
 test("circle-auth: uses profile username even when no metadata or email name exists", async () => {

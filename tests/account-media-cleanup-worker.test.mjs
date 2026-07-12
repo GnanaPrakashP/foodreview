@@ -28,6 +28,20 @@ vm.runInNewContext(outputText, {
         isOwnedReviewMediaQuarantinePath: (path, userId) => path.startsWith(`pending/${userId}/`)
       };
     }
+    if (id === "@/lib/server/media-pipeline") {
+      return {
+        MEDIA_PRIVATE_BUCKET: "media-private",
+        MEDIA_PUBLIC_BUCKET: "media-public",
+        MEDIA_SOURCE_BUCKET: "media-sources",
+        isOwnedGenericMediaPath: (path, userId) =>
+          path.startsWith(`sources/post/${userId}/`) ||
+          path.startsWith(`sources/avatar/${userId}/`) ||
+          path.startsWith(`sources/memory/${userId}/`) ||
+          path.startsWith(`private-posts/${userId}/`) ||
+          path.startsWith(`avatars/${userId}/`) ||
+          path.startsWith(`memories/${userId}/`)
+      };
+    }
     if (id === "@/lib/supabase/admin") return { createAdminClient: () => ({}) };
     throw new Error(`Unexpected require in cleanup worker tests: ${id}`);
   }

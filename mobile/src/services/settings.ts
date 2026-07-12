@@ -57,6 +57,12 @@ export type BlockedUser = {
   avatarUrl: string | null;
 };
 
+export type AccountDeletionAccepted = {
+  accepted: true;
+  jobId: string;
+  status: string;
+};
+
 export const defaultNotificationSettings: NotificationSettings = {
   pushEnabled: true,
   memoryActivity: true,
@@ -352,7 +358,7 @@ export async function unblockUser(username: string): Promise<void> {
   }, "unblocking this account");
 }
 
-export async function deleteCurrentAccount() {
+export async function deleteCurrentAccount(): Promise<AccountDeletionAccepted> {
   await getViewerProfile();
 
   const { data } = await supabase.auth.getSession();
@@ -365,9 +371,12 @@ export async function deleteCurrentAccount() {
     },
     method: "POST"
   });
-  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  const payload = await response.json().catch(() => null) as (Partial<AccountDeletionAccepted> & { error?: string }) | null;
   if (!response.ok) throw new Error(payload?.error ?? "Could not delete account");
+  if (!payload?.accepted || !payload.jobId) throw new Error("Account deletion was not accepted");
 
-  // The RPC removes the auth user; clear the local session regardless.
+  // The durable server job has already frozen the account. Sign out immediately
+  // so a retry, backgrounded app, or delayed worker cannot keep an active UI.
   await supabase.auth.signOut().catch(() => {});
+  return payload as AccountDeletionAccepted;
 }

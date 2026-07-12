@@ -183,6 +183,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
     try {
       await deleteAccount.mutateAsync();
       setShowDeleteModal(false);
+      notify("Deletion started", "Your account is locked while permanent deletion finishes securely.");
       router.replace("/login");
     } catch (error) {
       notify("Could not delete account", error instanceof Error ? error.message : "Please try again.");
@@ -344,7 +345,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
                 <Text style={styles.dangerCardTitle}>Delete account</Text>
               </View>
               <Text style={styles.dangerCardBody}>
-                Permanently deletes your profile, reviews, comments, saved items, memories, and likes. This cannot be undone.
+                Permanently deletes your profile, posts, comments, saved items and owned media. Shared rooms remain for other members without your account data. This cannot be undone.
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -397,7 +398,7 @@ function DeleteAccountModal({
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>Delete your account?</Text>
           <Text style={styles.modalBody}>
-            This permanently removes everything tied to your account. To confirm, type DELETE below.
+            This immediately locks your account and permanently removes its data and media in the background. To confirm, type DELETE below.
           </Text>
           <TextInput
             autoCapitalize="characters"
@@ -418,7 +419,7 @@ function DeleteAccountModal({
               onPress={onConfirm}
               style={({ pressed }) => [styles.modalDelete, !canConfirm && styles.modalDeleteDisabled, pressed && styles.pressedSurface]}
             >
-              <Text style={styles.modalDeleteText}>{pending ? "Deleting..." : "Delete"}</Text>
+              <Text style={styles.modalDeleteText}>{pending ? "Starting..." : "Delete permanently"}</Text>
             </Pressable>
           </View>
         </View>

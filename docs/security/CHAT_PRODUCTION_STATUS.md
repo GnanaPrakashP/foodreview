@@ -2,13 +2,27 @@
 
 Current phase: Final production-readiness audit
 
-Production-hardening program phase: Phase 1A — visibility-aware post media
+Production-hardening program phase: Phase 1B — complete account deletion
 
-Phase 1A status: BLOCKED on `hardening/01-private-media` pending hosted Supabase migration/Storage/backfill, credential-owner rotation assessment, PH-301 migration-root resolution, and native iOS validation. Real local Auth/RLS/Storage/HTTP, Android native-device, and Android release-artifact gates pass.
+Phase 1B implementation status: PASS locally on `hardening/02-account-deletion`. The durable freeze/inventory/Storage/database/Auth-last workflow passes real local Auth/RLS/Storage/HTTP validation 9/9.
+
+Phase 1B release verification status: BLOCKED pending the disposable hosted-staging deletion/interruption/retry/reconciliation matrix, worker scheduling and alerting verification, PH-301 migration-root resolution, and the pre-existing Phase 1A production blockers. No hosted project was mutated.
 
 Next required phase: Authenticated staging smoke verification
 
-Production-hardening next required phase: Execute the Phase 1A disposable-staging gate in `docs/production-hardening/PHASE_1A_VISIBILITY_AWARE_POST_MEDIA.md`. Do not start Phase 1B automatically.
+Production-hardening next required phase: Execute the Phase 1A hosted prerequisites and the Phase 1B disposable-staging gate in `docs/production-hardening/PHASE_1B_ACCOUNT_DELETION.md`. Do not start Phase 1C automatically.
+
+## Production Hardening Phase 1B — Complete Account Deletion (2026-07-13)
+
+- Replaced synchronous Auth-first deletion with an owner-only atomic freeze and service-only durable state machine: inventory, verified Storage cleanup, database cleanup, Auth deletion last, completion, and bounded retention purge.
+- Added coverage for generic Phase 1A sources/derivatives/privacy-migration variants, review/avatar final and quarantine media, Memory objects/intents, legacy cleanup arrays/stories, and owner-prefix orphans across six buckets. Client paths are never trusted.
+- Added immediate discovery/write/upload/fresh-signed-URL suppression for frozen accounts and removed the service-role actor reconstruction bypass caused by Auth metadata fallback.
+- Implemented shared Memory ownership semantics: sole rooms are deleted; shared rooms and another member's content remain; deleted-member attribution/content is removed.
+- Added moderation retention with reporter/moderator/target anonymization, generic error metadata, hashed ambiguity references, 30-day completed-job retention, and a bounded service-only purge.
+- Added a protected worker, lease recovery, bounded retries, dry-run reconciliation with opt-in one-step apply, and scheduler tooling. The legacy `delete_current_account()` now fails closed.
+- Clean root reset and SQL lint pass. Real local lifecycle validation passes 9/9, focused changed/security tests pass 35/35, Phase 1A remains 6/6, root/mobile typecheck and Next build pass, and Android/iOS Expo production exports are clean of privileged/development worker names.
+- Repository baselines improve from 1030/1051 to 1042/1062 because new Phase 1B tests pass and one changed stale assertion was corrected; the remaining 20 full-suite failures are pre-existing PH-002 UI/architecture assertions. Memory remains at its existing 71/72 baseline.
+- The mobile migration root still reproduces PH-301 at missing `post_views` before Phase 1B. Hosted Storage/CDN, production-like scale, worker scheduling/alerts, failure injection, and operator recovery remain unverified. See `docs/production-hardening/PHASE_1B_ACCOUNT_DELETION.md`.
 
 ## Production Hardening Phase 1A — Visibility-Aware Post Media (2026-07-13)
 

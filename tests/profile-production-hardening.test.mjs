@@ -12,6 +12,9 @@ const finalizeRoute = readFileSync("app/api/mobile/review-media/finalize-upload/
 const reviewsRoute = readFileSync("app/api/reviews/route.ts", "utf8");
 const reviewDeleteRoute = readFileSync("app/api/reviews/[id]/route.ts", "utf8");
 const deleteAccountRoute = readFileSync("app/api/delete-account/route.ts", "utf8");
+const accountDeletionMigration = readFileSync("mobile/supabase/migrations/202607130002_complete_account_deletion.sql", "utf8");
+const accountDeletionHelper = readFileSync("lib/server/account-deletion.ts", "utf8");
+const accountDeletionWorkerRoute = readFileSync("app/api/internal/account-deletion/route.ts", "utf8");
 const cleanupWorkerRoute = readFileSync("app/api/internal/account-media-cleanup/route.ts", "utf8");
 const cleanupHelper = readFileSync("lib/server/account-media-cleanup.ts", "utf8");
 const usernameRoute = readFileSync("app/api/mobile/profile/username/route.ts", "utf8");
@@ -306,21 +309,16 @@ test("post and account deletion remove only owner-scoped storage and fail closed
   assert.match(engagementService, /fetch\(apiUrl\(`\/api\/reviews\/\$\{encodeURIComponent\(input\.postId\)\}`\)/);
   assert.match(engagementService, /Authorization: `Bearer \$\{token\}`/);
 
-  assert.match(deleteAccountRoute, /\.rpc\("shared_memory_account_media_paths"/);
-  assert.match(deleteAccountRoute, /\.rpc\("review_media_account_storage_paths"/);
-  assert.match(deleteAccountRoute, /`avatars\/\$\{user\.id\}\/`/);
-  assert.match(deleteAccountRoute, /`posts\/\$\{user\.id\}\/`/);
-  assert.match(deleteAccountRoute, /`pending\/\$\{user\.id\}\/`/);
-  assert.match(deleteAccountRoute, /publicReviewMediaPathFromUrl\(profile\?\.avatar_url/);
-  assert.match(deleteAccountRoute, /isOwnedReviewMediaPath\(avatarUrlPath, user\.id\)/);
-  assert.match(deleteAccountRoute, /removeStorageObjectsOrQueue\(admin/);
-  assert.match(deleteAccountRoute, /cleanupPending/);
-  assertOrder(
-    deleteAccountRoute,
-    "const reviewCleanup = await removeStorageObjectsOrQueue(admin, {",
-    'supabase.rpc("delete_current_account")',
-    "account media cleanup must happen before database account deletion"
-  );
+  assert.match(deleteAccountRoute, /\.rpc\("request_account_deletion"/);
+  assert.match(deleteAccountRoute, /status: 202/);
+  assert.doesNotMatch(deleteAccountRoute, /delete_current_account/);
+  assert.match(accountDeletionMigration, /account_deletion_storage_candidates/);
+  assert.match(accountDeletionMigration, /account_deletion_storage_not_complete/);
+  assert.match(accountDeletionMigration, /status = 'auth_deletion_pending'/);
+  assert.match(accountDeletionHelper, /ACCOUNT_DELETION_STORAGE_BATCH_SIZE = 50/);
+  assert.match(accountDeletionHelper, /publicReviewMediaPathFromUrl/);
+  assert.match(accountDeletionWorkerRoute, /ACCOUNT_DELETION_WORKER_SECRET/);
+  assert.match(accountDeletionWorkerRoute, /runAccountDeletionJobs/);
 });
 
 test("cleanup jobs have an operational protected worker and paginated storage enumeration", () => {

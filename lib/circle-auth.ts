@@ -8,6 +8,8 @@ type CircleAuthDb = {
 };
 
 type ProfileRow = {
+  account_status?: string | null;
+  deletion_started_at?: string | null;
   username: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -29,12 +31,16 @@ export async function getAuthenticatedCircleActor(db: CircleAuthDb): Promise<{
 
   const { data: profile } = await db
     .from("profiles")
-    .select("username, first_name, last_name")
+    .select("username, first_name, last_name, account_status, deletion_started_at")
     .eq("id", user.id)
     .maybeSingle();
 
   const p = profile as ProfileRow | null;
-  const actorName = p?.username?.trim() || metadataUsername(user);
+  // A missing/suppressed profile is never reconstructed from Auth metadata.
+  // That fallback previously let a frozen account keep using service-role
+  // mutation routes after profile RLS hid it.
+  if (!p || p.account_status === "deleting" || p.deletion_started_at) return null;
+  const actorName = p.username?.trim() || metadataUsername(user);
   if (!actorName) return null;
 
   const displayName =
