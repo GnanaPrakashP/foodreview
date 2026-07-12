@@ -157,6 +157,9 @@ export async function POST(req: NextRequest) {
   if (!intent || intent.user_id !== actor.userId || intent.user_name !== actor.actorName) {
     return mobileJson({ error: "Upload intent not found" }, { status: 404 });
   }
+  if (intent.category === "post") {
+    return mobileJson({ error: "Legacy post media finalization is disabled" }, { status: 410 });
+  }
   if (requestedCategory && requestedCategory !== intent.category) {
     return mobileJson({ error: "Upload intent category mismatch" }, { status: 400 });
   }

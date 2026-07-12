@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { FoodReactionState, PostEngagementState } from "@/lib/server/post-engagement-state";
 import { displayFeedbackLabelForLabel } from "@/lib/taste-trust";
 import type { Review } from "@/lib/types";
+import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
 
 type CirclePostRequestStatus = "idle" | "pending" | "joined";
 
@@ -51,18 +52,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const admin = createAdminClient();
-    const [engagementByPostId, accountTypeByReviewer, requestStatusByReviewer] = await Promise.all([
+    const mediaAssetIds = page.reviews.flatMap((review) => (review.media_items ?? []).map((item) => item.media_asset_id).filter((id): id is string => Boolean(id)));
+    const [engagementByPostId, accountTypeByReviewer, requestStatusByReviewer, authorisedMedia] = await Promise.all([
       buildPageEngagementStates(admin, page),
       buildReviewerAccountTypeMap(admin, page),
       buildCircleRequestStatusMap(admin, page),
+      resolvePostMediaAccess(admin, mediaAssetIds, page.myName),
     ]);
+    const mediaByAssetId = new Map(authorisedMedia.map((item) => [item.id, item]));
     return NextResponse.json({
       ...page,
       nextCursorString: serializeCircleFeedCursor(page.nextCursor),
       posts: page.reviews.map((review) => {
         const engagement = engagementByPostId.get(review.id);
         return {
-          ...reviewPostFromReview(review, page, engagement, requestStatusByReviewer, accountTypeByReviewer),
+          ...reviewPostFromReview(review, page, engagement, requestStatusByReviewer, accountTypeByReviewer, mediaByAssetId),
           engagement,
         };
       }),
@@ -78,7 +82,8 @@ function reviewPostFromReview(
   page: Awaited<ReturnType<typeof getCircleFeedPage>>,
   engagement: PostEngagementState | undefined,
   requestStatusByReviewer: Map<string, CirclePostRequestStatus>,
-  accountTypeByReviewer: Map<string, "public" | "private">
+  accountTypeByReviewer: Map<string, "public" | "private">,
+  mediaByAssetId: Map<string, PostMediaDto>
 ) {
   const displayName = page.profileMap[review.reviewer_name] ?? review.reviewer_name;
   const context = review.reviewer_name === page.myName
@@ -102,11 +107,22 @@ function reviewPostFromReview(
     items: review.items ?? [],
     body: review.body,
     tags: review.tags ?? [],
-    media: (review.media_items ?? []).map((item, index) => ({
-      publicUrl: item.public_url,
-      mediaType: item.media_type === "video" ? "video" : "image",
-      position: item.position ?? index,
-    })),
+    media: (review.media_items ?? []).flatMap((item, index) => {
+      const authorised = item.media_asset_id ? mediaByAssetId.get(item.media_asset_id) : null;
+      if (item.media_asset_id && !authorised) return [];
+      return [{
+        accessClass: authorised?.accessClass ?? "legacy_public",
+        aspectRatio: authorised?.aspectRatio ?? null,
+        expiresAt: authorised?.expiresAt ?? null,
+        mediaAssetId: item.media_asset_id ?? null,
+        mediaType: authorised?.mediaType ?? (item.media_type === "video" ? "video" : "image"),
+        placeholder: authorised?.placeholder ?? null,
+        posterUrl: authorised?.posterUrl ?? null,
+        position: authorised?.position ?? item.position ?? index,
+        publicUrl: authorised?.displayUrl ?? item.public_url,
+        thumbnailUrl: authorised?.thumbnailUrl ?? null,
+      }];
+    }),
     visibility: review.visibility === "circle" || review.visibility === "me" ? review.visibility : "public",
     status: review.status ?? "active",
     createdAt: review.created_at,

@@ -46,6 +46,7 @@ const src = {
 function mockDb(...responses) {
   let idx = 0;
   return {
+    rpc: async () => ({ data: true, error: null }),
     storage: {
       from() {
         return {
@@ -63,7 +64,7 @@ function mockDb(...responses) {
       for (const m of [
         "select", "eq", "ilike", "or", "limit", "insert",
         "delete", "update", "order", "in", "single", "maybeSingle", "upsert",
-        "returns",
+        "returns", "is",
       ]) {
         chain[m] = () => chain;
       }
@@ -77,18 +78,23 @@ function mockDb(...responses) {
  * can verify what row was written to the database.
  */
 function validIntent(overrides = {}) {
-  return {
-    category: "post",
-    file_size_bytes: 1234,
-    id: "intent-1",
+  const row = {
+    access_class: "public_post",
+    consumed_at: null,
+    duration_ms: null,
+    id: "11111111-1111-4111-8111-111111111112",
     media_type: "image",
-    mime_type: "image/jpeg",
-    status: "finalized",
-    storage_path: "posts/uid-alice/intent-1/media.jpg",
-    user_id: "uid-alice",
-    user_name: "Alice",
+    original_mime_type: "image/jpeg",
+    owner_id: "uid-alice",
+    owner_name: "Alice",
+    status: "ready",
+    surface: "post",
     ...overrides,
   };
+  if (overrides.user_id) row.owner_id = overrides.user_id;
+  if (overrides.user_name) row.owner_name = overrides.user_name;
+  if (overrides.status === "finalized") row.status = "ready";
+  return row;
 }
 
 function capturingDb(
@@ -100,6 +106,7 @@ function capturingDb(
   return {
     get _inserted() { return insertedRow; },
     get _insertedPhotoRows() { return insertedPhotoRows; },
+    rpc: async () => ({ data: true, error: null }),
     storage: {
       from() {
         return {
@@ -112,8 +119,12 @@ function capturingDb(
       const chain = {
         then(res, rej) {
           const response =
-            table === "review_media_upload_intents"
+            table === "media_assets"
               ? { data: [intentRow], error: null }
+              : table === "media_derivatives"
+                ? { data: [{ asset_id: intentRow.id, kind: "canonical", bucket_id: "media-private", storage_path: `private-posts/${intentRow.owner_id}/${intentRow.id}/canonical.jpg`, public_url: null, mime_type: "image/jpeg", width: 1080, height: 1350, duration_ms: null, file_size_bytes: 1234, blurhash: null }], error: null }
+              : table === "review_media_upload_intents"
+                ? { data: [], error: null }
               : table === "review_photos"
                 ? { data: null, error: null }
                 : resolveWith;
@@ -218,6 +229,7 @@ function loadRoute(code, { db, adminDb, authName, dishIdentity }) {
       }
       if (id === "@/lib/server/media-pipeline") {
         return {
+          accessClassForPostVisibility: () => "public_post",
           MEDIA_PRIVATE_BUCKET: "media-private",
           MEDIA_PUBLIC_BUCKET: "media-public",
           MEDIA_SOURCE_BUCKET: "media-sources",
@@ -246,7 +258,7 @@ function loadRoute(code, { db, adminDb, authName, dishIdentity }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
-  media: [{ intentId: "intent-1", mediaType: "image" }],
+  media: [{ assetId: "11111111-1111-4111-8111-111111111112", mediaType: "image" }],
   visibility: "public",
 };
 
@@ -350,7 +362,7 @@ test("POST /reviews: videos without duration are rejected before media lookup", 
   assert.match(body(res).error, /Videos must be 30 seconds or less/i);
 });
 
-test("POST /reviews: finalized video intents are rejected until trusted transcoding exists", async () => {
+test("POST /reviews: legacy finalized post intents are rejected", async () => {
   const db = capturingDb(
     { data: { id: "11111111-1111-4111-8111-111111111111" }, error: null },
     validIntent({
@@ -368,8 +380,8 @@ test("POST /reviews: finalized video intents are rejected until trusted transcod
 
   const res = await POST(makeReq({ ...VALID_BODY, media }));
 
-  assert.equal(status(res), 400);
-  assert.match(body(res).error, /Video uploads are temporarily unavailable/i);
+  assert.equal(status(res), 409);
+  assert.match(body(res).error, /Legacy post media must be uploaded again/i);
 });
 
 test("POST /reviews: items with only whitespace names returns 400", async () => {
@@ -453,6 +465,7 @@ test("POST /reviews: DB error returns 500", async () => {
   const { POST } = loadRoute(src.create, {
     db: mockDb(
       { data: [validIntent()], error: null },
+      { data: [{ asset_id: "11111111-1111-4111-8111-111111111112", kind: "canonical", bucket_id: "media-private", storage_path: "private-posts/uid-alice/11111111-1111-4111-8111-111111111112/canonical.jpg", public_url: null, mime_type: "image/jpeg", width: 1080, height: 1350, duration_ms: null, file_size_bytes: 1234, blurhash: null }], error: null },
       { data: null, error: { message: "db connection failed" } }
     ),
     authName: "Alice",
@@ -644,20 +657,16 @@ test("PATCH /reviews/[id]: refreshing items replaces backend-owned dish mentions
   assert.deepEqual(calls[0].submittedItems, items);
 });
 
-test("PATCH /reviews/[id]: DB update error returns 500", async () => {
-  const { PATCH } = loadRoute(src.byId, {
-    db: mockDb(
-      { data: { reviewer_name: "Alice" }, error: null },
-      { data: null, error: { message: "update failed" } }
-    ),
-    authName: "Alice",
-  });
+test("PATCH /reviews/[id]: media transition failure is fail-closed", async () => {
+  const db = mockDb({ data: { reviewer_name: "Alice" }, error: null });
+  db.rpc = async () => ({ data: null, error: { message: "review_media_requires_private_backfill" } });
+  const { PATCH } = loadRoute(src.byId, { db, authName: "Alice" });
   const res = await PATCH(
     makeReq({ visibility: "circle" }),
     { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
-  assert.equal(status(res), 500);
-  assert.equal(body(res).error, "Could not update review");
+  assert.equal(status(res), 409);
+  assert.match(body(res).error, /privately migrated/i);
 });
 
 test("PATCH /reviews/[id]: review not found returns 404", async () => {

@@ -12,7 +12,7 @@ export const REVIEW_SELECT = [
   "tags",
   "photo_url",
   "photo_urls",
-  "review_photos(public_url, media_type, position)",
+  "review_photos(media_asset_id, public_url, media_type, position)",
   "visibility",
   "deleted_at",
   "hidden_at",

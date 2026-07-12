@@ -45,6 +45,10 @@ function spyDb(...responses) {
   return {
     get _calls() { return calls; },
     _setAuthName(name) { authNameForIntents = name || "Alice"; },
+    rpc(name, args) {
+      calls.push({ table: `rpc:${name}`, ops: [["rpc", args]] });
+      return Promise.resolve({ data: true, error: null });
+    },
     storage: {
       from() {
         return {
@@ -57,8 +61,15 @@ function spyDb(...responses) {
       const entry = { table, ops: [] };
       calls.push(entry);
       const next = () => {
-        if (table === "review_media_upload_intents") {
+        if (table === "media_assets") {
           return Promise.resolve({ data: [validIntentFor(authNameForIntents)], error: null });
+        }
+        if (table === "media_derivatives") {
+          const asset = validIntentFor(authNameForIntents);
+          return Promise.resolve({ data: [{ asset_id: asset.id, kind: "canonical", bucket_id: "media-private", storage_path: `private-posts/${asset.owner_id}/${asset.id}/canonical.jpg`, public_url: null, mime_type: "image/jpeg", width: 1080, height: 1350, duration_ms: null, file_size_bytes: 1234, blurhash: null }], error: null });
+        }
+        if (table === "review_media_upload_intents") {
+          return Promise.resolve({ data: [], error: null });
         }
         return Promise.resolve(responses[idx++] ?? { data: null, error: null });
       };
@@ -81,15 +92,17 @@ function spyDb(...responses) {
 function validIntentFor(authName) {
   const userId = `uid-${authName.toLowerCase().replace(/\s/g, "-")}`;
   return {
-    category: "post",
+    access_class: "public_post",
+    consumed_at: null,
+    duration_ms: null,
     file_size_bytes: 1234,
-    id: "intent-1",
+    id: "11111111-1111-4111-8111-111111111112",
     media_type: "image",
-    mime_type: "image/jpeg",
-    status: "finalized",
-    storage_path: `posts/${userId}/intent-1/media.jpg`,
-    user_id: userId,
-    user_name: authName,
+    original_mime_type: "image/jpeg",
+    owner_id: userId,
+    owner_name: authName,
+    status: "ready",
+    surface: "post",
   };
 }
 
@@ -107,6 +120,10 @@ function updateArg(calls) {
     if (op) return op[1];
   }
   return undefined;
+}
+
+function rpcArg(calls) {
+  return calls.find((entry) => entry.table === "rpc:set_review_visibility_with_media_access")?.ops[0]?.[1];
 }
 
 function eqFilters(entry) {
@@ -196,6 +213,17 @@ function loadRoute(code, { db, authName }) {
           isOwnedReviewMediaPath: (path, userId) => path?.includes(`/${userId}/`) ?? false,
         };
       }
+      if (id === "@/lib/server/media-pipeline") {
+        return {
+          accessClassForPostVisibility: () => "public_post",
+          MEDIA_PRIVATE_BUCKET: "media-private",
+          MEDIA_PUBLIC_BUCKET: "media-public",
+          MEDIA_SOURCE_BUCKET: "media-sources",
+        };
+      }
+      if (id === "@/lib/server/dish-identity") {
+        return { replaceReviewDishMentions: async () => ({ ok: true, rows: [] }) };
+      }
       if (id === "@/lib/circle-auth") {
         return {
           getAuthenticatedCircleActor: async () =>
@@ -213,7 +241,7 @@ function loadRoute(code, { db, authName }) {
 const VALID_BODY = {
   restaurantName: "Bawarchi",
   items: [{ name: "Mutton Biryani", rating: 5 }],
-  media: [{ intentId: "intent-1", mediaType: "image" }],
+  media: [{ assetId: "11111111-1111-4111-8111-111111111112", mediaType: "image" }],
   visibility: "public",
 };
 
@@ -387,7 +415,7 @@ test("DELETE: DB call uses both id and reviewer_name as eq filters", async () =>
 
 // ── PATCH /api/reviews/[id] — update payload ─────────────────────────────────
 
-test("PATCH: reviewer_name is never included in the update payload", async () => {
+test("PATCH: transition owner is derived from auth, never the request body", async () => {
   const db = spyDb(
     { data: { reviewer_name: "Alice" }, error: null },
     { data: null, error: null }
@@ -397,12 +425,12 @@ test("PATCH: reviewer_name is never included in the update payload", async () =>
     makeReq({ visibility: "circle", reviewerName: "Mallory" }),
     { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
-  const updates = updateArg(db._calls);
-  assert.ok(updates, "Expected an update call");
-  assert.ok(!("reviewer_name" in updates), "reviewer_name must never be in the update payload");
+  const transition = rpcArg(db._calls);
+  assert.equal(transition.p_owner_name, "Alice");
+  assert.notEqual(transition.p_owner_name, "Mallory");
 });
 
-test("PATCH: visibility in update payload matches requested value", async () => {
+test("PATCH: visibility is passed to the atomic media transition RPC", async () => {
   const db = spyDb(
     { data: { reviewer_name: "Alice" }, error: null },
     { data: null, error: null }
@@ -412,7 +440,7 @@ test("PATCH: visibility in update payload matches requested value", async () => 
     makeReq({ visibility: "me" }),
     { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
-  assert.equal(updateArg(db._calls).visibility, "me");
+  assert.equal(rpcArg(db._calls).p_visibility, "me");
 });
 
 test("PATCH: body is stored as null when whitespace-only", async () => {
@@ -428,7 +456,7 @@ test("PATCH: body is stored as null when whitespace-only", async () => {
   assert.equal(updateArg(db._calls).body, null);
 });
 
-test("PATCH: update call uses both id and reviewer_name as eq filters", async () => {
+test("PATCH: atomic transition binds both review id and authenticated owner", async () => {
   const db = spyDb(
     { data: { reviewer_name: "Alice" }, error: null },
     { data: null, error: null }
@@ -438,11 +466,9 @@ test("PATCH: update call uses both id and reviewer_name as eq filters", async ()
     makeReq({ visibility: "circle" }),
     { params: Promise.resolve({ id: "77777777-7777-4777-8777-777777777777" }) }
   );
-  const updateEntry = db._calls.find((c) => c.ops.some(([m]) => m === "update"));
-  assert.ok(updateEntry, "Expected an update call");
-  const filters = eqFilters(updateEntry);
-  assert.equal(filters.id, "77777777-7777-4777-8777-777777777777");
-  assert.equal(filters.reviewer_name, "Alice");
+  const transition = rpcArg(db._calls);
+  assert.equal(transition.p_review_id, "77777777-7777-4777-8777-777777777777");
+  assert.equal(transition.p_owner_name, "Alice");
 });
 
 test("PATCH: blank item names are stripped from items update", async () => {
@@ -491,7 +517,7 @@ test("PATCH: invalid item rating is rejected before update", async () => {
   assert.equal(updateArg(db._calls), undefined);
 });
 
-test("PATCH: only provided fields appear in the update payload", async () => {
+test("PATCH: visibility-only transition does not perform a second non-atomic review update", async () => {
   const db = spyDb(
     { data: { reviewer_name: "Alice" }, error: null },
     { data: null, error: null }
@@ -501,8 +527,6 @@ test("PATCH: only provided fields appear in the update payload", async () => {
     makeReq({ visibility: "public" }),
     { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
   );
-  const updates = updateArg(db._calls);
-  assert.ok("visibility" in updates, "visibility should be in update");
-  assert.ok(!("body" in updates), "body should not be in update when not provided");
-  assert.ok(!("items" in updates), "items should not be in update when not provided");
+  assert.equal(rpcArg(db._calls).p_visibility, "public");
+  assert.equal(updateArg(db._calls), undefined);
 });

@@ -9,9 +9,11 @@ import {
 } from "@/constants/exploreCategories";
 import { normalizeDishInput } from "@/services/dishNormalizer";
 import { searchDishNameSuggestions } from "@/services/dishSuggestions";
-import { explorePhotoUrl, filterEligibleExplorePhotos, trustedExplorePhotoUrl } from "@/services/exploreMedia";
+import { explorePhotoUrl, filterEligibleExplorePhotos } from "@/services/exploreMedia";
 import { getBlockedUsernames } from "@/services/feeds";
 import type { ExploreDishSpotlight, ExplorePlaceSpotlight } from "@/services/exploreDiscovery";
+import { fetchPostMediaAccess } from "@/services/postMediaAccess";
+import type { ReviewMedia } from "@/types/models";
 
 type SearchLocation = {
   lat: number;
@@ -182,15 +184,13 @@ function isSyntheticReviewRow(row: Pick<ReviewSearchRow, "restaurant_name" | "re
     || /^smoke test eats\b/i.test(row.restaurant_name);
 }
 
-function firstPhoto(row: ReviewSearchRow) {
+function firstPhoto(row: ReviewSearchRow, mediaByAssetId: Record<string, ReviewMedia>) {
   const galleryPhoto = (row.review_photos ?? [])
-    .filter((media) => (
-      Boolean(media.media_asset_id)
-      && media.media_type !== "video"
-      && Boolean(trustedExplorePhotoUrl(media.public_url))
-    ))
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]?.public_url;
-  const trustedPhoto = trustedExplorePhotoUrl(galleryPhoto);
+    .filter((media) => media.media_type !== "video")
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((media) => media.media_asset_id ? mediaByAssetId[media.media_asset_id]?.thumbnailUrl ?? mediaByAssetId[media.media_asset_id]?.publicUrl : media.public_url)
+    .find(Boolean);
+  const trustedPhoto = explorePhotoUrl(galleryPhoto);
   if (trustedPhoto) return trustedPhoto;
 
   return [...(row.photo_urls ?? []), row.photo_url]
@@ -388,6 +388,7 @@ export async function searchExplorePlaces(termInput: string, options: ExplorePla
 
   const { data, error } = await query.returns<ReviewSearchRow[]>();
   if (error) throw new Error(error.message);
+  const mediaByAssetId = await fetchPostMediaAccess((data ?? []).flatMap((row) => (row.review_photos ?? []).map((media) => media.media_asset_id).filter((id): id is string => Boolean(id))));
 
   const places = new Map<string, PlaceAccumulator>();
   for (const row of data ?? []) {
@@ -401,14 +402,14 @@ export async function searchExplorePlaces(termInput: string, options: ExplorePla
       key,
       locationRankScore: null,
       name: row.restaurant_name,
-      photo: firstPhoto(row),
+      photo: firstPhoto(row, mediaByAssetId),
       placeId: row.restaurant_id,
       postCount: 0,
       ratings: [],
       tags: new Map<string, number>()
     };
 
-    if (!current.photo) current.photo = firstPhoto(row);
+    if (!current.photo) current.photo = firstPhoto(row, mediaByAssetId);
     if (!current.placeId && row.restaurant_id) current.placeId = row.restaurant_id;
     current.locationRankScore = nearestLocationScore(current.locationRankScore, locationRankScore(row, options.location ?? null));
     current.postCount += 1;

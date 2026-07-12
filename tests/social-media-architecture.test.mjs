@@ -6,20 +6,21 @@ function source(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
-test("web review media uses FoodReview upload intents, not legacy direct moderation uploads", () => {
+test("web review media uses visibility-aware generic upload intents and disables the legacy post path", () => {
   const form = source("components/reviews/ReviewForm.tsx");
-  const uploadAlias = source("app/api/review-media/upload-intent/route.ts");
-  const finalizeAlias = source("app/api/review-media/finalize-upload/route.ts");
+  const legacyUpload = source("app/api/mobile/review-media/upload-intent/route.ts");
+  const legacyFinalize = source("app/api/mobile/review-media/finalize-upload/route.ts");
 
-  assert.match(form, /\/api\/review-media\/upload-intent/);
-  assert.match(form, /\/api\/review-media\/finalize-upload/);
+  assert.match(form, /\/api\/media\/upload-intent/);
+  assert.match(form, /\/api\/media\/finalize-upload/);
+  assert.match(form, /intendedVisibility: visibility/);
   assert.match(form, /intent\.uploadBucket/);
-  assert.match(form, /intentId: item\.intentId/);
+  assert.match(form, /assetId: item\.assetId/);
   assert.doesNotMatch(form, /\/api\/photos\/moderate/);
   assert.doesNotMatch(form, /\/api\/videos\/moderate/);
   assert.doesNotMatch(form, /\.from\("review-photos"\)[\s\S]{0,160}\.upload/);
-  assert.match(uploadAlias, /app\/api\/mobile\/review-media\/upload-intent\/route/);
-  assert.match(finalizeAlias, /app\/api\/mobile\/review-media\/finalize-upload\/route/);
+  assert.match(legacyUpload, /body\?\.category === "post"[\s\S]+status: 410/);
+  assert.match(legacyFinalize, /intent\.category === "post"[\s\S]+status: 410/);
 });
 
 test("feeds share FoodReview-native enrichment assembly", () => {

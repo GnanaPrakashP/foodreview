@@ -138,21 +138,22 @@ test("Explore place search is backed by review trigram indexes", () => {
   assert.match(placeSearchIndexes, /reviews_restaurant_address_trgm_idx/i);
 });
 
-test("Explore search prefers media-pipeline images and falls back to legacy place thumbnails", () => {
+test("Explore search prefers authorized media-pipeline images and falls back to legacy place thumbnails", () => {
   assert.match(exploreSearch, /review_photos\(media_asset_id, public_url, media_type, position\)/);
-  assert.match(exploreSearch, /Boolean\(media\.media_asset_id\)/);
+  assert.match(exploreSearch, /media\.media_asset_id \? mediaByAssetId\[media\.media_asset_id\]/);
   assert.match(exploreSearch, /media\.media_type !== "video"/);
-  assert.match(exploreSearch, /trustedExplorePhotoUrl\(media\.public_url\)/);
+  assert.match(exploreSearch, /fetchPostMediaAccess\(/);
+  assert.match(exploreSearch, /mediaByAssetId\[media\.media_asset_id\]\?\.thumbnailUrl/);
   assert.match(exploreSearch, /\[\.\.\.\(row\.photo_urls \?\? \[\]\), row\.photo_url\]/);
   assert.match(exploreSearch, /\.map\(explorePhotoUrl\)/);
   assert.match(exploreSearch, /filterEligibleExplorePhotos\(results\)/);
 });
 
-test("Explore place cards hydrate from public review media without dropping valid cards", () => {
+test("Explore place cards hydrate through batched authorization without dropping valid cards", () => {
   assert.match(exploreDiscovery, /function reviewPrimaryMediaCandidates\(row: ExplorePhotoReviewRow, derivativeUrls: Map<string, string>\)/);
   assert.match(exploreDiscovery, /media\.media_type === "video"[\s\S]+return assetDerivative \?\? null/);
-  assert.match(exploreDiscovery, /\.from\("media_derivatives"\)/);
-  assert.match(exploreDiscovery, /\.in\("kind", EXPLORE_MEDIA_DERIVATIVE_KINDS\)/);
+  assert.match(exploreDiscovery, /fetchPostMediaAccess\(assetIds\)/);
+  assert.doesNotMatch(exploreDiscovery, /\.from\("media_derivatives"\)/);
   assert.match(exploreDiscovery, /async function hydratePlaceReviewPhotos\(places: ExplorePlaceSpotlight\[\]\)/);
   assert.match(exploreDiscovery, /hydratePlaceReviewPhotos\(page\.places\)/);
   assert.match(exploreDiscovery, /hydratePlaceReviewPhotos\(buildPlaces\(feed\.posts, input\.location\)\)/);

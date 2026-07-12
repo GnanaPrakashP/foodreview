@@ -40,7 +40,7 @@ const REVIEW_SELECT = [
   "body",
   "tags",
   "photo_url",
-  "review_photos(public_url, media_type, position)",
+  "review_photos(media_asset_id, public_url, media_type, position)",
   "visibility",
   "created_at",
   "deleted_at",

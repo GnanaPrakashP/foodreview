@@ -6,25 +6,13 @@ import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/lib/server/review-validation";
 import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 import { REVIEW_MEDIA_BUCKET, REVIEW_POST_MAX_ITEMS, type ReviewMediaKind } from "@/lib/server/review-media";
-import { MEDIA_PUBLIC_BUCKET, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
+import { accessClassForPostVisibility, MEDIA_PRIVATE_BUCKET, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
 import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
 
 // Matches the mobile camera's 30s recording cap.
 const MAX_REVIEW_VIDEO_DURATION_SECONDS = 30;
 const MAX_REVIEW_TAGS = 5;
 const MAX_REVIEW_TAG_LENGTH = 28;
-
-type FinalizedReviewMediaIntent = {
-  category: "post" | "avatar";
-  file_size_bytes: number;
-  id: string;
-  media_type: ReviewMediaKind;
-  mime_type: string;
-  status: string;
-  storage_path: string;
-  user_id: string;
-  user_name: string;
-};
 
 type ValidatedReviewMedia = {
   durationSeconds?: number;
@@ -33,7 +21,7 @@ type ValidatedReviewMedia = {
   mediaAssetId?: string;
   mediaType: ReviewMediaKind;
   mimeType: string;
-  publicUrl: string;
+  publicUrl: string | null;
   sizeBytes: number;
   storagePath: string;
   width?: number;
@@ -176,7 +164,7 @@ export async function POST(req: NextRequest) {
 
   // reviewer_name is always derived from the authenticated session — never from the request body
   const writeDb = createAdminClient();
-  const validatedMedia = await loadFinalizedReviewMedia(writeDb, actor, incomingMediaItems);
+  const validatedMedia = await loadFinalizedReviewMedia(writeDb, actor, visibility, incomingMediaItems);
   if (!validatedMedia.ok) {
     return NextResponse.json({ error: validatedMedia.error }, { status: validatedMedia.status });
   }
@@ -204,8 +192,8 @@ export async function POST(req: NextRequest) {
       body: normalizedBody.body ?? null,
       tags: normalizedTags,
       visibility,
-      photo_url: validatedMedia.media[0].publicUrl,
-      photo_urls: validatedMedia.media.map((item) => item.publicUrl),
+      photo_url: null,
+      photo_urls: [],
       area: area?.trim() || null,
       restaurant_id: restaurantId ?? null,
       restaurant_address: restaurantAddress?.trim() || null,
@@ -312,6 +300,7 @@ export async function POST(req: NextRequest) {
 async function loadFinalizedReviewMedia(
   admin: ReturnType<typeof createAdminClient>,
   actor: NonNullable<Awaited<ReturnType<typeof getRouteActor>>["actor"]>,
+  visibility: "public" | "circle" | "me",
   incomingMedia: Array<{
     assetId?: unknown;
     durationSeconds?: unknown;
@@ -327,25 +316,20 @@ async function loadFinalizedReviewMedia(
   const intentIds = incomingMedia
     .map((item) => typeof item.intentId === "string" ? item.intentId.trim() : "")
     .filter(Boolean);
-  const uniqueIntentIds = Array.from(new Set(intentIds));
   const assetIds = incomingMedia
     .map((item) => typeof item.assetId === "string" ? item.assetId.trim() : "")
     .filter(Boolean);
   const uniqueAssetIds = Array.from(new Set(assetIds));
-  if (intentIds.length + assetIds.length !== incomingMedia.length || uniqueIntentIds.length !== intentIds.length || uniqueAssetIds.length !== assetIds.length) {
+  if (intentIds.length > 0) {
+    return { ok: false, error: "Legacy post media must be uploaded again", status: 409 };
+  }
+  if (assetIds.length !== incomingMedia.length || uniqueAssetIds.length !== assetIds.length) {
     return { ok: false, error: "Invalid review media", status: 400 };
   }
 
-  const { data, error } = uniqueIntentIds.length > 0
-    ? await admin
-      .from("review_media_upload_intents")
-      .select("id, user_id, user_name, category, media_type, mime_type, file_size_bytes, storage_path, status")
-      .in("id", uniqueIntentIds)
-      .returns<FinalizedReviewMediaIntent[]>()
-    : { data: [], error: null };
-  if (error) return { ok: false, error: "Could not verify review media", status: 500 };
-
   type ReadyMediaAsset = {
+    access_class: string;
+    consumed_at: string | null;
     duration_ms: number | null;
     id: string;
     media_type: ReviewMediaKind;
@@ -358,7 +342,7 @@ async function loadFinalizedReviewMedia(
   const { data: assetRows, error: assetError } = uniqueAssetIds.length > 0
     ? await admin
       .from("media_assets")
-      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status")
+      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status, access_class, consumed_at")
       .in("id", uniqueAssetIds)
       .returns<ReadyMediaAsset[]>()
     : { data: [], error: null };
@@ -374,12 +358,10 @@ async function loadFinalizedReviewMedia(
     : { data: [], error: null };
   if (derivativeError) return { ok: false, error: "Could not verify review media", status: 500 };
 
-  const intentsById = new Map((data ?? []).map((intent) => [intent.id, intent]));
   const assetsById = new Map((assetRows ?? []).map((asset) => [asset.id, asset]));
   const canonicalByAssetId = new Map((derivativeRows ?? []).map((derivative) => [derivative.asset_id, derivative]));
   const verified: ValidatedReviewMedia[] = [];
   for (const item of incomingMedia) {
-    const intentId = typeof item.intentId === "string" ? item.intentId.trim() : "";
     const assetId = typeof item.assetId === "string" ? item.assetId.trim() : "";
     if (assetId) {
       const asset = assetsById.get(assetId);
@@ -390,8 +372,11 @@ async function loadFinalizedReviewMedia(
         asset.owner_name !== actor.actorName ||
         asset.surface !== "post" ||
         asset.status !== "ready" ||
+        asset.consumed_at !== null ||
+        asset.access_class !== accessClassForPostVisibility(visibility) ||
         !canonical ||
-        canonical.bucket_id !== MEDIA_PUBLIC_BUCKET
+        canonical.bucket_id !== MEDIA_PRIVATE_BUCKET ||
+        canonical.public_url !== null
       ) {
         return { ok: false, error: "Review media is not ready", status: 409 };
       }
@@ -406,52 +391,20 @@ async function loadFinalizedReviewMedia(
       if (asset.media_type === "video" && (!durationSeconds || durationSeconds <= 0 || durationSeconds > MAX_REVIEW_VIDEO_DURATION_SECONDS)) {
         return { ok: false, error: `Videos must be ${MAX_REVIEW_VIDEO_DURATION_SECONDS} seconds or less`, status: 400 };
       }
-      const { data: publicUrlData } = canonical.public_url
-        ? { data: { publicUrl: canonical.public_url } }
-        : admin.storage.from(canonical.bucket_id).getPublicUrl(canonical.storage_path);
       verified.push({
         durationSeconds,
         height: typeof canonical.height === "number" ? canonical.height : undefined,
         mediaAssetId: asset.id,
         mediaType: asset.media_type,
         mimeType: canonical.mime_type,
-        publicUrl: publicUrlData.publicUrl,
+        publicUrl: null,
         sizeBytes: canonical.file_size_bytes,
         storagePath: canonical.storage_path,
         width: typeof canonical.width === "number" ? canonical.width : undefined
       });
       continue;
     }
-
-    const intent = intentsById.get(intentId);
-    if (
-      !intent ||
-      intent.user_id !== actor.userId ||
-      intent.user_name !== actor.actorName ||
-      intent.category !== "post" ||
-      intent.status !== "finalized"
-    ) {
-      return { ok: false, error: "Review media is not authorized", status: 403 };
-    }
-    if (item.mediaType && item.mediaType !== intent.media_type) {
-      return { ok: false, error: "Review media type mismatch", status: 400 };
-    }
-    if (intent.media_type === "video") {
-      return { ok: false, error: "Video uploads are temporarily unavailable", status: 400 };
-    }
-
-    const { data: publicUrlData } = admin.storage.from(REVIEW_MEDIA_BUCKET).getPublicUrl(intent.storage_path);
-    verified.push({
-      durationSeconds: typeof item.durationSeconds === "number" ? item.durationSeconds : undefined,
-      height: typeof item.height === "number" ? item.height : undefined,
-      intentId: intent.id,
-      mediaType: intent.media_type,
-      mimeType: intent.mime_type,
-      publicUrl: publicUrlData.publicUrl,
-      sizeBytes: intent.file_size_bytes,
-      storagePath: intent.storage_path,
-      width: typeof item.width === "number" ? item.width : undefined
-    });
+    return { ok: false, error: "Invalid review media", status: 400 };
   }
 
   return { ok: true, media: verified };

@@ -32,7 +32,14 @@ export type TasteTrustLevel =
   | "Highly Trusted";
 
 export type ReviewMedia = {
+  access_class?: "public_post" | "circle_post" | "private_post" | "legacy_public";
+  aspect_ratio?: number | null;
+  expires_at?: string | null;
+  media_asset_id?: string | null;
+  placeholder?: string | null;
+  poster_url?: string | null;
   public_url: string;
+  thumbnail_url?: string | null;
   media_type: ReviewMediaType;
   storage_path?: string | null;
   width?: number | null;

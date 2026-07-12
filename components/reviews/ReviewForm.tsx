@@ -34,21 +34,18 @@ type RestaurantSuggestion = {
 };
 
 type UploadedReviewMedia = {
-  category: "post" | "avatar";
+  assetId: string;
   fileSizeBytes: number;
   height?: number | null;
-  intentId: string;
   mediaKind: "image" | "video";
   mimeType: string;
-  publicUrl: string;
-  storagePath: string;
   width?: number | null;
 };
 
 type ReviewMediaPayload = {
+  assetId: string;
   durationSeconds?: number;
   height?: number | null;
-  intentId: string;
   mediaType: "image" | "video";
   width?: number | null;
 };
@@ -137,46 +134,77 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
   return payload;
 }
 
-async function uploadReviewMediaFile(supabase: ReturnType<typeof createClient>, file: ReviewUploadFile): Promise<UploadedReviewMedia> {
+async function uploadReviewMediaFile(supabase: ReturnType<typeof createClient>, file: ReviewUploadFile, visibility: Visibility): Promise<UploadedReviewMedia> {
   const mediaKind: "image" | "video" = file.type.startsWith("video/") ? "video" : "image";
   if (mediaKind === "video") throw new Error("Video uploads are temporarily unavailable");
 
   const mimeType = contentTypeForReviewFile(file, mediaKind);
   const ext = extensionForReviewFile(file, mediaKind);
   const intent = await postJson<{
-    category: "post";
+    accessClass: "public_post" | "circle_post" | "private_post";
+    assetId: string;
     expiresAt: string;
-    intentId: string;
     maxAllowedSize: number;
     mediaKind: "image" | "video";
     mimeType: string;
-    storagePath: string;
     uploadBucket: string;
     uploadPath: string;
-  }>("/api/review-media/upload-intent", {
-    category: "post",
+  }>("/api/media/upload-intent", {
     fileName: `media.${ext}`,
     fileSizeBytes: file.size,
     mediaKind,
     mimeType,
+    intendedVisibility: visibility,
+    surface: "post",
   });
+  const expectedAccessClass = visibility === "public" ? "public_post" : visibility === "circle" ? "circle_post" : "private_post";
+  if (intent.accessClass !== expectedAccessClass) throw new Error("Media visibility contract mismatch");
 
   const { error: uploadError } = await supabase.storage
     .from(intent.uploadBucket)
     .upload(intent.uploadPath, file, { contentType: intent.mimeType, upsert: false });
   if (uploadError) throw new Error("Could not upload media");
 
-  return postJson<UploadedReviewMedia>("/api/review-media/finalize-upload", {
-    category: "post",
-    intentId: intent.intentId,
+  await postJson<{ assetId: string; status: string }>("/api/media/finalize-upload", {
+    assetId: intent.assetId,
     uploadPath: intent.uploadPath,
   });
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(`/api/media/status?ids=${encodeURIComponent(intent.assetId)}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => null) as {
+      assets?: Array<{
+        assetId: string;
+        failureReason?: string | null;
+        status: string;
+        derivatives: Array<{ file_size_bytes: number; height: number | null; kind: string; mime_type: string; width: number | null }>;
+      }>;
+      error?: string;
+    } | null;
+    if (!response.ok || !payload) throw new Error(payload?.error ?? "Media processing failed");
+    const asset = payload.assets?.find((item) => item.assetId === intent.assetId);
+    if (asset?.status === "ready") {
+      const canonical = asset.derivatives.find((item) => item.kind === "canonical");
+      if (!canonical) throw new Error("Processed media is missing");
+      return {
+        assetId: intent.assetId,
+        fileSizeBytes: canonical.file_size_bytes,
+        height: canonical.height,
+        mediaKind,
+        mimeType: canonical.mime_type,
+        width: canonical.width,
+      };
+    }
+    if (asset?.status === "failed" || asset?.status === "rejected") throw new Error(asset.failureReason || "Media processing failed");
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  throw new Error("Media processing timed out");
 }
 
 function reviewMediaPayload(item: UploadedReviewMedia): ReviewMediaPayload {
   return {
+    assetId: item.assetId,
     height: item.height ?? null,
-    intentId: item.intentId,
     mediaType: item.mediaKind,
     width: item.width ?? null,
   };
@@ -558,12 +586,12 @@ export default function ReviewForm() {
       setSubmitStep("uploading");
       const uploadedMedia: UploadedReviewMedia[] = [];
       for (const file of photoFiles) {
-        uploadedMedia.push(await uploadReviewMediaFile(supabase, file));
+        uploadedMedia.push(await uploadReviewMediaFile(supabase, file, visibility));
       }
       const media = uploadedMedia.map(reviewMediaPayload);
 
       setSubmitStep("posting");
-      const photoUrl = uploadedMedia[0]?.publicUrl ?? null;
+      const photoUrl = null;
 
       const allItems = items
         .filter((it) => it.name.trim())

@@ -138,7 +138,7 @@ export async function PATCH(
   const admin = createAdminClient();
   const { data: review, error: fetchError } = await admin
     .from("reviews")
-    .select("reviewer_name, restaurant_id")
+    .select("reviewer_name, restaurant_id, visibility")
     .eq("id", id)
     .maybeSingle();
 
@@ -159,7 +159,15 @@ export async function PATCH(
     if (!isValidVisibility(visibility)) {
       return NextResponse.json({ error: "Invalid visibility" }, { status: 400 });
     }
-    updates.visibility = visibility;
+    const { error: transitionError } = await admin.rpc("set_review_visibility_with_media_access", {
+      p_owner_id: actor.userId,
+      p_owner_name: actor.actorName,
+      p_review_id: id,
+      p_visibility: visibility
+    });
+    if (transitionError) {
+      return NextResponse.json({ error: "Post media must be privately migrated before changing visibility" }, { status: 409 });
+    }
   }
 
   if (reviewBody !== undefined) {
@@ -179,11 +187,13 @@ export async function PATCH(
     normalizedItemsForMentions = normalizedItems.items ?? null;
   }
 
-  const { error } = await admin
-    .from("reviews")
-    .update(updates)
-    .eq("id", id)
-    .eq("reviewer_name", actor.actorName);
+  const { error } = Object.keys(updates).length > 0
+    ? await admin
+      .from("reviews")
+      .update(updates)
+      .eq("id", id)
+      .eq("reviewer_name", actor.actorName)
+    : { error: null };
 
   if (error) {
     return NextResponse.json({ error: "Could not update review" }, { status: 500 });

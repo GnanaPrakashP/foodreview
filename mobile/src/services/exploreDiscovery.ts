@@ -10,10 +10,10 @@ import {
 import { normalizeDishDisplayName, normalizeDishInput } from "@/services/dishNormalizer";
 import {
   explorePhotoUrl,
-  filterEligibleExplorePhotos,
-  trustedExplorePhotoUrl
+  filterEligibleExplorePhotos
 } from "@/services/exploreMedia";
 import { getExploreFeed, type ExploreFeedInput } from "@/services/feeds";
+import { fetchPostMediaAccess } from "@/services/postMediaAccess";
 import { compactAreaLabel } from "@/services/locationLabels";
 import { bayesianRating, distanceKmFromRankScore, placeDistanceBand, rankPlaces } from "@/services/placeRanking";
 import type { AccountType, ReviewPost } from "@/types/models";
@@ -97,13 +97,6 @@ type ExplorePhotoReviewRow = {
   }> | null;
 };
 
-type ExploreMediaDerivativeRow = {
-  asset_id: string | null;
-  bucket_id: string | null;
-  kind: string | null;
-  public_url: string | null;
-};
-
 type ExploreProfileRow = {
   account_type: string | null;
   first_name: string | null;
@@ -127,7 +120,6 @@ const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v2";
 const MIN_DISCOVERY_BACKFILL_COUNT = 10;
 const canonicalExploreEnabled = process.env.EXPO_PUBLIC_CANONICAL_EXPLORE !== "0";
 const EXPLORE_PHOTO_REVIEW_SELECT = "id, created_at, restaurant_id, restaurant_name, photo_url, photo_urls, review_photos(media_asset_id, public_url, media_type, position)";
-const EXPLORE_MEDIA_DERIVATIVE_KINDS = ["thumbnail", "poster", "canonical"];
 const CANONICAL_DISH_KEY_RE = /^canonical:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const DISH_PLACE_GLOBAL_MEAN_FALLBACK = 4;
 const DISH_PLACE_EVIDENCE_WEIGHT = 0.35;
@@ -265,9 +257,9 @@ function trustedExplorePhoto(post: ReviewPost) {
   const trustedMedia = post.media.find((item) => (
     item.mediaType === "image"
     && Boolean(item.mediaAssetId)
-    && Boolean(trustedExplorePhotoUrl(item.publicUrl))
+    && Boolean(explorePhotoUrl(item.publicUrl))
   ));
-  if (trustedMedia) return trustedExplorePhotoUrl(trustedMedia.publicUrl);
+  if (trustedMedia) return explorePhotoUrl(trustedMedia.publicUrl);
 
   const legacyMedia = post.media.find((item) => item.mediaType === "image" && Boolean(explorePhotoUrl(item.publicUrl)));
   return explorePhotoUrl(legacyMedia?.publicUrl);
@@ -597,33 +589,12 @@ function reviewPlacePhotoKeys(row: Pick<ExplorePhotoReviewRow, "restaurant_id" |
   return keys;
 }
 
-function mediaDerivativeRank(kind: string | null | undefined) {
-  const index = EXPLORE_MEDIA_DERIVATIVE_KINDS.indexOf(kind ?? "");
-  return index >= 0 ? index : EXPLORE_MEDIA_DERIVATIVE_KINDS.length;
-}
-
 async function fetchMediaDerivativeUrls(assetIds: string[]) {
-  const uniqueAssetIds = Array.from(new Set(assetIds.filter(Boolean)));
-  if (uniqueAssetIds.length === 0) return new Map<string, string>();
-
-  const { data, error } = await supabase
-    .from("media_derivatives")
-    .select("asset_id, kind, public_url, bucket_id")
-    .in("asset_id", uniqueAssetIds)
-    .in("kind", EXPLORE_MEDIA_DERIVATIVE_KINDS)
-    .eq("bucket_id", "media-public")
-    .returns<ExploreMediaDerivativeRow[]>();
-  if (error) return new Map<string, string>();
-
-  const urls = new Map<string, string>();
-  const sortedRows = [...(data ?? [])].sort((a, b) => mediaDerivativeRank(a.kind) - mediaDerivativeRank(b.kind));
-  for (const row of sortedRows) {
-    const assetId = row.asset_id?.trim();
-    if (!assetId || urls.has(assetId)) continue;
-    const url = explorePhotoUrl(row.public_url);
-    if (url) urls.set(assetId, url);
-  }
-  return urls;
+  const authorised = await fetchPostMediaAccess(assetIds);
+  return new Map(Object.entries(authorised).map(([assetId, media]) => [
+    assetId,
+    media.thumbnailUrl ?? media.posterUrl ?? media.publicUrl
+  ]));
 }
 
 function reviewPrimaryMediaCandidates(row: ExplorePhotoReviewRow, derivativeUrls: Map<string, string>) {

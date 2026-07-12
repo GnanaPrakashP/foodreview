@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
   if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => null);
+  if (body?.category === "post") {
+    return mobileJson({ error: "Use the visibility-aware media upload endpoint for posts" }, { status: 410 });
+  }
   let media;
   try {
     media = normalizeReviewMediaIntentInput({

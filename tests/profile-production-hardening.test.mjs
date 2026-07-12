@@ -111,23 +111,20 @@ test("avatar replacement updates profile through trusted finalization and record
   assert.doesNotMatch(profileService, /storage\.from\("review-photos"\)\.upload/);
 });
 
-test("review creation accepts only ready media assets or finalized post intents and does not trust client URLs or storage paths", () => {
+test("review creation accepts only visibility-matched private media assets and does not trust client URLs or storage paths", () => {
   assert.match(reviewsRoute, /REVIEW_POST_MAX_ITEMS/);
   assert.match(reviewsRoute, /typeof \(p as IncomingMedia\)\.intentId === "string"/);
   assert.match(reviewsRoute, /typeof \(p as IncomingMedia\)\.assetId === "string"/);
-  assert.match(reviewsRoute, /loadFinalizedReviewMedia\(writeDb, actor, incomingMediaItems\)/);
-  assert.match(reviewsRoute, /Video uploads are temporarily unavailable/);
+  assert.match(reviewsRoute, /loadFinalizedReviewMedia\(writeDb, actor, visibility, incomingMediaItems\)/);
   assert.match(reviewsRoute, /\.from\("media_assets"\)/);
   assert.match(reviewsRoute, /asset\.surface !== "post"/);
   assert.match(reviewsRoute, /asset\.status !== "ready"/);
   assert.match(reviewsRoute, /\.from\("media_derivatives"\)/);
-  assert.match(reviewsRoute, /MEDIA_PUBLIC_BUCKET/);
-  assert.match(reviewsRoute, /intent\.user_id !== actor\.userId/);
-  assert.match(reviewsRoute, /intent\.user_name !== actor\.actorName/);
-  assert.match(reviewsRoute, /intent\.category !== "post"/);
-  assert.match(reviewsRoute, /intent\.status !== "finalized"/);
-  assert.match(reviewsRoute, /admin\.storage\.from\(REVIEW_MEDIA_BUCKET\)\.getPublicUrl\(intent\.storage_path\)/);
-  assert.match(reviewsRoute, /upload_intent_id: p\.intentId/);
+  assert.match(reviewsRoute, /asset\.access_class !== accessClassForPostVisibility\(visibility\)/);
+  assert.match(reviewsRoute, /canonical\.bucket_id !== MEDIA_PRIVATE_BUCKET/);
+  assert.match(reviewsRoute, /canonical\.public_url !== null/);
+  assert.match(reviewsRoute, /asset\.consumed_at !== null/);
+  assert.match(reviewsRoute, /Legacy post media must be uploaded again/);
   assert.match(reviewsRoute, /media_asset_id: p\.mediaAssetId/);
   assert.match(reviewsRoute, /owner_id: actor\.userId/);
   assert.match(reviewsRoute, /mime_type: p\.mimeType/);
@@ -156,7 +153,8 @@ test("mobile post and avatar uploads use the authorized upload/finalize flow", (
   assert.match(mobileMediaPipeline, /function defaultCropRect/);
   assert.match(mobileMediaPipeline, /waitForReadyMedia/);
   assert.match(postService, /uploadPostMediaAsset\(\{/);
-  assert.match(postService, /uploadPostMediaItems\(items, input\.onUploadProgress\)/);
+  assert.match(postService, /uploadPostMediaItems\(items, input\.visibility, input\.onUploadProgress\)/);
+  assert.match(mobileMediaPipeline, /intendedVisibility: input\.intendedVisibility/);
   assert.doesNotMatch(postService, /Promise\.all\(items\.map/);
   assert.match(postService, /assetId: item\.assetId/);
   assert.doesNotMatch(postService, /storage\.from\("review-photos"\)\.upload/);

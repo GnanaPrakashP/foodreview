@@ -16,6 +16,13 @@ import {
 import type { AccountType, Profile } from "@/types/models";
 import { useSessionStore } from "@/stores/sessionStore";
 
+const POST_MEDIA_REFRESH_MS = 4 * 60_000;
+const EXPIRING_MEDIA_QUERY_OPTIONS = {
+  refetchInterval: POST_MEDIA_REFRESH_MS,
+  refetchOnWindowFocus: true,
+  staleTime: POST_MEDIA_REFRESH_MS
+} as const;
+
 export const profileKeys = {
   current: ["profile", "current"] as const,
   currentPage: ["profile", "current-page"] as const,
@@ -35,7 +42,8 @@ export function useCurrentProfilePageQuery(options: { enabled?: boolean } = {}) 
   return useQuery({
     queryKey: profileKeys.currentPage,
     queryFn: getCurrentProfilePage,
-    enabled: options.enabled ?? true
+    enabled: options.enabled ?? true,
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -43,7 +51,8 @@ export function useProfilePageQuery(username: string) {
   return useQuery({
     queryKey: profileKeys.byUsername(username),
     queryFn: () => getProfilePage(username),
-    enabled: Boolean(username)
+    enabled: Boolean(username),
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -53,7 +62,8 @@ export function useProfilePostsInfiniteQuery(username: string, options: { enable
     queryFn: ({ pageParam }) => getProfilePostsPage(username, pageParam),
     enabled: Boolean(username) && (options.enabled ?? true),
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    initialPageParam: null as string | null
+    initialPageParam: null as string | null,
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 

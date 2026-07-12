@@ -3,6 +3,7 @@ import { authorizedJson } from "@/api/client";
 import type { FeedPage, ReviewPost } from "@/types/models";
 import { normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
+import { fetchPostMediaAccess } from "@/services/postMediaAccess";
 
 const PAGE_SIZE = 24;
 const DISH_SCAN_SIZE = 400;
@@ -233,7 +234,10 @@ export async function addEngagementToRows(
   const names = displayNames ?? Object.fromEntries(
     Object.entries(identities).map(([name, identity]) => [name, identity.displayName])
   );
-  const engagement = options.engagementMaps ?? await fetchEngagementMaps(rows.map((row) => row.id), viewerName);
+  const [engagement, mediaByAssetId] = await Promise.all([
+    options.engagementMaps ?? fetchEngagementMaps(rows.map((row) => row.id), viewerName),
+    fetchPostMediaAccess(rows.flatMap((row) => (row.review_photos ?? []).map((media) => media.media_asset_id).filter((id): id is string => Boolean(id))))
+  ]);
 
   return rows.map((row) => {
     const reviewerUsername = identities[row.reviewer_name]?.username ?? row.reviewer_name;
@@ -256,7 +260,8 @@ export async function addEngagementToRows(
       circleRequestStatus: requestStatus,
       feedContextLabel: options.feedMetadataByPostId?.[row.id]?.contextLabel,
       feedSectionLabel: options.feedMetadataByPostId?.[row.id]?.sectionLabel,
-      isPublicDiscovery
+      isPublicDiscovery,
+      mediaByAssetId
     });
   });
 }
@@ -542,6 +547,7 @@ export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<Feed
   ]);
   const rows = discoveryRows.slice(0, scanLimit);
   const identities = await fetchReviewerIdentities(rows.map((row) => row.reviewer_name));
+  const mediaByAssetId = await fetchPostMediaAccess(rows.flatMap((row) => (row.review_photos ?? []).map((media) => media.media_asset_id).filter((id): id is string => Boolean(id))));
   const joinedCircleOwnerSet = new Set(joinedCircleOwners);
 
   return {
@@ -551,7 +557,8 @@ export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<Feed
       return mapReviewPost(row, {
         circleRequestStatus: joinedCircleOwnerSet.has(reviewerUsername) ? "joined" : undefined,
         displayName: identity?.displayName,
-        reviewerUsername
+        reviewerUsername,
+        mediaByAssetId
       });
     }),
     viewerName

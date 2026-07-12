@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       mediaType: body?.mediaType ?? body?.mediaKind,
       mimeType: body?.mimeType,
       surface: body?.surface ?? body?.category,
+      intendedVisibility: body?.intendedVisibility ?? body?.visibility,
       width: body?.width
     });
   } catch (error) {
@@ -69,6 +70,7 @@ export async function POST(req: NextRequest) {
     .from("media_assets")
     .insert({
       crop_rect: media.cropRect,
+      access_class: media.accessClass,
       duration_ms: media.durationMs,
       expires_at: expiresAt,
       id: media.assetId,
@@ -91,6 +93,7 @@ export async function POST(req: NextRequest) {
 
   return mediaJson({
     assetId: media.assetId,
+    accessClass: media.accessClass,
     cropRect: media.cropRect,
     expiresAt,
     maxAllowedSize: media.maxBytes,

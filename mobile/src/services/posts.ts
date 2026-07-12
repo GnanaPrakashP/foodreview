@@ -127,11 +127,8 @@ function normalizedDishes(input: CreatePostInput): FoodItem[] {
 
 type UploadedMedia = {
   assetId?: string;
-  intentId?: string;
   mimeType: string;
-  publicUrl: string;
   sizeBytes: number;
-  storagePath: string;
   mediaType: "image" | "video";
   width: number | null;
   height: number | null;
@@ -140,6 +137,7 @@ type UploadedMedia = {
 
 async function uploadOneWithProgress(
   media: CreatePostMediaInput,
+  visibility: Visibility,
   onUploadProgress?: (progress: number) => void
 ): Promise<UploadedMedia> {
   const mediaType = resolveMediaType(media);
@@ -150,6 +148,7 @@ async function uploadOneWithProgress(
     height: media.height,
     mediaKind: mediaType,
     mimeType: media.mimeType,
+    intendedVisibility: visibility,
     onUploadProgress,
     width: media.width,
     uri: media.uri
@@ -161,20 +160,18 @@ async function uploadOneWithProgress(
     height: uploaded.height ?? media.height ?? null,
     mediaType,
     mimeType: uploaded.mimeType,
-    publicUrl: uploaded.publicUrl,
     sizeBytes: uploaded.fileSizeBytes,
-    storagePath: uploaded.storagePath,
     width: uploaded.width ?? media.width ?? null
   };
 }
 
-async function uploadPostMediaItems(items: CreatePostMediaInput[], onUploadProgress?: (progress: number) => void) {
+async function uploadPostMediaItems(items: CreatePostMediaInput[], visibility: Visibility, onUploadProgress?: (progress: number) => void) {
   const uploaded: UploadedMedia[] = [];
   const total = Math.max(1, items.length);
   onUploadProgress?.(0);
 
   for (const [index, media] of items.entries()) {
-    const item = await uploadOneWithProgress(media, (itemProgress) => {
+    const item = await uploadOneWithProgress(media, visibility, (itemProgress) => {
       onUploadProgress?.((index + Math.max(0, Math.min(itemProgress, 1))) / total);
     });
     uploaded.push(item);
@@ -200,7 +197,6 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
         assetId: item.assetId,
         durationSeconds: item.durationMs ? item.durationMs / 1000 : undefined,
         height: item.height ?? undefined,
-        intentId: item.intentId,
         mediaType: item.mediaType,
         width: item.width ?? undefined
       })),
@@ -238,6 +234,6 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
     throw new Error("Posting requires the API server.");
   }
 
-  const uploaded = await uploadPostMediaItems(items, input.onUploadProgress);
+  const uploaded = await uploadPostMediaItems(items, input.visibility, input.onUploadProgress);
   return createReviewViaApi(input, uploaded);
 }

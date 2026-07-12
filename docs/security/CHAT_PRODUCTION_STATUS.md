@@ -2,13 +2,22 @@
 
 Current phase: Final production-readiness audit
 
-Production-hardening program phase: Phase 0 — baseline and control plane
+Production-hardening program phase: Phase 1A — visibility-aware post media
 
-Phase 0 status: PASS locally on `hardening/00-baseline`; GitHub Actions execution is not yet observed.
+Phase 1A status: BLOCKED on `hardening/01-private-media` pending hosted Supabase migration, Storage/CDN, backfill, credential-owner, and native-client validation.
 
 Next required phase: Authenticated staging smoke verification
 
-Production-hardening next required phase: Review the Phase 0 handoff, then Phase 1A — visibility-aware post media. Do not start automatically.
+Production-hardening next required phase: Execute the Phase 1A disposable-staging gate in `docs/production-hardening/PHASE_1A_VISIBILITY_AWARE_POST_MEDIA.md`. Do not start Phase 1B automatically.
+
+## Production Hardening Phase 1A — Visibility-Aware Post Media (2026-07-13)
+
+- Selected private canonical post media with current-authorized, five-minute signed delivery. Public, circle, and me posts now use explicit access classes while post derivatives remain in `media-private`; avatar and Memory behavior retain their existing classifications.
+- Added owner-bound visibility-aware upload intents, exact post-creation attachment validation, batched mobile access, web authorization redirects, fail-closed suppression/block/membership checks, and a service-role-only atomic visibility transition RPC.
+- Added byte-identical root/mobile migrations and an operator-run, paginated, durable, retryable legacy backfill. Public post objects must be removed only after private replacement verification.
+- Updated active public/Circle/Profile/Explore/detail consumers to use canonical authorized media DTOs. Status/access responses expose no raw Storage path.
+- Added Expo configuration containment that rejects public privileged Supabase variable names. The ignored local forbidden variable name still requires credential-owner removal/assessment and possible rotation; no value was inspected and bundle exposure was not proven.
+- Focused repository gates and a clean root Supabase reset through the Phase 1A migration pass. Database lint reports only pre-existing `extensions`/pgTAP findings and the project has no pgTAP files. Production remains blocked because hosted Storage/CDN revocation and existing-data backfill were not exercised, native release clients were not tested, PH-301/PH-302 remain open, and the five-minute previously-issued URL window is intentional.
 
 ## Production Hardening Phase 0 Baseline (2026-07-12)
 

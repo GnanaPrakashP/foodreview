@@ -58,11 +58,12 @@ test("mobile Explore parser preserves token-derived dish families from canonical
   assert.match(exploreDiscovery, /familyNames: familyNames\.length > 0 \? familyNames : \[stringValue\(value\.familyName\)\.trim\(\) \|\| fallbackFamilyName\]/);
 });
 
-test("mobile Explore client fallback only promotes trusted media-pipeline images for places", () => {
+test("mobile Explore client fallback only promotes authorized media-pipeline images for places", () => {
   assert.match(exploreDiscovery, /function trustedExplorePhoto\(post: ReviewPost\)/);
   assert.match(exploreDiscovery, /item\.mediaType === "image"/);
   assert.match(exploreDiscovery, /Boolean\(item\.mediaAssetId\)/);
-  assert.match(exploreDiscovery, /trustedExplorePhotoUrl\(item\.publicUrl\)/);
+  assert.match(exploreDiscovery, /Boolean\(explorePhotoUrl\(item\.publicUrl\)\)/);
+  assert.match(exploreDiscovery, /fetchPostMediaAccess\(assetIds\)/);
   assert.doesNotMatch(exploreDiscovery, /photo: post\.media\[0\]\?\.publicUrl/);
 });
 

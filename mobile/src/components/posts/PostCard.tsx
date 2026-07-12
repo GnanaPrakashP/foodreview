@@ -704,8 +704,8 @@ function PostCardComponent({ post }: PostCardProps) {
               decodeFormat="rgb"
               enforceEarlyResizing
               priority="normal"
-              recyclingKey={primaryMedia.publicUrl}
-              source={{ uri: primaryMedia.publicUrl }}
+              recyclingKey={primaryMedia.thumbnailUrl ?? primaryMedia.publicUrl}
+              source={{ uri: primaryMedia.thumbnailUrl ?? primaryMedia.publicUrl }}
               style={styles.image}
             />
           )}

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "program": "FoodReview Production Hardening",
-  "updatedAt": "2026-07-12",
+  "updatedAt": "2026-07-13",
   "sourceCommit": "18b608bbfe77ffd10bc31b903b00048e1e64cef1",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/00-baseline",
+  "currentBranch": "hardening/01-private-media",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -22,7 +22,7 @@
       "id": "PH-001",
       "title": "Remove and assess unsafe EXPO_PUBLIC service-key environment configuration",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "4",
       "branch": "hardening/06-security-abuse",
       "affectedFiles": ["mobile/.env", "mobile/.env.local", "mobile/.env.example", "mobile/eas.json"],
@@ -44,7 +44,7 @@
       "id": "PH-101",
       "title": "Make post media storage visibility-aware",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "1A",
       "branch": "hardening/01-private-media",
       "affectedFiles": ["lib/server/media-pipeline.ts", "app/api/media", "app/api/reviews", "mobile/src/services/mediaPipeline.ts", "supabase/migrations"],

@@ -1,6 +1,7 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
+import type { Visibility } from "@/types/models";
 
 export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaKind = "image" | "video";
@@ -14,6 +15,7 @@ export type MediaCropRect = {
 };
 
 type MediaUploadIntent = {
+  accessClass: "public_post" | "circle_post" | "private_post";
   assetId: string;
   maxAllowedSize: number;
   mediaType: MediaKind;
@@ -24,15 +26,10 @@ type MediaUploadIntent = {
 };
 
 type MediaStatusDerivative = {
-  asset_id: string;
-  bucket_id: string;
   file_size_bytes: number;
   height: number | null;
   kind: "canonical" | "thumbnail" | "poster";
   mime_type: string;
-  public_url: string | null;
-  signedUrl?: string | null;
-  storage_path: string;
   width: number | null;
 };
 
@@ -51,8 +48,6 @@ export type UploadedMediaAsset = {
   height?: number | null;
   mediaKind: MediaKind;
   mimeType: string;
-  publicUrl: string;
-  storagePath: string;
   width?: number | null;
 };
 
@@ -64,6 +59,7 @@ export type UploadPostMediaAssetInput = {
   mediaKind?: MediaKind;
   mimeType?: string | null;
   onUploadProgress?: (progress: number) => void;
+  intendedVisibility: Visibility;
   uri: string;
   width?: number | null;
 };
@@ -183,6 +179,7 @@ async function createMediaUploadIntent(input: {
   height?: number | null;
   mediaKind: MediaKind;
   mimeType: string;
+  intendedVisibility: Visibility;
   width?: number | null;
 }) {
   return authorizedMobileJson<MediaUploadIntent>("/api/media/upload-intent", {
@@ -194,6 +191,7 @@ async function createMediaUploadIntent(input: {
     mediaType: input.mediaKind,
     mimeType: input.mimeType,
     surface: "post",
+    intendedVisibility: input.intendedVisibility,
     width: input.width
   });
 }
@@ -325,10 +323,12 @@ export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Pr
     height: downscaled?.height ?? input.height,
     mediaKind,
     mimeType,
+    intendedVisibility: input.intendedVisibility,
     width: downscaled?.width ?? input.width
   });
   input.onUploadProgress?.(0.18);
-  if (intent.mediaType !== mediaKind || intent.mimeType !== mimeType || intent.maxAllowedSize < body.byteLength) {
+  const expectedAccessClass = input.intendedVisibility === "public" ? "public_post" : input.intendedVisibility === "circle" ? "circle_post" : "private_post";
+  if (intent.accessClass !== expectedAccessClass || intent.mediaType !== mediaKind || intent.mimeType !== mimeType || intent.maxAllowedSize < body.byteLength) {
     throw new Error("Media upload intent does not match the selected file.");
   }
 
@@ -348,17 +348,12 @@ export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Pr
   const { canonical } = await waitForReadyMedia(intent.assetId, input.onUploadProgress);
   input.onUploadProgress?.(1);
 
-  const publicUrl = canonical.public_url ?? canonical.signedUrl ?? "";
-  if (!publicUrl) throw new Error("Processed media is missing a URL.");
-
   return {
     assetId: intent.assetId,
     fileSizeBytes: canonical.file_size_bytes,
     height: canonical.height,
     mediaKind,
     mimeType: canonical.mime_type,
-    publicUrl,
-    storagePath: canonical.storage_path,
     width: canonical.width
   };
 }

@@ -19,10 +19,18 @@ export type FoodItem = {
 };
 
 export type ReviewMedia = {
+  accessClass: "public_post" | "circle_post" | "private_post" | "legacy_public";
+  aspectRatio: number | null;
+  expiresAt: string | null;
+  height: number | null;
   publicUrl: string;
   mediaType: "image" | "video";
   mediaAssetId?: string | null;
+  placeholder: string | null;
+  posterUrl: string | null;
   position: number;
+  thumbnailUrl: string | null;
+  width: number | null;
 };
 
 export type Profile = {

@@ -547,7 +547,7 @@ export default function CircleFeedCard({
                       />
                     ) : (
                       <FeedReviewImage
-                        src={feedImageUrl(item.public_url)}
+                        src={feedImageUrl(item.thumbnail_url ?? item.public_url)}
                         alt={review.restaurant_name}
                         priority={priorityImage && i === 0}
                       />

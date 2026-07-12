@@ -13,6 +13,16 @@ import {
 import { getExploreDiscovery } from "@/services/exploreDiscovery";
 import type { PostEngagementState, ReviewPost } from "@/types/models";
 
+// Post delivery URLs expire after five minutes. Active consumers refresh the
+// whole bounded page in one request before expiry; signed URLs are never
+// persisted by the query persister.
+const POST_MEDIA_REFRESH_MS = 4 * 60_000;
+const EXPIRING_MEDIA_QUERY_OPTIONS = {
+  refetchInterval: POST_MEDIA_REFRESH_MS,
+  refetchOnWindowFocus: true,
+  staleTime: POST_MEDIA_REFRESH_MS
+} as const;
+
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
   circlePages: ["feed", "circle", "pages"] as const,
@@ -39,7 +49,8 @@ export function useCircleFeedQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: feedKeys.circle,
     queryFn: () => getCircleFeed(),
-    enabled: options.enabled ?? true
+    enabled: options.enabled ?? true,
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -50,6 +61,7 @@ export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) 
     enabled: options.enabled ?? true,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: null as string | null
+    ,...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -158,7 +170,8 @@ export function usePublicFeedQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: feedKeys.public,
     queryFn: getPublicFeed,
-    enabled: options.enabled ?? true
+    enabled: options.enabled ?? true,
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -170,7 +183,7 @@ export function useExploreFeedQuery(input: ExploreFeedInput = {}, options: { ena
     gcTime: 2 * 60 * 60_000,
     placeholderData: keepPreviousData,
     refetchOnMount: false,
-    staleTime: 30 * 60_000
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -182,7 +195,7 @@ export function useExploreDiscoveryQuery(input: ExploreFeedInput = {}, options: 
     gcTime: 2 * 60 * 60_000,
     placeholderData: keepPreviousData,
     refetchOnMount: false,
-    staleTime: 30 * 60_000
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -190,7 +203,8 @@ export function useReviewPostQuery(postId: string, options: { enabled?: boolean 
   return useQuery({
     queryKey: feedKeys.review(postId),
     queryFn: () => getReviewPostById(postId),
-    enabled: Boolean(postId) && (options.enabled ?? true)
+    enabled: Boolean(postId) && (options.enabled ?? true),
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -199,7 +213,8 @@ export function useRestaurantFeedQuery(input: RestaurantFeedInput, options: { en
   return useQuery({
     queryKey: feedKeys.restaurant(input),
     queryFn: () => getRestaurantFeed(input),
-    enabled: hasTarget && (options.enabled ?? true)
+    enabled: hasTarget && (options.enabled ?? true),
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }
 
@@ -212,6 +227,7 @@ export function useDishFeedQuery(input: string | DishFeedInput, options: { enabl
   return useQuery({
     queryKey: feedKeys.dish(dishInput),
     queryFn: () => getDishFeed(dishInput),
-    enabled: Boolean(dishInput.dishName.trim() || dishInput.canonicalDishId?.trim()) && (options.enabled ?? true)
+    enabled: Boolean(dishInput.dishName.trim() || dishInput.canonicalDishId?.trim()) && (options.enabled ?? true),
+    ...EXPIRING_MEDIA_QUERY_OPTIONS
   });
 }

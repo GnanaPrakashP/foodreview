@@ -18,6 +18,7 @@ export const MEDIA_AVATAR_CANONICAL_SIZE = 512;
 export const MEDIA_AVATAR_THUMB_SIZE = 128;
 export const MEDIA_MEMORY_MAX_EDGE = 1600;
 export const MEDIA_MEMORY_THUMB_EDGE = 360;
+export const MEDIA_POST_SIGNED_URL_TTL_SECONDS = 5 * 60;
 export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_IMAGE_MAX_PIXELS = 80_000_000;
 export const MEDIA_MAX_ATTEMPTS = 3;
@@ -26,6 +27,7 @@ export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaType = "image" | "video";
 export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" | "failed" | "rejected" | "expired" | "abandoned";
 export type MediaDerivativeKind = "canonical" | "thumbnail" | "poster";
+export type MediaAccessClass = "public_post" | "circle_post" | "private_post" | "avatar_public" | "memory_private";
 
 export type NormalizedCropRect = {
   x: number;
@@ -47,6 +49,7 @@ export type NormalizedMediaIntent = {
   mimeType: string;
   sourceStoragePath: string;
   surface: MediaSurface;
+  accessClass: MediaAccessClass;
   visibility: "public" | "private";
   width: number | null;
 };
@@ -67,6 +70,7 @@ export type MediaAssetRow = {
   source_bucket_id: string;
   source_storage_path: string;
   status: MediaAssetStatus;
+  access_class: MediaAccessClass;
   visibility: "public" | "private";
   expires_at?: string;
   failure_reason?: string | null;
@@ -213,6 +217,7 @@ export function normalizeMediaIntentInput(input: {
   mediaType?: unknown;
   mimeType?: unknown;
   surface?: unknown;
+  intendedVisibility?: unknown;
   width?: unknown;
 }, assetId = randomUUID()): NormalizedMediaIntent {
   const surface = normalizeSurface(input.surface);
@@ -228,7 +233,9 @@ export function normalizeMediaIntentInput(input: {
   if (!Number.isSafeInteger(fileSizeBytes) || fileSizeBytes <= 0) throw new Error("media_file_size_invalid");
   if (fileSizeBytes > maxBytes) throw new Error("media_file_too_large");
 
+  const accessClass = accessClassForIntent(surface, input.intendedVisibility);
   return {
+    accessClass,
     assetId,
     cropRect: normalizeCropRect(surface, input.cropRect),
     durationMs: optionalDurationMs(input.durationMs),
@@ -240,9 +247,25 @@ export function normalizeMediaIntentInput(input: {
     mimeType,
     sourceStoragePath: buildMediaSourcePath({ assetId, extension, surface, userId: "" }),
     surface,
-    visibility: surface === "memory" ? "private" : "public",
+    visibility: accessClass === "avatar_public" ? "public" : "private",
     width: optionalPositiveInt(input.width)
   };
+}
+
+export function accessClassForPostVisibility(value: unknown): Extract<MediaAccessClass, "public_post" | "circle_post" | "private_post"> {
+  if (value === "public") return "public_post";
+  if (value === "circle") return "circle_post";
+  if (value === "me") return "private_post";
+  throw new Error("media_post_visibility_invalid");
+}
+
+export function accessClassForIntent(surface: MediaSurface, value: unknown): MediaAccessClass {
+  if (surface === "avatar") return "avatar_public";
+  if (surface === "memory") return "memory_private";
+  // Missing/uncertain post visibility is deliberately private. Active clients
+  // send an explicit value; this default protects older or draft callers.
+  if (value === undefined || value === null || value === "") return "private_post";
+  return accessClassForPostVisibility(value);
 }
 
 export function buildMediaSourcePath({
@@ -260,7 +283,7 @@ export function buildMediaSourcePath({
 }
 
 export function buildMediaDerivativePath(asset: Pick<MediaAssetRow, "id" | "owner_id" | "surface">, kind: MediaDerivativeKind, extension: string) {
-  const prefix = asset.surface === "avatar" ? "avatars" : asset.surface === "memory" ? "memories" : "posts";
+  const prefix = asset.surface === "avatar" ? "avatars" : asset.surface === "memory" ? "memories" : "private-posts";
   return `${prefix}/${asset.owner_id}/${asset.id}/${kind}.${extension}`;
 }
 
@@ -271,6 +294,7 @@ export function isOwnedGenericMediaPath(pathValue: string | null | undefined, us
     pathValue.startsWith(`sources/avatar/${userId}/`) ||
     pathValue.startsWith(`sources/memory/${userId}/`) ||
     pathValue.startsWith(`posts/${userId}/`) ||
+    pathValue.startsWith(`private-posts/${userId}/`) ||
     pathValue.startsWith(`avatars/${userId}/`) ||
     pathValue.startsWith(`memories/${userId}/`)
   );
@@ -309,6 +333,8 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
       return "Selected media is too large.";
     case "media_crop_rect_invalid":
       return "Crop selection is invalid.";
+    case "media_post_visibility_invalid":
+      return "Post visibility is invalid.";
     case "media_source_path_invalid":
       return "Media upload path is invalid.";
     case "media_image_decode_failed":
@@ -435,8 +461,8 @@ async function processImageAsset(admin: AdminClient, asset: MediaAssetRow, buffe
   const thumbPath = buildMediaDerivativePath(asset, "thumbnail", "jpg");
   const bucketId = derivativeBucketForSurface(asset.surface);
 
-  await uploadDerivative(admin, bucketId, canonicalPath, canonical.buffer, "image/jpeg");
-  await uploadDerivative(admin, bucketId, thumbPath, thumbnail.buffer, "image/jpeg");
+  await uploadDerivative(admin, bucketId, canonicalPath, canonical.buffer, "image/jpeg", asset.surface);
+  await uploadDerivative(admin, bucketId, thumbPath, thumbnail.buffer, "image/jpeg", asset.surface);
 
   const canonicalUrl = publicUrlFor(admin, bucketId, canonicalPath);
   const thumbUrl = publicUrlFor(admin, bucketId, thumbPath);
@@ -547,8 +573,8 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
     const posterStoragePath = buildMediaDerivativePath(asset, "poster", "jpg");
     const bucketId = derivativeBucketForSurface(asset.surface);
 
-    await uploadDerivative(admin, bucketId, canonicalPath, output, "video/mp4");
-    await uploadDerivative(admin, bucketId, posterStoragePath, poster, "image/jpeg");
+    await uploadDerivative(admin, bucketId, canonicalPath, output, "video/mp4", asset.surface);
+    await uploadDerivative(admin, bucketId, posterStoragePath, poster, "image/jpeg", asset.surface);
 
     await upsertDerivative(admin, {
       asset_id: asset.id,
@@ -647,12 +673,25 @@ async function runCommand(command: string, args: string[]) {
 }
 
 function derivativeBucketForSurface(surface: MediaSurface) {
-  return surface === "memory" ? MEDIA_PRIVATE_BUCKET : MEDIA_PUBLIC_BUCKET;
+  return surface === "avatar" ? MEDIA_PUBLIC_BUCKET : MEDIA_PRIVATE_BUCKET;
 }
 
-async function uploadDerivative(admin: AdminClient, bucketId: string, storagePath: string, buffer: Buffer, contentType: string) {
+function derivativeCacheSeconds(surface: MediaSurface) {
+  // A browser or native image cache must not extend a post's useful delivery
+  // lifetime materially beyond the signed URL which authorized it.
+  return surface === "post" ? MEDIA_POST_SIGNED_URL_TTL_SECONDS : DERIVATIVE_CACHE_SECONDS;
+}
+
+async function uploadDerivative(
+  admin: AdminClient,
+  bucketId: string,
+  storagePath: string,
+  buffer: Buffer,
+  contentType: string,
+  surface: MediaSurface
+) {
   const { error } = await admin.storage.from(bucketId).upload(storagePath, buffer, {
-    cacheControl: String(DERIVATIVE_CACHE_SECONDS),
+    cacheControl: String(derivativeCacheSeconds(surface)),
     contentType,
     upsert: true
   });

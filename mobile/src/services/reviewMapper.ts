@@ -119,15 +119,28 @@ function normalizeItems(value: unknown): FoodItem[] {
     .filter((item): item is FoodItem => Boolean(item));
 }
 
-function normalizeMedia(row: ReviewRow): ReviewMedia[] {
+function normalizeMedia(row: ReviewRow, mediaByAssetId: Record<string, ReviewMedia> = {}): ReviewMedia[] {
   const normalized: ReviewMedia[] = (row.review_photos ?? [])
-    .filter((media) => Boolean(media.public_url))
-    .map((media, index) => ({
-      mediaAssetId: media.media_asset_id ?? null,
-      publicUrl: media.public_url as string,
-      mediaType: media.media_type === "video" ? ("video" as const) : ("image" as const),
-      position: media.position ?? index
-    }))
+    .flatMap((media, index) => {
+      const authorised = media.media_asset_id ? mediaByAssetId[media.media_asset_id] : null;
+      if (media.media_asset_id && !authorised) return [];
+      if (authorised) return [authorised];
+      if (!media.public_url) return [];
+      return [{
+        accessClass: "legacy_public" as const,
+        aspectRatio: null,
+        expiresAt: null,
+        height: null,
+        mediaAssetId: null,
+        mediaType: media.media_type === "video" ? ("video" as const) : ("image" as const),
+        placeholder: null,
+        posterUrl: null,
+        position: media.position ?? index,
+        publicUrl: media.public_url,
+        thumbnailUrl: null,
+        width: null
+      }];
+    })
     .sort((a, b) => a.position - b.position);
 
   if (normalized.length > 0) return normalized;
@@ -135,14 +148,22 @@ function normalizeMedia(row: ReviewRow): ReviewMedia[] {
   const legacyUrls = row.photo_urls?.filter(Boolean) ?? [];
   if (legacyUrls.length > 0) {
     return legacyUrls.map((url, index) => ({
-      publicUrl: url,
+      accessClass: "legacy_public" as const,
+      aspectRatio: null,
+      expiresAt: null,
+      height: null,
       mediaType: "image" as const,
-      position: index
+      placeholder: null,
+      posterUrl: null,
+      position: index,
+      publicUrl: url,
+      thumbnailUrl: null,
+      width: null
     }));
   }
 
   return row.photo_url
-    ? [{ publicUrl: row.photo_url, mediaType: "image" as const, position: 0 }]
+    ? [{ accessClass: "legacy_public", aspectRatio: null, expiresAt: null, height: null, mediaType: "image" as const, placeholder: null, posterUrl: null, position: 0, publicUrl: row.photo_url, thumbnailUrl: null, width: null }]
     : [];
 }
 
@@ -189,6 +210,7 @@ export function mapReviewPost(
     feedContextLabel?: string;
     feedSectionLabel?: string;
     isPublicDiscovery?: boolean;
+    mediaByAssetId?: Record<string, ReviewMedia>;
   } = {}
 ): ReviewPost {
   const authorName = options.displayName || row.reviewer_name;
@@ -209,7 +231,7 @@ export function mapReviewPost(
     items: normalizeItems(row.items),
     body: row.body,
     tags: row.tags ?? [],
-    media: normalizeMedia(row),
+    media: normalizeMedia(row, options.mediaByAssetId),
     visibility: normalizeVisibility(row.visibility),
     status: normalizeStatus(row.status),
     createdAt: row.created_at,

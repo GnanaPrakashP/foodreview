@@ -663,7 +663,8 @@ function topRestaurantsFromFeed(feed: Review[], location: UserLocation | null): 
   }>();
 
   for (const review of feed) {
-    const photo = reviewMediaItems(review).find((item) => item.media_type === "image")?.public_url ?? null;
+    const media = reviewMediaItems(review).find((item) => item.media_type === "image");
+    const photo = media?.thumbnail_url ?? media?.public_url ?? null;
     const existing = restaurants.get(review.restaurant_name) ?? {
       reviewers: new Set<string>(),
       ratingTotal: 0,
@@ -750,7 +751,8 @@ function bestDishesFromFeed(feed: Review[], location: UserLocation | null): Dish
 
   for (const review of feed) {
     const latest = new Date(review.created_at).getTime();
-    const photo = reviewMediaItems(review).find((item) => item.media_type === "image")?.public_url ?? null;
+    const media = reviewMediaItems(review).find((item) => item.media_type === "image");
+    const photo = media?.thumbnail_url ?? media?.public_url ?? null;
     for (const item of review.items ?? []) {
       const dishName = item.name.trim();
       if (!dishName) continue;

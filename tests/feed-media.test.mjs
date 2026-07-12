@@ -28,7 +28,7 @@ test("public explore feed selects legacy photo_urls for card covers", () => {
 
   assert.match(source, /"photo_url"/);
   assert.match(source, /"photo_urls"/);
-  assert.match(source, /"review_photos\(public_url, media_type, position\)"/);
+  assert.match(source, /"review_photos\(media_asset_id, public_url, media_type, position\)"/);
 });
 
 test("explore and hungry hide synthetic E2E fixture posts", () => {

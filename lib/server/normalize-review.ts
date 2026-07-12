@@ -1,7 +1,8 @@
 import type { Review, ReviewMedia, ReviewMediaType } from "@/lib/types";
 
 type RawReviewPhoto = {
-  public_url: string;
+  media_asset_id?: string | null;
+  public_url: string | null;
   media_type?: ReviewMediaType | null;
   position: number;
 };
@@ -17,8 +18,20 @@ export function normalizeReview(raw: RawReview): Review {
   const mediaItems: ReviewMedia[] = (raw.review_photos ?? [])
     .slice()
     .sort((a, b) => a.position - b.position)
+    .filter((p) => Boolean(p.media_asset_id || p.public_url))
     .map((p) => ({
-      public_url: p.public_url,
+      access_class: p.media_asset_id
+        ? raw.visibility === "public"
+          ? "public_post"
+          : raw.visibility === "circle"
+            ? "circle_post"
+            : "private_post"
+        : "legacy_public",
+      expires_at: null,
+      media_asset_id: p.media_asset_id ?? null,
+      public_url: p.media_asset_id ? `/api/media/object/${encodeURIComponent(p.media_asset_id)}/canonical` : p.public_url!,
+      thumbnail_url: p.media_asset_id ? `/api/media/object/${encodeURIComponent(p.media_asset_id)}/thumbnail` : null,
+      poster_url: p.media_asset_id ? `/api/media/object/${encodeURIComponent(p.media_asset_id)}/poster` : null,
       media_type: p.media_type === "video" ? "video" : "image",
       position: p.position,
     }));

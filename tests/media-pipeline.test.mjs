@@ -59,6 +59,9 @@ test("media pipeline migration creates generic assets, derivatives, jobs, bucket
   assert.match(migration, /add column if not exists media_asset_id/);
   assert.match(migration, /avatar_media_asset_id/);
   assert.match(migration, /media-sources', 'media-public', 'media-private/);
+  const visibilityMigration = source("mobile/supabase/migrations/202607130001_visibility_aware_post_media.sql");
+  assert.match(visibilityMigration, /access_class/);
+  assert.match(visibilityMigration, /private_media_derivative_requires_private_bucket/);
 });
 
 test("media pipeline routes expose intent, finalize, status, and worker processing", () => {
@@ -74,7 +77,9 @@ test("media pipeline routes expose intent, finalize, status, and worker processi
   assert.doesNotMatch(upload, /body\?\.sourceStoragePath|body\?\.storagePath|body\?\.ownerId/);
   assert.match(finalize, /validateDetectedMedia/);
   assert.match(finalize, /enqueueMediaProcessingJob/);
-  assert.match(status, /createSignedUrl/);
+  const access = source("app/api/media/access/route.ts");
+  assert.doesNotMatch(status, /createSignedUrl/);
+  assert.match(access, /resolvePostMediaAccess/);
   assert.match(worker, /runMediaProcessingBatch/);
   assert.match(script, /\/api\/internal\/media\/process/);
   assert.match(pkg, /"media:worker": "node scripts\/media-worker\.mjs"/);
@@ -89,6 +94,16 @@ test("media crop math centers a full-frame 4:5 post crop", () => {
   assert.equal(pixels.left, 800);
   assert.equal(pixels.top, 0);
   assert.equal(pixels.width, 2400);
+});
+
+test("post upload intents bind explicit visibility and default uncertainty to private", () => {
+  const { normalizeMediaIntentInput } = loadMediaPipelineModule();
+  const base = { fileName: "photo.jpg", fileSizeBytes: 100, mediaType: "image", mimeType: "image/jpeg", surface: "post" };
+  assert.equal(normalizeMediaIntentInput({ ...base, intendedVisibility: "public" }).accessClass, "public_post");
+  assert.equal(normalizeMediaIntentInput({ ...base, intendedVisibility: "circle" }).accessClass, "circle_post");
+  assert.equal(normalizeMediaIntentInput({ ...base, intendedVisibility: "me" }).accessClass, "private_post");
+  assert.equal(normalizeMediaIntentInput(base).accessClass, "private_post");
+  assert.throws(() => normalizeMediaIntentInput({ ...base, intendedVisibility: "everyone" }), /media_post_visibility_invalid/);
 });
 
 test("image processing creates exact 4:5 post canonical and thumbnail derivatives", async () => {
@@ -148,6 +163,7 @@ test("image processing creates exact 4:5 post canonical and thumbnail derivative
     source_storage_path: "sources/post/user-1/asset-1/original.jpg",
     status: "uploaded",
     surface: "post",
+    access_class: "public_post",
     visibility: "public"
   });
 
@@ -156,9 +172,12 @@ test("image processing creates exact 4:5 post canonical and thumbnail derivative
   assert.equal(canonical.width, 1080);
   assert.equal(canonical.height, 1350);
   assert.equal(canonical.mime_type, "image/jpeg");
-  assert.equal(canonical.bucket_id, "media-public");
+  assert.equal(canonical.bucket_id, "media-private");
+  assert.equal(canonical.public_url, null);
+  assert.match(canonical.storage_path, /^private-posts\//);
   assert.match(canonical.blurhash, /^.{6}$/);
   assert.equal(thumbnail.width, 360);
   assert.equal(thumbnail.height, 450);
   assert.equal(uploads.length, 2);
+  assert.deepEqual(uploads.map((upload) => upload.options.cacheControl), ["300", "300"]);
 });
