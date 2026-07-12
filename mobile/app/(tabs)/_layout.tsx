@@ -1,16 +1,16 @@
 import { Tabs } from "expo-router";
-import { Plus, Search, User, Users, type LucideIcon } from "lucide-react-native";
+import { House, Plus, Search, User, type LucideIcon } from "lucide-react-native";
 import { useMemo } from "react";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
 import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { fontStyles, typography } from "@/theme";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
-  index: { title: "Circle", icon: Users },
+  index: { title: "Circle", icon: House },
   explore: { title: "Explore", icon: Search },
   share: { title: "Create", icon: Plus },
   profile: { title: "Profile", icon: User }
@@ -42,34 +42,22 @@ export default function TabLayout() {
           animation: "none",
           tabBarActiveTintColor: themeColors.orange,
           tabBarInactiveTintColor: themeColors.muted,
-          tabBarStyle: {
-            backgroundColor: themeColors.surface,
-            borderTopColor: themeColors.border,
-            borderTopWidth: 1,
-            // Hidden for the whole Post-a-Bite composer flow (until posted).
-            display: composing ? "none" : "flex",
-            height: 58 + Math.max(insets.bottom, 8),
-            paddingBottom: Math.max(insets.bottom, 8),
-            paddingTop: 6
-          },
+          // Hidden for the whole Post-a-Bite composer flow (until posted).
+          tabBarStyle: mainTabBarStyle(themeColors, insets.bottom, composing),
           tabBarItemStyle: {
             justifyContent: "center",
             paddingTop: 0
           },
           tabBarAccessibilityLabel: tab.title,
-          tabBarLabel: ({ focused, color }) => (
-            <Text style={[styles.label, focused && styles.activeLabel, { color }]}>
-              {tab.title}
-            </Text>
-          ),
+          tabBarShowLabel: false,
           tabBarIcon: ({ color, focused }) => {
             const Icon = tab.icon;
             return (
               <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
                 <Icon
                   color={color}
-                  size={21}
-                  strokeWidth={focused ? 2.4 : 1.8}
+                  size={24}
+                  strokeWidth={focused ? 2.4 : 2}
                 />
                 {route.name === "profile" && hasUnreadMemories ? (
                   <View
@@ -100,22 +88,12 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  label: {
-    ...fontStyles.bold,
-    fontSize: typography.tab,
-    letterSpacing: 0.2,
-    lineHeight: 12,
-    marginTop: 0
-  },
-  activeLabel: {
-    ...fontStyles.extraBold
-  },
   iconWrap: {
     alignItems: "center",
-    height: 24,
+    height: 36,
     justifyContent: "center",
     position: "relative",
-    width: 42
+    width: 44
   },
   iconWrapActive: {
     transform: [{ translateY: 0 }]
@@ -125,8 +103,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     height: 10,
     position: "absolute",
-    right: 8,
-    top: 0,
+    right: 7,
+    top: 4,
     width: 10
   }
 });

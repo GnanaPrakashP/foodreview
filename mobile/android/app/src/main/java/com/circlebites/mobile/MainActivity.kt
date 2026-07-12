@@ -19,6 +19,42 @@ class MainActivity : ReactActivity() {
     super.onCreate(null)
   }
 
+  override fun onResume() {
+    super.onResume()
+    applyHighRefreshRate()
+  }
+
+  /**
+   * Opt the app surface into a higher refresh rate. Android pins it to 60Hz
+   * unless the window requests a mode via preferredDisplayModeId, which halves
+   * the frames available to animations (e.g. the memory-room tab transitions).
+   *
+   * Capped at ~90Hz on purpose, NOT 120/144. On-device gfxinfo of the tab
+   * transitions (Motorola Edge 70 Fusion, 2026-07-12) showed 90Hz is the sweet
+   * spot: janky-frame rate 60Hz 7.3% -> 90Hz 6.0% -> 120Hz 12.1% (90th-pct
+   * frame 27ms -> 15ms -> 36ms). The app's heavier frames blow the 120Hz 8.3ms
+   * budget but fit the 90Hz 11ms one, so 120Hz measurably INCREASED jank. Raise
+   * this cap only if a device/content profile shows a higher rate helps.
+   * Re-applied on every resume so it survives backgrounding.
+   */
+  private fun applyHighRefreshRate() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    val activeDisplay =
+      (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) this.display else windowManager.defaultDisplay)
+        ?: return
+    val current = activeDisplay.mode ?: return
+    val best = activeDisplay.supportedModes
+      .filter {
+        it.physicalWidth == current.physicalWidth &&
+          it.physicalHeight == current.physicalHeight &&
+          it.refreshRate <= 90.5f
+      }
+      .maxByOrNull { it.refreshRate }
+      ?: return
+    if (best.modeId == current.modeId) return
+    window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
+  }
+
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.

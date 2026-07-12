@@ -24,15 +24,6 @@ params as (
     case when p_lat between -90 and 90 and p_lng between -180 and 180 then p_lat end as lat,
     case when p_lat between -90 and 90 and p_lng between -180 and 180 then p_lng end as lng
 ),
-bounds as (
-  select
-    lat - (30.0 / 111.0) as min_lat,
-    lat + (30.0 / 111.0) as max_lat,
-    lng - (30.0 / (111.0 * greatest(0.2, cos(radians(lat))))) as min_lng,
-    lng + (30.0 / (111.0 * greatest(0.2, cos(radians(lat))))) as max_lng
-  from params
-  where lat is not null and lng is not null
-),
 eligible_reviews as (
   select
     r.id,
@@ -56,11 +47,34 @@ eligible_reviews as (
         select rp.public_url
         from public.review_photos rp
         where rp.review_id = r.id
+          and nullif(to_jsonb(rp) ->> 'media_asset_id', '') is not null
+          and coalesce(rp.media_type, 'image') = 'image'
+          and rp.public_url ilike '%/storage/v1/object/public/media-public/%'
         order by rp.position asc, rp.created_at asc
         limit 1
       ),
-      r.photo_urls[1],
-      r.photo_url
+      (
+        select rp.public_url
+        from public.review_photos rp
+        where rp.review_id = r.id
+          and coalesce(rp.media_type, 'image') = 'image'
+          and nullif(rp.public_url, '') is not null
+          and rp.public_url not ilike '%/storage/v1/object/public/media-public/%'
+        order by rp.position asc, rp.created_at asc
+        limit 1
+      ),
+      (
+        select legacy_photo.url
+        from unnest(coalesce(r.photo_urls, '{}'::text[])) as legacy_photo(url)
+        where nullif(legacy_photo.url, '') is not null
+          and legacy_photo.url not ilike '%/storage/v1/object/public/media-public/%'
+        limit 1
+      ),
+      case
+        when nullif(r.photo_url, '') is not null
+          and r.photo_url not ilike '%/storage/v1/object/public/media-public/%'
+        then r.photo_url
+      end
     ) as photo
   from public.reviews r
   left join public.profiles p
@@ -73,26 +87,35 @@ eligible_reviews as (
     and r.reviewer_name !~* '^e2e_'
     and r.restaurant_name !~* '^e2e\\b'
 ),
-nearby_reviews as (
-  select er.*
+ranked_reviews as (
+  select
+    er.*,
+    case
+      when p.lat is not null
+        and p.lng is not null
+        and er.restaurant_lat between -90 and 90
+        and er.restaurant_lng between -180 and 180
+      then
+        power(er.restaurant_lat - p.lat, 2)
+        + power((er.restaurant_lng - p.lng) * greatest(0.2, cos(radians(p.lat))), 2)
+      else null
+    end as location_rank_score
   from eligible_reviews er
-  join bounds b on true
-  where er.restaurant_lat between b.min_lat and b.max_lat
-    and er.restaurant_lng between b.min_lng and b.max_lng
-  order by er.created_at desc, er.id desc
-  limit (select row_limit from params)
-),
-fallback_reviews as (
-  select er.*
-  from eligible_reviews er
-  where not exists (select 1 from nearby_reviews)
-  order by er.created_at desc, er.id desc
-  limit (select row_limit from params)
+  cross join params p
 ),
 selected_reviews as (
-  select * from nearby_reviews
-  union all
-  select * from fallback_reviews
+  select *
+  from ranked_reviews
+  order by
+    case
+      when (select lat from params) is null then 0
+      when location_rank_score is null then 1
+      else 0
+    end asc,
+    location_rank_score asc nulls last,
+    created_at desc,
+    id desc
+  limit (select row_limit from params)
 ),
 review_items as (
   select
@@ -103,6 +126,7 @@ review_items as (
     sr.tags,
     sr.photo,
     sr.created_at,
+    sr.location_rank_score,
     nullif(trim(item.value ->> 'name'), '') as item_name,
     case
       when (item.value ->> 'rating') ~ '^-?[0-9]+(\\.[0-9]+)?$'
@@ -137,6 +161,7 @@ place_rows as (
     (array_agg(sr.restaurant_id order by sr.created_at desc) filter (where sr.restaurant_id is not null))[1] as place_id,
     (array_agg(coalesce(sr.area, sr.restaurant_address) order by sr.created_at desc) filter (where coalesce(sr.area, sr.restaurant_address) is not null))[1] as area,
     (array_agg(sr.photo order by sr.created_at desc) filter (where sr.photo is not null))[1] as photo,
+    min(sr.location_rank_score) as location_rank_score,
     count(distinct sr.id)::integer as post_count,
     jsonb_agg(distinct coalesce(nullif(sr.reviewer_display_name, ''), sr.reviewer_name))
       filter (
@@ -211,7 +236,12 @@ places_json as (
       'topDishes', coalesce(ptd.top_dishes, '[]'::jsonb),
       'postCount', pr.post_count
     )
-    order by pr.post_count desc, coalesce(plr.average_rating, 0) desc, pr.name asc
+    order by
+      case when pr.location_rank_score is null then 1 else 0 end asc,
+      pr.location_rank_score asc nulls last,
+      pr.post_count desc,
+      coalesce(plr.average_rating, 0) desc,
+      pr.name asc
   ), '[]'::jsonb) as payload
   from place_rows pr
   left join place_ratings plr on plr.key = pr.key
@@ -225,6 +255,7 @@ dish_rows as (
     (array_agg(ri.family_id order by ri.created_at desc))[1] as family_id,
     (array_agg(ri.photo order by ri.created_at desc) filter (where ri.photo is not null))[1] as photo,
     (array_agg(ri.body order by ri.created_at desc) filter (where ri.body is not null and ri.body <> ''))[1] as snippet,
+    min(ri.location_rank_score) as location_rank_score,
     count(*)::integer as mention_count,
     round(avg(ri.rating) filter (where ri.rating > 0), 2) as average_rating,
     (count(ri.rating) filter (where ri.rating > 0))::integer as rating_count
@@ -282,7 +313,12 @@ dishes_json as (
       'tags', coalesce(dt.tags, '[]'::jsonb),
       'snippet', dr.snippet
     )
-    order by dr.mention_count desc, coalesce(dr.average_rating, 0) desc, dr.name asc
+    order by
+      case when dr.location_rank_score is null then 1 else 0 end asc,
+      dr.location_rank_score asc nulls last,
+      dr.mention_count desc,
+      coalesce(dr.average_rating, 0) desc,
+      dr.name asc
   ), '[]'::jsonb) as payload
   from dish_rows dr
   left join dish_restaurants dres on dres.key = dr.key

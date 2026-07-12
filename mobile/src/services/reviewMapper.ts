@@ -9,12 +9,14 @@ export const REVIEW_SELECT = [
   "restaurant_address",
   "restaurant_lat",
   "restaurant_lng",
+  "restaurant_primary_type",
+  "restaurant_types",
   "items",
   "body",
   "tags",
   "photo_url",
   "photo_urls",
-  "review_photos(public_url, media_type, position)",
+  "review_photos(media_asset_id, public_url, media_type, position)",
   "visibility",
   "deleted_at",
   "hidden_at",
@@ -32,12 +34,15 @@ export type ReviewRow = {
   restaurant_address: string | null;
   restaurant_lat: number | null;
   restaurant_lng: number | null;
+  restaurant_primary_type: string | null;
+  restaurant_types: string[] | null;
   items: unknown;
   body: string | null;
   tags: string[] | null;
   photo_url: string | null;
   photo_urls: string[] | null;
   review_photos?: Array<{
+    media_asset_id?: string | null;
     public_url: string | null;
     media_type: "image" | "video" | null;
     position: number | null;
@@ -118,6 +123,7 @@ function normalizeMedia(row: ReviewRow): ReviewMedia[] {
   const normalized: ReviewMedia[] = (row.review_photos ?? [])
     .filter((media) => Boolean(media.public_url))
     .map((media, index) => ({
+      mediaAssetId: media.media_asset_id ?? null,
       publicUrl: media.public_url as string,
       mediaType: media.media_type === "video" ? ("video" as const) : ("image" as const),
       position: media.position ?? index
@@ -198,6 +204,8 @@ export function mapReviewPost(
     restaurantAddress: row.restaurant_address,
     restaurantLat: row.restaurant_lat,
     restaurantLng: row.restaurant_lng,
+    restaurantPrimaryType: row.restaurant_primary_type,
+    restaurantTypes: row.restaurant_types ?? [],
     items: normalizeItems(row.items),
     body: row.body,
     tags: row.tags ?? [],

@@ -61,6 +61,8 @@ type PlaceCategoryInput = {
   name: string;
   area?: string | null;
   topDishes?: string[];
+  primaryType?: string | null;
+  types?: string[] | null;
 };
 
 type DishCategoryInput = {
@@ -161,8 +163,72 @@ export function normalizePlaceType(value: string): PlaceCategoryId | null {
   return null;
 }
 
+// Google Places (New) primaryType / types → Explore place buckets. Mapping by
+// Google's own venue type is far more reliable than guessing from the name.
+// Cuisine restaurants (e.g. "indian_restaurant") fall through to "restaurant".
+const GOOGLE_TYPE_TO_PLACE_CATEGORY: Record<string, PlaceCategoryId> = {
+  cafe: "cafe",
+  coffee_shop: "cafe",
+  tea_house: "cafe",
+  cat_cafe: "cafe",
+  dog_cafe: "cafe",
+  juice_shop: "cafe",
+  bakery: "desserts",
+  dessert_shop: "desserts",
+  dessert_restaurant: "desserts",
+  ice_cream_shop: "desserts",
+  chocolate_shop: "desserts",
+  chocolate_factory: "desserts",
+  candy_store: "desserts",
+  confectionery: "desserts",
+  donut_shop: "desserts",
+  bagel_shop: "desserts",
+  acai_shop: "desserts",
+  bar: "nightlife",
+  pub: "nightlife",
+  wine_bar: "nightlife",
+  night_club: "nightlife",
+  bar_and_grill: "nightlife",
+  fine_dining_restaurant: "fine_dining",
+  fast_food_restaurant: "quick_bites",
+  meal_takeaway: "quick_bites",
+  meal_delivery: "quick_bites",
+  sandwich_shop: "quick_bites",
+  hamburger_restaurant: "quick_bites",
+  pizza_restaurant: "quick_bites",
+  food_court: "quick_bites",
+};
+
+// Maps a place's Google primaryType + types to Explore buckets, most-authoritative
+// first (primaryType leads). "*_restaurant" cuisine types resolve to "restaurant".
+export function placeCategoryFromGoogleTypes(
+  primaryType?: string | null,
+  types?: string[] | null
+): PlaceCategoryId[] {
+  const found: PlaceCategoryId[] = [];
+  const seen = new Set<PlaceCategoryId>();
+
+  for (const raw of [primaryType, ...(types ?? [])]) {
+    const key = (raw ?? "").toLowerCase().trim();
+    if (!key) continue;
+    let bucket = GOOGLE_TYPE_TO_PLACE_CATEGORY[key];
+    if (!bucket && (key === "restaurant" || key.endsWith("_restaurant"))) bucket = "restaurant";
+    if (bucket && !seen.has(bucket)) {
+      seen.add(bucket);
+      found.push(bucket);
+    }
+  }
+  return found;
+}
+
 export function inferPlaceCategories(place: PlaceCategoryInput): PlaceCategoryId[] {
   const found = new Set<PlaceCategoryId>();
+
+  // Google's own venue types are the most reliable signal — take them first.
+  for (const category of placeCategoryFromGoogleTypes(place.primaryType, place.types)) {
+    found.add(category);
+  }
+
   const candidates = [place.name, place.area ?? "", ...(place.topDishes ?? [])];
 
   for (const candidate of candidates) {

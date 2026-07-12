@@ -1,6 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEvent } from "expo";
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState, type RecordingOptions } from "expo-audio";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+  type RecordingOptions
+} from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import { PenLine, Star, Utensils } from "lucide-react-native";
@@ -17,6 +25,8 @@ import {
   BackHandler,
   Easing,
   FlatList,
+  ImageBackground,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -67,13 +77,12 @@ import {
 import type { OccasionType } from "@/features/occasions/occasionTypes";
 import {
   FOOD_WALLPAPER_TILE_SIZE,
-  buildFoodWallpaperPlacements,
-  type DoodlePrimitive
 } from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import Svg, { Circle, Defs, Ellipse, G, Line, Path, Pattern, Rect } from "react-native-svg";
+import Svg, { Circle, Defs, G, Path, Pattern, Rect } from "react-native-svg";
 import {
   MEMORY_ROOM_TABS as ROOM_TABS,
+  MEMORY_ROOM_TAB_TIMING,
   useMemoryRoomController,
   type MemoryRoomMode as RoomMode,
   type MemoryRoomTabMode as RoomTabMode
@@ -191,6 +200,7 @@ type MemoryChatMainMessage = ChatMainMessage & {
   extraAttachments?: MemoryPhoto[];
   showSenderDetails?: boolean;
 };
+const FOOD_WALLPAPER_TILE_SOURCE = require("../../assets/memories/food-wallpaper-tile.png");
 const ROOM_MAX_WIDTH = 640;
 // Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
 // "Add dish" affordance — a movie or bowling stop just holds a note/photos.
@@ -348,18 +358,16 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
-const ROOM_PANE_ENTER_DELAY = 28;
-const ROOM_PANE_ENTER_DURATION = 160;
-const ROOM_PANE_EXIT_DURATION = 90;
 const ROOM_PANE_TRANSLATE_Y = 5;
+const CHAT_MAIN_INITIAL_RENDER_COUNT = 10;
+const CHAT_MAIN_MAX_RENDER_BATCH = 8;
+const CHAT_MAIN_WINDOW_SIZE = 7;
 const CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS = 18;
 const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
 const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
 const CHAT_TIMELINE_WINDOW_SIZE = 9;
 const CHAT_TIMELINE_LOAD_OLDER_DEBOUNCE_MS = 650;
 const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
-// TEMPORARY diagnostic (round 2: short-newline-lines case). Remove after.
-const CHAT_TIME_DEBUG = __DEV__;
 // How far the pinned time hangs below the text's layout box so the visible
 // line under the last text line cuts the time in half: half the time's 13px
 // line height (~6.5) minus the ~3px of line-height slack the 22px text line
@@ -374,12 +382,25 @@ const CHAT_TIME_SPACER_HEIGHT = 13 - CHAT_TIME_PINNED_DROP;
 const MEMORY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😋", "👏"] as const;
 const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
+const MEDIA_GALLERY_PREFETCH_COUNT = 12;
 const MEDIA_GALLERY_WINDOW_SIZE = 7;
 const MEDIA_VIEWER_MAX_RENDER_BATCH = 2;
 const MEDIA_VIEWER_WINDOW_SIZE = 3;
 type MediaPreviewSize = { height: number; width: number };
 type MediaTimestampPlacement = "bottom-left" | "bottom-right";
 type MessageGroupPosition = "single" | "first" | "middle" | "last";
+
+// Returns a referentially-stable callback that always invokes the LATEST
+// `handler` closure. Lets us pass the room screen's per-render handlers into
+// memo()'d panes without their identity thrashing memo on every parent render,
+// and without the stale-closure risk of hand-maintained useCallback dependency
+// arrays. Safe because the ref is only read when the callback fires (a user
+// event), never during render.
+function useStableHandler<TArgs extends unknown[], TReturn>(handler: (...args: TArgs) => TReturn) {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+  return useCallback((...args: TArgs) => handlerRef.current(...args), []);
+}
 
 function effectiveRoomOccasionType(room: Pick<MemoryRoom, "occasionConfidence" | "occasionConfirmedByUser" | "occasionType">): OccasionType {
   if (room.occasionConfirmedByUser || room.occasionConfidence >= 0.85) return room.occasionType;
@@ -1479,10 +1500,15 @@ function MemoryChatMainSurface({
           listProps={{
             contentContainerStyle: chatMainListContentStyle,
             extraData: selectedItemKeys.join("|"),
+            initialNumToRender: CHAT_MAIN_INITIAL_RENDER_COUNT,
+            maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH,
             onContentSizeChange: handleChatMainContentSizeChange,
             onScroll: handleChatMainScroll,
             onScrollBeginDrag: handleChatMainScrollBeginDrag,
-            onScrollEndDrag: handleChatMainScrollEndDrag
+            onScrollEndDrag: handleChatMainScrollEndDrag,
+            removeClippedSubviews: false,
+            updateCellsBatchingPeriod: 50,
+            windowSize: CHAT_MAIN_WINDOW_SIZE
           }}
           loadEarlierMessagesProps={{
             isAvailable: canLoadOlderMessages,
@@ -1612,14 +1638,17 @@ function ChatMainBodyWithTime({
   time: string;
   timeStyle: StyleProp<TextStyle>;
 }) {
-  // The time's measured width is a monotonic latch keyed by the label: it
-  // only ever grows, and resets only when the label itself changes (e.g.
-  // "edited …"). Layout can deliver transient under-reports (down to 0) from
-  // intermediate passes; accepting one would shrink the spacer, re-layout
-  // the bubble, and oscillate. With the latch, no re-report can ever feed
-  // back into the layout.
-  const [measuredTime, setMeasuredTime] = useState<{ label: string; width: number }>({ label: time, width: 0 });
-  const timeWidth = measuredTime.label === time ? measuredTime.width : 0;
+  // Reserve a conservative width immediately so the timestamp is visible in
+  // the same first frame as the message body. Native measurement then replaces
+  // that estimate once and becomes a monotonic latch, protecting later Android
+  // relayouts from transient zero/under-reported widths.
+  const estimatedTimeWidth = estimateChatTimestampWidth(time);
+  const [measuredTime, setMeasuredTime] = useState<{
+    label: string;
+    native: boolean;
+    width: number;
+  }>({ label: time, native: false, width: estimatedTimeWidth });
+  const timeWidth = measuredTime.label === time ? measuredTime.width : estimatedTimeWidth;
   const spacerWidth = timeWidth + CHAT_TIME_GAP;
 
   // Android quirks measured on-device (see git history for the logs):
@@ -1722,13 +1751,6 @@ function ChatMainBodyWithTime({
       pendingHugRef.current = null;
     }
 
-    if (CHAT_TIME_DEBUG) {
-      const linesDump = lines.map((line) => `${line.width}x${line.height}@${line.y}`).join(",");
-      console.log(
-        `[time-debug] len=${text.length} tW=${snapshot.timeW} box=${box.width}x${box.height} lines=${linesDump} own=${ownLine} margin=${margin} cand=${hugCandidate} conf=${confirmedHug}`
-      );
-    }
-
     setLayoutDecision((previous) => {
       const sameEpoch = previous && previous.timeW === snapshot.timeW;
       const hugWidth = sameEpoch && previous.hugWidth > 0 ? previous.hugWidth : confirmedHug;
@@ -1799,15 +1821,17 @@ function ChatMainBodyWithTime({
       </Text>
       <View
         pointerEvents="none"
-        style={[styles.chatMainTimePinned, timeWidth === 0 && styles.chatMainTimeMeasuring]}
+        style={styles.chatMainTimePinned}
       >
         <Text
           numberOfLines={1}
           onLayout={(event) => {
             const next = Math.ceil(event.nativeEvent.layout.width);
             setMeasuredTime((previous) => {
-              if (previous.label !== time) return { label: time, width: next };
-              return next > previous.width ? { label: time, width: next } : previous;
+              if (previous.label !== time || !previous.native) {
+                return { label: time, native: true, width: next };
+              }
+              return next > previous.width ? { label: time, native: true, width: next } : previous;
             });
           }}
           style={[styles.inlineTimestampText, timeStyle]}
@@ -1817,6 +1841,16 @@ function ChatMainBodyWithTime({
       </View>
     </View>
   );
+}
+
+function estimateChatTimestampWidth(label: string) {
+  const estimated = Array.from(label).reduce((width, character) => {
+    if (character === ":") return width + 3.5;
+    if (character === " ") return width + 3;
+    if (/\d/.test(character)) return width + 6.25;
+    return width + 6;
+  }, 2);
+  return Math.max(42, Math.ceil(estimated));
 }
 
 function formatAudioPlaybackTime(seconds: number | null | undefined) {
@@ -1847,19 +1881,13 @@ function ChatMainAudioMessage({
   const audio = memoryChatAudioAttachment(currentMessage);
   const hasCaption = Boolean(currentMessage.text?.trim());
   const timestamp = hasCaption ? "" : memoryChatTimestampLabel(currentMessage);
-  const player = useVideoPlayer(uri, (instance) => {
-    instance.audioMixingMode = "duckOthers";
-    instance.loop = false;
-    instance.timeUpdateEventInterval = 0.25;
-  });
-  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
-  const statusEvent = useEvent(player, "statusChange", { status: player.status });
-  const timeEvent = useEvent(player, "timeUpdate");
-  const status = statusEvent?.status ?? player.status;
-  const currentTime = timeEvent?.currentTime ?? player.currentTime;
-  const duration = audioDurationSeconds(audio, player.duration);
+  const player = useAudioPlayer(uri, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
+  const isPlaying = status.playing;
+  const currentTime = status.currentTime;
+  const duration = audioDurationSeconds(audio, status.duration);
   const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
-  const isError = status === "error";
+  const isError = status.playbackState === "error";
 
   useEffect(() => () => {
     pauseMediaPlayerQuietly(player);
@@ -1873,7 +1901,8 @@ function ChatMainAudioMessage({
         return;
       }
       if (duration > 0 && player.currentTime >= duration - 0.25) {
-        player.currentTime = 0;
+        void player.seekTo(0).then(() => player.play());
+        return;
       }
       player.play();
     } catch (error) {
@@ -1885,14 +1914,6 @@ function ChatMainAudioMessage({
 
   return (
     <View style={styles.chatMainAudioContent}>
-      <VideoView
-        allowsFullscreen={false}
-        allowsPictureInPicture={false}
-        nativeControls={false}
-        player={player}
-        pointerEvents="none"
-        style={styles.chatMainAudioHiddenPlayer}
-      />
       <Pressable
         accessibilityLabel={isPlaying ? "Pause audio message" : "Play audio message"}
         accessibilityRole="button"
@@ -2529,6 +2550,18 @@ function useSmoothedKeyboardOffset(): SharedValue<number> {
   return useKeyboardMotion().offset;
 }
 
+// Memoized pane wrappers over the hoisted pane components below. Their handler
+// props are stabilized (useStableHandler / already-stable setters) so these skip
+// re-rendering when the room screen re-renders for unrelated reasons — chat
+// keystrokes, realtime ticks, tab switches. Itinerary / Media / Dishes receive
+// no `active` prop, so once mounted they re-render only when their own data
+// changes; the chat surface still re-renders on its own prop changes (draft,
+// selection, new messages) but no longer on churn from the other panes.
+const ItineraryPanelPane = memo(ItineraryPanel);
+const MemoryChatMainSurfacePane = memo(MemoryChatMainSurface);
+const MediaGalleryPane = memo(MediaGallery);
+const DishesPanelPane = memo(DishesPanel);
+
 export default function MemoryDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string; tab?: string }>();
@@ -2583,6 +2616,7 @@ export default function MemoryDetailScreen() {
     paneTabMode,
     requestRoomMode
   } = useMemoryRoomController(params.tab);
+  const [panesPreloaded, setPanesPreloaded] = useState(false);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -2672,11 +2706,6 @@ export default function MemoryDetailScreen() {
       });
       return changed ? { ...current, items } : current;
     });
-  }, [room.data]);
-
-  useEffect(() => {
-    if (!room.data) return;
-    [...room.data.photos, ...photosFromMessages(room.data.messages)].forEach(prefetchMemoryMedia);
   }, [room.data]);
 
   useEffect(() => {
@@ -3606,13 +3635,31 @@ export default function MemoryDetailScreen() {
   const mergedRoomData = useMemo(() => (
     room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
   ), [olderMessageItems, room.data]);
-  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
+  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media" || panesPreloaded);
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
   ), [mediaPages.data]);
   const galleryPhotos = useMemo(() => (
     mergedRoomData ? mergeMemoryPhotos(pagedMediaPhotos, mergedRoomData.photos) : []
   ), [mergedRoomData, pagedMediaPhotos]);
+  // Warm every lazy pane (chat, media, dishes) once the opening interaction
+  // settles. After this fires, switching tabs is a pure visibility toggle on an
+  // already-mounted, already-committed subtree — no cold mount, no staged fill.
+  // runAfterInteractions keeps the mount cost off the entry animation frames.
+  useEffect(() => {
+    if (!room.data || panesPreloaded) return;
+    const preloadTask = InteractionManager.runAfterInteractions(() => {
+      setPanesPreloaded(true);
+    });
+    return () => preloadTask.cancel();
+  }, [panesPreloaded, room.data]);
+  useEffect(() => {
+    if (mode !== "media") return;
+    const prefetchTask = InteractionManager.runAfterInteractions(() => {
+      galleryPhotos.slice(0, MEDIA_GALLERY_PREFETCH_COUNT).forEach(prefetchMemoryMedia);
+    });
+    return () => prefetchTask.cancel();
+  }, [galleryPhotos, mode]);
   const hasLoadedOlderMessagePages = Boolean(olderMessages.data?.pages.length);
   const initialMessageSliceMayHaveOlder = (room.data?.messages.length ?? 0) >= MEMORY_CHAT_PRELOAD_LIMIT;
   const canLoadOlderMessages = initialMessageSliceMayHaveOlder && Boolean(olderMessagesCursor) && (
@@ -3626,6 +3673,34 @@ export default function MemoryDetailScreen() {
     if (!mediaPages.hasNextPage || mediaPages.isFetchingNextPage) return;
     void mediaPages.fetchNextPage();
   }, [mediaPages]);
+
+  // Stable identities for every handler passed into the memo()'d panes below.
+  // Without these, each parent render (every keystroke, every realtime tick)
+  // hands the panes fresh function props and defeats memo. The panes that carry
+  // no `active` prop (Itinerary / Media / Dishes) then re-render only when their
+  // own data changes — not on chat typing or tab switches. setDetailDishId,
+  // loadOlderMessages, loadMoreMedia and scrollChatToBottom are already stable.
+  const stableOpenMedia = useStableHandler(openMediaViewer);
+  const stableRateDish = useStableHandler((dishId: string, rating: number) => rateDish.mutate({ dishId, rating }));
+  const stableAddDishToStop = useStableHandler(addDishToStop);
+  const stableRemoveStop = useStableHandler(removeStop);
+  const stableBeginSelection = useStableHandler(beginSelection);
+  const stableToggleSelection = useStableHandler(toggleSelectedItem);
+  const stableCancelSelection = useStableHandler(cancelSelection);
+  const stableDeleteSelected = useStableHandler(removeSelectedItems);
+  const stableDeleteTarget = useStableHandler(deleteChatTarget);
+  const stableEditMessage = useStableHandler(beginEditMessage);
+  const stableCancelEdit = useStableHandler(cancelEditMessage);
+  const stableReplyMessage = useStableHandler(beginReplyMessage);
+  const stableCancelReply = useStableHandler(cancelReplyMessage);
+  const stableChangeMessage = useStableHandler(updateMessageDraft);
+  const stableSend = useStableHandler(submitMessage);
+  const stableSendAudio = useStableHandler(sendAudioMessage);
+  const stableToggleReaction = useStableHandler(toggleMessageReaction);
+  const stableInputFocus = useStableHandler(handleComposerFocus);
+  const stableInputToolbarLayout = useStableHandler(handleComposerLayout);
+  const stableNearBottomChange = useStableHandler(handleChatNearBottomChange);
+
   if (room.isLoading) {
     return (
       <Screen>
@@ -3706,20 +3781,20 @@ export default function MemoryDetailScreen() {
             <View style={styles.body}>
               <View style={styles.roomPager}>
                 <RoomPane active={paneTabMode === "overview"} motion="fade">
-                  <ItineraryPanel
+                  <ItineraryPanelPane
                     dishes={data.dishes}
                     error={createStop.error?.message ?? deleteStop.error?.message}
-                    onAddDishToStop={addDishToStop}
+                    onAddDishToStop={stableAddDishToStop}
                     onOpenDish={setDetailDishId}
-                    onRemoveStop={removeStop}
+                    onRemoveStop={stableRemoveStop}
                     removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
                     topInset={tableHeaderHeight}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "chat"}>
-                  <MemoryChatMainSurface
+                <RoomPane active={paneTabMode === "chat"} preload={panesPreloaded}>
+                  <MemoryChatMainSurfacePane
                     active={mode === "chat"}
                     bottomClearance={chatBottomClearance}
                     canDeleteSelected={canDeleteSelected}
@@ -3736,26 +3811,26 @@ export default function MemoryDetailScreen() {
                     message={message}
                     myUsername={myUsername}
                     selectedItemKeys={selectedItemKeys}
-                    onBeginSelection={beginSelection}
-                    onCancelEdit={cancelEditMessage}
-                    onCancelReply={cancelReplyMessage}
-                    onCancelSelection={cancelSelection}
-                    onChangeMessage={updateMessageDraft}
-                    onDeleteSelected={removeSelectedItems}
-                    onDeleteTarget={deleteChatTarget}
-                    onEditMessage={beginEditMessage}
-                    onInputFocus={handleComposerFocus}
-                    onInputToolbarLayout={handleComposerLayout}
+                    onBeginSelection={stableBeginSelection}
+                    onCancelEdit={stableCancelEdit}
+                    onCancelReply={stableCancelReply}
+                    onCancelSelection={stableCancelSelection}
+                    onChangeMessage={stableChangeMessage}
+                    onDeleteSelected={stableDeleteSelected}
+                    onDeleteTarget={stableDeleteTarget}
+                    onEditMessage={stableEditMessage}
+                    onInputFocus={stableInputFocus}
+                    onInputToolbarLayout={stableInputToolbarLayout}
                     onLoadOlderMessages={loadOlderMessages}
-                    onNearBottomChange={handleChatNearBottomChange}
+                    onNearBottomChange={stableNearBottomChange}
                     onOpenDish={setDetailDishId}
-                    onOpenMedia={openMediaViewer}
-                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
-                    onReplyMessage={beginReplyMessage}
-                    onSend={submitMessage}
-                    onSendAudio={sendAudioMessage}
-                    onToggleSelection={toggleSelectedItem}
-                    onToggleReaction={toggleMessageReaction}
+                    onOpenMedia={stableOpenMedia}
+                    onRateDish={stableRateDish}
+                    onReplyMessage={stableReplyMessage}
+                    onSend={stableSend}
+                    onSendAudio={stableSendAudio}
+                    onToggleSelection={stableToggleSelection}
+                    onToggleReaction={stableToggleReaction}
                     pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
@@ -3765,24 +3840,24 @@ export default function MemoryDetailScreen() {
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "media"}>
-                  <MediaGallery
+                <RoomPane active={paneTabMode === "media"} preload={panesPreloaded}>
+                  <MediaGalleryPane
                     error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
                     hasMore={Boolean(mediaPages.hasNextPage)}
                     loading={mediaPages.isLoading && galleryPhotos.length === 0}
                     loadingMore={mediaPages.isFetchingNextPage}
                     onLoadMore={loadMoreMedia}
-                    onOpenMedia={openMediaViewer}
+                    onOpenMedia={stableOpenMedia}
                     photos={galleryPhotos}
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "dishes"}>
-                  <DishesPanel
+                <RoomPane active={paneTabMode === "dishes"} preload={panesPreloaded}>
+                  <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
                     onOpenDish={setDetailDishId}
-                    onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+                    onRateDish={stableRateDish}
                     pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     themeCopy={roomOccasionTheme.copy}
                   />
@@ -4214,49 +4289,51 @@ function ModeButton({
 function RoomPane({
   active,
   children,
-  motion = "lift"
+  lazy = true,
+  motion = "lift",
+  preload = false
 }: {
   active: boolean;
   children: ReactNode;
+  lazy?: boolean;
   motion?: "fade" | "lift";
+  preload?: boolean;
 }) {
-  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const [hasMounted, setHasMounted] = useState(active || preload || !lazy);
+  const progress = useSharedValue(active ? 1 : 0);
 
   useEffect(() => {
-    progress.stopAnimation();
-    const animation = Animated.timing(progress, {
-      delay: active && motion === "lift" ? ROOM_PANE_ENTER_DELAY : 0,
-      duration: active ? ROOM_PANE_ENTER_DURATION : ROOM_PANE_EXIT_DURATION,
-      easing: Easing.out(Easing.cubic),
-      toValue: active ? 1 : 0,
-      useNativeDriver: true
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [active, motion, progress]);
+    if (active || preload) setHasMounted(true);
+  }, [active, preload]);
 
-  const translateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [motion === "lift" ? ROOM_PANE_TRANSLATE_Y : 0, 0]
-  });
+  // Cross-fade the content on the SAME timing (MEMORY_ROOM_TAB_TIMING) as the
+  // header collapse + tab indicator, started in the same commit, so the whole
+  // room moves as one unit. No enter delay, and warmed panes fade in WITH the
+  // header instead of snapping ahead of it (the old instant-snap was the desync).
+  // Reanimated's withTiming also interrupts gracefully from the current value,
+  // so rapid tab switches no longer hard-cut.
+  useEffect(() => {
+    progress.value = withTiming(active ? 1 : 0, MEMORY_ROOM_TAB_TIMING);
+  }, [active, progress]);
+
+  const liftOffset = motion === "lift" ? ROOM_PANE_TRANSLATE_Y : 0;
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [{ translateY: liftOffset * (1 - progress.value) }]
+  }));
+
+  if (lazy && !hasMounted) return null;
 
   return (
-    <Animated.View
+    <Reanimated.View
       accessibilityElementsHidden={!active}
       collapsable={false}
       importantForAccessibility={active ? "auto" : "no-hide-descendants"}
       pointerEvents={active ? "auto" : "none"}
-      style={[
-        styles.roomPagerPage,
-        {
-          opacity: progress,
-          transform: [{ translateY }],
-          zIndex: active ? 2 : 1
-        }
-      ]}
+      style={[styles.roomPagerPage, { zIndex: active ? 2 : 1 }, animatedStyle]}
     >
       {children}
-    </Animated.View>
+    </Reanimated.View>
   );
 }
 
@@ -5325,26 +5402,12 @@ function ChatTimeline({
   );
 }
 
-const FOOD_WALLPAPER_PLACEMENTS = buildFoodWallpaperPlacements();
 const ROMANTIC_WALLPAPER_PLACEMENTS = [
   { transform: "translate(28 30) scale(0.55)", strokeWidth: 2 },
   { transform: "translate(124 96) scale(0.48)", strokeWidth: 2 },
   { transform: "translate(198 38) scale(0.42)", strokeWidth: 2 }
 ] as const;
 const ROMANTIC_HEART_PATH = "M12 21s-7-4.4-9.3-8.2C.8 9.7 1.6 6 4.7 5.2c1.8-.5 3.5.2 4.5 1.6 1-1.4 2.7-2.1 4.5-1.6 3.1.8 3.9 4.5 2 7.6C19 16.6 12 21 12 21Z";
-
-function WallpaperPrimitive({ primitive }: { primitive: DoodlePrimitive }) {
-  switch (primitive.type) {
-    case "path":
-      return <Path d={primitive.d} />;
-    case "circle":
-      return <Circle cx={primitive.cx} cy={primitive.cy} r={primitive.r} />;
-    case "ellipse":
-      return <Ellipse cx={primitive.cx} cy={primitive.cy} rx={primitive.rx} ry={primitive.ry} />;
-    case "line":
-      return <Line x1={primitive.x1} x2={primitive.x2} y1={primitive.y1} y2={primitive.y2} />;
-  }
-}
 
 const FoodChatWallpaper = memo(function FoodChatWallpaper({
   patternKey,
@@ -5369,41 +5432,43 @@ const FoodChatWallpaper = memo(function FoodChatWallpaper({
   }, [opacity, visible]);
 
   return (
-    <Animated.View pointerEvents="none" style={[styles.chatWallpaper, { opacity }]}>
-      <Svg height="100%" style={StyleSheet.absoluteFill} width="100%">
-        <Defs>
-          <Pattern
-            height={FOOD_WALLPAPER_TILE_SIZE}
-            id={patternId}
-            patternUnits="userSpaceOnUse"
-            width={FOOD_WALLPAPER_TILE_SIZE}
-            x={0}
-            y={0}
-          >
-            <Rect fill={ROOM_COLORS.wallpaperBg} height={FOOD_WALLPAPER_TILE_SIZE} width={FOOD_WALLPAPER_TILE_SIZE} x={0} y={0} />
-            <G
-              fill="none"
-              opacity={ROOM_COLORS.wallpaperOpacity}
-              stroke={ROOM_COLORS.wallpaperLine}
-              strokeLinecap="round"
-              strokeLinejoin="round"
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.chatWallpaper, { backgroundColor: ROOM_COLORS.wallpaperBg, opacity }]}
+    >
+      <ImageBackground
+        imageStyle={{ opacity: ROOM_COLORS.wallpaperOpacity, tintColor: ROOM_COLORS.wallpaperLine }}
+        resizeMode="repeat"
+        source={FOOD_WALLPAPER_TILE_SOURCE}
+        style={StyleSheet.absoluteFill}
+      />
+      {romantic ? (
+        <Svg height="100%" style={StyleSheet.absoluteFill} width="100%">
+          <Defs>
+            <Pattern
+              height={FOOD_WALLPAPER_TILE_SIZE}
+              id={patternId}
+              patternUnits="userSpaceOnUse"
+              width={FOOD_WALLPAPER_TILE_SIZE}
+              x={0}
+              y={0}
             >
-              {FOOD_WALLPAPER_PLACEMENTS.map((placement, placementIndex) => (
-                <G key={placementIndex} strokeWidth={placement.strokeWidth} transform={placement.transform}>
-                  {placement.shape.primitives.map((primitive, primitiveIndex) => (
-                    <WallpaperPrimitive key={primitiveIndex} primitive={primitive} />
-                  ))}
-                </G>
-              ))}
-              {romantic ? ROMANTIC_WALLPAPER_PLACEMENTS.map((placement, index) => (
-                <Path key={`heart-${index}`} d={ROMANTIC_HEART_PATH} strokeWidth={placement.strokeWidth} transform={placement.transform} />
-              )) : null}
-            </G>
-          </Pattern>
-        </Defs>
-        <Rect fill={ROOM_COLORS.wallpaperBg} height="100%" width="100%" x={0} y={0} />
-        <Rect fill={`url(#${patternId})`} height="100%" width="100%" x={0} y={0} />
-      </Svg>
+              <G
+                fill="none"
+                opacity={ROOM_COLORS.wallpaperOpacity}
+                stroke={ROOM_COLORS.wallpaperLine}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {ROMANTIC_WALLPAPER_PLACEMENTS.map((placement, index) => (
+                  <Path key={`heart-${index}`} d={ROMANTIC_HEART_PATH} strokeWidth={placement.strokeWidth} transform={placement.transform} />
+                ))}
+              </G>
+            </Pattern>
+          </Defs>
+          <Rect fill={`url(#${patternId})`} height="100%" width="100%" x={0} y={0} />
+        </Svg>
+      ) : null}
       <View style={styles.chatWallpaperOverlay} />
     </Animated.View>
   );
@@ -8429,15 +8494,11 @@ function MediaViewer({
 }
 
 function ViewerAudio({ media }: { media: MemoryPhoto }) {
-  const player = useVideoPlayer(media.publicUrl, (instance) => {
-    instance.audioMixingMode = "duckOthers";
-    instance.loop = false;
-    instance.timeUpdateEventInterval = 0.25;
-  });
-  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
-  const timeEvent = useEvent(player, "timeUpdate");
-  const currentTime = timeEvent?.currentTime ?? player.currentTime;
-  const duration = audioDurationSeconds(media, player.duration);
+  const player = useAudioPlayer(media.publicUrl, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
+  const isPlaying = status.playing;
+  const currentTime = status.currentTime;
+  const duration = audioDurationSeconds(media, status.duration);
   const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
 
   useEffect(() => () => {
@@ -8451,7 +8512,8 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
         return;
       }
       if (duration > 0 && player.currentTime >= duration - 0.25) {
-        player.currentTime = 0;
+        void player.seekTo(0).then(() => player.play());
+        return;
       }
       player.play();
     } catch (error) {
@@ -8461,14 +8523,6 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
 
   return (
     <View style={styles.viewerAudio}>
-      <VideoView
-        allowsFullscreen={false}
-        allowsPictureInPicture={false}
-        nativeControls={false}
-        player={player}
-        pointerEvents="none"
-        style={styles.chatMainAudioHiddenPlayer}
-      />
       <Pressable
         accessibilityLabel={isPlaying ? "Pause audio" : "Play audio"}
         accessibilityRole="button"
@@ -8496,9 +8550,8 @@ function ViewerVideo({ media }: { media: MemoryPhoto }) {
   return (
     <View style={styles.viewerVideo}>
       <VideoView
-        allowsFullscreen
-        allowsPictureInPicture
         contentFit="contain"
+        fullscreenOptions={{ enable: true }}
         nativeControls
         player={player}
         style={styles.viewerVideoPlayer}
@@ -9057,11 +9110,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     bottom: -CHAT_TIME_PINNED_DROP,
     position: "absolute",
     right: 0
-  },
-  // Keeps the pinned time invisible for the first frame until its width has
-  // been measured, so it never flashes over the words.
-  chatMainTimeMeasuring: {
-    opacity: 0
   },
   chatMainAudioContent: {
     alignItems: "center",

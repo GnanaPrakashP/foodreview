@@ -14,6 +14,8 @@ type SlideOverOptions = {
   // Where to go if there is no screen to pop back to (e.g. deep link). When the
   // screen was reached normally this is unused since canGoBack() is true.
   fallbackHref?: Href;
+  // Return true when a nested state handled back and the slide-over should stay open.
+  onBack?: () => boolean;
 };
 
 // Drives a right-to-left slide-in / left-to-right slide-out for a screen that is
@@ -22,11 +24,13 @@ type SlideOverOptions = {
 // animated style for the screen's root view and a `close` that plays the exit
 // animation before navigating back. Also handles Android hardware back.
 export function useSlideOverScreen(options: SlideOverOptions = {}) {
-  const { fallbackHref } = options;
+  const { fallbackHref, onBack } = options;
   const router = useRouter();
   const { width } = useWindowDimensions();
   const progress = useSharedValue(0);
   const closingRef = useRef(false);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   const travel = Math.min(width, PANEL_TRAVEL_MAX);
   const slideStyle = useAnimatedStyle(() => ({
@@ -40,6 +44,7 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
   }, [fallbackHref, router]);
 
   const close = useCallback(() => {
+    if (onBackRef.current?.()) return;
     if (closingRef.current) return;
     closingRef.current = true;
     progress.value = withTiming(0, { duration: EXIT_MS, easing: Easing.in(Easing.cubic) }, (finished) => {

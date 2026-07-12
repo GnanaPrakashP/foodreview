@@ -1,0 +1,64 @@
+name: Dish Self-Curation
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run candidate conversion in dry-run mode"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      limit:
+        description: "Maximum legacy candidates to inspect"
+        required: true
+        default: "500"
+  schedule:
+    - cron: "23 20 * * *"
+
+jobs:
+  dish-curation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DISH_CURATION_URL: ${{ secrets.DISH_CURATION_URL }}
+      DISH_CURATION_SECRET: ${{ secrets.DISH_CURATION_SECRET }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      LIMIT: ${{ github.event.inputs.limit || '500' }}
+
+    steps:
+      - name: Validate configuration
+        run: |
+          test -n "$DISH_CURATION_URL"
+          test -n "$DISH_CURATION_SECRET"
+
+      - name: Convert legacy candidates
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "authorization: Bearer $DISH_CURATION_SECRET" \
+            --header "content-type: application/json" \
+            --data "{\"action\":\"self-curate\",\"dryRun\":$DRY_RUN,\"limit\":$LIMIT}" \
+            "$DISH_CURATION_URL/api/internal/dish-curation"
+
+      - name: Sweep majority dish names
+        if: env.DRY_RUN == 'false'
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "authorization: Bearer $DISH_CURATION_SECRET" \
+            --header "content-type: application/json" \
+            --data '{"action":"rename-sweep"}' \
+            "$DISH_CURATION_URL/api/internal/dish-curation"
+
+      - name: Rebuild dish identity stats
+        if: env.DRY_RUN == 'false'
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "authorization: Bearer $DISH_CURATION_SECRET" \
+            --header "content-type: application/json" \
+            --data '{"action":"rebuild-stats"}' \
+            "$DISH_CURATION_URL/api/internal/dish-curation"

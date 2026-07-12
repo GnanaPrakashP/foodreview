@@ -1,47 +1,91 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, MapPin, Star } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ArrowLeft, ChevronRight, MapPin, Star } from "lucide-react-native";
+import { useCallback, useMemo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
 import { EmptyState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useDishFeedQuery } from "@/hooks/useFeeds";
-import { dishSearchMatches } from "@/services/dishNormalizer";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
+import { normalizeDishDisplayName } from "@/services/dishNormalizer";
+import { compactAreaLabel } from "@/services/locationLabels";
+import { bayesianRating, distanceKmFromRankScore } from "@/services/placeRanking";
+import { useUserLocationStore } from "@/stores/userLocationStore";
+import { fontStyles, radius, screenLayout, spacing } from "@/theme";
 import type { ReviewPost } from "@/types/models";
+import type { UserLocation } from "@/services/userLocation";
 
 type ParamValue = string | string[] | undefined;
-type DishTab = "posts" | "places";
+type DishFilter = {
+  canonicalDishId: string;
+  name: string;
+};
 type DishPlace = {
-  averageRating: number;
   area: string | null;
+  averageRating: number;
+  distanceKm: number | null;
   mentions: number;
   name: string;
   placeId: string | null;
+  postCount: number;
+  rankScore: number;
 };
 
-const DISH_TABS: Array<{ id: DishTab; label: string }> = [
-  { id: "posts", label: "Posts" },
-  { id: "places", label: "Places" }
-];
+const DISH_DETAIL_FEED_LIMIT = 120;
+const DISH_PLACE_RATING_WEIGHT = 0.65;
+const DISH_PLACE_DISTANCE_WEIGHT = 0.3;
+const DISH_PLACE_EVIDENCE_WEIGHT = 0.05;
+const EMPTY_POSTS: ReviewPost[] = [];
 
 function firstParam(value: ParamValue) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
-}
-
-function tabIndexFor(tab: DishTab) {
-  return DISH_TABS.findIndex((item) => item.id === tab);
 }
 
 function normalizeEntityName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function matchingDishItems(post: ReviewPost, dishName: string) {
-  return post.items.filter((item) => dishSearchMatches(item.name, dishName));
+function placeLocationRankScore(post: Pick<ReviewPost, "restaurantLat" | "restaurantLng">, location: UserLocation | null) {
+  if (!location) return null;
+  const lat = Number(post.restaurantLat);
+  const lng = Number(post.restaurantLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+
+  const lngScale = Math.max(0.2, Math.cos((location.lat * Math.PI) / 180));
+  return Math.pow(lat - location.lat, 2) + Math.pow((lng - location.lng) * lngScale, 2);
+}
+
+function nearestLocationScore(current: number | null, candidate: number | null) {
+  if (candidate === null) return current;
+  return current === null || candidate < current ? candidate : current;
+}
+
+function dishNameMatchesExactly(candidate: string | null | undefined, dishName: string) {
+  const normalizedCandidate = normalizeDishDisplayName(candidate ?? "").toLowerCase();
+  const normalizedDishName = normalizeDishDisplayName(dishName).toLowerCase();
+  return Boolean(normalizedCandidate && normalizedDishName && normalizedCandidate === normalizedDishName);
+}
+
+function dishItemMatchesFilter(item: ReviewPost["items"][number], filter: DishFilter) {
+  if (filter.canonicalDishId) return item.canonicalDishId === filter.canonicalDishId;
+  if (!filter.name) return false;
+
+  return [item.canonicalDishName, item.name, item.rawDishName]
+    .filter((name): name is string => Boolean(name?.trim()))
+    .some((name) => dishNameMatchesExactly(name, filter.name));
+}
+
+function matchingDishItems(post: ReviewPost, filter: DishFilter) {
+  return post.items.filter((item) => dishItemMatchesFilter(item, filter));
+}
+
+function postsScopedToDish(posts: ReviewPost[], filter: DishFilter) {
+  return posts
+    .map((post) => ({ ...post, items: matchingDishItems(post, filter) }))
+    .filter((post) => post.items.length > 0);
 }
 
 function formatScore5(value: number) {
@@ -50,25 +94,59 @@ function formatScore5(value: number) {
   return `${Number.isInteger(score) ? String(score) : score.toFixed(1)}/5`;
 }
 
-function topPlacesForDish(posts: ReviewPost[], dishName: string): DishPlace[] {
-  const buckets = new Map<string, DishPlace & { ratingCount: number; ratingTotal: number }>();
+function formatDistanceKm(value: number | null) {
+  if (value === null) return null;
+  if (value < 1) return `${Math.max(1, Math.round(value * 1000))} m`;
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} km`;
+}
+
+function distanceClosenessScore(distanceKm: number | null) {
+  if (distanceKm === null) return 0;
+  return 1 / (1 + distanceKm / 8);
+}
+
+function evidenceScore(place: { mentions: number; postCount: number }) {
+  return Math.min(1, Math.log1p(Math.max(0, place.mentions + place.postCount)) / Math.log(12));
+}
+
+function dishPlaceRankScore(place: { averageRating: number; distanceKm: number | null; mentions: number; postCount: number; ratingCount: number }, globalMean: number) {
+  const rating = bayesianRating(place.averageRating > 0 ? place.averageRating : null, place.ratingCount, globalMean) / 5;
+  const distance = distanceClosenessScore(place.distanceKm);
+  const evidence = evidenceScore(place);
+  return (
+    rating * DISH_PLACE_RATING_WEIGHT
+    + distance * DISH_PLACE_DISTANCE_WEIGHT
+    + evidence * DISH_PLACE_EVIDENCE_WEIGHT
+  );
+}
+
+function topPlacesForDish(posts: ReviewPost[], filter: DishFilter, location: UserLocation | null): DishPlace[] {
+  const buckets = new Map<string, DishPlace & { locationRankScore: number | null; ratingCount: number; ratingTotal: number }>();
 
   for (const post of posts) {
-    const matches = matchingDishItems(post, dishName);
+    const matches = matchingDishItems(post, filter);
     if (matches.length === 0) continue;
 
-    const key = post.restaurantId || normalizeEntityName(post.restaurantName);
+    const placeLabel = post.area || post.restaurantAddress || "";
+    const key = post.restaurantId || `${normalizeEntityName(post.restaurantName)}::${normalizeEntityName(placeLabel)}`;
+    const postLocationRankScore = placeLocationRankScore(post, location);
     const existing = buckets.get(key) ?? {
-      area: post.area || post.restaurantAddress,
+      area: placeLabel || null,
       averageRating: 0,
+      distanceKm: null,
+      locationRankScore: null,
       mentions: 0,
       name: post.restaurantName,
       placeId: post.restaurantId,
+      postCount: 0,
+      rankScore: 0,
       ratingCount: 0,
       ratingTotal: 0
     };
 
+    existing.locationRankScore = nearestLocationScore(existing.locationRankScore, postLocationRankScore);
     existing.mentions += matches.length;
+    existing.postCount += 1;
     for (const item of matches) {
       if (item.rating > 0) {
         existing.ratingCount += 1;
@@ -79,83 +157,104 @@ function topPlacesForDish(posts: ReviewPost[], dishName: string): DishPlace[] {
     buckets.set(key, existing);
   }
 
+  const globalMean = (() => {
+    let ratingTotal = 0;
+    let ratingCount = 0;
+    for (const place of buckets.values()) {
+      ratingTotal += place.ratingTotal;
+      ratingCount += place.ratingCount;
+    }
+    return ratingCount > 0 ? ratingTotal / ratingCount : 4;
+  })();
+
   return Array.from(buckets.values())
     .map((place) => ({
-      area: place.area,
+      area: compactAreaLabel(place.area) ?? place.area,
       averageRating: place.ratingCount > 0 ? place.ratingTotal / place.ratingCount : 0,
+      distanceKm: distanceKmFromRankScore(place.locationRankScore),
       mentions: place.mentions,
       name: place.name,
-      placeId: place.placeId
+      placeId: place.placeId,
+      postCount: place.postCount,
+      rankScore: dishPlaceRankScore({
+        averageRating: place.ratingCount > 0 ? place.ratingTotal / place.ratingCount : 0,
+        distanceKm: distanceKmFromRankScore(place.locationRankScore),
+        mentions: place.mentions,
+        postCount: place.postCount,
+        ratingCount: place.ratingCount
+      }, globalMean)
     }))
-    .sort((a, b) => b.averageRating - a.averageRating || b.mentions - a.mentions || a.name.localeCompare(b.name));
+    .sort((a, b) =>
+      b.rankScore - a.rankScore
+      || (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY)
+      || b.averageRating - a.averageRating
+      || b.postCount - a.postCount
+      || b.mentions - a.mentions
+      || a.name.localeCompare(b.name)
+    );
 }
 
 export default function DishDetailScreen() {
   const router = useRouter();
-  const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/explore" });
-  const { width } = useWindowDimensions();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
-  const [activeTab, setActiveTab] = useState<DishTab>("posts");
-  const tabProgress = useRef(new Animated.Value(tabIndexFor("posts"))).current;
-  const previousTabIndex = useRef(tabIndexFor("posts"));
-  const contentTranslateX = useRef(new Animated.Value(0)).current;
-  const params = useLocalSearchParams<{ dish?: string }>();
+  const selectedLocation = useUserLocationStore((state) => state.location);
+  const params = useLocalSearchParams<{
+    canonicalDishId?: string;
+    dish?: string;
+    address?: string;
+    placeId?: string;
+    placeName?: string;
+  }>();
   const dishName = firstParam(params.dish).trim();
-  const feed = useDishFeedQuery(dishName);
-  const posts = feed.data?.posts ?? [];
-  const places = useMemo(() => topPlacesForDish(posts, dishName), [dishName, posts]);
-  const tabWidth = Math.max(0, width - spacing.base * 2) / DISH_TABS.length;
-
-  useEffect(() => {
-    const nextTabIndex = tabIndexFor(activeTab);
-    const previousIndex = previousTabIndex.current;
-    const direction = nextTabIndex > previousIndex ? 1 : nextTabIndex < previousIndex ? -1 : 0;
-
-    Animated.timing(tabProgress, {
-      duration: 240,
-      easing: Easing.out(Easing.cubic),
-      toValue: nextTabIndex,
-      useNativeDriver: true
-    }).start();
-
-    if (direction === 0) {
-      contentTranslateX.setValue(0);
-      previousTabIndex.current = nextTabIndex;
-      return;
-    }
-
-    contentTranslateX.setValue(direction * Math.max(width, 320));
-    Animated.timing(contentTranslateX, {
-      duration: 230,
-      easing: Easing.out(Easing.cubic),
-      toValue: 0,
-      useNativeDriver: true
-    }).start();
-    previousTabIndex.current = nextTabIndex;
-  }, [activeTab, contentTranslateX, tabProgress, width]);
-
-  function openPlace(place: DishPlace) {
-    if (place.placeId) {
-      router.push({
-        pathname: "/restaurants/[placeId]",
-        params: {
-          address: place.area ?? "",
-          name: place.name,
-          placeId: place.placeId
-        }
-      });
-      return;
-    }
-
-    router.push({
-      pathname: "/restaurants/by-name/[restaurant]",
+  const canonicalDishId = firstParam(params.canonicalDishId).trim();
+  const scopedPlaceId = firstParam(params.placeId).trim();
+  const scopedPlaceName = firstParam(params.placeName).trim();
+  const scopedAddress = firstParam(params.address).trim();
+  const hasPlaceScope = Boolean(scopedPlaceId || scopedPlaceName);
+  const dishFilter = useMemo(() => ({ canonicalDishId, name: dishName }), [canonicalDishId, dishName]);
+  const backToDishPlaces = useCallback(() => {
+    router.replace({
+      pathname: "/dishes/[dish]",
       params: {
-        address: place.area ?? "",
-        restaurant: place.name
+        canonicalDishId,
+        dish: dishName
       }
     });
-  }
+  }, [canonicalDishId, dishName, router]);
+  const handleDishBack = useCallback(() => {
+    if (!hasPlaceScope) return false;
+    backToDishPlaces();
+    return true;
+  }, [backToDishPlaces, hasPlaceScope]);
+  const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/explore", onBack: handleDishBack });
+  const feed = useDishFeedQuery({
+    canonicalDishId,
+    dishName,
+    limit: DISH_DETAIL_FEED_LIMIT,
+    location: selectedLocation,
+    placeId: scopedPlaceId || null,
+    restaurantAddress: scopedAddress || null,
+    restaurantName: scopedPlaceName || null
+  });
+  const posts = feed.data?.posts ?? EMPTY_POSTS;
+  const dishPosts = useMemo(() => postsScopedToDish(posts, dishFilter), [dishFilter, posts]);
+  const places = useMemo(() => topPlacesForDish(posts, dishFilter, selectedLocation), [dishFilter, posts, selectedLocation]);
+  const scopedTitle = scopedPlaceName || posts[0]?.restaurantName || "Place";
+  const scopedMeta = `${dishName}${dishPosts.length > 0 ? ` · ${dishPosts.length} ${dishPosts.length === 1 ? "post" : "posts"}` : ""}`;
+
+  const openDishPlace = useCallback((place: DishPlace) => {
+    router.replace({
+      pathname: "/dishes/[dish]",
+      params: {
+        address: place.area ?? "",
+        canonicalDishId,
+        dish: dishName,
+        placeId: place.placeId ?? "",
+        placeName: place.name
+      }
+    });
+  }, [canonicalDishId, dishName, router]);
 
   return (
     <Reanimated.View style={[styles.screenRoot, slideStyle]}>
@@ -167,40 +266,45 @@ export default function DishDetailScreen() {
               <EmptyState icon="restaurant-outline" message="This dish link is missing a dish name." title="Dish unavailable" />
             </View>
           </>
-        ) : (
+        ) : hasPlaceScope ? (
           <>
             <DishHeader
-              dishName={dishName}
-              meta={`${posts.length} public ${posts.length === 1 ? "post" : "posts"} across ${places.length} ${places.length === 1 ? "place" : "places"}`}
+              dishName={scopedTitle}
+              meta={scopedMeta}
               onBack={close}
               styles={styles}
               themeColors={themeColors}
             />
-            <DishTabs
-              activeTab={activeTab}
-              onChange={setActiveTab}
-              styles={styles}
-              tabProgress={tabProgress}
-              tabWidth={tabWidth}
+            <PostFeed
+              embedded
+              emptyMessage="Posts for this dish at this place will appear here."
+              emptyTitle="No posts yet"
+              errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this dish at this place."}
+              isError={feed.isError}
+              isLoading={feed.isLoading}
+              onRetry={() => feed.refetch()}
+              posts={dishPosts}
             />
-
-            <View style={styles.tabViewport}>
-              <Animated.View style={[styles.tabContent, { transform: [{ translateX: contentTranslateX }] }]}>
-                {activeTab === "posts" ? (
-                  <PostFeed
-                    emptyMessage="Public posts for this dish will appear here."
-                    emptyTitle="No posts yet"
-                    errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this dish."}
-                    isError={feed.isError}
-                    isLoading={feed.isLoading}
-                    onRetry={() => feed.refetch()}
-                    posts={posts}
-                  />
-                ) : (
-                  <TopPlaces onOpenPlace={openPlace} places={places} styles={styles} themeColors={themeColors} />
-                )}
-              </Animated.View>
-            </View>
+          </>
+        ) : (
+          <>
+            <DishHeader
+              dishName={dishName}
+              meta={`${places.length} ${places.length === 1 ? "place" : "places"} · ${dishPosts.length} ${dishPosts.length === 1 ? "post" : "posts"}`}
+              onBack={close}
+              styles={styles}
+              themeColors={themeColors}
+            />
+            <DishPlacesContent
+              errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load places for this dish."}
+              isError={feed.isError}
+              isLoading={feed.isLoading}
+              onOpenPlace={openDishPlace}
+              onRetry={() => feed.refetch()}
+              places={places}
+              styles={styles}
+              themeColors={themeColors}
+            />
           </>
         )}
       </Screen>
@@ -234,45 +338,42 @@ function DishHeader({
   );
 }
 
-function DishTabs({
-  activeTab,
-  onChange,
+function DishPlacesContent({
+  errorMessage,
+  isError,
+  isLoading,
+  onOpenPlace,
+  onRetry,
+  places,
   styles,
-  tabProgress,
-  tabWidth
+  themeColors
 }: {
-  activeTab: DishTab;
-  onChange: (tab: DishTab) => void;
+  errorMessage: string;
+  isError: boolean;
+  isLoading: boolean;
+  onOpenPlace: (place: DishPlace) => void;
+  onRetry: () => void;
+  places: DishPlace[];
   styles: ReturnType<typeof createStyles>;
-  tabProgress: Animated.Value;
-  tabWidth: number;
+  themeColors: ReturnType<typeof themeColorsFor>;
 }) {
-  const indicatorTranslateX = tabProgress.interpolate({
-    inputRange: DISH_TABS.map((_, index) => index),
-    outputRange: DISH_TABS.map((_, index) => index * tabWidth)
-  });
-
-  return (
-    <View style={styles.webTabsOuter}>
-      <View style={styles.webTabs}>
-        {DISH_TABS.map((tab) => {
-          const active = tab.id === activeTab;
-          return (
-            <Pressable key={tab.id} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => onChange(tab.id)} style={styles.webTab}>
-              <Text style={[styles.webTabText, active && styles.webTabTextActive]}>{tab.label}</Text>
-            </Pressable>
-          );
-        })}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.webTabIndicator,
-            { transform: [{ translateX: indicatorTranslateX }], width: tabWidth }
-          ]}
-        />
+  if (isLoading) {
+    return (
+      <View style={styles.stateWrap}>
+        <EmptyState icon="restaurant-outline" message="Finding places that serve this dish." title="Loading places" />
       </View>
-    </View>
-  );
+    );
+  }
+
+  if (isError) {
+    return (
+      <View style={styles.stateWrap}>
+        <EmptyState actionLabel="Try again" icon="warning-outline" message={errorMessage} onAction={onRetry} title="Could not load places" />
+      </View>
+    );
+  }
+
+  return <TopPlaces onOpenPlace={onOpenPlace} places={places} styles={styles} themeColors={themeColors} />;
 }
 
 function TopPlaces({
@@ -297,7 +398,7 @@ function TopPlaces({
 
   return (
     <View style={styles.placesSection}>
-      {places.slice(0, 5).map((place, index) => (
+      {places.map((place, index) => (
         <Pressable
           key={`${place.placeId ?? place.name}-${index}`}
           accessibilityRole="button"
@@ -312,7 +413,11 @@ function TopPlaces({
             <View style={styles.placeMetaRow}>
               <MapPin size={11} color={themeColors.muted} strokeWidth={2} />
               <Text numberOfLines={1} style={styles.placeMeta}>
-                {place.area || `${place.mentions} ${place.mentions === 1 ? "mention" : "mentions"}`}
+                {[
+                  place.area,
+                  formatDistanceKm(place.distanceKm),
+                  `${place.mentions} ${place.mentions === 1 ? "mention" : "mentions"}`
+                ].filter(Boolean).join(" · ")}
               </Text>
             </View>
           </View>
@@ -320,6 +425,7 @@ function TopPlaces({
             <Star size={11} color={themeColors.gold} fill={themeColors.gold} strokeWidth={0} />
             <Text style={styles.placeScoreText}>{formatScore5(place.averageRating).replace("/5", "")}</Text>
           </View>
+          <ChevronRight size={17} color={themeColors.muted} strokeWidth={2.1} />
         </Pressable>
       ))}
     </View>
@@ -368,45 +474,6 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       fontSize: 11,
       lineHeight: 15,
       marginTop: 2
-    },
-    webTabsOuter: {
-      paddingBottom: spacing.base,
-      paddingHorizontal: spacing.base
-    },
-    webTabs: {
-      borderBottomColor: c.border,
-      borderBottomWidth: 2,
-      flexDirection: "row",
-      position: "relative"
-    },
-    webTab: {
-      alignItems: "center",
-      flex: 1,
-      paddingBottom: 9,
-      paddingTop: 10
-    },
-    webTabText: {
-      ...fontStyles.semiBold,
-      color: c.muted,
-      fontSize: typography.caption,
-      lineHeight: 15
-    },
-    webTabTextActive: {
-      color: c.orange
-    },
-    webTabIndicator: {
-      backgroundColor: c.orange,
-      borderRadius: radius.pill,
-      bottom: -2,
-      height: 2,
-      left: 0,
-      position: "absolute"
-    },
-    tabViewport: {
-      overflow: "hidden"
-    },
-    tabContent: {
-      minHeight: 180
     },
     placesSection: {
       paddingBottom: spacing.lg,
@@ -468,17 +535,22 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       borderColor: c.goldBorder,
       borderRadius: radius.pill,
       borderWidth: 1,
+      flexShrink: 0,
       flexDirection: "row",
       gap: 4,
-      minWidth: 52,
+      height: 30,
+      justifyContent: "center",
+      minWidth: 56,
       paddingHorizontal: spacing.sm,
-      paddingVertical: 7
     },
     placeScoreText: {
       ...fontStyles.extraBold,
       color: c.gold,
       fontSize: 12,
-      lineHeight: 15
+      includeFontPadding: false,
+      lineHeight: 14,
+      textAlign: "center",
+      textAlignVertical: "center"
     },
     emptyTabState: {
       alignItems: "center",

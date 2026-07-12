@@ -77,64 +77,31 @@ export async function deletePost(input: { postId: string }) {
 }
 
 export async function requestCircleAccess(input: RequestCircleInput): Promise<"pending" | "joined"> {
-  const token = await authToken("requesting circle access");
-
-  const response = await fetch(apiUrl("/api/circle/request"), {
+  const payload = await authorizedJson<{ status?: string; state?: string }>("/api/circle/request", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({ receiverName: input.receiverName })
-  });
-  const payload = await response.json().catch(() => null) as { status?: string; state?: string; error?: string } | null;
+  }, { action: "requesting circle access", timeoutMs: 8_000 });
 
-  if (!response.ok) {
-    throw new Error(payload?.error ?? "Unable to request circle access");
-  }
-
-  if (payload?.state === "CIRCLE_ONE_WAY" || payload?.status === "one_way" || payload?.status === "accepted") {
+  if (payload.state === "CIRCLE_ONE_WAY" || payload.status === "one_way" || payload.status === "accepted") {
     return "joined";
   }
   return "pending";
 }
 
 export async function cancelCircleAccess(input: RequestCircleInput): Promise<"idle"> {
-  const token = await authToken("canceling circle request");
-
-  const response = await fetch(apiUrl("/api/circle/cancel"), {
+  await authorizedJson<{ ok?: boolean }>("/api/circle/cancel", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({ receiverName: input.receiverName })
-  });
-  const payload = await response.json().catch(() => null) as { error?: string } | null;
-
-  if (!response.ok) {
-    throw new Error(payload?.error ?? "Unable to cancel circle request");
-  }
+  }, { action: "canceling circle request", timeoutMs: 8_000 });
 
   return "idle";
 }
 
 export async function leaveCircleAccess(input: RequestCircleInput): Promise<"idle"> {
-  const token = await authToken("leaving circle");
-
-  const response = await fetch(apiUrl("/api/circle/remove"), {
+  await authorizedJson<{ ok?: boolean }>("/api/circle/remove", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({ otherName: input.receiverName })
-  });
-  const payload = await response.json().catch(() => null) as { error?: string } | null;
-
-  if (!response.ok) {
-    throw new Error(payload?.error ?? "Unable to leave circle");
-  }
+  }, { action: "leaving circle", timeoutMs: 8_000 });
 
   return "idle";
 }

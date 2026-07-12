@@ -15,12 +15,14 @@ create index if not exists profiles_last_name_trgm_idx
 create index if not exists profiles_full_name_trgm_idx
   on public.profiles using gin ((lower(first_name || ' ' || last_name)) gin_trgm_ops);
 
+drop function if exists public.search_user_profiles(text, text[], integer);
+
 create or replace function public.search_user_profiles(
   p_query text,
   p_excluded_usernames text[] default '{}'::text[],
   p_limit integer default 8
 )
-returns table(username text, first_name text, last_name text)
+returns table(username text, first_name text, last_name text, account_type text)
 language sql
 stable
 security invoker
@@ -54,7 +56,7 @@ as $$
       result_limit
     from normalized
   )
-  select p.username, p.first_name, p.last_name
+  select p.username, p.first_name, p.last_name, p.account_type
   from public.profiles p
   cross join prepared s
   where length(s.q) >= 2

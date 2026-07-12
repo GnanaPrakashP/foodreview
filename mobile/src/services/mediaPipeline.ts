@@ -1,3 +1,4 @@
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 
@@ -69,6 +70,19 @@ export type UploadPostMediaAssetInput = {
 
 const MEDIA_STATUS_POLL_INTERVAL_MS = 1200;
 const MEDIA_STATUS_MAX_POLLS = 50;
+// The server derives at most 1080px-wide output, so anything beyond this
+// edge is wasted upload bandwidth.
+const UPLOAD_IMAGE_MAX_EDGE = 2400;
+const UPLOAD_IMAGE_QUALITY = 0.85;
+// Upload timeout grows with payload size (~256KB/s worst-case mobile link),
+// bounded so a stalled connection still fails in reasonable time.
+const UPLOAD_TIMEOUT_MIN_MS = 60_000;
+const UPLOAD_TIMEOUT_MAX_MS = 8 * 60_000;
+
+function uploadTimeoutFor(byteLength: number) {
+  const estimated = 45_000 + (byteLength / (256 * 1024)) * 1000;
+  return Math.max(UPLOAD_TIMEOUT_MIN_MS, Math.min(UPLOAD_TIMEOUT_MAX_MS, Math.round(estimated)));
+}
 
 function resolveMediaKind(input: Pick<UploadPostMediaAssetInput, "mediaKind" | "mimeType">): MediaKind {
   return input.mediaKind ?? (input.mimeType?.startsWith("video/") ? "video" : "image");
@@ -98,6 +112,44 @@ async function fileBodyFromUri(uri: string): Promise<ArrayBuffer> {
   const response = await fetch(uri);
   if (!response.ok) throw new Error("Could not read selected media");
   return response.arrayBuffer();
+}
+
+type DownscaledImage = {
+  height: number;
+  uri: string;
+  width: number;
+};
+
+// Shrinks oversized images before upload (the server only derives ~1080px
+// output). Relative crop rects survive resizing unchanged. Returns null when
+// the original is already small enough or preparation fails — the original
+// bytes upload as-is in that case.
+async function downscaleImageForUpload(uri: string): Promise<DownscaledImage | null> {
+  try {
+    const loaded = await ImageManipulator.manipulate(uri).renderAsync();
+    const longEdge = Math.max(loaded.width, loaded.height);
+    if (longEdge <= UPLOAD_IMAGE_MAX_EDGE) {
+      loaded.release();
+      return null;
+    }
+    const context = ImageManipulator.manipulate(loaded);
+    context.resize(loaded.width >= loaded.height ? { width: UPLOAD_IMAGE_MAX_EDGE } : { height: UPLOAD_IMAGE_MAX_EDGE });
+    const rendered = await context.renderAsync();
+    const result = await rendered.saveAsync({
+      compress: UPLOAD_IMAGE_QUALITY,
+      format: SaveFormat.JPEG
+    });
+    rendered.release();
+    loaded.release();
+    if (!result.uri || !result.width || !result.height) return null;
+    return {
+      height: result.height,
+      uri: result.uri,
+      width: result.width
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function authorizedMobileJson<T>(path: string, body?: Record<string, unknown>, method = "POST"): Promise<T> {
@@ -217,7 +269,7 @@ async function uploadFileBody({
     const xhr = new XMLHttpRequest();
 
     xhr.open("POST", uploadUrl);
-    xhr.timeout = 60_000;
+    xhr.timeout = uploadTimeoutFor(body.byteLength);
     xhr.setRequestHeader("apikey", resolvedSupabaseAnonKey);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Content-Type", contentType);
@@ -259,9 +311,10 @@ function storageUploadErrorMessage(xhr: XMLHttpRequest) {
 
 export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Promise<UploadedMediaAsset> {
   const mediaKind = resolveMediaKind(input);
-  const mimeType = defaultMimeType(mediaKind, input.mimeType);
   input.onUploadProgress?.(0.03);
-  const body = await fileBodyFromUri(input.uri);
+  const downscaled = mediaKind === "image" ? await downscaleImageForUpload(input.uri) : null;
+  const mimeType = downscaled ? "image/jpeg" : defaultMimeType(mediaKind, input.mimeType);
+  const body = await fileBodyFromUri(downscaled?.uri ?? input.uri);
   input.onUploadProgress?.(0.1);
   const extension = extensionFor(mimeType, mediaKind);
   const intent = await createMediaUploadIntent({
@@ -269,10 +322,10 @@ export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Pr
     durationMs: input.durationMs,
     fileName: `media.${extension}`,
     fileSizeBytes: body.byteLength,
-    height: input.height,
+    height: downscaled?.height ?? input.height,
     mediaKind,
     mimeType,
-    width: input.width
+    width: downscaled?.width ?? input.width
   });
   input.onUploadProgress?.(0.18);
   if (intent.mediaType !== mediaKind || intent.mimeType !== mimeType || intent.maxAllowedSize < body.byteLength) {

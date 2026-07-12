@@ -36,7 +36,13 @@ import {
   type UpdateMemoryStopInput
 } from "@/services/memories";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
-import { deleteOfflineMemoryMessage, deleteOfflineMemoryPhoto, saveOfflineMemoryRoom } from "@/services/memoryOfflineStore";
+import {
+  deleteOfflineMemoryMessage,
+  deleteOfflineMemoryPhoto,
+  readOfflineMemoryRoom,
+  readOfflineMemorySummaries,
+  saveOfflineMemoryRoom
+} from "@/services/memoryOfflineStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 
@@ -917,10 +923,25 @@ function applyOptimisticSummaryDelete(
 }
 
 export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
+  const queryClient = useQueryClient();
+  const enabled = options.enabled ?? true;
+
+  useEffect(() => {
+    if (!enabled || queryClient.getQueryData(memoryKeys.list)) return;
+    let cancelled = false;
+    void readOfflineMemorySummaries().then((cached) => {
+      if (cancelled || !cached || queryClient.getQueryData(memoryKeys.list)) return;
+      queryClient.setQueryData(memoryKeys.list, cached);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, queryClient]);
+
   return useQuery({
     queryKey: memoryKeys.list,
     queryFn: listMemoryRoomsOfflineFirst,
-    enabled: options.enabled ?? true
+    enabled
   });
 }
 
@@ -980,6 +1001,20 @@ export function useMemoryRoomsRealtime(enabled = true) {
 }
 
 export function useMemoryRoomQuery(roomId: string) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!roomId || queryClient.getQueryData(memoryKeys.detail(roomId))) return;
+    let cancelled = false;
+    void readOfflineMemoryRoom(roomId).then((cached) => {
+      if (cancelled || !cached || queryClient.getQueryData(memoryKeys.detail(roomId))) return;
+      queryClient.setQueryData(memoryKeys.detail(roomId), cached);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient, roomId]);
+
   return useQuery({
     queryKey: memoryKeys.detail(roomId),
     queryFn: () => getMemoryRoomOfflineFirst(roomId),
@@ -990,7 +1025,7 @@ export function useMemoryRoomQuery(roomId: string) {
     // re-downloaded the entire room (members, dishes, all messages, all photos) every 8s.
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    staleTime: 0,
+    staleTime: 30_000,
     structuralSharing: preserveRecentMediaAttachments
   });
 }

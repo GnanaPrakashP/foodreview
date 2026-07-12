@@ -6,6 +6,7 @@ import { isValidUuid, isValidVisibility, normalizeReviewItems, validateReviewBod
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isOwnedReviewMediaPath, REVIEW_MEDIA_BUCKET } from "@/lib/server/review-media";
 import { MEDIA_PRIVATE_BUCKET, MEDIA_PUBLIC_BUCKET, MEDIA_SOURCE_BUCKET } from "@/lib/server/media-pipeline";
+import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
 
 type ReviewDeleteRow = {
   reviewer_name: string;
@@ -137,7 +138,7 @@ export async function PATCH(
   const admin = createAdminClient();
   const { data: review, error: fetchError } = await admin
     .from("reviews")
-    .select("reviewer_name")
+    .select("reviewer_name, restaurant_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -152,6 +153,7 @@ export async function PATCH(
   const body = await req.json();
   const { visibility, body: reviewBody, items } = body;
   const updates: Record<string, unknown> = {};
+  let normalizedItemsForMentions: ReturnType<typeof normalizeReviewItems>["items"] | null = null;
 
   if (visibility !== undefined) {
     if (!isValidVisibility(visibility)) {
@@ -174,6 +176,7 @@ export async function PATCH(
       return NextResponse.json({ error: normalizedItems.error }, { status: 400 });
     }
     updates.items = normalizedItems.items;
+    normalizedItemsForMentions = normalizedItems.items ?? null;
   }
 
   const { error } = await admin
@@ -184,6 +187,20 @@ export async function PATCH(
 
   if (error) {
     return NextResponse.json({ error: "Could not update review" }, { status: 500 });
+  }
+
+  if (normalizedItemsForMentions) {
+    const mentionResult = await replaceReviewDishMentions(admin, {
+      items: normalizedItemsForMentions,
+      placeId: typeof review.restaurant_id === "string" ? review.restaurant_id : null,
+      reviewId: id,
+      submittedItems: items,
+      userId: actor.userId
+    });
+    if (!mentionResult.ok) {
+      console.error("[reviews] Failed to refresh dish mentions:", mentionResult.error);
+      return NextResponse.json({ error: "Could not update review dishes" }, { status: 500 });
+    }
   }
 
   invalidateSocialCachesForNames([actor.actorName]);

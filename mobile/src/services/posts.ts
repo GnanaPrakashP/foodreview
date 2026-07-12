@@ -39,6 +39,8 @@ export type CreatePostInput = {
   restaurantAddress?: string | null;
   restaurantLat?: number | null;
   restaurantLng?: number | null;
+  restaurantPrimaryType?: string | null;
+  restaurantTypes?: string[] | null;
   dishName: string;
   dishes?: FoodItem[];
   caption: string;
@@ -207,6 +209,8 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
       restaurantLat: input.restaurantLat,
       restaurantLng: input.restaurantLng,
       restaurantName: input.restaurantName,
+      restaurantPrimaryType: input.restaurantPrimaryType,
+      restaurantTypes: input.restaurantTypes,
       tags: input.tags,
       visibility: input.visibility
     }),

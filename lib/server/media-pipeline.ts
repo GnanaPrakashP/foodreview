@@ -106,11 +106,24 @@ const MIME_EXTENSION: Record<string, string> = {
   "video/quicktime": "mov",
   "video/webm": "webm"
 };
+// A 60s 1080p H.264 clip is ~40-80MB; 100MB leaves headroom without letting
+// mobile uploads run long enough to routinely time out.
 const MAX_BYTES: Record<MediaSurface, Record<MediaType, number>> = {
   avatar: { image: 5 * 1024 * 1024, video: 0 },
-  memory: { image: 60 * 1024 * 1024, video: 200 * 1024 * 1024 },
-  post: { image: 60 * 1024 * 1024, video: 200 * 1024 * 1024 }
+  memory: { image: 60 * 1024 * 1024, video: 100 * 1024 * 1024 },
+  post: { image: 60 * 1024 * 1024, video: 100 * 1024 * 1024 }
 };
+// Enforced against the probed duration at processing time — the intent's
+// client-supplied duration is advisory only. Small tolerance for container
+// rounding.
+const MAX_VIDEO_DURATION_MS: Record<MediaSurface, number> = {
+  avatar: 0,
+  memory: 60_000,
+  post: 30_000
+};
+const VIDEO_DURATION_TOLERANCE_MS = 1_500;
+// Derivative paths embed the asset id, so their content is immutable.
+const DERIVATIVE_CACHE_SECONDS = 60 * 60 * 24 * 365;
 const BASE83 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
 
 export function mediaIntentExpiresAt(now = Date.now()) {
@@ -301,6 +314,8 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
     case "media_image_decode_failed":
     case "media_image_dimensions_too_large":
       return "Selected image could not be processed.";
+    case "media_video_too_long":
+      return "Video is longer than allowed.";
     default:
       return "Media upload is not allowed.";
   }
@@ -494,6 +509,10 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
   try {
     await writeFile(inputPath, buffer);
     const probe = await ffprobe(inputPath);
+    const maxDurationMs = MAX_VIDEO_DURATION_MS[asset.surface] ?? 0;
+    if (maxDurationMs > 0 && probe.durationMs !== null && probe.durationMs > maxDurationMs + VIDEO_DURATION_TOLERANCE_MS) {
+      throw new Error("media_video_too_long");
+    }
     const crop = cropPixelsForRect(asset.crop_rect, probe.width, probe.height);
     const filter = videoFilterFor(asset.surface, crop);
     await runCommand("ffmpeg", [
@@ -516,7 +535,10 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
       "128k",
       outputPath
     ]);
-    await runCommand("ffmpeg", ["-y", "-ss", "00:00:01", "-i", outputPath, "-frames:v", "1", posterPath]);
+    // Poster from ~1s in, clamped to the clip's midpoint so sub-second
+    // videos still yield a frame.
+    const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
+    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath]);
     const output = await readFile(outputPath);
     const poster = await readFile(posterPath);
     const posterMeta = await sharp(poster).metadata();
@@ -630,6 +652,7 @@ function derivativeBucketForSurface(surface: MediaSurface) {
 
 async function uploadDerivative(admin: AdminClient, bucketId: string, storagePath: string, buffer: Buffer, contentType: string) {
   const { error } = await admin.storage.from(bucketId).upload(storagePath, buffer, {
+    cacheControl: String(DERIVATIVE_CACHE_SECONDS),
     contentType,
     upsert: true
   });

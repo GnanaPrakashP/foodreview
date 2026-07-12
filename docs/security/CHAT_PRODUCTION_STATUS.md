@@ -106,6 +106,39 @@ The final audit migration is now visible in the configured Supabase project. Thi
 - Removed the Share tab Table Memory place prompt from the create flow. The app now passes the existing required `restaurantName` RPC field as the internal fallback `"Table Memory"` for that flow; no schema/RLS/storage changes were made.
 - Updated the mobile profile Memories tab to group memory cards by month in a timeline with orange dots and a connector line, while preserving the original stacked date block with divider, occasion title, place line, and participant, media, dish, and message counts. Dish counts are computed from `shared_memory_dishes.room_id` for already-visible room summaries only; the place line uses existing room summary `restaurantName`/`area` fields, and no dish names, message bodies, media URLs, signed URLs, or storage paths are added to the profile list.
 
+## Memory Room Mobile Performance Blocker Fix (2026-07-12)
+
+Status: Implemented and verified on a connected Android device. Phase 4 remains Partial because the large-media, interrupted/background upload, offline-retry, and signed-URL-expiry staging matrix is still outstanding.
+
+- Heavy room tabs remain lazy, while Chat now background-warms after the Table entry interaction settles. Selecting an already-warmed Chat pane skips the old opacity-zero entrance delay, so the prepared list is revealed immediately without restoring the original room-entry cost.
+- The room list and room detail hooks hydrate available SQLite snapshots into React Query immediately, then reconcile with Supabase in the background with a 30-second freshness window.
+- Media prefetch is deferred until the Media tab becomes active and is capped to the first 12 gallery items.
+- The active chat list now uses bounded initial rendering, batch size, and window size while preserving cursor-based older-message pagination.
+- The food-pattern wallpaper is a repeated density-aware raster tile instead of 495 native SVG primitives. The checked-in generator keeps the raster assets reproducible.
+- Chat and viewer audio use `expo-audio`; hidden `VideoView` surfaces and their continuous status-driven redraws were removed. Temporary memory-room timing logs and obsolete picture-in-picture properties were also removed.
+- Text-message timestamps now reserve a conservative width on the first render and are visible in the same frame as the body. Native width measurement silently refines the reservation instead of controlling timestamp visibility.
+- The deployed cursor path was exercised with a 63-message room: page 1 returned 50 with `hasNext=true`; page 2 returned 13 with `hasNext=false`.
+
+Connected Android measurements on `com.circlebites.mobile`:
+
+- Before the fix, a room-open sample rendered 222 frames with 218 janky frames (98.2%), a 40 ms median, 57 ms p90, and frames in the 900-950 ms buckets.
+- After lazy mounting and rasterizing the wallpaper, repeated room-open samples rendered the Table surface within 0.5-1.0 seconds with 8.57-13.79% janky frames, 5-23 ms median frame time, and no 900-950 ms frames.
+- Media activation showed content within 0.75 seconds and measured 1/32 janky frames (3.12%).
+- Chat content and the composer were visible within one second. After settling, a five-second idle sample rendered 0 frames with 0 jank and 0 slow UI/draw events, confirming the former audio-player redraw loop is gone.
+- Chat warm-up/timestamp follow-up: after freshly re-entering the room and letting Table settle, the first post-input device capture at 300 ms showed the complete chat list, composer, message bodies, and timestamps together. A 150 ms capture was still on Table because Android had not dispatched the tab selection; no selected-Chat text-only intermediate frame was observed.
+
+Latest scoped verification:
+
+- `npm run test:memory-hardening`: 72/72.
+- `node --test tests/shared-memory-phase1-security.test.mjs`: 19/19.
+- `node --test tests/shared-memory-phase2-media-security.test.mjs`: 20/20.
+- `node --test tests/shared-memory-phase4-mobile-performance.test.mjs`: 17/17.
+- `npm run typecheck`: passed.
+- `cd mobile && npm run typecheck`: passed.
+- `git diff --check`: passed.
+- Security gate: passed for this patch. It changes no RLS, Storage policy, service-role boundary, signed-URL behavior, or private-data logging.
+- Repository-wide `npm test` remains red on the current dirty branch because unrelated route test harnesses do not mock the new `@/lib/server/media-pipeline` dependency, several unrelated static UI assertions no longer match the branch, and a Profile layout test references a missing file. Repository-wide lint also remains red on existing vendored chat `@ts-nocheck` files and unrelated warnings. These failures are not introduced by the scoped memory-room performance patch; the scoped hardening/security/typecheck gates above pass.
+
 ## Automated Verification
 
 Passed:
@@ -221,7 +254,7 @@ Not verified:
 | Phase 2: Media Upload and Storage Hardening | Partial | Upload intent/finalize flow, private bucket, MIME/extension/size/magic-byte checks, pending visibility, signed URLs, cleanup RPCs. | Static tests pass; live bucket is private; finalize and cleanup RPC role gates pass. | Image dimensions/video duration remain client-enforced only; full staging user-path media tests still required. |
 | Phase 2.1/2.2: Trust Boundary and Cleanup | Partial | Client direct media-row insert removed; one-use intent/path indexes; cleanup skips valid media; final audit adds atomic finalize and account media sweep usage. | Hardening tests pass; cleanup and finalize RPC role gates pass live. | Run direct insert/replay/pending visibility/cleanup safety SQL tests with real authenticated staging users. |
 | Phase 3: Database and Scalability Fixes | Partial | Indexes, bounded summary RPC, mobile room-list paging, `(created_at,id)` chat/media cursors. | Static tests and typechecks pass. | Need `EXPLAIN`/load verification with large room and many-room data after migrations are deployed; durable message idempotency/rate quotas remain future work. |
-| Phase 4: Mobile Performance Fixes | Partial | Virtualized chat/media surfaces, disk cache hints, sequential media upload/finalize, compression/size guards. | Static tests, mobile typecheck, public E2E smoke pass. | Needs real-device large-media memory test, interrupted/background upload test, offline retry validation, and signed-URL expiry smoke. |
+| Phase 4: Mobile Performance Fixes | Partial | Lazy room panes, cache-first SQLite hydration, bounded chat/media render windows, activation-scoped media prefetch, raster wallpaper, disk cache hints, audio-only playback surfaces, sequential upload/finalize, and compression/size guards. | Hardening/performance tests and root/mobile typechecks pass; connected Android room, Chat, Media, idle-redraw, audio playback, and 63-message pagination smokes pass. | Needs real-device large-media memory test, interrupted/background upload test, offline retry validation, and signed-URL expiry smoke. |
 | Phase 5: Monitoring and Operations | Partial | Sanitized `recordMemoryOperation`, no raw memory notification/participant error logs, cleanup/account-delete count-only logs, docs for metrics/alerts. | Static tests and lint pass. | No real metrics sink, crash reporting, alert policy, notification receipt monitoring, backup/restore drill, or scheduled cleanup proof. |
 | Phase 6: Tests and CI/CD | Partial | Hardening workflow, expanded verify script, static regression tests, build/lint/typecheck coverage. | `npm run verify:memory-hardening` passes; `npm run test:e2e` passes 6 public tests with 50 skipped. | CI run status not verified from GitHub; Supabase CLI/staging DB tests unavailable; account-dependent E2E skipped without `.env.e2e`. |
 

@@ -31,6 +31,14 @@ import {
   type PlaceSuggestion,
   type SelectedPlace
 } from "@/services/places";
+import {
+  confirmDishAlias,
+  findDishDidYouMean,
+  normalizeDishNameForMatch,
+  searchDishNameSuggestions,
+  type DishDidYouMean,
+  type DishNameSuggestion
+} from "@/services/dishSuggestions";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -222,10 +230,10 @@ export default function ShareScreen() {
   const previewTags = selectedTags;
   const previewLocation = compactPlaceLocation(restaurantPlace);
   const setComposing = useComposerStore((state) => state.setComposing);
-  // The tab bar stays hidden for the whole composer flow: from the first
-  // captured photo through review/details/preview, until posted or abandoned
-  // (removing the last photo re-shows it).
-  const composing = Boolean(isReady && isAuthenticated && shareMode === "solo" && mediaItems.length > 0);
+  // The tab bar is hidden for the entire Post-a-Bite flow — any solo step,
+  // with or without media (error and empty states included) — until the
+  // post is made or the flow is abandoned.
+  const composing = Boolean(isReady && isAuthenticated && shareMode === "solo");
   useEffect(() => {
     setComposing(composing);
     return () => setComposing(false);
@@ -242,6 +250,7 @@ export default function ShareScreen() {
   function openSolo() {
     setSoloStep("review");
     setImageError("");
+    setSuccess("");
     setUploadProgress(null);
     router.push("/share/camera");
   }
@@ -502,6 +511,8 @@ export default function ShareScreen() {
         restaurantLat: restaurantPlace?.latitude,
         restaurantLng: restaurantPlace?.longitude,
         restaurantName: restaurantPlace?.name ?? restaurantName,
+        restaurantPrimaryType: restaurantPlace?.primaryType,
+        restaurantTypes: restaurantPlace?.types,
         tags: selectedTags,
         visibility
       });
@@ -513,7 +524,10 @@ export default function ShareScreen() {
       setCustomTag("");
       setSelectedTags([]);
       setVisibility("public");
-      setSoloStep("details");
+      // Posting ends the flow: back to the Create screen (tab bar returns),
+      // where the success banner is shown.
+      setShareMode("choice");
+      setSoloStep("review");
       setSuccess("Post shared. Your feeds and profile are refreshing.");
       setUploadProgress(null);
     } catch {
@@ -744,28 +758,34 @@ export default function ShareScreen() {
             <SignedOutFeedState message="Sign in to share a real food post." />
           ) : shareMode === "choice" ? (
             <View collapsable={false} style={styles.choiceStack}>
+              {success ? (
+                <View style={styles.successBanner}>
+                  <Text style={styles.successTitle}>Shared</Text>
+                  <Text style={styles.successText}>{success}</Text>
+                </View>
+              ) : null}
               <ActionCard
                 Icon={PenLine}
                 accent="orange"
                 cardHeight={choiceCardHeight}
                 cta="Capture Dish"
                 CtaIcon={Camera}
-                description="Share the dish worth talking about."
+                description="Share your dining experience and help others decide what's worth trying."
                 onMeasureHeight={measureChoiceCard}
                 onPress={openSolo}
-                tags={["Photo", "Rating"]}
-                title="Post a Bite"
+                tags={["Photo", "Dish", "How was it?"]}
+                title="Dining Experience"
               />
               <ActionCard
                 Icon={Users}
                 accent="memory"
                 cardHeight={choiceCardHeight}
-                cta="Create memory"
+                cta="Create Memory"
                 CtaIcon={UserPlus}
-                description="Remember the places you visit with friends."
+                description="A private room with friends for every stop, dish, and memory from the occasion."
                 onMeasureHeight={measureChoiceCard}
                 onPress={() => setShareMode("friends")}
-                tags={["Private", "With friends", "Photos + dishes"]}
+                tags={["Private", "Friends", "Dishes"]}
                 title="Table Memory"
               />
             </View>
@@ -1370,12 +1390,77 @@ function DishRow({
   showRemove: boolean;
 }) {
   const { themeColors: c, styles } = useShareTheme();
+  const [suggestions, setSuggestions] = useState<DishNameSuggestion[]>([]);
+  const [didYouMean, setDidYouMean] = useState<DishDidYouMean | null>(null);
+  // Names accepted from a suggestion or "keep as typed" — don't re-suggest them.
+  const settledNameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const term = dish.name.trim();
+    if (term.length < 2 || term === settledNameRef.current) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchDishNameSuggestions(term, 3)
+        .then((results) => {
+          if (cancelled) return;
+          const normalizedTerm = normalizeDishNameForMatch(term);
+          setSuggestions(results.filter((result) => result.normalizedName !== normalizedTerm));
+        })
+        .catch(() => {});
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [dish.name]);
+
+  function acceptSuggestion(suggestion: DishNameSuggestion) {
+    settledNameRef.current = suggestion.name;
+    setSuggestions([]);
+    setDidYouMean(null);
+    onChange({ name: suggestion.name });
+  }
+
+  function acceptDidYouMean(match: DishDidYouMean) {
+    const typedName = dish.name.trim();
+    acceptSuggestion(match.suggestion);
+    // The typed spelling meant this canonical dish — teach the alias dictionary.
+    void confirmDishAlias(typedName, match.suggestion.canonicalDishId);
+  }
+
+  function keepTypedName() {
+    settledNameRef.current = dish.name.trim();
+    setDidYouMean(null);
+  }
+
+  async function handleEndEditing() {
+    setSuggestions([]);
+    const term = dish.name.trim();
+    if (term.length < 3 || term === settledNameRef.current) return;
+    try {
+      const match = await findDishDidYouMean(term);
+      setDidYouMean(match);
+    } catch {
+      setDidYouMean(null);
+    }
+  }
+
   return (
     <View style={styles.dishRow}>
       <View style={styles.dishInputRow}>
         <Utensils size={20} color={c.gold} strokeWidth={1.9} />
         <TextInput
-          onChangeText={(name) => onChange({ name })}
+          onChangeText={(name) => {
+            if (name.trim() !== settledNameRef.current) settledNameRef.current = null;
+            setDidYouMean(null);
+            onChange({ name });
+          }}
+          onEndEditing={() => {
+            void handleEndEditing();
+          }}
           placeholder="Chicken Biriyani"
           placeholderTextColor={c.muted}
           style={styles.dishInput}
@@ -1387,6 +1472,34 @@ function DishRow({
           </Pressable>
         ) : null}
       </View>
+      {suggestions.length > 0 ? (
+        <View style={styles.dishSuggestionList}>
+          {suggestions.map((suggestion) => (
+            <Pressable
+              key={suggestion.canonicalDishId}
+              onPress={() => acceptSuggestion(suggestion)}
+              style={styles.dishSuggestionItem}
+            >
+              <Text numberOfLines={1} style={styles.dishSuggestionText}>{suggestion.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {didYouMean ? (
+        <View style={styles.didYouMeanRow}>
+          <Text numberOfLines={1} style={styles.didYouMeanText}>
+            Did you mean {didYouMean.suggestion.name}?
+          </Text>
+          <View style={styles.didYouMeanActions}>
+            <Pressable onPress={() => acceptDidYouMean(didYouMean)} style={styles.didYouMeanButton}>
+              <Text style={styles.didYouMeanButtonText}>Yes</Text>
+            </Pressable>
+            <Pressable onPress={keepTypedName} style={styles.didYouMeanButton}>
+              <Text style={styles.didYouMeanKeepText}>Keep</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       <View style={styles.dishRatingRow}>
         <Text style={styles.ratingLabel}>{dish.rating > 0 ? `${dish.rating}/5` : "Rate dish"}</Text>
         <View style={styles.stars}>
@@ -2585,6 +2698,54 @@ function createStyles(c: ThemeColors) {
   },
   removeDishButton: {
     padding: 4
+  },
+  dishSuggestionList: {
+    gap: 2
+  },
+  dishSuggestionItem: {
+    paddingLeft: 30,
+    paddingVertical: 5
+  },
+  dishSuggestionText: {
+    ...fontStyles.medium,
+    color: c.gold,
+    fontSize: 13,
+    lineHeight: 17
+  },
+  didYouMeanRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.s,
+    justifyContent: "space-between",
+    paddingLeft: 30
+  },
+  didYouMeanText: {
+    ...fontStyles.medium,
+    color: c.muted,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    minWidth: 0
+  },
+  didYouMeanActions: {
+    flexDirection: "row",
+    gap: spacing.s
+  },
+  didYouMeanButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 2
+  },
+  didYouMeanButtonText: {
+    ...fontStyles.semiBold,
+    color: c.gold,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  didYouMeanKeepText: {
+    ...fontStyles.semiBold,
+    color: c.muted,
+    fontSize: 12,
+    lineHeight: 16
   },
   addDishButton: {
     alignItems: "center",

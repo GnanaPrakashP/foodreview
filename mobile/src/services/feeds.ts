@@ -1,7 +1,7 @@
 import { supabase } from "@/api/supabase";
 import { authorizedJson } from "@/api/client";
 import type { FeedPage, ReviewPost } from "@/types/models";
-import { dishSearchMatches, normalizeDishDisplayName } from "@/services/dishNormalizer";
+import { normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
 
 const PAGE_SIZE = 24;
@@ -41,6 +41,16 @@ export type RestaurantFeedInput = {
   restaurantName?: string | null;
 };
 
+export type DishFeedInput = {
+  canonicalDishId?: string | null;
+  dishName: string;
+  limit?: number;
+  location?: ExploreFeedInput["location"];
+  placeId?: string | null;
+  restaurantAddress?: string | null;
+  restaurantName?: string | null;
+};
+
 export type ExploreFeedInput = {
   limit?: number;
   location?: {
@@ -49,12 +59,7 @@ export type ExploreFeedInput = {
   } | null;
 };
 
-type NearbyBounds = {
-  maxLat: number;
-  maxLng: number;
-  minLat: number;
-  minLng: number;
-};
+type LocationBias = NonNullable<ExploreFeedInput["location"]>;
 
 function displayNameForProfileRow(row: ReviewerIdentityRow) {
   return displayNameForProfile({
@@ -319,18 +324,33 @@ function normalizeEntityName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function nearbyBounds(lat: number, lng: number, radiusKm = 30): NearbyBounds | null {
+function validLocationBias(location?: ExploreFeedInput["location"] | null): LocationBias | null {
+  if (!location) return null;
+  const lat = Number(location.lat);
+  const lng = Number(location.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
 
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  return {
-    maxLat: lat + latDelta,
-    maxLng: lng + lngDelta,
-    minLat: lat - latDelta,
-    minLng: lng - lngDelta
-  };
+function locationRankScore(row: Pick<ReviewRow, "restaurant_lat" | "restaurant_lng">, location: LocationBias) {
+  const lat = Number(row.restaurant_lat);
+  const lng = Number(row.restaurant_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return Number.POSITIVE_INFINITY;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return Number.POSITIVE_INFINITY;
+
+  const lngScale = Math.max(0.2, Math.cos((location.lat * Math.PI) / 180));
+  return Math.pow(lat - location.lat, 2) + Math.pow((lng - location.lng) * lngScale, 2);
+}
+
+function sortRowsByLocation(rows: ReviewRow[], location: LocationBias) {
+  return [...rows].sort((a, b) => {
+    const distanceDiff = locationRankScore(a, location) - locationRankScore(b, location);
+    if (distanceDiff !== 0) return distanceDiff;
+    const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    if (createdDiff !== 0) return createdDiff;
+    return b.id.localeCompare(a.id);
+  });
 }
 
 function isSyntheticReviewRow(row: Pick<ReviewRow, "restaurant_name" | "reviewer_name">) {
@@ -339,14 +359,42 @@ function isSyntheticReviewRow(row: Pick<ReviewRow, "restaurant_name" | "reviewer
     || /^smoke test eats\b/i.test(row.restaurant_name);
 }
 
-function rowHasDish(row: ReviewRow, dishName: string) {
-  const normalizedDishName = normalizeDishDisplayName(dishName);
-  if (!normalizedDishName || !Array.isArray(row.items)) return false;
+function rowItemString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function rowItemNameMatchesExactly(value: unknown, dishName: string) {
+  const normalizedCandidate = normalizeDishDisplayName(rowItemString(value)).toLowerCase();
+  const normalizedDishName = normalizeDishDisplayName(dishName).toLowerCase();
+  return Boolean(normalizedCandidate && normalizedDishName && normalizedCandidate === normalizedDishName);
+}
+
+function rowItemMatchesDish(item: unknown, input: Pick<DishFeedInput, "canonicalDishId" | "dishName">) {
+  const canonicalDishId = input.canonicalDishId?.trim() ?? "";
+  if (!item || typeof item !== "object") return false;
+
+  const candidate = item as {
+    canonicalDishId?: unknown;
+    canonicalDishName?: unknown;
+    name?: unknown;
+    rawDishName?: unknown;
+  };
+  if (canonicalDishId) return rowItemString(candidate.canonicalDishId) === canonicalDishId;
+  if (!normalizeDishDisplayName(input.dishName)) return false;
+
+  return [
+    candidate.canonicalDishName,
+    candidate.name,
+    candidate.rawDishName
+  ].some((name) => rowItemNameMatchesExactly(name, input.dishName));
+}
+
+function rowHasDish(row: ReviewRow, input: Pick<DishFeedInput, "canonicalDishId" | "dishName">) {
+  if (!Array.isArray(row.items)) return false;
 
   return row.items.some((item) => {
     if (!item || typeof item !== "object") return false;
-    const name = (item as { name?: unknown }).name;
-    return typeof name === "string" && dishSearchMatches(name, normalizedDishName);
+    return rowItemMatchesDish(item, input);
   });
 }
 
@@ -376,7 +424,6 @@ async function publicReviewRowsPage(
   viewerName: string,
   from: number,
   to: number,
-  bounds?: NearbyBounds | null,
   blockedNamesInput?: string[]
 ) {
   const blockedNames = blockedNamesInput ?? await getBlockedUsernames(viewerName);
@@ -393,14 +440,6 @@ async function publicReviewRowsPage(
     query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
   }
 
-  if (bounds) {
-    query = query
-      .gte("restaurant_lat", bounds.minLat)
-      .lte("restaurant_lat", bounds.maxLat)
-      .gte("restaurant_lng", bounds.minLng)
-      .lte("restaurant_lng", bounds.maxLng);
-  }
-
   return query
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -413,13 +452,13 @@ async function scanPublicReviewRows(
   options: { excludeSynthetic?: boolean; limit?: number; location?: ExploreFeedInput["location"] } = {}
 ) {
   const rows: ReviewRow[] = [];
-  const bounds = options.location ? nearbyBounds(options.location.lat, options.location.lng) : null;
+  const location = validLocationBias(options.location);
   const limit = Math.max(1, options.limit ?? PUBLIC_REVIEW_BATCH_SIZE);
   const blockedNames = await getBlockedUsernames(viewerName);
 
   for (let from = 0; rows.length < limit; ) {
     const batchSize = Math.min(PUBLIC_REVIEW_BATCH_SIZE, limit - rows.length);
-    const { data, error } = await publicReviewRowsPage(viewerName, from, from + batchSize - 1, bounds, blockedNames);
+    const { data, error } = await publicReviewRowsPage(viewerName, from, from + batchSize - 1, blockedNames);
     if (error) throw new Error(error.message);
 
     const page = (data ?? []).filter((row) => !options.excludeSynthetic || !isSyntheticReviewRow(row));
@@ -429,7 +468,7 @@ async function scanPublicReviewRows(
     from += batchSize;
   }
 
-  return rows;
+  return location ? sortRowsByLocation(rows, location) : rows;
 }
 
 export async function getCircleFeed(cursor?: string | null): Promise<FeedPage> {
@@ -495,13 +534,13 @@ export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<Feed
     EXPLORE_MAX_REVIEW_SCAN_LIMIT,
     Math.max(1, input.limit ?? EXPLORE_REVIEW_SCAN_LIMIT)
   );
-  const [nearbyRows, joinedCircleOwners] = await Promise.all([
-    scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: scanLimit, location: input.location ?? null }),
+  const location = validLocationBias(input.location);
+  const locationScanLimit = location ? Math.max(scanLimit, RESTAURANT_SCAN_SIZE) : scanLimit;
+  const [discoveryRows, joinedCircleOwners] = await Promise.all([
+    scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: locationScanLimit, location }),
     getJoinedCircleOwners(viewerName)
   ]);
-  const rows = input.location && nearbyRows.length === 0
-    ? await scanPublicReviewRows(viewerName, { excludeSynthetic: true, limit: scanLimit })
-    : nearbyRows;
+  const rows = discoveryRows.slice(0, scanLimit);
   const identities = await fetchReviewerIdentities(rows.map((row) => row.reviewer_name));
   const joinedCircleOwnerSet = new Set(joinedCircleOwners);
 
@@ -568,20 +607,70 @@ export async function getRestaurantFeed(input: RestaurantFeedInput): Promise<Fee
   };
 }
 
-export async function getDishFeed(dishName: string): Promise<FeedPage> {
-  const viewerName = await getViewerName();
-  const normalizedDishName = normalizeEntityName(dishName);
+function normalizeDishFeedInput(input: string | DishFeedInput): DishFeedInput {
+  return typeof input === "string" ? { dishName: input } : input;
+}
 
-  if (!normalizedDishName) {
+export async function getDishFeed(input: string | DishFeedInput): Promise<FeedPage> {
+  const viewerName = await getViewerName();
+  const normalizedInput = normalizeDishFeedInput(input);
+  const dishName = normalizedInput.dishName.trim();
+  const canonicalDishId = normalizedInput.canonicalDishId?.trim() ?? "";
+  const location = validLocationBias(normalizedInput.location);
+  const placeId = normalizedInput.placeId?.trim() ?? "";
+  const restaurantAddress = normalizedInput.restaurantAddress?.trim() ?? "";
+  const restaurantName = normalizedInput.restaurantName?.trim() ?? "";
+  const resultLimit = Math.max(1, Math.min(normalizedInput.limit ?? PAGE_SIZE, DISH_SCAN_SIZE));
+  const hasPlaceScope = Boolean(placeId || restaurantName);
+
+  if (!dishName && !canonicalDishId) {
     return { posts: [], viewerName };
   }
 
-  const { data, error } = await publicReviewRows(viewerName, DISH_SCAN_SIZE);
-  if (error) throw new Error(error.message);
+  let rows: ReviewRow[] = [];
 
-  const matchingRows = (data ?? [])
-    .filter((row) => rowHasDish(row, normalizedDishName))
-    .slice(0, PAGE_SIZE);
+  if (hasPlaceScope) {
+    const blockedNames = await getBlockedUsernames(viewerName);
+    let query = supabase
+      .from("reviews")
+      .select(REVIEW_SELECT)
+      .eq("visibility", "public")
+      .is("deleted_at", null)
+      .is("hidden_at", null)
+      .is("reported_at", null)
+      .eq("status", "active");
+
+    query = placeId
+      ? query.eq("restaurant_id", placeId)
+      : query.eq("restaurant_name", restaurantName);
+
+    if (blockedNames.length > 0) {
+      query = query.not("reviewer_name", "in", `(${blockedNames.map((name) => `"${name}"`).join(",")})`);
+    }
+
+    const { data, error } = await query
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(RESTAURANT_SCAN_SIZE)
+      .returns<ReviewRow[]>();
+
+    if (error) throw new Error(error.message);
+    rows = placeId || !restaurantAddress
+      ? data ?? []
+      : (data ?? []).filter((row) => {
+        const address = normalizeEntityName(restaurantAddress);
+        return normalizeEntityName(row.area ?? "") === address || normalizeEntityName(row.restaurant_address ?? "") === address;
+      });
+  } else {
+    rows = await scanPublicReviewRows(viewerName, {
+      limit: location ? Math.max(DISH_SCAN_SIZE, RESTAURANT_SCAN_SIZE) : DISH_SCAN_SIZE,
+      location
+    });
+  }
+
+  const matchingRows = rows
+    .filter((row) => rowHasDish(row, { canonicalDishId, dishName }))
+    .slice(0, resultLimit);
 
   return {
     posts: await addEngagementToRows(matchingRows, viewerName),

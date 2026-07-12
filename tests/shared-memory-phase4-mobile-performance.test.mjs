@@ -16,6 +16,9 @@ const memoryValidation = readFileSync("mobile/src/services/memoryMediaValidation
 
 test("phase 4 chat and media lists use bounded render windows", () => {
   for (const expected of [
+    "CHAT_MAIN_INITIAL_RENDER_COUNT",
+    "CHAT_MAIN_MAX_RENDER_BATCH",
+    "CHAT_MAIN_WINDOW_SIZE",
     "CHAT_TIMELINE_INITIAL_RENDER_COUNT",
     "CHAT_TIMELINE_MAX_RENDER_BATCH",
     "CHAT_TIMELINE_WINDOW_SIZE",
@@ -26,6 +29,11 @@ test("phase 4 chat and media lists use bounded render windows", () => {
     assert.match(memoryRoomScreen, new RegExp(expected));
   }
 
+  const chatMainBody = memoryRoomScreen.match(/<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/)?.[0] ?? "";
+  assert.match(chatMainBody, /initialNumToRender: CHAT_MAIN_INITIAL_RENDER_COUNT/);
+  assert.match(chatMainBody, /maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH/);
+  assert.match(chatMainBody, /windowSize: CHAT_MAIN_WINDOW_SIZE/);
+  assert.match(chatMainBody, /updateCellsBatchingPeriod: 50/);
   assert.match(memoryRoomScreen, /initialNumToRender=\{CHAT_TIMELINE_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{CHAT_TIMELINE_MAX_RENDER_BATCH\}/);
   assert.match(memoryRoomScreen, /windowSize=\{CHAT_TIMELINE_WINDOW_SIZE\}/);
@@ -50,8 +58,19 @@ test("phase 4 media viewer is virtualized instead of mounting every media item",
 test("phase 4 room panes lazy-mount inactive heavy tabs", () => {
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.match(roomPaneBody, /lazy = true/);
-  assert.match(roomPaneBody, /const \[hasMounted, setHasMounted\] = useState\(active \|\| !lazy\)/);
+  assert.match(roomPaneBody, /const \[hasMounted, setHasMounted\] = useState\(active \|\| preload \|\| !lazy\)/);
   assert.match(roomPaneBody, /if \(lazy && !hasMounted\) return null/);
+});
+
+test("phase 4 warms chat after room entry and renders timestamps on the first frame", () => {
+  const timeBody = memoryRoomScreen.match(/function ChatMainBodyWithTime\([\s\S]*?\nfunction estimateChatTimestampWidth/)?.[0] ?? "";
+  const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
+  assert.match(memoryRoomScreen, /InteractionManager\.runAfterInteractions\(\(\) => \{\s*setChatPreloaded\(true\)/);
+  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "chat"\} preload=\{chatPreloaded\}>/);
+  assert.match(roomPaneBody, /if \(active && preload\) \{\s*progress\.setValue\(1\)/);
+  assert.match(timeBody, /const estimatedTimeWidth = estimateChatTimestampWidth\(time\)/);
+  assert.match(timeBody, /style=\{styles\.chatMainTimePinned\}/);
+  assert.doesNotMatch(memoryRoomScreen, /chatMainTimeMeasuring/);
 });
 
 test("phase 4 media images use disk cache and stable recycling keys", () => {
@@ -65,6 +84,21 @@ test("phase 4 media gallery warms the first media assets on activation", () => {
   assert.match(memoryRoomScreen, /const MEDIA_GALLERY_PREFETCH_COUNT = 12/);
   assert.match(memoryRoomScreen, /if \(mode !== "media"\) return/);
   assert.match(memoryRoomScreen, /galleryPhotos\.slice\(0, MEDIA_GALLERY_PREFETCH_COUNT\)\.forEach\(prefetchMemoryMedia\)/);
+});
+
+test("phase 4 memory wallpaper uses a raster tile instead of mounting hundreds of SVG nodes", () => {
+  assert.match(memoryRoomScreen, /FOOD_WALLPAPER_TILE_SOURCE/);
+  assert.match(memoryRoomScreen, /resizeMode="repeat"/);
+  assert.doesNotMatch(memoryRoomScreen, /FOOD_WALLPAPER_PLACEMENTS\.map/);
+});
+
+test("phase 4 audio messages use the audio engine without hidden video surfaces", () => {
+  const chatAudioBody = memoryRoomScreen.match(/function ChatMainAudioMessage\([\s\S]*?\nfunction MemoryChatMainSelectionToolbar/)?.[0] ?? "";
+  const viewerAudioBody = memoryRoomScreen.match(/function ViewerAudio\([\s\S]*?\nfunction ViewerVideo/)?.[0] ?? "";
+  assert.match(chatAudioBody, /useAudioPlayer/);
+  assert.match(viewerAudioBody, /useAudioPlayer/);
+  assert.doesNotMatch(chatAudioBody, /useVideoPlayer|<VideoView/);
+  assert.doesNotMatch(viewerAudioBody, /useVideoPlayer|<VideoView/);
 });
 
 test("phase 3 persists memory React Query cache with MMKV", () => {
@@ -92,6 +126,9 @@ test("phase 5 adds SQLite offline store and offline-first memory hooks", () => {
   assert.match(memoryHooks, /getMemoryRoomOfflineFirst/);
   assert.match(memoryHooks, /getMemoryMessagesPageOfflineFirst/);
   assert.match(memoryHooks, /getMemoryMediaPageOfflineFirst/);
+  assert.match(memoryHooks, /readOfflineMemorySummaries/);
+  assert.match(memoryHooks, /readOfflineMemoryRoom/);
+  assert.match(memoryHooks, /queryClient\.setQueryData\(memoryKeys\.detail\(roomId\), cached\)/);
   assert.match(memoryHooks, /saveOfflineMemoryRoom/);
 });
 

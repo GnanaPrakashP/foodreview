@@ -1,4 +1,5 @@
 import { apiUrl } from "@/api/config";
+import { compactAddressText, compactLocationLabel } from "@/services/locationLabels";
 
 export type PlaceSuggestion = {
   mainText: string;
@@ -10,21 +11,16 @@ export type PlaceSuggestion = {
 export type PlaceDetails = {
   formattedAddress: string;
   latitude: number | null;
+  locationLabel: string;
   longitude: number | null;
   name: string;
   placeId: string;
+  primaryType: string;
   shortFormattedAddress: string;
+  types: string[];
 };
 
 export type SelectedPlace = PlaceDetails;
-
-const ADMIN_PARTS = new Set([
-  "india",
-  "telangana",
-  "andhra pradesh",
-  "karnataka",
-  "maharashtra"
-]);
 
 type AutocompleteResponse = {
   suggestions?: PlaceSuggestion[];
@@ -43,28 +39,28 @@ export function createPlacesSessionToken() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function cleanAddressPart(part: string) {
-  return part
-    .replace(/\b\d{5,6}\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+export function compactPlaceLocation(place: Pick<SelectedPlace, "formattedAddress" | "shortFormattedAddress" | "locationLabel"> | null) {
+  // Prefer the structured "area, city" label (sublocality/neighborhood + city)
+  // the backend derives from Google's address hierarchy; fall back to parsing
+  // the formatted address only when structured components were unavailable.
+  const structured = place?.locationLabel?.trim();
+  if (structured) return structured;
+  const source = place?.shortFormattedAddress || place?.formattedAddress || "";
+  return compactAddressText(source) ?? compactLocationLabel([place?.shortFormattedAddress, place?.formattedAddress]) ?? "";
 }
 
-export function compactPlaceLocation(place: Pick<SelectedPlace, "formattedAddress" | "shortFormattedAddress"> | null) {
-  const source = place?.shortFormattedAddress || place?.formattedAddress || "";
-  const parts = source
-    .split(",")
-    .map(cleanAddressPart)
-    .filter(Boolean)
-    .filter((part) => !ADMIN_PARTS.has(part.toLowerCase()));
+// An unreachable API host otherwise hangs the fetch (and the search spinner)
+// indefinitely — fail fast so the UI can show its error state.
+const PLACES_REQUEST_TIMEOUT_MS = 10_000;
 
-  if (parts.length === 0) return "";
-
-  const cityIndex = parts.findIndex((part) => /hyderabad|secunderabad|rangareddy|rangareddy district/i.test(part));
-  if (cityIndex > 0) return `${parts[cityIndex - 1]}, ${parts[cityIndex]}`;
-  if (cityIndex === 0 && parts[1]) return `${parts[0]}, ${parts[1]}`;
-
-  return parts.slice(-2).join(", ");
+async function fetchWithTimeout(url: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PLACES_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function autocompletePlaces(input: string, sessionToken: string, location?: LocationBias | null): Promise<PlaceSuggestion[]> {
@@ -75,7 +71,7 @@ export async function autocompletePlaces(input: string, sessionToken: string, lo
     params.set("lng", String(location.lng));
   }
 
-  const response = await fetch(apiUrl(`/api/places/autocomplete?${params.toString()}`));
+  const response = await fetchWithTimeout(apiUrl(`/api/places/autocomplete?${params.toString()}`));
   if (!response.ok) return [];
 
   const payload = (await response.json()) as AutocompleteResponse;
@@ -86,7 +82,7 @@ export async function placeDetails(placeId: string, sessionToken: string): Promi
   const params = new URLSearchParams({ placeId });
   if (sessionToken) params.set("sessionToken", sessionToken);
 
-  const response = await fetch(apiUrl(`/api/places/details?${params.toString()}`));
+  const response = await fetchWithTimeout(apiUrl(`/api/places/details?${params.toString()}`));
   if (!response.ok) return null;
 
   const payload = (await response.json()) as DetailsResponse;
@@ -97,9 +93,12 @@ export function selectedPlaceFromSuggestion(suggestion: PlaceSuggestion, details
   return {
     formattedAddress: details?.formattedAddress ?? "",
     latitude: details?.latitude ?? null,
+    locationLabel: details?.locationLabel ?? "",
     longitude: details?.longitude ?? null,
     name: details?.name || suggestion.mainText,
     placeId: details?.placeId || suggestion.placeId,
-    shortFormattedAddress: details?.shortFormattedAddress || suggestion.secondaryText
+    primaryType: details?.primaryType ?? "",
+    shortFormattedAddress: details?.shortFormattedAddress || suggestion.secondaryText,
+    types: details?.types ?? []
   };
 }

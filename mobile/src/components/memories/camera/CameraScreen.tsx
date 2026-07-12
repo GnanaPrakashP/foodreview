@@ -1,7 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Camera, CameraView, type FocusMode } from "expo-camera";
-import { Image } from "expo-image";
-import * as MediaLibrary from "expo-media-library";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
@@ -45,6 +43,7 @@ const SHUTTER_SIZE = 86;
 const SHUTTER_INNER_SIZE = 62;
 const SHUTTER_RING_RADIUS = 40;
 const SHUTTER_RING_CIRCUMFERENCE = 2 * Math.PI * SHUTTER_RING_RADIUS;
+const SIDE_ACTION_ICON_SIZE = 25;
 const MAX_CAMERA_ZOOM = 0.85;
 const FOCUS_RETICLE_SIZE = 78;
 // Pinch sensitivity: a full two-finger spread (scale ~1 -> ~2) should sweep a
@@ -145,8 +144,6 @@ export function CameraScreen({
   // (pausing the preview natively would kill the in-flight capture on
   // Android, so an overlay stands in for a true frozen frame).
   const [captureBlackout, setCaptureBlackout] = useState(false);
-  const [galleryThumbNonce, setGalleryThumbNonce] = useState(0);
-
   // The memories flow pushes a preview screen over this one and can come
   // back for a retake, so the blackout must lift when focus returns.
   useFocusEffect(useCallback(() => setCaptureBlackout(false), []));
@@ -423,9 +420,6 @@ export function CameraScreen({
     const result = allowVideo
       ? await pickSingleMemoryMediaFromGallery()
       : await pickPostImageFromGallery();
-    // The picker may have just granted library access; let the gallery
-    // button pick up its latest-photo thumbnail.
-    setGalleryThumbNonce((nonce) => nonce + 1);
     if (result.error) {
       setCameraError(result.error);
       return;
@@ -450,7 +444,6 @@ export function CameraScreen({
 
   async function openGalleryMulti() {
     const result = await pickPostMediaFromGallery(gallerySelectionLimit);
-    setGalleryThumbNonce((nonce) => nonce + 1);
     if (result.error) {
       setCameraError(result.error);
       return;
@@ -610,7 +603,7 @@ export function CameraScreen({
         <ZoomRail disabled={cameraBusy} selectedZoom={zoom} onSelect={selectZoomPreset} />
         {allowVideo ? <ModeRail disabled={cameraBusy} mode={captureMode} onSelect={selectMode} /> : null}
         <View style={styles.bottomActionRow}>
-          <GalleryButton disabled={cameraBusy} onPress={openGallery} refreshNonce={galleryThumbNonce} />
+          <GalleryButton disabled={cameraBusy} onPress={openGallery} />
           <Pressable
             accessibilityLabel={recording ? "Stop recording" : captureMode === "video" ? "Start recording" : "Take photo"}
             disabled={shutterUnavailable && !recording}
@@ -626,7 +619,7 @@ export function CameraScreen({
             onPress={flipCamera}
             style={[styles.sideActionButton, cameraBusy && styles.disabledControl]}
           >
-            <Ionicons name="camera-reverse-outline" size={25} color={colors.dark.white} />
+            <Ionicons name="camera-reverse-outline" size={SIDE_ACTION_ICON_SIZE} color={colors.dark.white} />
           </Pressable>
         </View>
       </View>
@@ -638,45 +631,13 @@ function CameraShell({ children }: { children: React.ReactNode }) {
   return <View style={styles.screen}>{children}</View>;
 }
 
-// Gallery entry showing the newest library photo as a framed thumbnail
-// (falls back to an icon until library access has been granted). Permission
-// is only read, never requested — the picker itself asks on first use, and
-// refreshNonce re-checks after it closes.
 function GalleryButton({
   disabled,
-  onPress,
-  refreshNonce
+  onPress
 }: {
   disabled: boolean;
   onPress: () => void;
-  refreshNonce: number;
 }) {
-  const [thumbUri, setThumbUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const permission = await MediaLibrary.getPermissionsAsync();
-        if (!permission.granted) {
-          if (alive) setThumbUri(null);
-          return;
-        }
-        const assets = await MediaLibrary.getAssetsAsync({
-          first: 1,
-          mediaType: [MediaLibrary.MediaType.photo],
-          sortBy: [[MediaLibrary.SortBy.creationTime, false]]
-        });
-        if (alive) setThumbUri(assets.assets[0]?.uri ?? null);
-      } catch {
-        if (alive) setThumbUri(null);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [refreshNonce]);
-
   return (
     <Pressable
       accessibilityLabel="Choose from gallery"
@@ -684,13 +645,7 @@ function GalleryButton({
       onPress={onPress}
       style={[styles.sideActionButton, disabled && styles.disabledControl]}
     >
-      {thumbUri ? (
-        <Image alt="Latest gallery photo" contentFit="cover" source={{ uri: thumbUri }} style={styles.galleryThumb} transition={120} />
-      ) : (
-        <View style={styles.galleryThumbPlaceholder}>
-          <Ionicons name="images-outline" size={20} color={colors.dark.white} />
-        </View>
-      )}
+      <Ionicons name="image-outline" size={SIDE_ACTION_ICON_SIZE} color={colors.dark.white} />
     </Pressable>
   );
 }
@@ -1264,23 +1219,6 @@ const styles = StyleSheet.create({
     height: 54,
     justifyContent: "center",
     width: 54
-  },
-  galleryThumb: {
-    borderColor: "rgba(255,255,255,0.92)",
-    borderRadius: 10,
-    borderWidth: 1.5,
-    height: 40,
-    width: 40
-  },
-  galleryThumbPlaceholder: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.28)",
-    borderColor: "rgba(255,255,255,0.6)",
-    borderRadius: 10,
-    borderWidth: 1.5,
-    height: 40,
-    justifyContent: "center",
-    width: 40
   },
   shutterButton: {
     alignItems: "center",

@@ -7,6 +7,7 @@ import { isValidVisibility, normalizeReviewItems, validateReviewBody } from "@/l
 import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 import { REVIEW_MEDIA_BUCKET, REVIEW_POST_MAX_ITEMS, type ReviewMediaKind } from "@/lib/server/review-media";
 import { MEDIA_PUBLIC_BUCKET, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
+import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
 
 // Matches the mobile camera's 30s recording cap.
 const MAX_REVIEW_VIDEO_DURATION_SECONDS = 30;
@@ -110,6 +111,8 @@ export async function POST(req: NextRequest) {
     restaurantAddress,
     restaurantLat,
     restaurantLng,
+    restaurantPrimaryType,
+    restaurantTypes,
     tags,
   } = body;
 
@@ -178,6 +181,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: validatedMedia.error }, { status: validatedMedia.status });
   }
 
+  const restaurantPrimaryTypeValue =
+    typeof restaurantPrimaryType === "string" && restaurantPrimaryType.trim()
+      ? restaurantPrimaryType.trim().slice(0, 80)
+      : null;
+  const restaurantTypesValue = Array.isArray(restaurantTypes)
+    ? Array.from(
+        new Set(
+          restaurantTypes
+            .filter((type): type is string => typeof type === "string" && type.trim().length > 0)
+            .map((type) => type.trim().slice(0, 80))
+        )
+      ).slice(0, 24)
+    : null;
+
   const { data, error } = await writeDb
     .from("reviews")
     .insert({
@@ -194,11 +211,27 @@ export async function POST(req: NextRequest) {
       restaurant_address: restaurantAddress?.trim() || null,
       restaurant_lat: typeof restaurantLat === "number" ? restaurantLat : null,
       restaurant_lng: typeof restaurantLng === "number" ? restaurantLng : null,
+      restaurant_primary_type: restaurantPrimaryTypeValue,
+      restaurant_types: restaurantTypesValue,
     })
     .select("id")
     .single();
 
   if (error) {
+    await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
+    return NextResponse.json({ error: "Could not create review" }, { status: 500 });
+  }
+
+  const mentionResult = await replaceReviewDishMentions(writeDb, {
+    items: normalizedItems.items!,
+    placeId: typeof restaurantId === "string" ? restaurantId : null,
+    reviewId: data.id,
+    submittedItems: items,
+    userId: actor.userId
+  });
+  if (!mentionResult.ok) {
+    console.error("[reviews] Failed to write dish mentions:", mentionResult.error);
+    await writeDb.from("reviews").delete().eq("id", data.id);
     await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
     return NextResponse.json({ error: "Could not create review" }, { status: 500 });
   }

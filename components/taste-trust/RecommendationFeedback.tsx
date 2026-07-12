@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Flame, ThumbsDown, type LucideIcon } from "lucide-react";
-import { TASTE_TRUST_FEEDBACK_OPTIONS, type PostTasteTrustSummary } from "@/lib/taste-trust";
+import { ThumbsDown, ThumbsUp, type LucideIcon } from "lucide-react";
+import {
+  displayFeedbackLabelForLabel,
+  TASTE_TRUST_FEEDBACK_OPTIONS,
+  type PostTasteTrustSummary,
+  type TasteTrustFeedbackLabel,
+} from "@/lib/taste-trust";
 import { invalidateCachedJson } from "@/lib/browser-api-cache";
 
 type Props = {
@@ -31,14 +36,14 @@ const EMPTY_SUMMARY: PostTasteTrustSummary = {
   disagreed_count: 0,
   agreement_percentage: null,
   feedback_counts: {
-    "Must Try": 0,
-    "Not Worth It": 0,
+    Helpful: 0,
+    Disagree: 0,
   },
 };
 
-const FEEDBACK_ICONS: Record<string, LucideIcon> = {
-  "Must Try": Flame,
-  "Not Worth It": ThumbsDown,
+const FEEDBACK_ICONS: Record<TasteTrustFeedbackLabel, LucideIcon> = {
+  Helpful: ThumbsUp,
+  Disagree: ThumbsDown,
 };
 
 function invalidateTasteTrustCaches() {
@@ -47,16 +52,16 @@ function invalidateTasteTrustCaches() {
   invalidateCachedJson("/api/me");
 }
 
-const FEEDBACK_LABELS: Record<string, string> = {
-  "Must Try": "Must Try",
-  "Not Worth It": "Not Worth It",
+const FEEDBACK_LABELS: Record<TasteTrustFeedbackLabel, string> = {
+  Helpful: "Helpful",
+  Disagree: "Disagree",
 };
 
-function feedbackCountFor(summary: PostTasteTrustSummary, label: string) {
-  const count = summary.feedback_counts?.[label as keyof typeof summary.feedback_counts];
+function feedbackCountFor(summary: PostTasteTrustSummary, label: TasteTrustFeedbackLabel) {
+  const count = summary.feedback_counts?.[label];
   if (typeof count === "number" && Number.isFinite(count)) return count;
-  if (label === "Must Try") return summary.agree_count ?? summary.agreed_count ?? 0;
-  if (label === "Not Worth It") return summary.disagreed_count;
+  if (label === "Helpful") return summary.agree_count ?? summary.agreed_count ?? 0;
+  if (label === "Disagree") return summary.disagreed_count;
   return 0;
 }
 
@@ -70,9 +75,9 @@ export default function RecommendationFeedback({
   onSummaryChange,
 }: Props) {
   const [summary, setSummary] = useState<PostTasteTrustSummary>(initialSummary ?? EMPTY_SUMMARY);
-  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const [selectedLabel, setSelectedLabel] = useState<TasteTrustFeedbackLabel | null>(null);
   const [statusText, setStatusText] = useState("");
-  const [submittingLabel, setSubmittingLabel] = useState<string | null>(null);
+  const [submittingLabel, setSubmittingLabel] = useState<TasteTrustFeedbackLabel | null>(null);
   const [removing, setRemoving] = useState(false);
 
   const isPrivatePost = postVisibility === "me" || postVisibility === "private";
@@ -91,7 +96,7 @@ export default function RecommendationFeedback({
           setSummary(payload.summary);
           onSummaryChange?.(payload.summary);
         }
-        setSelectedLabel(payload.myFeedbackLabel ?? null);
+        setSelectedLabel(displayFeedbackLabelForLabel(payload.myFeedbackLabel));
       })
       .catch(() => {});
     return () => {
@@ -102,7 +107,7 @@ export default function RecommendationFeedback({
   if (isPrivatePost && summary.tried_count === 0) return null;
   if (!canSubmit && !shouldShowSummaryOnly) return null;
 
-  async function submitFeedback(label: string) {
+  async function submitFeedback(label: TasteTrustFeedbackLabel) {
     if (!canSubmit || submittingLabel || removing) return;
     setSubmittingLabel(label);
     setStatusText("");
@@ -119,7 +124,7 @@ export default function RecommendationFeedback({
       return;
     }
 
-    setSelectedLabel(payload.myFeedbackLabel ?? label);
+    setSelectedLabel(displayFeedbackLabelForLabel(payload.myFeedbackLabel) ?? label);
     if (payload.postSummary) {
       setSummary(payload.postSummary);
       onSummaryChange?.(payload.postSummary);

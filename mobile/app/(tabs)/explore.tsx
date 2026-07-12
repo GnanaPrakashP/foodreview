@@ -1,11 +1,12 @@
+import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
-import * as Location from "expo-location";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronDown, LocateFixed, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
+import { ArrowLeft, ChevronDown, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
@@ -18,16 +19,16 @@ import {
   type ExploreCategory,
   type PlaceCategoryId
 } from "@/constants/exploreCategories";
-import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
+import { useSetCircleAccessStatusMutation } from "@/hooks/useEngagement";
 import { useExploreDiscoveryQuery } from "@/hooks/useFeeds";
 import type { ExploreDishSpotlight, ExplorePersonSpotlight, ExplorePlaceSpotlight } from "@/services/exploreDiscovery";
+import { searchExploreDishes, searchExplorePlaces } from "@/services/exploreSearch";
 import {
-  loadSavedExploreLocation,
-  reverseGeocodeExploreLocation,
-  saveExploreLocation,
-  shortExploreLocationLabel,
-  type ExploreUserLocation
-} from "@/services/exploreLocation";
+  createManualUserLocation,
+  getCurrentDeviceUserLocation,
+  shortUserLocationLabel,
+  type UserLocation
+} from "@/services/userLocation";
 import {
   autocompletePlaces,
   compactPlaceLocation,
@@ -38,7 +39,10 @@ import {
 } from "@/services/places";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
+import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
+import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useUserLocationStore } from "@/stores/userLocationStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 
 type ExploreTab = "places" | "dishes" | "people";
@@ -49,15 +53,27 @@ type DishSpotlight = ExploreDishSpotlight;
 type PersonSpotlight = ExplorePersonSpotlight;
 
 type PersonRequestStatus = "idle" | "loading" | "pending" | "joined";
+type PersonCircleIntent = {
+  desiredStatus: PersonRequestStatus;
+  previousStatus: PersonRequestStatus;
+};
 
-// Explore is a "top near you" discovery surface, not an exhaustive list. Capping the
-// rendered cards keeps the lists bounded so memory and load time stay predictable
-// regardless of how large the backend discovery payload grows.
-const EXPLORE_FEED_SCAN_LIMIT = 30;
-const EXPLORE_MAX_LIST_LIMIT = 24;
+// Explore should show the available discovery set in location-ranked order while
+// keeping the rendered list bounded for mobile memory and scroll performance.
+const EXPLORE_FEED_SCAN_LIMIT = 60;
+const EXPLORE_MAX_LIST_LIMIT = 60;
 const EXPLORE_INITIAL_CARD_LIMIT = 6;
 const EXPLORE_CARD_PAGE_SIZE = 6;
 const EXPLORE_APP_RESUME_REFRESH_MS = 10 * 60_000;
+const EXPLORE_SEARCH_PLACEHOLDER = "Search places, dishes, or people...";
+const EXPLORE_SEARCH_DEBOUNCE_MS = 240;
+const EXPLORE_SEARCH_MIN_LENGTH = 2;
+const EXPLORE_SEARCH_RESULT_LIMIT = 6;
+const LOCATION_MENU_ENTER_MS = 200;
+const LOCATION_MENU_EXIT_MS = 150;
+const LOCATION_SEARCH_DEBOUNCE_MS = 250;
+const PERSON_CIRCLE_SYNC_DELAY_MS = 450;
+const PERSON_CIRCLE_SYNC_RETRY_MS = 150;
 const EMPTY_PLACES: PlaceSpotlight[] = [];
 const EMPTY_DISHES: DishSpotlight[] = [];
 const EMPTY_PEOPLE: PersonSpotlight[] = [];
@@ -80,6 +96,7 @@ const EXPLORE_TABS: Array<{ id: ExploreTab; label: string }> = [
   { id: "dishes", label: "Dishes" },
   { id: "people", label: "People" }
 ];
+let lastExploreTab: ExploreTab = "places";
 const INITIAL_VISIBLE_COUNTS: Record<ExploreTab, number> = {
   dishes: EXPLORE_INITIAL_CARD_LIMIT,
   people: EXPLORE_INITIAL_CARD_LIMIT,
@@ -87,15 +104,19 @@ const INITIAL_VISIBLE_COUNTS: Record<ExploreTab, number> = {
 };
 
 function useExploreTheme() {
-  const { themeColors } = useThemePreference();
+  const { resolvedTheme, themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
-  return { themeColors, styles };
+  return { resolvedTheme, themeColors, styles };
 }
 
 function initialsFor(name: string) {
   const parts = name.split(/[\s_]+/).filter(Boolean);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   return (parts[0]?.[0] ?? "?").toUpperCase();
+}
+
+function canonicalDishIdFromSpotlightKey(key: string) {
+  return /^canonical:([0-9a-f-]+)$/i.exec(key)?.[1] ?? "";
 }
 
 function avatarColor(name: string) {
@@ -111,6 +132,12 @@ function displayRating(value: number | null) {
 function exploreTabFromParam(value?: string): ExploreTab {
   if (value === "dishes" || value === "people") return value;
   return "places";
+}
+
+function initialExploreTab(value?: string) {
+  return value === "places" || value === "dishes" || value === "people"
+    ? exploreTabFromParam(value)
+    : lastExploreTab;
 }
 
 function placeCategoryLabel(categoryId: PlaceCategoryId) {
@@ -134,25 +161,43 @@ function circleProofText(names: string[]) {
 
 export default function ExploreScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();
-  const { themeColors, styles } = useExploreTheme();
+  const { resolvedTheme, themeColors, styles } = useExploreTheme();
   const isFocused = useIsFocused();
-  const requestCircleAccess = useRequestCircleAccessMutation();
+  const setCircleAccessStatus = useSetCircleAccessStatusMutation();
+  const composing = useComposerStore((state) => state.composing);
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
   const isActiveMainTab = isFocused;
   const isActiveMainTabRef = useRef(isActiveMainTab);
   isActiveMainTabRef.current = isActiveMainTab;
-  const initialTab = useRef(exploreTabFromParam(params.tab)).current;
+  const initialTab = useRef(initialExploreTab(params.tab)).current;
   const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ExploreTab>(initialTab);
   const backgroundedAtRef = useRef<number | null>(null);
-  const [exploreLocation, setExploreLocation] = useState<ExploreUserLocation | null>(null);
-  const [locationHydrated, setLocationHydrated] = useState(false);
-  const [locationLabel, setLocationLabel] = useState("Set location");
-  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const keyboardVisibleRef = useRef(false);
+  const personCircleIntentsRef = useRef<Record<string, PersonCircleIntent>>({});
+  const personCircleInFlightRef = useRef<Record<string, boolean>>({});
+  const personCircleServerStatusesRef = useRef<Record<string, PersonRequestStatus>>({});
+  const personCircleSyncSeqRef = useRef<Record<string, number>>({});
+  const personCircleSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const searchInputRef = useRef<TextInput>(null);
+  const shouldRestoreSearchFocusRef = useRef(false);
+  const exploreLocation = useUserLocationStore((state) => state.location);
+  const locationHydrated = useUserLocationStore((state) => state.hydrated);
+  const setUserLocation = useUserLocationStore((state) => state.setLocation);
+  const [showLocationMenu, setShowLocationMenu] = useState(false);
+  const [locationMenuTop, setLocationMenuTop] = useState(0);
+  const locationHeaderRef = useRef<View>(null);
   const [placeCategory, setPlaceCategory] = useState<PlaceCategoryId>("all");
   const [dishCategory, setDishCategory] = useState<DishClusterId>("all");
   const [query, setQuery] = useState("");
+  const [searchResultsVisible, setSearchResultsVisible] = useState(false);
+  const [placeSearchResults, setPlaceSearchResults] = useState<PlaceSpotlight[]>([]);
+  const [dishSearchResults, setDishSearchResults] = useState<DishSpotlight[]>([]);
+  const [globalSearchError, setGlobalSearchError] = useState<string | null>(null);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [visibleCounts, setVisibleCounts] = useState(INITIAL_VISIBLE_COUNTS);
   const [personRequestStatuses, setPersonRequestStatuses] = useState<Record<string, PersonRequestStatus>>({});
   const discovery = useExploreDiscoveryQuery(
@@ -162,67 +207,112 @@ export default function ExploreScreen() {
   const showInitialLoading = !locationHydrated || (discovery.isLoading && !discovery.data);
   const showLoading = showInitialLoading;
   const normalizedQuery = query.trim().toLowerCase();
+  const canSearchGlobally = searchResultsVisible && normalizedQuery.length >= EXPLORE_SEARCH_MIN_LENGTH;
   const places = showLoading ? EMPTY_PLACES : discovery.data?.places ?? EMPTY_PLACES;
   const dishes = showLoading ? EMPTY_DISHES : discovery.data?.dishes ?? EMPTY_DISHES;
   const people = showLoading ? EMPTY_PEOPLE : discovery.data?.people ?? EMPTY_PEOPLE;
   const peopleSearch = useUserProfileSearch({
-    enabled: Boolean(normalizedQuery),
+    enabled: canSearchGlobally,
     excludedUsernames: viewerName ? [viewerName] : [],
-    limit: 8,
+    limit: EXPLORE_SEARCH_RESULT_LIMIT,
     query
   });
+  const locationLabel = exploreLocation ? shortUserLocationLabel(exploreLocation.label) : "Set location";
 
   const filteredPlaces = normalizedQuery
     ? places.filter((place) => `${place.name} ${place.area ?? ""} ${place.topDishes.join(" ")}`.toLowerCase().includes(normalizedQuery))
     : places;
   const filteredDishes = normalizedQuery
-    ? dishes.filter((dish) => `${dish.name} ${dish.familyName} ${dish.topRestaurantNames.join(" ")} ${dish.tags.join(" ")}`.toLowerCase().includes(normalizedQuery))
+    ? dishes.filter((dish) => `${dish.name} ${dish.familyName} ${dish.familyNames.join(" ")} ${dish.familyIds.join(" ")} ${dish.topRestaurantNames.join(" ")} ${dish.tags.join(" ")}`.toLowerCase().includes(normalizedQuery))
     : dishes;
   const filteredPeople = normalizedQuery
     ? people.filter((person) => `${person.displayName} ${person.username}`.toLowerCase().includes(normalizedQuery))
     : people;
   const searchPeople = useMemo(() => {
-    const merged = new Map<string, PersonSpotlight>();
-    for (const person of filteredPeople) merged.set(person.username.toLowerCase(), person);
-    for (const person of peopleSearch.results) {
-      const key = person.username.toLowerCase();
-      if (!merged.has(key)) {
-        merged.set(key, {
-          displayName: person.displayName,
-          initials: initialsFor(person.displayName || person.username),
-          totalPlaces: 0,
-          username: person.username
-        });
+    if (!canSearchGlobally) return EMPTY_PEOPLE;
+    return peopleSearch.results.map((person) => ({
+      accountType: person.accountType,
+      circleStatus: "idle" as const,
+      displayName: person.displayName,
+      initials: initialsFor(person.displayName || person.username),
+      totalPlaces: 0,
+      username: person.username
+    }));
+  }, [canSearchGlobally, peopleSearch.results]);
+  useEffect(() => {
+    for (const person of people) {
+      if (!personCircleIntentsRef.current[person.username] && !personCircleInFlightRef.current[person.username]) {
+        personCircleServerStatusesRef.current[person.username] = person.circleStatus ?? "idle";
       }
     }
-    return Array.from(merged.values()).slice(0, 8);
-  }, [filteredPeople, peopleSearch.results]);
+  }, [people]);
   const handleExploreTabChange = useCallback((tab: ExploreTab) => {
     activeTabRef.current = tab;
+    lastExploreTab = tab;
+  }, []);
+
+  const handleSearchChange = useCallback((nextQuery: string) => {
+    setQuery(nextQuery);
+  }, []);
+
+  const openSearchMode = useCallback(() => {
+    shouldRestoreSearchFocusRef.current = true;
+    setSearchResultsVisible(true);
+  }, []);
+
+  const closeSearchMode = useCallback(() => {
+    shouldRestoreSearchFocusRef.current = false;
+    keyboardVisibleRef.current = false;
+    searchInputRef.current?.blur();
+    setSearchResultsVisible(false);
+    setQuery("");
+    setPlaceSearchResults([]);
+    setDishSearchResults([]);
+    setGlobalSearchError(null);
+    setGlobalSearchLoading(false);
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    shouldRestoreSearchFocusRef.current = true;
+    setQuery("");
+    setPlaceSearchResults([]);
+    setDishSearchResults([]);
+    setGlobalSearchError(null);
+    setGlobalSearchLoading(false);
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const savedLocation = await loadSavedExploreLocation();
-        if (cancelled) return;
-        setExploreLocation(savedLocation);
-        setLocationLabel(savedLocation ? shortExploreLocationLabel(savedLocation.label) : "Set location");
-      } catch {
-        if (cancelled) return;
-        setExploreLocation(null);
-        setLocationLabel("Set location");
-      } finally {
-        if (!cancelled) setLocationHydrated(true);
-      }
-    })();
+    if (Platform.OS === "web") return undefined;
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      keyboardVisibleRef.current = true;
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      keyboardVisibleRef.current = false;
+    });
 
     return () => {
-      cancelled = true;
+      showSubscription.remove();
+      hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+    if (!searchResultsVisible) return undefined;
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (keyboardVisibleRef.current) {
+        keyboardVisibleRef.current = false;
+        Keyboard.dismiss();
+        searchInputRef.current?.blur();
+        return true;
+      }
+      closeSearchMode();
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [closeSearchMode, searchResultsVisible]);
 
   useEffect(() => {
     if (Platform.OS === "web") return undefined;
@@ -243,22 +333,96 @@ export default function ExploreScreen() {
     return () => subscription.remove();
   }, [discovery.refetch, locationHydrated]);
 
+  useEffect(() => {
+    if (!shouldRestoreSearchFocusRef.current) return undefined;
+
+    const focusSearch = () => {
+      searchInputRef.current?.focus();
+      shouldRestoreSearchFocusRef.current = false;
+    };
+    const frame = requestAnimationFrame(focusSearch);
+    const timeout = setTimeout(focusSearch, 80);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timeout);
+    };
+  }, [query, searchResultsVisible]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!canSearchGlobally) {
+      setPlaceSearchResults([]);
+      setDishSearchResults([]);
+      setGlobalSearchError(null);
+      setGlobalSearchLoading(false);
+      return undefined;
+    }
+
+    setGlobalSearchError(null);
+    setGlobalSearchLoading(true);
+    const timeout = setTimeout(() => {
+      Promise.all([
+        searchExplorePlaces(query, {
+          limit: EXPLORE_SEARCH_RESULT_LIMIT,
+          location: exploreLocation,
+          viewerName
+        }),
+        searchExploreDishes(query, { limit: EXPLORE_SEARCH_RESULT_LIMIT })
+      ])
+        .then(([nextPlaces, nextDishes]) => {
+          if (cancelled) return;
+          setPlaceSearchResults(nextPlaces);
+          setDishSearchResults(nextDishes);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setPlaceSearchResults([]);
+          setDishSearchResults([]);
+          setGlobalSearchError(error instanceof Error ? error.message : "Could not search right now.");
+        })
+        .finally(() => {
+          if (!cancelled) setGlobalSearchLoading(false);
+        });
+    }, EXPLORE_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [canSearchGlobally, exploreLocation, query, viewerName]);
+
   // Deep links / external param changes animate through the same pager progress as taps
   // and swipes, so the indicator and content never update on separate clocks.
   useEffect(() => {
     if (!isActiveMainTab) return;
-    const tab = exploreTabFromParam(params.tab);
+    const tab = initialExploreTab(params.tab);
     if (tab === activeTabRef.current) return;
     activeTabRef.current = tab;
+    lastExploreTab = tab;
     tabsRef.current?.jumpToTab(tab);
   }, [isActiveMainTab, params.tab]);
 
-  function handleLocationSelect(nextLocation: ExploreUserLocation) {
-    setExploreLocation(nextLocation);
-    setLocationLabel(shortExploreLocationLabel(nextLocation.label));
-    setShowLocationPicker(false);
-    void saveExploreLocation(nextLocation);
+  function handleLocationSelect(nextLocation: UserLocation) {
+    setShowLocationMenu(false);
+    void setUserLocation(nextLocation);
   }
+
+  const openLocationMenu = useCallback(() => {
+    // Anchor the blur + dropdown to the bottom of the Explore/location header
+    // row so the header stays sharp and everything below it blurs.
+    const header = locationHeaderRef.current;
+    if (header) {
+      header.measureInWindow((_x, y, _width, height) => {
+        setLocationMenuTop(Math.max(Math.round(y + height), 56));
+        setShowLocationMenu(true);
+      });
+      return;
+    }
+    setLocationMenuTop(112);
+    setShowLocationMenu(true);
+  }, []);
 
   const openPlace = useCallback((place: PlaceSpotlight) => {
     if (!isActiveMainTabRef.current) return;
@@ -285,7 +449,13 @@ export default function ExploreScreen() {
 
   const openDish = useCallback((dish: DishSpotlight) => {
     if (!isActiveMainTabRef.current) return;
-    router.push({ pathname: "/dishes/[dish]", params: { dish: dish.name } });
+    router.push({
+      pathname: "/dishes/[dish]",
+      params: {
+        canonicalDishId: canonicalDishIdFromSpotlightKey(dish.key),
+        dish: dish.name
+      }
+    });
   }, [router]);
 
   const openProfile = useCallback((username: string) => {
@@ -298,32 +468,123 @@ export default function ExploreScreen() {
     router.push({ pathname: "/people/[username]", params: { username } });
   }, [router, viewerName]);
 
-  const personStatusFor = useCallback((username: string): PersonRequestStatus => {
-    if (username === viewerName) return "joined";
-    return personRequestStatuses[username] ?? "idle";
+  const personStatusFor = useCallback((person: PersonSpotlight): PersonRequestStatus => {
+    if (person.username === viewerName) return "joined";
+    return personRequestStatuses[person.username] ?? person.circleStatus ?? "idle";
   }, [personRequestStatuses, viewerName]);
 
-  const requestPerson = useCallback(async (username: string) => {
+  const schedulePersonCircleSync = useCallback((
+    person: PersonSpotlight,
+    desiredStatus: PersonRequestStatus,
+    previousStatus: PersonRequestStatus,
+    delayMs = PERSON_CIRCLE_SYNC_DELAY_MS
+  ) => {
+    const username = person.username;
+    personCircleIntentsRef.current[username] = { desiredStatus, previousStatus };
+    const nextSeq = (personCircleSyncSeqRef.current[username] ?? 0) + 1;
+    personCircleSyncSeqRef.current[username] = nextSeq;
+    clearTimeout(personCircleSyncTimersRef.current[username]);
+
+    personCircleSyncTimersRef.current[username] = setTimeout(() => {
+      void (async () => {
+        const intent = personCircleIntentsRef.current[username];
+        if (!intent || personCircleSyncSeqRef.current[username] !== nextSeq) return;
+
+        if (personCircleInFlightRef.current[username]) {
+          schedulePersonCircleSync(person, intent.desiredStatus, intent.previousStatus, PERSON_CIRCLE_SYNC_RETRY_MS);
+          return;
+        }
+
+        const currentStatus = personCircleServerStatusesRef.current[username] ?? person.circleStatus ?? "idle";
+        if (currentStatus === intent.desiredStatus) {
+          delete personCircleIntentsRef.current[username];
+          return;
+        }
+
+        try {
+          personCircleInFlightRef.current[username] = true;
+          const currentSyncStatus = currentStatus === "loading" ? "idle" : currentStatus;
+          const desiredSyncStatus = intent.desiredStatus === "loading" ? "idle" : intent.desiredStatus;
+          const result = await setCircleAccessStatus.mutateAsync({
+            receiverName: username,
+            currentStatus: currentSyncStatus,
+            desiredStatus: desiredSyncStatus
+          });
+
+          const syncedStatus: PersonRequestStatus = desiredSyncStatus === "idle"
+            ? "idle"
+            : result === "joined"
+              ? "joined"
+              : "pending";
+          personCircleServerStatusesRef.current[username] = syncedStatus;
+
+          if (personCircleSyncSeqRef.current[username] !== nextSeq) return;
+          const latestIntent = personCircleIntentsRef.current[username];
+          if (latestIntent && latestIntent.desiredStatus !== syncedStatus) {
+            schedulePersonCircleSync(person, latestIntent.desiredStatus, latestIntent.previousStatus, PERSON_CIRCLE_SYNC_RETRY_MS);
+            return;
+          }
+
+          delete personCircleIntentsRef.current[username];
+          setPersonRequestStatuses((current) => ({
+            ...current,
+            [username]: syncedStatus
+          }));
+        } catch (error) {
+          if (personCircleSyncSeqRef.current[username] !== nextSeq) return;
+          delete personCircleIntentsRef.current[username];
+          setPersonRequestStatuses((current) => ({
+            ...current,
+            [username]: personCircleServerStatusesRef.current[username] ?? intent.previousStatus
+          }));
+          Alert.alert("Could not update circle", error instanceof Error ? error.message : "Please try again.");
+        } finally {
+          personCircleInFlightRef.current[username] = false;
+        }
+      })();
+    }, delayMs);
+  }, [setCircleAccessStatus]);
+
+  useEffect(() => () => {
+    Object.values(personCircleSyncTimersRef.current).forEach(clearTimeout);
+  }, []);
+
+  const updatePersonStatus = useCallback((person: PersonSpotlight, nextStatus: PersonRequestStatus, previousStatus: PersonRequestStatus) => {
+    setPersonRequestStatuses((current) => ({ ...current, [person.username]: nextStatus }));
+    schedulePersonCircleSync(person, nextStatus, previousStatus);
+  }, [schedulePersonCircleSync]);
+
+  const requestPerson = useCallback((person: PersonSpotlight) => {
     if (!viewerName) {
       Alert.alert("Sign in required", "Log in before requesting circle access.");
       return;
     }
-    if (username === viewerName || requestCircleAccess.isPending) return;
-    const previous = personStatusFor(username);
-    if (previous === "pending" || previous === "joined" || previous === "loading") return;
-
-    setPersonRequestStatuses((current) => ({ ...current, [username]: "loading" }));
-    try {
-      const result = await requestCircleAccess.mutateAsync({ receiverName: username });
-      setPersonRequestStatuses((current) => ({
-        ...current,
-        [username]: result === "joined" ? "joined" : "pending"
-      }));
-    } catch (error) {
-      setPersonRequestStatuses((current) => ({ ...current, [username]: previous }));
-      Alert.alert("Could not request access", error instanceof Error ? error.message : "Please try again.");
+    if (person.username === viewerName) return;
+    const previous = personStatusFor(person);
+    if (previous === "loading") return;
+    if (previous === "pending") {
+      updatePersonStatus(person, "idle", previous);
+      return;
     }
-  }, [personStatusFor, requestCircleAccess, viewerName]);
+    if (previous === "joined") {
+      Alert.alert(
+        "Leave circle?",
+        `Leave ${person.displayName}'s circle?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Leave",
+            style: "destructive",
+            onPress: () => updatePersonStatus(person, "idle", previous)
+          }
+        ]
+      );
+      return;
+    }
+
+    const optimisticStatus: PersonRequestStatus = person.accountType === "private" ? "pending" : "joined";
+    updatePersonStatus(person, optimisticStatus, previous);
+  }, [personStatusFor, updatePersonStatus, viewerName]);
 
   useEffect(() => {
     setVisibleCounts(INITIAL_VISIBLE_COUNTS);
@@ -337,7 +598,21 @@ export default function ExploreScreen() {
     () => filteredDishes.filter((dish) => dishMatchesCategory(dish, dishCategory)).slice(0, EXPLORE_MAX_LIST_LIMIT),
     [filteredDishes, dishCategory]
   );
-  const allPeopleForList = useMemo(() => filteredPeople.slice(0, EXPLORE_MAX_LIST_LIMIT), [filteredPeople]);
+  const allPeopleForList = useMemo(() => {
+    const statusRank: Record<PersonRequestStatus, number> = {
+      idle: 0,
+      loading: 0,
+      pending: 1,
+      joined: 2
+    };
+    return [...filteredPeople]
+      .sort((a, b) =>
+        statusRank[personStatusFor(a)] - statusRank[personStatusFor(b)]
+        || b.totalPlaces - a.totalPlaces
+        || a.displayName.localeCompare(b.displayName)
+      )
+      .slice(0, EXPLORE_MAX_LIST_LIMIT);
+  }, [filteredPeople, personStatusFor]);
   const placesForCategory = useMemo(
     () => allPlacesForCategory.slice(0, visibleCounts.places),
     [allPlacesForCategory, visibleCounts.places]
@@ -389,47 +664,77 @@ export default function ExploreScreen() {
     />
   ), [discovery.isRefetching, refreshExplore, themeColors.card, themeColors.orange]);
   const listRefreshControl = Platform.OS === "android" ? undefined : refreshControl;
+  const exploreTabBarStyle = useMemo(
+    () => mainTabBarStyle(themeColors, insets.bottom, composing || showLocationMenu),
+    [composing, insets.bottom, showLocationMenu, themeColors]
+  );
+
+  useEffect(() => {
+    navigation.setOptions({ tabBarStyle: exploreTabBarStyle });
+  }, [exploreTabBarStyle, navigation]);
+
+  useEffect(() => {
+    return () => {
+      navigation.setOptions({ tabBarStyle: undefined });
+    };
+  }, [navigation]);
 
   const renderExploreHeader = useCallback(() => (
     <View style={styles.collapsibleHeader}>
-      <View collapsable={false} style={styles.header}>
+      <View collapsable={false} ref={locationHeaderRef} style={styles.header}>
         <Text style={styles.title}>Explore</Text>
         <Pressable
           accessibilityLabel="Location"
           accessibilityRole="button"
           hitSlop={8}
-          onPress={() => setShowLocationPicker(true)}
+          onPress={() => (showLocationMenu ? setShowLocationMenu(false) : openLocationMenu())}
           style={styles.locationButton}
         >
           <Text style={styles.locationCompass}>🧭</Text>
           <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
-          <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+          <View style={{ transform: [{ rotate: showLocationMenu ? "180deg" : "0deg" }] }}>
+            <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+          </View>
         </Pressable>
       </View>
 
       <View collapsable={false} style={styles.searchWrap}>
-        <View style={styles.searchBox}>
+        <Pressable
+          accessibilityLabel="Open Explore search"
+          accessibilityRole="button"
+          onPress={openSearchMode}
+          style={styles.searchBox}
+        >
           <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
-            onChangeText={setQuery}
-            placeholder="Search people, dishes or places..."
+            onChangeText={handleSearchChange}
+            onFocus={openSearchMode}
+            onPressIn={openSearchMode}
+            placeholder={EXPLORE_SEARCH_PLACEHOLDER}
             placeholderTextColor={themeColors.muted}
+            ref={searchInputRef}
+            returnKeyType="search"
             style={styles.searchInput}
             value={query}
           />
           {query ? (
-            <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-              <X size={13} color={themeColors.muted} strokeWidth={2.4} />
+            <Pressable accessibilityLabel="Clear search" onPress={clearSearch} style={styles.clearButton}>
+              <X size={17} color={themeColors.muted} strokeWidth={2.4} />
             </Pressable>
           ) : null}
-        </View>
+        </Pressable>
       </View>
     </View>
   ), [
     locationLabel,
+    openLocationMenu,
+    showLocationMenu,
     query,
+    clearSearch,
+    handleSearchChange,
+    openSearchMode,
     styles,
     themeColors.muted
   ]);
@@ -454,7 +759,7 @@ export default function ExploreScreen() {
   const exploreTabs = (
     <Tabs.Container
       ref={tabsRef}
-      initialTabName={initialTab}
+      initialTabName={activeTabRef.current}
       containerStyle={styles.tabsClip}
       headerHeight={EXPLORE_COLLAPSIBLE_HEADER_HEIGHT}
       headerContainerStyle={styles.collapsibleHeaderContainer}
@@ -574,9 +879,9 @@ export default function ExploreScreen() {
           renderItem={({ item }) => (
             <PersonCard
               person={item}
-              status={personStatusFor(item.username)}
+              status={personStatusFor(item)}
               onOpenProfile={() => openProfile(item.username)}
-              onRequest={() => requestPerson(item.username)}
+              onRequest={() => requestPerson(item)}
             />
           )}
           ListHeaderComponent={(
@@ -619,107 +924,146 @@ export default function ExploreScreen() {
       padded={false}
       style={styles.screenFill}
     >
-      <LocationPickerSheet
-        currentLocation={exploreLocation}
-        visible={showLocationPicker}
-        onClose={() => setShowLocationPicker(false)}
-        onSelect={handleLocationSelect}
-      />
-
-      {normalizedQuery ? (
-        <>
-          <View collapsable={false} style={styles.header}>
-            <Text style={styles.title}>Explore</Text>
+      {searchResultsVisible ? (
+        <View style={styles.searchScreen}>
+          <View collapsable={false} style={styles.searchModeHeader}>
             <Pressable
-              accessibilityLabel="Location"
+              accessibilityLabel="Close search"
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => setShowLocationPicker(true)}
-              style={styles.locationButton}
+              onPress={closeSearchMode}
+              style={styles.searchBackButton}
             >
-              <Text style={styles.locationCompass}>🧭</Text>
-              <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
-              <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
+              <ArrowLeft size={21} color={themeColors.cream} strokeWidth={2.4} />
             </Pressable>
-          </View>
-
-          <View collapsable={false} style={styles.searchWrap}>
-            <View style={styles.searchBox}>
+            <View style={[styles.searchBox, styles.searchModeBox]}>
               <Search size={17} color={themeColors.muted} strokeWidth={2.2} />
               <TextInput
                 autoCapitalize="none"
                 autoCorrect={false}
-                onChangeText={setQuery}
-                placeholder="Search people, dishes or places..."
+                onChangeText={handleSearchChange}
+                onPressIn={openSearchMode}
+                placeholder={EXPLORE_SEARCH_PLACEHOLDER}
                 placeholderTextColor={themeColors.muted}
+                ref={searchInputRef}
+                returnKeyType="search"
                 style={styles.searchInput}
                 value={query}
               />
-              <Pressable accessibilityLabel="Clear search" onPress={() => setQuery("")} style={styles.clearButton}>
-                <X size={13} color={themeColors.muted} strokeWidth={2.4} />
-              </Pressable>
+              {query ? (
+                <Pressable accessibilityLabel="Clear search" onPress={clearSearch} style={styles.clearButton}>
+                  <X size={17} color={themeColors.muted} strokeWidth={2.4} />
+                </Pressable>
+              ) : null}
             </View>
           </View>
 
           <ScrollView
-            keyboardShouldPersistTaps="handled"
-            refreshControl={refreshControl}
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             style={styles.fill}
+            contentContainerStyle={styles.searchScreenContent}
           >
-            <SearchResults
-              dishes={filteredDishes.slice(0, 6)}
-              people={searchPeople}
-              peopleError={peopleSearch.error}
-              peopleLoading={peopleSearch.loading}
-              places={filteredPlaces.slice(0, 6)}
-              query={query.trim()}
-              onOpenDish={openDish}
-              onOpenPlace={openPlace}
-              onOpenProfile={openProfile}
-              onRequestPerson={requestPerson}
-              personStatusFor={personStatusFor}
-            />
+            {canSearchGlobally ? (
+              <SearchResults
+                dishes={dishSearchResults}
+                error={globalSearchError ?? peopleSearch.error}
+                loading={globalSearchLoading || peopleSearch.loading}
+                people={searchPeople}
+                places={placeSearchResults}
+                query={query.trim()}
+                onOpenDish={openDish}
+                onOpenPlace={openPlace}
+                onOpenProfile={openProfile}
+              />
+            ) : null}
           </ScrollView>
-        </>
+        </View>
       ) : exploreTabs}
+
+      <LocationMenu
+        anchorTop={locationMenuTop}
+        currentLocation={exploreLocation}
+        visible={showLocationMenu}
+        onClose={() => setShowLocationMenu(false)}
+        onSelect={handleLocationSelect}
+      />
     </Screen>
   );
 }
 
-function LocationPickerSheet({
+function LocationMenu({
+  anchorTop,
   currentLocation,
   onClose,
   onSelect,
   visible
 }: {
-  currentLocation: ExploreUserLocation | null;
+  anchorTop: number;
+  currentLocation: UserLocation | null;
   onClose: () => void;
-  onSelect: (location: ExploreUserLocation) => void;
+  onSelect: (location: UserLocation) => void;
   visible: boolean;
 }) {
-  const { themeColors, styles } = useExploreTheme();
+  const { styles, themeColors } = useExploreTheme();
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState("");
   const [selectingPlaceId, setSelectingPlaceId] = useState<string | null>(null);
+  const [rendered, setRendered] = useState(visible);
+  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const sessionToken = useRef(createPlacesSessionToken());
+  const hasQuery = query.trim().length > 0;
 
   useEffect(() => {
-    if (!visible) {
-      setQuery("");
-      setSuggestions([]);
-      setLoading(false);
-      setGpsError("");
+    if (visible) {
+      setRendered(true);
+      Animated.timing(progress, {
+        duration: LOCATION_MENU_ENTER_MS,
+        easing: Easing.out(Easing.cubic),
+        toValue: 1,
+        useNativeDriver: true
+      }).start();
       return;
     }
 
+    Animated.timing(progress, {
+      duration: LOCATION_MENU_EXIT_MS,
+      easing: Easing.in(Easing.cubic),
+      toValue: 0,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (finished) setRendered(false);
+    });
+    Keyboard.dismiss();
+  }, [progress, visible]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS === "web") return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [onClose, visible]);
+
+  useEffect(() => {
+    if (visible) return;
+    setQuery("");
+    setSuggestions([]);
+    setLoading(false);
+    setGpsError("");
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
     if (!query.trim()) {
       setSuggestions([]);
       setLoading(false);
-      return;
+      return undefined;
     }
 
     const timeout = setTimeout(() => {
@@ -728,7 +1072,7 @@ function LocationPickerSheet({
         .then(setSuggestions)
         .catch(() => setSuggestions([]))
         .finally(() => setLoading(false));
-    }, 300);
+    }, LOCATION_SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
   }, [currentLocation, query, visible]);
@@ -737,16 +1081,14 @@ function LocationPickerSheet({
     setGpsLoading(true);
     setGpsError("");
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== "granted") {
-        setGpsError("Location access was denied.");
+      const result = await getCurrentDeviceUserLocation({ preferFresh: true, requestPermission: true });
+      if (!result.location) {
+        setGpsError(result.error ?? "Could not get your location.");
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const { latitude, longitude } = position.coords;
-      const label = await reverseGeocodeExploreLocation(latitude, longitude);
-      onSelect({ lat: latitude, lng: longitude, label });
+      Keyboard.dismiss();
+      onSelect(result.location);
     } catch (error) {
       setGpsError(error instanceof Error ? error.message : "Could not get your location.");
     } finally {
@@ -771,7 +1113,19 @@ function LocationPickerSheet({
         || selectedPlace.formattedAddress
         || selectedPlace.name
         || suggestion.mainText;
-      onSelect({ lat: selectedPlace.latitude, lng: selectedPlace.longitude, label });
+      const userLocation = createManualUserLocation({
+        lat: selectedPlace.latitude,
+        lng: selectedPlace.longitude,
+        label,
+        placeId: selectedPlace.placeId || suggestion.placeId
+      });
+      if (!userLocation) {
+        setGpsError("Could not read that location. Try another result.");
+        return;
+      }
+
+      Keyboard.dismiss();
+      onSelect(userLocation);
     } catch {
       setGpsError("Could not select that location. Try another result.");
     } finally {
@@ -779,69 +1133,139 @@ function LocationPickerSheet({
     }
   }
 
+  if (!rendered) return null;
+
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
-      <View style={styles.locationModalRoot}>
-        <Pressable accessibilityLabel="Close location picker" style={styles.locationBackdrop} onPress={onClose} />
-        <View style={styles.locationSheet}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={gpsLoading}
-            onPress={useCurrentLocation}
-            style={[styles.locationCurrentButton, gpsLoading && styles.locationButtonDisabled]}
-          >
+    <View pointerEvents="box-none" style={styles.locationMenuRoot}>
+      <Animated.View style={[styles.locationMenuBackdrop, { opacity: progress, top: anchorTop }]}>
+        <BlurView
+          blurReductionFactor={2}
+          experimentalBlurMethod="dimezisBlurView"
+          intensity={80}
+          style={StyleSheet.absoluteFill}
+          tint="dark"
+        />
+        <Pressable
+          accessibilityLabel="Close location menu"
+          onPress={onClose}
+          style={[StyleSheet.absoluteFill, styles.locationMenuScrim]}
+        />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          styles.locationMenuPanel,
+          { top: anchorTop + 8 },
+          {
+            opacity: progress,
+            transform: [
+              { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) },
+              { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) }
+            ]
+          }
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          onPress={useCurrentLocation}
+          style={styles.locationMenuCurrent}
+        >
+          <View style={styles.locationMenuCurrentIcon}>
             {gpsLoading ? (
               <ActivityIndicator size="small" color={themeColors.orange} />
             ) : (
-              <LocateFixed size={16} color={themeColors.orange} strokeWidth={2.2} />
+              <MapPin size={20} color={themeColors.orange} strokeWidth={2.2} />
             )}
-            <Text style={styles.locationCurrentText}>{gpsLoading ? "Getting location..." : "Use current location"}</Text>
-          </Pressable>
-
-          {gpsError ? <Text style={styles.locationError}>{gpsError}</Text> : null}
-
-          <View style={styles.locationDividerRow}>
-            <View style={styles.locationDivider} />
-            <Text style={styles.locationDividerText}>or</Text>
-            <View style={styles.locationDivider} />
           </View>
-
-          <View style={styles.locationSearchBox}>
-            <Search size={15} color={themeColors.muted} strokeWidth={2.2} />
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-              onChangeText={setQuery}
-              placeholder="Search area or city..."
-              placeholderTextColor={themeColors.muted}
-              style={styles.locationSearchInput}
-              value={query}
-            />
-            {loading ? <ActivityIndicator size="small" color={themeColors.muted} /> : null}
+          <View style={styles.locationMenuText}>
+            <Text numberOfLines={1} style={styles.locationMenuCurrentTitle}>Use current location</Text>
+            <Text numberOfLines={1} style={styles.locationMenuCurrentSubtitle}>
+              {gpsLoading ? "Locating…" : "Detect where you are"}
+            </Text>
           </View>
+        </Pressable>
 
-          {suggestions.length > 0 ? (
-            <View style={styles.locationSuggestions}>
-              {suggestions.map((suggestion, index) => (
-                <Pressable
-                  key={suggestion.placeId}
-                  accessibilityRole="button"
-                  disabled={selectingPlaceId === suggestion.placeId}
-                  onPress={() => { void selectSuggestion(suggestion); }}
-                  style={[styles.locationSuggestion, index > 0 && styles.locationSuggestionBorder]}
-                >
-                  <Text numberOfLines={1} style={styles.locationSuggestionTitle}>{suggestion.mainText}</Text>
-                  {suggestion.secondaryText ? (
-                    <Text numberOfLines={1} style={styles.locationSuggestionSubtitle}>{suggestion.secondaryText}</Text>
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
+        <View style={styles.locationMenuSearch}>
+          <Search size={18} color={themeColors.muted} strokeWidth={2.2} />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setQuery}
+            placeholder="Search city or area"
+            placeholderTextColor={themeColors.muted}
+            returnKeyType="search"
+            style={styles.locationMenuSearchInput}
+            value={query}
+          />
+          {loading ? (
+            <ActivityIndicator size="small" color={themeColors.muted} />
+          ) : query ? (
+            <Pressable accessibilityLabel="Clear location search" hitSlop={8} onPress={() => setQuery("")}>
+              <X size={17} color={themeColors.muted} strokeWidth={2.3} />
+            </Pressable>
           ) : null}
         </View>
+
+        {gpsError ? <Text style={styles.locationMenuError}>{gpsError}</Text> : null}
+
+        {hasQuery || loading ? (
+          <View style={styles.locationMenuResults}>
+            <ScrollView keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
+              {suggestions.length > 0 ? (
+                suggestions.map((suggestion) => (
+                  <LocationResultRow
+                    key={suggestion.placeId}
+                    loading={selectingPlaceId === suggestion.placeId}
+                    subtitle={suggestion.secondaryText || "Search result"}
+                    title={suggestion.mainText}
+                    onPress={() => { void selectSuggestion(suggestion); }}
+                  />
+                ))
+              ) : loading ? (
+                <LocationResultRow loading subtitle="Finding matching areas" title="Searching" />
+              ) : (
+                <LocationResultRow subtitle="Try a city, neighborhood, or landmark" title="No matching places" />
+              )}
+            </ScrollView>
+          </View>
+        ) : null}
+      </Animated.View>
+    </View>
+  );
+}
+
+function LocationResultRow({
+  loading,
+  onPress,
+  subtitle,
+  title
+}: {
+  loading?: boolean;
+  onPress?: () => void;
+  subtitle: string;
+  title: string;
+}) {
+  const { styles, themeColors } = useExploreTheme();
+
+  return (
+    <Pressable
+      accessibilityRole={onPress ? "button" : undefined}
+      disabled={!onPress || loading}
+      onPress={onPress}
+      style={styles.locationMenuResultRow}
+    >
+      <View style={styles.locationMenuResultIcon}>
+        {loading ? (
+          <ActivityIndicator size="small" color={themeColors.orange} />
+        ) : (
+          <MapPin size={17} color={themeColors.muted} strokeWidth={2.2} />
+        )}
       </View>
-    </Modal>
+      <View style={styles.locationMenuText}>
+        <Text numberOfLines={1} style={styles.locationMenuResultTitle}>{title}</Text>
+        <Text numberOfLines={1} style={styles.locationMenuResultSubtitle}>{subtitle}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -1010,7 +1434,7 @@ function PersonCard({
   status: PersonRequestStatus;
 }) {
   const { styles } = useExploreTheme();
-  const requestDisabled = status === "loading" || status === "pending" || status === "joined";
+  const requestDisabled = status === "loading";
   const requestLabel = status === "loading" ? "Requesting" : status === "pending" ? "Requested" : status === "joined" ? "In Circle" : "Request";
 
   function handleRequestPress(event: GestureResponderEvent) {
@@ -1043,9 +1467,13 @@ function PersonCard({
           accessibilityRole="button"
           accessibilityState={{ disabled: requestDisabled }}
           onPress={handleRequestPress}
-          style={[styles.addButton, requestDisabled && styles.addButtonMuted]}
+          style={[
+            styles.addButton,
+            status === "pending" && styles.addButtonRequested,
+            status === "joined" && styles.addButtonJoined
+          ]}
         >
-          <Text style={styles.addButtonText}>{requestLabel}</Text>
+          <Text style={[styles.addButtonText, status === "joined" && styles.addButtonJoinedText]}>{requestLabel}</Text>
         </Pressable>
       </Pressable>
     </View>
@@ -1054,56 +1482,51 @@ function PersonCard({
 
 function SearchResults({
   dishes,
+  error,
+  loading,
   onOpenDish,
   onOpenPlace,
   onOpenProfile,
-  onRequestPerson,
   people,
-  peopleError,
-  peopleLoading,
-  personStatusFor,
   places,
   query
 }: {
   dishes: DishSpotlight[];
+  error: string | null;
+  loading: boolean;
   onOpenDish: (dish: DishSpotlight) => void;
   onOpenPlace: (place: PlaceSpotlight) => void;
   onOpenProfile: (username: string) => void;
-  onRequestPerson: (username: string) => void;
   people: PersonSpotlight[];
-  peopleError: string | null;
-  peopleLoading: boolean;
-  personStatusFor: (username: string) => PersonRequestStatus;
   places: PlaceSpotlight[];
   query: string;
 }) {
   const { styles } = useExploreTheme();
   const hasResults = people.length > 0 || places.length > 0 || dishes.length > 0;
-  const showPeopleSection = peopleLoading || Boolean(peopleError) || people.length > 0;
 
   return (
     <View style={styles.searchResults}>
-      {showPeopleSection ? (
+      {loading ? (
+        <View style={styles.searchLoadingRow}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.searchMuted}>Searching</Text>
+        </View>
+      ) : null}
+
+      {error ? <Text style={styles.searchMuted}>{error}</Text> : null}
+
+      {people.length > 0 ? (
         <View style={styles.searchSection}>
           <Text style={styles.searchSectionLabel}>People</Text>
-          {peopleLoading ? (
-            <View style={styles.searchLoadingRow}>
-              <ActivityIndicator size="small" />
-              <Text style={styles.searchMuted}>Searching people</Text>
-            </View>
-          ) : peopleError ? (
-            <Text style={styles.searchMuted}>{peopleError}</Text>
-          ) : people.length > 0 ? (
-            people.map((person) => (
-              <PersonCard
-                key={person.username}
-                person={person}
-                status={personStatusFor(person.username)}
-                onOpenProfile={() => onOpenProfile(person.username)}
-                onRequest={() => onRequestPerson(person.username)}
-              />
-            ))
-          ) : null}
+          {people.map((person) => (
+            <SearchResultRow
+              key={person.username}
+              kind="person"
+              title={person.displayName}
+              subtitle={`@${person.username}`}
+              onPress={() => onOpenProfile(person.username)}
+            />
+          ))}
         </View>
       ) : null}
 
@@ -1111,7 +1534,13 @@ function SearchResults({
         <View style={styles.searchSection}>
           <Text style={styles.searchSectionLabel}>Places</Text>
           {places.map((place) => (
-            <PlaceCard key={place.key} place={place} onOpen={() => onOpenPlace(place)} />
+            <SearchResultRow
+              key={place.key}
+              kind="place"
+              title={place.name}
+              subtitle={place.area ?? `${place.postCount} visit${place.postCount !== 1 ? "s" : ""}`}
+              onPress={() => onOpenPlace(place)}
+            />
           ))}
         </View>
       ) : null}
@@ -1120,15 +1549,57 @@ function SearchResults({
         <View style={styles.searchSection}>
           <Text style={styles.searchSectionLabel}>Dishes</Text>
           {dishes.map((dish) => (
-            <DishCard key={dish.key} dish={dish} onOpen={() => onOpenDish(dish)} />
+            <SearchResultRow
+              key={dish.key}
+              kind="dish"
+              title={dish.name}
+              subtitle={dish.familyNames.join(", ") || dish.familyName}
+              onPress={() => onOpenDish(dish)}
+            />
           ))}
         </View>
       ) : null}
 
-      {!hasResults && !peopleLoading ? (
+      {!hasResults && !loading && !error ? (
         <EmptyState message={`No public matches for "${query}" yet.`} title="No results" />
       ) : null}
     </View>
+  );
+}
+
+function SearchResultRow({
+  kind,
+  onPress,
+  subtitle,
+  title
+}: {
+  kind: "dish" | "person" | "place";
+  onPress: () => void;
+  subtitle: string;
+  title: string;
+}) {
+  const { styles, themeColors } = useExploreTheme();
+  const Icon = kind === "person" ? Users : kind === "place" ? MapPin : Utensils;
+
+  return (
+    <Pressable
+      accessibilityLabel={`Open ${title}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.searchResultRow}
+    >
+      <View style={[
+        styles.searchResultIcon,
+        kind === "dish" && styles.searchResultIconDish,
+        kind === "person" && styles.searchResultIconPerson
+      ]}>
+        <Icon size={18} color={themeColors.cream} strokeWidth={2.2} />
+      </View>
+      <View style={styles.searchResultText}>
+        <Text numberOfLines={1} style={styles.searchResultTitle}>{title}</Text>
+        <Text numberOfLines={1} style={styles.searchResultSubtitle}>{subtitle}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -1235,115 +1706,127 @@ function createStyles(c: ThemeColors) {
       fontSize: 13,
       minWidth: 0
     },
-    locationModalRoot: {
-      flex: 1,
-      justifyContent: "flex-start",
-      paddingTop: 72
-    },
-    locationBackdrop: {
+    locationMenuRoot: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: "rgba(0, 0, 0, 0.6)"
+      zIndex: 20
     },
-    locationSheet: {
+    locationMenuBackdrop: {
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0
+    },
+    locationMenuScrim: {
+      backgroundColor: "rgba(8, 6, 4, 0.4)"
+    },
+    locationMenuPanel: {
       backgroundColor: c.card,
-      borderColor: c.border,
-      borderRadius: 16,
+      borderColor: "rgba(245, 237, 216, 0.12)",
+      borderRadius: 20,
       borderWidth: 1,
-      marginHorizontal: spacing.base,
-      padding: spacing.base
+      left: 12,
+      overflow: "hidden",
+      padding: 8,
+      position: "absolute",
+      right: 12,
+      shadowColor: c.black,
+      shadowOffset: { height: 22, width: 0 },
+      shadowOpacity: 0.5,
+      shadowRadius: 44
     },
-    locationCurrentButton: {
+    locationMenuCurrent: {
       alignItems: "center",
-      backgroundColor: c.surface,
-      borderColor: c.border,
-      borderRadius: 12,
+      backgroundColor: "rgba(200, 74, 28, 0.10)",
+      borderColor: "rgba(200, 74, 28, 0.20)",
+      borderRadius: 15,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: 13,
+      overflow: "hidden",
+      padding: 13
+    },
+    locationMenuCurrentIcon: {
+      alignItems: "center",
+      backgroundColor: "rgba(200, 74, 28, 0.16)",
+      borderRadius: 13,
+      height: 40,
+      justifyContent: "center",
+      width: 40
+    },
+    locationMenuText: {
+      flex: 1,
+      minWidth: 0
+    },
+    locationMenuCurrentTitle: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 15,
+      lineHeight: 19
+    },
+    locationMenuCurrentSubtitle: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 12,
+      lineHeight: 16,
+      marginTop: 2
+    },
+    locationMenuSearch: {
+      alignItems: "center",
+      backgroundColor: "rgba(245, 237, 216, 0.05)",
+      borderColor: "rgba(245, 237, 216, 0.10)",
+      borderRadius: 15,
       borderWidth: 1,
       flexDirection: "row",
       gap: 10,
-      justifyContent: "center",
-      paddingHorizontal: 14,
-      paddingVertical: 11
+      marginTop: 8,
+      minHeight: 50,
+      paddingHorizontal: 14
     },
-    locationButtonDisabled: {
-      opacity: 0.7
-    },
-    locationCurrentText: {
-      ...fontStyles.bold,
+    locationMenuSearchInput: {
+      ...fontStyles.regular,
       color: c.cream,
-      fontSize: 13,
-      lineHeight: 16
+      flex: 1,
+      fontSize: 15,
+      lineHeight: 19,
+      minWidth: 0,
+      padding: 0
     },
-    locationError: {
+    locationMenuError: {
       ...fontStyles.regular,
       color: "#F87171",
       fontSize: 12,
       lineHeight: 16,
-      marginTop: 8,
-      textAlign: "center"
+      marginHorizontal: 6,
+      marginTop: 8
     },
-    locationDividerRow: {
+    locationMenuResults: {
+      marginTop: 6,
+      maxHeight: 268
+    },
+    locationMenuResultRow: {
       alignItems: "center",
+      borderRadius: 14,
       flexDirection: "row",
-      gap: 10,
-      marginVertical: 12
+      gap: 11,
+      paddingHorizontal: 12,
+      paddingVertical: 11
     },
-    locationDivider: {
-      backgroundColor: c.border,
-      flex: 1,
-      height: 1
-    },
-    locationDividerText: {
-      ...fontStyles.regular,
-      color: c.muted,
-      fontSize: 11,
-      lineHeight: 14
-    },
-    locationSearchBox: {
+    locationMenuResultIcon: {
       alignItems: "center",
-      backgroundColor: c.surface,
-      borderColor: c.border,
-      borderRadius: 10,
-      borderWidth: 1,
-      flexDirection: "row",
-      gap: 9,
-      paddingHorizontal: 12,
-      paddingVertical: 9
+      justifyContent: "center",
+      width: 24
     },
-    locationSearchInput: {
-      ...fontStyles.regular,
-      color: c.cream,
-      flex: 1,
-      fontSize: 13,
-      minWidth: 0,
-      padding: 0
-    },
-    locationSuggestions: {
-      borderColor: c.border,
-      borderRadius: 10,
-      borderWidth: 1,
-      marginTop: 8,
-      overflow: "hidden"
-    },
-    locationSuggestion: {
-      backgroundColor: c.surface,
-      paddingHorizontal: 12,
-      paddingVertical: 10
-    },
-    locationSuggestionBorder: {
-      borderTopColor: c.border,
-      borderTopWidth: 1
-    },
-    locationSuggestionTitle: {
+    locationMenuResultTitle: {
       ...fontStyles.bold,
       color: c.cream,
-      fontSize: 13,
-      lineHeight: 16
+      fontSize: 15,
+      lineHeight: 19
     },
-    locationSuggestionSubtitle: {
+    locationMenuResultSubtitle: {
       ...fontStyles.regular,
       color: c.muted,
-      fontSize: 11,
-      lineHeight: 14,
+      fontSize: 12,
+      lineHeight: 16,
       marginTop: 2
     },
     searchWrap: {
@@ -1352,6 +1835,26 @@ function createStyles(c: ThemeColors) {
       paddingBottom: spacing.md,
       paddingHorizontal: spacing.base,
       paddingTop: EXPLORE_SEARCH_WRAP_TOP_PADDING
+    },
+    searchScreen: {
+      backgroundColor: c.bg,
+      flex: 1
+    },
+    searchModeHeader: {
+      alignItems: "center",
+      backgroundColor: c.bg,
+      flexDirection: "row",
+      gap: spacing.sm,
+      minHeight: EXPLORE_HEADER_ROW_HEIGHT,
+      paddingBottom: screenLayout.headerContentGap,
+      paddingHorizontal: spacing.base,
+      paddingTop: screenLayout.topGap
+    },
+    searchBackButton: {
+      alignItems: "center",
+      height: EXPLORE_SEARCH_BOX_HEIGHT,
+      justifyContent: "center",
+      width: 34
     },
     searchBox: {
       alignItems: "center",
@@ -1365,6 +1868,9 @@ function createStyles(c: ThemeColors) {
       paddingHorizontal: spacing.base,
       paddingVertical: 0
     },
+    searchModeBox: {
+      flex: 1
+    },
     searchInput: {
       ...fontStyles.regular,
       color: c.cream,
@@ -1377,13 +1883,10 @@ function createStyles(c: ThemeColors) {
     },
     clearButton: {
       alignItems: "center",
-      backgroundColor: c.surface,
-      borderColor: c.border,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      height: 24,
+      height: EXPLORE_SEARCH_BOX_HEIGHT,
       justifyContent: "center",
-      width: 24
+      marginRight: -6,
+      width: 30
     },
     tabsOuter: {
       backgroundColor: c.bg,
@@ -1488,10 +1991,15 @@ function createStyles(c: ThemeColors) {
     },
     searchResults: {
       backgroundColor: c.bg,
+      flex: 1,
       paddingBottom: 100
     },
+    searchScreenContent: {
+      backgroundColor: c.bg,
+      flexGrow: 1,
+      paddingTop: spacing.sm
+    },
     searchSection: {
-      gap: 10,
       paddingBottom: spacing.lg
     },
     searchSectionLabel: {
@@ -1516,6 +2024,50 @@ function createStyles(c: ThemeColors) {
       fontSize: 12,
       lineHeight: 17,
       paddingHorizontal: spacing.base
+    },
+    searchResultRow: {
+      alignItems: "center",
+      borderBottomColor: c.border,
+      borderBottomWidth: 1,
+      flexDirection: "row",
+      gap: spacing.md,
+      marginHorizontal: spacing.base,
+      paddingVertical: 12
+    },
+    searchResultIcon: {
+      alignItems: "center",
+      backgroundColor: c.orangeDim,
+      borderColor: c.orangeBorder,
+      borderRadius: 22,
+      borderWidth: 1,
+      height: 44,
+      justifyContent: "center",
+      width: 44
+    },
+    searchResultIconDish: {
+      backgroundColor: c.greenDim,
+      borderColor: c.greenBorder
+    },
+    searchResultIconPerson: {
+      backgroundColor: c.surface,
+      borderColor: c.border
+    },
+    searchResultText: {
+      flex: 1,
+      minWidth: 0
+    },
+    searchResultTitle: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 15,
+      lineHeight: 19
+    },
+    searchResultSubtitle: {
+      ...fontStyles.regular,
+      color: c.muted,
+      fontSize: 12,
+      lineHeight: 16,
+      marginTop: 2
     },
     peopleDiscoveryHeader: {
       paddingHorizontal: spacing.base
@@ -1776,13 +2328,21 @@ function createStyles(c: ThemeColors) {
       paddingHorizontal: 14,
       paddingVertical: 8
     },
-    addButtonMuted: {
+    addButtonRequested: {
       opacity: 0.62
+    },
+    addButtonJoined: {
+      backgroundColor: c.greenDim,
+      borderColor: c.greenBorder,
+      opacity: 1
     },
     addButtonText: {
       ...fontStyles.semiBold,
       color: c.orange,
       fontSize: 11
+    },
+    addButtonJoinedText: {
+      color: c.green
     }
   });
 }

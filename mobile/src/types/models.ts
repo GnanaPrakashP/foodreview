@@ -21,6 +21,7 @@ export type FoodItem = {
 export type ReviewMedia = {
   publicUrl: string;
   mediaType: "image" | "video";
+  mediaAssetId?: string | null;
   position: number;
 };
 
@@ -60,6 +61,8 @@ export type ReviewPost = {
   restaurantAddress: string | null;
   restaurantLat: number | null;
   restaurantLng: number | null;
+  restaurantPrimaryType: string | null;
+  restaurantTypes: string[];
   items: FoodItem[];
   body: string | null;
   tags: string[];

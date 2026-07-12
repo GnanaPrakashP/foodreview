@@ -7,6 +7,7 @@ import { AuthBootstrap } from "@/providers/AuthBootstrap";
 import { AuthGate } from "@/providers/AuthGate";
 import { DevAutoLogin } from "@/providers/DevAutoLogin";
 import { PushNotificationBootstrap } from "@/providers/PushNotificationBootstrap";
+import { UserLocationBootstrap } from "@/providers/UserLocationBootstrap";
 import { queryCachePersister } from "@/providers/queryPersistence";
 
 const QUERY_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
@@ -45,6 +46,7 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   const providerContent = (
     <AuthBootstrap>
+      <UserLocationBootstrap />
       {children}
       <PushNotificationBootstrap />
       <DevAutoLogin />

@@ -1,25 +1,34 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { networkInterfaces } from "node:os";
+import { spawn, spawnSync } from "node:child_process";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import http from "node:http";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APP_ID = "com.circlebites.mobile";
 const SCHEME = "circlebites";
 const DEFAULT_PORT = 8081;
+const DEFAULT_HOST = "127.0.0.1";
+const METRO_START_TIMEOUT_MS = 60_000;
+const API_START_TIMEOUT_MS = 60_000;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const mobileRoot = resolve(scriptDir, "..");
+const projectRoot = resolve(mobileRoot, "..");
 const androidRoot = join(mobileRoot, "android");
 const gradlew = join(androidRoot, process.platform === "win32" ? "gradlew.bat" : "gradlew");
 const debugApk = join(androidRoot, "app", "build", "outputs", "apk", "debug", "app-debug.apk");
 
 function parseArgs(argv) {
   const options = {
+    clearData: false,
     device: "",
     host: "",
     launch: true,
-    port: DEFAULT_PORT
+    port: DEFAULT_PORT,
+    startApi: true,
+    restartMetro: true,
+    startMetro: true
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -60,6 +69,22 @@ function parseArgs(argv) {
       options.launch = false;
       continue;
     }
+    if (arg === "--no-start-metro") {
+      options.startMetro = false;
+      continue;
+    }
+    if (arg === "--no-start-api") {
+      options.startApi = false;
+      continue;
+    }
+    if (arg === "--no-restart-metro") {
+      options.restartMetro = false;
+      continue;
+    }
+    if (arg === "--clear-data") {
+      options.clearData = true;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -81,8 +106,12 @@ Usage:
 
 Options:
   --device <serial>  ADB device serial. Defaults to the first physical phone.
-  --host <ip>        Metro host IP. Defaults to EXPO_DEV_HOST or local LAN IP.
+  --host <ip>        Metro host/IP for the dev client. Defaults to EXPO_DEV_HOST or ${DEFAULT_HOST} over adb reverse.
   --port <port>      Metro port. Defaults to ${DEFAULT_PORT}.
+  --clear-data       Clear Android app data after reinstall. This signs you out and resets local app storage.
+  --no-start-api     Do not auto-start the local Next API when EXPO_PUBLIC_API_BASE_URL is loopback.
+  --no-start-metro   Do not auto-start Expo Metro when the port is not reachable.
+  --no-restart-metro Keep an already-running Metro process instead of restarting it with a cleared cache.
   --no-launch        Install only; do not open the dev client.
 `);
 }
@@ -188,24 +217,295 @@ function selectDevice(adb, requestedSerial) {
   );
 }
 
-function lanHost() {
-  if (process.env.EXPO_DEV_HOST) return process.env.EXPO_DEV_HOST;
+function defaultHost() {
+  return process.env.EXPO_DEV_HOST || DEFAULT_HOST;
+}
 
-  const interfaces = networkInterfaces();
-  const preferredNames = Object.keys(interfaces).filter((name) => /^en\d+$/i.test(name));
-  const remainingNames = Object.keys(interfaces).filter((name) => !preferredNames.includes(name));
+function isLocalhostHost(host) {
+  return host === "127.0.0.1" || host === "localhost";
+}
 
-  for (const name of [...preferredNames, ...remainingNames]) {
-    if (/^(awdl|bridge|llw|lo|utun|vbox|vmnet)/i.test(name)) continue;
-    const entries = interfaces[name];
-    for (const entry of entries ?? []) {
-      if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) {
-        return entry.address;
+function metroHostMode(host) {
+  return isLocalhostHost(host) ? "localhost" : "lan";
+}
+
+function expoCliCommand() {
+  const localExpo = join(mobileRoot, "node_modules", ".bin", process.platform === "win32" ? "expo.cmd" : "expo");
+  if (existsSync(localExpo)) return { command: localExpo, args: [] };
+  return { command: "npx", args: ["expo"] };
+}
+
+function parseEnvFile(path) {
+  if (!existsSync(path)) return {};
+
+  return readFileSync(path, "utf8")
+    .split(/\r?\n/)
+    .reduce((values, line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return values;
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex < 0) return values;
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      let value = trimmed.slice(separatorIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
       }
+      if (key) values[key] = value;
+      return values;
+    }, {});
+}
+
+function mobileEnv() {
+  return {
+    ...parseEnvFile(join(mobileRoot, ".env")),
+    ...parseEnvFile(join(mobileRoot, ".env.local")),
+    ...process.env
+  };
+}
+
+function apiBaseUrl() {
+  const raw = mobileEnv().EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (!raw) return null;
+
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackApiUrl(url) {
+  return url.protocol === "http:" && isLocalhostHost(url.hostname);
+}
+
+function apiPort(url) {
+  return Number(url.port) || 80;
+}
+
+function apiReadinessPath(url) {
+  const prefix = url.pathname.replace(/\/$/, "");
+  return `${prefix}/api/places/reverse-geocode`;
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+function metroListenPids(port) {
+  if (process.platform === "win32") return [];
+
+  const result = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+  if (result.status !== 0) return [];
+
+  return result.stdout
+    .split("\n")
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+
+function metroStatus(host, port, timeoutMs = 1200) {
+  return new Promise((resolveStatus) => {
+    const req = http.get({
+      host,
+      path: "/status",
+      port,
+      timeout: timeoutMs
+    }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        resolveStatus(body.includes("packager-status:running"));
+      });
+    });
+
+    req.on("error", () => resolveStatus(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolveStatus(false);
+    });
+  });
+}
+
+async function waitForMetro(host, port, timeoutMs = METRO_START_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await metroStatus(host, port)) return true;
+    await delay(1000);
+  }
+  return false;
+}
+
+function apiStatus(url, timeoutMs = 1200) {
+  return new Promise((resolveStatus) => {
+    const req = http.get({
+      host: url.hostname,
+      path: apiReadinessPath(url),
+      port: apiPort(url),
+      timeout: timeoutMs
+    }, (res) => {
+      res.resume();
+      res.on("end", () => {
+        resolveStatus(Boolean(res.statusCode && res.statusCode < 500));
+      });
+    });
+
+    req.on("error", () => resolveStatus(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolveStatus(false);
+    });
+  });
+}
+
+async function waitForApi(url, timeoutMs = API_START_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await apiStatus(url)) return true;
+    await delay(1000);
+  }
+  return false;
+}
+
+function startApiServer(url) {
+  const port = apiPort(url);
+  const logPath = join(tmpdir(), `circlebites-next-api-${port}.log`);
+  const out = openSync(logPath, "a");
+  const err = openSync(logPath, "a");
+  const child = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
+    cwd: projectRoot,
+    detached: true,
+    env: process.env,
+    stdio: ["ignore", out, err]
+  });
+  child.unref();
+  closeSync(out);
+  closeSync(err);
+  console.log(`Started Next API in the background (pid ${child.pid}). Logs: ${logPath}`);
+}
+
+async function ensureApiServer(url, shouldStart) {
+  if (await apiStatus(url)) {
+    console.log(`Next API is reachable at ${url.origin}`);
+    return true;
+  }
+
+  if (!shouldStart) {
+    console.log(`Next API is not reachable at ${url.origin}. Start it with: npm run dev -- -p ${apiPort(url)}`);
+    return false;
+  }
+
+  const existingPids = metroListenPids(apiPort(url));
+  if (existingPids.length > 0) {
+    throw new Error(`Port ${apiPort(url)} is in use, but the Next API did not respond. Stop that process or update EXPO_PUBLIC_API_BASE_URL.`);
+  }
+
+  console.log(`Next API is not reachable at ${url.origin}; starting it...`);
+  startApiServer(url);
+  if (await waitForApi(url)) {
+    console.log(`Next API is ready at ${url.origin}`);
+    return true;
+  }
+
+  throw new Error(`Next API did not become reachable at ${url.origin}. Check /tmp/circlebites-next-api-${apiPort(url)}.log and retry.`);
+}
+
+async function stopMetroOnPort(port) {
+  const pids = metroListenPids(port);
+  if (pids.length === 0) return false;
+
+  console.log(`Stopping existing Metro process on port ${port}: ${pids.join(", ")}`);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // It may have exited between lsof and kill.
     }
   }
 
-  return "127.0.0.1";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await delay(250);
+    if (metroListenPids(port).length === 0) return true;
+  }
+
+  for (const pid of metroListenPids(port)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // It may have exited after the retry loop.
+    }
+  }
+  await delay(500);
+  return metroListenPids(port).length === 0;
+}
+
+function startMetro(host, port) {
+  const { command, args } = expoCliCommand();
+  const expoArgs = [
+    ...args,
+    "start",
+    "--dev-client",
+    "--host",
+    metroHostMode(host),
+    "--port",
+    String(port),
+    "--clear"
+  ];
+  const logPath = join(tmpdir(), `circlebites-metro-${port}.log`);
+  const out = openSync(logPath, "a");
+  const err = openSync(logPath, "a");
+  const child = spawn(command, expoArgs, {
+    cwd: mobileRoot,
+    detached: true,
+    env: process.env,
+    stdio: ["ignore", out, err]
+  });
+  child.unref();
+  closeSync(out);
+  closeSync(err);
+  console.log(`Started Expo Metro in the background (pid ${child.pid}). Logs: ${logPath}`);
+}
+
+async function ensureMetro(host, port, shouldStart, shouldRestart) {
+  if (await metroStatus(host, port)) {
+    if (shouldStart && shouldRestart) {
+      console.log(`Metro is reachable at http://${host}:${port}; restarting it with a cleared cache.`);
+      const stopped = await stopMetroOnPort(port);
+      if (!stopped) {
+        throw new Error(`Metro is already running on port ${port}, but it could not be stopped. Stop it manually or rerun with --no-restart-metro.`);
+      }
+      startMetro(host, port);
+      if (await waitForMetro(host, port)) {
+        console.log(`Metro is ready at http://${host}:${port}`);
+        return;
+      }
+      throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/circlebites-metro-${port}.log and retry.`);
+    }
+    console.log(`Metro is reachable at http://${host}:${port}`);
+    return;
+  }
+
+  if (!shouldStart) {
+    throw new Error(`Metro is not reachable at http://${host}:${port}. Start it with: npm --prefix mobile run start -- --dev-client --host ${metroHostMode(host)} --port ${port}`);
+  }
+
+  console.log(`Metro is not reachable at http://${host}:${port}; starting Expo Metro...`);
+  startMetro(host, port);
+  if (await waitForMetro(host, port)) {
+    console.log(`Metro is ready at http://${host}:${port}`);
+    return;
+  }
+
+  throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/circlebites-metro-${port}.log and retry.`);
 }
 
 function devClientUrl(host, port) {
@@ -213,11 +513,12 @@ function devClientUrl(host, port) {
   return `${SCHEME}://expo-development-client/?url=${encodeURIComponent(metroUrl)}`;
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   const adb = adbPath();
   const device = selectDevice(adb, options.device);
-  const host = options.host || lanHost();
+  const host = options.host || defaultHost();
+  const mobileApiUrl = apiBaseUrl();
   const javaHome = javaHomePath();
   const buildEnv = {
     ...process.env,
@@ -227,6 +528,14 @@ function main() {
 
   console.log(`Using Android device: ${device}`);
   console.log(`Using Metro URL: http://${host}:${options.port}`);
+  if (!options.host && isLocalhostHost(host)) {
+    console.log("Using adb reverse for Metro. Pass --host <LAN IP> to use Wi-Fi/LAN instead.");
+  }
+  if (mobileApiUrl) {
+    console.log(`Using API URL: ${mobileApiUrl.origin}`);
+  } else {
+    console.log("EXPO_PUBLIC_API_BASE_URL is not configured; API-backed mobile features may be unavailable.");
+  }
   console.log(`Using JAVA_HOME: ${javaHome}`);
 
   if (!existsSync(gradlew)) {
@@ -240,8 +549,21 @@ function main() {
   }
 
   run(adb, ["-s", device, "install", "-r", "-d", debugApk]);
+  if (options.clearData) {
+    run(adb, ["-s", device, "shell", "pm", "clear", APP_ID]);
+  }
 
   if (options.launch) {
+    await ensureMetro(host, options.port, options.startMetro, options.restartMetro);
+    if (isLocalhostHost(host)) {
+      run(adb, ["-s", device, "reverse", `tcp:${options.port}`, `tcp:${options.port}`]);
+    }
+    if (mobileApiUrl && isLoopbackApiUrl(mobileApiUrl)) {
+      await ensureApiServer(mobileApiUrl, options.startApi);
+      run(adb, ["-s", device, "reverse", `tcp:${apiPort(mobileApiUrl)}`, `tcp:${apiPort(mobileApiUrl)}`]);
+    } else if (mobileApiUrl) {
+      console.log(`API URL is not loopback, so it was not auto-started or adb-reversed: ${mobileApiUrl.origin}`);
+    }
     run(adb, ["-s", device, "shell", "am", "force-stop", APP_ID]);
     run(adb, [
       "-s",
@@ -261,7 +583,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);

@@ -46,11 +46,12 @@ export type ProfileDetailsInput = {
 };
 
 export type UserSearchResult = {
+  accountType: AccountType;
   displayName: string;
   username: string;
 };
 
-type UserSearchRow = Pick<ProfileRow, "username" | "first_name" | "last_name">;
+type UserSearchRow = Pick<ProfileRow, "username" | "first_name" | "last_name" | "account_type">;
 
 export type UserProfileSearchOptions = {
   excludedUsernames?: string[];
@@ -333,6 +334,7 @@ export async function searchUserProfiles(
     .filter((profile) => profile.username && !excluded.has(profile.username.toLowerCase()))
     .slice(0, limit)
     .map((profile) => ({
+      accountType: profile.account_type === "private" ? "private" : "public",
       displayName: displayNameForProfile({
         firstName: profile.first_name,
         lastName: profile.last_name,
@@ -366,7 +368,7 @@ async function searchUserProfilesDirect(
 ): Promise<UserSearchRow[]> {
   let request = supabase
     .from("profiles")
-    .select("username, first_name, last_name")
+    .select("username, first_name, last_name, account_type")
     .or(`username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`)
     .limit(options.limit + options.excludedUsernames.length)
     .returns<UserSearchRow[]>();

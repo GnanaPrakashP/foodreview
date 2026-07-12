@@ -145,7 +145,7 @@ function makeReq(body) { return { json: async () => body }; }
 function body(res) { return res._body; }
 function status(res) { return res._status; }
 
-function loadRoute(code, { db, adminDb, authName }) {
+function loadRoute(code, { db, adminDb, authName, dishIdentity }) {
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -221,6 +221,11 @@ function loadRoute(code, { db, adminDb, authName }) {
           MEDIA_PRIVATE_BUCKET: "media-private",
           MEDIA_PUBLIC_BUCKET: "media-public",
           MEDIA_SOURCE_BUCKET: "media-sources",
+        };
+      }
+      if (id === "@/lib/server/dish-identity") {
+        return {
+          replaceReviewDishMentions: dishIdentity?.replaceReviewDishMentions ?? (async () => ({ ok: true, rows: [] })),
         };
       }
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => adminDb ?? db };
@@ -423,6 +428,27 @@ test("POST /reviews: valid review returns the new review id", async () => {
   assert.equal(body(res).id, "rev-abc-123");
 });
 
+test("POST /reviews: writes backend-owned dish mentions for the created review", async () => {
+  const calls = [];
+  const db = capturingDb({ data: { id: "11111111-1111-4111-8111-111111111111" }, error: null });
+  const dishIdentity = {
+    replaceReviewDishMentions: async (_db, input) => {
+      calls.push(input);
+      return { ok: true, rows: [] };
+    }
+  };
+  const items = [{ name: "Chicken Biryani", rating: 5 }];
+  const { POST } = loadRoute(src.create, { db, authName: "Alice", dishIdentity });
+  const res = await POST(makeReq({ ...VALID_BODY, items, restaurantId: "google-place-1" }));
+
+  assert.equal(status(res), 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].reviewId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(calls[0].userId, "uid-alice");
+  assert.equal(calls[0].placeId, "google-place-1");
+  assert.deepEqual(calls[0].submittedItems, items);
+});
+
 test("POST /reviews: DB error returns 500", async () => {
   const { POST } = loadRoute(src.create, {
     db: mockDb(
@@ -587,6 +613,35 @@ test("PATCH /reviews/[id]: owner can update visibility", async () => {
   );
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
+});
+
+test("PATCH /reviews/[id]: refreshing items replaces backend-owned dish mentions", async () => {
+  const calls = [];
+  const items = [{ name: "Chiken Biryani", rating: 4 }];
+  const { PATCH } = loadRoute(src.byId, {
+    db: mockDb(
+      { data: { reviewer_name: "Alice", restaurant_id: "google-place-1" }, error: null },
+      { data: null, error: null }
+    ),
+    authName: "Alice",
+    dishIdentity: {
+      replaceReviewDishMentions: async (_db, input) => {
+        calls.push(input);
+        return { ok: true, rows: [] };
+      }
+    }
+  });
+  const res = await PATCH(
+    makeReq({ items }),
+    { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+  );
+
+  assert.equal(status(res), 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].reviewId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(calls[0].userId, "uid-alice");
+  assert.equal(calls[0].placeId, "google-place-1");
+  assert.deepEqual(calls[0].submittedItems, items);
 });
 
 test("PATCH /reviews/[id]: DB update error returns 500", async () => {

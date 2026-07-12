@@ -6,6 +6,7 @@ import {
   getPublicFeed,
   getRestaurantFeed,
   getReviewPostById,
+  type DishFeedInput,
   type ExploreFeedInput,
   type RestaurantFeedInput
 } from "@/services/feeds";
@@ -15,7 +16,18 @@ import type { PostEngagementState, ReviewPost } from "@/types/models";
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
   circlePages: ["feed", "circle", "pages"] as const,
-  dish: (dishName: string) => ["feed", "dish", dishName] as const,
+  dish: (input: DishFeedInput) => [
+    "feed",
+    "dish",
+    input.dishName,
+    input.canonicalDishId ?? "",
+    input.location?.lat ?? "",
+    input.location?.lng ?? "",
+    input.placeId ?? "",
+    input.restaurantName ?? "",
+    input.restaurantAddress ?? "",
+    input.limit ?? ""
+  ] as const,
   exploreDiscovery: (input: ExploreFeedInput = {}) => ["feed", "explore-discovery", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
   explore: (input: ExploreFeedInput = {}) => ["feed", "explore", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
   public: ["feed", "public"] as const,
@@ -191,10 +203,15 @@ export function useRestaurantFeedQuery(input: RestaurantFeedInput, options: { en
   });
 }
 
-export function useDishFeedQuery(dishName: string, options: { enabled?: boolean } = {}) {
+function dishFeedInputValue(input: string | DishFeedInput): DishFeedInput {
+  return typeof input === "string" ? { dishName: input } : input;
+}
+
+export function useDishFeedQuery(input: string | DishFeedInput, options: { enabled?: boolean } = {}) {
+  const dishInput = dishFeedInputValue(input);
   return useQuery({
-    queryKey: feedKeys.dish(dishName),
-    queryFn: () => getDishFeed(dishName),
-    enabled: Boolean(dishName.trim()) && (options.enabled ?? true)
+    queryKey: feedKeys.dish(dishInput),
+    queryFn: () => getDishFeed(dishInput),
+    enabled: Boolean(dishInput.dishName.trim() || dishInput.canonicalDishId?.trim()) && (options.enabled ?? true)
   });
 }

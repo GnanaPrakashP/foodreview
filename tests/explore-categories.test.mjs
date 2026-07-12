@@ -92,6 +92,31 @@ test("place matching maps quick bites and nightlife signals", () => {
   assert.equal(placeMatchesCategory({ name: "Family Biryani House", topDishes: ["Chicken Biryani"] }, "restaurant"), true);
 });
 
+test("place categories map from Google Places types, primaryType first", () => {
+  const { placeCategoryFromGoogleTypes } = loadExploreCategoriesModule();
+  const asList = (primaryType, types) => placeCategoryFromGoogleTypes(primaryType, types).join(",");
+
+  assert.equal(asList("coffee_shop", ["cafe", "food", "point_of_interest"]), "cafe");
+  assert.equal(asList("ice_cream_shop", []), "desserts");
+  assert.equal(asList("bar_and_grill", ["bar", "restaurant"]), "nightlife,restaurant");
+  assert.equal(asList("fine_dining_restaurant", ["restaurant", "food"]), "fine_dining,restaurant");
+  // Cuisine restaurants fall through to the generic bucket.
+  assert.equal(asList("indian_restaurant", ["restaurant", "food"]), "restaurant");
+  // No venue signal -> no bucket; keyword heuristics decide instead.
+  assert.equal(asList(null, ["establishment", "point_of_interest"]), "");
+});
+
+test("place inference prefers Google types over name keywords", () => {
+  const { inferPlaceCategories } = loadExploreCategoriesModule();
+
+  // A cafe brand whose name has no "cafe" keyword still classifies as cafe via Google types.
+  assert.ok(inferPlaceCategories({ name: "Blue Tokai", topDishes: [], primaryType: "coffee_shop", types: ["cafe"] }).includes("cafe"));
+  // Google type and dish signal combine (a cafe that also serves desserts).
+  const combined = inferPlaceCategories({ name: "Roastery", topDishes: ["Brownie"], primaryType: "coffee_shop", types: ["cafe"] });
+  assert.ok(combined.includes("cafe"));
+  assert.ok(combined.includes("desserts"));
+});
+
 test("dish matching maps new image categories", () => {
   const { dishMatchesCategory } = loadExploreCategoriesModule();
 
