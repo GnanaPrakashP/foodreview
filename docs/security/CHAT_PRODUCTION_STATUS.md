@@ -1,18 +1,29 @@
 # Chat Production Status
 
-Current phase: Production Hardening Phase 6 — React Native mobile performance and rendering
+Current phase: Production Hardening Phase 7 — production observability, scheduled operations and recovery
 
-Production-hardening program phase: Phase 6 — lazy retained tabs, owner-safe selected persistence, targeted cache patches, cursor lists, viewport media, and coordinated runtime activity
+Production-hardening program phase: Phase 7 — privacy-safe Sentry/structured telemetry, durable Expo push tickets and receipts, monitored schedules, database/queue health, alerts/runbooks, restore validation, and deployment recovery
 
-Phase 6 implementation status: PASS locally on `hardening/08-mobile-performance`. Four main tabs have zero eager mounts; visited tabs remain retained/frozen; five logical account-owned cache surfaces hydrate through a bounded owner envelope; one AppState/network owner drives React Query focus/online state; ordinary post/comment/notification/Memory deltas use targeted patches; active lists use stable cursors and bounded virtualization; feed media uses feed-sized variants with at most one viewport player; native bundle and Android APK budgets pass, and an isolated generated iOS arm64 simulator Release compile succeeds.
+Phase 7 implementation status: PASS locally on `hardening/09-observability`. Mobile/API/worker Sentry integration, fail-open redacted JSON logging, request correlation, release metadata, service-role database health, media/deletion/moderation monitoring, durable Expo push ticket/receipt processing, 16 explicit schedules, missed-run detection, 43 actionable alerts, 17 runbooks, deployment recovery, telemetry governance, and a real disposable local database restore are implemented.
 
-Phase 6 release verification status: BLOCKED. The configured hosted database lacks the Phase 5 `mobile_public_feed_page_v1` contract, so the release app correctly returns a fail-closed 503 and cannot produce useful-content/tab/media measurements. The supplemental Android 15 emulator profile is partial; no physical Android/iOS device was available. Hosted staging, physical-device frames/memory, signed native artifacts, Phase 7 telemetry, Phase 9 load/soak/recovery, and earlier blockers remain mandatory. No hosted project was mutated and no 1,000-user capacity claim is made.
+Phase 7 release verification status: BLOCKED. Hosted Sentry projects/symbolication/alert delivery, production scheduler configuration, real Expo provider tickets/receipts, hosted backup/PITR and Storage recovery, an isolated staging restore, and canary/rollback drills have not been executed. Signed physical-device evidence remains Phase 8 work. Earlier hosted Phase 1A–6 blockers and PH-001/PH-002 remain. PH-003 also records the current production dependency audit (root: two moderate/two high; mobile: 18 moderate) for reviewed framework remediation before release. No hosted or production project was mutated and no 1,000-user capacity claim is made.
 
-Final Phase 6 evidence includes 12/12 focused tests, 72/72 Memory hardening, passing Phase 1A–5 focused regressions, zero-error root/mobile lint, passing root/mobile typechecks, Android/iOS production exports, a successful Android release APK, a successful isolated generated iOS arm64 simulator Release compile, and passing bundle budgets. Owner cache hydration measured 46 ms in one release cold launch. Five-sample emulator cold draw median was 9,153 ms and warm resume median 1,463 ms, but content/tab/frame/player results are not accepted because the hosted feed contract was unavailable.
+Final Phase 7 evidence includes 17/17 focused tests; 9/9 real operational runtime tests; 16 signals/16 schedules/43 alerts; local health 28 healthy with zero warning/critical/unknown; 88/88 pgTAP; 10/10 real Auth/RLS/Storage policies; upgrades 7/7 and zero drift; 72/72 Memory; passing Phase 1A–6 focused/runtime regressions; root/mobile typechecks; zero-error lint; Next build; Android/iOS production exports with Hermes maps; Android native release with Sentry; isolated generated iOS release compile with RNSentry; and a successful real local dump/restore/contract drill. The root suite is 1,103/1,122 with only the 19 unchanged registered PH-002 implementation/source assertions.
 
-Next required phase: Phase 6 hosted/physical-device staging matrix, then separately authorized Phase 7 work
+Next required work: execute the Phase 7 hosted staging gate and the outstanding Phase 1A–6 hosted/physical-device gates. Phase 8 is not started by this handoff.
 
-Production-hardening next required phase: deploy/review the Phase 5 contract in disposable production-like staging, execute `docs/production-hardening/PHASE_6_MOBILE_PERFORMANCE.md` on physical Android/iOS devices together with the Phase 1A–5 hosted gates, and resolve PH-603/PH-902. Phase 7 is not started by this handoff.
+Production-hardening next required work: deploy the complete canonical migration chain and Phase 7 telemetry/worker/scheduler configuration to disposable production-like staging; verify symbolication, alert delivery, correlation, Expo receipts, missed-run detection, isolated restore, and canary/rollback; execute the Phase 6 physical-device matrix and earlier hosted security gates; and resolve PH-001/PH-002/PH-603/PH-902. Do not begin Phase 8 automatically.
+
+## Production Hardening Phase 7 — Observability and Operations (2026-07-13)
+
+- Telemetry: Sentry covers mobile native/JavaScript crashes, NDK, ANR/app hang, watchdog, app start/native frames, API errors, and worker errors; all signals share environment/release and privacy filters.
+- Logging/correlation: structured JSON is recursively redacted and fail-open; middleware/mobile/API/workers propagate bounded request/run correlation without account IDs or content.
+- Operations: service-only health reports database waits/contracts plus media, deletion, moderation, push, and scheduler backlog/age/failure; final local health is 28/28 healthy.
+- Push: direct Expo sending is replaced with durable deduped jobs, fenced sends, unique tickets, delayed receipts, bounded batches, backoff, invalid-token disablement, and dead letters.
+- Scheduling: 16 owned schedules cover push, deletion, media, moderation, cleanup, retention, Storage reconciliation, and existing worker/GitHub responsibilities; durable runs and heartbeats detect misses.
+- Response/recovery: 43 alerts link to 17 complete runbooks; rollback/roll-forward and emergency disablement are documented; the real local dump/clean-restore/schema/RLS drill passes.
+- Privacy: no user identity, raw content, tokens, signed URLs, Storage paths, screenshots, view hierarchy, precise IP/location, request bodies, or provider payloads enter telemetry; retention is bounded and Phase 8 disclosure updates are flagged.
+- Remaining: hosted Sentry/symbolication/alerts, production schedules, real Expo delivery, hosted PITR/Storage recovery, staging restore/canary/rollback, signed physical devices, and Phase 9 capacity evidence.
 
 ## Production Hardening Phase 6 — React Native Mobile Performance (2026-07-13)
 

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "scheduler": "Vercel Cron for bounded API jobs; dedicated container loops for media and account deletion; GitHub Actions for dish curation",
+  "operations": [
+    { "job": "push-send", "owner": "api-operations", "cron": "* * * * *", "mode": "bounded-idempotent" },
+    { "job": "push-receipts", "owner": "api-operations", "cron": "*/5 * * * *", "mode": "bounded-idempotent" },
+    { "job": "account-deletion-processing", "owner": "privacy-operations", "cron": "*/2 * * * *", "mode": "leased-idempotent" },
+    { "job": "account-deletion-reconciliation", "owner": "privacy-operations", "cron": "*/10 * * * *", "mode": "leased-idempotent" },
+    { "job": "account-media-cleanup", "owner": "privacy-operations", "cron": "3-59/10 * * * *", "mode": "leased-idempotent" },
+    { "job": "media-abandoned-cleanup", "owner": "media-operations", "cron": "7-59/10 * * * *", "mode": "leased-idempotent" },
+    { "job": "media-worker-supervision", "owner": "media-operations", "cron": "* * * * *", "mode": "read-only" },
+    { "job": "media-dead-letter-monitor", "owner": "media-operations", "cron": "*/15 * * * *", "mode": "read-only-alerting" },
+    { "job": "moderation-processing", "owner": "trust-safety", "cron": "*/5 * * * *", "mode": "leased-idempotent" },
+    { "job": "expired-upload-cleanup", "owner": "media-operations", "cron": "4-59/15 * * * *", "mode": "bounded-idempotent" },
+    { "job": "api-state-cleanup", "owner": "api-operations", "cron": "17 * * * *", "mode": "bounded-idempotent" },
+    { "job": "disabled-push-token-cleanup", "owner": "push-operations", "cron": "41 2 * * *", "mode": "bounded-idempotent" },
+    { "job": "operational-retention", "owner": "platform-operations", "cron": "53 2 * * *", "mode": "bounded-idempotent" },
+    { "job": "orphaned-storage-reconciliation", "owner": "media-operations", "cron": "13 3 * * *", "mode": "read-only-alerting" },
+    { "job": "dish-curation", "owner": "dish-data-operations", "cron": "23 20 * * *", "mode": "github-actions-existing" },
+    { "job": "media-processing", "owner": "media-operations", "cron": "continuous", "mode": "dedicated-leased-worker" }
+  ]
+}

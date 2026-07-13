@@ -12,6 +12,8 @@ type PerformanceEventName =
   | "tab.profile.cached_content"
   | "tab.profile.fresh_settled";
 
+import { recordMobileFlow } from "@/observability/mobileTelemetry";
+
 type PerformanceSample = {
   at: number;
   durationMs?: number;
@@ -40,6 +42,9 @@ export function recordPerformanceSample(
   sample: Omit<PerformanceSample, "at" | "name"> = {}
 ) {
   append({ at: Date.now(), name, ...sample });
+  if (typeof sample.durationMs === "number") {
+    recordMobileFlow(name, sample.durationMs, "success", { source: "phase6_marker" });
+  }
 }
 
 export function adjustPerformanceCounter(name: PerformanceEventName, delta: number) {

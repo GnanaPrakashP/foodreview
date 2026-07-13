@@ -42,6 +42,9 @@ function loadMediaPipelineModule() {
       if (id === "node:path") return path;
       if (id === "node:child_process") return childProcess;
       if (id === "sharp") return sharp;
+      if (id === "@/lib/observability/server") return {
+        mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
+      };
       throw new Error(`Unexpected require in media pipeline tests: ${id}`);
     }
   });

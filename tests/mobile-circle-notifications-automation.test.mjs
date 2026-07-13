@@ -22,6 +22,7 @@ const notificationListRouteSource = source("app/api/notifications/route.ts");
 const notificationUnreadRouteSource = source("app/api/notifications/unread-count/route.ts");
 const pushBootstrapSource = source("mobile/src/providers/PushNotificationBootstrap.tsx");
 const serverNotificationSource = source("lib/notifications.ts");
+const pushDeliverySource = source("lib/server/push-delivery.ts");
 const hardeningMigrationSource = source("supabase/migrations/202607080001_circle_production_hardening.sql");
 
 test("circle feed automation uses server APIs, cursor pagination, and canonical post_views", () => {
@@ -117,21 +118,25 @@ test("notification inbox automation uses backend list and unread-count truth", (
   assert.match(notificationScreenSource, /useRespondToCircleRequestMutation/);
 });
 
-test("push notification automation covers token registration, server fanout, preferences, and deep links", () => {
+test("push notification automation covers token registration, durable fanout, preferences, and deep links", () => {
   assert.match(notificationServiceSource, /import\("expo-notifications"\)/);
   assert.match(notificationServiceSource, /registerForPushNotifications\(username: string\)/);
   assert.match(notificationServiceSource, /\.from\("push_tokens"\)\s+\.upsert/s);
   assert.match(notificationServiceSource, /getExpoPushTokenAsync\(\{ projectId \}\)/);
   assert.match(notificationServiceSource, /Constants\.appOwnership === "expo"/);
 
-  assert.match(serverNotificationSource, /const EXPO_PUSH_URL = "https:\/\/exp\.host\/--\/api\/v2\/push\/send"/);
+  assert.match(serverNotificationSource, /import \{ enqueuePushDeliveries \} from "@\/lib\/server\/push-delivery"/);
   assert.match(serverNotificationSource, /function pushPreferenceColumnForType/);
   assert.match(serverNotificationSource, /\.from\("notification_settings"\)/);
-  assert.match(serverNotificationSource, /\.from\("push_tokens"\)/);
-  assert.match(serverNotificationSource, /function compactPushData/);
-  assert.match(serverNotificationSource, /type: input\.entityType === "TABLE_MEMORY" \? "table-memory" : "social-notification"/);
-  assert.match(serverNotificationSource, /await sendExpoPushMessages\(tokens\.map/);
+  assert.match(serverNotificationSource, /await enqueuePushDeliveries\(\{/);
+  assert.doesNotMatch(serverNotificationSource, /exp\.host\/--\/api\/v2\/push\/send/);
   assert.match(serverNotificationSource, /Push is best-effort/);
+  assert.match(pushDeliverySource, /const EXPO_PUSH_URL = "https:\/\/exp\.host\/--\/api\/v2\/push\/send"/);
+  assert.match(pushDeliverySource, /const PUSH_BATCH_SIZE = 100/);
+  assert.match(pushDeliverySource, /const RECEIPT_BATCH_SIZE = 1000/);
+  assert.match(pushDeliverySource, /\.from\("push_tokens"\)/);
+  assert.match(pushDeliverySource, /claim_push_delivery_jobs/);
+  assert.match(pushDeliverySource, /claim_push_receipt_jobs/);
 
   assert.match(pushBootstrapSource, /registerForPushNotifications\(username\)/);
   assert.match(pushBootstrapSource, /getLastNotificationResponseAsync/);

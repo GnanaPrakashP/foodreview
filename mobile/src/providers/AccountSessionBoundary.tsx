@@ -19,6 +19,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { reconcilePendingPostMediaUploads } from "@/services/mediaPipeline";
 import { subscribeRuntimeActivity } from "@/performance/runtimeActivity";
 import { recordPerformanceSample } from "@/performance/mobilePerformance";
+import { captureMobileError, clearMobileTelemetryIdentity, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 function createAccountQueryClient() {
   return new QueryClient({
@@ -94,6 +95,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
     };
 
     const transition = async (session: Session | null) => {
+      const transitionStartedAt = Date.now();
       if (!alive) return;
       if (tokenExpiryTimeout) {
         clearTimeout(tokenExpiryTimeout);
@@ -118,9 +120,11 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
           await prepareSignedOutLocalData(nextClient, current?.client);
           if (session) await logout();
           useSessionStore.getState().clearSession();
+          clearMobileTelemetryIdentity();
           const nextHost = { client: nextClient, ownerUserId: null };
           hostRef.current = nextHost;
           if (alive) setHost(nextHost);
+          recordMobileFlow("auth.session_resolution", Date.now() - transitionStartedAt, "success", { state: "signed_out" });
           return;
         }
 
@@ -175,6 +179,10 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         hostRef.current = nextHost;
         scheduleTokenExpiry(session, nextHost);
         if (alive) setHost(nextHost);
+        recordMobileFlow("auth.session_resolution", Date.now() - transitionStartedAt, "success", {
+          cache_owner_changed: ownerChanged,
+          state: actor ? "active" : "onboarding"
+        });
         void reconcilePendingPostMediaUploads().catch(() => {});
       } catch (error) {
         const reason = error instanceof Error && error.message === "authoritative_owner_mismatch"
@@ -187,6 +195,9 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         const signedOutClient = createAccountQueryClient();
         await prepareSignedOutLocalData(signedOutClient, nextClient).catch(() => {});
         useSessionStore.getState().clearSession();
+        clearMobileTelemetryIdentity();
+        recordMobileFlow("auth.session_resolution", Date.now() - transitionStartedAt, "failure", { reason });
+        captureMobileError("auth.session_resolution_failed", error, { reason });
         const nextHost = { client: signedOutClient, ownerUserId: null };
         hostRef.current = nextHost;
         if (alive) setHost(nextHost);
@@ -264,7 +275,8 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         initialResolved = true;
         enqueue(bufferedSession === undefined ? data.session : bufferedSession);
       })
-      .catch(async () => {
+      .catch(async (error) => {
+        captureMobileError("auth.initial_session_read_failed", error);
         await logout().catch(() => {});
         initialResolved = true;
         enqueue(null);

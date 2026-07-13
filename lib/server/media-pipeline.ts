@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import sharp from "sharp";
+import { mediaWorkerLogger } from "@/lib/observability/server";
 
 export const MEDIA_SOURCE_BUCKET = "media-sources";
 export const MEDIA_PUBLIC_BUCKET = "media-public";
@@ -1032,7 +1033,8 @@ export type MediaProcessingBatchOptions = {
 };
 
 function recordMediaWorkerEvent(event: string, fields: Record<string, string | number | boolean | null>) {
-  console.log(JSON.stringify({ component: "media-worker", event, ...fields }));
+  if (/failed|lease_lost/.test(event)) mediaWorkerLogger.warn(event, fields);
+  else mediaWorkerLogger.info(event, fields);
 }
 
 function assertAssetProcessingContract(asset: MediaAssetRow) {

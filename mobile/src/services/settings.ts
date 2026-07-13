@@ -7,6 +7,7 @@ import { removePushTokensForUser } from "@/services/notifications";
 import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ReviewRow } from "@/services/reviewMapper";
 import type { ReviewPost } from "@/types/models";
 import { fetchPostMediaAccess } from "@/services/postMediaAccess";
+import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 type CommentRow = {
   id: string;
@@ -342,15 +343,21 @@ export async function unblockUser(username: string): Promise<void> {
 }
 
 export async function deleteCurrentAccount(): Promise<AccountDeletionAccepted> {
+  const startedAt = Date.now();
   await getViewerProfile();
-
-  const response = await fetch(apiUrl("/api/delete-account"), {
-    headers: await authorizedApiHeaders("deleting your account", "POST"),
-    method: "POST"
-  });
-  const payload = await response.json().catch(() => null) as (Partial<AccountDeletionAccepted> & { error?: string }) | null;
-  if (!response.ok) throw new Error(payload?.error ?? "Could not delete account");
-  if (!payload?.accepted || !payload.jobId) throw new Error("Account deletion was not accepted");
-
-  return payload as AccountDeletionAccepted;
+  try {
+    const response = await fetch(apiUrl("/api/delete-account"), {
+      headers: await authorizedApiHeaders("deleting your account", "POST"),
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => null) as (Partial<AccountDeletionAccepted> & { error?: string }) | null;
+    if (!response.ok) throw new Error(payload?.error ?? "Could not delete account");
+    if (!payload?.accepted || !payload.jobId) throw new Error("Account deletion was not accepted");
+    recordMobileFlow("account.deletion_request", Date.now() - startedAt, "success");
+    return payload as AccountDeletionAccepted;
+  } catch (error) {
+    recordMobileFlow("account.deletion_request", Date.now() - startedAt, "failure");
+    captureMobileError("account.deletion_request_failed", error);
+    throw error;
+  }
 }

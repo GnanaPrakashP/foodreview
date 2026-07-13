@@ -1,18 +1,21 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { workerLogger, flushWorkerTelemetry } from "./worker-observability.mjs";
+
+const log = workerLogger("foodreview-media-worker-entrypoint");
 
 const required = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "MEDIA_WORKER_SECRET"];
 for (const name of required) {
   const value = process.env[name]?.trim() ?? "";
   if (!value || (name !== "NEXT_PUBLIC_SUPABASE_URL" && process.env.NODE_ENV === "production" && value.length < 32)) {
-    console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: `${name.toLowerCase()}_invalid` }));
+    log.error("startup_failed", new Error("worker_configuration_invalid"), { failure_code: `${name.toLowerCase()}_invalid` });
     process.exit(1);
   }
 }
 try {
   new URL(process.env.NEXT_PUBLIC_SUPABASE_URL);
 } catch {
-  console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: "supabase_url_invalid" }));
+  log.error("startup_failed", new Error("supabase_url_invalid"), { failure_code: "supabase_url_invalid" });
   process.exit(1);
 }
 
@@ -49,13 +52,13 @@ process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 next.on("exit", (code) => {
   if (!stopping) {
-    console.error(JSON.stringify({ component: "media-worker", event: "server_exited", exitCode: code ?? -1 }));
+    log.error("server_exited", new Error("worker_server_exited"), { exit_code: code ?? -1 });
     worker?.kill("SIGTERM");
     process.exitCode = code || 1;
   }
 });
 
-const healthUrl = `http://127.0.0.1:${process.env.PORT || "3000"}/api/internal/media/health`;
+const healthUrl = `http://127.0.0.1:${process.env.PORT || "3000"}/api/internal/media/health?startup=1`;
 for (let attempt = 0; attempt < 60 && !stopping; attempt += 1) {
   try {
     const response = await fetch(healthUrl, {
@@ -66,7 +69,7 @@ for (let attempt = 0; attempt < 60 && !stopping; attempt += 1) {
     // The private local server is still starting.
   }
   if (attempt === 59) {
-    console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: "health_check_failed" }));
+    log.error("startup_failed", new Error("health_check_failed"), { failure_code: "health_check_failed" });
     stop("SIGTERM");
     process.exit(1);
   }
@@ -94,3 +97,4 @@ await new Promise((resolve) => {
   next.on("exit", resolve);
   worker?.on("exit", resolve);
 });
+await flushWorkerTelemetry();

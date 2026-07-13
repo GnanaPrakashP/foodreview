@@ -44,6 +44,9 @@ jobs:
       - name: Validate production-hardening issue register
         run: npm run validate:hardening-register
 
+      - name: Validate observability, schedules, alerts and runbooks
+        run: npm run validate:observability
+
       - name: Validate mobile API trust-boundary inventory
         run: npm run validate:mobile-api-security
 
@@ -55,6 +58,9 @@ jobs:
 
       - name: Run Phase 5 static performance contracts
         run: npm run test:backend-performance
+
+      - name: Run Phase 7 observability, alert and push contracts
+        run: npm run test:observability-operations
 
       - name: Run root lint
         run: npm run lint
@@ -156,6 +162,9 @@ jobs:
       - name: Run Phase 5 production API timing and payload matrix
         run: npm run validate:backend-performance:api
 
+      - name: Run Phase 7 database health and missed-scheduler behaviors
+        run: npm run validate:observability:db
+
       - name: Run Phase 4 API and local recovery behaviors
         run: npm run validate:mobile-api-security:api
 
@@ -167,6 +176,9 @@ jobs:
 
       - name: Audit local drift through the read-only contract
         run: npm run db:drift-report
+
+      - name: Prove a real local backup restore and restored contracts
+        run: npm run backup:restore-drill:local
 
       - name: Stop local Supabase
         if: always()

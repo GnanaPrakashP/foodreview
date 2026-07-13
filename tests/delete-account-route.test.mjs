@@ -42,6 +42,8 @@ function loadRoute({ rpcData = [{ job_id: "job-1", job_status: "inventory_pendin
       if (id === "@/lib/server/route-supabase") return {
         getRouteActor: async () => ({
           actor: user ? { userId: user.id, actorName: "Alice", displayName: "Alice" } : null,
+          actorResolution: { status: user ? "active" : "unauthenticated" },
+          authenticatedUserId: user?.id ?? null,
           supabase: client,
         }),
       };

@@ -2,6 +2,7 @@ import * as Network from "expo-network";
 import { focusManager, onlineManager } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore, type PropsWithChildren } from "react";
 import { AppState, Platform, type AppStateStatus } from "react-native";
+import { recordMobileFlow } from "@/observability/mobileTelemetry";
 
 export type RuntimeActivitySnapshot = {
   appState: AppStateStatus;
@@ -22,6 +23,7 @@ let snapshot: RuntimeActivitySnapshot = {
   isOnline: true,
   networkType: "UNKNOWN"
 };
+let backgroundStartedAt: number | null = snapshot.isForeground ? null : Date.now();
 
 function onlineFromNetworkState(state: Network.NetworkState) {
   return state.isConnected !== false && state.isInternetReachable !== false;
@@ -66,6 +68,9 @@ export function RuntimeActivityCoordinator({ children }: PropsWithChildren) {
   useEffect(() => {
     const applyNetworkState = (state: Network.NetworkState) => {
       const isOnline = onlineFromNetworkState(state);
+      if (isOnline !== snapshot.isOnline) {
+        recordMobileFlow("runtime.connectivity_change", 0, "success", { online: isOnline });
+      }
       onlineManager.setOnline(isOnline);
       publish({
         ...snapshot,
@@ -75,6 +80,11 @@ export function RuntimeActivityCoordinator({ children }: PropsWithChildren) {
     };
     const applyAppState = (appState: AppStateStatus) => {
       const isForeground = appState === "active";
+      if (!isForeground && snapshot.isForeground) backgroundStartedAt = Date.now();
+      if (isForeground && !snapshot.isForeground) {
+        recordMobileFlow("app.warm_resume", backgroundStartedAt ? Date.now() - backgroundStartedAt : 0, "success");
+        backgroundStartedAt = null;
+      }
       if (Platform.OS !== "web") focusManager.setFocused(isForeground);
       publish({ ...snapshot, appState, isForeground });
     };

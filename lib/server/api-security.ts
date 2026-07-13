@@ -2,6 +2,8 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MOBILE_API_POLICIES, type MobileApiPolicyName } from "@/lib/server/mobile-api-policies";
+import { apiLogger } from "@/lib/observability/server";
+import { safeCorrelationId } from "@/lib/observability/structured-log.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FORBIDDEN_SECRETS = new Set(["change-me", "changeme", "default", "secret", "test"]);
@@ -45,7 +47,7 @@ export function mobileCorsHeaders(req: NextRequest, methods: string[]) {
   const origin = req.headers.get("origin")?.trim() ?? "";
   const headers: Record<string, string> = {
     ...SAFE_API_HEADERS,
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-FoodReview-Install-Id",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-FoodReview-Install-Id, X-Request-Id",
     "Access-Control-Allow-Methods": [...methods, "OPTIONS"].join(", "),
     "Vary": "Origin",
   };
@@ -53,10 +55,97 @@ export function mobileCorsHeaders(req: NextRequest, methods: string[]) {
   return headers;
 }
 
+type ApiRequestContext = {
+  requestId: string;
+  startedAt: number;
+};
+
+const apiRequestContexts = new WeakMap<NextRequest, ApiRequestContext>();
+const loggedApiRequests = new WeakSet<NextRequest>();
+let apiRuntimeHasHandledRequest = false;
+
+export function requestCorrelation(req: NextRequest): ApiRequestContext {
+  const cached = apiRequestContexts.get(req);
+  if (cached) return cached;
+  const supplied = safeCorrelationId(req.headers.get("x-request-id"));
+  const headerStart = Number(req.headers.get("x-foodreview-request-start-ms"));
+  const context = {
+    requestId: supplied ?? randomUUID(),
+    startedAt: Number.isFinite(headerStart) && headerStart > 0 && headerStart <= Date.now()
+      ? headerStart
+      : Date.now()
+  };
+  apiRequestContexts.set(req, context);
+  return context;
+}
+
+export function mobileEndpointLabel(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.map((segment, index) => {
+    if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(segment) || /^\d+$/.test(segment)) return ":id";
+    if (segments[index - 1] === "memories" && !["read", "notify", "upload-intent", "finalize-upload", "uploads"].includes(segment)) return ":room";
+    return /^[a-z0-9-]{1,40}$/i.test(segment) ? segment.toLowerCase() : ":value";
+  }).join("/").slice(0, 120) || "api";
+}
+
+function payloadSizeCategory(body: unknown) {
+  let size = 0;
+  try {
+    size = JSON.stringify(body).length;
+  } catch {
+    return "unknown";
+  }
+  if (size <= 1024) return "tiny";
+  if (size <= 16 * 1024) return "small";
+  if (size <= 128 * 1024) return "medium";
+  return "large";
+}
+
+function responseCategory(status: number) {
+  if (status < 400) return "success";
+  if (status === 401) return "authentication_rejection";
+  if (status === 403) return "authorization_rejection";
+  if (status === 429) return "rate_limit_rejection";
+  if (status < 500) return "expected_client_error";
+  return "server_failure";
+}
+
 export function mobileApiJson(req: NextRequest, methods: string[], body: unknown, init: ResponseInit = {}) {
-  return apiJson(body, {
+  const context = requestCorrelation(req);
+  const status = init.status ?? 200;
+  const responseBody = status >= 400 && body && typeof body === "object" && !Array.isArray(body)
+    ? { ...(body as Record<string, unknown>), correlationId: context.requestId }
+    : body;
+  if (!loggedApiRequests.has(req)) {
+    loggedApiRequests.add(req);
+    const runtimeColdStart = !apiRuntimeHasHandledRequest;
+    apiRuntimeHasHandledRequest = true;
+    const serializationStartedAt = Date.now();
+    const payloadSize = payloadSizeCategory(responseBody);
+    const serializationDurationMs = Date.now() - serializationStartedAt;
+    const fields = {
+      correlation_id: context.requestId,
+      duration_ms: Math.max(0, Date.now() - context.startedAt),
+      endpoint: mobileEndpointLabel(req.nextUrl.pathname),
+      method: req.method,
+      payload_size: payloadSize,
+      runtime_cold_start: runtimeColdStart,
+      serialization_duration_ms: serializationDurationMs,
+      status,
+      status_category: responseCategory(status)
+    };
+    if (status >= 500) apiLogger.error("api_request_failed", new Error("api_server_failure"), fields);
+    else if (status >= 400) apiLogger.warn("api_request_rejected", fields);
+    else apiLogger.info("api_request_completed", fields);
+  }
+  return apiJson(responseBody, {
     ...init,
-    headers: { ...mobileCorsHeaders(req, methods), ...init.headers },
+    headers: {
+      ...mobileCorsHeaders(req, methods),
+      "X-Correlation-Id": context.requestId,
+      "X-Request-Id": context.requestId,
+      ...init.headers
+    },
   });
 }
 
@@ -77,7 +166,7 @@ export function mobileApiError(
   status: number,
   headers?: HeadersInit
 ) {
-  const correlationId = randomUUID();
+  const correlationId = requestCorrelation(req).requestId;
   return mobileApiJson(req, methods, { code, correlationId, error: message }, {
     headers: { "X-Correlation-Id": correlationId, ...headers },
     status,

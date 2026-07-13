@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "program": "FoodReview Production Hardening",
   "updatedAt": "2026-07-13",
-  "sourceCommit": "0af380ac1533253dca07af95f144ad6892714f50",
+  "sourceCommit": "bee3d9157913575e11ec3a41243770d152dc0ad6",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/08-mobile-performance",
+  "currentBranch": "hardening/09-observability",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -39,6 +39,17 @@
       "affectedFiles": ["tests", "docs/production-hardening/PHASE_0_BASELINE.md", ".github/workflows/application-ci.yml"],
       "dependencies": ["Owning product phases must confirm each active runtime contract before changing its test"],
       "acceptanceCriteria": ["Full root test suite passes", "Memory hardening suite passes", "Stale mocks support active dependencies", "Important UI and architecture contracts use behaviour-level proof instead of implementation regexes", "No security assertion is weakened"]
+    },
+    {
+      "id": "PH-003",
+      "title": "Remediate production dependency security advisories without breaking pinned runtime contracts",
+      "severity": "P0",
+      "status": "open",
+      "phase": "0 follow-up before release",
+      "branch": "hardening/09-observability",
+      "affectedFiles": ["package.json", "package-lock.json", "mobile/package.json", "mobile/package-lock.json"],
+      "dependencies": ["Next.js 15.5.15 has a non-major 15.5.20 remediation path that requires full regression validation", "Mobile Expo advisories currently report semver-major remediation paths and require an SDK upgrade plan rather than forced audit changes"],
+      "acceptanceCriteria": ["Root production npm audit has no high or critical advisory", "Mobile advisories are remediated or explicitly risk-accepted by the security owner", "Framework upgrades preserve Phase 1A–7 gates", "Native Android and iOS release compiles pass after remediation"]
     },
     {
       "id": "PH-101",
@@ -297,33 +308,33 @@
       "id": "PH-701",
       "title": "Add crash, API, database and queue observability",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "7",
-      "branch": "hardening/09-observability-operations",
-      "affectedFiles": ["mobile", "app/api", "lib/server", "scripts/media-worker.mjs"],
-      "dependencies": ["PH-201"],
+      "branch": "hardening/09-observability",
+      "affectedFiles": ["mobile/src/observability", "app/api", "lib/observability", "lib/server", "scripts/media-worker.mjs", "config/operations-alerts.json"],
+      "dependencies": ["PH-201", "Production Sentry projects, source-map credentials, dashboards and live alert delivery require deployment-owner configuration", "Production-like mobile crash, ANR and watchdog capture require signed physical-device builds in Phase 8"],
       "acceptanceCriteria": ["Mobile crashes and Android ANRs are reported with source maps", "API requests have correlation IDs and latency metrics", "Slow queries and media queue health are visible", "Alerts have tested delivery and owners"]
     },
     {
       "id": "PH-702",
       "title": "Process Expo push tickets and receipts",
       "severity": "P1",
-      "status": "open",
+      "status": "blocked",
       "phase": "7",
-      "branch": "hardening/09-observability-operations",
-      "affectedFiles": ["lib/notifications.ts", "app/api/mobile/memories/notify/route.ts", "supabase/migrations"],
-      "dependencies": ["PH-701"],
+      "branch": "hardening/09-observability",
+      "affectedFiles": ["lib/notifications.ts", "lib/server/push-delivery.ts", "app/api/internal/push-delivery/route.ts", "supabase/migrations/202607130010_observability_operations.sql"],
+      "dependencies": ["PH-701", "Hosted Expo credentials, provider tickets/receipts and scheduled execution remain externally unverified"],
       "acceptanceCriteria": ["Ticket IDs are stored", "Receipts are checked", "Temporary failures retry with backoff", "DeviceNotRegistered tokens are removed"]
     },
     {
       "id": "PH-703",
       "title": "Schedule cleanup jobs and prove backup and rollback recovery",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "7",
-      "branch": "hardening/09-observability-operations",
-      "affectedFiles": [".github/workflows", "scripts", "docs/operations"],
-      "dependencies": ["PH-102", "PH-202", "PH-203", "PH-701", "PH-702"],
+      "branch": "hardening/09-observability",
+      "affectedFiles": [".github/workflows", "vercel.json", "config/operations-schedules.json", "scripts", "docs/operations"],
+      "dependencies": ["PH-102", "PH-202", "PH-203", "PH-701", "PH-702", "Production backup/PITR, monitored scheduler delivery and a production-like incident exercise require deployment-owner access"],
       "acceptanceCriteria": ["All cleanup and receipt jobs have monitored schedules", "A database backup is restored successfully", "Web and database rollback runbooks are rehearsed", "A staging incident is diagnosed without source edits"]
     },
     {

@@ -3,6 +3,7 @@ import { addPostComment, deletePostComment, getPostComments, type CommentsPage }
 import { findCachedPostById, patchCachedPostEngagementFields } from "@/hooks/useFeeds";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { PostComment } from "@/types/models";
+import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 export const commentKeys = {
   post: (postId: string) => ["comments", postId] as const
@@ -11,7 +12,18 @@ export const commentKeys = {
 export function usePostCommentsQuery(postId: string) {
   return useInfiniteQuery({
     queryKey: commentKeys.post(postId),
-    queryFn: ({ pageParam }) => getPostComments(postId, pageParam),
+    queryFn: async ({ pageParam }) => {
+      const startedAt = Date.now();
+      try {
+        const page = await getPostComments(postId, pageParam);
+        recordMobileFlow("comments.page_load", Date.now() - startedAt, "success", { first_page: !pageParam });
+        return page;
+      } catch (error) {
+        recordMobileFlow("comments.page_load", Date.now() - startedAt, "failure", { first_page: !pageParam });
+        captureMobileError("comments.page_load_failed", error, { first_page: !pageParam });
+        throw error;
+      }
+    },
     enabled: Boolean(postId),
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,

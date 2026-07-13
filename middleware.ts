@@ -1,119 +1,19 @@
-import { createServerClient } from "@supabase/ssr";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const { hostname } = request.nextUrl;
+const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,79}$/;
 
-  const isQaRoute = pathname === "/qa" || pathname.startsWith("/qa/");
-  const isApiRoute = pathname === "/api" || pathname.startsWith("/api/");
-  const isLocalhost =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.endsWith(".localhost");
-
-  // Route handlers apply tighter endpoint-specific streaming limits. This is a
-  // universal outer ceiling for ordinary mobile requests and keeps API traffic
-  // out of the browser-cookie refresh path below.
-  if (isApiRoute) {
-    const rawLength = request.headers.get("content-length");
-    if (rawLength) {
-      const length = Number(rawLength);
-      if (!Number.isSafeInteger(length) || length < 0 || length > 1024 * 1024) {
-        return NextResponse.json({ error: "Request too large" }, { status: 413 });
-      }
-    }
-    return NextResponse.next({ request });
-  }
-
-  // Keep /qa local-only without paying the Supabase auth round trip.
-  if (isQaRoute) {
-    if (!isLocalhost) {
-      const notFoundUrl = request.nextUrl.clone();
-      notFoundUrl.pathname = "/404";
-      return NextResponse.rewrite(notFoundUrl, { status: 404 });
-    }
-    return NextResponse.next({ request });
-  }
-
-  let supabaseResponse = NextResponse.next({ request });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  // Refresh session cookie on every request (required by @supabase/ssr)
-  const { data: { user } } = await supabase.auth.getUser();
-
-  const isAuthRoute       = pathname.startsWith("/auth");
-  const isLoginRoute      = pathname === "/login";
-  const isOnboardingRoute = pathname === "/onboarding";
-  const isResetRoute      = pathname.startsWith("/auth/reset-password");
-
-  // 1. Not logged in → send to /login
-  if (!user && !isLoginRoute && !isAuthRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
-  }
-
-  // 2. Logged in but trying to see /login → send home
-  if (user && isLoginRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
-  }
-
-  // 3. Logged in but onboarding not done → send to /onboarding
-  //    (skip if already on onboarding, any /auth/** route, or reset-password)
-  const onboardingDone = !!user?.user_metadata?.username;
-  if (user && !onboardingDone && !isOnboardingRoute && !isAuthRoute && !isResetRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/onboarding";
-    return NextResponse.redirect(url);
-  }
-
-  // 4. Onboarding done, don't let them back to /onboarding
-  if (user && onboardingDone && isOnboardingRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
-  }
-
-  return supabaseResponse;
+export function middleware(req: NextRequest) {
+  const requestHeaders = new Headers(req.headers);
+  const supplied = req.headers.get("x-request-id")?.trim() ?? "";
+  const requestId = REQUEST_ID.test(supplied) ? supplied : crypto.randomUUID();
+  requestHeaders.set("x-request-id", requestId);
+  requestHeaders.set("x-foodreview-request-start-ms", String(Date.now()));
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("X-Request-Id", requestId);
+  response.headers.set("X-Correlation-Id", requestId);
+  return response;
 }
 
 export const config = {
-  matcher: [
-    "/",
-    "/api/:path*",
-    "/comments/:path*",
-    "/dishes/:path*",
-    "/login",
-    "/me/:path*",
-    "/notifications/:path*",
-    "/onboarding",
-    "/people/:path*",
-    "/qa/:path*",
-    "/reviews/:path*",
-    "/trending/:path*",
-  ],
+  matcher: "/api/:path*"
 };

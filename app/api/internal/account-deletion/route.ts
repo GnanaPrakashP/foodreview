@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { runAccountDeletionJobs } from "@/lib/server/account-deletion";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { configuredInternalSecret, internalRequestSecret, readBoundedJson, timingSafeSecretMatch } from "@/lib/server/api-security";
+import { runtimeRelease, safeErrorCode } from "@/lib/observability/structured-log.mjs";
+import { accountDeletionLogger } from "@/lib/observability/server";
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   if (!timingSafeSecretMatch(
     internalRequestSecret(req, "x-account-deletion-secret"),
     configuredInternalSecret("ACCOUNT_DELETION_WORKER_SECRET")
@@ -23,11 +26,24 @@ export async function POST(req: NextRequest) {
     : null;
 
   try {
-    const result = await runAccountDeletionJobs(createAdminClient(), { jobId, limit });
+    const admin = createAdminClient();
+    const result = await runAccountDeletionJobs(admin, { jobId, limit });
+    await admin.rpc("record_service_heartbeat", {
+      p_duration_ms: Date.now() - startedAt,
+      p_error_code: null,
+      p_interval_seconds: 120,
+      p_job_name: "account-deletion-worker",
+      p_release: runtimeRelease(),
+      p_state: "succeeded"
+    });
     return NextResponse.json({ ok: true, ...result }, {
       headers: { "Cache-Control": "private, no-store" }
     });
-  } catch {
+  } catch (error) {
+    accountDeletionLogger.error("batch_failed", error, {
+      duration_ms: Date.now() - startedAt,
+      error_code: safeErrorCode(error)
+    });
     return NextResponse.json({ error: "Account deletion processing failed" }, { status: 500 });
   }
 }

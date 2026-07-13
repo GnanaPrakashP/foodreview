@@ -56,6 +56,9 @@ function loadPipeline() {
     if (id === "node:path") return path;
     if (id === "node:child_process") return childProcess;
     if (id === "sharp") return sharp;
+    if (id === "@/lib/observability/server") return {
+      mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
+    };
     throw new Error(`Unexpected import: ${id}`);
   });
 }
@@ -639,6 +642,10 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
       if (id === "@/api/supabase") return { resolvedSupabaseAnonKey: "anon", resolvedSupabaseUrl: "http://supabase.test", supabase };
       if (id === "@/services/accountFileStore") return { stageAccountFile: async (uri) => uri };
       if (id === "@/services/mediaUploadRecovery") return recovery;
+      if (id === "@/observability/mobileTelemetry") return {
+        captureMobileError: () => {},
+        recordMobileFlow: () => {}
+      };
       if (id === "@/security/cacheOwnership") return {
         getActiveCacheGeneration: () => 9,
         getActiveCacheOwner: () => owner,

@@ -10,6 +10,7 @@ import { PostCommentsSheetHost } from "@/components/posts/PostCommentsSheet";
 import { AppProviders } from "@/providers/AppProviders";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useCircleBitesFonts } from "@/theme";
+import { wrapRootLayout } from "@/observability/mobileTelemetry";
 
 configureReanimatedLogger({
   level: ReanimatedLogLevel.warn,
@@ -56,7 +57,7 @@ const SLIDE_OVER_ROUTES = [
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded] = useCircleBitesFonts();
   const { resolvedTheme, themeColors } = useThemePreference();
   const navigationTheme = useMemo<Theme>(() => {
@@ -129,3 +130,5 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+export default wrapRootLayout(RootLayout);

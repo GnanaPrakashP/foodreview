@@ -20,6 +20,13 @@ function validateClientConfiguration(env = process.env, extra = {}) {
   if (releaseDevCredential) {
     throw new Error(`Development auto-login configuration is forbidden in production client builds: ${releaseDevCredential}`);
   }
+  const applicationEnvironment = (env.EXPO_PUBLIC_APP_ENVIRONMENT ?? "local").trim().toLowerCase();
+  if (applicationEnvironment === "production") {
+    if (!env.EXPO_PUBLIC_SENTRY_DSN?.trim()) throw new Error("Production mobile Sentry DSN is required");
+    const releaseId = env.EXPO_PUBLIC_RELEASE_ID?.trim() ?? "";
+    if (!releaseId || releaseId === "local") throw new Error("Production mobile release ID is required");
+    if (isLocalHttpUrl(env.EXPO_PUBLIC_API_BASE_URL ?? "")) throw new Error("Production mobile API URL cannot be local");
+  }
 }
 
 function isLocalHttpUrl(value) {
@@ -54,6 +61,7 @@ module.exports = ({ config: expoConfig } = {}) => {
   const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
   const plugins = [...(config.plugins ?? [])];
   if (!plugins.includes("expo-sqlite")) plugins.push("expo-sqlite");
+  if (!plugins.includes("@sentry/react-native")) plugins.push("@sentry/react-native");
 
   if (isLocalHttpUrl(apiBaseUrl)) {
     plugins.push("./plugins/withAndroidCleartextForLocalApi");

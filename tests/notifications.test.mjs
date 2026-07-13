@@ -38,6 +38,12 @@ function loadNotifications(hasCircleAccess = async () => false, options = {}) {
         };
       }
       if (id === "@/lib/types") return {};
+      if (id === "@/lib/server/push-delivery") return {
+        enqueuePushDeliveries: options.enqueuePushDeliveries ?? (async () => {})
+      };
+      if (id === "@/lib/observability/server") return {
+        pushLogger: { error: () => {}, info: () => {}, warn: () => {} }
+      };
       throw new Error(`Unexpected require in notification tests: ${id}`);
     },
   });
@@ -498,13 +504,11 @@ test("resolveProfiles: empty names list skips DB entirely", async () => {
   assert.equal(db._calls.length, 0, "no DB calls should be made for self-notifications");
 });
 
-test("createNotificationForNames sends sanitized Expo push messages when enabled", async () => {
-  const fetchCalls = [];
-  const fetchMock = async (url, init) => {
-    fetchCalls.push({ init, url });
-    return { ok: true, status: 200 };
-  };
-  const { createNotificationForNames } = loadNotifications(async () => false, { fetch: fetchMock });
+test("createNotificationForNames enqueues a minimal durable push job when enabled", async () => {
+  const queueCalls = [];
+  const { createNotificationForNames } = loadNotifications(async () => false, {
+    enqueuePushDeliveries: async (input) => queueCalls.push(input),
+  });
   const db = spyDb(
     {
       data: [
@@ -533,15 +537,6 @@ test("createNotificationForNames sends sanitized Expo push messages when enabled
         push_enabled: true,
       },
       error: null,
-    },
-    {
-      data: [
-        { expo_push_token: "ExponentPushToken[token-a]" },
-        { expo_push_token: "ExponentPushToken[token-b]" },
-        { expo_push_token: "ExponentPushToken[token-a]" },
-        { expo_push_token: null },
-      ],
-      error: null,
     }
   );
 
@@ -562,40 +557,20 @@ test("createNotificationForNames sends sanitized Expo push messages when enabled
   });
 
   assert.equal(result.id, "notif-1");
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(fetchCalls[0].url, "https://exp.host/--/api/v2/push/send");
-  assert.equal(fetchCalls[0].init.method, "POST");
-  assert.equal(fetchCalls[0].init.headers["Content-Type"], "application/json");
-
-  const payload = JSON.parse(fetchCalls[0].init.body);
-  assert.equal(payload.length, 2, "duplicate Expo push tokens should be collapsed");
-  assert.deepEqual(payload.map((message) => message.to), [
-    "ExponentPushToken[token-a]",
-    "ExponentPushToken[token-b]",
-  ]);
-  assert.equal(payload[0].title, "New like");
-  assert.equal(payload[0].body, "Bob Bite liked your post");
-  assert.equal(payload[0].sound, "default");
-  assert.deepEqual(payload[0].data, {
-    actorName: "bob",
-    entityId: "post-1",
-    entityType: "POST",
+  assert.deepEqual(queueCalls.map((entry) => ({ ...entry })), [{
     notificationId: "notif-1",
     notificationType: "POST_LIKED",
-    postId: "post-1",
     recipientName: "alice",
     recipientUserId: "recipient-id",
-    type: "social-notification",
-  });
+  }]);
+  assert.equal(JSON.stringify(queueCalls).includes("comment preview"), false);
+  assert.equal(JSON.stringify(queueCalls).includes("photo.jpg"), false);
 });
 
 test("push fanout respects disabled notification settings", async () => {
-  const fetchCalls = [];
+  const queueCalls = [];
   const { createNotificationForNames } = loadNotifications(async () => false, {
-    fetch: async (url, init) => {
-      fetchCalls.push({ init, url });
-      return { ok: true, status: 200 };
-    },
+    enqueuePushDeliveries: async (input) => queueCalls.push(input),
   });
   const db = spyDb(
     { data: [], error: null },
@@ -629,7 +604,7 @@ test("push fanout respects disabled notification settings", async () => {
   });
 
   assert.equal(result.id, "notif-1");
-  assert.equal(fetchCalls.length, 0);
+  assert.equal(queueCalls.length, 0);
   assert.equal(
     db._calls.some((call) => call.table === "push_tokens"),
     false,
@@ -639,7 +614,7 @@ test("push fanout respects disabled notification settings", async () => {
 
 test("push delivery failure never blocks durable in-app notification creation", async () => {
   const { createNotificationForNames } = loadNotifications(async () => false, {
-    fetch: async () => ({ ok: false, status: 500 }),
+    enqueuePushDeliveries: async () => { throw new Error("push_queue_unavailable"); },
   });
   const db = spyDb(
     { data: [], error: null },

@@ -45,6 +45,7 @@ import { useComposerStore } from "@/stores/composerStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
 import { createLocalMMKV } from "@/security/localMMKV";
 import { clearMediaUploadRecoveryForScope } from "@/services/mediaUploadRecovery";
+import { captureMobileError, clearMobileTelemetryIdentity, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 export type LocalCleanupReason =
   | "explicit_logout"
@@ -338,15 +339,20 @@ export async function prepareSignedOutLocalData(queryClient: QueryClient, previo
 }
 
 export async function cleanupCurrentLocalData(reason: LocalCleanupReason, queryClient: QueryClient) {
+  const startedAt = Date.now();
   const scope = getActiveCacheOwner()?.scope ?? activeOwnerMarker();
   if (!scope) {
     queryClient.clear();
+    clearMobileTelemetryIdentity();
+    recordMobileFlow("security.local_data_cleanup", Date.now() - startedAt, "success", { reason, scoped: false });
     return true;
   }
   try {
     await cleanupLocalDataForOwner(scope, reason, queryClient);
+    clearMobileTelemetryIdentity();
+    recordMobileFlow("security.local_data_cleanup", Date.now() - startedAt, "success", { reason, scoped: true });
     return true;
-  } catch {
+  } catch (error) {
     stopOwnerQueryPersistence();
     queryClient.clear();
     setActiveCacheOwner(null);
@@ -358,6 +364,9 @@ export async function cleanupCurrentLocalData(reason: LocalCleanupReason, queryC
     useCommentsSheetStore.getState().closeCommentsSheet();
     useComposerStore.getState().reset();
     useUserLocationStore.getState().resetForAccountTransition();
+    clearMobileTelemetryIdentity();
+    recordMobileFlow("security.local_data_cleanup", Date.now() - startedAt, "failure", { reason, scoped: true });
+    captureMobileError("security.local_data_cleanup_failed", error, { reason });
     return false;
   }
 }

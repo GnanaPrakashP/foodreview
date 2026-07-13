@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { workerLogger, flushWorkerTelemetry } from "./worker-observability.mjs";
+
+const log = workerLogger("foodreview-account-deletion-worker");
 
 const baseUrl = (
   process.env.ACCOUNT_DELETION_WORKER_BASE_URL ||
@@ -12,7 +15,7 @@ const intervalMs = Math.max(5_000, Number(process.env.ACCOUNT_DELETION_WORKER_IN
 const limit = Math.max(1, Math.min(50, Number(process.env.ACCOUNT_DELETION_WORKER_BATCH_LIMIT ?? 10)));
 
 if (!secret) {
-  console.error("[account-deletion-worker] ACCOUNT_DELETION_WORKER_SECRET is required");
+  log.error("startup_failed", new Error("account_deletion_worker_secret_required"), { failure_code: "account_deletion_worker_secret_required" });
   process.exit(1);
 }
 
@@ -30,11 +33,12 @@ async function processBatch() {
 for (;;) {
   try {
     const result = await processBatch();
-    console.log(`[account-deletion-worker] claimed=${result.claimed}`);
-  } catch {
-    console.error("[account-deletion-worker] bounded batch failed");
+    log.info("batch_completed", { claimed: result.claimed ?? 0 });
+  } catch (error) {
+    log.error("batch_failed", error, { failure_code: "account_deletion_batch_failed" });
     if (once) process.exitCode = 1;
   }
   if (once) break;
   await new Promise((resolve) => setTimeout(resolve, intervalMs));
 }
+await flushWorkerTelemetry();

@@ -168,6 +168,11 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
       setUserLocationOwnerScope: (scope) => calls.push(`location.owner:${scope ?? "none"}`)
     };
     if (id === "@/services/accountProfileCache") return { clearAccountProfileCache: async (scope) => calls.push(`profile.clear:${scope}`) };
+    if (id === "@/observability/mobileTelemetry") return {
+      captureMobileError: () => {},
+      clearMobileTelemetryIdentity: () => {},
+      recordMobileFlow: () => {}
+    };
     if (id === "@/features/occasions/occasionStorage") return { clearOccasionCorrectionsForScope: async (scope) => calls.push(`occasion.clear:${scope}`) };
     if (id === "@/services/memoryCaptureSession") return { clearMemoryCaptureSession: () => calls.push("memory.capture.clear") };
     if (id === "@/services/postCaptureSession") return { clearPostCaptureSession: () => calls.push("post.capture.clear") };

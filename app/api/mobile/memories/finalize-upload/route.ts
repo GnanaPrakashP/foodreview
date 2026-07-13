@@ -11,7 +11,7 @@ import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } fro
 import { assertMemoryRoomMutationAllowed, memoryRoomSecurityErrorStatus } from "@/lib/server/memory-room-security";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { apiJson, boundedJsonError, enforceRateLimit, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
 export const maxDuration = 60;
 
@@ -63,8 +63,8 @@ type MemoryPhotoFinalizeRow = {
 
 const MEMORY_PHOTO_FINALIZE_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
 
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return apiJson(body, init);
+function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 function normalizeString(value: unknown) {
@@ -126,6 +126,7 @@ function photoMatchesIntent(photo: MemoryPhotoFinalizeRow, intent: UploadIntentR
 }
 
 async function finalizedPhotoResponse(
+  req: NextRequest,
   admin: ReturnType<typeof createAdminClient>,
   intent: UploadIntentRow,
   photo: MemoryPhotoFinalizeRow
@@ -134,7 +135,7 @@ async function finalizedPhotoResponse(
     .from(MEMORY_MEDIA_BUCKET)
     .createSignedUrl(intent.storage_path, MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS);
 
-  return mobileJson({
+  return mobileJson(req, {
     ...mediaLimitResponse(intent.media_type),
     moderationStatus: photo.moderation_status ?? "pending",
     photo: signed?.signedUrl ? { ...photo, public_url: signed.signedUrl } : photo
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const { actor, supabase } = await getRouteActor(req);
-    if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+    if (!actor) return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
     const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
     if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
     const requestedPath = normalizeString(body?.storagePath);
 
     if (!intentId || !roomId || !messageId) {
-      return mobileJson({ error: "intentId, roomId, and messageId are required" }, { status: 400 });
+      return mobileJson(req, { error: "intentId, roomId, and messageId are required" }, { status: 400 });
     }
 
     const admin = createAdminClient();
@@ -169,13 +170,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle<UploadIntentRow>();
 
     if (intentError) throw intentError;
-    if (!intent) return mobileJson({ error: "Upload intent not found" }, { status: 404 });
+    if (!intent) return mobileJson(req, { error: "Upload intent not found" }, { status: 404 });
     if (intent.uploader_id !== actor.userId || intent.uploader_name !== actor.actorName) {
-      return mobileJson({ error: "Upload intent not found" }, { status: 404 });
+      return mobileJson(req, { error: "Upload intent not found" }, { status: 404 });
     }
-    if (intent.room_id !== roomId) return mobileJson({ error: "Upload intent room mismatch" }, { status: 400 });
+    if (intent.room_id !== roomId) return mobileJson(req, { error: "Upload intent room mismatch" }, { status: 400 });
     if (requestedPath && requestedPath !== intent.storage_path) {
-      return mobileJson({ error: "Upload path does not match intent" }, { status: 400 });
+      return mobileJson(req, { error: "Upload path does not match intent" }, { status: 400 });
     }
     if (intent.status !== "created") {
       const existingPhoto = await existingPhotoForIntent(admin, intent);
@@ -188,15 +189,15 @@ export async function POST(req: NextRequest) {
           status: "idempotent",
           statusCode: 200
         });
-        return finalizedPhotoResponse(admin, intent, existingPhoto);
+        return finalizedPhotoResponse(req, admin, intent, existingPhoto);
       }
-      if (intent.status === "expired") return mobileJson({ error: "Upload intent expired" }, { status: 410 });
-      if (intent.status === "rejected") return mobileJson({ error: "Media was rejected by moderation" }, { status: 422 });
-      return mobileJson({ error: "Upload intent is already finalized" }, { status: 409 });
+      if (intent.status === "expired") return mobileJson(req, { error: "Upload intent expired" }, { status: 410 });
+      if (intent.status === "rejected") return mobileJson(req, { error: "Media was rejected by moderation" }, { status: 422 });
+      return mobileJson(req, { error: "Upload intent is already finalized" }, { status: 409 });
     }
     if (new Date(intent.expires_at).getTime() <= Date.now()) {
       await admin.from("shared_memory_upload_intents").update({ status: "expired" }).eq("id", intent.id);
-      return mobileJson({ error: "Upload intent expired" }, { status: 410 });
+      return mobileJson(req, { error: "Upload intent expired" }, { status: 410 });
     }
 
     await assertMemoryRoomMutationAllowed({
@@ -216,34 +217,34 @@ export async function POST(req: NextRequest) {
     const metadata = await storageObjectMetadata(admin, intent.storage_path);
     const metadataSize = metadata?.size && Number.isFinite(metadata.size) ? Number(metadata.size) : null;
     if (metadataSize !== null && metadataSize > memoryMediaMaxBytes(intent.media_type)) {
-      return mobileJson({ error: "Uploaded object is too large" }, { status: 413 });
+      return mobileJson(req, { error: "Uploaded object is too large" }, { status: 413 });
     }
     if (metadataSize !== null && metadataSize !== intent.file_size_bytes) {
-      return mobileJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
+      return mobileJson(req, { error: "Uploaded object size does not match intent" }, { status: 400 });
     }
 
     const metadataMime = normalizeMimeType(metadata?.mimetype ?? metadata?.contentType);
     if (metadataMime && metadataMime !== intent.mime_type) {
-      return mobileJson({ error: "Uploaded object MIME type does not match intent" }, { status: 415 });
+      return mobileJson(req, { error: "Uploaded object MIME type does not match intent" }, { status: 415 });
     }
 
     const { data: blob, error: downloadError } = await admin.storage
       .from(MEMORY_MEDIA_BUCKET)
       .download(intent.storage_path);
 
-    if (downloadError || !blob) return mobileJson({ error: "Uploaded object not found" }, { status: 404 });
+    if (downloadError || !blob) return mobileJson(req, { error: "Uploaded object not found" }, { status: 404 });
 
     const buffer = Buffer.from(await blob.arrayBuffer());
     if (buffer.byteLength > memoryMediaMaxBytes(intent.media_type)) {
-      return mobileJson({ error: "Uploaded object is too large" }, { status: 413 });
+      return mobileJson(req, { error: "Uploaded object is too large" }, { status: 413 });
     }
     if (buffer.byteLength !== intent.file_size_bytes) {
-      return mobileJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
+      return mobileJson(req, { error: "Uploaded object size does not match intent" }, { status: 400 });
     }
 
     const blobMime = normalizeMimeType(blob.type);
     if (blobMime && blobMime !== intent.mime_type) {
-      return mobileJson({ error: "Uploaded object MIME type does not match intent" }, { status: 415 });
+      return mobileJson(req, { error: "Uploaded object MIME type does not match intent" }, { status: 415 });
     }
 
     validateDetectedMemoryMedia({
@@ -282,7 +283,7 @@ export async function POST(req: NextRequest) {
         status: "rejected",
         statusCode: 422
       });
-      return mobileJson({ error: "Media was rejected by moderation" }, { status: 422 });
+      return mobileJson(req, { error: "Media was rejected by moderation" }, { status: 422 });
     }
 
     const finalizedAt = new Date().toISOString();
@@ -308,7 +309,7 @@ export async function POST(req: NextRequest) {
           status: "idempotent",
           statusCode: 200
         });
-        return finalizedPhotoResponse(admin, intent, existingPhoto);
+        return finalizedPhotoResponse(req, admin, intent, existingPhoto);
       }
       throw finalizeResult.error;
     }
@@ -326,7 +327,7 @@ export async function POST(req: NextRequest) {
       status: "success",
       statusCode: 200
     });
-    return finalizedPhotoResponse(admin, intent, photo);
+    return finalizedPhotoResponse(req, admin, intent, photo);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     recordMemoryOperation("upload_intent.finalize", {
@@ -336,12 +337,12 @@ export async function POST(req: NextRequest) {
       statusCode: message.startsWith("memory_media_signature") ? 415 : message === "memory_media_existing_photo_mismatch" ? 409 : memoryRoomSecurityErrorStatus(error)
     });
     if (message.startsWith("memory_media_signature")) {
-      return mobileJson({ error: "Uploaded file content does not match the requested media type" }, { status: 415 });
+      return mobileJson(req, { error: "Uploaded file content does not match the requested media type" }, { status: 415 });
     }
     if (message === "memory_media_existing_photo_mismatch") {
-      return mobileJson({ error: "Upload intent already has mismatched media" }, { status: 409 });
+      return mobileJson(req, { error: "Upload intent already has mismatched media" }, { status: 409 });
     }
-    return mobileJson(
+    return mobileJson(req,
       { error: "Unable to finalize memory media upload" },
       { status: memoryRoomSecurityErrorStatus(error) }
     );

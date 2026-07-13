@@ -2301,7 +2301,48 @@
       "sizeBytes": 47367,
       "sourceRoot": "supabase/migrations",
       "version": "202607130009"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "claim_push_delivery_jobs",
+        "claim_push_receipt_jobs",
+        "claim_review_moderation_intents",
+        "complete_push_delivery_receipt",
+        "complete_push_delivery_ticket",
+        "fail_push_delivery_send",
+        "notifications",
+        "operational_scheduler_heartbeats",
+        "operational_scheduler_runs",
+        "push_delivery_jobs",
+        "push_tokens",
+        "record_scheduler_run",
+        "record_service_heartbeat",
+        "review_media_upload_intents",
+        "role",
+        "users"
+      ],
+      "description": "observability_operations",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130010_observability_operations.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "dabaf139d1fd2fb1983b44d0670789fa192f7d4ada8a07f7475e0f3ff08883d6",
+      "sizeBytes": 40961,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130010"
     }
   ],
-  "currentCanonicalMigrations": 66
+  "currentCanonicalMigrations": 67
 }

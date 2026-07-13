@@ -47,6 +47,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
+import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 export const memoryKeys = {
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
@@ -1059,7 +1060,18 @@ export function useMemoryRoomQuery(roomId: string) {
 
   return useQuery({
     queryKey: memoryKeys.detail(roomId),
-    queryFn: () => getMemoryRoomOfflineFirst(roomId),
+    queryFn: async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await getMemoryRoomOfflineFirst(roomId);
+        recordMobileFlow("memory.room_open", Date.now() - startedAt, "success");
+        return result;
+      } catch (error) {
+        recordMobileFlow("memory.room_open", Date.now() - startedAt, "failure");
+        captureMobileError("memory.room_open_failed", error);
+        throw error;
+      }
+    },
     enabled: Boolean(roomId),
     // Live updates come from realtime (useMemoryRoomRealtime). On top of that we refetch
     // when the app returns to the foreground or the network reconnects, to catch anything
@@ -1075,9 +1087,21 @@ export function useMemoryRoomQuery(roomId: string) {
 export function useMemoryMessagePagesQuery(roomId: string, before: string | null) {
   return useInfiniteQuery({
     queryKey: [...memoryKeys.chat(roomId), before ?? "initial"] as const,
-    queryFn: ({ pageParam }) => getMemoryMessagesPageOfflineFirst(roomId, {
-      before: typeof pageParam === "string" && pageParam ? pageParam : before
-    }),
+    queryFn: async ({ pageParam }) => {
+      const startedAt = Date.now();
+      const firstPage = !pageParam && !before;
+      try {
+        const page = await getMemoryMessagesPageOfflineFirst(roomId, {
+          before: typeof pageParam === "string" && pageParam ? pageParam : before
+        });
+        recordMobileFlow("memory.chat_page_load", Date.now() - startedAt, "success", { first_page: firstPage });
+        return page;
+      } catch (error) {
+        recordMobileFlow("memory.chat_page_load", Date.now() - startedAt, "failure", { first_page: firstPage });
+        captureMobileError("memory.chat_page_load_failed", error, { first_page: firstPage });
+        throw error;
+      }
+    },
     initialPageParam: before ?? "",
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: false
@@ -1288,7 +1312,13 @@ export function useMemoryRoomRealtime(roomId: string) {
         { event: "*", schema: "public", table: "shared_memory_rooms", filter: `id=eq.${roomId}` },
         scheduleRefresh
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") recordMobileFlow("memory.realtime_connect", 0, "success");
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          recordMobileFlow("memory.realtime_connect", 0, "failure", { state: status.toLowerCase() });
+          captureMobileError("memory.realtime_connect_failed", new Error("realtime_channel_failure"), { state: status.toLowerCase() });
+        }
+      });
 
     return () => {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);

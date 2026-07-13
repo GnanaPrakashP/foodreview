@@ -2,6 +2,8 @@ import { hasCircleAccess } from "@/lib/circle-db";
 import { profileDisplayName } from "@/lib/profile-names";
 import { LEGACY_NOTIFICATION_SELECT, NOTIFICATION_SELECT } from "@/lib/selects";
 import type { Json, Notification, Review } from "@/lib/types";
+import { enqueuePushDeliveries } from "@/lib/server/push-delivery";
+import { pushLogger } from "@/lib/observability/server";
 
 type NotificationDb = {
   from: (table: string) => any;
@@ -62,13 +64,6 @@ type PushSettingsRow = {
   post_engagement?: boolean | null;
   push_enabled?: boolean | null;
 };
-
-type PushTokenRow = {
-  expo_push_token: string | null;
-};
-
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-const EXPO_PUSH_BATCH_SIZE = 100;
 
 function isNotificationSchemaError(error: SupabaseLikeError): boolean {
   const message = error?.message ?? "";
@@ -235,51 +230,6 @@ function socialPushCopy(input: CreateNotificationInput): { body: string; title: 
   }
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : "";
-}
-
-function compactPushData(data: Record<string, unknown>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(data)
-      .map(([key, value]) => [key, stringValue(value)] as const)
-      .filter(([, value]) => Boolean(value))
-  );
-}
-
-async function expoPushTokensForRecipient(db: NotificationDb, recipientName: string): Promise<string[]> {
-  try {
-    const { data, error } = await db
-      .from("push_tokens")
-      .select("expo_push_token")
-      .eq("user_name", recipientName);
-
-    if (error) return [];
-    return Array.from(new Set(
-      ((data ?? []) as PushTokenRow[])
-        .map((row) => row.expo_push_token)
-        .filter((token): token is string => Boolean(token))
-    ));
-  } catch {
-    return [];
-  }
-}
-
-async function sendExpoPushMessages(messages: Array<Record<string, unknown>>) {
-  for (let index = 0; index < messages.length; index += EXPO_PUSH_BATCH_SIZE) {
-    const batch = messages.slice(index, index + EXPO_PUSH_BATCH_SIZE);
-    const response = await fetch(EXPO_PUSH_URL, {
-      body: JSON.stringify(batch),
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    });
-    if (!response.ok) throw new Error(`expo_push_failed_${response.status}`);
-  }
-}
-
 async function sendPushForNotification(
   db: NotificationDb,
   input: CreateNotificationInput,
@@ -294,32 +244,16 @@ async function sendPushForNotification(
     if (!copy) return;
     if (!(await isPushNotificationEnabled(db, recipientName, input.type))) return;
 
-    const tokens = await expoPushTokensForRecipient(db, recipientName);
-    if (tokens.length === 0) return;
-
-    const roomId = input.entityType === "TABLE_MEMORY" ? input.entityId : null;
-    const data = compactPushData({
-      actorName: input.actorName,
-      entityId: input.entityId ?? input.postId,
-      entityType: input.entityType,
-      notificationId: notification?.id,
+    if (!notification?.id) return;
+    await enqueuePushDeliveries({
+      notificationId: notification.id,
       notificationType: input.type,
-      postId: input.postId ?? (input.entityType === "POST" ? input.entityId : null),
       recipientName,
-      recipientUserId,
-      roomId,
-      type: input.entityType === "TABLE_MEMORY" ? "table-memory" : "social-notification",
+      recipientUserId
     });
-
-    await sendExpoPushMessages(tokens.map((to) => ({
-      body: copy.body,
-      data,
-      sound: "default",
-      title: copy.title,
-      to,
-    })));
-  } catch {
+  } catch (error) {
     // Push is best-effort; the durable in-app notification remains the source of truth.
+    pushLogger.error("push_enqueue_failed", error, { notification_type: input.type });
   }
 }
 

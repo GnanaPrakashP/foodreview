@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { workerLogger, flushWorkerTelemetry } from "./worker-observability.mjs";
+
+const log = workerLogger("foodreview-media-worker-loop");
 
 const baseUrl = (process.env.MEDIA_WORKER_BASE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const secret = process.env.MEDIA_WORKER_SECRET?.trim() ?? "";
@@ -10,11 +13,11 @@ const cleanupEvery = integerEnv("MEDIA_WORKER_CLEANUP_EVERY", 12, 1, 10_000);
 const workerId = process.env.MEDIA_WORKER_ID?.trim() || `media-worker-${process.pid}-${randomUUID().slice(0, 8)}`;
 
 if (!secret || (process.env.NODE_ENV === "production" && secret.length < 32)) {
-  console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: "media_worker_secret_invalid" }));
+  log.error("startup_failed", new Error("media_worker_secret_invalid"), { failure_code: "media_worker_secret_invalid" });
   process.exit(1);
 }
 if (!/^[A-Za-z0-9._:-]{1,120}$/.test(workerId)) {
-  console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: "media_worker_id_invalid" }));
+  log.error("startup_failed", new Error("media_worker_id_invalid"), { failure_code: "media_worker_id_invalid" });
   process.exit(1);
 }
 
@@ -27,14 +30,14 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     if (stopping) return;
     stopping = true;
     shutdownController.abort();
-    console.log(JSON.stringify({ component: "media-worker", event: "shutdown_requested", signal, workerId }));
+    log.info("shutdown_requested", { signal, worker_id: workerId });
   });
 }
 
 function integerEnv(name, fallback, minimum, maximum) {
   const parsed = process.env[name] === undefined ? fallback : Number(process.env[name]);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
-    console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: `${name.toLowerCase()}_invalid` }));
+    log.error("startup_failed", new Error("worker_configuration_invalid"), { failure_code: `${name.toLowerCase()}_invalid` });
     process.exit(1);
   }
   return parsed;
@@ -81,38 +84,34 @@ async function verifyReadiness() {
 
 async function runLoop() {
   await verifyReadiness();
-  console.log(JSON.stringify({ component: "media-worker", event: "started", baseUrl, batchLimit: limit, once, workerId }));
+  log.info("started", { batch_limit: limit, once, worker_id: workerId });
 
   while (!stopping) {
     iteration += 1;
     try {
       const result = await internalRequest("/api/internal/media/process", { limit, workerId });
-      console.log(JSON.stringify({
-        component: "media-worker",
-        event: "batch_completed",
-        deadLettered: result.deadLettered ?? 0,
+      log.info("batch_completed", {
+        dead_lettered: result.deadLettered ?? 0,
         failed: result.failed ?? 0,
-        leaseLost: result.leaseLost ?? 0,
+        lease_lost: result.leaseLost ?? 0,
         processed: result.processed ?? 0,
         rejected: result.rejected ?? 0,
         retried: result.retried ?? 0,
         succeeded: result.succeeded ?? 0,
-        workerId
-      }));
+        worker_id: workerId
+      });
       if (iteration % cleanupEvery === 0) {
         const cleanup = await internalRequest("/api/internal/media/cleanup", { limit: Math.min(100, limit * 5), workerId });
-        console.log(JSON.stringify({
+        log.info("cleanup_completed", {
           claimed: cleanup.claimed ?? 0,
           cleaned: cleanup.cleaned ?? 0,
-          component: "media-worker",
-          event: "cleanup_completed",
           failed: cleanup.failed ?? 0,
-          workerId
-        }));
+          worker_id: workerId
+        });
       }
     } catch {
       if (!stopping) {
-        console.error(JSON.stringify({ component: "media-worker", event: "batch_failed", failureCode: "media_worker_request_failed", workerId }));
+        log.error("batch_failed", new Error("media_worker_request_failed"), { failure_code: "media_worker_request_failed", worker_id: workerId });
         if (once) process.exitCode = 1;
       }
     }
@@ -124,7 +123,8 @@ async function runLoop() {
 try {
   await runLoop();
 } catch {
-  console.error(JSON.stringify({ component: "media-worker", event: "startup_failed", failureCode: "media_worker_not_ready", workerId }));
+  log.error("startup_failed", new Error("media_worker_not_ready"), { failure_code: "media_worker_not_ready", worker_id: workerId });
   process.exitCode = 1;
 }
-console.log(JSON.stringify({ component: "media-worker", event: "stopped", workerId }));
+log.info("stopped", { worker_id: workerId });
+await flushWorkerTelemetry();

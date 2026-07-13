@@ -1,0 +1,18 @@
+{
+  "crons": [
+    { "path": "/api/internal/operations/run?job=push-send", "schedule": "* * * * *" },
+    { "path": "/api/internal/operations/run?job=push-receipts", "schedule": "*/5 * * * *" },
+    { "path": "/api/internal/operations/run?job=account-deletion-processing", "schedule": "*/2 * * * *" },
+    { "path": "/api/internal/operations/run?job=account-deletion-reconciliation", "schedule": "*/10 * * * *" },
+    { "path": "/api/internal/operations/run?job=account-media-cleanup", "schedule": "3-59/10 * * * *" },
+    { "path": "/api/internal/operations/run?job=media-abandoned-cleanup", "schedule": "7-59/10 * * * *" },
+    { "path": "/api/internal/operations/run?job=media-worker-supervision", "schedule": "* * * * *" },
+    { "path": "/api/internal/operations/run?job=media-dead-letter-monitor", "schedule": "*/15 * * * *" },
+    { "path": "/api/internal/operations/run?job=moderation-processing", "schedule": "*/5 * * * *" },
+    { "path": "/api/internal/operations/run?job=expired-upload-cleanup", "schedule": "4-59/15 * * * *" },
+    { "path": "/api/internal/operations/run?job=api-state-cleanup", "schedule": "17 * * * *" },
+    { "path": "/api/internal/operations/run?job=disabled-push-token-cleanup", "schedule": "41 2 * * *" },
+    { "path": "/api/internal/operations/run?job=operational-retention", "schedule": "53 2 * * *" },
+    { "path": "/api/internal/operations/run?job=orphaned-storage-reconciliation", "schedule": "13 3 * * *" }
+  ]
+}

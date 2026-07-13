@@ -19,6 +19,7 @@ import {
 } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import type { Visibility } from "@/types/models";
+import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 
 export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaKind = "image" | "video";
@@ -213,22 +214,40 @@ async function createMediaUploadIntent(input: {
   intendedVisibility: Visibility;
   width?: number | null;
 }) {
-  return authorizedMobileJson<MediaUploadIntent>("/api/media/upload-intent", {
-    cropRect: input.cropRect ?? defaultCropRect(input.mediaKind),
-    durationMs: input.durationMs,
-    fileName: input.fileName,
-    fileSizeBytes: input.fileSizeBytes,
-    height: input.height,
-    mediaType: input.mediaKind,
-    mimeType: input.mimeType,
-    surface: "post",
-    intendedVisibility: input.intendedVisibility,
-    width: input.width
-  });
+  const startedAt = Date.now();
+  try {
+    const intent = await authorizedMobileJson<MediaUploadIntent>("/api/media/upload-intent", {
+      cropRect: input.cropRect ?? defaultCropRect(input.mediaKind),
+      durationMs: input.durationMs,
+      fileName: input.fileName,
+      fileSizeBytes: input.fileSizeBytes,
+      height: input.height,
+      mediaType: input.mediaKind,
+      mimeType: input.mimeType,
+      surface: "post",
+      intendedVisibility: input.intendedVisibility,
+      width: input.width
+    });
+    recordMobileFlow("media.intent_create", Date.now() - startedAt, "success", { media_kind: input.mediaKind });
+    return intent;
+  } catch (error) {
+    recordMobileFlow("media.intent_create", Date.now() - startedAt, "failure", { media_kind: input.mediaKind });
+    captureMobileError("media.intent_create_failed", error, { media_kind: input.mediaKind });
+    throw error;
+  }
 }
 
 async function finalizeMediaUpload(input: { assetId: string; uploadPath: string }) {
-  return authorizedMobileJson<{ assetId: string; status: string }>("/api/media/finalize-upload", input);
+  const startedAt = Date.now();
+  try {
+    const result = await authorizedMobileJson<{ assetId: string; status: string }>("/api/media/finalize-upload", input);
+    recordMobileFlow("media.finalize", Date.now() - startedAt, "success");
+    return result;
+  } catch (error) {
+    recordMobileFlow("media.finalize", Date.now() - startedAt, "failure");
+    captureMobileError("media.finalize_failed", error);
+    throw error;
+  }
 }
 
 function defaultCropRect(mediaKind: MediaKind): MediaCropRect {
@@ -286,6 +305,7 @@ async function applyServerMediaStatus(record: PendingMediaUploadRecord, asset: M
 }
 
 async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: (progress: number) => void) {
+  const startedAt = Date.now();
   if (!record.assetId) throw new Error("Media upload intent is missing.");
   const generation = getActiveCacheGeneration();
   const ownerScope = getActiveCacheOwner()?.scope;
@@ -300,7 +320,10 @@ async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: 
       const asset = assets.find((item) => item.assetId === record.assetId);
       if (asset) {
         const canonical = await applyServerMediaStatus(record, asset);
-        if (canonical) return { asset, canonical };
+        if (canonical) {
+          recordMobileFlow("media.processing_wait", Date.now() - startedAt, "success", { media_kind: record.mediaKind });
+          return { asset, canonical };
+        }
       }
       onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
       const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
@@ -308,6 +331,10 @@ async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: 
     }
     updatePendingMediaUpload(record.localUploadId, { lastCheckedAt: Date.now(), state: "processing" });
     throw new Error("Media is still processing. Keep this draft and try sharing again shortly.");
+  } catch (error) {
+    recordMobileFlow("media.processing_wait", Date.now() - startedAt, "failure", { media_kind: record.mediaKind });
+    captureMobileError("media.processing_wait_failed", error, { media_kind: record.mediaKind });
+    throw error;
   } finally {
     activePollControllers.delete(controller);
   }
@@ -362,7 +389,8 @@ export async function reconcilePendingPostMediaUploads() {
         await finalizeMediaUpload({ assetId: current.assetId, uploadPath: current.uploadPath });
         updatePendingMediaUpload(current.localUploadId, { state: "processing" });
       }
-    } catch {
+    } catch (error) {
+      captureMobileError("media.recovery_retry_failed", error, { media_kind: record.mediaKind, state: record.state });
       // Keep the owner-scoped record for the next bounded foreground retry.
     }
   }
@@ -408,11 +436,17 @@ async function uploadFileBody({
   path: string;
 }) {
   if (typeof XMLHttpRequest === "undefined") {
+    const startedAt = Date.now();
     const { error } = await supabase.storage
       .from(bucket)
       .upload(path, body, { contentType, upsert: false });
-    if (error && !isObjectAlreadyExistsError(error.message)) throw new Error("Could not upload media");
+    if (error && !isObjectAlreadyExistsError(error.message)) {
+      recordMobileFlow("media.source_upload", Date.now() - startedAt, "failure");
+      captureMobileError("media.source_upload_failed", error);
+      throw new Error("Could not upload media");
+    }
     onProgress?.(1);
+    recordMobileFlow("media.source_upload", Date.now() - startedAt, "success");
     return;
   }
 
@@ -421,6 +455,7 @@ async function uploadFileBody({
   const objectPath = path.split("/").map(encodeURIComponent).join("/");
   const uploadUrl = `${resolvedSupabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/${objectPath}`;
 
+  const startedAt = Date.now();
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
@@ -439,19 +474,34 @@ async function uploadFileBody({
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(1);
+        recordMobileFlow("media.source_upload", Date.now() - startedAt, "success");
         resolve();
         return;
       }
       const message = storageUploadErrorMessage(xhr);
       if (xhr.status === 409 || isObjectAlreadyExistsError(message)) {
         onProgress?.(1);
+        recordMobileFlow("media.source_upload", Date.now() - startedAt, "success", { duplicate_safe: true });
         resolve();
         return;
       }
-      reject(new Error(message));
+      const error = new Error(message);
+      recordMobileFlow("media.source_upload", Date.now() - startedAt, "failure");
+      captureMobileError("media.source_upload_failed", error);
+      reject(error);
     };
-    xhr.onerror = () => reject(new Error("Could not upload media"));
-    xhr.ontimeout = () => reject(new Error("Media upload timed out"));
+    xhr.onerror = () => {
+      const error = new Error("Could not upload media");
+      recordMobileFlow("media.source_upload", Date.now() - startedAt, "failure");
+      captureMobileError("media.source_upload_failed", error);
+      reject(error);
+    };
+    xhr.ontimeout = () => {
+      const error = new Error("Media upload timed out");
+      recordMobileFlow("media.source_upload", Date.now() - startedAt, "failure");
+      captureMobileError("media.source_upload_failed", error);
+      reject(error);
+    };
     xhr.send(body);
   });
 }
