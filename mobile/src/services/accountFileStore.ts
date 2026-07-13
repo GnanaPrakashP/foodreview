@@ -18,6 +18,10 @@ function ownerDirectory(scope: string) {
   return `${PRIVATE_ROOT}/${requireScope(scope)}`;
 }
 
+export function isOwnedAccountFileUri(uri: string, scope: string) {
+  return Boolean(uri && uri.startsWith(`${ownerDirectory(scope)}/`) && !uri.includes(".."));
+}
+
 function safeExtension(uri: string) {
   const source = uri.split(/[?#]/, 1)[0] ?? "";
   const match = source.match(/\.([A-Za-z0-9]{1,8})$/);
@@ -78,6 +82,11 @@ export async function stageAccountFile(uri: string, category: string) {
 
 export async function discardTemporaryAccountFile(uri: string | null | undefined) {
   if (!uri || !isDisposableAppCacheUri(uri)) return;
+  await FileSystem.deleteAsync(uri, { idempotent: true });
+}
+
+export async function discardOwnedAccountFile(uri: string | null | undefined, scope: string) {
+  if (!uri || !isOwnedAccountFileUri(uri, scope)) return;
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 

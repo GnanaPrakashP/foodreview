@@ -1,0 +1,27 @@
+FROM node:20.19.4-bookworm-slim AS build
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+RUN npm prune --omit=dev
+
+FROM node:20.19.4-bookworm-slim AS runtime
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system --gid 10001 mediaworker \
+  && useradd --system --uid 10001 --gid mediaworker --home-dir /app --shell /usr/sbin/nologin mediaworker
+WORKDIR /app
+ENV NODE_ENV=production \
+  NEXT_TELEMETRY_DISABLED=1 \
+  PORT=3000 \
+  MEDIA_WORKER_TEMP_DIR=/tmp/circlebites-media-worker
+COPY --from=build --chown=mediaworker:mediaworker /app /app
+RUN mkdir -p /tmp/circlebites-media-worker \
+  && chown mediaworker:mediaworker /tmp/circlebites-media-worker
+USER mediaworker
+HEALTHCHECK --interval=30s --timeout=12s --start-period=45s --retries=3 \
+  CMD ["node", "scripts/media-worker-healthcheck.mjs"]
+CMD ["node", "scripts/media-worker-entrypoint.mjs"]

@@ -4,7 +4,7 @@
   "updatedAt": "2026-07-13",
   "sourceCommit": "18b608bbfe77ffd10bc31b903b00048e1e64cef1",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/03-cache-isolation",
+  "currentBranch": "hardening/04-media-worker",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -77,33 +77,33 @@
       "id": "PH-201",
       "title": "Deploy the media processor in a supported worker runtime",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "2",
       "branch": "hardening/04-media-worker",
-      "affectedFiles": ["scripts/media-worker.mjs", "app/api/internal/media/process/route.ts", "lib/server/media-pipeline.ts"],
-      "dependencies": ["PH-301"],
+      "affectedFiles": ["Dockerfile.media-worker", "scripts/media-worker.mjs", "scripts/media-worker-entrypoint.mjs", "app/api/internal/media/process/route.ts", "app/api/internal/media/health/route.ts", "lib/server/media-pipeline.ts"],
+      "dependencies": ["Hosted worker deployment, scheduler and production-like smoke remain externally unverified", "PH-301"],
       "acceptanceCriteria": ["Production runtime packages ffmpeg and ffprobe", "Worker execution and temporary-storage limits are documented", "Queue processing runs continuously or on a proven scheduler", "A production-like processing smoke passes"]
     },
     {
       "id": "PH-202",
       "title": "Add lease expiry and stale-running media-job recovery",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "2",
       "branch": "hardening/04-media-worker",
-      "affectedFiles": ["lib/server/media-pipeline.ts", "supabase/migrations/202607100001_media_pipeline.sql"],
-      "dependencies": ["PH-201", "PH-301"],
+      "affectedFiles": ["lib/server/media-pipeline.ts", "supabase/migrations/202607130003_media_worker_reliability.sql", "mobile/supabase/migrations/202607130003_media_worker_reliability.sql", "tests/media-worker-phase2.test.mjs", "tests/supabase-media-worker-phase2-runtime-validation.mjs"],
+      "dependencies": ["PH-201", "PH-301", "Hosted two-worker termination and infrastructure-interruption matrix remains externally unverified"],
       "acceptanceCriteria": ["Jobs have locked_by and lease expiry", "Stale running jobs are reclaimed", "Processing is idempotent", "Worker termination at each stage recovers without duplicates"]
     },
     {
       "id": "PH-203",
       "title": "Expire abandoned media intents and clean source objects",
       "severity": "P1",
-      "status": "open",
+      "status": "blocked",
       "phase": "2",
       "branch": "hardening/04-media-worker",
-      "affectedFiles": ["lib/server/media-pipeline.ts", "app/api/media", "scripts/media-worker.mjs"],
-      "dependencies": ["PH-201", "PH-202"],
+      "affectedFiles": ["lib/server/media-pipeline.ts", "app/api/media", "app/api/internal/media/cleanup/route.ts", "scripts/media-worker.mjs", "scripts/media-reconcile.mjs", "supabase/migrations/202607130003_media_worker_reliability.sql"],
+      "dependencies": ["PH-201", "PH-202", "Hosted source-growth metrics and scheduled cleanup remain externally unverified"],
       "acceptanceCriteria": ["Expired and abandoned intents are swept", "Unneeded source objects are deleted after success", "Dead-letter and operator retry paths exist", "Storage-growth metrics detect leaks"]
     },
     {

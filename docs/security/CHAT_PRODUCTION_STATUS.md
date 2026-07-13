@@ -2,15 +2,28 @@
 
 Current phase: Final production-readiness audit
 
-Production-hardening program phase: Phase 1C — account-isolated mobile caches and session cleanup
+Production-hardening program phase: Phase 2 — production-reliable media processing
 
-Phase 1C implementation status: PASS locally on `hardening/03-cache-isolation`. Account-scoped Query/MMKV/SQLite/files/preferences, a crash-resumable cleanup journal, local-first logout, invalid-session/freeze containment, and the auth/cache render gate pass focused behavior and changed-path validation.
+Phase 2 implementation status: PASS locally on `hardening/04-media-worker`. Atomic leased claims, fencing/heartbeats, bounded retries and dead letter, idempotent image/video derivatives, durable cleanup, owner-scoped mobile recovery, a protected operator path, and a non-root ffmpeg Docker worker pass local behavior and real Supabase/Storage processing validation.
 
-Phase 1C release verification status: BLOCKED pending disposable two-account Android/iOS runtime, backup/restore and crash-injection staging; Phase 1B hosted deletion verification; PH-301 migration-root resolution; and the pre-existing Phase 1A production blockers. No hosted project was mutated.
+Phase 2 release verification status: BLOCKED pending hosted worker/process supervision, two-instance crash/interruption validation, hosted source-retention cleanup, alerts/dashboards, production-like throughput testing, PH-301 migration-root resolution, and the earlier Phase 1A/1B/1C release blockers. No hosted project was mutated.
 
 Next required phase: Authenticated staging smoke verification
 
-Production-hardening next required phase: Execute the Phase 1A hosted prerequisites plus the Phase 1B and Phase 1C disposable-staging/native gates. Do not start Phase 2 automatically.
+Production-hardening next required phase: Execute the documented Phase 2 hosted staging matrix together with the earlier Phase 1A/1B/1C release gates. Do not start Phase 3 automatically.
+
+## Production Hardening Phase 2 — Production-Reliable Media Processing (2026-07-13)
+
+- Added a canonical job state machine with service-only atomic `SKIP LOCKED` claims, database lease expiry, worker identity, heartbeat, generation/token fencing, deterministic ordering, capped attempts, and reclaim of crashed `running` jobs.
+- Added sanitized retry/permanent classification, capped exponential jitter, `rejected`, `dead_letter`, audited eligible requeue, idempotent cancel, and a service-only event stream. Stale workers cannot finalise after reclaim or account freeze.
+- Made uploaded-asset job creation atomic through a database trigger. Image/video derivatives use server-derived asset paths and Storage/metadata upserts; the completion transaction verifies the current lease, active account, authoritative visibility/bucket/path, and full derivative set.
+- Preserved Phase 1A private post derivatives with no permanent public URL, Phase 1B freeze/deletion fencing and inventory, and Phase 1C account-scoped local files/generation guards. Mobile now persists bounded owner-only upload states and resumes intent, upload, finalisation, and status reconciliation after same-account restart/foreground.
+- Added leased cleanup for expired intents, terminal failures, consumed sources after 24 hours, and unattached ready assets after seven days. Cleanup is resumable, path-derived, bounded, idempotent, and account deletion can override retention.
+- Added a dry-run-first reconciliation/operator CLI with job/asset/user/global filters, stale/dead-letter/partial/cleanup reporting, an explicit bounded Storage scan for missing/orphaned objects, and confirmation-gated requeue/cancel/cleanup.
+- Added a pinned Node 20.19.4 Bookworm Docker worker with ffmpeg/ffprobe, UID 10001, private localhost server, readiness/health, fail-fast configuration, bounded concurrency/temp/timeouts, structured logs, and graceful shutdown. The image built and runtime checks passed locally; it was not deployed.
+- Phase 2 tests pass 11/11. Real local database leasing/fencing/retry/freeze/cleanup behavior passes 14/14. Real local JPEG/H.264/invalid-file/Storage/cleanup/reconciliation behavior passes 10/10. Root/mobile typecheck, zero-error lint, Next build, Android/iOS exports, Docker runtime, clean root reset, SQL lint, and artifact scans pass.
+- Full root tests move from 1,050/1,070 to 1,061/1,081 only through eleven new passing tests; the same 20 PH-002 failures remain. Memory remains 71/72 with the same PH-002 failure.
+- Hosted worker scheduling, two-replica process kills, real infrastructure interruptions, alerts/dashboards, physical mobile restart matrix, source-growth monitoring, dependency-advisory review, and capacity/load validation remain release blockers. See `docs/production-hardening/PHASE_2_MEDIA_WORKER.md`.
 
 ## Production Hardening Phase 1C — Account-Isolated Mobile Caches (2026-07-13)
 

@@ -2,6 +2,21 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import { stageAccountFile } from "@/services/accountFileStore";
+import {
+  createPendingMediaUpload,
+  findPendingMediaUpload,
+  pendingMediaUploads,
+  prunePendingMediaUploads,
+  removePendingMediaUpload,
+  updatePendingMediaUpload,
+  type PendingMediaUploadRecord
+} from "@/services/mediaUploadRecovery";
+import {
+  getActiveCacheGeneration,
+  getActiveCacheOwner,
+  isCacheGenerationActive
+} from "@/security/cacheOwnership";
+import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import type { Visibility } from "@/types/models";
 
 export type MediaSurface = "post" | "avatar" | "memory";
@@ -18,6 +33,7 @@ export type MediaCropRect = {
 type MediaUploadIntent = {
   accessClass: "public_post" | "circle_post" | "private_post";
   assetId: string;
+  expiresAt: string;
   maxAllowedSize: number;
   mediaType: MediaKind;
   mimeType: string;
@@ -37,7 +53,14 @@ type MediaStatusDerivative = {
 type MediaStatusAsset = {
   assetId: string;
   derivatives: MediaStatusDerivative[];
+  failureCode: string | null;
   failureReason: string | null;
+  job: {
+    attempts: number;
+    maxAttempts: number;
+    nextAttemptAt: string | null;
+    status: string | null;
+  } | null;
   mediaType: MediaKind;
   status: string;
   surface: MediaSurface;
@@ -49,6 +72,7 @@ export type UploadedMediaAsset = {
   height?: number | null;
   mediaKind: MediaKind;
   mimeType: string;
+  recoveryId: string;
   width?: number | null;
 };
 
@@ -65,8 +89,9 @@ export type UploadPostMediaAssetInput = {
   width?: number | null;
 };
 
-const MEDIA_STATUS_POLL_INTERVAL_MS = 1200;
-const MEDIA_STATUS_MAX_POLLS = 50;
+const MEDIA_STATUS_INITIAL_POLL_MS = 1500;
+const MEDIA_STATUS_MAX_POLL_MS = 8000;
+const MEDIA_STATUS_MAX_POLLS = 16;
 // The server derives at most 1080px-wide output, so anything beyond this
 // edge is wasted upload bandwidth.
 const UPLOAD_IMAGE_MAX_EDGE = 2400;
@@ -75,6 +100,12 @@ const UPLOAD_IMAGE_QUALITY = 0.85;
 // bounded so a stalled connection still fails in reasonable time.
 const UPLOAD_TIMEOUT_MIN_MS = 60_000;
 const UPLOAD_TIMEOUT_MAX_MS = 8 * 60_000;
+const activePollControllers = new Set<AbortController>();
+
+registerSensitiveResourceCleanup(() => {
+  for (const controller of activePollControllers) controller.abort();
+  activePollControllers.clear();
+});
 
 function uploadTimeoutFor(byteLength: number) {
   const estimated = 45_000 + (byteLength / (256 * 1024)) * 1000;
@@ -149,7 +180,12 @@ async function downscaleImageForUpload(uri: string): Promise<DownscaledImage | n
   }
 }
 
-async function authorizedMobileJson<T>(path: string, body?: Record<string, unknown>, method = "POST"): Promise<T> {
+async function authorizedMobileJson<T>(
+  path: string,
+  body?: Record<string, unknown>,
+  method = "POST",
+  signal?: AbortSignal
+): Promise<T> {
   if (!apiBaseUrl) throw new Error("Media uploads require the API server.");
 
   const { data, error } = await supabase.auth.getSession();
@@ -163,7 +199,8 @@ async function authorizedMobileJson<T>(path: string, body?: Record<string, unkno
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     },
-    method
+    method,
+    signal
   });
   const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
   if (!response.ok || !payload) {
@@ -215,22 +252,149 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForReadyMedia(assetId: string, onProgress?: (progress: number) => void) {
-  for (let attempt = 0; attempt < MEDIA_STATUS_MAX_POLLS; attempt += 1) {
-    const payload = await authorizedMobileJson<{ assets: MediaStatusAsset[] }>(`/api/media/status?ids=${encodeURIComponent(assetId)}`, undefined, "GET");
-    const asset = payload.assets.find((item) => item.assetId === assetId);
-    if (asset?.status === "ready") {
-      const canonical = asset.derivatives.find((derivative) => derivative.kind === "canonical");
-      if (!canonical) throw new Error("Processed media is missing.");
-      return { asset, canonical };
-    }
-    if (asset?.status === "failed" || asset?.status === "rejected") {
-      throw new Error(asset.failureReason || "Media could not be processed.");
-    }
-    onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
-    await sleep(MEDIA_STATUS_POLL_INTERVAL_MS);
+function terminalMediaStatus(asset: MediaStatusAsset) {
+  return ["failed", "rejected", "expired", "abandoned", "cancelled"].includes(asset.status) ||
+    ["dead_letter", "rejected", "cancelled"].includes(asset.job?.status ?? "");
+}
+
+async function fetchMediaStatuses(assetIds: string[], signal?: AbortSignal) {
+  if (assetIds.length === 0) return [];
+  const payload = await authorizedMobileJson<{ assets: MediaStatusAsset[] }>(
+    `/api/media/status?ids=${encodeURIComponent(assetIds.slice(0, 25).join(","))}`,
+    undefined,
+    "GET",
+    signal
+  );
+  return payload.assets;
+}
+
+async function applyServerMediaStatus(record: PendingMediaUploadRecord, asset: MediaStatusAsset) {
+  if (asset.status === "ready") {
+    const canonical = asset.derivatives.find((derivative) => derivative.kind === "canonical");
+    if (!canonical) throw new Error("Processed media is missing.");
+    updatePendingMediaUpload(record.localUploadId, {
+      lastCheckedAt: Date.now(),
+      readyResult: {
+        fileSizeBytes: canonical.file_size_bytes,
+        height: canonical.height,
+        mimeType: canonical.mime_type,
+        width: canonical.width
+      },
+      state: "ready"
+    });
+    return canonical;
   }
-  throw new Error("Media processing timed out.");
+  if (terminalMediaStatus(asset)) {
+    await removePendingMediaUpload(record.localUploadId);
+    throw new Error(asset.failureReason || "Media could not be processed. Please select it again.");
+  }
+  updatePendingMediaUpload(record.localUploadId, { lastCheckedAt: Date.now(), state: "processing" });
+  return null;
+}
+
+async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: (progress: number) => void) {
+  if (!record.assetId) throw new Error("Media upload intent is missing.");
+  const generation = getActiveCacheGeneration();
+  const ownerScope = getActiveCacheOwner()?.scope;
+  const controller = new AbortController();
+  activePollControllers.add(controller);
+  try {
+    for (let attempt = 0; attempt < MEDIA_STATUS_MAX_POLLS; attempt += 1) {
+      if (!ownerScope || getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) {
+        throw new Error("Media upload account changed.");
+      }
+      const assets = await fetchMediaStatuses([record.assetId], controller.signal);
+      const asset = assets.find((item) => item.assetId === record.assetId);
+      if (asset) {
+        const canonical = await applyServerMediaStatus(record, asset);
+        if (canonical) return { asset, canonical };
+      }
+      onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
+      const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
+      await sleep(Math.round(delay));
+    }
+    updatePendingMediaUpload(record.localUploadId, { lastCheckedAt: Date.now(), state: "processing" });
+    throw new Error("Media is still processing. Keep this draft and try sharing again shortly.");
+  } finally {
+    activePollControllers.delete(controller);
+  }
+}
+
+export async function reconcilePendingPostMediaUploads() {
+  const generation = getActiveCacheGeneration();
+  const ownerScope = getActiveCacheOwner()?.scope;
+  if (!ownerScope || !isCacheGenerationActive(generation)) return { pending: 0, ready: 0, terminal: 0 };
+  const records = await prunePendingMediaUploads();
+  for (const record of records) {
+    try {
+      let current = record;
+      if (current.state === "prepared") {
+        const intent = await createMediaUploadIntent({
+          cropRect: current.cropRect,
+          durationMs: current.durationMs,
+          fileName: `media.${extensionFor(current.mimeType, current.mediaKind)}`,
+          fileSizeBytes: current.fileSizeBytes,
+          height: current.height,
+          mediaKind: current.mediaKind,
+          mimeType: current.mimeType,
+          intendedVisibility: current.accessClass === "public_post" ? "public" : current.accessClass === "circle_post" ? "circle" : "me",
+          width: current.width
+        });
+        if (
+          intent.accessClass !== current.accessClass ||
+          intent.mediaType !== current.mediaKind ||
+          intent.mimeType !== current.mimeType ||
+          intent.maxAllowedSize < current.fileSizeBytes
+        ) throw new Error("media_upload_intent_mismatch");
+        current = updatePendingMediaUpload(current.localUploadId, {
+          assetId: intent.assetId,
+          expiresAt: intent.expiresAt,
+          state: "intent_created",
+          uploadBucket: intent.uploadBucket,
+          uploadPath: intent.uploadPath
+        });
+      }
+      if (current.state === "intent_created" && current.uploadBucket && current.uploadPath) {
+        const body = await fileBodyFromUri(current.preparedUri);
+        if (body.byteLength !== current.fileSizeBytes) throw new Error("media_upload_source_changed");
+        await uploadFileBody({
+          body,
+          bucket: current.uploadBucket,
+          contentType: current.mimeType,
+          path: current.uploadPath
+        });
+        current = updatePendingMediaUpload(current.localUploadId, { state: "source_uploaded" });
+      }
+      if (current.state === "source_uploaded" && current.assetId && current.uploadPath) {
+        await finalizeMediaUpload({ assetId: current.assetId, uploadPath: current.uploadPath });
+        updatePendingMediaUpload(current.localUploadId, { state: "processing" });
+      }
+    } catch {
+      // Keep the owner-scoped record for the next bounded foreground retry.
+    }
+  }
+  if (getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) return { pending: 0, ready: 0, terminal: 0 };
+  const candidates = pendingMediaUploads().filter((record) => record.assetId);
+  const statuses = await fetchMediaStatuses(candidates.map((record) => record.assetId!).slice(0, 25));
+  let ready = 0;
+  let terminal = 0;
+  for (const record of candidates) {
+    const status = statuses.find((item) => item.assetId === record.assetId);
+    if (!status) continue;
+    try {
+      const canonical = await applyServerMediaStatus(record, status);
+      if (canonical) ready += 1;
+    } catch {
+      terminal += 1;
+    }
+  }
+  return { pending: Math.max(0, candidates.length - ready - terminal), ready, terminal };
+}
+
+export async function completeRecoveredMediaUploads(recoveryIds: string[]) {
+  for (const recoveryId of Array.from(new Set(recoveryIds.filter(Boolean)))) {
+    await removePendingMediaUpload(recoveryId).catch(() => {});
+  }
 }
 
 function isObjectAlreadyExistsError(message: string) {
@@ -312,50 +476,105 @@ export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Pr
   const mediaKind = resolveMediaKind(input);
   input.onUploadProgress?.(0.03);
   const sourceUri = await stageAccountFile(input.uri, "post-upload-source");
-  const downscaled = mediaKind === "image" ? await downscaleImageForUpload(sourceUri) : null;
-  const mimeType = downscaled ? "image/jpeg" : defaultMimeType(mediaKind, input.mimeType);
-  const body = await fileBodyFromUri(downscaled?.uri ?? sourceUri);
-  input.onUploadProgress?.(0.1);
-  const extension = extensionFor(mimeType, mediaKind);
-  const intent = await createMediaUploadIntent({
-    cropRect: input.cropRect,
-    durationMs: input.durationMs,
-    fileName: `media.${extension}`,
-    fileSizeBytes: body.byteLength,
-    height: downscaled?.height ?? input.height,
-    mediaKind,
-    mimeType,
-    intendedVisibility: input.intendedVisibility,
-    width: downscaled?.width ?? input.width
-  });
-  input.onUploadProgress?.(0.18);
-  const expectedAccessClass = input.intendedVisibility === "public" ? "public_post" : input.intendedVisibility === "circle" ? "circle_post" : "private_post";
-  if (intent.accessClass !== expectedAccessClass || intent.mediaType !== mediaKind || intent.mimeType !== mimeType || intent.maxAllowedSize < body.byteLength) {
-    throw new Error("Media upload intent does not match the selected file.");
+  const expectedAccessClass: PendingMediaUploadRecord["accessClass"] = input.intendedVisibility === "public"
+    ? "public_post"
+    : input.intendedVisibility === "circle"
+      ? "circle_post"
+      : "private_post";
+  let record = findPendingMediaUpload(sourceUri, mediaKind, expectedAccessClass);
+  if (record?.state === "ready" && record.assetId && record.readyResult) {
+    input.onUploadProgress?.(1);
+    return {
+      assetId: record.assetId,
+      fileSizeBytes: record.readyResult.fileSizeBytes,
+      height: record.readyResult.height,
+      mediaKind,
+      mimeType: record.readyResult.mimeType,
+      recoveryId: record.localUploadId,
+      width: record.readyResult.width
+    };
   }
 
-  await uploadFileBody({
-    body,
-    bucket: intent.uploadBucket,
-    contentType: intent.mimeType,
-    onProgress: (progress) => input.onUploadProgress?.(0.18 + progress * 0.72),
-    path: intent.uploadPath
-  });
+  const downscaled = !record && mediaKind === "image" ? await downscaleImageForUpload(sourceUri) : null;
+  const preparedUri = record?.preparedUri ?? downscaled?.uri ?? sourceUri;
+  const mimeType = record?.mimeType ?? (downscaled ? "image/jpeg" : defaultMimeType(mediaKind, input.mimeType));
+  const body = await fileBodyFromUri(preparedUri);
+  input.onUploadProgress?.(0.1);
+  const extension = extensionFor(mimeType, mediaKind);
+  if (!record) {
+    record = createPendingMediaUpload({
+      accessClass: expectedAccessClass,
+      assetId: null,
+      cropRect: input.cropRect ?? defaultCropRect(mediaKind),
+      durationMs: input.durationMs ?? null,
+      expiresAt: null,
+      fileSizeBytes: body.byteLength,
+      height: downscaled?.height ?? input.height ?? null,
+      mediaKind,
+      mimeType,
+      preparedUri,
+      sourceUri,
+      uploadBucket: null,
+      uploadPath: null,
+      width: downscaled?.width ?? input.width ?? null
+    });
+  }
+
+  if (!record.assetId) {
+    const intent = await createMediaUploadIntent({
+      cropRect: input.cropRect,
+      durationMs: input.durationMs,
+      fileName: `media.${extension}`,
+      fileSizeBytes: body.byteLength,
+      height: record.height,
+      mediaKind,
+      mimeType,
+      intendedVisibility: input.intendedVisibility,
+      width: record.width
+    });
+    if (intent.accessClass !== expectedAccessClass || intent.mediaType !== mediaKind || intent.mimeType !== mimeType || intent.maxAllowedSize < body.byteLength) {
+      await removePendingMediaUpload(record.localUploadId);
+      throw new Error("Media upload intent does not match the selected file.");
+    }
+    record = updatePendingMediaUpload(record.localUploadId, {
+      assetId: intent.assetId,
+      expiresAt: intent.expiresAt,
+      state: "intent_created",
+      uploadBucket: intent.uploadBucket,
+      uploadPath: intent.uploadPath
+    });
+  }
+  input.onUploadProgress?.(0.18);
+
+  if (!record.uploadBucket || !record.uploadPath || !record.assetId) throw new Error("Media upload recovery record is incomplete.");
+  const assetId = record.assetId;
+  const uploadPath = record.uploadPath;
+  if (record.state === "prepared" || record.state === "intent_created") {
+    await uploadFileBody({
+      body,
+      bucket: record.uploadBucket,
+      contentType: record.mimeType,
+      onProgress: (progress) => input.onUploadProgress?.(0.18 + progress * 0.72),
+      path: record.uploadPath
+    });
+    record = updatePendingMediaUpload(record.localUploadId, { state: "source_uploaded" });
+  }
   input.onUploadProgress?.(0.9);
 
-  await finalizeMediaUpload({
-    assetId: intent.assetId,
-    uploadPath: intent.uploadPath
-  });
-  const { canonical } = await waitForReadyMedia(intent.assetId, input.onUploadProgress);
+  if (record.state !== "processing" && record.state !== "ready") {
+    await finalizeMediaUpload({ assetId, uploadPath });
+    record = updatePendingMediaUpload(record.localUploadId, { state: "processing" });
+  }
+  const { canonical } = await waitForReadyMedia(record, input.onUploadProgress);
   input.onUploadProgress?.(1);
 
   return {
-    assetId: intent.assetId,
+    assetId,
     fileSizeBytes: canonical.file_size_bytes,
     height: canonical.height,
     mediaKind,
     mimeType: canonical.mime_type,
+    recoveryId: record.localUploadId,
     width: canonical.width
   };
 }

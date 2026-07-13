@@ -129,9 +129,10 @@ test("review creation accepts only visibility-matched private media assets and d
   assert.match(reviewsRoute, /asset\.consumed_at !== null/);
   assert.match(reviewsRoute, /Legacy post media must be uploaded again/);
   assert.match(reviewsRoute, /media_asset_id: p\.mediaAssetId/);
-  assert.match(reviewsRoute, /owner_id: actor\.userId/);
-  assert.match(reviewsRoute, /mime_type: p\.mimeType/);
-  assert.match(reviewsRoute, /file_size_bytes: p\.sizeBytes/);
+  assert.match(reviewsRoute, /asset\.owner_id !== actor\.userId/);
+  assert.match(reviewsRoute, /mimeType: canonical\.mime_type/);
+  assert.match(reviewsRoute, /sizeBytes: canonical\.file_size_bytes/);
+  assert.match(reviewsRoute, /size_bytes: p\.sizeBytes/);
   assert.match(reviewsRoute, /async function cleanupUnusedReviewMedia/);
   assert.match(reviewsRoute, /admin\.storage\.from\(REVIEW_MEDIA_BUCKET\)\.remove\(storagePaths\)/);
   assert.match(reviewsRoute, /recordAccountMediaCleanupJob/);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { type MediaAssetRow, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
+import { safeMediaFailureMessage, type MediaAssetRow, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -58,12 +58,26 @@ export async function GET(req: NextRequest) {
     derivativesByAsset.set(derivative.asset_id, existing);
   }
 
+  const { data: jobRows, error: jobError } = await admin
+    .from("media_processing_jobs")
+    .select("asset_id,status,failure_code,next_attempt_at,attempts,max_attempts")
+    .in("asset_id", allowedIds);
+  if (jobError) return NextResponse.json({ error: "Could not load media status" }, { status: 500 });
+  const jobsByAsset = new Map((jobRows ?? []).map((job) => [job.asset_id, job]));
+
   return NextResponse.json({
     assets: assets.map((asset) => ({
       accessClass: asset.access_class,
       assetId: asset.id,
       derivatives: derivativesByAsset.get(asset.id) ?? [],
-      failureReason: asset.failure_reason ?? null,
+      failureCode: asset.failure_code ?? jobsByAsset.get(asset.id)?.failure_code ?? null,
+      failureReason: asset.failure_code ? safeMediaFailureMessage(asset.failure_code) : null,
+      job: jobsByAsset.has(asset.id) ? {
+        attempts: jobsByAsset.get(asset.id)?.attempts ?? 0,
+        maxAttempts: jobsByAsset.get(asset.id)?.max_attempts ?? 0,
+        nextAttemptAt: jobsByAsset.get(asset.id)?.next_attempt_at ?? null,
+        status: jobsByAsset.get(asset.id)?.status ?? null
+      } : null,
       mediaType: asset.media_type,
       status: asset.status,
       surface: asset.surface

@@ -228,9 +228,6 @@ export async function POST(req: NextRequest) {
   // legacy; rows can now represent either images or videos.
   if (validatedMedia.media.length > 0) {
     const mediaRows = validatedMedia.media.map((p, i) => ({
-      file_size_bytes: p.sizeBytes,
-      mime_type: p.mimeType,
-      owner_id: actor.userId,
       review_id: data.id,
       storage_path: p.storagePath,
       public_url: p.publicUrl,
@@ -238,24 +235,10 @@ export async function POST(req: NextRequest) {
       width: typeof p.width === "number" ? p.width : null,
       height: typeof p.height === "number" ? p.height : null,
       size_bytes: p.sizeBytes,
-      upload_intent_id: p.intentId,
       media_asset_id: p.mediaAssetId ?? null,
       position: i,
     }));
-    let { error: photoError } = await writeDb.from("review_photos").insert(mediaRows);
-    if (photoError && /media_type|schema cache|column/i.test(photoError.message)) {
-      const legacyRows = mediaRows.map((row) => ({
-        height: row.height,
-        position: row.position,
-        public_url: row.public_url,
-        review_id: row.review_id,
-        size_bytes: row.size_bytes,
-        storage_path: row.storage_path,
-        width: row.width
-      }));
-      const retry = await writeDb.from("review_photos").insert(legacyRows);
-      photoError = retry.error;
-    }
+    const { error: photoError } = await writeDb.from("review_photos").insert(mediaRows);
     if (photoError) {
       await writeDb.from("reviews").delete().eq("id", data.id);
       await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);

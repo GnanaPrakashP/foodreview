@@ -43,6 +43,7 @@ import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useComposerStore } from "@/stores/composerStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
 import { createLocalMMKV } from "@/security/localMMKV";
+import { clearMediaUploadRecoveryForScope } from "@/services/mediaUploadRecovery";
 
 export type LocalCleanupReason =
   | "explicit_logout"
@@ -213,6 +214,7 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
         clearAccountProfileCache(next.ownerScope),
         clearOccasionCorrectionsForScope(next.ownerScope)
       ]);
+      clearMediaUploadRecoveryForScope(next.ownerScope);
       if (reasonInvalidatesSession(next.reason)) await clearSupabaseLocalSessionStorage();
     });
 

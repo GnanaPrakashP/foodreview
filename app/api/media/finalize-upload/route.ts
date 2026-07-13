@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   MEDIA_SOURCE_BUCKET,
   enqueueMediaProcessingJob,
-  safeMediaPipelineErrorMessage,
-  validateDetectedMedia,
   type MediaAssetRow
 } from "@/lib/server/media-pipeline";
 import { getRouteActor } from "@/lib/server/route-supabase";
@@ -60,6 +58,16 @@ async function storageObjectMetadata(admin: ReturnType<typeof createAdminClient>
   return data?.metadata ?? null;
 }
 
+async function storageObjectExists(admin: ReturnType<typeof createAdminClient>, bucketId: string, objectPath: string) {
+  const segments = objectPath.split("/");
+  const name = segments.pop();
+  const prefix = segments.join("/");
+  if (!name) return false;
+  const { data, error } = await admin.storage.from(bucketId).list(prefix, { limit: 2, search: name });
+  if (error) throw new Error("storage_temporarily_unavailable");
+  return (data ?? []).some((item) => item.name === name);
+}
+
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
   if (!actor) return mediaJson({ error: "Unauthorized" }, { status: 401 });
@@ -82,6 +90,11 @@ export async function POST(req: NextRequest) {
   if (requestedPath && requestedPath !== asset.source_storage_path) {
     return mediaJson({ error: "Upload path does not match intent" }, { status: 400 });
   }
+  const { data: accountActive, error: accountError } = await admin.rpc("account_is_active", { p_user_id: actor.userId });
+  if (accountError) return mediaJson({ error: "Unable to finalize upload" }, { status: 500 });
+  if (accountActive !== true) return mediaJson({ error: "Account deletion is in progress" }, { status: 409 });
+
+  if (asset.status === "uploaded") await enqueueMediaProcessingJob(admin, asset.id, asset.media_type);
   if (asset.status === "ready" || asset.status === "processing" || asset.status === "uploaded") {
     return mediaJson({
       assetId: asset.id,
@@ -94,28 +107,25 @@ export async function POST(req: NextRequest) {
     return mediaJson({ error: "Upload intent is not active" }, { status: 409 });
   }
   if (new Date(asset.expires_at ?? 0).getTime() <= Date.now()) {
-    await admin.from("media_assets").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", asset.id);
+    await admin.from("media_assets").update({
+      failure_code: "intent_expired",
+      failure_reason: "intent_expired",
+      source_cleanup_after: new Date().toISOString(),
+      status: "expired",
+      updated_at: new Date().toISOString()
+    }).eq("id", asset.id);
     return mediaJson({ error: "Upload intent expired" }, { status: 410 });
   }
 
   try {
     const metadata = await storageObjectMetadata(admin, MEDIA_SOURCE_BUCKET, asset.source_storage_path);
+    if (!metadata && !await storageObjectExists(admin, MEDIA_SOURCE_BUCKET, asset.source_storage_path)) {
+      return mediaJson({ error: "Uploaded object not found" }, { status: 404 });
+    }
     const metadataSize = metadata?.size && Number.isFinite(metadata.size) ? Number(metadata.size) : null;
     if (metadataSize !== null && metadataSize !== asset.original_file_size_bytes) {
-      return mediaJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
+      throw new Error("file_size_mismatch");
     }
-
-    const { data: blob, error: downloadError } = await admin.storage.from(MEDIA_SOURCE_BUCKET).download(asset.source_storage_path);
-    if (downloadError || !blob) return mediaJson({ error: "Uploaded object not found" }, { status: 404 });
-    const buffer = Buffer.from(await blob.arrayBuffer());
-    if (buffer.byteLength <= 0 || buffer.byteLength !== asset.original_file_size_bytes) {
-      return mediaJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
-    }
-    validateDetectedMedia({
-      buffer,
-      expectedMediaType: asset.media_type,
-      expectedMimeType: asset.original_mime_type
-    });
 
     const now = new Date().toISOString();
     const { error: updateError } = await admin
@@ -123,7 +133,10 @@ export async function POST(req: NextRequest) {
       .update({ status: "uploaded", uploaded_at: now, updated_at: now })
       .eq("id", asset.id)
       .eq("status", "created");
-    if (updateError) throw updateError;
+    if (updateError) throw new Error("database_temporarily_unavailable");
+    // The database trigger creates the job atomically with the uploaded state.
+    // This idempotent insert also supports environments applying the API before
+    // the corrective migration during a rolling deployment.
     await enqueueMediaProcessingJob(admin, asset.id, asset.media_type);
 
     return mediaJson({
@@ -133,6 +146,8 @@ export async function POST(req: NextRequest) {
       surface: asset.surface
     });
   } catch (error) {
+    const permanentMismatch = error instanceof Error && error.message === "file_size_mismatch";
+    if (!permanentMismatch) return mediaJson({ error: "Unable to finalize upload" }, { status: 503 });
     try {
       await admin.storage.from(MEDIA_SOURCE_BUCKET).remove([asset.source_storage_path]);
     } catch {
@@ -143,6 +158,8 @@ export async function POST(req: NextRequest) {
         .from("media_assets")
         .update({
           failure_reason: error instanceof Error ? error.message.slice(0, 500) : "media_validation_failed",
+          failure_code: "file_size_mismatch",
+          source_cleanup_after: new Date().toISOString(),
           status: "rejected",
           updated_at: new Date().toISOString()
         })
@@ -151,7 +168,7 @@ export async function POST(req: NextRequest) {
     } catch {
       // Sanitized response below; internal write failure is not exposed.
     }
-    return mediaJson({ error: safeMediaPipelineErrorMessage(error) }, { status: 415 });
+    return mediaJson({ error: "Uploaded object size does not match intent" }, { status: 415 });
   }
 }
 

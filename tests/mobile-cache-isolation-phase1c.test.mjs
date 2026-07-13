@@ -131,6 +131,7 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
     if (id === "react-native") return { Platform: { OS: "test" } };
     if (id === "@/security/cacheOwnership") return ownership;
     if (id === "@/security/sensitiveResourceRegistry") return { clearRegisteredSensitiveResources: async () => 0 };
+    if (id === "@/services/mediaUploadRecovery") return { clearMediaUploadRecoveryForScope: (scope) => calls.push(`uploads.clear:${scope}`) };
     if (id === "@/providers/queryPersistence") return {
       activateOwnerQueryPersistence: async (_client, scope) => calls.push(`query.activate:${scope}`),
       clearLegacyGlobalQueryCache: async () => calls.push("legacy.query.clear"),

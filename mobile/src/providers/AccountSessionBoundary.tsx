@@ -16,6 +16,7 @@ import {
   saveAccountProfileCache
 } from "@/services/accountProfileCache";
 import { useSessionStore } from "@/stores/sessionStore";
+import { reconcilePendingPostMediaUploads } from "@/services/mediaPipeline";
 
 function createAccountQueryClient() {
   return new QueryClient({
@@ -156,6 +157,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         hostRef.current = nextHost;
         scheduleTokenExpiry(session, nextHost);
         if (alive) setHost(nextHost);
+        void reconcilePendingPostMediaUploads().catch(() => {});
       } catch (error) {
         const reason = error instanceof Error && error.message === "authoritative_owner_mismatch"
           ? "owner_mismatch"
@@ -198,6 +200,9 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       }
       void getAccountLifecycleStatus(session.access_token)
         .then((status) => {
+          if (status === "active" && stillCurrent()) {
+            void reconcilePendingPostMediaUploads().catch(() => {});
+          }
           if (
             status === "active" ||
             (status === "missing" && !useSessionStore.getState().profile) ||

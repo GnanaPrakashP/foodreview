@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -21,11 +21,14 @@ export const MEDIA_MEMORY_THUMB_EDGE = 360;
 export const MEDIA_POST_SIGNED_URL_TTL_SECONDS = 5 * 60;
 export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_IMAGE_MAX_PIXELS = 80_000_000;
-export const MEDIA_MAX_ATTEMPTS = 3;
+export const MEDIA_VIDEO_MAX_PIXELS = 16_000_000;
+export const MEDIA_MAX_ATTEMPTS = 5;
+export const MEDIA_WORKER_DEFAULT_LEASE_SECONDS = 180;
+export const MEDIA_WORKER_DEFAULT_CONCURRENCY = 2;
 
 export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaType = "image" | "video";
-export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" | "failed" | "rejected" | "expired" | "abandoned";
+export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" | "failed" | "rejected" | "expired" | "abandoned" | "cancelled";
 export type MediaDerivativeKind = "canonical" | "thumbnail" | "poster";
 export type MediaAccessClass = "public_post" | "circle_post" | "private_post" | "avatar_public" | "memory_private";
 
@@ -73,7 +76,9 @@ export type MediaAssetRow = {
   access_class: MediaAccessClass;
   visibility: "public" | "private";
   expires_at?: string;
+  failure_code?: string | null;
   failure_reason?: string | null;
+  consumed_at?: string | null;
 };
 
 export type MediaDerivativeRow = {
@@ -92,9 +97,46 @@ export type MediaDerivativeRow = {
 
 type AdminClient = {
   from: (table: string) => any;
+  rpc: (name: string, args?: Record<string, unknown>) => any;
   storage: {
     from: (bucket: string) => any;
   };
+};
+
+export type MediaFailureClass = "retryable" | "permanent" | "cancelled";
+
+export type MediaWorkerConfig = {
+  concurrency: number;
+  downloadTimeoutMs: number;
+  ffmpegTimeoutMs: number;
+  ffprobeTimeoutMs: number;
+  heartbeatIntervalMs: number;
+  leaseSeconds: number;
+  maxAttempts: number;
+  maxTempBytes: number;
+  retryBaseSeconds: number;
+  retryMaxSeconds: number;
+  tempRoot: string;
+  uploadTimeoutMs: number;
+};
+
+export type ClaimedMediaJob = {
+  id: string;
+  asset_id: string;
+  attempts: number;
+  max_attempts: number;
+  job_type: string;
+  lease_generation: number;
+  claim_token: string;
+  lock_expires_at: string;
+  stale_reclaimed: boolean;
+};
+
+type ProcessingLease = {
+  assertCurrent: () => Promise<void>;
+  checkpoint: (stage: string) => Promise<void>;
+  job: ClaimedMediaJob;
+  workerId: string;
 };
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"]);
@@ -129,6 +171,48 @@ const VIDEO_DURATION_TOLERANCE_MS = 1_500;
 // Derivative paths embed the asset id, so their content is immutable.
 const DERIVATIVE_CACHE_SECONDS = 60 * 60 * 24 * 365;
 const BASE83 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
+
+function boundedInteger(name: string, value: string | undefined, fallback: number, minimum: number, maximum: number) {
+  const parsed = value === undefined || value === "" ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name.toLowerCase()}_invalid`);
+  }
+  return parsed;
+}
+
+export function mediaWorkerConfig(env: NodeJS.ProcessEnv = process.env): MediaWorkerConfig {
+  const leaseSeconds = boundedInteger("MEDIA_WORKER_LEASE_SECONDS", env.MEDIA_WORKER_LEASE_SECONDS, MEDIA_WORKER_DEFAULT_LEASE_SECONDS, 15, 900);
+  const heartbeatIntervalMs = boundedInteger(
+    "MEDIA_WORKER_HEARTBEAT_MS",
+    env.MEDIA_WORKER_HEARTBEAT_MS,
+    Math.min(30_000, Math.floor(leaseSeconds * 1000 / 3)),
+    5_000,
+    Math.max(5_000, Math.floor(leaseSeconds * 1000 / 2))
+  );
+  const tempRoot = (env.MEDIA_WORKER_TEMP_DIR || path.join(tmpdir(), "circlebites-media-worker")).trim();
+  if (!path.isAbsolute(tempRoot) || tempRoot.includes("\0")) throw new Error("media_worker_temp_dir_invalid");
+  return {
+    concurrency: boundedInteger("MEDIA_WORKER_CONCURRENCY", env.MEDIA_WORKER_CONCURRENCY, MEDIA_WORKER_DEFAULT_CONCURRENCY, 1, 8),
+    downloadTimeoutMs: boundedInteger("MEDIA_WORKER_DOWNLOAD_TIMEOUT_MS", env.MEDIA_WORKER_DOWNLOAD_TIMEOUT_MS, 120_000, 5_000, 600_000),
+    ffmpegTimeoutMs: boundedInteger("MEDIA_WORKER_FFMPEG_TIMEOUT_MS", env.MEDIA_WORKER_FFMPEG_TIMEOUT_MS, 240_000, 10_000, 900_000),
+    ffprobeTimeoutMs: boundedInteger("MEDIA_WORKER_FFPROBE_TIMEOUT_MS", env.MEDIA_WORKER_FFPROBE_TIMEOUT_MS, 30_000, 5_000, 120_000),
+    heartbeatIntervalMs,
+    leaseSeconds,
+    maxAttempts: boundedInteger("MEDIA_WORKER_MAX_ATTEMPTS", env.MEDIA_WORKER_MAX_ATTEMPTS, MEDIA_MAX_ATTEMPTS, 1, 20),
+    maxTempBytes: boundedInteger("MEDIA_WORKER_MAX_TEMP_BYTES", env.MEDIA_WORKER_MAX_TEMP_BYTES, 512 * 1024 * 1024, 128 * 1024 * 1024, 2_000_000_000),
+    retryBaseSeconds: boundedInteger("MEDIA_WORKER_RETRY_BASE_SECONDS", env.MEDIA_WORKER_RETRY_BASE_SECONDS, 30, 1, 3600),
+    retryMaxSeconds: boundedInteger("MEDIA_WORKER_RETRY_MAX_SECONDS", env.MEDIA_WORKER_RETRY_MAX_SECONDS, 3600, 30, 86_400),
+    tempRoot,
+    uploadTimeoutMs: boundedInteger("MEDIA_WORKER_UPLOAD_TIMEOUT_MS", env.MEDIA_WORKER_UPLOAD_TIMEOUT_MS, 120_000, 5_000, 600_000)
+  };
+}
+
+export function mediaWorkerId(env: NodeJS.ProcessEnv = process.env) {
+  const configured = env.MEDIA_WORKER_ID?.trim();
+  const value = configured || `media-worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+  if (!/^[A-Za-z0-9._:-]{1,120}$/.test(value)) throw new Error("media_worker_id_invalid");
+  return value;
+}
 
 export function mediaIntentExpiresAt(now = Date.now()) {
   return new Date(now + MEDIA_INTENT_TTL_MS).toISOString();
@@ -342,9 +426,66 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
       return "Selected image could not be processed.";
     case "media_video_too_long":
       return "Video is longer than allowed.";
+    case "duration_exceeded":
+      return "Video is longer than allowed.";
+    case "dimensions_exceeded":
+      return "Selected media dimensions are too large.";
+    case "corrupt_source":
+    case "invalid_file_signature":
+      return "Selected media is invalid or corrupted.";
+    case "unsupported_media_type":
+      return "Selected media is not a supported file type.";
+    case "account_deleting":
+      return "This account can no longer process uploads.";
+    case "intent_expired":
+      return "The media upload expired. Please upload it again.";
+    case "dead_letter":
+    case "retry_exhausted":
+      return "Media processing needs support. Please try a new upload.";
+    case "cancelled":
+      return "Media processing was cancelled.";
     default:
       return "Media upload is not allowed.";
   }
+}
+
+export function safeMediaFailureMessage(code: string | null | undefined) {
+  return safeMediaPipelineErrorMessage(new Error(code || "media_processing_failed"));
+}
+
+const PERMANENT_MEDIA_FAILURES = new Set([
+  "invalid_file_signature",
+  "unsupported_media_type",
+  "duration_exceeded",
+  "dimensions_exceeded",
+  "file_too_large",
+  "corrupt_source",
+  "source_missing",
+  "source_owner_mismatch",
+  "visibility_contract_mismatch",
+  "account_deleting",
+  "intent_expired"
+]);
+
+export function classifyMediaProcessingFailure(error: unknown): { code: string; failureClass: MediaFailureClass } {
+  const raw = error instanceof Error ? error.message : "media_processing_failed";
+  const normalized = raw.split(":", 1)[0].trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    media_detected_mime_type_mismatch: "unsupported_media_type",
+    media_detected_type_mismatch: "unsupported_media_type",
+    media_extension_not_allowed: "unsupported_media_type",
+    media_image_decode_failed: "corrupt_source",
+    media_image_dimensions_too_large: "dimensions_exceeded",
+    media_mime_type_not_allowed: "unsupported_media_type",
+    media_signature_not_allowed: "invalid_file_signature",
+    media_source_not_found: "source_missing",
+    media_source_path_invalid: "source_owner_mismatch",
+    media_video_probe_failed: "corrupt_source",
+    media_video_too_long: "duration_exceeded"
+  };
+  const code = aliases[normalized] ?? (/^[a-z0-9_]{1,80}$/.test(normalized) ? normalized : "media_processing_failed");
+  if (code === "lease_lost") return { code, failureClass: "cancelled" };
+  return { code, failureClass: PERMANENT_MEDIA_FAILURES.has(code) ? "permanent" : "retryable" };
 }
 
 export function detectMedia(buffer: Buffer): { mediaType: MediaType; mimeType: string } | null {
@@ -423,22 +564,70 @@ function normalizeCropRecord(value: NormalizedCropRect | Record<string, unknown>
   };
 }
 
-export async function processMediaAsset(admin: AdminClient, asset: MediaAssetRow) {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(code)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timeout);
+        reject(new Error(code));
+      }
+    );
+  });
+}
+
+export async function processMediaAsset(
+  admin: AdminClient,
+  asset: MediaAssetRow,
+  lease?: ProcessingLease,
+  config = mediaWorkerConfig()
+) {
   assertSafeMediaSourcePath(asset);
-  const { data: blob, error } = await admin.storage.from(MEDIA_SOURCE_BUCKET).download(asset.source_storage_path);
-  if (error || !blob) throw new Error("media_source_not_found");
+  await lease?.checkpoint("before_source_download");
+  const downloadStarted = Date.now();
+  const { data: blob, error } = await withTimeout<{ data: Blob | null; error: unknown }>(
+    admin.storage.from(MEDIA_SOURCE_BUCKET).download(asset.source_storage_path),
+    config.downloadTimeoutMs,
+    "source_download_timeout"
+  );
+  if (error) throw new Error("storage_temporarily_unavailable");
+  if (!blob) throw new Error("source_missing");
   const buffer = Buffer.from(await blob.arrayBuffer());
+  if (lease) {
+    recordMediaWorkerEvent("source_download_completed", {
+      durationMs: Date.now() - downloadStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
+  }
+  if (buffer.byteLength !== asset.original_file_size_bytes || buffer.byteLength <= 0) {
+    throw new Error("corrupt_source");
+  }
+  const sourceLimit = maxBytesFor(asset.surface, asset.media_type);
+  if (buffer.byteLength > sourceLimit) throw new Error("file_too_large");
   validateDetectedMedia({
     buffer,
     expectedMediaType: asset.media_type,
     expectedMimeType: asset.original_mime_type
   });
+  await lease?.checkpoint("after_source_validation");
   return asset.media_type === "image"
-    ? processImageAsset(admin, asset, buffer)
-    : processVideoAsset(admin, asset, buffer);
+    ? processImageAsset(admin, asset, buffer, lease, config)
+    : processVideoAsset(admin, asset, buffer, lease, config);
 }
 
-async function processImageAsset(admin: AdminClient, asset: MediaAssetRow, buffer: Buffer) {
+async function processImageAsset(
+  admin: AdminClient,
+  asset: MediaAssetRow,
+  buffer: Buffer,
+  lease: ProcessingLease | undefined,
+  config: MediaWorkerConfig
+) {
   let metadata: sharp.Metadata;
   const base = sharp(buffer, { failOn: "error", limitInputPixels: MEDIA_IMAGE_MAX_PIXELS + 1 }).rotate();
   try {
@@ -455,14 +644,29 @@ async function processImageAsset(admin: AdminClient, asset: MediaAssetRow, buffe
   const crop = cropPixelsForRect(asset.crop_rect, sourceWidth, sourceHeight);
   const cropped = base.clone().extract(crop).flatten({ background: "#ffffff" });
   const canonical = await renderCanonicalImage(asset, cropped.clone());
+  await lease?.checkpoint("after_canonical_creation");
   const thumbnail = await renderThumbnailImage(asset, cropped.clone());
+  await lease?.checkpoint("after_thumbnail_creation");
   const blurhash = await blurhashForImage(canonical.buffer);
   const canonicalPath = buildMediaDerivativePath(asset, "canonical", "jpg");
   const thumbPath = buildMediaDerivativePath(asset, "thumbnail", "jpg");
   const bucketId = derivativeBucketForSurface(asset.surface);
 
-  await uploadDerivative(admin, bucketId, canonicalPath, canonical.buffer, "image/jpeg", asset.surface);
-  await uploadDerivative(admin, bucketId, thumbPath, thumbnail.buffer, "image/jpeg", asset.surface);
+  await lease?.assertCurrent();
+  const uploadStarted = Date.now();
+  await uploadDerivative(admin, bucketId, canonicalPath, canonical.buffer, "image/jpeg", asset.surface, config.uploadTimeoutMs);
+  await lease?.checkpoint("after_first_derivative_upload");
+  await uploadDerivative(admin, bucketId, thumbPath, thumbnail.buffer, "image/jpeg", asset.surface, config.uploadTimeoutMs);
+  await lease?.checkpoint("after_all_derivative_uploads");
+  if (lease) {
+    recordMediaWorkerEvent("derivative_upload_completed", {
+      derivativeCount: 2,
+      durationMs: Date.now() - uploadStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
+  }
 
   const canonicalUrl = publicUrlFor(admin, bucketId, canonicalPath);
   const thumbUrl = publicUrlFor(admin, bucketId, thumbPath);
@@ -492,7 +696,9 @@ async function processImageAsset(admin: AdminClient, asset: MediaAssetRow, buffe
     storage_path: thumbPath,
     width: thumbnail.width
   });
+  await lease?.checkpoint("after_derivative_metadata");
   return {
+    durationMs: null,
     height: canonical.height,
     width: canonical.width
   };
@@ -526,18 +732,30 @@ async function renderThumbnailImage(asset: MediaAssetRow, image: sharp.Sharp) {
   };
 }
 
-async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffer: Buffer) {
-  const dir = path.join(tmpdir(), `circlebites-media-${asset.id}-${Date.now()}`);
-  await mkdir(dir, { recursive: true });
+async function processVideoAsset(
+  admin: AdminClient,
+  asset: MediaAssetRow,
+  buffer: Buffer,
+  lease: ProcessingLease | undefined,
+  config: MediaWorkerConfig
+) {
+  await mkdir(config.tempRoot, { recursive: true, mode: 0o700 });
+  const disk = await statfs(config.tempRoot);
+  const availableBytes = Number(disk.bavail) * Number(disk.bsize);
+  if (!Number.isFinite(availableBytes) || availableBytes < config.maxTempBytes) throw new Error("temporary_disk_unavailable");
+  const dir = await mkdtemp(path.join(config.tempRoot, `job-${asset.id}-`));
   const inputPath = path.join(dir, `source.${asset.original_extension === "mov" ? "mov" : "mp4"}`);
   const outputPath = path.join(dir, "canonical.mp4");
   const posterPath = path.join(dir, "poster.jpg");
   try {
     await writeFile(inputPath, buffer);
-    const probe = await ffprobe(inputPath);
+    if (buffer.byteLength * 3 > config.maxTempBytes) throw new Error("temporary_disk_limit_exceeded");
+    const probe = await ffprobe(inputPath, config.ffprobeTimeoutMs);
+    if (probe.width * probe.height > MEDIA_VIDEO_MAX_PIXELS) throw new Error("dimensions_exceeded");
+    await lease?.checkpoint("after_video_probe");
     const maxDurationMs = MAX_VIDEO_DURATION_MS[asset.surface] ?? 0;
     if (maxDurationMs > 0 && probe.durationMs !== null && probe.durationMs > maxDurationMs + VIDEO_DURATION_TOLERANCE_MS) {
-      throw new Error("media_video_too_long");
+      throw new Error("duration_exceeded");
     }
     const crop = cropPixelsForRect(asset.crop_rect, probe.width, probe.height);
     const filter = videoFilterFor(asset.surface, crop);
@@ -560,11 +778,13 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
       "-b:a",
       "128k",
       outputPath
-    ]);
+    ], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    await lease?.checkpoint("after_canonical_creation");
     // Poster from ~1s in, clamped to the clip's midpoint so sub-second
     // videos still yield a frame.
     const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
-    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath]);
+    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    await lease?.checkpoint("after_poster_creation");
     const output = await readFile(outputPath);
     const poster = await readFile(posterPath);
     const posterMeta = await sharp(poster).metadata();
@@ -573,8 +793,22 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
     const posterStoragePath = buildMediaDerivativePath(asset, "poster", "jpg");
     const bucketId = derivativeBucketForSurface(asset.surface);
 
-    await uploadDerivative(admin, bucketId, canonicalPath, output, "video/mp4", asset.surface);
-    await uploadDerivative(admin, bucketId, posterStoragePath, poster, "image/jpeg", asset.surface);
+    if (output.byteLength + poster.byteLength + buffer.byteLength > config.maxTempBytes) throw new Error("temporary_disk_limit_exceeded");
+    await lease?.assertCurrent();
+    const uploadStarted = Date.now();
+    await uploadDerivative(admin, bucketId, canonicalPath, output, "video/mp4", asset.surface, config.uploadTimeoutMs);
+    await lease?.checkpoint("after_first_derivative_upload");
+    await uploadDerivative(admin, bucketId, posterStoragePath, poster, "image/jpeg", asset.surface, config.uploadTimeoutMs);
+    await lease?.checkpoint("after_all_derivative_uploads");
+    if (lease) {
+      recordMediaWorkerEvent("derivative_upload_completed", {
+        derivativeCount: 2,
+        durationMs: Date.now() - uploadStarted,
+        jobId: lease.job.id,
+        mediaType: asset.media_type,
+        workerId: lease.workerId
+      });
+    }
 
     await upsertDerivative(admin, {
       asset_id: asset.id,
@@ -602,19 +836,25 @@ async function processVideoAsset(admin: AdminClient, asset: MediaAssetRow, buffe
       storage_path: posterStoragePath,
       width: posterMeta.width ?? null
     });
-    return videoOutputSize(asset.surface);
+    await lease?.checkpoint("after_derivative_metadata");
+    return { ...videoOutputSize(asset.surface), durationMs: probe.durationMs };
   } finally {
     await rm(dir, { force: true, recursive: true }).catch(() => undefined);
   }
 }
 
-function even(value: number) {
+function evenDimension(value: number) {
   const rounded = Math.max(2, Math.floor(value));
   return rounded % 2 === 0 ? rounded : rounded - 1;
 }
 
+function evenOffset(value: number) {
+  const rounded = Math.max(0, Math.floor(value));
+  return rounded % 2 === 0 ? rounded : rounded - 1;
+}
+
 function videoFilterFor(surface: MediaSurface, crop: { height: number; left: number; top: number; width: number }) {
-  const cropFilter = `crop=${even(crop.width)}:${even(crop.height)}:${even(crop.left)}:${even(crop.top)}`;
+  const cropFilter = `crop=${evenDimension(crop.width)}:${evenDimension(crop.height)}:${evenOffset(crop.left)}:${evenOffset(crop.top)}`;
   if (surface === "post") return `${cropFilter},scale=${MEDIA_POST_CANONICAL_WIDTH}:${MEDIA_POST_CANONICAL_HEIGHT},setsar=1`;
   if (surface === "avatar") return `${cropFilter},scale=${MEDIA_AVATAR_CANONICAL_SIZE}:${MEDIA_AVATAR_CANONICAL_SIZE},setsar=1`;
   return `${cropFilter},scale=w='min(${MEDIA_MEMORY_MAX_EDGE},iw)':h=-2,setsar=1`;
@@ -626,7 +866,7 @@ function videoOutputSize(surface: MediaSurface) {
   return { height: null, width: null };
 }
 
-async function ffprobe(inputPath: string) {
+async function ffprobe(inputPath: string, timeoutMs: number) {
   const output = await runCommand("ffprobe", [
     "-v",
     "error",
@@ -637,14 +877,17 @@ async function ffprobe(inputPath: string) {
     "-of",
     "json",
     inputPath
-  ]);
+  ], timeoutMs, "media_video_probe_failed");
   try {
     const parsed = JSON.parse(output.stdout) as { streams?: Array<{ width?: number; height?: number }>; format?: { duration?: string } };
     const stream = parsed.streams?.[0];
     const durationSeconds = parsed.format?.duration ? Number(parsed.format.duration) : null;
     if (!stream?.width || !stream.height) throw new Error("media_video_probe_failed");
+    if (durationSeconds === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      throw new Error("media_video_probe_failed");
+    }
     return {
-      durationMs: durationSeconds && Number.isFinite(durationSeconds) ? Math.round(durationSeconds * 1000) : null,
+      durationMs: Math.round(durationSeconds * 1000),
       height: stream.height,
       width: stream.width
     };
@@ -653,21 +896,41 @@ async function ffprobe(inputPath: string) {
   }
 }
 
-async function runCommand(command: string, args: string[]) {
+export async function runMediaBinaryCheck(command: "ffmpeg" | "ffprobe", timeoutMs = 10_000) {
+  await runCommand(command, ["-version"], timeoutMs, `${command}_unavailable`);
+  return true;
+}
+
+async function runCommand(command: string, args: string[], timeoutMs: number, failureCode: string) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
-    let stderr = "";
+    let stderrBytes = 0;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      reject(new Error(failureCode));
+    }, timeoutMs);
     child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
+      if (stdout.length < 1_000_000) stdout += String(chunk).slice(0, 1_000_000 - stdout.length);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
+      stderrBytes += Buffer.byteLength(chunk);
     });
-    child.on("error", reject);
+    child.on("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`${command}_unavailable`));
+    });
     child.on("close", (code) => {
-      if (code === 0) resolve({ stderr, stdout });
-      else reject(new Error(`${command}_failed:${stderr.slice(0, 500)}`));
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code === 0) resolve({ stderr: stderrBytes > 0 ? "output_redacted" : "", stdout });
+      else reject(new Error(failureCode));
     });
   });
 }
@@ -688,14 +951,19 @@ async function uploadDerivative(
   storagePath: string,
   buffer: Buffer,
   contentType: string,
-  surface: MediaSurface
+  surface: MediaSurface,
+  timeoutMs: number
 ) {
-  const { error } = await admin.storage.from(bucketId).upload(storagePath, buffer, {
-    cacheControl: String(derivativeCacheSeconds(surface)),
-    contentType,
-    upsert: true
-  });
-  if (error) throw error;
+  const { error } = await withTimeout<{ error: unknown }>(
+    admin.storage.from(bucketId).upload(storagePath, buffer, {
+      cacheControl: String(derivativeCacheSeconds(surface)),
+      contentType,
+      upsert: true
+    }),
+    timeoutMs,
+    "derivative_upload_timeout"
+  );
+  if (error) throw new Error("storage_temporarily_unavailable");
 }
 
 function publicUrlFor(admin: AdminClient, bucketId: string, storagePath: string) {
@@ -747,106 +1015,303 @@ export async function enqueueMediaProcessingJob(admin: AdminClient, assetId: str
       asset_id: assetId,
       job_type: jobType,
       max_attempts: MEDIA_MAX_ATTEMPTS,
+      next_attempt_at: new Date().toISOString(),
       next_retry_at: new Date().toISOString(),
       status: "queued",
       updated_at: new Date().toISOString()
-    }, { onConflict: "asset_id,job_type" });
+    }, { ignoreDuplicates: true, onConflict: "asset_id,job_type" });
   if (error) throw error;
 }
 
-type JobRow = {
-  id: string;
-  asset_id: string;
-  attempts: number;
-  max_attempts: number;
+export type MediaProcessingBatchOptions = {
+  config?: MediaWorkerConfig;
+  failureInjector?: (stage: string, job: ClaimedMediaJob) => Promise<void> | void;
+  limit?: number;
+  signal?: AbortSignal;
+  workerId?: string;
 };
 
-export async function runMediaProcessingBatch(admin: AdminClient, limit = 5) {
-  const cappedLimit = Math.max(1, Math.min(Math.floor(limit) || 5, 25));
-  const { data: jobRows, error } = await admin
-    .from("media_processing_jobs")
-    .select("id, asset_id, attempts, max_attempts")
-    .in("status", ["queued", "failed"])
-    .lte("next_retry_at", new Date().toISOString())
-    .order("created_at", { ascending: true })
-    .limit(cappedLimit);
-  if (error) throw error;
+function recordMediaWorkerEvent(event: string, fields: Record<string, string | number | boolean | null>) {
+  console.log(JSON.stringify({ component: "media-worker", event, ...fields }));
+}
 
-  let processed = 0;
-  let succeeded = 0;
-  let failed = 0;
-  const jobs = (jobRows ?? []) as JobRow[];
-  for (const job of jobs ?? []) {
-    processed += 1;
-    const attempts = (job.attempts ?? 0) + 1;
-    const lockedAt = new Date().toISOString();
-    const { data: locked, error: lockError } = await admin
-      .from("media_processing_jobs")
-      .update({ attempts, locked_at: lockedAt, status: "running", updated_at: lockedAt })
-      .eq("id", job.id)
-      .in("status", ["queued", "failed"])
-      .select("id")
-      .maybeSingle();
-    if (lockError || !locked) {
-      failed += 1;
-      continue;
-    }
+function assertAssetProcessingContract(asset: MediaAssetRow) {
+  assertSafeMediaSourcePath(asset);
+  if (asset.surface === "post" && (!asset.access_class.endsWith("_post") || asset.visibility !== "private")) {
+    throw new Error("visibility_contract_mismatch");
+  }
+  if (asset.surface === "memory" && (asset.access_class !== "memory_private" || asset.visibility !== "private")) {
+    throw new Error("visibility_contract_mismatch");
+  }
+  if (asset.surface === "avatar" && (asset.access_class !== "avatar_public" || asset.visibility !== "public")) {
+    throw new Error("visibility_contract_mismatch");
+  }
+}
 
+async function leaseIsCurrent(admin: AdminClient, job: ClaimedMediaJob, workerId: string) {
+  const { data, error } = await admin.rpc("media_processing_lease_is_current", {
+    p_claim_token: job.claim_token,
+    p_job_id: job.id,
+    p_lease_generation: job.lease_generation,
+    p_worker_id: workerId
+  });
+  if (error || data !== true) throw new Error("lease_lost");
+}
+
+async function processClaimedMediaJob(
+  admin: AdminClient,
+  job: ClaimedMediaJob,
+  workerId: string,
+  config: MediaWorkerConfig,
+  options: MediaProcessingBatchOptions
+) {
+  const started = Date.now();
+  let leaseLost = false;
+  let heartbeatRunning = false;
+  let authoritativeCompleted = false;
+  const heartbeat = async () => {
+    if (heartbeatRunning || leaseLost) return;
+    heartbeatRunning = true;
     try {
-      await admin
-        .from("media_assets")
-        .update({ status: "processing", updated_at: new Date().toISOString() })
-        .eq("id", job.asset_id)
-        .in("status", ["uploaded", "processing", "failed"]);
-      const { data: assetRow, error: assetError } = await admin
-        .from("media_assets")
-        .select("*")
-        .eq("id", job.asset_id)
-        .maybeSingle();
+      const { data, error } = await admin.rpc("heartbeat_media_processing_job", {
+        p_claim_token: job.claim_token,
+        p_job_id: job.id,
+        p_lease_generation: job.lease_generation,
+        p_lease_seconds: config.leaseSeconds,
+        p_worker_id: workerId
+      });
+      if (error || data !== true) leaseLost = true;
+    } finally {
+      heartbeatRunning = false;
+    }
+  };
+  const heartbeatTimer = setInterval(() => void heartbeat(), config.heartbeatIntervalMs);
+  const lease: ProcessingLease = {
+    assertCurrent: async () => {
+      if (options.signal?.aborted) throw new Error("worker_shutdown");
+      if (leaseLost) throw new Error("lease_lost");
+      await leaseIsCurrent(admin, job, workerId);
+    },
+    checkpoint: async (stage) => {
+      await options.failureInjector?.(stage, job);
+      await lease.assertCurrent();
+    },
+    job,
+    workerId
+  };
+
+  try {
+    await lease.checkpoint("after_claim");
+    const { data: assetRow, error: assetError } = await admin
+      .from("media_assets")
+      .select("*")
+      .eq("id", job.asset_id)
+      .maybeSingle();
+    const asset = assetRow as MediaAssetRow | null;
+    if (assetError) throw new Error("database_temporarily_unavailable");
+    if (!asset) throw new Error("source_owner_mismatch");
+    assertAssetProcessingContract(asset);
+    await lease.assertCurrent();
+    const { error: processingError } = await admin
+      .from("media_assets")
+      .update({ failure_code: null, failure_reason: null, status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", asset.id)
+      .in("status", ["uploaded", "processing"]);
+    if (processingError) throw new Error("database_temporarily_unavailable");
+
+    const dimensions = await processMediaAsset(admin, asset, lease, config);
+    await lease.checkpoint("before_metadata_finalization");
+    const { data: completed, error: completionError } = await admin.rpc("complete_media_processing_job", {
+      p_claim_token: job.claim_token,
+      p_duration_ms: dimensions.durationMs,
+      p_height: dimensions.height,
+      p_job_id: job.id,
+      p_lease_generation: job.lease_generation,
+      p_width: dimensions.width,
+      p_worker_id: workerId
+    });
+    if (completionError) throw new Error("database_temporarily_unavailable");
+    if (completed !== true) throw new Error("lease_lost");
+    authoritativeCompleted = true;
+    await options.failureInjector?.("after_metadata_finalization", job);
+    recordMediaWorkerEvent("job_succeeded", {
+      attempt: job.attempts,
+      durationMs: Date.now() - started,
+      jobId: job.id,
+      mediaType: asset.media_type,
+      staleReclaimed: job.stale_reclaimed,
+      workerId
+    });
+    return { code: null, status: "succeeded" as const };
+  } catch (error) {
+    if (authoritativeCompleted) {
+      recordMediaWorkerEvent("post_completion_worker_loss", { jobId: job.id, workerId });
+      return { code: null, status: "succeeded" as const };
+    }
+    const failure = classifyMediaProcessingFailure(error);
+    if (failure.code === "lease_lost") {
+      recordMediaWorkerEvent("lease_lost", { jobId: job.id, workerId, leaseGeneration: job.lease_generation });
+      return { code: failure.code, status: "lease_lost" as const };
+    }
+    const { data: nextStatus, error: failError } = await admin.rpc("fail_media_processing_job", {
+      p_base_delay_seconds: config.retryBaseSeconds,
+      p_claim_token: job.claim_token,
+      p_failure_class: failure.failureClass,
+      p_failure_code: failure.code,
+      p_job_id: job.id,
+      p_lease_generation: job.lease_generation,
+      p_max_delay_seconds: config.retryMaxSeconds,
+      p_worker_id: workerId
+    });
+    if (failError) {
+      recordMediaWorkerEvent("failure_transition_failed", { failureCode: failure.code, jobId: job.id, workerId });
+      return { code: "database_temporarily_unavailable", status: "lease_recovery" as const };
+    }
+    recordMediaWorkerEvent("job_failed", {
+      attempt: job.attempts,
+      failureClass: failure.failureClass,
+      failureCode: failure.code,
+      jobId: job.id,
+      nextStatus: typeof nextStatus === "string" ? nextStatus : "unknown",
+      workerId
+    });
+    return { code: failure.code, status: String(nextStatus) };
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+}
+
+export async function runMediaProcessingBatch(
+  admin: AdminClient,
+  limitOrOptions: number | MediaProcessingBatchOptions = 5
+) {
+  const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
+  const config = options.config ?? mediaWorkerConfig();
+  if (config.retryMaxSeconds < config.retryBaseSeconds) throw new Error("media_worker_retry_configuration_invalid");
+  const workerId = options.workerId ?? mediaWorkerId();
+  const cappedLimit = Math.max(1, Math.min(Math.floor(options.limit ?? config.concurrency) || config.concurrency, 25));
+  if (options.signal?.aborted) return { deadLettered: 0, failed: 0, leaseLost: 0, processed: 0, rejected: 0, retried: 0, succeeded: 0 };
+
+  const { data, error } = await admin.rpc("claim_media_processing_jobs", {
+    p_lease_seconds: config.leaseSeconds,
+    p_limit: Math.min(cappedLimit, config.concurrency),
+    p_max_attempts: config.maxAttempts,
+    p_worker_id: workerId
+  });
+  if (error) throw new Error("database_temporarily_unavailable");
+  const jobs = (data ?? []) as ClaimedMediaJob[];
+  const results = await Promise.all(jobs.map((job) => processClaimedMediaJob(admin, job, workerId, config, options)));
+  return {
+    deadLettered: results.filter((result) => result.status === "dead_letter").length,
+    failed: results.filter((result) => result.status !== "succeeded").length,
+    leaseLost: results.filter((result) => result.status === "lease_lost" || result.status === "lease_recovery").length,
+    processed: results.length,
+    rejected: results.filter((result) => result.status === "rejected").length,
+    retried: results.filter((result) => result.status === "retry_wait").length,
+    succeeded: results.filter((result) => result.status === "succeeded").length
+  };
+}
+
+type CleanupClaim = { asset_id: string; cleanup_kind: "source" | "terminal" | "abandoned"; cleanup_token: string };
+
+function derivativePathIsOwned(asset: MediaAssetRow, derivative: MediaDerivativeRow) {
+  const expectedExtension = derivative.kind === "canonical" && asset.media_type === "video" ? "mp4" : "jpg";
+  return derivative.storage_path === buildMediaDerivativePath(asset, derivative.kind, expectedExtension) &&
+    derivative.bucket_id === derivativeBucketForSurface(asset.surface);
+}
+
+export async function runMediaCleanupBatch(
+  admin: AdminClient,
+  options: { limit?: number; workerId?: string; leaseSeconds?: number } = {}
+) {
+  const workerId = options.workerId ?? mediaWorkerId();
+  const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 25), 100));
+  const leaseSeconds = options.leaseSeconds ?? 120;
+  const { data, error } = await admin.rpc("claim_media_cleanup_assets", {
+    p_lease_seconds: leaseSeconds,
+    p_limit: limit,
+    p_worker_id: workerId
+  });
+  if (error) throw new Error("database_temporarily_unavailable");
+  const claims = (data ?? []) as CleanupClaim[];
+  let cleaned = 0;
+  let failed = 0;
+  for (const claim of claims) {
+    try {
+      const { data: assetRow, error: assetError } = await admin.from("media_assets").select("*").eq("id", claim.asset_id).maybeSingle();
+      if (assetError) throw new Error("database_temporarily_unavailable");
       const asset = assetRow as MediaAssetRow | null;
-      if (assetError || !asset) throw assetError ?? new Error("media_asset_not_found");
-      const dimensions = await processMediaAsset(admin, asset);
-      const now = new Date().toISOString();
-      await admin
-        .from("media_assets")
-        .update({
-          failure_reason: null,
-          original_height: asset.original_height ?? dimensions.height,
-          original_width: asset.original_width ?? dimensions.width,
-          processed_at: now,
-          status: "ready",
-          updated_at: now
-        })
-        .eq("id", asset.id);
-      await admin
-        .from("media_processing_jobs")
-        .update({ last_error: null, locked_at: null, status: "succeeded", updated_at: now })
-        .eq("id", job.id);
-      succeeded += 1;
-    } catch (jobError) {
-      const message = jobError instanceof Error ? jobError.message : "media_processing_failed";
-      const terminal = attempts >= (job.max_attempts || MEDIA_MAX_ATTEMPTS);
-      const nextRetry = new Date(Date.now() + Math.min(attempts, 6) * 5 * 60 * 1000).toISOString();
-      await admin
-        .from("media_assets")
-        .update({
-          failure_reason: message.slice(0, 500),
-          status: terminal ? "failed" : "uploaded",
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", job.asset_id);
-      await admin
-        .from("media_processing_jobs")
-        .update({
-          last_error: message.slice(0, 500),
-          locked_at: null,
-          next_retry_at: terminal ? new Date("9999-12-31T00:00:00Z").toISOString() : nextRetry,
-          status: "failed",
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", job.id);
+      if (!asset) continue;
+      assertSafeMediaSourcePath(asset);
+      const { data: derivativeRows, error: derivativeError } = await admin.from("media_derivatives").select("*").eq("asset_id", asset.id);
+      if (derivativeError) throw new Error("database_temporarily_unavailable");
+      const derivatives = (derivativeRows ?? []) as MediaDerivativeRow[];
+      if (derivatives.some((row) => !derivativePathIsOwned(asset, row))) throw new Error("source_owner_mismatch");
+
+      const sourceRemoval = await admin.storage.from(asset.source_bucket_id).remove([asset.source_storage_path]);
+      if (sourceRemoval.error) throw new Error("storage_temporarily_unavailable");
+      if (claim.cleanup_kind !== "source") {
+        for (const bucketId of [MEDIA_PRIVATE_BUCKET, MEDIA_PUBLIC_BUCKET]) {
+          const paths = derivatives.filter((row) => row.bucket_id === bucketId).map((row) => row.storage_path);
+          if (paths.length === 0) continue;
+          const removal = await admin.storage.from(bucketId).remove(paths);
+          if (removal.error) throw new Error("storage_temporarily_unavailable");
+        }
+      }
+      const { data: completed, error: completeError } = await admin.rpc("complete_media_cleanup_asset", {
+        p_asset_id: claim.asset_id,
+        p_cleanup_kind: claim.cleanup_kind,
+        p_cleanup_token: claim.cleanup_token,
+        p_worker_id: workerId
+      });
+      if (completeError || completed !== true) throw new Error("lease_lost");
+      cleaned += 1;
+      recordMediaWorkerEvent("cleanup_succeeded", {
+        assetId: claim.asset_id,
+        cleanupKind: claim.cleanup_kind,
+        workerId
+      });
+    } catch (cleanupError) {
       failed += 1;
+      const failure = classifyMediaProcessingFailure(cleanupError);
+      await admin.rpc("fail_media_cleanup_asset", {
+        p_asset_id: claim.asset_id,
+        p_cleanup_token: claim.cleanup_token,
+        p_failure_code: failure.code,
+        p_worker_id: workerId
+      });
+      recordMediaWorkerEvent("cleanup_failed", {
+        assetId: claim.asset_id,
+        cleanupKind: claim.cleanup_kind,
+        failureCode: failure.code,
+        workerId
+      });
     }
   }
-  return { failed, processed, succeeded };
+  return { claimed: claims.length, cleaned, failed };
+}
+
+export async function mediaWorkerQueueHealth(admin: AdminClient) {
+  const statuses = ["queued", "running", "retry_wait", "dead_letter"] as const;
+  const counts: Record<string, number> = {};
+  for (const status of statuses) {
+    const { count, error } = await admin.from("media_processing_jobs").select("id", { count: "exact", head: true }).eq("status", status);
+    if (error) throw new Error("database_temporarily_unavailable");
+    counts[status] = count ?? 0;
+  }
+  const { data: oldest, error: oldestError } = await admin
+    .from("media_processing_jobs")
+    .select("created_at")
+    .in("status", ["queued", "retry_wait"])
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (oldestError) throw new Error("database_temporarily_unavailable");
+  return {
+    deadLetter: counts.dead_letter,
+    oldestQueuedAgeSeconds: oldest?.created_at ? Math.max(0, Math.floor((Date.now() - new Date(oldest.created_at).getTime()) / 1000)) : 0,
+    queued: counts.queued,
+    retryWait: counts.retry_wait,
+    running: counts.running
+  };
 }

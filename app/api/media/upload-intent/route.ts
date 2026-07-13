@@ -66,6 +66,9 @@ export async function POST(req: NextRequest) {
 
   const expiresAt = mediaIntentExpiresAt();
   const admin = createAdminClient();
+  const { data: accountActive, error: accountError } = await admin.rpc("account_is_active", { p_user_id: actor.userId });
+  if (accountError) return mediaJson({ error: "Unable to authorize media upload" }, { status: 500 });
+  if (accountActive !== true) return mediaJson({ error: "Account deletion is in progress" }, { status: 409 });
   const { error } = await admin
     .from("media_assets")
     .insert({

@@ -24,9 +24,15 @@ function loadMediaPipelineModule() {
   });
   const mod = { exports: {} };
   vm.runInNewContext(outputText, {
+    AbortController,
     Buffer,
     Blob,
+    clearInterval,
+    clearTimeout,
     console,
+    setInterval,
+    setTimeout,
+    process: { env: {}, pid: 1234 },
     module: mod,
     exports: mod.exports,
     require(id) {
@@ -75,7 +81,8 @@ test("media pipeline routes expose intent, finalize, status, and worker processi
   assert.match(upload, /normalizeMediaIntentInput/);
   assert.match(upload, /MEDIA_SOURCE_BUCKET/);
   assert.doesNotMatch(upload, /body\?\.sourceStoragePath|body\?\.storagePath|body\?\.ownerId/);
-  assert.match(finalize, /validateDetectedMedia/);
+  assert.match(finalize, /storageObjectMetadata/);
+  assert.doesNotMatch(finalize, /Buffer\.from\(await blob\.arrayBuffer\(\)\)/);
   assert.match(finalize, /enqueueMediaProcessingJob/);
   const access = source("app/api/media/access/route.ts");
   assert.doesNotMatch(status, /createSignedUrl/);

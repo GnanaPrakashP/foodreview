@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { normalizeDishInput } from "@/services/dishNormalizer";
-import { uploadPostMediaAsset, type MediaCropRect } from "@/services/mediaPipeline";
+import { completeRecoveredMediaUploads, uploadPostMediaAsset, type MediaCropRect } from "@/services/mediaPipeline";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { FoodItem, Visibility } from "@/types/models";
 
@@ -130,6 +130,7 @@ type UploadedMedia = {
   mimeType: string;
   sizeBytes: number;
   mediaType: "image" | "video";
+  recoveryId: string;
   width: number | null;
   height: number | null;
   durationMs: number | null;
@@ -160,6 +161,7 @@ async function uploadOneWithProgress(
     height: uploaded.height ?? media.height ?? null,
     mediaType,
     mimeType: uploaded.mimeType,
+    recoveryId: uploaded.recoveryId,
     sizeBytes: uploaded.fileSizeBytes,
     width: uploaded.width ?? media.width ?? null
   };
@@ -235,5 +237,7 @@ export async function createPost(input: CreatePostInput): Promise<CreatePostResu
   }
 
   const uploaded = await uploadPostMediaItems(items, input.visibility, input.onUploadProgress);
-  return createReviewViaApi(input, uploaded);
+  const created = await createReviewViaApi(input, uploaded);
+  await completeRecoveredMediaUploads(uploaded.map((item) => item.recoveryId));
+  return created;
 }

@@ -1,0 +1,15 @@
+node_modules
+mobile
+.next
+.git
+.env
+.env.*
+!.env.example
+coverage
+design-preview
+mobile-context
+playwright-report
+test-results
+tmp
+docs
+*.log
