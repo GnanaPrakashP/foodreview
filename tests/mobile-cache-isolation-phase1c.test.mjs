@@ -129,6 +129,10 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
       supabase: { removeAllChannels: async () => [] }
     };
     if (id === "react-native") return { Platform: { OS: "test" } };
+    if (id === "expo-image") return { Image: {
+      clearDiskCache: async () => calls.push("image.disk.clear"),
+      clearMemoryCache: async () => calls.push("image.memory.clear")
+    } };
     if (id === "@/security/cacheOwnership") return ownership;
     if (id === "@/security/sensitiveResourceRegistry") return { clearRegisteredSensitiveResources: async () => 0 };
     if (id === "@/services/mediaUploadRecovery") return { clearMediaUploadRecoveryForScope: (scope) => calls.push(`uploads.clear:${scope}`) };

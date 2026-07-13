@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import { PostFeed } from "@/components/feeds/PostFeed";
 import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
@@ -11,7 +12,13 @@ export default function SavedPostsScreen() {
   const { themeColors } = useThemePreference();
   const { slideStyle, close } = useSlideOverScreen();
   const saved = useSavedSettingsItemsQuery();
-  const posts = saved.data?.posts ?? [];
+  const posts = useMemo(() => {
+    const uniquePosts = new Map();
+    for (const page of saved.data?.pages ?? []) {
+      for (const post of page.posts) uniquePosts.set(post.id, post);
+    }
+    return Array.from(uniquePosts.values());
+  }, [saved.data?.pages]);
 
   return (
     <ProfileSubScreen
@@ -19,14 +26,15 @@ export default function SavedPostsScreen() {
       contentHorizontalPadding={false}
       onBack={close}
       slideStyle={slideStyle}
+      scroll={false}
       themeColors={themeColors}
       title="Saved Posts"
     >
-      {saved.isLoading ? (
+      {saved.isLoading && posts.length === 0 ? (
         <View style={styles.stateWrap}>
           <LoadingState message="Fetching posts you saved." title="Loading saved posts" />
         </View>
-      ) : saved.isError ? (
+      ) : saved.isError && posts.length === 0 ? (
         <View style={styles.stateWrap}>
           <ErrorState
             actionLabel="Try again"
@@ -40,7 +48,11 @@ export default function SavedPostsScreen() {
           embedded
           emptyMessage="Posts you save will appear here."
           emptyTitle="No saved posts yet"
+          hasMore={saved.hasNextPage}
+          isFetchingMore={saved.isFetchingNextPage}
+          onEndReached={() => void saved.fetchNextPage()}
           posts={posts}
+          scrollEnabled
         />
       )}
     </ProfileSubScreen>
@@ -49,6 +61,7 @@ export default function SavedPostsScreen() {
 
 const styles = StyleSheet.create({
   stateWrap: {
+    flex: 1,
     paddingHorizontal: spacing.lg
   }
 });

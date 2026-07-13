@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "program": "FoodReview Production Hardening",
   "updatedAt": "2026-07-13",
-  "sourceCommit": "76d1bf6816a46fd08614c5dee2439bbec1e4470d",
+  "sourceCommit": "0af380ac1533253dca07af95f144ad6892714f50",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/07-backend-performance",
+  "currentBranch": "hardening/08-mobile-performance",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -253,9 +253,9 @@
       "id": "PH-601",
       "title": "Lazy-mount retained tabs and persist selected user-scoped data",
       "severity": "P1",
-      "status": "open",
+      "status": "complete",
       "phase": "6",
-      "branch": "hardening/08-performance-rendering",
+      "branch": "hardening/08-mobile-performance",
       "affectedFiles": ["mobile/app/(tabs)/_layout.tsx", "mobile/src/providers/AppProviders.tsx", "mobile/src/providers/queryPersistence.ts"],
       "dependencies": ["PH-103", "PH-501", "PH-502", "PH-503"],
       "acceptanceCriteria": ["Only the initial tab mounts during cold start", "Visited tabs retain screen and scroll state", "Selected first pages hydrate only for their owner", "Background tabs do not start unrelated cold-launch work"]
@@ -264,11 +264,11 @@
       "id": "PH-602",
       "title": "Consume image variants and gate video players by viewport",
       "severity": "P1",
-      "status": "open",
+      "status": "blocked",
       "phase": "6",
-      "branch": "hardening/08-performance-rendering",
+      "branch": "hardening/08-mobile-performance",
       "affectedFiles": ["mobile/src/components/posts/PostCard.tsx", "mobile/src/components/feeds/PostFeed.tsx", "lib/selects.ts", "lib/server/media-pipeline.ts"],
-      "dependencies": ["PH-101", "PH-201"],
+      "dependencies": ["PH-101", "PH-201", "Representative mixed-media staging data and physical-device frame/memory validation are unavailable"],
       "acceptanceCriteria": ["Feed DTO exposes thumbnail, medium, canonical, poster, dimensions and placeholder", "Feed cards do not load canonical media unnecessarily", "Offscreen videos have no active player", "Scroll memory and dropped-frame targets pass"]
     },
     {
@@ -277,7 +277,7 @@
       "severity": "P1",
       "status": "open",
       "phase": "6",
-      "branch": "hardening/08-performance-rendering",
+      "branch": "hardening/08-mobile-performance",
       "affectedFiles": ["mobile/app/(tabs)/share.tsx", "mobile/src/services/mediaPipeline.ts", "mobile/src/services/mediaUploadService.ts"],
       "dependencies": ["PH-201", "PH-202", "PH-203"],
       "acceptanceCriteria": ["Draft survives process termination", "Upload resumes after network loss", "Concurrency is bounded", "Maximum media does not require one full JavaScript-memory copy where avoidable"]
@@ -286,9 +286,9 @@
       "id": "PH-604",
       "title": "Reduce overlapping Memory realtime subscriptions and reconciliation",
       "severity": "P2",
-      "status": "open",
+      "status": "complete",
       "phase": "6",
-      "branch": "hardening/08-performance-rendering",
+      "branch": "hardening/08-mobile-performance",
       "affectedFiles": ["mobile/src/hooks/useMemories.ts", "mobile/src/services/memories.ts"],
       "dependencies": ["PH-302"],
       "acceptanceCriteria": ["Active-room events are processed once", "Delta updates do not immediately trigger redundant full refetches", "Foreground reconciliation recovers missed events"]
@@ -396,10 +396,10 @@
       "id": "PH-902",
       "title": "Reduce oversized modules and enforce bundle budgets",
       "severity": "P2",
-      "status": "open",
+      "status": "in_progress",
       "phase": "6",
-      "branch": "hardening/08-performance-rendering",
-      "affectedFiles": ["mobile/app/memories/[id].tsx", "mobile/app/(tabs)/explore.tsx", "mobile/app/(tabs)/profile.tsx", "mobile/src/hooks/useMemories.ts", "mobile/package.json"],
+      "branch": "hardening/08-mobile-performance",
+      "affectedFiles": ["mobile/app/memories/[id].tsx", "mobile/app/(tabs)/explore.tsx", "mobile/app/(tabs)/profile.tsx", "mobile/src/hooks/useMemories.ts", "mobile/package.json", "config/mobile-performance-budgets.json", "scripts/report-mobile-bundle.mjs"],
       "dependencies": ["PH-601", "PH-602"],
       "acceptanceCriteria": ["Large screens are split by runtime ownership", "Unused icon font assets are removed", "Hermes bundle and total export budgets are enforced in CI", "Module boundaries preserve behaviour tests"]
     }

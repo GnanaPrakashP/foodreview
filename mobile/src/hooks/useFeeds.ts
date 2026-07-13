@@ -17,15 +17,16 @@ import type { PostEngagementState, ReviewPost } from "@/types/models";
 // whole bounded page in one request before expiry; signed URLs are never
 // persisted by the query persister.
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
-const EXPIRING_MEDIA_QUERY_OPTIONS = {
+const ACTIVE_MEDIA_REFRESH_OPTIONS = {
   refetchInterval: POST_MEDIA_REFRESH_MS,
   refetchOnWindowFocus: true,
-  staleTime: POST_MEDIA_REFRESH_MS
+  staleTime: 45_000
 } as const;
 
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
   circlePages: ["feed", "circle", "pages"] as const,
+  publicPages: ["feed", "public", "pages"] as const,
   dish: (input: DishFeedInput) => [
     "feed",
     "dish",
@@ -42,6 +43,20 @@ export const feedKeys = {
   explore: (input: ExploreFeedInput = {}) => ["feed", "explore", input.location?.lat ?? "", input.location?.lng ?? "", input.limit ?? ""] as const,
   public: ["feed", "public"] as const,
   restaurant: (input: RestaurantFeedInput) => ["feed", "restaurant", input.placeId ?? "", input.restaurantName ?? "", input.restaurantAddress ?? ""] as const,
+  restaurantPages: (input: RestaurantFeedInput) => ["feed", "restaurant", "pages", input.placeId ?? "", input.restaurantName ?? "", input.restaurantAddress ?? ""] as const,
+  dishPages: (input: DishFeedInput) => [
+    "feed",
+    "dish",
+    "pages",
+    input.dishName,
+    input.canonicalDishId ?? "",
+    input.location?.lat ?? "",
+    input.location?.lng ?? "",
+    input.placeId ?? "",
+    input.restaurantName ?? "",
+    input.restaurantAddress ?? "",
+    input.limit ?? ""
+  ] as const,
   review: (postId: string) => ["feed", "review", postId] as const
 };
 
@@ -50,7 +65,7 @@ export function useCircleFeedQuery(options: { enabled?: boolean } = {}) {
     queryKey: feedKeys.circle,
     queryFn: () => getCircleFeed(),
     enabled: options.enabled ?? true,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS
   });
 }
 
@@ -60,8 +75,8 @@ export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) 
     queryFn: ({ pageParam }) => getCircleFeed(pageParam),
     enabled: options.enabled ?? true,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    initialPageParam: null as string | null
-    ,...EXPIRING_MEDIA_QUERY_OPTIONS
+    initialPageParam: null as string | null,
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS
   });
 }
 
@@ -159,6 +174,71 @@ export function patchCachedPostById(
   );
 }
 
+function removePostFromCacheValue(value: unknown, postId: string): unknown {
+  if (!value) return value;
+  if (Array.isArray(value)) {
+    const next = value.filter((item) => !isReviewPost(item) || item.id !== postId);
+    return next.length === value.length ? value : next;
+  }
+  if (typeof value !== "object") return value;
+  const current = value as Record<string, unknown>;
+  let changed = false;
+  const next: Record<string, unknown> = { ...current };
+  if (Array.isArray(current.posts)) {
+    const posts = current.posts.filter((item) => !isReviewPost(item) || item.id !== postId);
+    if (posts.length !== current.posts.length) {
+      next.posts = posts;
+      changed = true;
+    }
+  }
+  if (Array.isArray(current.pages)) {
+    const currentPages = current.pages;
+    const pages = currentPages.map((page) => removePostFromCacheValue(page, postId));
+    if (pages.some((page, index) => page !== currentPages[index])) {
+      next.pages = pages;
+      changed = true;
+    }
+  }
+  return changed ? next : value;
+}
+
+export function removeCachedPostById(queryClient: QueryClient, postId: string) {
+  queryClient.setQueriesData<unknown>(
+    {
+      predicate: (query) => {
+        const scope = Array.isArray(query.queryKey) ? query.queryKey[0] : null;
+        return scope === "feed" || scope === "profile" || scope === "settings";
+      }
+    },
+    (current: unknown) => removePostFromCacheValue(current, postId)
+  );
+}
+
+function findPostInCacheValue(value: unknown, postId: string): ReviewPost | null {
+  if (!value) return null;
+  if (isReviewPost(value)) return value.id === postId ? value : null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findPostInCacheValue(item, postId);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  return findPostInCacheValue(record.posts, postId) ?? findPostInCacheValue(record.pages, postId);
+}
+
+export function findCachedPostById(queryClient: QueryClient, postId: string) {
+  for (const [, data] of queryClient.getQueriesData<unknown>({
+    predicate: (query) => query.queryKey[0] === "feed" || query.queryKey[0] === "profile"
+  })) {
+    const found = findPostInCacheValue(data, postId);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function patchCachedPostEngagementFields(
   queryClient: QueryClient,
   patch: Partial<PostEngagementState> & { postId: string }
@@ -169,9 +249,20 @@ export function patchCachedPostEngagementFields(
 export function usePublicFeedQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: feedKeys.public,
-    queryFn: getPublicFeed,
+    queryFn: () => getPublicFeed(),
     enabled: options.enabled ?? true,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS
+  });
+}
+
+export function usePublicFeedInfiniteQuery(options: { enabled?: boolean } = {}) {
+  return useInfiniteQuery({
+    queryKey: feedKeys.publicPages,
+    queryFn: ({ pageParam }) => getPublicFeed(pageParam),
+    enabled: options.enabled ?? true,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS
   });
 }
 
@@ -183,7 +274,8 @@ export function useExploreFeedQuery(input: ExploreFeedInput = {}, options: { ena
     gcTime: 2 * 60 * 60_000,
     placeholderData: keepPreviousData,
     refetchOnMount: false,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 5 * 60_000
   });
 }
 
@@ -195,7 +287,8 @@ export function useExploreDiscoveryQuery(input: ExploreFeedInput = {}, options: 
     gcTime: 2 * 60 * 60_000,
     placeholderData: keepPreviousData,
     refetchOnMount: false,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 5 * 60_000
   });
 }
 
@@ -204,7 +297,7 @@ export function useReviewPostQuery(postId: string, options: { enabled?: boolean 
     queryKey: feedKeys.review(postId),
     queryFn: () => getReviewPostById(postId),
     enabled: Boolean(postId) && (options.enabled ?? true),
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS
   });
 }
 
@@ -214,7 +307,21 @@ export function useRestaurantFeedQuery(input: RestaurantFeedInput, options: { en
     queryKey: feedKeys.restaurant(input),
     queryFn: () => getRestaurantFeed(input),
     enabled: hasTarget && (options.enabled ?? true),
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 2 * 60_000
+  });
+}
+
+export function useRestaurantFeedInfiniteQuery(input: RestaurantFeedInput, options: { enabled?: boolean } = {}) {
+  const hasTarget = Boolean(input.placeId?.trim() || input.restaurantName?.trim());
+  return useInfiniteQuery({
+    queryKey: feedKeys.restaurantPages(input),
+    queryFn: ({ pageParam }) => getRestaurantFeed(input, pageParam),
+    enabled: hasTarget && (options.enabled ?? true),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 2 * 60_000
   });
 }
 
@@ -228,6 +335,29 @@ export function useDishFeedQuery(input: string | DishFeedInput, options: { enabl
     queryKey: feedKeys.dish(dishInput),
     queryFn: () => getDishFeed(dishInput),
     enabled: Boolean(dishInput.dishName.trim() || dishInput.canonicalDishId?.trim()) && (options.enabled ?? true),
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 5 * 60_000
   });
+}
+
+export function useDishFeedInfiniteQuery(input: string | DishFeedInput, options: { enabled?: boolean } = {}) {
+  const dishInput = dishFeedInputValue(input);
+  return useInfiniteQuery({
+    queryKey: feedKeys.dishPages(dishInput),
+    queryFn: ({ pageParam }) => getDishFeed(dishInput, pageParam),
+    enabled: Boolean(dishInput.dishName.trim() || dishInput.canonicalDishId?.trim()) && (options.enabled ?? true),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    ...ACTIVE_MEDIA_REFRESH_OPTIONS,
+    staleTime: 5 * 60_000
+  });
+}
+
+export function mergeUniqueFeedPosts(pages: Array<{ posts: ReviewPost[] }> | undefined) {
+  const seen = new Set<string>();
+  return (pages ?? []).flatMap((page) => page.posts.filter((post) => {
+    if (seen.has(post.id)) return false;
+    seen.add(post.id);
+    return true;
+  }));
 }

@@ -1,6 +1,7 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -24,6 +25,7 @@ import {
   useDeleteNotificationMutation,
   useMarkAllNotificationsReadMutation,
   useMarkNotificationReadMutation,
+  patchCachedNotification,
   useNotificationsQuery
 } from "@/hooks/useNotifications";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -43,6 +45,10 @@ const EMPTY_NOTIFICATIONS: AppNotification[] = [];
 const NOTIFICATIONS_ENTER_MS = 300;
 const NOTIFICATIONS_EXIT_MS = 120;
 const NOTIFICATIONS_PANEL_TRAVEL_MAX = 640;
+const NOTIFICATIONS_INITIAL_RENDER_COUNT = 8;
+const NOTIFICATIONS_RENDER_BATCH_SIZE = 8;
+const NOTIFICATIONS_WINDOW_SIZE = 7;
+const NOTIFICATIONS_STALE_MS = 30_000;
 
 function effectiveDate(notification: AppNotification) {
   return notification.updatedAt || notification.createdAt;
@@ -116,6 +122,7 @@ function buildSections(notifications: AppNotification[]): NotificationSection[] 
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const { width } = useWindowDimensions();
@@ -125,6 +132,8 @@ export default function NotificationsScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const notifications = useNotificationsQuery({ enabled: isReady && isAuthenticated });
+  const notificationsDataUpdatedAt = notifications.dataUpdatedAt;
+  const refetchNotifications = notifications.refetch;
   const markRead = useMarkNotificationReadMutation();
   const markAllRead = useMarkAllNotificationsReadMutation();
   const deleteNotification = useDeleteNotificationMutation();
@@ -192,12 +201,15 @@ export default function NotificationsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (Date.now() - notificationsDataUpdatedAt > NOTIFICATIONS_STALE_MS) {
+        void refetchNotifications();
+      }
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close])
+    }, [close, notificationsDataUpdatedAt, refetchNotifications])
   );
 
   async function openNotification(notification: AppNotification) {
@@ -229,7 +241,11 @@ export default function NotificationsScreen() {
     try {
       await respondToCircle.mutateAsync({ senderName: notification.actorName, action });
       await markRead.mutateAsync(notification.id).catch(() => {});
-      await notifications.refetch();
+      patchCachedNotification(queryClient, notification.id, (current) => ({
+        ...current,
+        circleRequestStatus: action === "accept" ? "accepted" : "rejected",
+        isRead: true
+      }));
     } catch (error) {
       Alert.alert("Could not update circle request", error instanceof Error ? error.message : "Please try again.");
     } finally {
@@ -269,7 +285,7 @@ export default function NotificationsScreen() {
         >
           <View style={styles.avatarWrap}>
             {item.actorAvatarUrl ? (
-              <Image source={{ uri: item.actorAvatarUrl }} style={styles.avatarImage} contentFit="cover" />
+              <Image cachePolicy="memory-disk" recyclingKey={item.actorAvatarUrl} source={{ uri: item.actorAvatarUrl }} style={styles.avatarImage} contentFit="cover" />
             ) : (
               <View style={[styles.avatarFallback, { backgroundColor: avatarColor(item.actorDisplayName) }]}>
                 <Text style={styles.avatarText}>{initialsForName(item.actorDisplayName)}</Text>
@@ -300,7 +316,7 @@ export default function NotificationsScreen() {
           </View>
 
           {item.thumbnailUrl ? (
-            <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} contentFit="cover" />
+            <Image cachePolicy="memory-disk" recyclingKey={item.thumbnailUrl} source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} contentFit="cover" />
           ) : null}
         </Pressable>
 
@@ -371,11 +387,11 @@ export default function NotificationsScreen() {
               title="Notifications are private"
             />
           </View>
-        ) : notifications.isLoading ? (
+        ) : notifications.isLoading && items.length === 0 ? (
           <View style={styles.stateWrap}>
             <LoadingState message="Fetching likes, comments, and circle activity." title="Loading notifications" />
           </View>
-        ) : notifications.isError ? (
+        ) : notifications.isError && items.length === 0 ? (
           <View style={styles.stateWrap}>
             <ErrorState
               actionLabel="Try again"
@@ -395,6 +411,7 @@ export default function NotificationsScreen() {
         ) : (
           <SectionList
             sections={sections}
+            initialNumToRender={NOTIFICATIONS_INITIAL_RENDER_COUNT}
             onEndReached={() => {
               if (notifications.hasNextPage && !notifications.isFetchingNextPage) {
                 void notifications.fetchNextPage();
@@ -402,6 +419,7 @@ export default function NotificationsScreen() {
             }}
             onEndReachedThreshold={0.35}
             keyExtractor={(item) => item.id}
+            maxToRenderPerBatch={NOTIFICATIONS_RENDER_BATCH_SIZE}
             renderItem={renderNotification}
             renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
             refreshControl={(
@@ -416,6 +434,9 @@ export default function NotificationsScreen() {
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             stickySectionHeadersEnabled={false}
+            updateCellsBatchingPeriod={50}
+            windowSize={NOTIFICATIONS_WINDOW_SIZE}
+            removeClippedSubviews={false}
           />
         )}
       </Screen>

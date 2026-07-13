@@ -4,7 +4,7 @@ import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, ChevronDown, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
+import { ActivityIndicator, Alert, Animated, BackHandler, Easing, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
@@ -43,7 +43,10 @@ import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
 import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
+import { useExploreLocationActivation } from "@/providers/UserLocationBootstrap";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
+import { useTabPerformance } from "@/performance/useTabPerformance";
 
 type ExploreTab = "places" | "dishes" | "people";
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -164,12 +167,14 @@ export default function ExploreScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();
-  const { resolvedTheme, themeColors, styles } = useExploreTheme();
+  const { themeColors, styles } = useExploreTheme();
   const isFocused = useIsFocused();
+  const runtime = useRuntimeActivity();
   const setCircleAccessStatus = useSetCircleAccessStatusMutation();
   const composing = useComposerStore((state) => state.composing);
   const viewerName = useSessionStore((state) => state.profile?.username ?? "");
   const isActiveMainTab = isFocused;
+  useExploreLocationActivation(isActiveMainTab);
   const isActiveMainTabRef = useRef(isActiveMainTab);
   isActiveMainTabRef.current = isActiveMainTab;
   const initialTab = useRef(initialExploreTab(params.tab)).current;
@@ -202,12 +207,19 @@ export default function ExploreScreen() {
   const [personRequestStatuses, setPersonRequestStatuses] = useState<Record<string, PersonRequestStatus>>({});
   const discovery = useExploreDiscoveryQuery(
     { limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation },
-    { enabled: locationHydrated }
+    { enabled: locationHydrated && isActiveMainTab }
   );
+  const refetchExploreDiscovery = discovery.refetch;
   const showInitialLoading = !locationHydrated || (discovery.isLoading && !discovery.data);
   const showLoading = showInitialLoading;
+  useTabPerformance(
+    "explore",
+    isActiveMainTab,
+    locationHydrated && Boolean(discovery.data || (!discovery.isLoading && !discovery.isError)),
+    !discovery.isFetching
+  );
   const normalizedQuery = query.trim().toLowerCase();
-  const canSearchGlobally = searchResultsVisible && normalizedQuery.length >= EXPLORE_SEARCH_MIN_LENGTH;
+  const canSearchGlobally = isActiveMainTab && searchResultsVisible && normalizedQuery.length >= EXPLORE_SEARCH_MIN_LENGTH;
   const places = showLoading ? EMPTY_PLACES : discovery.data?.places ?? EMPTY_PLACES;
   const dishes = showLoading ? EMPTY_DISHES : discovery.data?.dishes ?? EMPTY_DISHES;
   const people = showLoading ? EMPTY_PEOPLE : discovery.data?.people ?? EMPTY_PEOPLE;
@@ -219,15 +231,15 @@ export default function ExploreScreen() {
   });
   const locationLabel = exploreLocation ? shortUserLocationLabel(exploreLocation.label) : "Set location";
 
-  const filteredPlaces = normalizedQuery
+  const filteredPlaces = useMemo(() => normalizedQuery
     ? places.filter((place) => `${place.name} ${place.area ?? ""} ${place.topDishes.join(" ")}`.toLowerCase().includes(normalizedQuery))
-    : places;
-  const filteredDishes = normalizedQuery
+    : places, [normalizedQuery, places]);
+  const filteredDishes = useMemo(() => normalizedQuery
     ? dishes.filter((dish) => `${dish.name} ${dish.familyName} ${dish.familyNames.join(" ")} ${dish.familyIds.join(" ")} ${dish.topRestaurantNames.join(" ")} ${dish.tags.join(" ")}`.toLowerCase().includes(normalizedQuery))
-    : dishes;
-  const filteredPeople = normalizedQuery
+    : dishes, [dishes, normalizedQuery]);
+  const filteredPeople = useMemo(() => normalizedQuery
     ? people.filter((person) => `${person.displayName} ${person.username}`.toLowerCase().includes(normalizedQuery))
-    : people;
+    : people, [normalizedQuery, people]);
   const searchPeople = useMemo(() => {
     if (!canSearchGlobally) return EMPTY_PEOPLE;
     return peopleSearch.results.map((person) => ({
@@ -315,23 +327,17 @@ export default function ExploreScreen() {
   }, [closeSearchMode, searchResultsVisible]);
 
   useEffect(() => {
-    if (Platform.OS === "web") return undefined;
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "background" || nextState === "inactive") {
-        backgroundedAtRef.current = Date.now();
-        return;
-      }
-
-      if (nextState !== "active" || !locationHydrated || !isActiveMainTabRef.current) return;
-      const backgroundedAt = backgroundedAtRef.current;
-      backgroundedAtRef.current = null;
-      if (backgroundedAt && Date.now() - backgroundedAt > EXPLORE_APP_RESUME_REFRESH_MS) {
-        void discovery.refetch();
-      }
-    });
-
-    return () => subscription.remove();
-  }, [discovery.refetch, locationHydrated]);
+    if (!runtime.isForeground) {
+      backgroundedAtRef.current ??= Date.now();
+      return;
+    }
+    if (!locationHydrated || !isActiveMainTabRef.current) return;
+    const backgroundedAt = backgroundedAtRef.current;
+    backgroundedAtRef.current = null;
+    if (backgroundedAt && Date.now() - backgroundedAt > EXPLORE_APP_RESUME_REFRESH_MS) {
+      void refetchExploreDiscovery();
+    }
+  }, [locationHydrated, refetchExploreDiscovery, runtime.isForeground]);
 
   useEffect(() => {
     if (!shouldRestoreSearchFocusRef.current) return undefined;
@@ -650,8 +656,8 @@ export default function ExploreScreen() {
 
   const refreshExplore = useCallback(() => {
     if (!locationHydrated) return;
-    void discovery.refetch();
-  }, [discovery.refetch, locationHydrated]);
+    void refetchExploreDiscovery();
+  }, [locationHydrated, refetchExploreDiscovery]);
 
   const refreshControl = useMemo(() => (
     <RefreshControl

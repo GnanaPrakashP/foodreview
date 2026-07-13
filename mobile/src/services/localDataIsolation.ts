@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { Image } from "expo-image";
 import { Platform } from "react-native";
 import { clearSupabaseLocalSessionStorage, supabase } from "@/api/supabase";
 import {
@@ -205,7 +206,11 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
     });
     await cleanupStep(next, "clearing_files", async () => {
       setAccountFileOwnerScope(null);
-      await clearAccountFiles(next.ownerScope);
+      await Promise.all([
+        clearAccountFiles(next.ownerScope),
+        Image.clearMemoryCache().catch(() => false),
+        Image.clearDiskCache().catch(() => false)
+      ]);
     });
     await cleanupStep(next, "clearing_account_storage", async () => {
       setUserLocationOwnerScope(null);

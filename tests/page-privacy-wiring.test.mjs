@@ -321,8 +321,8 @@ test("settings engagement APIs resolve the authenticated actor server-side", () 
     assert.match(src, /actor\.actorName/);
   }
 
-  assert.match(liked, /likedPostsForActor\(db, actor\.actorName\)/);
-  assert.match(saved, /savedPostsForActor\(db, actor\.actorName\)/);
+  assert.match(liked, /likedPostsForActor\(db, actor\.actorName, \{ cursor, limit \}\)/);
+  assert.match(saved, /savedPostsForActor\(db, actor\.actorName, \{ cursor, limit \}\)/);
   assert.match(comments, /commentsForActor\(db, actor\.actorName\)/);
   assert.match(comments, /buildProfileDisplayMap\(/);
   assert.match(comments, /profileMap/);

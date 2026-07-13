@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -106,6 +106,7 @@ import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
@@ -2621,7 +2622,6 @@ export default function MemoryDetailScreen() {
     paneTabMode,
     requestRoomMode
   } = useMemoryRoomController(params.tab);
-  const [panesPreloaded, setPanesPreloaded] = useState(false);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -3640,24 +3640,13 @@ export default function MemoryDetailScreen() {
   const mergedRoomData = useMemo(() => (
     room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
   ), [olderMessageItems, room.data]);
-  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media" || panesPreloaded);
+  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
   ), [mediaPages.data]);
   const galleryPhotos = useMemo(() => (
     mergedRoomData ? mergeMemoryPhotos(pagedMediaPhotos, mergedRoomData.photos) : []
   ), [mergedRoomData, pagedMediaPhotos]);
-  // Warm every lazy pane (chat, media, dishes) once the opening interaction
-  // settles. After this fires, switching tabs is a pure visibility toggle on an
-  // already-mounted, already-committed subtree — no cold mount, no staged fill.
-  // runAfterInteractions keeps the mount cost off the entry animation frames.
-  useEffect(() => {
-    if (!room.data || panesPreloaded) return;
-    const preloadTask = InteractionManager.runAfterInteractions(() => {
-      setPanesPreloaded(true);
-    });
-    return () => preloadTask.cancel();
-  }, [panesPreloaded, room.data]);
   useEffect(() => {
     if (mode !== "media") return;
     const prefetchTask = InteractionManager.runAfterInteractions(() => {
@@ -3798,7 +3787,7 @@ export default function MemoryDetailScreen() {
                     topInset={tableHeaderHeight}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "chat"} preload={panesPreloaded}>
+                <RoomPane active={paneTabMode === "chat"}>
                   <MemoryChatMainSurfacePane
                     active={mode === "chat"}
                     bottomClearance={chatBottomClearance}
@@ -3845,7 +3834,7 @@ export default function MemoryDetailScreen() {
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "media"} preload={panesPreloaded}>
+                <RoomPane active={paneTabMode === "media"}>
                   <MediaGalleryPane
                     error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
                     hasMore={Boolean(mediaPages.hasNextPage)}
@@ -3857,7 +3846,7 @@ export default function MemoryDetailScreen() {
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "dishes"} preload={panesPreloaded}>
+                <RoomPane active={paneTabMode === "dishes"}>
                   <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
@@ -4295,21 +4284,19 @@ function RoomPane({
   active,
   children,
   lazy = true,
-  motion = "lift",
-  preload = false
+  motion = "lift"
 }: {
   active: boolean;
   children: ReactNode;
   lazy?: boolean;
   motion?: "fade" | "lift";
-  preload?: boolean;
 }) {
-  const [hasMounted, setHasMounted] = useState(active || preload || !lazy);
+  const [hasMounted, setHasMounted] = useState(active || !lazy);
   const progress = useSharedValue(active ? 1 : 0);
 
   useEffect(() => {
-    if (active || preload) setHasMounted(true);
-  }, [active, preload]);
+    if (active) setHasMounted(true);
+  }, [active]);
 
   // Cross-fade the content on the SAME timing (MEMORY_ROOM_TAB_TIMING) as the
   // header collapse + tab indicator, started in the same commit, so the whole
@@ -8393,12 +8380,17 @@ function MediaViewer({
     }
   }
 
-  const renderViewerItem = ({ item: media }: { item: MemoryPhoto }) => (
+  const viewerExtraData = `${safeActiveIndex}:${carouselWidth}`;
+  const renderViewerItem = ({ index, item: media }: { index: number; item: MemoryPhoto }) => (
     <View style={[styles.viewerSlide, carouselWidth > 0 && { width: carouselWidth }]}>
       {memoryMediaKind(media) === "audio" ? (
         <ViewerAudio media={media} />
-      ) : memoryMediaKind(media) === "video" ? (
+      ) : memoryMediaKind(media) === "video" && index === safeActiveIndex ? (
         <ViewerVideo media={media} />
+      ) : memoryMediaKind(media) === "video" ? (
+        <View style={styles.viewerVideo}>
+          <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" uri={media.publicUrl} />
+        </View>
       ) : (
         <Image
           cachePolicy="memory-disk"
@@ -8429,7 +8421,7 @@ function MediaViewer({
         >
           <FlatList
             data={items}
-            extraData={carouselWidth}
+            extraData={viewerExtraData}
             getItemLayout={carouselWidth > 0 ? (_data, index) => ({
               index,
               length: carouselWidth,
@@ -8564,9 +8556,15 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
 }
 
 function ViewerVideo({ media }: { media: MemoryPhoto }) {
+  const runtime = useRuntimeActivity();
   const player = useVideoPlayer(media.publicUrl, (instance) => {
     instance.loop = false;
+    instance.staysActiveInBackground = false;
   });
+
+  useEffect(() => {
+    if (!runtime.isForeground) player.pause();
+  }, [player, runtime.isForeground]);
 
   return (
     <View style={styles.viewerVideo}>

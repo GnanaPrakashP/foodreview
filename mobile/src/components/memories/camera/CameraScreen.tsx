@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Camera, CameraView, type FocusMode } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -8,7 +8,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  AppState,
   Linking,
   Platform,
   Pressable,
@@ -18,6 +17,7 @@ import {
   View
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import Reanimated, {
   cancelAnimation,
   Easing,
@@ -117,10 +117,11 @@ export function CameraScreen({
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const runtime = useRuntimeActivity();
   const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
   const cameraRef = useRef<CameraView>(null);
   const closingRef = useRef(false);
-  const appActiveRef = useRef(AppState.currentState === "active");
+  const appActiveRef = useRef(runtime.isForeground);
   const recordingRef = useRef(false);
   const recordingStartRef = useRef(0);
   const autoFocusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,14 +181,10 @@ export function CameraScreen({
   }
 
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      const active = nextState === "active";
-      appActiveRef.current = active;
-      setAppActive(active);
-      if (!active && recordingRef.current) cameraRef.current?.stopRecording();
-    });
-    return () => subscription.remove();
-  }, []);
+    appActiveRef.current = runtime.isForeground;
+    setAppActive(runtime.isForeground);
+    if (!runtime.isForeground && recordingRef.current) cameraRef.current?.stopRecording();
+  }, [runtime.isForeground]);
 
   useEffect(() => {
     if (facing === "front" && flashEnabled) setFlashEnabled(false);

@@ -1,12 +1,12 @@
 import { useLocalSearchParams } from "expo-router";
 import { ArrowLeft, MapPin } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
 import { EmptyState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { useRestaurantFeedQuery } from "@/hooks/useFeeds";
+import { mergeUniqueFeedPosts, useRestaurantFeedInfiniteQuery } from "@/hooks/useFeeds";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
@@ -94,8 +94,8 @@ export default function RestaurantDetailScreen() {
   const placeId = firstParam(params.placeId).trim();
   const fallbackName = (firstParam(params.name) || firstParam(params.restaurant)).trim();
   const fallbackAddress = firstParam(params.address).trim();
-  const feed = useRestaurantFeedQuery({ placeId, restaurantAddress: fallbackAddress, restaurantName: fallbackName });
-  const posts = feed.data?.posts ?? [];
+  const feed = useRestaurantFeedInfiniteQuery({ placeId, restaurantAddress: fallbackAddress, restaurantName: fallbackName });
+  const posts = useMemo(() => mergeUniqueFeedPosts(feed.data?.pages), [feed.data?.pages]);
   const title = fallbackName || posts[0]?.restaurantName || "Restaurant";
   const subtitle = fallbackAddress || posts[0]?.area || posts[0]?.restaurantAddress || "Public posts";
   const dishes = useMemo(() => topDishesForRestaurant(posts), [posts]);
@@ -105,6 +105,13 @@ export default function RestaurantDetailScreen() {
     visitsThisWeek: visitsThisWeek(posts)
   }), [posts]);
   const tabWidth = Math.max(0, width - spacing.base * 2) / RESTAURANT_TABS.length;
+  const fetchNextPage = feed.fetchNextPage;
+  const hasNextPage = feed.hasNextPage;
+  const isFetchingNextPage = feed.isFetchingNextPage;
+  const loadMorePosts = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   useEffect(() => {
     const nextTabIndex = tabIndexFor(activeTab);
@@ -140,11 +147,46 @@ export default function RestaurantDetailScreen() {
 
   return (
     <Reanimated.View style={[styles.screenRoot, slideStyle]}>
-      <Screen padded={false} scroll>
+      <Screen padded={false} scroll={activeTab !== "posts"}>
         {!placeId && !fallbackName ? (
           <View style={styles.stateWrap}>
             <EmptyState icon="restaurant-outline" message="This restaurant link is missing a place id." title="Restaurant unavailable" />
           </View>
+        ) : activeTab === "posts" ? (
+          <PostFeed
+            ListHeaderComponent={(
+              <>
+                <RestaurantHeader
+                  onBack={closeRestaurant}
+                  styles={styles}
+                  subtitle={subtitle}
+                  themeColors={themeColors}
+                  title={title}
+                />
+                <RestaurantStats stats={stats} styles={styles} />
+                <RestaurantTabs
+                  activeTab={activeTab}
+                  onChange={setActiveTab}
+                  styles={styles}
+                  tabProgress={tabProgress}
+                  tabWidth={tabWidth}
+                />
+              </>
+            )}
+            emptyMessage="Reviews for this restaurant will appear here."
+            emptyTitle="No public posts yet"
+            errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this restaurant."}
+            hasMore={Boolean(feed.hasNextPage)}
+            isError={feed.isError && posts.length === 0}
+            isFetchingMore={feed.isFetchingNextPage}
+            isLoading={feed.isLoading && posts.length === 0}
+            onEndReached={loadMorePosts}
+            onRefresh={() => { void feed.refetch(); }}
+            onRetry={() => feed.refetch()}
+            posts={posts}
+            refreshing={feed.isRefetching && !feed.isFetchingNextPage}
+            scrollEnabled
+          />
         ) : (
           <>
             <RestaurantHeader
@@ -165,17 +207,7 @@ export default function RestaurantDetailScreen() {
 
             <View style={styles.tabViewport}>
               <Animated.View style={[styles.tabContent, { transform: [{ translateX: contentTranslateX }] }]}>
-                {activeTab === "posts" ? (
-                  <PostFeed
-                    emptyMessage="Reviews for this restaurant will appear here."
-                    emptyTitle="No public posts yet"
-                    errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this restaurant."}
-                    isError={feed.isError}
-                    isLoading={feed.isLoading}
-                    onRetry={() => feed.refetch()}
-                    posts={posts}
-                  />
-                ) : activeTab === "dishes" ? (
+                {activeTab === "dishes" ? (
                   <RestaurantDishes dishes={dishes} styles={styles} />
                 ) : (
                   <View style={styles.menuState}>

@@ -76,7 +76,8 @@ test("mobile recovery and OAuth callbacks are mode-bound, allowlisted, and repla
 });
 
 test("install identity is cryptographically random and is never authentication", () => {
-  assert.match(install, /cryptoApi\?\.getRandomValues/);
+  assert.match(install, /import \{ getRandomValues \} from "expo-crypto"/);
+  assert.match(install, /return getRandomValues\(bytes\)/);
   assert.match(install, /SecureStore/);
   assert.match(install, /UUID_RE/);
   assert.doesNotMatch(actor, /x-foodreview-install-id/);

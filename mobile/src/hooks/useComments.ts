@@ -1,6 +1,8 @@
 import { type InfiniteData, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { addPostComment, deletePostComment, getPostComments, type CommentsPage } from "@/services/comments";
-import { patchCachedPostEngagementFields } from "@/hooks/useFeeds";
+import { findCachedPostById, patchCachedPostEngagementFields } from "@/hooks/useFeeds";
+import { useSessionStore } from "@/stores/sessionStore";
+import type { PostComment } from "@/types/models";
 
 export const commentKeys = {
   post: (postId: string) => ["comments", postId] as const
@@ -19,10 +21,57 @@ export function usePostCommentsQuery(postId: string) {
 
 export function useAddPostCommentMutation(postId: string) {
   const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
 
   return useMutation({
     mutationFn: (content: string) => addPostComment({ postId, content }),
-    onSuccess: (comment) => {
+    onMutate: async (content) => {
+      const queryKey = commentKeys.post(postId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey }),
+        queryClient.cancelQueries({ predicate: (query) => query.queryKey[0] === "feed" || query.queryKey[0] === "profile" })
+      ]);
+      const previousComments = queryClient.getQueryData<InfiniteData<CommentsPage>>(queryKey);
+      const previousPostCaches = queryClient.getQueriesData({
+        predicate: (query) => query.queryKey[0] === "feed" || query.queryKey[0] === "profile"
+      });
+      const optimisticId = `optimistic-comment:${Date.now()}`;
+      const displayName = profile?.displayName || profile?.username || "You";
+      const initials = displayName.split(/[\s_]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "Y";
+      const optimisticComment: PostComment = {
+        authorInitials: initials,
+        authorName: displayName,
+        content: content.trim(),
+        createdAt: new Date().toISOString(),
+        id: optimisticId,
+        postId,
+        userName: profile?.username ?? ""
+      };
+      queryClient.setQueryData<InfiniteData<CommentsPage>>(queryKey, (current) => {
+        if (!current?.pages[0]) return current;
+        const pages = [...current.pages];
+        pages[0] = {
+          ...pages[0],
+          comments: [...pages[0].comments, optimisticComment],
+          totalCount: pages[0].totalCount + 1
+        };
+        return { ...current, pages };
+      });
+      const cachedPost = findCachedPostById(queryClient, postId);
+      if (cachedPost) {
+        patchCachedPostEngagementFields(queryClient, {
+          commentCount: cachedPost.commentCount + 1,
+          postId
+        });
+      }
+      return { optimisticId, previousComments, previousPostCaches };
+    },
+    onError: (_error, _content, context) => {
+      if (!context) return;
+      queryClient.setQueryData(commentKeys.post(postId), context.previousComments);
+      for (const [queryKey, data] of context.previousPostCaches) queryClient.setQueryData(queryKey, data);
+    },
+    onSuccess: (comment, _content, context) => {
       queryClient.setQueryData<InfiniteData<CommentsPage>>(commentKeys.post(postId), (current) => {
         if (!current) return current;
         const pages = [...current.pages];
@@ -30,8 +79,10 @@ export function useAddPostCommentMutation(postId: string) {
         if (!firstPage) return current;
         pages[0] = {
           ...firstPage,
-          comments: [...firstPage.comments, comment],
-          totalCount: firstPage.totalCount + 1
+          comments: context?.optimisticId
+            ? firstPage.comments.map((cached) => cached.id === context.optimisticId ? comment : cached)
+            : [...firstPage.comments, comment],
+          totalCount: context?.optimisticId ? firstPage.totalCount : firstPage.totalCount + 1
         };
         return { ...current, pages };
       });

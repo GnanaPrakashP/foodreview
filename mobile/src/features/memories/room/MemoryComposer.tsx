@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   type LayoutChangeEvent,

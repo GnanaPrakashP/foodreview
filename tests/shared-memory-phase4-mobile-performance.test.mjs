@@ -58,16 +58,17 @@ test("phase 4 media viewer is virtualized instead of mounting every media item",
 test("phase 4 room panes lazy-mount inactive heavy tabs", () => {
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.match(roomPaneBody, /lazy = true/);
-  assert.match(roomPaneBody, /const \[hasMounted, setHasMounted\] = useState\(active \|\| preload \|\| !lazy\)/);
+  assert.match(roomPaneBody, /const \[hasMounted, setHasMounted\] = useState\(active \|\| !lazy\)/);
+  assert.match(roomPaneBody, /if \(active\) setHasMounted\(true\)/);
   assert.match(roomPaneBody, /if \(lazy && !hasMounted\) return null/);
 });
 
-test("phase 4 warms chat after room entry and renders timestamps on the first frame", () => {
+test("phase 6 defers chat until visit, retains it, and renders timestamps on the first frame", () => {
   const timeBody = memoryRoomScreen.match(/function ChatMainBodyWithTime\([\s\S]*?\nfunction estimateChatTimestampWidth/)?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
-  assert.match(memoryRoomScreen, /InteractionManager\.runAfterInteractions\(\(\) => \{\s*setChatPreloaded\(true\)/);
-  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "chat"\} preload=\{chatPreloaded\}>/);
-  assert.match(roomPaneBody, /if \(active && preload\) \{\s*progress\.setValue\(1\)/);
+  assert.doesNotMatch(memoryRoomScreen, /setChatPreloaded|panesPreloaded/);
+  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "chat"\}>/);
+  assert.match(roomPaneBody, /if \(active\) setHasMounted\(true\)/);
   assert.match(timeBody, /const estimatedTimeWidth = estimateChatTimestampWidth\(time\)/);
   assert.match(timeBody, /style=\{styles\.chatMainTimePinned\}/);
   assert.doesNotMatch(memoryRoomScreen, /chatMainTimeMeasuring/);
@@ -108,7 +109,7 @@ test("phase 3 persists memory React Query cache with MMKV", () => {
   assert.match(queryPersistence, /circlebites\.query-cache/);
   assert.match(appProviders, /AccountSessionBoundary/);
   assert.match(queryPersistence, /persistQueryClientRestore/);
-  assert.match(queryPersistence, /query\.queryKey\[0\] === "memories"/);
+  assert.match(queryPersistence, /key\.length === 1 && key\[0\] === "memories"/);
   assert.match(queryPersistence, /maxAge: QUERY_CACHE_MAX_AGE_MS/);
   assert.match(queryPersistence, /ownerScope/);
 });

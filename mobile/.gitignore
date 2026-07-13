@@ -2,6 +2,7 @@
 .expo-shared/
 node_modules/
 dist/
+dist-mobile-performance/
 web-build/
 *.jks
 *.p8

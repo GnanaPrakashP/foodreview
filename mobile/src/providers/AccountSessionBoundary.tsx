@@ -2,7 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { PropsWithChildren, useEffect, useRef, useState } from "react";
-import { AppState, View } from "react-native";
+import { View } from "react-native";
 import { supabase } from "@/api/supabase";
 import { getAccountLifecycleStatus, logout } from "@/services/auth";
 import { actorFromProfile, getProfileForVerifiedUserId } from "@/services/profiles";
@@ -17,15 +17,19 @@ import {
 } from "@/services/accountProfileCache";
 import { useSessionStore } from "@/stores/sessionStore";
 import { reconcilePendingPostMediaUploads } from "@/services/mediaPipeline";
+import { subscribeRuntimeActivity } from "@/performance/runtimeActivity";
+import { recordPerformanceSample } from "@/performance/mobilePerformance";
 
 function createAccountQueryClient() {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        gcTime: 30 * 60_000,
-        refetchOnReconnect: false,
+        gcTime: 2 * 60 * 60_000,
+        networkMode: "online",
+        refetchOnMount: true,
+        refetchOnReconnect: true,
         refetchOnWindowFocus: false,
-        retry: 1,
+        retry: (failureCount) => failureCount < 1,
         staleTime: 5 * 60_000
       }
     }
@@ -51,6 +55,16 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
   const [host, setHost] = useState<Host | null>(null);
   const hostRef = useRef<Host | null>(null);
   const queueRef = useRef(Promise.resolve());
+  const boundaryStartedAtRef = useRef(Date.now());
+  const readyRecordedRef = useRef(false);
+
+  useEffect(() => {
+    if (!host || readyRecordedRef.current) return;
+    readyRecordedRef.current = true;
+    recordPerformanceSample("app.account_boundary_ready", {
+      durationMs: Date.now() - boundaryStartedAtRef.current
+    });
+  }, [host]);
 
   useEffect(() => {
     let alive = true;
@@ -110,7 +124,11 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
           return;
         }
 
+        const hydrationStartedAt = Date.now();
         const { owner, ownerChanged } = await prepareLocalDataForOwner(session.user.id, nextClient, current?.client);
+        recordPerformanceSample("app.cache_hydration", {
+          durationMs: Date.now() - hydrationStartedAt
+        });
         let profile = null;
         let profileLookupFailed = false;
         let lifecycle: Awaited<ReturnType<typeof getAccountLifecycleStatus>> | null = null;
@@ -237,8 +255,8 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       }
       enqueue(session);
     });
-    const appStateListener = AppState.addEventListener("change", (state) => {
-      if (state === "active") validateForegroundAccount();
+    const unsubscribeRuntimeActivity = subscribeRuntimeActivity((next, previous) => {
+      if (next.isForeground && !previous.isForeground) validateForegroundAccount();
     });
 
     supabase.auth.getSession()
@@ -256,7 +274,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       alive = false;
       if (tokenExpiryTimeout) clearTimeout(tokenExpiryTimeout);
       authListener.subscription.unsubscribe();
-      appStateListener.remove();
+      unsubscribeRuntimeActivity();
       hostRef.current?.client.clear();
     };
   }, [router]);

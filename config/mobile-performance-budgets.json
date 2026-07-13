@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "profileBuildFlag": "EXPO_PUBLIC_PERFORMANCE_PROFILE=1",
+  "timingMilliseconds": {
+    "coldJsStartToUsefulContent": 1500,
+    "cachedHydrationAfterBoundary": 200,
+    "warmTabCachedContent": 150
+  },
+  "rendering": {
+    "feedInitialItems": 4,
+    "feedBatchItems": 4,
+    "feedWindowSize": 5,
+    "maximumActiveFeedPlayers": 1,
+    "thumbnailPrefetchDepth": 2,
+    "maximumRepeatedFlowMemoryGrowthMb": 40
+  },
+  "bundleBytes": {
+    "androidReleaseApk": 178257920,
+    "nativeExportTotal": 19922944,
+    "hermesPerPlatform": 11010048,
+    "fontAssetsTotal": 2621440
+  },
+  "phase5Baseline": {
+    "androidReleaseApkBytes": 151758357,
+    "sourceCommit": "0af380ac1533253dca07af95f144ad6892714f50"
+  },
+  "measurementRules": {
+    "coldSamples": 5,
+    "tabSamples": 5,
+    "profileDataIsAggregateOnly": true,
+    "releaseBuildRequired": true
+  }
+}

@@ -1,5 +1,10 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { feedKeys, patchCachedPostEngagementFields } from "@/hooks/useFeeds";
+import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import {
+  findCachedPostById,
+  patchCachedPostById,
+  patchCachedPostEngagementFields,
+  removeCachedPostById
+} from "@/hooks/useFeeds";
 import { profileKeys } from "@/hooks/useProfiles";
 import {
   cancelCircleAccess,
@@ -12,28 +17,70 @@ import {
   type ToggleBookmarkInput,
   type ToggleLikeInput
 } from "@/services/engagement";
+import type { SavedSettingsList, SettingsPostList } from "@/services/settings";
 
-function useInvalidateEngagementQueries() {
-  const queryClient = useQueryClient();
+const likedSettingsKey = ["settings", "liked"] as const;
+const savedSettingsKey = ["settings", "saved"] as const;
 
-  return () => {
-    queryClient.invalidateQueries({ queryKey: feedKeys.circle });
-    queryClient.invalidateQueries({ queryKey: feedKeys.public });
-    queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
-    queryClient.invalidateQueries({ queryKey: ["circle"] });
-    queryClient.invalidateQueries({ queryKey: ["profile"] });
+function updateInfiniteSettingsPosts<TPage extends SettingsPostList>(
+  current: InfiniteData<TPage> | undefined,
+  postId: string,
+  replacement: TPage["posts"][number] | null
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page, pageIndex) => ({
+      ...page,
+      posts: [
+        ...(pageIndex === 0 && replacement ? [replacement] : []),
+        ...page.posts.filter((post) => post.id !== postId)
+      ]
+    }))
   };
+}
+
+function postCachePredicate(query: { queryKey: readonly unknown[] }) {
+  return query.queryKey[0] === "feed" || query.queryKey[0] === "profile" || query.queryKey[0] === "settings";
+}
+
+function restorePostCaches(queryClient: ReturnType<typeof useQueryClient>, snapshots: Array<[readonly unknown[], unknown]>) {
+  for (const [queryKey, data] of snapshots) queryClient.setQueryData(queryKey, data);
 }
 
 export function useTogglePostLikeMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ToggleLikeInput) => togglePostLike(input),
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ predicate: postCachePredicate });
+      const snapshots = queryClient.getQueriesData({ predicate: postCachePredicate });
+      patchCachedPostById(queryClient, input.postId, (post) => ({
+        ...post,
+        likedByMe: !input.liked,
+        likeCount: Math.max(0, post.likeCount + (input.liked ? -1 : 1))
+      }));
+      return { snapshots };
+    },
+    onError: (_error, _input, context) => {
+      if (context) restorePostCaches(queryClient, context.snapshots);
+    },
     onSuccess: (engagement) => patchCachedPostEngagementFields(queryClient, {
       likedByMe: engagement.likedByMe,
       likeCount: engagement.likeCount,
       postId: engagement.postId
-    })
+    }),
+    onSettled: (engagement) => {
+      if (!engagement) return;
+      const sourcePost = findCachedPostById(queryClient, engagement.postId);
+      queryClient.setQueryData<InfiniteData<SettingsPostList>>(likedSettingsKey, (current) => (
+        updateInfiniteSettingsPosts(
+          current,
+          engagement.postId,
+          engagement.likedByMe && sourcePost ? { ...sourcePost, likedByMe: true } : null
+        )
+      ));
+    }
   });
 }
 
@@ -41,19 +88,42 @@ export function useTogglePostBookmarkMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ToggleBookmarkInput) => togglePostBookmark(input),
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ predicate: postCachePredicate });
+      const snapshots = queryClient.getQueriesData({ predicate: postCachePredicate });
+      patchCachedPostById(queryClient, input.postId, (post) => ({ ...post, bookmarkedByMe: !input.bookmarked }));
+      return { snapshots };
+    },
+    onError: (_error, _input, context) => {
+      if (context) restorePostCaches(queryClient, context.snapshots);
+    },
     onSuccess: (engagement) => patchCachedPostEngagementFields(queryClient, {
       bookmarkedByMe: engagement.bookmarkedByMe,
       postId: engagement.postId
-    })
+    }),
+    onSettled: (engagement) => {
+      if (!engagement) return;
+      const sourcePost = findCachedPostById(queryClient, engagement.postId);
+      queryClient.setQueryData<InfiniteData<SavedSettingsList>>(savedSettingsKey, (current) => (
+        updateInfiniteSettingsPosts(
+          current,
+          engagement.postId,
+          engagement.bookmarkedByMe && sourcePost ? { ...sourcePost, bookmarkedByMe: true } : null
+        )
+      ));
+    }
   });
 }
 
 export function useDeletePostMutation() {
-  const invalidate = useInvalidateEngagementQueries();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (input: { postId: string }) => deletePost(input),
-    onSettled: invalidate
+    onSuccess: (_result, input) => {
+      removeCachedPostById(queryClient, input.postId);
+      queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
+    }
   });
 }
 

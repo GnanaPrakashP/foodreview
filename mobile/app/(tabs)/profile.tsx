@@ -3,10 +3,9 @@ import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ViewToken } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQueryClient } from "@tanstack/react-query";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { PostCard } from "@/components/posts/PostCard";
 import { AppButton } from "@/components/ui/AppButton";
@@ -15,13 +14,14 @@ import { AppText } from "@/components/ui/AppText";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
-import { useMemoryRoomsQuery } from "@/hooks/useMemories";
-import { profileKeys, useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
+import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
+import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { ProfileSettingsPanel } from "../profile/settings";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData, ReviewPost } from "@/types/models";
+import { useTabPerformance } from "@/performance/useTabPerformance";
 
 type ProfileTab = "posts" | "memories";
 
@@ -100,10 +100,17 @@ function profileErrorMessage(error: unknown, fallback: string) {
 
 export default function ProfileScreen() {
   const { styles } = useProfileTheme();
+  const isFocused = useIsFocused();
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const page = useCurrentProfilePageQuery({ enabled: isReady && isAuthenticated });
-  const memories = useMemoryRoomsQuery({ enabled: isReady && isAuthenticated && Boolean(page.data) });
+  const page = useCurrentProfilePageQuery({ enabled: isFocused && isReady && isAuthenticated });
+  useTabPerformance(
+    "profile",
+    isFocused,
+    isReady && (!isAuthenticated || Boolean(page.data) || (!page.isLoading && !page.isError)),
+    !page.isFetching
+  );
+  const memories = useMemoryRoomsQuery({ enabled: isFocused && isReady && isAuthenticated && Boolean(page.data) });
   const canRefresh = isReady && isAuthenticated;
   const [settingsVisible, setSettingsVisible] = useState(false);
   const openingSettingsRef = useRef(false);
@@ -163,14 +170,19 @@ function ProfileContent({
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const router = useRouter();
   const isFocused = useIsFocused();
-  const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ tab?: string }>();
   const isActiveMainTab = isFocused;
   const initialTab = useRef(profileTabFromParam(params.tab)).current;
   const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ProfileTab>(initialTab);
   const [showTrustSheet, setShowTrustSheet] = useState(false);
+  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const endReachedInFlightRef = useRef(false);
+  const postViewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 65, minimumViewTime: 900 });
+  const onPostViewableItemsChangedRef = useRef(({ viewableItems }: { viewableItems: ViewToken<ProfileListRow>[] }) => {
+    const activePostId = viewableItems.find((token) => token.isViewable && token.item?.type === "post")?.item;
+    setActiveMediaPostId(activePostId?.type === "post" ? activePostId.post.id : null);
+  });
 
   const openCreate = useCallback(() => {
     router.push("/share");
@@ -189,9 +201,13 @@ function ProfileContent({
   }, [isActiveMainTab, params.tab]);
 
   const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
+  useMemoryRoomsRealtime(isActiveMainTab && isReady && isAuthenticated && Boolean(memoriesData));
   const profileUsername = page?.profile.username ?? "";
-  const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: Boolean(profileUsername) });
-  const pagedPosts = posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page?.posts ?? [];
+  const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: isActiveMainTab && Boolean(profileUsername) });
+  const pagedPosts = useMemo(
+    () => posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page?.posts ?? [],
+    [page?.posts, posts.data?.pages]
+  );
 
   useEffect(() => {
     if (!posts.isFetchingNextPage) endReachedInFlightRef.current = false;
@@ -226,13 +242,12 @@ function ProfileContent({
   }, [isAuthenticated, isReady, memoriesIsError, memoriesIsLoading, memoryRows, page, pageQuery.isError, pageQuery.isLoading]);
 
   const onRefresh = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ["profile"] });
-    if (profileUsername) await queryClient.resetQueries({ queryKey: profileKeys.posts(profileUsername) });
     await Promise.all([
       pageQuery.refetch(),
-      memoriesRefetch()
+      memoriesRefetch(),
+      profileUsername ? posts.refetch() : Promise.resolve()
     ]);
-  }, [memoriesRefetch, pageQuery, profileUsername, queryClient]);
+  }, [memoriesRefetch, pageQuery, posts, profileUsername]);
 
   const onEndReached = useCallback(() => {
     if (!posts.hasNextPage || posts.isFetchingNextPage || endReachedInFlightRef.current) return;
@@ -245,7 +260,7 @@ function ProfileContent({
   const renderListRow = useCallback((item: ProfileListRow) => {
     switch (item.type) {
       case "post":
-        return <PostCard post={item.post} />;
+        return <PostCard mediaActive={isActiveMainTab && activeMediaPostId === item.post.id} post={item.post} />;
       case "profile-loading":
         return <View style={styles.listInset}><ProfileSkeletonList /></View>;
       case "profile-error":
@@ -338,7 +353,7 @@ function ProfileContent({
       default:
         return null;
     }
-  }, [memoriesError, memoriesRefetch, openCreate, pageQuery, posts, router, styles]);
+  }, [activeMediaPostId, isActiveMainTab, memoriesError, memoriesRefetch, openCreate, pageQuery, posts, router, styles]);
 
   const footer = pagedPosts.length > 0 ? (
     <View>
@@ -453,12 +468,14 @@ function ProfileContent({
           nestedScrollEnabled
           onEndReached={onEndReached}
           onEndReachedThreshold={0.7}
+          onViewableItemsChanged={onPostViewableItemsChangedRef.current}
           overScrollMode="never"
           refreshControl={listRefreshControl}
           removeClippedSubviews={false}
           showsVerticalScrollIndicator={false}
           style={styles.profileList}
           updateCellsBatchingPeriod={50}
+          viewabilityConfig={postViewabilityConfigRef.current}
           windowSize={PROFILE_LIST_WINDOW_SIZE}
         />
       </Tabs.Tab>

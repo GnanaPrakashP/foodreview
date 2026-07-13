@@ -1,6 +1,8 @@
 import { useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { loadNotificationsModule, registerForPushNotifications } from "@/services/notifications";
+import { notificationKeys } from "@/hooks/useNotifications";
 import { useSessionStore } from "@/stores/sessionStore";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 
@@ -27,6 +29,7 @@ function stringData(response: NotificationResponseLike | null | undefined, key: 
 
 export function PushNotificationBootstrap() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const username = useSessionStore((state) => state.profile?.username ?? "");
   const userId = useSessionStore((state) => state.session?.user.id ?? "");
   const handledNotificationRef = useRef<string | null>(null);
@@ -58,6 +61,7 @@ export function PushNotificationBootstrap() {
     const ownerGeneration = getActiveCacheGeneration();
     let alive = true;
     let subscription: { remove: () => void } | null = null;
+    let receivedSubscription: { remove: () => void } | null = null;
 
     function openNotificationTarget(response: NotificationResponseLike | null | undefined) {
       if (!alive || !isCacheGenerationActive(ownerGeneration)) return;
@@ -110,14 +114,20 @@ export function PushNotificationBootstrap() {
           .catch(() => {});
 
         subscription = Notifications.addNotificationResponseReceivedListener(openNotificationTarget);
+        receivedSubscription = Notifications.addNotificationReceivedListener(() => {
+          if (!alive || !isCacheGenerationActive(ownerGeneration)) return;
+          void queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
+          void queryClient.invalidateQueries({ queryKey: notificationKeys.list });
+        });
       })
       .catch(() => {});
 
     return () => {
       alive = false;
       subscription?.remove();
+      receivedSubscription?.remove();
     };
-  }, [router, userId, username]);
+  }, [queryClient, router, userId, username]);
 
   return null;
 }

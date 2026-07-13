@@ -1,0 +1,146 @@
+{
+  "status": "PARTIAL",
+  "recordedAt": "2026-07-13T17:14:10.273Z",
+  "build": {
+    "packageName": "com.circlebites.mobile",
+    "versionCode": "1",
+    "versionName": "0.1.0",
+    "profileFlagRequired": "EXPO_PUBLIC_PERFORMANCE_PROFILE=1"
+  },
+  "device": {
+    "serial": "emulator-5554",
+    "model": "sdk_gphone64_arm64",
+    "androidVersion": "15",
+    "sdk": 35,
+    "screen": {
+      "width": 1080,
+      "height": 2400
+    }
+  },
+  "conditions": {
+    "buildType": "installed release/profile",
+    "network": "device current network",
+    "accountData": "existing owner-scoped test account cache",
+    "sampleCount": 5
+  },
+  "startupMs": {
+    "coldActivityDraw": {
+      "samples": 5,
+      "min": 8323,
+      "median": 9153,
+      "p95": 13047,
+      "max": 13657
+    },
+    "coldJsStartToUsefulContent": {
+      "samples": 0,
+      "min": null,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "coldCircleCachedContent": {
+      "samples": 0,
+      "min": null,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "warmActivityResume": {
+      "samples": 5,
+      "min": 978,
+      "median": 1463,
+      "p95": 1680,
+      "max": 1869
+    }
+  },
+  "tabsMs": {
+    "circle": {
+      "cached": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      },
+      "freshSettled": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "explore": {
+      "cached": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      },
+      "freshSettled": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "profile": {
+      "cached": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      },
+      "freshSettled": {
+        "samples": 0,
+        "min": null,
+        "median": null,
+        "p95": null,
+        "max": null
+      }
+    }
+  },
+  "rendering": {
+    "totalFrames": 434,
+    "jankyFrames": 416,
+    "jankyPercent": 95.85,
+    "frameTimePercentilesMs": {
+      "p50": 450,
+      "p90": 1000,
+      "p95": 1200,
+      "p99": 3800
+    },
+    "maximumObservedActiveFeedPlayers": null
+  },
+  "memory": {
+    "before": {
+      "pssKb": 139516,
+      "rssKb": 259808
+    },
+    "after": {
+      "pssKb": 203424,
+      "rssKb": 327280
+    },
+    "pssGrowthKb": 63908,
+    "repeatedTabCycles": 30
+  },
+  "privacy": {
+    "contentLogged": false,
+    "mediaUrlsLogged": false,
+    "accountIdentifiersLogged": false
+  },
+  "budgets": {
+    "coldJsStartToUsefulContent": 1500,
+    "cachedHydrationAfterBoundary": 200,
+    "warmTabCachedContent": 150
+  },
+  "warnings": [
+    "No profile-build useful-content marks were observed; rebuild with EXPO_PUBLIC_PERFORMANCE_PROFILE=1 and keep a valid signed-in cache.",
+    "No circle cached-content samples were observed.",
+    "No explore cached-content samples were observed.",
+    "No profile cached-content samples were observed."
+  ]
+}

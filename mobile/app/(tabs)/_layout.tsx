@@ -3,11 +3,10 @@ import { House, Plus, Search, User, type LucideIcon } from "lucide-react-native"
 import { useMemo } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
+import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
 import { useComposerStore } from "@/stores/composerStore";
-import { useSessionStore } from "@/stores/sessionStore";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
   index: { title: "Circle", icon: House },
@@ -18,19 +17,16 @@ const tabs: Record<string, { title: string; icon: LucideIcon }> = {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const isReady = useSessionStore((state) => state.isReady);
-  const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const { themeColors } = useThemePreference();
   const composing = useComposerStore((state) => state.composing);
-  const shouldLoadMemories = isReady && isAuthenticated;
-  const memoryRooms = useMemoryRoomsQuery({ enabled: shouldLoadMemories });
+  // Observe already-loaded room summaries for the Profile badge without
+  // turning the tab bar into a cold-start network owner. Profile owns the
+  // first room-list request after its first visit.
+  const memoryRooms = useMemoryRoomsQuery({ enabled: false });
   const hasUnreadMemories = useMemo(
     () => (memoryRooms.data ?? []).some((memory) => memory.unreadCount > 0),
     [memoryRooms.data]
   );
-
-  useMemoryRoomsRealtime(shouldLoadMemories);
-
   return (
     <Tabs
       screenOptions={({ route }) => {
@@ -40,6 +36,8 @@ export default function TabLayout() {
           headerShown: false,
           // No transition animation: tapping a tab swaps to it instantly.
           animation: "none",
+          freezeOnBlur: true,
+          lazy: true,
           tabBarActiveTintColor: themeColors.orange,
           tabBarInactiveTintColor: themeColors.muted,
           // Hidden for the whole Post-a-Bite composer flow (until posted).
@@ -78,11 +76,11 @@ export default function TabLayout() {
         };
       }}
     >
-      <Tabs.Screen name="index" options={{ lazy: false }} />
-      <Tabs.Screen name="explore" options={{ lazy: false }} />
-      <Tabs.Screen name="share" options={{ lazy: false }} />
+      <Tabs.Screen name="index" />
+      <Tabs.Screen name="explore" />
+      <Tabs.Screen name="share" />
       <Tabs.Screen name="hungry" options={{ href: null }} />
-      <Tabs.Screen name="profile" options={{ lazy: false }} />
+      <Tabs.Screen name="profile" />
     </Tabs>
   );
 }

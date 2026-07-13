@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEvent } from "expo";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";

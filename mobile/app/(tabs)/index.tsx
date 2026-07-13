@@ -1,7 +1,8 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useIsFocused } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
@@ -11,18 +12,24 @@ import { markCircleFeedPostsSeen } from "@/services/feeds";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing } from "@/theme";
+import { useTabPerformance } from "@/performance/useTabPerformance";
 
 export default function CircleScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const [notificationsOpening, setNotificationsOpening] = useState(false);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const feed = useCircleFeedInfiniteQuery({ enabled: isReady && isAuthenticated });
-  const notifications = useUnreadNotificationCountQuery({ enabled: isReady && isAuthenticated });
+  const feed = useCircleFeedInfiniteQuery({ enabled: isFocused && isReady && isAuthenticated });
+  const notifications = useUnreadNotificationCountQuery({ enabled: isFocused && isReady && isAuthenticated });
   const seenPostIdsRef = useRef(new Set<string>());
+  const pendingSeenPostIdsRef = useRef(new Set<string>());
+  const seenFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const posts = useMemo(() => feed.data?.pages.flatMap((page) => page.posts) ?? [], [feed.data?.pages]);
+  const contentReady = isReady && (!isAuthenticated || posts.length > 0 || (!feed.isLoading && !feed.isError));
+  useTabPerformance("circle", isFocused, contentReady, !feed.isFetching);
   const unreadNotificationCount = notifications.data ?? 0;
   const notificationBadge = unreadNotificationCount > 9 ? "9+" : String(unreadNotificationCount);
   const canRefresh = isReady && isAuthenticated;
@@ -44,12 +51,26 @@ export default function CircleScreen() {
     void Haptics.selectionAsync().catch(() => {});
     router.push("/notifications");
   }, [notificationsOpening, router]);
+  const flushSeenPosts = useCallback(() => {
+    if (seenFlushTimerRef.current) clearTimeout(seenFlushTimerRef.current);
+    seenFlushTimerRef.current = null;
+    const postIds = [...pendingSeenPostIdsRef.current];
+    pendingSeenPostIdsRef.current.clear();
+    if (postIds.length > 0) void markCircleFeedPostsSeen(postIds);
+  }, []);
   const markPostsViewed = useCallback((postIds: string[]) => {
     const nextPostIds = postIds.filter((postId) => !seenPostIdsRef.current.has(postId));
     if (nextPostIds.length === 0) return;
-    for (const postId of nextPostIds) seenPostIdsRef.current.add(postId);
-    void markCircleFeedPostsSeen(nextPostIds);
-  }, []);
+    for (const postId of nextPostIds) {
+      seenPostIdsRef.current.add(postId);
+      pendingSeenPostIdsRef.current.add(postId);
+    }
+    if (seenFlushTimerRef.current) clearTimeout(seenFlushTimerRef.current);
+    seenFlushTimerRef.current = setTimeout(flushSeenPosts, 600);
+  }, [flushSeenPosts]);
+  useEffect(() => () => {
+    flushSeenPosts();
+  }, [flushSeenPosts]);
   const circleHeader = (
     <View collapsable={false}>
       <View style={styles.header}>
@@ -112,6 +133,7 @@ export default function CircleScreen() {
           isError={feed.isError && posts.length === 0}
           isFetchingMore={isFetchingNextPage}
           isLoading={feed.isLoading && posts.length === 0}
+          mediaPlaybackEnabled={isFocused}
           onEndReached={loadMorePosts}
           onPostsViewed={markPostsViewed}
           onRefresh={canRefresh ? () => { void feed.refetch(); } : undefined}

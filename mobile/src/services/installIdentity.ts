@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { getRandomValues } from "expo-crypto";
 
 const INSTALL_ID_KEY = "circlebites.security.install-id.v1";
 const AUTH_FLOW_PREFIX = "circlebites.security.auth-flow.v1.";
@@ -10,10 +11,11 @@ export type AuthFlowKind = "oauth" | "recovery";
 
 function secureRandomBytes(length: number) {
   const bytes = new Uint8Array(length);
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi?.getRandomValues) throw new Error("secure_random_unavailable");
-  cryptoApi.getRandomValues(bytes);
-  return bytes;
+  try {
+    return getRandomValues(bytes);
+  } catch {
+    throw new Error("secure_random_unavailable");
+  }
 }
 
 function hex(bytes: Uint8Array) {

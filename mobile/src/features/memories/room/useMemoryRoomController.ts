@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { Easing as ReanimatedEasing, useSharedValue, withTiming } from "react-native-reanimated";
 

@@ -55,9 +55,12 @@ import { fontStyles, radius, spacing, typography } from "@/theme";
 import { chooseReportReason } from "@/utils/reporting";
 import type { ReviewPost } from "@/types/models";
 import type { ReportTargetType } from "@/services/reports";
+import { adjustPerformanceCounter } from "@/performance/mobilePerformance";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
 
 type PostCardProps = {
   loadDetailEngagement?: boolean;
+  mediaActive?: boolean;
   post: ReviewPost;
 };
 
@@ -193,7 +196,7 @@ function optimisticTasteTrustState(
   };
 }
 
-function PostCardComponent({ loadDetailEngagement = false, post }: PostCardProps) {
+function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, post }: PostCardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { themeColors } = useThemePreference();
@@ -699,16 +702,32 @@ function PostCardComponent({ loadDetailEngagement = false, post }: PostCardProps
       {primaryMedia ? (
         <View style={styles.mediaWrap}>
           {primaryMedia.mediaType === "video" ? (
-            <PostVideoPreview uri={primaryMedia.publicUrl} />
+            mediaActive && mediaAccessIsUsable(primaryMedia.expiresAt) ? (
+              <PostVideoPreview uri={primaryMedia.publicUrl} />
+            ) : (
+              <Image
+                cachePolicy="memory-disk"
+                contentFit="cover"
+                decodeFormat="rgb"
+                enforceEarlyResizing
+                placeholder={primaryMedia.placeholder ? { blurhash: primaryMedia.placeholder } : undefined}
+                recyclingKey={primaryMedia.posterUrl ?? primaryMedia.thumbnailUrl ?? primaryMedia.mediaAssetId ?? post.id}
+                source={primaryMedia.posterUrl || primaryMedia.thumbnailUrl
+                  ? { uri: primaryMedia.posterUrl ?? primaryMedia.thumbnailUrl ?? "" }
+                  : undefined}
+                style={styles.image}
+              />
+            )
           ) : (
             <Image
               cachePolicy="memory-disk"
               contentFit="cover"
               decodeFormat="rgb"
               enforceEarlyResizing
+              placeholder={primaryMedia.placeholder ? { blurhash: primaryMedia.placeholder } : undefined}
               priority="normal"
-              recyclingKey={primaryMedia.thumbnailUrl ?? primaryMedia.publicUrl}
-              source={{ uri: primaryMedia.thumbnailUrl ?? primaryMedia.publicUrl }}
+              recyclingKey={(loadDetailEngagement ? primaryMedia.publicUrl : primaryMedia.thumbnailUrl) ?? primaryMedia.publicUrl}
+              source={{ uri: (loadDetailEngagement ? primaryMedia.publicUrl : primaryMedia.thumbnailUrl) ?? primaryMedia.publicUrl }}
               style={styles.image}
             />
           )}
@@ -934,10 +953,17 @@ function TasteTrustFeedback({
 
 function PostVideoPreview({ uri }: { uri: string }) {
   const { themeColors } = useThemePreference();
+  const runtime = useRuntimeActivity();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
+    instance.staysActiveInBackground = false;
   });
+
+  useEffect(() => adjustPerformanceCounter("media.active_feed_players", 1), []);
+  useEffect(() => {
+    if (!runtime.isForeground) player.pause();
+  }, [player, runtime.isForeground]);
 
   return (
     <VideoView
@@ -949,6 +975,12 @@ function PostVideoPreview({ uri }: { uri: string }) {
       style={styles.image}
     />
   );
+}
+
+function mediaAccessIsUsable(expiresAt: string | null) {
+  if (!expiresAt) return true;
+  const expiry = new Date(expiresAt).getTime();
+  return Number.isFinite(expiry) && expiry > Date.now() + 15_000;
 }
 
 function createStyles(c: ThemeColors) {

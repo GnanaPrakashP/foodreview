@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   blockUser,
   deleteCurrentAccount,
@@ -24,16 +24,22 @@ export const settingsKeys = {
 };
 
 export function useLikedSettingsPostsQuery() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: settingsKeys.liked,
-    queryFn: getLikedSettingsPosts
+    queryFn: ({ pageParam }) => getLikedSettingsPosts(pageParam),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    staleTime: 2 * 60_000
   });
 }
 
 export function useSavedSettingsItemsQuery() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: settingsKeys.saved,
-    queryFn: getSavedSettingsItems
+    queryFn: ({ pageParam }) => getSavedSettingsItems(pageParam),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    staleTime: 2 * 60_000
   });
 }
 

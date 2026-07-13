@@ -1,12 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, ChevronRight, MapPin, Star } from "lucide-react-native";
-import { useCallback, useMemo } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, type ReactElement } from "react";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
 import { EmptyState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { useDishFeedQuery } from "@/hooks/useFeeds";
+import { mergeUniqueFeedPosts, useDishFeedInfiniteQuery } from "@/hooks/useFeeds";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { normalizeDishDisplayName } from "@/services/dishNormalizer";
@@ -37,7 +37,6 @@ const DISH_DETAIL_FEED_LIMIT = 120;
 const DISH_PLACE_RATING_WEIGHT = 0.65;
 const DISH_PLACE_DISTANCE_WEIGHT = 0.3;
 const DISH_PLACE_EVIDENCE_WEIGHT = 0.05;
-const EMPTY_POSTS: ReviewPost[] = [];
 
 function firstParam(value: ParamValue) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -228,7 +227,7 @@ export default function DishDetailScreen() {
     return true;
   }, [backToDishPlaces, hasPlaceScope]);
   const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/explore", onBack: handleDishBack });
-  const feed = useDishFeedQuery({
+  const feed = useDishFeedInfiniteQuery({
     canonicalDishId,
     dishName,
     limit: DISH_DETAIL_FEED_LIMIT,
@@ -237,11 +236,18 @@ export default function DishDetailScreen() {
     restaurantAddress: scopedAddress || null,
     restaurantName: scopedPlaceName || null
   });
-  const posts = feed.data?.posts ?? EMPTY_POSTS;
+  const posts = useMemo(() => mergeUniqueFeedPosts(feed.data?.pages), [feed.data?.pages]);
   const dishPosts = useMemo(() => postsScopedToDish(posts, dishFilter), [dishFilter, posts]);
   const places = useMemo(() => topPlacesForDish(posts, dishFilter, selectedLocation), [dishFilter, posts, selectedLocation]);
   const scopedTitle = scopedPlaceName || posts[0]?.restaurantName || "Place";
   const scopedMeta = `${dishName}${dishPosts.length > 0 ? ` · ${dishPosts.length} ${dishPosts.length === 1 ? "post" : "posts"}` : ""}`;
+  const fetchNextPage = feed.fetchNextPage;
+  const hasNextPage = feed.hasNextPage;
+  const isFetchingNextPage = feed.isFetchingNextPage;
+  const loadMore = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   const openDishPlace = useCallback((place: DishPlace) => {
     router.replace({
@@ -258,7 +264,7 @@ export default function DishDetailScreen() {
 
   return (
     <Reanimated.View style={[styles.screenRoot, slideStyle]}>
-      <Screen padded={false} scroll>
+      <Screen padded={false} scroll={false}>
         {!dishName ? (
           <>
             <DishHeader dishName="Dish" meta="Explore" onBack={close} styles={styles} themeColors={themeColors} />
@@ -267,45 +273,38 @@ export default function DishDetailScreen() {
             </View>
           </>
         ) : hasPlaceScope ? (
-          <>
-            <DishHeader
-              dishName={scopedTitle}
-              meta={scopedMeta}
-              onBack={close}
-              styles={styles}
-              themeColors={themeColors}
-            />
-            <PostFeed
-              embedded
-              emptyMessage="Posts for this dish at this place will appear here."
-              emptyTitle="No posts yet"
-              errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this dish at this place."}
-              isError={feed.isError}
-              isLoading={feed.isLoading}
-              onRetry={() => feed.refetch()}
-              posts={dishPosts}
-            />
-          </>
+          <PostFeed
+            ListHeaderComponent={<DishHeader dishName={scopedTitle} meta={scopedMeta} onBack={close} styles={styles} themeColors={themeColors} />}
+            embedded
+            emptyMessage="Posts for this dish at this place will appear here."
+            emptyTitle="No posts yet"
+            errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load this dish at this place."}
+            hasMore={Boolean(feed.hasNextPage)}
+            isError={feed.isError && dishPosts.length === 0}
+            isFetchingMore={feed.isFetchingNextPage}
+            isLoading={feed.isLoading && dishPosts.length === 0}
+            onEndReached={loadMore}
+            onRefresh={() => { void feed.refetch(); }}
+            onRetry={() => feed.refetch()}
+            posts={dishPosts}
+            refreshing={feed.isRefetching && !feed.isFetchingNextPage}
+            scrollEnabled
+          />
         ) : (
-          <>
-            <DishHeader
-              dishName={dishName}
-              meta={`${places.length} ${places.length === 1 ? "place" : "places"} · ${dishPosts.length} ${dishPosts.length === 1 ? "post" : "posts"}`}
-              onBack={close}
-              styles={styles}
-              themeColors={themeColors}
-            />
-            <DishPlacesContent
-              errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load places for this dish."}
-              isError={feed.isError}
-              isLoading={feed.isLoading}
-              onOpenPlace={openDishPlace}
-              onRetry={() => feed.refetch()}
-              places={places}
-              styles={styles}
-              themeColors={themeColors}
-            />
-          </>
+          <DishPlacesContent
+            errorMessage={feed.error instanceof Error ? feed.error.message : "Could not load places for this dish."}
+            hasMore={Boolean(feed.hasNextPage)}
+            isError={feed.isError && places.length === 0}
+            isFetchingMore={feed.isFetchingNextPage}
+            isLoading={feed.isLoading && places.length === 0}
+            listHeader={<DishHeader dishName={dishName} meta={`${places.length} ${places.length === 1 ? "place" : "places"} · ${dishPosts.length} ${dishPosts.length === 1 ? "post" : "posts"}`} onBack={close} styles={styles} themeColors={themeColors} />}
+            onEndReached={loadMore}
+            onOpenPlace={openDishPlace}
+            onRetry={() => feed.refetch()}
+            places={places}
+            styles={styles}
+            themeColors={themeColors}
+          />
         )}
       </Screen>
     </Reanimated.View>
@@ -340,8 +339,12 @@ function DishHeader({
 
 function DishPlacesContent({
   errorMessage,
+  hasMore,
+  isFetchingMore,
   isError,
   isLoading,
+  listHeader,
+  onEndReached,
   onOpenPlace,
   onRetry,
   places,
@@ -349,8 +352,12 @@ function DishPlacesContent({
   themeColors
 }: {
   errorMessage: string;
+  hasMore: boolean;
+  isFetchingMore: boolean;
   isError: boolean;
   isLoading: boolean;
+  listHeader: ReactElement;
+  onEndReached: () => void;
   onOpenPlace: (place: DishPlace) => void;
   onRetry: () => void;
   places: DishPlace[];
@@ -359,29 +366,54 @@ function DishPlacesContent({
 }) {
   if (isLoading) {
     return (
-      <View style={styles.stateWrap}>
-        <EmptyState icon="restaurant-outline" message="Finding places that serve this dish." title="Loading places" />
+      <View style={styles.fillState}>
+        {listHeader}
+        <View style={styles.stateWrap}>
+          <EmptyState icon="restaurant-outline" message="Finding places that serve this dish." title="Loading places" />
+        </View>
       </View>
     );
   }
 
   if (isError) {
     return (
-      <View style={styles.stateWrap}>
-        <EmptyState actionLabel="Try again" icon="warning-outline" message={errorMessage} onAction={onRetry} title="Could not load places" />
+      <View style={styles.fillState}>
+        {listHeader}
+        <View style={styles.stateWrap}>
+          <EmptyState actionLabel="Try again" icon="warning-outline" message={errorMessage} onAction={onRetry} title="Could not load places" />
+        </View>
       </View>
     );
   }
 
-  return <TopPlaces onOpenPlace={onOpenPlace} places={places} styles={styles} themeColors={themeColors} />;
+  return (
+    <TopPlaces
+      hasMore={hasMore}
+      isFetchingMore={isFetchingMore}
+      listHeader={listHeader}
+      onEndReached={onEndReached}
+      onOpenPlace={onOpenPlace}
+      places={places}
+      styles={styles}
+      themeColors={themeColors}
+    />
+  );
 }
 
 function TopPlaces({
+  hasMore,
+  isFetchingMore,
+  listHeader,
+  onEndReached,
   onOpenPlace,
   places,
   styles,
   themeColors
 }: {
+  hasMore: boolean;
+  isFetchingMore: boolean;
+  listHeader: ReactElement;
+  onEndReached: () => void;
   onOpenPlace: (place: DishPlace) => void;
   places: DishPlace[];
   styles: ReturnType<typeof createStyles>;
@@ -389,18 +421,29 @@ function TopPlaces({
 }) {
   if (places.length === 0) {
     return (
-      <View style={styles.emptyTabState}>
-        <Text style={styles.emptyTitle}>No places yet</Text>
-        <Text style={styles.emptyBody}>Places that review this dish will appear here.</Text>
+      <View style={styles.fillState}>
+        {listHeader}
+        <View style={styles.emptyTabState}>
+          <Text style={styles.emptyTitle}>No places yet</Text>
+          <Text style={styles.emptyBody}>Places that review this dish will appear here.</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.placesSection}>
-      {places.map((place, index) => (
+    <FlatList
+      contentContainerStyle={styles.placesSection}
+      data={places}
+      initialNumToRender={8}
+      keyExtractor={(place) => place.placeId || `${place.name}:${place.area ?? ""}`}
+      ListHeaderComponent={listHeader}
+      maxToRenderPerBatch={8}
+      onEndReached={hasMore && !isFetchingMore ? onEndReached : undefined}
+      onEndReachedThreshold={0.6}
+      removeClippedSubviews={false}
+      renderItem={({ item: place, index }) => (
         <Pressable
-          key={`${place.placeId ?? place.name}-${index}`}
           accessibilityRole="button"
           onPress={() => onOpenPlace(place)}
           style={({ pressed }) => [styles.placeRow, pressed && styles.placeRowPressed]}
@@ -427,8 +470,11 @@ function TopPlaces({
           </View>
           <ChevronRight size={17} color={themeColors.muted} strokeWidth={2.1} />
         </Pressable>
-      ))}
-    </View>
+      )}
+      showsVerticalScrollIndicator={false}
+      updateCellsBatchingPeriod={50}
+      windowSize={7}
+    />
   );
 }
 
@@ -436,6 +482,9 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
   return StyleSheet.create({
     screenRoot: {
       backgroundColor: c.bg,
+      flex: 1
+    },
+    fillState: {
       flex: 1
     },
     stateWrap: {
@@ -476,8 +525,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       marginTop: 2
     },
     placesSection: {
-      paddingBottom: spacing.lg,
-      paddingHorizontal: spacing.lg
+      paddingBottom: spacing.lg
     },
     placeRow: {
       alignItems: "center",
@@ -487,6 +535,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       gap: spacing.md,
       justifyContent: "space-between",
       minHeight: 64,
+      marginHorizontal: spacing.lg,
       paddingVertical: spacing.md
     },
     placeRowPressed: {

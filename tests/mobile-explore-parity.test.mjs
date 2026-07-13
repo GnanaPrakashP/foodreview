@@ -264,7 +264,7 @@ test("mobile explore cards navigate to existing native detail routes", () => {
   assert.doesNotMatch(layout, /EXPLORE_DETAIL_OPTIONS/);
   assert.match(explore, /function placeLocation\(post: ReviewPost\)/);
   assert.match(explore, /`\$\{post\.restaurantName\.toLowerCase\(\)\}::\$\{location\.toLowerCase\(\)\}`/);
-  assert.match(restaurant, /useRestaurantFeedQuery\(\{ placeId, restaurantAddress: fallbackAddress, restaurantName: fallbackName \}\)/);
+  assert.match(restaurant, /useRestaurantFeedInfiniteQuery\(\{ placeId, restaurantAddress: fallbackAddress, restaurantName: fallbackName \}\)/);
   assert.match(hooks, /input\.restaurantAddress \?\? ""/);
   assert.match(services, /restaurantAddress\?: string \| null/);
   assert.match(services, /normalizeEntityName\(row\.area \?\? ""\) === address \|\| normalizeEntityName\(row\.restaurant_address \?\? ""\) === address/);
@@ -276,8 +276,8 @@ test("mobile restaurant and dish detail routes use filtered feed queries", () =>
   const restaurant = source("mobile/app/restaurants/[placeId].tsx");
   const dish = source("mobile/app/dishes/[dish].tsx");
 
-  assert.match(hooks, /useRestaurantFeedQuery/);
-  assert.match(hooks, /useDishFeedQuery/);
+  assert.match(hooks, /useRestaurantFeedInfiniteQuery/);
+  assert.match(hooks, /useDishFeedInfiniteQuery/);
   assert.match(services, /export async function getRestaurantFeed/);
   assert.match(services, /getMobileFeedPage\("restaurant"/);
   assert.match(services, /export async function getDishFeed/);
@@ -291,8 +291,10 @@ test("mobile restaurant and dish detail routes use filtered feed queries", () =>
   assert.match(services, /restaurantAddress\?: string \| null/);
   assert.match(hooks, /input\.location\?\.lat \?\? ""/);
   assert.match(hooks, /input\.location\?\.lng \?\? ""/);
-  assert.match(restaurant, /useRestaurantFeedQuery/);
-  assert.match(dish, /useDishFeedQuery/);
+  assert.match(restaurant, /useRestaurantFeedInfiniteQuery/);
+  assert.match(restaurant, /mergeUniqueFeedPosts\(feed\.data\?\.pages\)/);
+  assert.match(dish, /useDishFeedInfiniteQuery/);
+  assert.match(dish, /mergeUniqueFeedPosts\(feed\.data\?\.pages\)/);
 });
 
 test("mobile explore dishes use canonical variants and families", () => {
@@ -361,7 +363,7 @@ test("mobile dish detail is place-first and drills into scoped dish-place posts"
   assert.match(dish, /function postsScopedToDish/);
   assert.match(dish, /const hasPlaceScope = Boolean\(scopedPlaceId \|\| scopedPlaceName\)/);
   assert.match(dish, /const selectedLocation = useUserLocationStore\(\(state\) => state\.location\)/);
-  assert.match(dish, /useDishFeedQuery\(\{\s*canonicalDishId,[\s\S]+location: selectedLocation,[\s\S]+placeId: scopedPlaceId \|\| null,[\s\S]+restaurantName: scopedPlaceName \|\| null/);
+  assert.match(dish, /useDishFeedInfiniteQuery\(\{\s*canonicalDishId,[\s\S]+location: selectedLocation,[\s\S]+placeId: scopedPlaceId \|\| null,[\s\S]+restaurantName: scopedPlaceName \|\| null/);
   assert.match(dish, /function dishPlaceRankScore/);
   assert.match(dish, /DISH_PLACE_RATING_WEIGHT = 0\.65/);
   assert.match(dish, /DISH_PLACE_DISTANCE_WEIGHT = 0\.3/);
@@ -383,7 +385,7 @@ test("mobile dish detail is place-first and drills into scoped dish-place posts"
   assert.doesNotMatch(dish, /pathname: "\/restaurants\/\[placeId\]"/);
   assert.doesNotMatch(dish, /pathname: "\/restaurants\/by-name\/\[restaurant\]"/);
   assert.match(dish, /hasPlaceScope \? \(/);
-  assert.match(dish, /<PostFeed\s+embedded[\s\S]+posts=\{dishPosts\}/);
+  assert.match(dish, /<PostFeed[\s\S]+embedded[\s\S]+posts=\{dishPosts\}/);
   assert.match(dish, /const backToDishPlaces = useCallback\(\(\) =>/);
   assert.match(dish, /const handleDishBack = useCallback\(\(\) => \{\s*if \(!hasPlaceScope\) return false;\s*backToDishPlaces\(\);\s*return true;/);
   assert.match(dish, /useSlideOverScreen\(\{ fallbackHref: "\/explore", onBack: handleDishBack \}\)/);
@@ -399,9 +401,11 @@ test("mobile dish detail is place-first and drills into scoped dish-place posts"
   assert.match(dish, /pathname: "\/dishes\/\[dish\]"/);
   assert.match(dish, /placeId: place\.placeId \?\? ""/);
   assert.match(dish, /placeName: place\.name/);
-  assert.match(dish, /<Pressable\s+key=\{`\$\{place\.placeId \?\? place\.name\}-\$\{index\}`\}/);
+  assert.match(dish, /<FlatList/);
+  assert.match(dish, /keyExtractor=\{\(place\) => place\.placeId \|\| `\$\{place\.name\}:\$\{place\.area \?\? ""\}`\}/);
   assert.match(dish, /style=\{\(\{ pressed \}\) => \[styles\.placeRow, pressed && styles\.placeRowPressed\]\}/);
-  assert.match(dish, /placesSection: \{\s*paddingBottom: spacing\.lg,\s*paddingHorizontal: spacing\.lg\s*\}/);
+  assert.match(dish, /placesSection: \{\s*paddingBottom: spacing\.lg\s*\}/);
+  assert.match(dish, /placeRow: \{[\s\S]*?marginHorizontal: spacing\.lg/);
   assert.doesNotMatch(dish, /placeList: \{\s*borderTopColor/);
   assert.doesNotMatch(dish, /paddingTop: spacing\.lg\s*\},\s*placeList/);
   assert.match(dish, /placeRow: \{[\s\S]*?justifyContent: "space-between",\s*minHeight: 64/);

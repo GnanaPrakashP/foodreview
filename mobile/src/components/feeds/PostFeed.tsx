@@ -1,5 +1,6 @@
 import { useRouter } from "expo-router";
-import { type ReactElement, useEffect, useRef } from "react";
+import { Image } from "expo-image";
+import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -16,6 +17,9 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing, typography } from "@/theme";
 import type { ReviewPost } from "@/types/models";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
+import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
+import { JS_RUNTIME_STARTED_AT_MS, recordPerformanceSample } from "@/performance/mobilePerformance";
 
 type PostFeedProps = {
   embedded?: boolean;
@@ -29,6 +33,7 @@ type PostFeedProps = {
   isFetchingMore?: boolean;
   isLoading?: boolean;
   ListHeaderComponent?: ReactElement | null;
+  mediaPlaybackEnabled?: boolean;
   contentContainerStyle?: StyleProp<ViewStyle>;
   listStyle?: StyleProp<ViewStyle>;
   onEmptyAction?: () => void;
@@ -45,9 +50,26 @@ type PostFeedProps = {
 const FEED_INITIAL_RENDER_COUNT = 4;
 const FEED_RENDER_BATCH_SIZE = 4;
 const FEED_WINDOW_SIZE = 5;
+const FEED_THUMBNAIL_PREFETCH_DEPTH = 2;
+
+function PostFeedRow({
+  mediaActive,
+  post,
+  sectionLabel
+}: {
+  mediaActive: boolean;
+  post: ReviewPost;
+  sectionLabel: ReactElement | null;
+}) {
+  return (
+    <>
+      {sectionLabel}
+      <PostCard mediaActive={mediaActive} post={post} />
+    </>
+  );
+}
 
 export function PostFeed({
-  embedded = false,
   endReachedLabel,
   emptyActionLabel,
   emptyMessage,
@@ -58,6 +80,7 @@ export function PostFeed({
   isFetchingMore = false,
   isLoading,
   ListHeaderComponent,
+  mediaPlaybackEnabled = true,
   contentContainerStyle,
   listStyle,
   onEmptyAction,
@@ -71,13 +94,19 @@ export function PostFeed({
   scrollEnabled = false
 }: PostFeedProps) {
   const { themeColors } = useThemePreference();
+  const runtime = useRuntimeActivity();
+  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const onPostsViewedRef = useRef(onPostsViewed);
+  const mountedAtRef = useRef(Date.now());
+  const firstContentRecordedRef = useRef(false);
   const reportedPostIdsRef = useRef(new Set<string>());
   const viewabilityConfigRef = useRef({
     itemVisiblePercentThreshold: 65,
     minimumViewTime: 900
   });
   const onViewableItemsChangedRef = useRef(({ viewableItems }: { viewableItems: ViewToken<ReviewPost>[] }) => {
+    const activePostId = viewableItems.find((item) => item.isViewable)?.item?.id ?? null;
+    setActiveMediaPostId((current) => current === activePostId ? current : activePostId);
     const onPostsViewedHandler = onPostsViewedRef.current;
     if (!onPostsViewedHandler) return;
 
@@ -93,6 +122,31 @@ export function PostFeed({
   useEffect(() => {
     onPostsViewedRef.current = onPostsViewed;
   }, [onPostsViewed]);
+
+  useEffect(() => {
+    if (posts.length === 0 || firstContentRecordedRef.current) return;
+    firstContentRecordedRef.current = true;
+    recordPerformanceSample("feed.first_content", { durationMs: Date.now() - mountedAtRef.current });
+    recordPerformanceSample("app.js_start_to_feed_content", { durationMs: Date.now() - JS_RUNTIME_STARTED_AT_MS });
+  }, [posts.length]);
+
+  useEffect(() => {
+    const unmeteredNetwork = runtime.networkType === "WIFI" || runtime.networkType === "ETHERNET";
+    if (!runtime.isForeground || !runtime.isOnline || !unmeteredNetwork || !activeMediaPostId) return;
+    const activeIndex = posts.findIndex((post) => post.id === activeMediaPostId);
+    if (activeIndex < 0) return;
+    const ownerGeneration = getActiveCacheGeneration();
+    const urls = posts
+      .slice(activeIndex + 1, activeIndex + 1 + FEED_THUMBNAIL_PREFETCH_DEPTH)
+      .map((post) => post.media[0])
+      .filter((media) => media?.mediaType === "image")
+      .map((media) => media?.thumbnailUrl ?? "")
+      .filter(Boolean);
+    if (urls.length === 0) return;
+    void Image.prefetch(urls, { cachePolicy: "memory-disk" }).then(() => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+    }).catch(() => {});
+  }, [activeMediaPostId, posts, runtime.isForeground, runtime.isOnline, runtime.networkType]);
 
   const refreshControl = onRefresh ? (
     <RefreshControl
@@ -146,7 +200,7 @@ export function PostFeed({
   const state = renderState();
   const showEndReached = Boolean(endReachedLabel && posts.length > 0 && !hasMore && !isFetchingMore);
 
-  function renderSectionLabel(post: ReviewPost, index: number) {
+  const renderSectionLabel = useCallback((post: ReviewPost, index: number) => {
     if (!showSectionLabels || !post.feedSectionLabel) return null;
     const previous = index > 0 ? posts[index - 1] : null;
     if (previous?.feedSectionLabel === post.feedSectionLabel) return null;
@@ -156,7 +210,15 @@ export function PostFeed({
         <Text style={[styles.sectionHeaderText, { color: themeColors.mutedStrong }]}>{post.feedSectionLabel}</Text>
       </View>
     );
-  }
+  }, [posts, showSectionLabels, themeColors.mutedStrong]);
+
+  const renderPost = useCallback(({ item, index }: { item: ReviewPost; index: number }) => (
+    <PostFeedRow
+      mediaActive={mediaPlaybackEnabled && runtime.isForeground && item.id === activeMediaPostId}
+      post={item}
+      sectionLabel={renderSectionLabel(item, index)}
+    />
+  ), [activeMediaPostId, mediaPlaybackEnabled, renderSectionLabel, runtime.isForeground]);
 
   function renderFooter() {
     if (isFetchingMore) {
@@ -194,12 +256,7 @@ export function PostFeed({
         onEndReachedThreshold={0.65}
         overScrollMode="never"
         refreshControl={refreshControl}
-        renderItem={({ item, index }) => (
-          <>
-            {renderSectionLabel(item, index)}
-            <PostCard post={item} />
-          </>
-        )}
+        renderItem={renderPost}
         scrollEnabled
         showsVerticalScrollIndicator={false}
         style={[styles.virtualizedList, listStyle]}

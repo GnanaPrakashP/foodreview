@@ -88,7 +88,10 @@ test("notification inbox automation uses backend list and unread-count truth", (
   assert.match(notificationHookSource, /useUnreadNotificationCountQuery/);
   assert.match(notificationHookSource, /useInfiniteQuery/);
   assert.match(notificationHookSource, /queryClient\.setQueryData\(notificationKeys\.unreadCount, 0\)/);
-  assert.match(notificationHookSource, /invalidateQueries\(\{ queryKey: notificationKeys\.unreadCount \}\)/);
+  assert.match(notificationHookSource, /patchCachedNotification\(queryClient, notificationId/);
+  assert.match(notificationHookSource, /decrementCachedUnreadCounts\(queryClient\)/);
+  assert.match(notificationHookSource, /queryClient\.setQueryData\(notificationKeys\.unreadCount, context\.previousUnreadCount\)/);
+  assert.doesNotMatch(notificationHookSource, /invalidateQueries\(\{ queryKey: notificationKeys\.(?:list|unreadCount) \}\)/);
 
   assert.match(notificationServiceSource, /authorizedJson<NotificationsApiResponse>/);
   assert.match(notificationServiceSource, /new URLSearchParams\(\{ limit: String\(limit\) \}\)/);

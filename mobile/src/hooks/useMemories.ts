@@ -56,7 +56,8 @@ export const memoryKeys = {
 };
 
 const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
-const REALTIME_RECONCILE_DELAY_MS = 1_500;
+const REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000;
+const REALTIME_SUMMARY_RECONCILE_DELAY_MS = 15_000;
 const recentMediaMessageExpiries = new Map<string, number>();
 registerSensitiveResourceCleanup(() => recentMediaMessageExpiries.clear());
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
@@ -945,12 +946,15 @@ export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: memoryKeys.list,
     queryFn: listMemoryRoomsOfflineFirst,
-    enabled
+    enabled,
+    refetchOnWindowFocus: true,
+    staleTime: 45_000
   });
 }
 
 export function useMemoryRoomsRealtime(enabled = true) {
   const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
 
   useEffect(() => {
     if (!enabled) return;
@@ -963,7 +967,38 @@ export function useMemoryRoomsRealtime(enabled = true) {
       invalidationTimeout = setTimeout(() => {
         if (!isCacheGenerationActive(ownerGeneration)) return;
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-      }, 150);
+      }, REALTIME_SUMMARY_RECONCILE_DELAY_MS);
+    };
+    const handleMessageChange = (payload: MemoryMessageRealtimePayload) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+      if (!row.room_id) {
+        scheduleRefresh();
+        return;
+      }
+      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+        if (payload.eventType === "INSERT") return applyRealtimeMessageToSummaries(current, row, profile?.username);
+        if (payload.eventType === "UPDATE") return applyRealtimeMessageUpdateToSummaries(current, row);
+        if (row.id) return applyRealtimeMessageDeleteToSummaries(current, row, profile?.username);
+        return current;
+      });
+    };
+    const handlePhotoChange = (payload: MemoryPhotoRealtimePayload) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+      if (!row.room_id) {
+        scheduleRefresh();
+        return;
+      }
+      if (payload.eventType === "INSERT") {
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
+        ));
+      } else if (payload.eventType === "DELETE" && row.id) {
+        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          applyRealtimePhotoDeleteToSummaries(current, row, profile?.username)
+        ));
+      }
     };
 
     const channel = supabase
@@ -971,12 +1006,12 @@ export function useMemoryRoomsRealtime(enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_messages" },
-        scheduleRefresh
+        (payload) => handleMessageChange(payload as MemoryMessageRealtimePayload)
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_photos" },
-        scheduleRefresh
+        (payload) => handlePhotoChange(payload as MemoryPhotoRealtimePayload)
       )
       .on(
         "postgres_changes",
@@ -1004,7 +1039,7 @@ export function useMemoryRoomsRealtime(enabled = true) {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       void supabase.removeChannel(channel);
     };
-  }, [enabled, queryClient]);
+  }, [enabled, profile?.username, queryClient]);
 }
 
 export function useMemoryRoomQuery(roomId: string) {
@@ -1077,18 +1112,7 @@ export function useMemoryRoomRealtime(roomId: string) {
         if (!isCacheGenerationActive(ownerGeneration)) return;
         queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-      }, 150);
-    };
-    const scheduleReconcile = () => {
-      if (!isCacheGenerationActive(ownerGeneration)) return;
-      if (invalidationTimeout) clearTimeout(invalidationTimeout);
-      invalidationTimeout = setTimeout(() => {
-        if (!isCacheGenerationActive(ownerGeneration)) return;
-        queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-        queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-        queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-      }, REALTIME_RECONCILE_DELAY_MS);
+      }, REALTIME_FALLBACK_RECONCILE_DELAY_MS);
     };
     const persistOfflineRoom = () => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1113,7 +1137,6 @@ export function useMemoryRoomRealtime(roomId: string) {
           applyRealtimeMessageToSummaries(current, row, profile?.username)
         ));
         persistOfflineRoom();
-        scheduleReconcile();
         return;
       }
 
@@ -1140,7 +1163,6 @@ export function useMemoryRoomRealtime(roomId: string) {
           applyRealtimeMessageUpdateToSummaries(current, row)
         ));
         persistOfflineRoom();
-        scheduleReconcile();
         return;
       }
 
@@ -1166,7 +1188,6 @@ export function useMemoryRoomRealtime(roomId: string) {
         ));
         void deleteOfflineMemoryMessage(row.id as string);
         persistOfflineRoom();
-        scheduleReconcile();
         return;
       }
 
@@ -1202,7 +1223,6 @@ export function useMemoryRoomRealtime(roomId: string) {
           ));
         }
         persistOfflineRoom();
-        scheduleReconcile();
         return;
       }
 
@@ -1228,7 +1248,6 @@ export function useMemoryRoomRealtime(roomId: string) {
         ));
         void deleteOfflineMemoryPhoto(row.id as string);
         persistOfflineRoom();
-        scheduleReconcile();
         return;
       }
 
@@ -1319,10 +1338,8 @@ export function useUpdateMemoryRoomOccasionMutation(roomId: string) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
       }
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-    }
+    // The optimistic detail/list patch is authoritative for this interaction;
+    // scoped realtime or foreground reconciliation handles external changes.
   });
 }
 
@@ -1362,9 +1379,6 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
       if (context?.previousList) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
       }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
 }
@@ -1486,11 +1500,6 @@ export function useAddMemoryMessageMutation(roomId: string) {
       if (context?.previousList) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
       }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
 }
@@ -1510,24 +1519,33 @@ export function useEditMemoryMessageMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ body, messageId }: { body: string; messageId: string }) => editMemoryMessage(roomId, messageId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    onSuccess: (_result, variables) => {
+      const editedAt = new Date().toISOString();
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => current ? ({
+        ...current,
+        messages: current.messages.map((message) => message.id === variables.messageId
+          ? { ...message, body: variables.body.trim(), editedAt }
+          : message)
+      }) : current);
+      queryClient.setQueriesData<InfiniteData<MemoryMessagesPage>>(
+        { queryKey: memoryKeys.chat(roomId) },
+        (current) => current ? ({
+          ...current,
+          pages: current.pages.map((page) => ({
+            ...page,
+            messages: page.messages.map((message) => message.id === variables.messageId
+              ? { ...message, body: variables.body.trim(), editedAt }
+              : message)
+          }))
+        }) : current
+      );
     }
   });
 }
 
 export function useDeleteMemoryMessageMutation(roomId: string) {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (messageId: string) => deleteMemoryMessage(roomId, messageId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-    }
+    mutationFn: (messageId: string) => deleteMemoryMessage(roomId, messageId)
   });
 }
 
@@ -1604,25 +1622,13 @@ export function useDeleteMemoryItemsMutation(roomId: string) {
     },
     onSettled: (_data, _error, _input, context) => {
       removePendingMemoryDelete(roomId, context?.pendingDeleteToken);
-      if (pendingDeleteSetsForRoom(roomId)) return;
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
 }
 
 export function useDeleteMemoryPhotoMutation(roomId: string) {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (photoId: string) => deleteMemoryPhoto(roomId, photoId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-    }
+    mutationFn: (photoId: string) => deleteMemoryPhoto(roomId, photoId)
   });
 }
 
@@ -1902,10 +1908,6 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           };
         });
       }
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.media(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
 }

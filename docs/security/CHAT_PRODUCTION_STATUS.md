@@ -1,18 +1,29 @@
 # Chat Production Status
 
-Current phase: Production Hardening Phase 5 — backend, database, and feed performance
+Current phase: Production Hardening Phase 6 — React Native mobile performance and rendering
 
-Production-hardening program phase: Phase 5 — bounded mobile reads, canonical feed queries, pagination, and query/payload budgets
+Production-hardening program phase: Phase 6 — lazy retained tabs, owner-safe selected persistence, targeted cache patches, cursor lists, viewport media, and coordinated runtime activity
 
-Phase 5 implementation status: PASS locally on `hardening/07-backend-performance`. Sixteen primary mobile reads have explicit request/query/row/payload budgets; Circle and mobile feeds use bounded canonical RPCs; feed-card N+1 calls are removed; Explore v3 is mandatory; Profile has one posts owner; comments, notifications, Memory chat, and Memory media are bounded/cursor-paginated; Memory private paths remain server-side; deterministic query plans/payload/cursor behavior pass locally.
+Phase 6 implementation status: PASS locally on `hardening/08-mobile-performance`. Four main tabs have zero eager mounts; visited tabs remain retained/frozen; five logical account-owned cache surfaces hydrate through a bounded owner envelope; one AppState/network owner drives React Query focus/online state; ordinary post/comment/notification/Memory deltas use targeted patches; active lists use stable cursors and bounded virtualization; feed media uses feed-sized variants with at most one viewport player; native bundle and Android APK budgets pass, and an isolated generated iOS arm64 simulator Release compile succeeds.
 
-Phase 5 release verification status: BLOCKED pending hosted migration/lock review, production-sized staging plans, hosted API p50/p95/p99, pool/Storage/network metrics, Phase 9 concurrency/soak/failure testing, and all earlier Phase 1A–4 release blockers. No hosted project was mutated and no 1,000-user capacity claim is made.
+Phase 6 release verification status: BLOCKED. The configured hosted database lacks the Phase 5 `mobile_public_feed_page_v1` contract, so the release app correctly returns a fail-closed 503 and cannot produce useful-content/tab/media measurements. The supplemental Android 15 emulator profile is partial; no physical Android/iOS device was available. Hosted staging, physical-device frames/memory, signed native artifacts, Phase 7 telemetry, Phase 9 load/soak/recovery, and earlier blockers remain mandatory. No hosted project was mutated and no 1,000-user capacity claim is made.
 
-Final Phase 5 evidence includes a clean canonical reset, 57/57 pgTAP assertions, 10/10 real policy behaviors, zero canonical drift, 8/8 focused Phase 5 tests, 13 production API flows with 20 warm samples each, passing root/mobile typechecks, a passing production Next build, and passing Android/iOS production exports. The full root suite retains exactly the 20 registered PH-002 failing names; Memory remains 71/72 with its existing PH-002 failure.
+Final Phase 6 evidence includes 12/12 focused tests, 72/72 Memory hardening, passing Phase 1A–5 focused regressions, zero-error root/mobile lint, passing root/mobile typechecks, Android/iOS production exports, a successful Android release APK, a successful isolated generated iOS arm64 simulator Release compile, and passing bundle budgets. Owner cache hydration measured 46 ms in one release cold launch. Five-sample emulator cold draw median was 9,153 ms and warm resume median 1,463 ms, but content/tab/frame/player results are not accepted because the hosted feed contract was unavailable.
 
-Next required phase: Phase 5 manual staging/performance matrix, followed by separately authorized Phase 6 work
+Next required phase: Phase 6 hosted/physical-device staging matrix, then separately authorized Phase 7 work
 
-Production-hardening next required phase: execute `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md` against disposable production-sized staging together with the Phase 1A–4 hosted gates. Phase 6 is not started by this handoff.
+Production-hardening next required phase: deploy/review the Phase 5 contract in disposable production-like staging, execute `docs/production-hardening/PHASE_6_MOBILE_PERFORMANCE.md` on physical Android/iOS devices together with the Phase 1A–5 hosted gates, and resolve PH-603/PH-902. Phase 7 is not started by this handoff.
+
+## Production Hardening Phase 6 — React Native Mobile Performance (2026-07-13)
+
+- Tabs/startup: all four main tabs use lazy mounting; only Circle is initial, visited tabs remain retained and freeze on blur, and Profile/Memory/Explore/location/camera work is focus-gated.
+- Persistence: the per-owner Query envelope persists only successful bounded first-page Circle, Explore, current Profile, Memory summaries, and unread count; it omits mutations/errors/tail pages and strips expired signed media. Expo Image caches join Phase 1C cleanup.
+- Runtime: one AppState/Expo Network owner drives React Query focus/online managers and all foreground consumers. A release-only install-identity failure was fixed with Expo Crypto without adding an insecure fallback.
+- Mutations: likes, bookmarks, comments, notifications, Profile edits, deletes, and Memory deltas patch exact cached entities with rollback/server correction; notification polling and immediate Memory delta reloads are removed.
+- Rendering: feed lists use 4/4/5 virtualization, memoized cards, batched seen writes, feed-sized images, next-two Wi-Fi/Ethernet thumbnail prefetch, and a single viewport-owned video player. Restaurant, dish, liked, and saved surfaces now consume stable cursor pages.
+- Artifacts: Android/iOS exports are 16,647,373/16,639,725 bytes; Hermes is 9,262,946/9,254,301 bytes; fonts are 2,101,500 bytes/platform; final APK is 151,601,421 bytes. All pass budgets. An isolated generated iOS arm64 simulator Release compile also succeeds; it is not signed-device evidence.
+- Runtime evidence: Android 15 emulator release/profile, five samples, cold draw median 9,153 ms and warm resume median 1,463 ms. No useful-content/tab-content marks, representative player count, or valid feed-scroll frames were available because hosted `mobile_public_feed_page_v1` is missing. The partial result is not a production latency claim.
+- Remaining: physical devices, hosted staging, long-session memory/media, PH-603 process-safe drafts, PH-902 module splitting, Phase 7 telemetry, Phase 8 signed/store validation, and Phase 9 capacity testing.
 
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 

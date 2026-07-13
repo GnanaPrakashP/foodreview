@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actorFromProfile,
   getCurrentProfilePage,
@@ -13,14 +13,14 @@ import {
   type ProfileDetailsInput,
   type ProfileSetupInput
 } from "@/services/profiles";
-import type { AccountType, Profile } from "@/types/models";
+import type { AccountType, Profile, ProfilePageData } from "@/types/models";
 import { useSessionStore } from "@/stores/sessionStore";
 
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
 const EXPIRING_MEDIA_QUERY_OPTIONS = {
   refetchInterval: POST_MEDIA_REFRESH_MS,
   refetchOnWindowFocus: true,
-  staleTime: POST_MEDIA_REFRESH_MS
+  staleTime: 2 * 60_000
 } as const;
 
 export const profileKeys = {
@@ -30,11 +30,21 @@ export const profileKeys = {
   posts: (username: string) => ["profile", username, "posts"] as const
 };
 
+export function patchCurrentProfileCaches(queryClient: QueryClient, profile: Profile) {
+  queryClient.setQueryData(profileKeys.current, profile);
+  queryClient.setQueryData<ProfilePageData>(profileKeys.currentPage, (current) => current ? ({
+    ...current,
+    displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || profile.username,
+    profile
+  }) : current);
+}
+
 export function useCurrentUserProfileQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: profileKeys.current,
     queryFn: getCurrentUserProfile,
-    enabled: options.enabled ?? true
+    enabled: options.enabled ?? true,
+    staleTime: 2 * 60_000
   });
 }
 
@@ -103,14 +113,7 @@ export function useUpdateAccountTypeMutation() {
     },
     onSuccess: (profile) => {
       setProfile(actorFromProfile(profile));
-      queryClient.setQueryData(profileKeys.current, profile);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: profileKeys.current });
-      queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
-      queryClient.invalidateQueries({ queryKey: ["feed"] });
-      queryClient.invalidateQueries({ queryKey: ["circle"] });
+      patchCurrentProfileCaches(queryClient, profile);
     }
   });
 }
@@ -123,10 +126,7 @@ export function useUpdateAvatarMutation() {
     mutationFn: (input: AvatarUploadInput) => updateCurrentUserAvatar(input),
     onSuccess: (profile) => {
       setProfile(actorFromProfile(profile));
-      queryClient.invalidateQueries({ queryKey: profileKeys.current });
-      queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
-      queryClient.invalidateQueries({ queryKey: ["feed"] });
+      patchCurrentProfileCaches(queryClient, profile);
     }
   });
 }
@@ -139,10 +139,7 @@ export function useUpdateProfileDetailsMutation() {
     mutationFn: (input: ProfileDetailsInput) => updateCurrentProfileDetails(input),
     onSuccess: (profile) => {
       setProfile(actorFromProfile(profile));
-      queryClient.invalidateQueries({ queryKey: profileKeys.current });
-      queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
-      queryClient.invalidateQueries({ queryKey: ["feed"] });
+      patchCurrentProfileCaches(queryClient, profile);
     }
   });
 }

@@ -73,11 +73,16 @@ export function useLeaveCircleMutation() {
 }
 
 export function useRespondToCircleRequestMutation() {
-  const invalidate = useInvalidateCircleQueries();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: respondToCircleRequest,
-    onSettled: invalidate
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: circleKeys.mine });
+      queryClient.invalidateQueries({ queryKey: circleKeys.relationship(variables.senderName) });
+      queryClient.invalidateQueries({ queryKey: ["profile", "current-page"] });
+      queryClient.invalidateQueries({ queryKey: ["feed", "circle"] });
+    }
   });
 }
 

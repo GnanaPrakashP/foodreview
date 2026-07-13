@@ -2,6 +2,7 @@ import type { Comment, Review } from "@/lib/types";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { REVIEW_SELECT } from "@/lib/selects";
 import { isReviewSuppressed, normalizeVisibility } from "@/lib/visibility";
+import type { StableTimestampCursor } from "@/lib/server/stable-cursor";
 
 type EngagementDb = {
   from: (table: string) => any;
@@ -17,6 +18,17 @@ type WishlistRow = {
 type HungryPickRow = {
   post_id: string;
   created_at: string;
+};
+
+type LikeRow = {
+  created_at: string;
+  id: string;
+  post_id: string;
+};
+
+type EngagementPageOptions = {
+  cursor?: StableTimestampCursor | null;
+  limit?: number;
 };
 
 type CommentRow = {
@@ -147,14 +159,21 @@ export async function engagementForPosts(db: EngagementDb, reviews: Review[], ac
   return { ...maps, ...actorMaps };
 }
 
-export async function likedPostsForActor(db: EngagementDb, actorName: string) {
-  const { data } = await db
+export async function likedPostsForActor(db: EngagementDb, actorName: string, options: EngagementPageOptions = {}) {
+  const limit = Math.min(50, Math.max(1, options.limit ?? 30));
+  let query = db
     .from("likes")
-    .select("post_id, created_at")
+    .select("id, post_id, created_at")
     .eq("user_name", actorName)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false });
+  if (options.cursor) {
+    query = query.or(`created_at.lt.${options.cursor.createdAt},and(created_at.eq.${options.cursor.createdAt},id.lt.${options.cursor.id})`);
+  }
+  const { data } = await query.limit(limit + 1);
 
-  const postIds = ((data ?? []) as { post_id: string }[]).map((row) => row.post_id);
+  const rows = ((data ?? []) as LikeRow[]).slice(0, limit);
+  const postIds = rows.map((row) => row.post_id);
   const reviewMap = await reviewsById(db, postIds, actorName);
   const reviews = postIds.map((id) => reviewMap.get(id)).filter((review): review is Review => Boolean(review));
   const [maps, actorMaps] = await Promise.all([
@@ -162,17 +181,29 @@ export async function likedPostsForActor(db: EngagementDb, actorName: string) {
     actorStateMaps(db, reviews, actorName),
   ]);
 
-  return { reviews, ...maps, ...actorMaps };
+  const oldest = rows[rows.length - 1];
+  return {
+    reviews,
+    ...maps,
+    ...actorMaps,
+    nextCursor: (data ?? []).length > limit && oldest ? { createdAt: oldest.created_at, id: oldest.id } : null
+  };
 }
 
-export async function savedPostsForActor(db: EngagementDb, actorName: string) {
-  const { data } = await db
+export async function savedPostsForActor(db: EngagementDb, actorName: string, options: EngagementPageOptions = {}) {
+  const limit = Math.min(50, Math.max(1, options.limit ?? 30));
+  let query = db
     .from("wishlist")
     .select("id, restaurant_name, post_id, created_at")
     .eq("user_name", actorName)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false });
+  if (options.cursor) {
+    query = query.or(`created_at.lt.${options.cursor.createdAt},and(created_at.eq.${options.cursor.createdAt},id.lt.${options.cursor.id})`);
+  }
+  const { data } = await query.limit(limit + 1);
 
-  const rows = (data ?? []) as WishlistRow[];
+  const rows = ((data ?? []) as WishlistRow[]).slice(0, limit);
   const postIds = rows.map((row) => row.post_id).filter((id): id is string => Boolean(id));
   const reviewMap = await reviewsById(db, postIds, actorName);
   const reviews = rows
@@ -184,7 +215,14 @@ export async function savedPostsForActor(db: EngagementDb, actorName: string) {
   const maps = await engagementMaps(db, reviews.map((review) => review.id));
   const actorMaps = await actorStateMaps(db, reviews, actorName);
 
-  return { reviews, placeItems, ...maps, ...actorMaps };
+  const oldest = rows[rows.length - 1];
+  return {
+    reviews,
+    placeItems,
+    ...maps,
+    ...actorMaps,
+    nextCursor: (data ?? []).length > limit && oldest ? { createdAt: oldest.created_at, id: oldest.id } : null
+  };
 }
 
 export async function hungryPicksForActor(db: EngagementDb, actorName: string) {

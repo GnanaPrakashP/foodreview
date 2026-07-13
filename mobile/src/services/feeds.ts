@@ -314,27 +314,27 @@ export async function getReviewPostById(postId: string): Promise<ReviewPost | nu
   return page.posts[0] ?? null;
 }
 
-export async function getPublicFeed(): Promise<FeedPage> {
-  return getMobileFeedPage("public");
+export async function getPublicFeed(cursor?: string | null): Promise<FeedPage> {
+  return getMobileFeedPage("public", cursor ? { cursor } : {});
 }
 
 export async function getExploreFeed(input: ExploreFeedInput = {}): Promise<FeedPage> {
   return getMobileFeedPage("public", { limit: String(Math.min(Math.max(input.limit ?? PAGE_SIZE, 1), 50)) });
 }
 
-export async function getRestaurantFeed(input: RestaurantFeedInput): Promise<FeedPage> {
+export async function getRestaurantFeed(input: RestaurantFeedInput, cursor?: string | null): Promise<FeedPage> {
   const placeId = input.placeId?.trim() ?? "";
   const restaurantAddress = input.restaurantAddress?.trim() ?? "";
   const restaurantName = input.restaurantName?.trim() ?? "";
   if (!placeId && !restaurantName) return { posts: [], viewerName: "" };
-  return getMobileFeedPage("restaurant", { placeId, restaurantAddress, restaurantName });
+  return getMobileFeedPage("restaurant", { cursor: cursor ?? "", placeId, restaurantAddress, restaurantName });
 }
 
 function normalizeDishFeedInput(input: string | DishFeedInput): DishFeedInput {
   return typeof input === "string" ? { dishName: input } : input;
 }
 
-export async function getDishFeed(input: string | DishFeedInput): Promise<FeedPage> {
+export async function getDishFeed(input: string | DishFeedInput, cursor?: string | null): Promise<FeedPage> {
   const normalizedInput = normalizeDishFeedInput(input);
   const dishName = normalizeDishDisplayName(normalizedInput.dishName).toLowerCase();
   const canonicalDishId = normalizedInput.canonicalDishId?.trim() ?? "";
@@ -344,6 +344,7 @@ export async function getDishFeed(input: string | DishFeedInput): Promise<FeedPa
   if (!dishName && !canonicalDishId) return { posts: [], viewerName: "" };
   return getMobileFeedPage("dish", {
     canonicalDishId,
+    cursor: cursor ?? "",
     dishName,
     limit: String(Math.min(Math.max(normalizedInput.limit ?? PAGE_SIZE, 1), 50)),
     placeId,

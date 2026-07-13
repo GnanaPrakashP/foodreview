@@ -1,21 +1,12 @@
 import { supabase } from "@/api/supabase";
 import { apiUrl } from "@/api/config";
-import { authorizedApiHeaders } from "@/api/client";
+import { authorizedApiHeaders, authorizedJson } from "@/api/client";
 import { addEngagementToRows } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
 import { removePushTokensForUser } from "@/services/notifications";
-import { displayNameForProfile, REVIEW_SELECT, type ReviewRow } from "@/services/reviewMapper";
+import { displayNameForProfile, mapReviewPost, REVIEW_SELECT, type ReviewRow } from "@/services/reviewMapper";
 import type { ReviewPost } from "@/types/models";
-
-type EngagementPostRow = {
-  post_id: string | null;
-};
-
-type SavedPostRow = {
-  id: string;
-  restaurant_name: string;
-  post_id: string | null;
-};
+import { fetchPostMediaAccess } from "@/services/postMediaAccess";
 
 type CommentRow = {
   id: string;
@@ -30,11 +21,24 @@ export type SavedPlaceItem = {
 };
 
 export type SettingsPostList = {
+  nextCursor: string | null;
   posts: ReviewPost[];
 };
 
 export type SavedSettingsList = SettingsPostList & {
   places: SavedPlaceItem[];
+};
+
+type EngagementFeedResponse = {
+  bookmarkedPostMap?: Record<string, boolean>;
+  commentMap?: Record<string, { count?: number }>;
+  likeCountMap?: Record<string, number>;
+  likedByMeMap?: Record<string, boolean>;
+  myName?: string;
+  nextCursor?: string | null;
+  placeItems?: Array<{ id: string; restaurant_name: string }>;
+  profileMap?: Record<string, string>;
+  reviews?: ReviewRow[];
 };
 
 export type SettingsCommentItem = {
@@ -153,56 +157,43 @@ async function mapRowsToPosts(rows: ReviewRow[], viewerName: string): Promise<Re
   return addEngagementToRows(rows, viewerName);
 }
 
-export async function getLikedSettingsPosts(): Promise<SettingsPostList> {
-  const viewer = await getViewerProfile();
-  const { data, error } = await supabase
-    .from("likes")
-    .select("post_id")
-    .eq("user_name", viewer.username)
-    .order("created_at", { ascending: false })
-    .returns<EngagementPostRow[]>();
-
-  if (error) throw new Error(error.message);
-
-  const postIds = (data ?? []).map((row) => row.post_id).filter((id): id is string => Boolean(id));
-  const reviewMap = await getVisibleReviewRows(postIds, viewer.username);
-  const rows = postIds.map((id) => reviewMap.get(id)).filter((row): row is ReviewRow => Boolean(row));
-
-  return {
-    posts: await mapRowsToPosts(rows, viewer.username)
-  };
+async function mapEngagementFeedPosts(payload: EngagementFeedResponse) {
+  const reviews = payload.reviews ?? [];
+  const mediaByAssetId = await fetchPostMediaAccess(reviews.flatMap((row) => (
+    row.review_photos ?? []
+  ).map((media) => media.media_asset_id).filter((id): id is string => Boolean(id))));
+  return reviews.map((row) => mapReviewPost(row, {
+    bookmarkedByMe: payload.bookmarkedPostMap?.[row.id] ?? false,
+    commentCount: payload.commentMap?.[row.id]?.count ?? 0,
+    displayName: payload.profileMap?.[row.reviewer_name] ?? row.reviewer_name,
+    likedByMe: payload.likedByMeMap?.[row.id] ?? false,
+    likeCount: payload.likeCountMap?.[row.id] ?? 0,
+    mediaByAssetId,
+    reviewerUsername: row.reviewer_name
+  }));
 }
 
-export async function getSavedSettingsItems(): Promise<SavedSettingsList> {
-  const viewer = await getViewerProfile();
-  const { data, error } = await supabase
-    .from("wishlist")
-    .select("id, restaurant_name, post_id")
-    .eq("user_name", viewer.username)
-    .order("created_at", { ascending: false })
-    .returns<SavedPostRow[]>();
+export async function getLikedSettingsPosts(cursor?: string | null): Promise<SettingsPostList> {
+  const params = new URLSearchParams({ limit: "30" });
+  if (cursor) params.set("cursor", cursor);
+  const payload = await authorizedJson<EngagementFeedResponse>(`/api/me/liked?${params.toString()}`, { method: "GET" }, {
+    action: "loading liked posts",
+    timeoutMs: 12_000
+  });
+  return { nextCursor: payload.nextCursor ?? null, posts: await mapEngagementFeedPosts(payload) };
+}
 
-  if (error) throw new Error(error.message);
-
-  const rows = data ?? [];
-  const postIds = rows.map((row) => row.post_id).filter((id): id is string => Boolean(id));
-  const reviewMap = await getVisibleReviewRows(postIds, viewer.username);
-  const reviewRows = rows
-    .map((row) => row.post_id ? reviewMap.get(row.post_id) ?? null : null)
-    .filter((row): row is ReviewRow => Boolean(row));
-  // Only genuine place-only saves (no post_id) count as "places". A bookmarked
-  // post whose review is no longer visible is a dead bookmark, not a saved
-  // place, so it is dropped rather than shown as a bare restaurant name.
-  const places = rows
-    .filter((row) => !row.post_id)
-    .map((row) => ({
-      id: row.id,
-      restaurantName: row.restaurant_name
-    }));
-
+export async function getSavedSettingsItems(cursor?: string | null): Promise<SavedSettingsList> {
+  const params = new URLSearchParams({ limit: "30" });
+  if (cursor) params.set("cursor", cursor);
+  const payload = await authorizedJson<EngagementFeedResponse>(`/api/me/saved?${params.toString()}`, { method: "GET" }, {
+    action: "loading saved posts",
+    timeoutMs: 12_000
+  });
   return {
-    places,
-    posts: await mapRowsToPosts(reviewRows, viewer.username)
+    nextCursor: payload.nextCursor ?? null,
+    places: (payload.placeItems ?? []).map((place) => ({ id: place.id, restaurantName: place.restaurant_name })),
+    posts: await mapEngagementFeedPosts(payload)
   };
 }
 

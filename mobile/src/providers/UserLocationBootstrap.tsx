@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { AppState, Platform, type AppStateStatus } from "react-native";
+import { Platform } from "react-native";
+import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import { isCoarseUserLocationLabel } from "@/services/userLocation";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
@@ -28,52 +29,47 @@ async function refreshDeviceLocationIfAllowed() {
 }
 
 export function UserLocationBootstrap() {
-  const hydrated = useUserLocationStore((state) => state.hydrated);
   const hydrate = useUserLocationStore((state) => state.hydrate);
-  const syncRemoteLocation = useUserLocationStore((state) => state.syncRemoteLocation);
-  const isSessionReady = useSessionStore((state) => state.isReady);
-  const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const didResolveInitialLocationRef = useRef(false);
-  const didSyncRemoteForSessionRef = useRef(false);
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
-  useEffect(() => {
-    if (!hydrated || !isSessionReady || didResolveInitialLocationRef.current) return;
-    didResolveInitialLocationRef.current = true;
+  return null;
+}
 
+/**
+ * Remote/device location work is owned by the active Explore screen. The
+ * global bootstrap hydrates the small account-scoped local preference only.
+ */
+export function useExploreLocationActivation(active: boolean) {
+  const runtime = useRuntimeActivity();
+  const hydrated = useUserLocationStore((state) => state.hydrated);
+  const syncRemoteLocation = useUserLocationStore((state) => state.syncRemoteLocation);
+  const isSessionReady = useSessionStore((state) => state.isReady);
+  const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
+  const didSyncRemoteForSessionRef = useRef(false);
+  const wasForegroundRef = useRef(runtime.isForeground);
+
+  useEffect(() => {
+    if (!active || !hydrated || !isSessionReady || !runtime.isForeground) return;
+    if (!isAuthenticated) {
+      didSyncRemoteForSessionRef.current = false;
+      void refreshDeviceLocationIfAllowed();
+      return;
+    }
     void (async () => {
-      if (isAuthenticated) {
+      if (!didSyncRemoteForSessionRef.current) {
         didSyncRemoteForSessionRef.current = true;
         await syncRemoteLocation();
       }
       await refreshDeviceLocationIfAllowed();
     })();
-  }, [hydrated, isAuthenticated, isSessionReady, syncRemoteLocation]);
+  }, [active, hydrated, isAuthenticated, isSessionReady, runtime.isForeground, syncRemoteLocation]);
 
   useEffect(() => {
-    if (!hydrated || !isSessionReady) return;
-    if (!isAuthenticated) {
-      didSyncRemoteForSessionRef.current = false;
-      return;
-    }
-    if (didSyncRemoteForSessionRef.current) return;
-
-    didSyncRemoteForSessionRef.current = true;
-    void syncRemoteLocation();
-  }, [hydrated, isAuthenticated, isSessionReady, syncRemoteLocation]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return undefined;
-
-    const subscription = AppState.addEventListener("change", (status: AppStateStatus) => {
-      if (status === "active") void refreshDeviceLocationIfAllowed();
-    });
-
-    return () => subscription.remove();
-  }, []);
-
-  return null;
+    const becameForeground = runtime.isForeground && !wasForegroundRef.current;
+    wasForegroundRef.current = runtime.isForeground;
+    if (active && becameForeground) void refreshDeviceLocationIfAllowed();
+  }, [active, runtime.isForeground]);
 }

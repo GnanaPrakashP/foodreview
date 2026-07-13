@@ -346,7 +346,7 @@ export default function ReviewDetailScreen() {
             </View>
           ) : (
             <>
-              <PostCard loadDetailEngagement post={post.data} />
+              <PostCard loadDetailEngagement mediaActive post={post.data} />
               <View style={styles.commentsSection}>
                 <View style={styles.commentsHeader}>
                   <View style={styles.commentsHeaderText}>

@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, type ViewStyle } from "react-native";
 import { useThemePreference } from "@/hooks/useThemePreference";

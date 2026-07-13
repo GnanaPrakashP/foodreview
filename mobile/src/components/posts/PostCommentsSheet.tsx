@@ -40,6 +40,9 @@ type ThemeColors = ReturnType<typeof themeColorsFor>;
 const COMMENT_LIMIT = 500;
 const COMMENT_LIMIT_WARNING_AT = COMMENT_LIMIT - 50;
 const QUICK_COMMENT_EMOJIS = ["😋", "🔥", "❤️", "👏", "😮", "🤤", "😂"];
+const COMMENTS_INITIAL_RENDER_COUNT = 12;
+const COMMENTS_RENDER_BATCH_SIZE = 8;
+const COMMENTS_WINDOW_SIZE = 7;
 
 function initialsForName(name: string) {
   const parts = name.split(/[\s_]+/).filter(Boolean);
@@ -363,6 +366,7 @@ function PostCommentsSheet({
               commentsData.length === 0 && styles.commentsSheetScrollContentEmpty
             ]}
             data={commentsData}
+            initialNumToRender={COMMENTS_INITIAL_RENDER_COUNT}
             ListHeaderComponent={comments.hasNextPage ? (
               <Pressable
                 accessibilityRole="button"
@@ -380,6 +384,7 @@ function PostCommentsSheet({
             ListFooterComponent={commentsData.length > 0 ? <Animated.View style={listReserveStyle} /> : null}
             keyboardShouldPersistTaps="handled"
             keyExtractor={(item) => item.id}
+            maxToRenderPerBatch={COMMENTS_RENDER_BATCH_SIZE}
             ListEmptyComponent={renderListEmpty()}
             ref={listRef}
             refreshControl={comments.isLoading ? undefined : (
@@ -392,8 +397,11 @@ function PostCommentsSheet({
               />
             )}
             renderItem={({ item }) => renderComment(item)}
+            removeClippedSubviews={false}
             showsVerticalScrollIndicator={false}
             style={styles.commentsSheetScroll}
+            updateCellsBatchingPeriod={50}
+            windowSize={COMMENTS_WINDOW_SIZE}
           />
 
           <Animated.View
