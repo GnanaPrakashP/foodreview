@@ -28,34 +28,17 @@ test("Explore discovery SQL ranks by location without a radius cutoff", () => {
   }
 });
 
-test("mobile Explore fallback sorts by location without bounding the query", () => {
+test("mobile Explore passes location to the mandatory bounded canonical contract", () => {
   const feeds = source("mobile/src/services/feeds.ts");
   const discovery = source("mobile/src/services/exploreDiscovery.ts");
-  const exploreScreen = source("mobile/app/(tabs)/explore.tsx");
 
   assert.doesNotMatch(feeds, /function nearbyBounds/i);
-  assert.doesNotMatch(feeds, /\.gte\("restaurant_lat"/i);
-  assert.doesNotMatch(feeds, /\.lte\("restaurant_lng"/i);
-  assert.match(feeds, /function validLocationBias/i);
-  assert.match(feeds, /function locationRankScore/i);
-  assert.match(feeds, /function sortRowsByLocation/i);
-  assert.match(feeds, /const locationScanLimit = location \? Math\.max\(scanLimit, RESTAURANT_SCAN_SIZE\) : scanLimit/);
-  assert.match(feeds, /const rows = discoveryRows\.slice\(0, scanLimit\)/);
-
-  assert.match(discovery, /function buildPlaces\(posts: ReviewPost\[\], inputLocation\?: ExploreFeedInput\["location"\] \| null\)/);
-  assert.match(discovery, /function buildDishes\(posts: ReviewPost\[\], inputLocation\?: ExploreFeedInput\["location"\] \| null\)/);
-  assert.match(discovery, /compareLocationScores\(a\.locationRankScore, b\.locationRankScore\)/);
-  assert.match(discovery, /hydratePlaceReviewPhotos\(buildPlaces\(feed\.posts, input\.location\)\)/);
-  assert.match(discovery, /filterEligibleExplorePhotos\(buildDishes\(feed\.posts, input\.location\)\)/);
-  assert.match(discovery, /function shouldBackfillSparseDiscovery\(page: ExploreDiscoveryPage, input: ExploreFeedInput\)/);
-  assert.match(discovery, /page\.places\.length < expected \|\| page\.dishes\.length < expected \|\| page\.people\.length < expected/);
-  assert.match(discovery, /await backfillSparseDiscovery\(\s*await getExploreDiscoveryFromRpc\(input, CANONICAL_EXPLORE_DISCOVERY_RPC\)/);
-  assert.match(discovery, /async function fetchProfilePeople\(viewerName: string, limit: number\)/);
-  assert.match(discovery, /\.from\("profiles"\)[\s\S]+\.select\("username, first_name, last_name, account_type"\)/);
-  assert.match(discovery, /return mergePeople\(await fetchProfilePeople\(viewerName, limit\), reviewPeople, limit\)/);
-
-  assert.match(exploreScreen, /const EXPLORE_FEED_SCAN_LIMIT = 60/);
-  assert.match(exploreScreen, /const EXPLORE_MAX_LIST_LIMIT = 60/);
+  assert.doesNotMatch(feeds, /RESTAURANT_SCAN_SIZE|PUBLIC_REVIEW_BATCH_SIZE|\.range\(/);
+  assert.match(discovery, /p_lat: input\.location\?\.lat \?\? null/);
+  assert.match(discovery, /p_lng: input\.location\?\.lng \?\? null/);
+  assert.match(discovery, /p_limit: input\.limit \?\? 30/);
+  assert.match(discovery, /explore_discovery_canonical_v3/);
+  assert.doesNotMatch(discovery, /getExploreDiscoveryFallback\(input\)|getExploreFeed\(/);
 });
 
 test("mobile Explore places rank in distance bands by quality score", () => {

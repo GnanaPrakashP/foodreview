@@ -46,8 +46,10 @@ type ActorSummary = {
 };
 
 type NotificationsApiResponse = {
+  nextCursor?: string | null;
   notifications: NotificationRow[];
   profileMap?: Record<string, string>;
+  unreadCount?: number;
 };
 
 let notificationsModulePromise: Promise<NotificationsModule | null> | null = null;
@@ -264,15 +266,14 @@ function mapNotification(row: NotificationRow, profileMap: Record<string, ActorS
   };
 }
 
-export async function listNotifications(limit = 50): Promise<NotificationsPage> {
-  const [payload, unreadCount] = await Promise.all([
-    authorizedJson<NotificationsApiResponse>(
-      `/api/notifications?limit=${encodeURIComponent(String(limit))}`,
-      { method: "GET" },
-      { action: "loading notifications", timeoutMs: 10_000 }
-    ),
-    getUnreadNotificationCount(),
-  ]);
+export async function listNotifications(limit = 30, cursor?: string | null): Promise<NotificationsPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  const payload = await authorizedJson<NotificationsApiResponse>(
+    `/api/notifications?${params.toString()}`,
+    { method: "GET" },
+    { action: "loading notifications", timeoutMs: 10_000 }
+  );
   const profileMap: Record<string, ActorSummary> = Object.fromEntries(
     Object.entries(payload.profileMap ?? {}).map(([username, displayName]) => [
       username,
@@ -282,8 +283,9 @@ export async function listNotifications(limit = 50): Promise<NotificationsPage> 
   const notifications = (payload.notifications ?? []).map((row) => mapNotification(row, profileMap));
 
   return {
+    nextCursor: payload.nextCursor ?? null,
     notifications,
-    unreadCount
+    unreadCount: payload.unreadCount ?? 0
   };
 }
 

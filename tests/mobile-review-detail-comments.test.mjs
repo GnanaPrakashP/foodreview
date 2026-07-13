@@ -45,14 +45,15 @@ test("review detail composer supports proper writing states", () => {
 
 test("mobile comment writes still go through trusted API routes", () => {
   assert.match(commentsService, /authorizedApiJson<CommentsApiResponse>/);
-  assert.match(commentsService, /`\/api\/comments\?postId=\$\{encodeURIComponent\(postId\)\}`/);
+  assert.match(commentsService, /new URLSearchParams\(\{ postId, limit: "30" \}\)/);
+  assert.match(commentsService, /`\/api\/comments\?\$\{params\.toString\(\)\}`/);
   assert.match(commentsService, /authorizedApiJson<CommentRow & \{[\s\S]*engagement\?: PostEngagementState;[\s\S]*profileMap\?: Record<string, string>;[\s\S]*\}>/);
   assert.match(commentsService, /mapComment\(data, data\.profileMap\?\.\[data\.user_name\] \?\? data\.user_name\)/);
   assert.match(commentsService, /`\/api\/comments\/\$\{encodeURIComponent\(input\.commentId\)\}`/);
   assert.doesNotMatch(commentsService, /\.from\("comments"\)/);
   assert.doesNotMatch(commentsService, /async function viewerName/);
   assert.doesNotMatch(commentsService, /await viewerName\(\)/);
-  assert.match(commentsHook, /setQueryData<PostComment\[]>\(commentKeys\.post\(postId\)/);
+  assert.match(commentsHook, /setQueryData<InfiniteData<CommentsPage>>\(commentKeys\.post\(postId\)/);
   assert.match(commentsHook, /patchCachedPostEngagementFields/);
   assert.match(commentsHook, /commentCount: comment\.engagement\.commentCount/);
   assert.match(commentsHook, /commentCount: result\.engagement\.commentCount/);

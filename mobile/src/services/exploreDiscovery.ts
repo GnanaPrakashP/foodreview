@@ -12,7 +12,7 @@ import {
   explorePhotoUrl,
   filterEligibleExplorePhotos
 } from "@/services/exploreMedia";
-import { getExploreFeed, type ExploreFeedInput } from "@/services/feeds";
+import type { ExploreFeedInput } from "@/services/feeds";
 import { fetchPostMediaAccess } from "@/services/postMediaAccess";
 import { compactAreaLabel } from "@/services/locationLabels";
 import { bayesianRating, distanceKmFromRankScore, placeDistanceBand, rankPlaces } from "@/services/placeRanking";
@@ -111,14 +111,7 @@ type CanonicalDishImageRow = {
 
 const VALID_PLACE_CATEGORIES = new Set<PlaceCategoryId>(PLACE_CATEGORIES.map((category) => category.id));
 const VALID_DISH_CATEGORIES = new Set<DishClusterId>(DISH_CATEGORIES.map((category) => category.id));
-const EXPLORE_DISCOVERY_RPC = "explore_discovery_v1";
-const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v2";
-// When the canonical RPC returns fewer than this per section, backfill from the
-// broader review feed (buildPlaces) and merge — this is what fills the tab when
-// the RPC's nearest-N-reviews window is sparse. Kept generous so a sparse RPC
-// result doesn't leave the Places/Dishes tabs nearly empty.
-const MIN_DISCOVERY_BACKFILL_COUNT = 10;
-const canonicalExploreEnabled = process.env.EXPO_PUBLIC_CANONICAL_EXPLORE !== "0";
+const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v3";
 const EXPLORE_PHOTO_REVIEW_SELECT = "id, created_at, restaurant_id, restaurant_name, photo_url, photo_urls, review_photos(media_asset_id, public_url, media_type, position)";
 const CANONICAL_DISH_KEY_RE = /^canonical:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const DISH_PLACE_GLOBAL_MEAN_FALLBACK = 4;
@@ -575,6 +568,19 @@ async function buildDiscoveryPeople(posts: ReviewPost[], viewerName: string, lim
   }
 }
 
+function mergePeople(primary: ExplorePersonSpotlight[], fallback: ExplorePersonSpotlight[], limit: number) {
+  const merged = new Map<string, ExplorePersonSpotlight>();
+  for (const person of primary) merged.set(person.username.toLowerCase(), person);
+  for (const person of fallback) {
+    const key = person.username.toLowerCase();
+    const current = merged.get(key);
+    merged.set(key, current ? { ...current, totalPlaces: Math.max(current.totalPlaces, person.totalPlaces) } : person);
+  }
+  return Array.from(merged.values())
+    .sort((a, b) => b.totalPlaces - a.totalPlaces || a.displayName.localeCompare(b.displayName))
+    .slice(0, limit);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -837,9 +843,8 @@ function parseDishSpotlight(value: unknown): ExploreDishSpotlight | null {
     familyName: stringValue(value.familyName).trim() || fallbackFamilyName,
     familyNames: familyNames.length > 0 ? familyNames : [stringValue(value.familyName).trim() || fallbackFamilyName],
     topRestaurantNames: stringArrayValue(value.topRestaurantNames).slice(0, 3),
-    // Dish card photos are canonical assets only. RPC/review photos can refer to
-    // a multi-dish post and must not be trusted for a specific dish card.
-    photo: null,
+    // v3 returns only approved canonical-dish imagery for this exact dish.
+    photo: explorePhotoUrl(nullableStringValue(value.photo)),
     averageRating: numberValue(value.averageRating),
     categoryTags: categoryTags.length > 0
       ? categoryTags
@@ -890,7 +895,7 @@ async function filterDiscoveryMedia(page: ExploreDiscoveryPage): Promise<Explore
 
 async function getExploreDiscoveryFromRpc(
   input: ExploreFeedInput,
-  rpcName = EXPLORE_DISCOVERY_RPC
+  rpcName = CANONICAL_EXPLORE_DISCOVERY_RPC
 ): Promise<ExploreDiscoveryPage> {
   const { data, error } = await supabase.rpc(rpcName, {
     p_lat: input.location?.lat ?? null,
@@ -901,80 +906,14 @@ async function getExploreDiscoveryFromRpc(
 
   const parsed = parseDiscoveryPage(data);
   if (!parsed) throw new Error("Explore discovery returned an invalid response.");
-  return filterDiscoveryMedia(parsed);
-}
-
-async function getExploreDiscoveryFallback(input: ExploreFeedInput): Promise<ExploreDiscoveryPage> {
-  const feed = await getExploreFeed(input);
-  const limit = Math.max(1, input.limit ?? 30);
-  const [places, dishes, people] = await Promise.all([
-    hydratePlaceReviewPhotos(buildPlaces(feed.posts, input.location)),
-    filterEligibleExplorePhotos(buildDishes(feed.posts, input.location)),
-    buildDiscoveryPeople(feed.posts, feed.viewerName, limit)
-  ]);
-  return {
-    viewerName: feed.viewerName,
-    places,
-    dishes,
-    people
-  };
-}
-
-function mergeByKey<T extends { key: string }>(primary: T[], fallback: T[], limit: number) {
-  const merged = new Map<string, T>();
-  for (const item of primary) merged.set(item.key, item);
-  for (const item of fallback) {
-    if (!merged.has(item.key)) merged.set(item.key, item);
-  }
-  return Array.from(merged.values()).slice(0, limit);
-}
-
-function mergePeople(primary: ExplorePersonSpotlight[], fallback: ExplorePersonSpotlight[], limit: number) {
-  const merged = new Map<string, ExplorePersonSpotlight>();
-  for (const person of primary) merged.set(person.username.toLowerCase(), person);
-  for (const person of fallback) {
-    const key = person.username.toLowerCase();
-    const current = merged.get(key);
-    merged.set(key, current ? { ...current, totalPlaces: Math.max(current.totalPlaces, person.totalPlaces) } : person);
-  }
-  return Array.from(merged.values())
-    .sort((a, b) => b.totalPlaces - a.totalPlaces || a.displayName.localeCompare(b.displayName))
-    .slice(0, limit);
-}
-
-function shouldBackfillSparseDiscovery(page: ExploreDiscoveryPage, input: ExploreFeedInput) {
-  const expected = Math.min(input.limit ?? 30, MIN_DISCOVERY_BACKFILL_COUNT);
-  return page.places.length < expected || page.dishes.length < expected || page.people.length < expected;
-}
-
-async function backfillSparseDiscovery(page: ExploreDiscoveryPage, input: ExploreFeedInput): Promise<ExploreDiscoveryPage> {
-  if (!shouldBackfillSparseDiscovery(page, input)) return page;
-  const fallback = await getExploreDiscoveryFallback(input);
-  const limit = Math.max(1, input.limit ?? 30);
-
-  return {
-    viewerName: page.viewerName || fallback.viewerName,
-    places: mergeByKey(fallback.places, page.places, limit),
-    dishes: mergeByKey(fallback.dishes, page.dishes, limit),
-    people: mergePeople(fallback.people, page.people, limit)
-  };
+  return parsed;
 }
 
 export async function getExploreDiscovery(input: ExploreFeedInput = {}): Promise<ExploreDiscoveryPage> {
-  if (canonicalExploreEnabled) {
-    try {
-      return await backfillSparseDiscovery(
-        await getExploreDiscoveryFromRpc(input, CANONICAL_EXPLORE_DISCOVERY_RPC),
-        input
-      );
-    } catch {
-      // Fall through to the current production RPC, then the existing client fallback.
-    }
-  }
-
   try {
-    return await backfillSparseDiscovery(await getExploreDiscoveryFromRpc(input), input);
-  } catch {
-    return getExploreDiscoveryFallback(input);
+    return await getExploreDiscoveryFromRpc(input, CANONICAL_EXPLORE_DISCOVERY_RPC);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown database error";
+    throw new Error(`Explore deployment contract unavailable (${CANONICAL_EXPLORE_DISCOVERY_RPC}): ${detail}`);
   }
 }

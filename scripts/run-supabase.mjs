@@ -15,7 +15,10 @@ let prefix = [];
 let version = probe(command);
 if (version.error?.code === "ENOENT") {
   command = "npx";
-  prefix = ["--no-install", "supabase"];
+  // `npx --no-install` can block while resolving an already-cached binary on
+  // some npm releases. The version check below remains the source of truth,
+  // so allowing normal npx resolution cannot silently select another CLI.
+  prefix = ["supabase"];
   version = probe(command, prefix);
 }
 

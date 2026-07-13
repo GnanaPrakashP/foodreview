@@ -28,6 +28,7 @@ const anonymousRoutes = new Set([
 ]);
 const optionalActorRoutes = new Set([
   "/api/feed/public",
+  "/api/mobile/feed",
   "/api/media/access",
   "/api/users/[targetUserId]/reviews",
 ]);
@@ -110,7 +111,7 @@ const inventory = routeFiles.flatMap((file) => {
     requestBounds: requestBounds(method, source),
     risk: risk(route, method, source),
     route,
-    sensitiveResponse: /notification|account|profile|media|feed|comment|report|circle/.test(route)
+    sensitiveResponse: /notification|account|profile|media|memor|feed|comment|report|circle/.test(route)
       ? "yes; private no-store/security headers" : "low/none",
     serviceRole: /createAdminClient|SUPABASE_SERVICE_ROLE_KEY/.test(source),
   }));

@@ -76,7 +76,7 @@ export default function ReviewDetailScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const shouldScrollToCommentsEndRef = useRef(false);
   const commentsData = comments.data ?? [];
-  const displayedCommentCount = comments.data ? commentsData.length : post.data?.commentCount ?? 0;
+  const displayedCommentCount = post.data?.commentCount ?? commentsData.length;
   const canSendComment = Boolean(viewerName && commentText.trim()) && !addComment.isPending;
 
   useEffect(() => {
@@ -243,6 +243,17 @@ export default function ReviewDetailScreen() {
 
     return (
       <View style={styles.commentList}>
+        {comments.hasNextPage ? (
+          <Pressable
+            disabled={comments.isFetchingNextPage}
+            onPress={() => comments.fetchNextPage()}
+            style={styles.retryComments}
+          >
+            <Text style={styles.retryCommentsTitle}>
+              {comments.isFetchingNextPage ? "Loading older comments…" : "Load older comments"}
+            </Text>
+          </Pressable>
+        ) : null}
         {commentsData.map(renderComment)}
       </View>
     );
@@ -335,7 +346,7 @@ export default function ReviewDetailScreen() {
             </View>
           ) : (
             <>
-              <PostCard post={post.data} />
+              <PostCard loadDetailEngagement post={post.data} />
               <View style={styles.commentsSection}>
                 <View style={styles.commentsHeader}>
                   <View style={styles.commentsHeaderText}>

@@ -395,6 +395,12 @@ export default function NotificationsScreen() {
         ) : (
           <SectionList
             sections={sections}
+            onEndReached={() => {
+              if (notifications.hasNextPage && !notifications.isFetchingNextPage) {
+                void notifications.fetchNextPage();
+              }
+            }}
+            onEndReachedThreshold={0.35}
             keyExtractor={(item) => item.id}
             renderItem={renderNotification}
             renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}

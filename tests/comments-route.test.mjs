@@ -152,6 +152,12 @@ function loadRoute(code, { db, authName }) {
           invalidateSocialCachesForNames() {},
         };
       }
+      if (id === "@/lib/server/stable-cursor") {
+        return {
+          decodeStableCursor: () => null,
+          encodeStableCursor: ({ createdAt, id: cursorId }) => `${createdAt}|${cursorId}`,
+        };
+      }
       if (id === "@/lib/server/route-supabase") {
         return {
           createRouteSupabase: async () => db,

@@ -25,6 +25,7 @@ type FeedDb = {
     }>;
   };
   from: (table: string) => any;
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 };
 
 const REVIEW_SELECT = [

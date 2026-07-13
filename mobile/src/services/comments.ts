@@ -15,7 +15,15 @@ export type CommentMutationResult = PostComment & {
 
 type CommentsApiResponse = {
   comments: CommentRow[];
+  nextCursor?: string | null;
   profileMap?: Record<string, string>;
+  totalCount?: number;
+};
+
+export type CommentsPage = {
+  comments: PostComment[];
+  nextCursor: string | null;
+  totalCount: number;
 };
 
 function initialsForName(name: string) {
@@ -37,16 +45,23 @@ function mapComment(row: CommentRow, displayName: string): PostComment {
   };
 }
 
-export async function getPostComments(postId: string): Promise<PostComment[]> {
-  if (!postId) return [];
+export async function getPostComments(postId: string, cursor?: string | null): Promise<CommentsPage> {
+  if (!postId) return { comments: [], nextCursor: null, totalCount: 0 };
+
+  const params = new URLSearchParams({ postId, limit: "30" });
+  if (cursor) params.set("cursor", cursor);
 
   const payload = await authorizedApiJson<CommentsApiResponse>(
-    `/api/comments?postId=${encodeURIComponent(postId)}`,
+    `/api/comments?${params.toString()}`,
     { method: "GET" },
     { action: "loading comments", timeoutMs: 10_000 }
   );
 
-  return (payload.comments ?? []).map((row) => mapComment(row, payload.profileMap?.[row.user_name] ?? row.user_name));
+  return {
+    comments: (payload.comments ?? []).map((row) => mapComment(row, payload.profileMap?.[row.user_name] ?? row.user_name)),
+    nextCursor: payload.nextCursor ?? null,
+    totalCount: payload.totalCount ?? payload.comments?.length ?? 0
+  };
 }
 
 export async function addPostComment(input: { postId: string; content: string }): Promise<CommentMutationResult> {

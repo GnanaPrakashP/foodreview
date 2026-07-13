@@ -50,6 +50,12 @@ jobs:
       - name: Run Phase 4 static security contracts
         run: npm run test:mobile-api-security
 
+      - name: Validate Phase 5 backend performance budgets
+        run: npm run validate:backend-performance
+
+      - name: Run Phase 5 static performance contracts
+        run: npm run test:backend-performance
+
       - name: Run root lint
         run: npm run lint
 
@@ -143,6 +149,12 @@ jobs:
 
       - name: Run Phase 4 database security behaviors
         run: npm run validate:mobile-api-security:db
+
+      - name: Run Phase 5 database plans and cursor behaviors
+        run: npm run validate:backend-performance:db
+
+      - name: Run Phase 5 production API timing and payload matrix
+        run: npm run validate:backend-performance:api
 
       - name: Run Phase 4 API and local recovery behaviors
         run: npm run validate:mobile-api-security:api

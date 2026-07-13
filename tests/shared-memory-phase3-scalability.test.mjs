@@ -14,7 +14,12 @@ const chatPageMigration = readFileSync(
   "supabase/migrations/202607050001_shared_memory_chat_page_rpc.sql",
   "utf8"
 );
+const phase5Migration = readFileSync(
+  "supabase/migrations/202607130009_backend_feed_performance.sql",
+  "utf8"
+);
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
+const memoryReadRoute = readFileSync("app/api/mobile/memories/read/route.ts", "utf8");
 const supabaseReadme = readFileSync("docs/database/MIGRATIONS.md", "utf8");
 const summaryMigrations = `${phase3Migration}\n${finalAuditMigration}`;
 
@@ -52,15 +57,13 @@ test("phase 3 room summary RPC is bounded, member scoped, and search_path safe",
   assert.match(finalAuditMigration, /not public\.shared_memory_room_has_blocked_relationship\(room\.id, v_user_name\)/);
 });
 
-test("mobile memory list pages DB-computed summaries with legacy fallback", () => {
-  assert.match(memoryService, /\.rpc\("shared_memory_room_summaries"/);
-  assert.match(memoryService, /p_before_activity_at: beforeActivityAt/);
-  assert.match(memoryService, /p_before_room_id: beforeRoomId/);
-  assert.match(memoryService, /MEMORY_ROOM_SUMMARY_MAX_PAGES/);
+test("mobile memory list requires one bounded v2 summary contract without legacy fallback", () => {
+  assert.match(memoryReadRoute, /\.rpc\("shared_memory_room_summaries_v2"/);
+  assert.match(memoryReadRoute, /p_before_activity_at: cursor\?\.createdAt \?\? null/);
+  assert.match(memoryReadRoute, /p_before_room_id: cursor\?\.id \?\? null/);
   assert.match(memoryService, /MEMORY_ROOM_SUMMARY_PAGE_SIZE/);
   assert.match(memoryService, /mapMemorySummaryRow/);
-  assert.match(memoryService, /listMemoryRoomsLegacy\(username\)/);
-  assert.match(memoryService, /isMissingMemorySummaryRpc/);
+  assert.match(memoryService, /\/api\/mobile\/memories\/read\?action=rooms/);
 
   const listMemoryRoomsBody = memoryService.match(/export async function listMemoryRooms\(\)[\s\S]*?\n}/)?.[0] ?? "";
   assert.doesNotMatch(listMemoryRoomsBody, /from\("shared_memory_messages"\)[\s\S]*\.in\("room_id", roomIds\)/);
@@ -75,24 +78,25 @@ test("mobile chat and media pagination use id tie-breaker cursors", () => {
 });
 
 test("phase 2 chat page RPC is bounded, member scoped, and mobile preferred", () => {
-  assert.match(chatPageMigration, /create or replace function public\.shared_memory_chat_page/);
-  assert.match(chatPageMigration, /security definer[\s\S]*set search_path = public/);
-  assert.match(chatPageMigration, /least\(greatest\(coalesce\(p_limit, 50\), 1\), 100\)/);
-  assert.match(chatPageMigration, /not public\.can_read_shared_memory\(p_room_id\)/);
-  assert.match(chatPageMigration, /limit \(v_limit \+ 1\)/);
-  assert.match(chatPageMigration, /message\.created_at < p_before_created_at/);
-  assert.match(chatPageMigration, /message\.id < p_before_message_id/);
-  assert.match(chatPageMigration, /coalesce\(photo\.moderation_status, 'approved'\) = 'approved'/);
-  assert.match(chatPageMigration, /photo\.uploader_name = v_user_name/);
-  assert.match(chatPageMigration, /'replyMessages'/);
-  assert.match(chatPageMigration, /'profiles'/);
-  assert.match(chatPageMigration, /revoke all on function public\.shared_memory_chat_page[\s\S]*from anon/);
-  assert.match(chatPageMigration, /grant execute on function public\.shared_memory_chat_page[\s\S]*to authenticated, service_role/);
+  const activeChatMigration = `${chatPageMigration}\n${phase5Migration}`;
+  assert.match(phase5Migration, /create or replace function public\.shared_memory_chat_page/);
+  assert.match(phase5Migration, /security definer[\s\S]*set search_path = public/);
+  assert.match(phase5Migration, /least\(greatest\(coalesce\(p_limit, 50\), 1\), 100\)/);
+  assert.match(phase5Migration, /not public\.can_read_shared_memory\(p_room_id\)/);
+  assert.match(phase5Migration, /limit \(v_limit \+ 1\)/);
+  assert.match(phase5Migration, /message\.created_at < p_before_created_at/);
+  assert.match(phase5Migration, /message\.id < p_before_message_id/);
+  assert.match(phase5Migration, /coalesce\(photo\.moderation_status, 'approved'\) = 'approved'/);
+  assert.match(phase5Migration, /photo\.uploader_name = v_user_name/);
+  assert.match(phase5Migration, /'replyMessages'/);
+  assert.match(phase5Migration, /'profiles'/);
+  assert.match(activeChatMigration, /revoke all on function public\.shared_memory_chat_page[\s\S]*from anon/);
+  assert.match(activeChatMigration, /grant execute on function public\.shared_memory_chat_page[\s\S]*to authenticated, service_role/);
 
-  assert.match(memoryService, /\.rpc\("shared_memory_chat_page"/);
+  assert.match(memoryReadRoute, /\.rpc\("shared_memory_chat_page"/);
   assert.match(memoryService, /fetchMemoryMessagePageBundle/);
-  assert.match(memoryService, /isMissingMemoryChatPageRpc/);
-  assert.match(memoryService, /fetchMemoryMessagePageLegacy/);
+  assert.match(memoryService, /return fetchMemoryMessagePageViaRpc\(\{ before, limit, roomId \}\)/);
+  assert.match(memoryService, /\/api\/mobile\/memories\/read\?\$\{params\.toString\(\)\}/);
   assert.doesNotMatch(
     memoryService.match(/export async function getMemoryMessagesPage[\s\S]*?\n}/)?.[0] ?? "",
     /assertMemoryRoomMember/

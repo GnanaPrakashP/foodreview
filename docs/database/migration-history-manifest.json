@@ -2259,7 +2259,49 @@
       "sizeBytes": 27232,
       "sourceRoot": "supabase/migrations",
       "version": "202607130008"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "circle_memberships",
+        "comments",
+        "dish_place_stats",
+        "likes",
+        "mobile_post_engagement_v1",
+        "mobile_public_feed_page_v1",
+        "notifications",
+        "notifications_created_at_idx",
+        "notifications_recipient_created_idx",
+        "place_stats",
+        "profiles",
+        "recommendation_feedback",
+        "review_dish_mentions",
+        "reviews",
+        "reviews_visible_feed_idx",
+        "shared_memory_messages_room_created_idx",
+        "wishlist"
+      ],
+      "description": "backend_feed_performance",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130009_backend_feed_performance.sql",
+      "objectCategories": [
+        "account-deletion",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "social",
+        "triggers"
+      ],
+      "sha256": "56673c6d7de3535068ab85324827ad4eb57cb11f123a85e65d232d1785d0798d",
+      "sizeBytes": 47367,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130009"
     }
   ],
-  "currentCanonicalMigrations": 65
+  "currentCanonicalMigrations": 66
 }

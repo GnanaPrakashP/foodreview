@@ -29,9 +29,9 @@ test("feeds share FoodReview-native enrichment assembly", () => {
   const circleFeed = source("lib/circle-feed.ts");
 
   assert.match(helper, /export async function buildFeedAssemblyMaps/);
-  assert.match(helper, /from\("likes"\)\.select\("post_id, user_name"\)/);
-  assert.match(helper, /from\("comments"\)/);
-  assert.match(helper, /from\("wishlist"\)/);
+  assert.match(helper, /db\.rpc\("mobile_post_engagement_v1"/);
+  assert.doesNotMatch(helper, /from\("likes"\)|from\("comments"\)|from\("wishlist"\)/);
+  assert.match(helper, /p_viewer_user_id: options\.viewerUserId \?\? null/);
   assert.match(helper, /buildProfileDisplayMap/);
   assert.match(publicFeed, /buildFeedAssemblyMaps\(db, reviews/);
   assert.match(circleFeed, /buildFeedAssemblyMaps\(readDb, allReviews/);

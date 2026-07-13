@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Notification } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayName } from "@/lib/profile-names";
-import { LEGACY_NOTIFICATION_SELECT, NOTIFICATION_SELECT } from "@/lib/selects";
+import { NOTIFICATION_SELECT } from "@/lib/selects";
 import { filterValidNotifications, getNotificationRouteContext, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
+import { decodeStableTimestampCursor, encodeStableTimestampCursor } from "@/lib/server/stable-cursor";
 
 type ProfileLookupDb = {
   from: (table: string) => any;
@@ -73,62 +74,56 @@ export async function GET(req: NextRequest) {
   const { supabase, viewer } = await getNotificationRouteContext(req);
   if (!viewer) return unauthorized();
 
-  const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? 50);
-  const limit = Math.min(Math.max(Number.isFinite(limitParam) ? limitParam : 50, 1), 100);
+  const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? 30);
+  const limit = Math.min(Math.max(Number.isFinite(limitParam) ? Math.floor(limitParam) : 30, 1), 50);
+  const rawCursor = req.nextUrl.searchParams.get("cursor");
+  const cursor = decodeStableTimestampCursor(rawCursor);
+  if (rawCursor && !cursor) return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
 
-  const byIdPromise = supabase
+  const recipientFilter = viewer.name
+    ? `recipient_user_id.eq.${viewer.id},recipient_name.eq.${viewer.name}`
+    : `recipient_user_id.eq.${viewer.id}`;
+  let pageQuery = supabase
     .from("notifications")
     .select(NOTIFICATION_SELECT)
-    .eq("recipient_user_id", viewer.id)
+    .or(recipientFilter)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
-    .limit(limit);
-
-  const byNamePromise = viewer.name
-    ? supabase
-        .from("notifications")
-        .select(NOTIFICATION_SELECT)
-        .eq("recipient_name", viewer.name)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(limit)
-    : Promise.resolve({ data: [], error: null });
-
-  const [{ data: byId, error: byIdError }, { data: byName, error: byNameError }] = await Promise.all([byIdPromise, byNamePromise]);
-  if (byIdError || byNameError) {
-    if (isNotificationSchemaError(byIdError) || isNotificationSchemaError(byNameError)) {
-      if (!viewer.name) return NextResponse.json({ notifications: [] });
-
-      const { data: legacy, error: legacyError } = await supabase
-        .from("notifications")
-        .select(LEGACY_NOTIFICATION_SELECT)
-        .eq("recipient_name", viewer.name)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-
-      if (legacyError) {
-        console.error("[notifications] legacy list failed");
-        return NextResponse.json({ error: legacyError.message }, { status: 500 });
-      }
-
-      const merged = mergeNotifications(legacy as unknown as Notification[]).slice(0, limit);
-      const validNotifications = await filterValidNotifications(supabase, merged);
-      return NextResponse.json({
-        notifications: validNotifications,
-        profileMap: await buildNotificationProfileMap(supabase, validNotifications),
-      });
-    }
-
-    console.error("[notifications] list failed");
-    return NextResponse.json({ error: byIdError?.message ?? byNameError?.message }, { status: 500 });
+    .order("id", { ascending: false });
+  if (cursor) {
+    pageQuery = pageQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
   }
 
-  const merged = mergeNotifications(
-    byId as unknown as Notification[],
-    byName as unknown as Notification[]
-  ).slice(0, limit);
-  const validNotifications = await filterValidNotifications(supabase, merged);
-  const profileMap = await buildNotificationProfileMap(supabase, validNotifications);
+  const unreadQuery = supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .or(recipientFilter)
+    .eq("is_read", false)
+    .eq("read", false)
+    .is("deleted_at", null);
+  const [{ data, error }, { count: unreadCount, error: unreadError }] = await Promise.all([
+    pageQuery.limit(limit + 1),
+    unreadQuery,
+  ]);
+  if (error || unreadError) {
+    if (isNotificationSchemaError(error) || isNotificationSchemaError(unreadError)) {
+      return NextResponse.json({ error: "Notification deployment contract unavailable" }, { status: 503 });
+    }
+    console.error("[notifications] paginated list failed");
+    return NextResponse.json({ error: error?.message ?? unreadError?.message }, { status: 500 });
+  }
 
-  return NextResponse.json({ notifications: validNotifications, profileMap });
+  const selected = mergeNotifications(data as unknown as Notification[]).slice(0, limit);
+  const validNotifications = await filterValidNotifications(supabase, selected);
+  const profileMap = await buildNotificationProfileMap(supabase, validNotifications);
+  const oldest = selected[selected.length - 1];
+
+  return NextResponse.json({
+    nextCursor: (data ?? []).length > limit && oldest
+      ? encodeStableTimestampCursor({ createdAt: oldest.created_at, id: oldest.id })
+      : null,
+    notifications: validNotifications,
+    profileMap,
+    unreadCount: unreadCount ?? 0,
+  });
 }

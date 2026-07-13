@@ -19,6 +19,7 @@ const cleanupWorkerRoute = readFileSync("app/api/internal/account-media-cleanup/
 const cleanupHelper = readFileSync("lib/server/account-media-cleanup.ts", "utf8");
 const usernameRoute = readFileSync("app/api/mobile/profile/username/route.ts", "utf8");
 const profileService = readFileSync("mobile/src/services/profiles.ts", "utf8");
+const profileShellRoute = readFileSync("app/api/mobile/profile/shell/route.ts", "utf8");
 const postService = readFileSync("mobile/src/services/posts.ts", "utf8");
 const mobileMediaPipeline = readFileSync("mobile/src/services/mediaPipeline.ts", "utf8");
 const mobileReviewMedia = readFileSync("mobile/src/services/reviewMedia.ts", "utf8");
@@ -204,12 +205,11 @@ test("profile statistics are server-derived and profile posts use stable keyset 
   assert.match(migration, /jsonb_array_elements\(coalesce\(review\.items, '\[\]'::jsonb\)\)/);
   assert.match(migration, /grant execute on function public\.profile_post_stats\(text\) to anon, authenticated, service_role/);
   assert.match(profileService, /const PROFILE_POST_PAGE_SIZE = 24/);
-  assert.match(profileService, /\.rpc\("profile_post_stats"/);
-  assert.match(profileService, /\.limit\(limit \+ 1\)/);
-  assert.match(profileService, /order\("created_at", \{ ascending: false \}\)/);
-  assert.match(profileService, /order\("id", \{ ascending: false \}\)/);
-  assert.match(profileService, /created_at\.lt\.\$\{parsedCursor\.createdAt\},and\(created_at\.eq\.\$\{parsedCursor\.createdAt\},id\.lt\.\$\{parsedCursor\.id\}\)/);
-  assert.match(profileService, /rowsWithExtra\.length > PROFILE_POST_PAGE_SIZE \? encodeProfilePostCursor\(rows\[rows\.length - 1\]\) : null/);
+  assert.match(profileShellRoute, /\.rpc\("profile_post_stats"/);
+  assert.match(profileShellRoute, /posts:\s*\[\]/);
+  assert.match(profileService, /scope:\s*"profile"/);
+  assert.match(profileService, /\/api\/mobile\/feed\?\$\{params\.toString\(\)\}/);
+  assert.match(profileService, /if \(cursor\) params\.set\("cursor", cursor\)/);
   assert.match(profileHooks, /useInfiniteQuery/);
   assert.match(profileHooks, /getNextPageParam: \(lastPage\) => lastPage\.nextCursor/);
   assert.match(profileScreen, /fetchNextPage/);

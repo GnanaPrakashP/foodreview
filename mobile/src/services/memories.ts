@@ -1,10 +1,10 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
-import { authorizedApiHeaders } from "@/api/client";
+import { authorizedApiHeaders, authorizedJson } from "@/api/client";
 import { createRequestId, getInstallId } from "@/services/installIdentity";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
-import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, mapMemorySummary, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
+import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   memoryTablesError,
   normalizeUsername,
@@ -48,8 +48,7 @@ import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryS
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
 export const MEMORY_CHAT_PAGE_SIZE = 50;
 export const MEMORY_MEDIA_PAGE_SIZE = 30;
-const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 100;
-const MEMORY_ROOM_SUMMARY_MAX_PAGES = 10;
+const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 50;
 const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
 
 const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
@@ -190,6 +189,7 @@ type MemoryRoomSummaryRow = {
   occasion_confidence?: number | string | null;
   occasion_confirmed_by_user?: boolean | null;
   participant_count: number | string;
+  place_names?: string[] | null;
   photo_count: number | string;
   restaurant_name: string;
   source_post_id: string | null;
@@ -198,8 +198,6 @@ type MemoryRoomSummaryRow = {
   unread_count: number | string;
   visit_date: string | null;
 };
-
-type MemoryRoomSummaryStopRow = Pick<MemoryStopRow, "created_at" | "name" | "position" | "room_id">;
 
 type MemoryChatPageProfileRow = {
   first_name: string | null;
@@ -297,7 +295,7 @@ function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
     occasionConfidence: occasionConfidenceForRoom(row),
     occasionConfirmedByUser: occasionConfirmedForRoom(row),
     themeKey: themeKeyForRoom(row),
-    placeNames: memoryPlaceNamesForRoom({
+    placeNames: row.place_names?.filter(Boolean) ?? memoryPlaceNamesForRoom({
       area: row.area,
       id: row.id,
       restaurant_name: row.restaurant_name
@@ -316,50 +314,6 @@ function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
     latestActivityAt: row.latest_activity_at,
     createdAt: row.created_at
   };
-}
-
-async function dishCountsByRoomId(roomIds: string[]): Promise<Map<string, number>> {
-  const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean)));
-  const counts = new Map<string, number>();
-  if (uniqueRoomIds.length === 0) return counts;
-
-  const { data, error } = await supabase
-    .from("shared_memory_dishes")
-    .select("room_id")
-    .in("room_id", uniqueRoomIds)
-    .returns<Array<{ room_id: string }>>();
-
-  if (error) throw memoryTablesError(error);
-
-  for (const row of data ?? []) {
-    counts.set(row.room_id, (counts.get(row.room_id) ?? 0) + 1);
-  }
-  return counts;
-}
-
-async function memoryStopsByRoomId(roomIds: string[]): Promise<Map<string, MemoryRoomSummaryStopRow[]>> {
-  const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean)));
-  const stopsByRoomId = new Map<string, MemoryRoomSummaryStopRow[]>();
-  if (uniqueRoomIds.length === 0) return stopsByRoomId;
-
-  const { data, error } = await supabase
-    .from("shared_memory_stops")
-    .select("room_id, name, position, created_at")
-    .in("room_id", uniqueRoomIds)
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true })
-    .returns<MemoryRoomSummaryStopRow[]>();
-
-  if (error) {
-    if (isMissingMemoryStopsSchema(error)) return stopsByRoomId;
-    throw memoryTablesError(error);
-  }
-
-  for (const stop of data ?? []) {
-    stopsByRoomId.set(stop.room_id, [...(stopsByRoomId.get(stop.room_id) ?? []), stop]);
-  }
-
-  return stopsByRoomId;
 }
 
 async function assertMemoryRoomMember(roomId: string, username: string) {
@@ -419,127 +373,14 @@ async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) 
   });
 }
 
-async function roomRowsForUser(username: string): Promise<MemoryRoomRow[]> {
-  const { data: memberRows, error: memberError } = await supabase
-    .from("shared_memory_members")
-    .select("room_id")
-    .eq("user_name", username);
-
-  if (memberError) throw memoryTablesError(memberError);
-
-  const roomIds = Array.from(new Set((memberRows ?? []).map((row) => row.room_id).filter(Boolean)));
-  if (roomIds.length === 0) return [];
-
-  const { data: rooms, error: roomsError } = await supabase
-    .from("shared_memory_rooms")
-    .select(ROOM_SELECT)
-    .in("id", roomIds)
-    .order("created_at", { ascending: false })
-    .returns<MemoryRoomRow[]>();
-
-  if (roomsError) throw memoryTablesError(roomsError);
-  return rooms ?? [];
-}
-
-function isMissingMemorySummaryRpc(error: { message?: string; code?: string } | null | undefined) {
-  const message = error?.message ?? "";
-  return error?.code === "PGRST202" ||
-    /shared_memory_room_summaries|schema cache|could not find .*function/i.test(message);
-}
-
-async function listMemoryRoomsLegacy(username: string): Promise<MemoryRoomSummary[]> {
-  const rooms = await roomRowsForUser(username);
-  const roomIds = rooms.map((room) => room.id);
-  if (roomIds.length === 0) return [];
-
-  const [members, messages, photos, dishes, stopsByRoomId] = await Promise.all([
-    supabase.from("shared_memory_members").select("room_id").in("room_id", roomIds),
-    supabase
-      .from("shared_memory_messages")
-      .select("room_id, author_name, body, created_at")
-      .in("room_id", roomIds)
-      .order("created_at", { ascending: false }),
-    supabase.from("shared_memory_photos").select("room_id").in("room_id", roomIds),
-    supabase.from("shared_memory_dishes").select("room_id").in("room_id", roomIds),
-    memoryStopsByRoomId(roomIds)
-  ]);
-
-  if (members.error) throw memoryTablesError(members.error);
-  if (messages.error) throw memoryTablesError(messages.error);
-  if (photos.error) throw memoryTablesError(photos.error);
-  if (dishes.error) throw memoryTablesError(dishes.error);
-
-  const { data: readsData, error: readsError } = await supabase
-    .from("shared_memory_reads")
-    .select("room_id, user_name, last_read_at, updated_at")
-    .eq("user_name", username)
-    .in("room_id", roomIds)
-    .returns<MemoryReadRow[]>();
-
-  if (readsError && !isMissingMemoryReadsTable(readsError)) throw memoryTablesError(readsError);
-  const reads = readsError ? [] : readsData ?? [];
-
-  return rooms.map((room) => mapMemorySummary({
-    dishes: dishes.data ?? [],
-    members: members.data ?? [],
-    messages: messages.data ?? [],
-    photos: photos.data ?? [],
-    reads,
-    stops: stopsByRoomId.get(room.id) ?? [],
-    viewerName: username,
-    room
-  })).sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
-}
-
 export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
-  const username = await myUsername();
-  const summaries: MemoryRoomSummary[] = [];
-  let beforeActivityAt: string | null = null;
-  let beforeRoomId: string | null = null;
-
-  for (let page = 0; page < MEMORY_ROOM_SUMMARY_MAX_PAGES; page += 1) {
-    const result = await supabase
-      .rpc("shared_memory_room_summaries", {
-        p_before_activity_at: beforeActivityAt,
-        p_before_room_id: beforeRoomId,
-        p_limit: MEMORY_ROOM_SUMMARY_PAGE_SIZE
-      });
-    const data: unknown = result.data;
-    const error = result.error;
-
-    if (error) {
-      if (isMissingMemorySummaryRpc(error)) return listMemoryRoomsLegacy(username);
-      throw memoryTablesError(error);
-    }
-
-    const rows: MemoryRoomSummaryRow[] = Array.isArray(data) ? data as MemoryRoomSummaryRow[] : [];
-    const roomIds = rows.map((row) => row.id);
-    const [dishCounts, stopsByRoomId] = await Promise.all([
-      dishCountsByRoomId(roomIds),
-      memoryStopsByRoomId(roomIds)
-    ]);
-    summaries.push(...rows.map((row) => {
-      const summary = mapMemorySummaryRow(row);
-      const placeNames = memoryPlaceNamesForRoom({
-        area: row.area,
-        id: row.id,
-        restaurant_name: row.restaurant_name
-      }, stopsByRoomId.get(row.id) ?? []);
-      return {
-        ...summary,
-        dishCount: dishCounts.get(summary.id) ?? summary.dishCount,
-        placeNames
-      };
-    }));
-    if (rows.length < MEMORY_ROOM_SUMMARY_PAGE_SIZE) break;
-
-    const lastRow: MemoryRoomSummaryRow | undefined = rows[rows.length - 1];
-    beforeActivityAt = lastRow?.latest_activity_at ?? null;
-    beforeRoomId = lastRow?.id ?? null;
-    if (!beforeActivityAt || !beforeRoomId) break;
-  }
-
-  return summaries;
+  const payload = await authorizedJson<{ rooms?: MemoryRoomSummaryRow[] }>(
+    `/api/mobile/memories/read?action=rooms&limit=${MEMORY_ROOM_SUMMARY_PAGE_SIZE}`,
+    { method: "GET" },
+    { action: "loading memories", timeoutMs: 12_000 }
+  );
+  const rows = Array.isArray(payload.rooms) ? payload.rooms : [];
+  return rows.map(mapMemorySummaryRow);
 }
 
 async function validateParticipants(usernames: string[]) {
@@ -816,27 +657,23 @@ async function fetchMemoryMessagePageViaRpc({
   before?: string | null;
   limit: number;
   roomId: string;
-}): Promise<MemoryMessagePageBundle | null> {
-  const cursor = parseMemoryPageCursor(before);
-  const { data, error } = await supabase.rpc("shared_memory_chat_page", {
-    p_before_created_at: cursor?.createdAt ?? null,
-    p_before_message_id: cursor?.id ?? null,
-    p_limit: limit,
-    p_room_id: roomId
+}): Promise<MemoryMessagePageBundle> {
+  const params = new URLSearchParams({
+    action: "chat",
+    limit: String(Math.min(Math.max(limit, 1), 50)),
+    roomId
   });
-
-  if (error) {
-    if (isMissingMemoryChatPageRpc(error)) return null;
-    throw memoryTablesError(error);
-  }
-
-  const payload = (data ?? {}) as MemoryChatPageRpcPayload;
-  const photos = await signMemoryPhotoRows(rpcArray(payload.photos));
+  if (before) params.set("cursor", before);
+  const payload = await authorizedJson<MemoryChatPageRpcPayload>(
+    `/api/mobile/memories/read?${params.toString()}`,
+    { method: "GET" },
+    { action: "loading memory messages", timeoutMs: 12_000 }
+  );
 
   return {
     namesByUsername: displayNameMapFromProfiles(rpcArray(payload.profiles)),
     nextCursor: typeof payload.nextCursor === "string" ? payload.nextCursor : null,
-    photos,
+    photos: rpcArray(payload.photos),
     replyMessages: rpcArray(payload.replyMessages),
     rows: rpcArray(payload.messages)
   };
@@ -867,24 +704,14 @@ async function fetchMemoryMessagePageLegacy({
 
 async function fetchMemoryMessagePageBundle({
   before,
-  legacyMemberCheck = false,
   limit,
   roomId
 }: {
   before?: string | null;
-  legacyMemberCheck?: boolean;
   limit: number;
   roomId: string;
 }): Promise<MemoryMessagePageBundle> {
-  const rpcPage = await fetchMemoryMessagePageViaRpc({ before, limit, roomId });
-  if (rpcPage) return rpcPage;
-
-  if (legacyMemberCheck) {
-    const username = await myUsername();
-    await assertMemoryRoomMember(roomId, username);
-  }
-
-  return fetchMemoryMessagePageLegacy({ before, limit, roomId });
+  return fetchMemoryMessagePageViaRpc({ before, limit, roomId });
 }
 
 async function fetchMemoryMediaRowsPage({
@@ -1057,98 +884,45 @@ export async function updateMemoryRoomOccasion(roomId: string, input: UpdateMemo
   };
 }
 
-async function fetchRoomParts(roomId: string, username: string) {
-  const [roomResult, membersResult, messagePage, stopsResult, dishesResult, dishRatingsResult, readResult] = await Promise.all([
-    supabase.from("shared_memory_rooms").select(ROOM_SELECT).eq("id", roomId).maybeSingle<MemoryRoomRow>(),
-    supabase.from("shared_memory_members").select("id, room_id, user_name, role, created_at").eq("room_id", roomId).returns<MemoryMemberRow[]>(),
-    fetchMemoryMessagePageBundle({ limit: MEMORY_CHAT_PRELOAD_LIMIT, roomId }),
-    supabase
-      .from("shared_memory_stops")
-      .select("id, room_id, stop_type, name, note, position, created_by, created_at")
-      .eq("room_id", roomId)
-      .order("position", { ascending: true })
-      .order("created_at", { ascending: true })
-      .returns<MemoryStopRow[]>(),
-    supabase
-      .from("shared_memory_dishes")
-      .select("id, room_id, stop_id, added_by, dish_name, rating, note, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<MemoryDishRow[]>(),
-    supabase
-      .from("shared_memory_dish_ratings")
-      .select("id, room_id, dish_id, rated_by, rating, created_at, updated_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<MemoryDishRatingRow[]>(),
-    supabase
-      .from("shared_memory_reads")
-      .select("room_id, user_name, last_read_at, updated_at")
-      .eq("room_id", roomId)
-      .eq("user_name", username)
-      .maybeSingle<MemoryReadRow>()
-  ]);
-
-  if (roomResult.error) throw memoryTablesError(roomResult.error);
-  if (membersResult.error) throw memoryTablesError(membersResult.error);
-
-  // Dishes now carry stop_id. Before the stops migration is applied that column
-  // is missing, so fall back to a stop-less select and treat dishes as room-level.
-  let dishes = dishesResult.data ?? [];
-  if (dishesResult.error) {
-    if (!isMissingMemoryStopsSchema(dishesResult.error)) throw memoryTablesError(dishesResult.error);
-    const fallback = await supabase
-      .from("shared_memory_dishes")
-      .select("id, room_id, added_by, dish_name, rating, note, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .returns<Omit<MemoryDishRow, "stop_id">[]>();
-    if (fallback.error) throw memoryTablesError(fallback.error);
-    dishes = (fallback.data ?? []).map((dish) => ({ ...dish, stop_id: null }));
-  }
-
-  let stops: MemoryStopRow[] = [];
-  if (stopsResult.error) {
-    if (!isMissingMemoryStopsSchema(stopsResult.error)) throw memoryTablesError(stopsResult.error);
-  } else {
-    stops = stopsResult.data ?? [];
-  }
-
-  if (dishRatingsResult.error && !isMissingMemoryDishRatingsTable(dishRatingsResult.error)) {
-    throw memoryTablesError(dishRatingsResult.error);
-  }
-  if (readResult.error && !isMissingMemoryReadsTable(readResult.error) && readResult.error.code !== "PGRST116") {
-    throw memoryTablesError(readResult.error);
-  }
-  if (!roomResult.data) throw new Error("Memory room not found");
-
+async function fetchRoomParts(roomId: string) {
+  const payload = await authorizedJson<{
+    chat?: MemoryChatPageRpcPayload;
+    dishRatings?: MemoryDishRatingRow[];
+    dishes?: MemoryDishRow[];
+    members?: MemoryMemberRow[];
+    profiles?: MemoryChatPageProfileRow[];
+    read?: MemoryReadRow | null;
+    room?: MemoryRoomRow;
+    stops?: MemoryStopRow[];
+    viewerName?: string;
+  }>(
+    `/api/mobile/memories/read?action=detail&roomId=${encodeURIComponent(roomId)}&limit=${MEMORY_CHAT_PRELOAD_LIMIT}`,
+    { method: "GET" },
+    { action: "loading memory", timeoutMs: 12_000 }
+  );
+  if (!payload.room) throw memoryRoomNotFoundError();
+  const chat = payload.chat ?? {};
   return {
-    room: roomResult.data,
-    dishes,
-    stops,
-    dishRatings: dishRatingsResult.error ? [] : dishRatingsResult.data ?? [],
-    lastReadAt: readResult.error ? null : readResult.data?.last_read_at ?? null,
-    members: membersResult.data ?? [],
-    messages: messagePage.rows,
-    photos: messagePage.photos,
-    replyMessages: messagePage.replyMessages
+    room: payload.room,
+    dishes: rpcArray(payload.dishes),
+    stops: rpcArray(payload.stops),
+    dishRatings: rpcArray(payload.dishRatings),
+    lastReadAt: payload.read?.last_read_at ?? null,
+    members: rpcArray(payload.members),
+    messages: rpcArray(chat.messages),
+    photos: rpcArray(chat.photos),
+    replyMessages: rpcArray(chat.replyMessages),
+    namesByUsername: displayNameMapFromProfiles([
+      ...rpcArray(payload.profiles),
+      ...rpcArray(chat.profiles)
+    ]),
+    viewerName: payload.viewerName ?? ""
   };
 }
 
 export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
-  const username = await myUsername();
-  const parts = await fetchRoomParts(roomId, username);
-  assertLoadedMemoryRoomMember(parts.members, username);
-  const names = [
-    ...parts.members.map((member) => member.user_name),
-    ...parts.stops.map((stop) => stop.created_by),
-    ...parts.dishes.map((dish) => dish.added_by),
-    ...parts.dishRatings.map((rating) => rating.rated_by),
-    ...parts.messages.map((message) => message.author_name),
-    ...parts.replyMessages.map((message) => message.author_name),
-    ...parts.photos.map((photo) => photo.uploader_name)
-  ];
-  const namesByUsername = await displayNameMap(names);
+  const parts = await fetchRoomParts(roomId);
+  assertLoadedMemoryRoomMember(parts.members, parts.viewerName);
 
   return mapMemoryRoom({
     dishes: parts.dishes,
@@ -1156,11 +930,11 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
     lastReadAt: parts.lastReadAt,
     members: parts.members,
     messages: parts.messages,
-    namesByUsername,
+    namesByUsername: parts.namesByUsername,
     photos: parts.photos,
     replyMessages: parts.replyMessages,
     stops: parts.stops,
-    viewerName: username,
+    viewerName: parts.viewerName,
     room: parts.room
   });
 }
@@ -1171,7 +945,6 @@ export async function getMemoryMessagesPage(
 ): Promise<MemoryMessagesPage> {
   const messagePage = await fetchMemoryMessagePageBundle({
     before: input.before,
-    legacyMemberCheck: true,
     limit: input.limit ?? MEMORY_CHAT_PAGE_SIZE,
     roomId
   });
@@ -1197,18 +970,26 @@ export async function getMemoryMediaPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMediaPage> {
-  const username = await myUsername();
-  await assertMemoryRoomMember(roomId, username);
-  const mediaPage = await fetchMemoryMediaRowsPage({
-    before: input.before,
-    limit: input.limit ?? MEMORY_MEDIA_PAGE_SIZE,
+  const params = new URLSearchParams({
+    action: "media",
+    limit: String(Math.min(Math.max(input.limit ?? MEMORY_MEDIA_PAGE_SIZE, 1), 50)),
     roomId
   });
-  const rows = await signMemoryPhotoRows(mediaPage.rows);
-  const namesByUsername = await displayNameMap(rows.map((photo) => photo.uploader_name));
+  if (input.before) params.set("cursor", input.before);
+  const payload = await authorizedJson<{
+    nextCursor?: string | null;
+    photos?: MemoryPhotoRow[];
+    profiles?: MemoryChatPageProfileRow[];
+  }>(
+    `/api/mobile/memories/read?${params.toString()}`,
+    { method: "GET" },
+    { action: "loading memory media", timeoutMs: 12_000 }
+  );
+  const rows = rpcArray(payload.photos);
+  const namesByUsername = displayNameMapFromProfiles(rpcArray(payload.profiles));
 
   return {
-    nextCursor: mediaPage.nextCursor,
+    nextCursor: payload.nextCursor ?? null,
     photos: mapMemoryPhotos({ namesByUsername, photos: rows })
   };
 }

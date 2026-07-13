@@ -57,6 +57,7 @@ import type { ReviewPost } from "@/types/models";
 import type { ReportTargetType } from "@/services/reports";
 
 type PostCardProps = {
+  loadDetailEngagement?: boolean;
   post: ReviewPost;
 };
 
@@ -192,7 +193,7 @@ function optimisticTasteTrustState(
   };
 }
 
-function PostCardComponent({ post }: PostCardProps) {
+function PostCardComponent({ loadDetailEngagement = false, post }: PostCardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { themeColors } = useThemePreference();
@@ -237,7 +238,9 @@ function PostCardComponent({ post }: PostCardProps) {
   const requestInFlightRef = useRef(false);
   const hasReviewContent = Boolean(post.body) || post.tags.length > 0 || post.items.length > 0;
   const isPrivatePost = post.visibility === "me";
-  const feedbackQuery = usePostTasteTrustQuery(post.id, { enabled: !isPrivatePost });
+  // Page DTOs already carry card-visible engagement. Only a detail screen may
+  // reconcile this independently; mounting feed cards must not start requests.
+  const feedbackQuery = usePostTasteTrustQuery(post.id, { enabled: loadDetailEngagement && !isPrivatePost });
   const [visualTasteTrustState, setVisualTasteTrustState] = useState<TasteTrustFeedbackState | undefined>();
   const fallbackTasteTrustState = useMemo(() => tasteTrustStateFromPost(post), [post]);
   const foodReactionTotal = foodReactionTotalFor(

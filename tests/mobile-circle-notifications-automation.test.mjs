@@ -14,6 +14,7 @@ const apiClientSource = source("mobile/src/api/client.ts");
 const postViewsRouteSource = source("app/api/post-views/route.ts");
 const circleFeedRouteSource = source("app/api/feed/circle/route.ts");
 const circleFeedServerSource = source("lib/circle-feed.ts");
+const canonicalCircleFeedSource = source("lib/server/canonical-circle-feed.ts");
 const notificationHookSource = source("mobile/src/hooks/useNotifications.ts");
 const notificationScreenSource = source("mobile/app/notifications.tsx");
 const notificationServiceSource = source("mobile/src/services/notifications.ts");
@@ -36,20 +37,16 @@ test("circle feed automation uses server APIs, cursor pagination, and canonical 
   assert.doesNotMatch(feedServiceSource, /post_impressions/);
   assert.doesNotMatch(feedServiceSource, /supabase\.rpc\("circle_feed_page_v1"/);
 
-  assert.match(circleFeedRouteSource, /createRouteSupabase\(req\)/);
-  assert.match(circleFeedRouteSource, /getCircleFeedPage/);
+  assert.match(circleFeedRouteSource, /getRouteActor\(req\)/);
+  assert.match(circleFeedRouteSource, /loadCanonicalCircleFeedPage/);
   assert.match(circleFeedRouteSource, /buildPageEngagementStates/);
-  assert.match(circleFeedRouteSource, /\.from\("recommendation_feedback"\)[\s\S]*\.eq\("feedback_user_id", page\.viewerUserId\)[\s\S]*\.in\("post_id", postIds\)/);
   assert.match(circleFeedRouteSource, /foodReaction/);
   assert.match(circleFeedRouteSource, /nextCursorString: serializeCircleFeedCursor/);
-  assert.match(circleFeedRouteSource, /buildCircleRequestStatusMap/);
-  assert.match(circleFeedRouteSource, /buildReviewerAccountTypeMap/);
   assert.match(circleFeedRouteSource, /circleRequestAccountType: accountTypeByReviewer\.get\(review\.reviewer_name\) \?\? null/);
-  assert.match(circleFeedRouteSource, /\.from\("circle_requests"\)[\s\S]*\.eq\("sender_name", page\.myName\)[\s\S]*\.in\("receiver_name", requestableNames\)/);
   assert.match(circleFeedRouteSource, /circleRequestStatus: requestStatusByReviewer\.get\(review\.reviewer_name\) \?\? "idle"/);
-  assert.match(circleFeedServerSource, /const trustedReviewerNames = Array\.from\(new Set\(\[myName, \.\.\.joinedCircles\]/);
-  assert.match(circleFeedServerSource, /trustedVisibleIds\.has\(review\.id\)/);
-  assert.match(circleFeedServerSource, /!trustedReviewerSet\.has\(review\.reviewer_name\) && review\.visibility !== "circle" && review\.visibility !== "me"/);
+  assert.match(canonicalCircleFeedSource, /db\.rpc\("circle_feed_page_v2"/);
+  assert.match(canonicalCircleFeedSource, /p_viewer_user_id: actor\.userId/);
+  assert.doesNotMatch(circleFeedRouteSource, /recommendation_feedback|circle_requests|auth\.getUser/);
 
   assert.match(postViewsRouteSource, /getRouteActor\(req\)/);
   assert.match(postViewsRouteSource, /recordSeenPostIdsForUser/);
@@ -61,8 +58,9 @@ test("circle feed automation uses server APIs, cursor pagination, and canonical 
   assert.match(feedHookSource, /useInfiniteQuery/);
   assert.match(feedHookSource, /getNextPageParam: \(lastPage\) => lastPage\.nextCursor \?\? undefined/);
   assert.match(feedHookSource, /initialPageParam: null as string \| null/);
-  assert.match(feedHookSource, /patchCircleFeedPostEngagement/);
-  assert.match(feedHookSource, /setQueryData<InfiniteData<FeedPage>>\(feedKeys\.circlePages/);
+  assert.match(feedHookSource, /patchCachedPostEngagementFields/);
+  assert.match(feedHookSource, /setQueriesData<unknown>/);
+  assert.match(feedHookSource, /return scope === "feed" \|\| scope === "profile"/);
 
   assert.match(circleTabSource, /useCircleFeedInfiniteQuery/);
   assert.match(circleTabSource, /const fetchNextPage = feed\.fetchNextPage/);
@@ -88,12 +86,13 @@ test("notification inbox automation uses backend list and unread-count truth", (
 
   assert.match(notificationHookSource, /useNotificationsQuery/);
   assert.match(notificationHookSource, /useUnreadNotificationCountQuery/);
-  assert.match(notificationHookSource, /refetchInterval: 30_000/);
+  assert.match(notificationHookSource, /useInfiniteQuery/);
   assert.match(notificationHookSource, /queryClient\.setQueryData\(notificationKeys\.unreadCount, 0\)/);
   assert.match(notificationHookSource, /invalidateQueries\(\{ queryKey: notificationKeys\.unreadCount \}\)/);
 
   assert.match(notificationServiceSource, /authorizedJson<NotificationsApiResponse>/);
-  assert.match(notificationServiceSource, /\/api\/notifications\?limit=/);
+  assert.match(notificationServiceSource, /new URLSearchParams\(\{ limit: String\(limit\) \}\)/);
+  assert.match(notificationServiceSource, /`\/api\/notifications\?\$\{params\.toString\(\)\}`/);
   assert.match(notificationServiceSource, /\/api\/notifications\/unread-count/);
   assert.doesNotMatch(notificationServiceSource, /\.from\("notifications"\)/);
   assert.doesNotMatch(notificationServiceSource, /filter\(.*!notification\.isRead/);
@@ -101,7 +100,8 @@ test("notification inbox automation uses backend list and unread-count truth", (
   assert.match(notificationListRouteSource, /getNotificationRouteContext\(req\)/);
   assert.match(notificationListRouteSource, /filterValidNotifications/);
   assert.match(notificationUnreadRouteSource, /getNotificationRouteContext\(req\)/);
-  assert.match(notificationUnreadRouteSource, /filterValidNotifications/);
+  assert.match(notificationUnreadRouteSource, /head:\s*true/);
+  assert.doesNotMatch(notificationUnreadRouteSource, /filterValidNotifications/);
 
   assert.match(notificationScreenSource, /SectionList/);
   assert.match(notificationScreenSource, /RefreshControl/);

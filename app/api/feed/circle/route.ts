@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCircleFeedPage, parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
+import { parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getRouteActor } from "@/lib/server/route-supabase";
-import { getAccountTypesForNames } from "@/lib/circle-db";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { FoodReactionState, PostEngagementState } from "@/lib/server/post-engagement-state";
-import { displayFeedbackLabelForLabel } from "@/lib/taste-trust";
+import type { PostEngagementState } from "@/lib/server/post-engagement-state";
 import type { Review } from "@/lib/types";
 import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
+import { loadCanonicalCircleFeedPage, type CanonicalCircleFeedPage } from "@/lib/server/canonical-circle-feed";
 
 type CirclePostRequestStatus = "idle" | "pending" | "joined";
 
@@ -30,12 +29,12 @@ function parseCsvIds(value: string | null): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const { actor, supabase } = await getRouteActor(req);
+  const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const limit = parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE);
+  const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);
-  const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
   const excludePostIds = parseCsvIds(req.nextUrl.searchParams.get("excludeSeen"));
 
   if (rawCursor && !cursor) {
@@ -43,23 +42,21 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const page = await getCircleFeedPage(supabase, {
+    const admin = createAdminClient();
+    const page = await loadCanonicalCircleFeedPage(admin, actor, {
       cursor,
       limit,
-      bypassCache: refreshMode && !cursor,
       excludePostIds,
+      bypassCache: refreshMode && !cursor,
     });
     if (!page.myName) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const admin = createAdminClient();
     const mediaAssetIds = page.reviews.flatMap((review) => (review.media_items ?? []).map((item) => item.media_asset_id).filter((id): id is string => Boolean(id)));
-    const [engagementByPostId, accountTypeByReviewer, requestStatusByReviewer, authorisedMedia] = await Promise.all([
-      buildPageEngagementStates(admin, page),
-      buildReviewerAccountTypeMap(admin, page),
-      buildCircleRequestStatusMap(admin, page),
-      resolvePostMediaAccess(admin, mediaAssetIds, page.myName),
-    ]);
+    const engagementByPostId = buildPageEngagementStates(page);
+    const accountTypeByReviewer = new Map(Object.entries(page.accountTypeMap));
+    const requestStatusByReviewer = new Map(Object.entries(page.requestStatusMap));
+    const authorisedMedia = await resolvePostMediaAccess(admin, mediaAssetIds, page.myName);
     const mediaByAssetId = new Map(authorisedMedia.map((item) => [item.id, item]));
     return NextResponse.json({
       ...page,
@@ -80,7 +77,7 @@ export async function GET(req: NextRequest) {
 
 function reviewPostFromReview(
   review: Review,
-  page: Awaited<ReturnType<typeof getCircleFeedPage>>,
+  page: CanonicalCircleFeedPage,
   engagement: PostEngagementState | undefined,
   requestStatusByReviewer: Map<string, CirclePostRequestStatus>,
   accountTypeByReviewer: Map<string, "public" | "private">,
@@ -142,86 +139,7 @@ function reviewPostFromReview(
   };
 }
 
-async function buildReviewerAccountTypeMap(
-  db: ReturnType<typeof createAdminClient>,
-  page: Awaited<ReturnType<typeof getCircleFeedPage>>
-): Promise<Map<string, "public" | "private">> {
-  const reviewerNames = Array.from(new Set(page.reviews.map((review) => review.reviewer_name).filter(Boolean)));
-  const accountTypes = await getAccountTypesForNames(db, reviewerNames);
-  return new Map(Object.entries(accountTypes).map(([name, accountType]) => [name, accountType === "private" ? "private" : "public"]));
-}
-
-async function buildCircleRequestStatusMap(
-  db: ReturnType<typeof createAdminClient>,
-  page: Awaited<ReturnType<typeof getCircleFeedPage>>
-): Promise<Map<string, CirclePostRequestStatus>> {
-  const statuses = new Map<string, CirclePostRequestStatus>();
-  const joined = new Set(page.joinedCircles);
-  const candidates = Array.from(
-    new Set(
-      page.reviews
-        .map((review) => review.reviewer_name)
-        .filter((name) => name && name !== page.myName)
-    )
-  );
-
-  for (const reviewerName of candidates) {
-    statuses.set(reviewerName, joined.has(reviewerName) ? "joined" : "idle");
-  }
-
-  const requestableNames = candidates.filter((name) => !joined.has(name));
-  if (!page.myName || requestableNames.length === 0) return statuses;
-
-  const { data, error } = await db
-    .from("circle_requests")
-    .select("receiver_name, status")
-    .eq("sender_name", page.myName)
-    .in("receiver_name", requestableNames);
-
-  if (error) {
-    console.error("[feed/circle] failed to load circle request statuses:", error.message);
-    return statuses;
-  }
-
-  for (const row of (data ?? []) as Array<{ receiver_name?: string | null; status?: string | null }>) {
-    if (!row.receiver_name) continue;
-    if (row.status === "pending") statuses.set(row.receiver_name, "pending");
-    if (row.status === "accepted") statuses.set(row.receiver_name, "joined");
-  }
-
-  return statuses;
-}
-
-function foodReactionForLabel(value: unknown): FoodReactionState {
-  const label = displayFeedbackLabelForLabel(value);
-  if (label === "Helpful") return "MUST_TRY";
-  if (label === "Disagree") return "NOT_WORTH_IT";
-  return null;
-}
-
-async function buildPageEngagementStates(
-  db: ReturnType<typeof createAdminClient>,
-  page: Awaited<ReturnType<typeof getCircleFeedPage>>
-): Promise<Map<string, PostEngagementState>> {
-  const postIds = page.reviews.map((review) => review.id).filter(Boolean);
-  const myFeedbackByPostId = new Map<string, FoodReactionState>();
-
-  if (page.viewerUserId && postIds.length > 0) {
-    const { data, error } = await db
-      .from("recommendation_feedback")
-      .select("post_id, feedback_label")
-      .eq("feedback_user_id", page.viewerUserId)
-      .in("post_id", postIds);
-
-    if (error) {
-      console.error("[feed/circle] failed to load viewer feedback:", error.message);
-    } else {
-      for (const row of (data ?? []) as Array<{ feedback_label?: string | null; post_id?: string | null }>) {
-        if (row.post_id) myFeedbackByPostId.set(row.post_id, foodReactionForLabel(row.feedback_label));
-      }
-    }
-  }
-
+function buildPageEngagementStates(page: CanonicalCircleFeedPage): Map<string, PostEngagementState> {
   return new Map(page.reviews.map((review) => {
     const summary = page.tasteTrustSummaryMap[review.id];
     const state: PostEngagementState = {
@@ -230,7 +148,7 @@ async function buildPageEngagementStates(
       likeCount: page.likeCountMap[review.id] ?? 0,
       bookmarkedByMe: page.bookmarkedPostMap[review.id] ?? false,
       commentCount: page.commentMap[review.id]?.count ?? 0,
-      foodReaction: myFeedbackByPostId.get(review.id) ?? null,
+      foodReaction: page.foodReactionMap[review.id] ?? null,
       mustTryCount: summary?.feedback_counts?.Helpful ?? 0,
       notWorthItCount: summary?.feedback_counts?.Disagree ?? 0,
     };

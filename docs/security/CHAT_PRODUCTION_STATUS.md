@@ -1,16 +1,29 @@
 # Chat Production Status
 
-Current phase: Production Hardening Phase 4 — mobile API security
+Current phase: Production Hardening Phase 5 — backend, database, and feed performance
 
-Production-hardening program phase: Phase 4 — mobile API security, authentication hardening, and abuse controls
+Production-hardening program phase: Phase 5 — bounded mobile reads, canonical feed queries, pagination, and query/payload budgets
 
-Phase 4 implementation status: PASS locally on `hardening/06-api-security`. One canonical actor resolver, enumeration-safe authentication helpers, a shared PostgreSQL limiter, active-mobile mutation policies, bounded provider/notification/report/media routes, validated recovery/OAuth deep links, install-bound push tokens, moderation quarantine/audit, internal-secret separation, safe errors, headers/CORS, pgTAP, and real local API/database behavior gates are implemented.
+Phase 5 implementation status: PASS locally on `hardening/07-backend-performance`. Sixteen primary mobile reads have explicit request/query/row/payload budgets; Circle and mobile feeds use bounded canonical RPCs; feed-card N+1 calls are removed; Explore v3 is mandatory; Profile has one posts owner; comments, notifications, Memory chat, and Memory media are bounded/cursor-paginated; Memory private paths remain server-side; deterministic query plans/payload/cursor behavior pass locally.
 
-Phase 4 release verification status: BLOCKED pending hosted multi-replica limiter proof, real email delivery, real Android/iOS recovery and OAuth callbacks, provider quota/restriction tests, hosted moderation/operator availability, production proxy/secret-manager configuration, hosted Phase 3 drift/history verification, and the earlier Phase 1A–2 release blockers. No hosted project was mutated.
+Phase 5 release verification status: BLOCKED pending hosted migration/lock review, production-sized staging plans, hosted API p50/p95/p99, pool/Storage/network metrics, Phase 9 concurrency/soak/failure testing, and all earlier Phase 1A–4 release blockers. No hosted project was mutated and no 1,000-user capacity claim is made.
 
-Next required phase: Phase 4 manual staging/release matrix
+Final Phase 5 evidence includes a clean canonical reset, 57/57 pgTAP assertions, 10/10 real policy behaviors, zero canonical drift, 8/8 focused Phase 5 tests, 13 production API flows with 20 warm samples each, passing root/mobile typechecks, a passing production Next build, and passing Android/iOS production exports. The full root suite retains exactly the 20 registered PH-002 failing names; Memory remains 71/72 with its existing PH-002 failure.
 
-Production-hardening next required phase: execute the Phase 4 staging matrix in `docs/production-hardening/PHASE_4_API_SECURITY.md` together with the Phase 1A–3 hosted gates. Do not start Phase 5 automatically.
+Next required phase: Phase 5 manual staging/performance matrix, followed by separately authorized Phase 6 work
+
+Production-hardening next required phase: execute `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md` against disposable production-sized staging together with the Phase 1A–4 hosted gates. Phase 6 is not started by this handoff.
+
+## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
+
+- Inventory/budgets: 16 primary mobile reads, one primary mobile request each, maximum six application-data statements, pages capped at 50, payload budgets capped at 256 KiB, and one named cache owner per first page.
+- Feeds: Circle uses `circle_feed_page_v2`; public/restaurant/dish/Profile/detail use `/api/mobile/feed` plus `mobile_public_feed_page_v1`; engagement/profile/media enrichment is batched; mounted feed cards perform zero independent Taste/Trust requests.
+- Explore/Profile: `explore_discovery_canonical_v3` is mandatory and fails visibly when absent. Profile shell omits posts and aggregate stats replace the 1,000-row fallback; Profile posts have one infinite-query owner.
+- Social reads: comments and notifications use stable opaque `(created_at,id)` cursors and exact aggregate/head counts; identity enrichment is batched. Notification sparse-recipient plans use the stable recipient index.
+- Memory: room list has no per-room query loop; bootstrap/chat/media each use one authenticated API request. RPC payloads omit private Storage paths and stored URLs; the server resolves authorized photo IDs and signs paths in one batch.
+- Database: migration `202607130009_backend_feed_performance.sql`; 66 canonical migrations/84 manifest entries; pgTAP 57/57. Four harmful/redundant chronological indexes are replaced by stable Circle/public/recipient/Memory cursor indexes.
+- Local plan fixture: 10,000 reviews, 2,000 comments, 5,000 notifications, 5,000 Memory messages; all four critical plans use their intended indexes, the representative payload is 17,092 bytes, and concurrent insertion yields zero cursor overlap.
+- Local database execution measurements are not Next API p50/p95 or capacity evidence. Hosted staging, connection-pool/Storage latency, concurrency, soak/failure testing, and production capacity remain unverified and belong to the documented staging matrix/Phase 9.
 
 ## Production Hardening Phase 4 — Mobile API Security (2026-07-13)
 

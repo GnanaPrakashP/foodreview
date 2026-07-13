@@ -162,6 +162,7 @@ export type AppNotification = {
 };
 
 export type NotificationsPage = {
+  nextCursor: string | null;
   notifications: AppNotification[];
   unreadCount: number;
 };

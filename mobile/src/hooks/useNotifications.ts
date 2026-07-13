@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteNotification,
   getUnreadNotificationCount,
@@ -24,12 +24,19 @@ function useInvalidateNotificationQueries() {
 }
 
 export function useNotificationsQuery(options: { enabled?: boolean; limit?: number } = {}) {
-  return useQuery({
-    queryKey: [...notificationKeys.list, options.limit ?? 50] as const,
-    queryFn: () => listNotifications(options.limit),
+  return useInfiniteQuery({
+    queryKey: [...notificationKeys.list, options.limit ?? 30] as const,
+    queryFn: ({ pageParam }) => listNotifications(options.limit, pageParam),
     enabled: options.enabled ?? true,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: null as string | null,
     refetchInterval: 30_000,
-    staleTime: 15_000
+    staleTime: 15_000,
+    select: (data) => ({
+      nextCursor: data.pages[data.pages.length - 1]?.nextCursor ?? null,
+      notifications: data.pages.flatMap((page) => page.notifications),
+      unreadCount: data.pages[0]?.unreadCount ?? 0
+    })
   });
 }
 
@@ -65,15 +72,18 @@ export function useMarkAllNotificationsReadMutation() {
       ]);
 
       const previousUnreadCount = queryClient.getQueryData<number>(notificationKeys.unreadCount);
-      const previousLists = queryClient.getQueriesData<NotificationListResult>({ queryKey: notificationKeys.list });
+      const previousLists = queryClient.getQueriesData<InfiniteData<NotificationListResult>>({ queryKey: notificationKeys.list });
 
       queryClient.setQueryData(notificationKeys.unreadCount, 0);
-      queryClient.setQueriesData<NotificationListResult>({ queryKey: notificationKeys.list }, (current) => {
+      queryClient.setQueriesData<InfiniteData<NotificationListResult>>({ queryKey: notificationKeys.list }, (current) => {
         if (!current) return current;
         return {
           ...current,
-          notifications: current.notifications.map((notification) => ({ ...notification, isRead: true })),
-          unreadCount: 0
+          pages: current.pages.map((page) => ({
+            ...page,
+            notifications: page.notifications.map((notification) => ({ ...notification, isRead: true })),
+            unreadCount: 0
+          }))
         };
       });
 

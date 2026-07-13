@@ -363,6 +363,20 @@ function PostCommentsSheet({
               commentsData.length === 0 && styles.commentsSheetScrollContentEmpty
             ]}
             data={commentsData}
+            ListHeaderComponent={comments.hasNextPage ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={comments.isFetchingNextPage}
+                onPress={() => comments.fetchNextPage()}
+                style={styles.drawerRetryButton}
+              >
+                {comments.isFetchingNextPage ? (
+                  <ActivityIndicator color={themeColors.orange} size="small" />
+                ) : (
+                  <Text style={styles.drawerRetryButtonText}>Load older comments</Text>
+                )}
+              </Pressable>
+            ) : null}
             ListFooterComponent={commentsData.length > 0 ? <Animated.View style={listReserveStyle} /> : null}
             keyboardShouldPersistTaps="handled"
             keyExtractor={(item) => item.id}

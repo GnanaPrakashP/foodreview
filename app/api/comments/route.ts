@@ -8,8 +8,11 @@ import type { Comment, Review } from "@/lib/types";
 import { getPostEngagementState } from "@/lib/server/post-engagement-state";
 import { profileDisplayName } from "@/lib/profile-names";
 import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+import { decodeStableTimestampCursor, encodeStableTimestampCursor } from "@/lib/server/stable-cursor";
 
 const METHODS = ["POST"];
+const DEFAULT_COMMENT_PAGE_SIZE = 30;
+const MAX_COMMENT_PAGE_SIZE = 50;
 
 const ENGAGEMENT_REVIEW_SELECT = "id, reviewer_name, restaurant_name, photo_url, photo_urls, visibility";
 
@@ -46,7 +49,9 @@ function scheduleCommentSideEffects(input: {
       const { data: priorComments } = await writeDb
         .from("comments")
         .select("user_name")
-        .eq("post_id", input.postId);
+        .eq("post_id", input.postId)
+        .order("created_at", { ascending: false })
+        .limit(100);
 
       await createPostCommentNotifications(
         writeDb,
@@ -70,7 +75,7 @@ async function blockedUsernamesForViewer(db: ReturnType<typeof createAdminClient
   const { data, error } = await db
     .from("blocked_users")
     .select("blocker_name, blocked_name")
-    .in("blocker_name", [actorName])
+    .or(`blocker_name.eq.${actorName},blocked_name.eq.${actorName}`)
     .returns<Array<{ blocker_name: string | null; blocked_name: string | null }>>();
 
   if (error) {
@@ -78,7 +83,11 @@ async function blockedUsernamesForViewer(db: ReturnType<typeof createAdminClient
     return new Set();
   }
 
-  return new Set((data ?? []).map((row) => row.blocked_name).filter(Boolean) as string[]);
+  return new Set((data ?? []).flatMap((row) => {
+    if (row.blocker_name === actorName && row.blocked_name) return [row.blocked_name];
+    if (row.blocked_name === actorName && row.blocker_name) return [row.blocker_name];
+    return [];
+  }));
 }
 
 async function displayNamesForCommentAuthors(
@@ -119,14 +128,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const [{ data, error }, blockedNames] = await Promise.all([
-    readDb
+  const rawCursor = req.nextUrl.searchParams.get("cursor");
+  const cursor = decodeStableTimestampCursor(rawCursor);
+  if (rawCursor && !cursor) {
+    return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+  }
+  const requestedLimit = Number(req.nextUrl.searchParams.get("limit") ?? DEFAULT_COMMENT_PAGE_SIZE);
+  const limit = Math.min(MAX_COMMENT_PAGE_SIZE, Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : DEFAULT_COMMENT_PAGE_SIZE));
+
+  let commentsQuery = readDb
       .from("comments")
-      .select("id, post_id, user_name, content, created_at")
+      .select("id, post_id, user_name, content, created_at", { count: "exact" })
       .eq("post_id", postId)
-      .order("created_at", { ascending: true })
-      .limit(100)
-      .returns<CommentListRow[]>(),
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+  if (cursor) {
+    commentsQuery = commentsQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  }
+
+  const [{ data, error, count }, blockedNames] = await Promise.all([
+    commentsQuery.limit(limit + 1).returns<CommentListRow[]>(),
     blockedUsernamesForViewer(readDb, actor.actorName),
   ]);
 
@@ -135,9 +156,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unable to load comments" }, { status: 500 });
   }
 
-  const comments = (data ?? []).filter((row) => !blockedNames.has(row.user_name));
+  const visibleRows = (data ?? []).filter((row) => !blockedNames.has(row.user_name));
+  const selectedDesc = visibleRows.slice(0, limit);
+  const comments = [...selectedDesc].reverse();
   const profileMap = await displayNamesForCommentAuthors(readDb, comments.map((row) => row.user_name));
-  return NextResponse.json({ comments, profileMap });
+  const oldest = selectedDesc[selectedDesc.length - 1];
+  return NextResponse.json({
+    comments,
+    nextCursor: (data ?? []).length > limit && oldest
+      ? encodeStableTimestampCursor({ createdAt: oldest.created_at, id: oldest.id })
+      : null,
+    profileMap,
+    totalCount: count ?? comments.length,
+  });
 }
 
 export async function POST(req: NextRequest) {
