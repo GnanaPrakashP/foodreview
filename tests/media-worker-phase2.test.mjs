@@ -60,10 +60,8 @@ function loadPipeline() {
   });
 }
 
-test("Phase 2 migration is mirrored and defines fenced atomic leases and terminal states", () => {
+test("Phase 2 canonical migration defines fenced atomic leases and terminal states", () => {
   const root = source("supabase/migrations/202607130003_media_worker_reliability.sql");
-  const mobile = source("mobile/supabase/migrations/202607130003_media_worker_reliability.sql");
-  assert.equal(root, mobile);
   assert.match(root, /create or replace function public\.claim_media_processing_jobs/);
   assert.match(root, /for update of job skip locked/);
   assert.match(root, /lock_expires_at <= now\(\)/);

@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "program": "FoodReview Production Hardening",
   "updatedAt": "2026-07-13",
-  "sourceCommit": "18b608bbfe77ffd10bc31b903b00048e1e64cef1",
+  "sourceCommit": "0cb005ed28bd65f4dae3108ce55235bc1e792844",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/04-media-worker",
+  "currentBranch": "hardening/05-migrations",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -48,7 +48,7 @@
       "phase": "1A",
       "branch": "hardening/01-private-media",
       "affectedFiles": ["lib/server/media-pipeline.ts", "app/api/media", "app/api/reviews", "mobile/src/services/mediaPipeline.ts", "supabase/migrations"],
-      "dependencies": ["PH-301"],
+      "dependencies": ["Hosted migration/Storage-policy verification and disposable-staging upgrade remain externally unverified", "Potentially exposed privileged credentials must be adjudicated under PH-001", "Required iOS and real-device release validation remains externally unverified"],
       "acceptanceCriteria": ["Circle and private media have no permanent public URL", "Retrieval enforces current post visibility", "Blocked and removed members cannot fetch media", "Visibility transitions and deletion revoke access"]
     },
     {
@@ -81,7 +81,7 @@
       "phase": "2",
       "branch": "hardening/04-media-worker",
       "affectedFiles": ["Dockerfile.media-worker", "scripts/media-worker.mjs", "scripts/media-worker-entrypoint.mjs", "app/api/internal/media/process/route.ts", "app/api/internal/media/health/route.ts", "lib/server/media-pipeline.ts"],
-      "dependencies": ["Hosted worker deployment, scheduler and production-like smoke remain externally unverified", "PH-301"],
+      "dependencies": ["Hosted worker deployment, scheduler and production-like smoke remain externally unverified"],
       "acceptanceCriteria": ["Production runtime packages ffmpeg and ffprobe", "Worker execution and temporary-storage limits are documented", "Queue processing runs continuously or on a proven scheduler", "A production-like processing smoke passes"]
     },
     {
@@ -91,8 +91,8 @@
       "status": "blocked",
       "phase": "2",
       "branch": "hardening/04-media-worker",
-      "affectedFiles": ["lib/server/media-pipeline.ts", "supabase/migrations/202607130003_media_worker_reliability.sql", "mobile/supabase/migrations/202607130003_media_worker_reliability.sql", "tests/media-worker-phase2.test.mjs", "tests/supabase-media-worker-phase2-runtime-validation.mjs"],
-      "dependencies": ["PH-201", "PH-301", "Hosted two-worker termination and infrastructure-interruption matrix remains externally unverified"],
+      "affectedFiles": ["lib/server/media-pipeline.ts", "supabase/migrations/202607130003_media_worker_reliability.sql", "tests/media-worker-phase2.test.mjs", "tests/supabase-media-worker-phase2-runtime-validation.mjs"],
+      "dependencies": ["PH-201", "Hosted two-worker termination and infrastructure-interruption matrix remains externally unverified"],
       "acceptanceCriteria": ["Jobs have locked_by and lease expiry", "Stale running jobs are reclaimed", "Processing is idempotent", "Worker termination at each stage recovers without duplicates"]
     },
     {
@@ -110,10 +110,10 @@
       "id": "PH-301",
       "title": "Unify root and mobile Supabase migration histories",
       "severity": "P0",
-      "status": "open",
+      "status": "complete",
       "phase": "3",
       "branch": "hardening/05-migrations",
-      "affectedFiles": ["supabase/migrations", "mobile/supabase/migrations", "supabase/schema.sql"],
+      "affectedFiles": ["supabase/migrations", "mobile/supabase/README.md", "docs/database/migration-history-manifest.json", "docs/database/legacy-mobile-migrations", "scripts/validate-migration-history.mjs"],
       "dependencies": [],
       "acceptanceCriteria": ["One migration root is canonical", "Identical migration IDs never contain different SQL", "A clean database is created from zero", "Production migration history is reconciled without editing applied history"]
     },
@@ -121,10 +121,10 @@
       "id": "PH-302",
       "title": "Add transactional database, RLS and storage-policy tests",
       "severity": "P0",
-      "status": "open",
+      "status": "complete",
       "phase": "3",
       "branch": "hardening/05-migrations",
-      "affectedFiles": ["supabase/tests", "mobile/supabase/tests", ".github/workflows"],
+      "affectedFiles": ["supabase/tests", "tests/supabase-phase3-policy-validation.mjs", "scripts/validate-database-upgrades.mjs", "scripts/database-drift-report.mjs", ".github/workflows/application-ci.yml"],
       "dependencies": ["PH-301"],
       "acceptanceCriteria": ["Clean reset runs in CI", "Authenticated member, non-member and blocked-user policies are tested", "Storage object reads are tested separately from metadata reads", "Database tests cannot report success with zero test files"]
     },

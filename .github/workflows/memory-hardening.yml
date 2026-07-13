@@ -18,6 +18,8 @@ on:
       - "mobile/src/services/settings.ts"
       - "mobile/src/services/mediaUploadService.ts"
       - "mobile/supabase/**"
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
       - "tests/shared-memory-phase*.test.mjs"
   push:
     branches:
@@ -39,6 +41,8 @@ on:
       - "mobile/src/services/settings.ts"
       - "mobile/src/services/mediaUploadService.ts"
       - "mobile/supabase/**"
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
       - "tests/shared-memory-phase*.test.mjs"
 
 jobs:

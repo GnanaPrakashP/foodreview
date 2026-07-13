@@ -6,6 +6,8 @@
 
 The repository implementation and real local Auth/RLS/Storage/HTTP gate are complete. The Android native development-client path and Android release artifact also pass. It must not be deployed until the checks below prove the migration against hosted Supabase Storage/CDN behavior and a production-like data shape, the credential owner completes the possible privileged-key assessment, and the native iOS client is exercised. This document deliberately does not authorize Phase 1B, 1C, or any later hardening work.
 
+Phase 3 supersession note (2026-07-13): the two migration roots described in this historical Phase 1A handoff were reconciled. `supabase/migrations/202607130001_visibility_aware_post_media.sql` is now the sole executable copy; its former identical mobile hash remains in the locked migration manifest. Run current database gates through `npm run db:*` from the repository root.
+
 ## Architecture decision
 
 Phase 1A selects **Model A: private canonical post media with authorized delivery**.
@@ -59,7 +61,7 @@ Circle membership removal, either-direction block, review suppression, deletion,
 
 ## Database and Storage migration
 
-Both currently configured migration roots contain byte-identical `202607130001_visibility_aware_post_media.sql` files because PH-301 has not yet established a single canonical root. This phase does not rewrite prior migration history.
+At Phase 1A handoff, two temporary roots contained byte-identical copies. Phase 3 retained the root file as the canonical executable migration, retired the mobile copy, and preserved both historical hashes without editing this migration.
 
 The migration adds `media_assets.access_class`, a fail-closed `privacy_state`, durable `media_privacy_migration_jobs`, nullable legacy `review_photos.public_url`, linkage uniqueness, derivative/bucket consistency triggers, avatar-only public read policies, and the service-role-only atomic visibility RPC. The RPC uses `SECURITY DEFINER` with an empty `search_path` and is revoked from public, anonymous, and authenticated roles.
 
@@ -109,12 +111,11 @@ Hosted execution was not possible from this checkout because the Supabase CLI ha
 
 ## Repeatable real-local verification
 
-The Phase 1A validator uses real local Supabase Auth users, RLS, Storage objects, and active Next routes. Because PH-301 still leaves the generic-media and Profile/block prerequisites in different migration roots, the validator applies an explicitly test-only compatibility fixture after a clean root reset. That fixture is not a deployable migration and is not a substitute for resolving PH-301.
+The Phase 1A validator uses real local Supabase Auth users, RLS, Storage objects, and active Next routes against the complete canonical root. The former PH-301 compatibility fixture is obsolete and is not part of the current command.
 
 ```bash
 npx supabase start
 npx supabase db reset
-npx supabase db query --local --file tests/fixtures/phase1a-root-runtime-compat.sql
 npx supabase status -o json > /private/tmp/foodreview-phase1a-supabase-status.json
 POST_MEDIA_SUPABASE_STATUS_FILE=/private/tmp/foodreview-phase1a-supabase-status.json \
   npm run validate:post-media-phase1a
@@ -122,7 +123,7 @@ POST_MEDIA_SUPABASE_STATUS_FILE=/private/tmp/foodreview-phase1a-supabase-status.
 
 The validator creates disposable Owner, Member, Stranger, and Blocked users and verifies 13 grouped gates: private derivative creation for public/circle/me posts; status DTO redaction; direct private-object denial to anonymous and authenticated clients; authorized delivery and `private, no-store`; all six visibility transitions; service-role-only transition RPC; membership removal; either-direction blocking and suppression; deletion; legacy inventory; public-to-private copy, recovery, deletion, and idempotency; a one-second Storage expiry probe; and the route-issued URL remaining valid inside but failing after the exact 300-second window. The latest run passed **13/13**.
 
-The root migration chain resets cleanly through Phase 1A. A clean reset from `mobile/supabase` currently stops at its pre-existing `202607080001_circle_production_hardening.sql` because `public.post_views` is absent from that history. That is concrete PH-301 evidence and must not be hidden with a Phase 1A migration rewrite.
+The canonical root migration chain resets cleanly through Phase 1A and the later Phase 3 corrections. The retired mobile chain's missing `post_views` dependency remains recorded as concrete reconciliation evidence and is classified as requiring manual remediation if found in a hosted history.
 
 ## Credential containment preflight
 

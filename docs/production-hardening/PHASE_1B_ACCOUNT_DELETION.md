@@ -6,13 +6,15 @@ Branch: `hardening/02-account-deletion`
 
 Implementation status: PASS locally
 
-Release verification status: BLOCKED pending disposable hosted-staging execution, worker scheduling/alerting verification, PH-301 migration-root resolution, and the pre-existing production-readiness blockers recorded below.
+Release verification status: BLOCKED pending disposable hosted-staging execution, worker scheduling/alerting verification, and the pre-existing production-readiness blockers recorded below. PH-301 was resolved locally in Phase 3; hosted history still requires explicit audit.
 
 ## Executive result
 
 FoodReview no longer treats account deletion as a synchronous client request that removes the Auth user before all Storage and application records are proven clean. The active mobile flow now creates an owner-only durable deletion job and freezes the account atomically. A protected, bounded, lease-based worker inventories and verifies Storage deletion, cleans application data, reconciles shared data, deletes the Supabase Auth user last, and retains only sanitized operational metadata for a bounded 30-day window.
 
 The local implementation passes behavior-level unit tests, a clean root migration reset, Supabase SQL lint, Next production build, Android/iOS Expo exports, Phase 1A security tests, and a real local Auth/RLS/Storage/HTTP lifecycle with another user's data present. The hosted matrix was not run and production has not been mutated.
+
+Phase 3 supersession note (2026-07-13): the temporary mirrored migration arrangement is retired. `supabase/migrations/202607130002_complete_account_deletion.sql` is the sole executable copy, its former mobile hash is preserved in the locked manifest, and current database commands run from the repository root.
 
 ## Why the previous flow was unsafe
 
@@ -263,10 +265,10 @@ Reports include job state, sanitized error code, remaining/failed/ambiguous obje
 
 ## Tests added or updated
 
-- `tests/account-deletion-phase1b.test.mjs`: migration mirror, state machine, freeze/order, shared Memory, Auth-missing idempotency, partial Storage retry, and mobile acceptance behavior.
+- `tests/account-deletion-phase1b.test.mjs`: canonical migration, state machine, freeze/order, shared Memory, Auth-missing idempotency, partial Storage retry, and mobile acceptance behavior.
 - `tests/delete-account-route.test.mjs`: unauthenticated rejection, atomic durable request, retired RPC exclusion, and generic error response.
 - `tests/supabase-account-deletion-phase1b-runtime-validation.mjs`: real local Auth actors, Storage variants, cross-user isolation, freeze, protected bounded worker, Auth-last order, shared/sole rooms, moderation anonymization, idempotency/reconciliation, and bounded retention purge.
-- `tests/fixtures/phase1b-root-runtime-compat.sql`: test-only compatibility schema for the known PH-301 split. It is not a deployable migration.
+- `tests/fixtures/phase1b-root-runtime-compat.sql`: obsolete historical test-only evidence from the former PH-301 split; current gates do not apply it.
 - Updated actor/media mocks and the pre-existing account-media cleanup worker test so active dependencies are represented without weakening security assertions.
 
 ## Local validation results
@@ -286,7 +288,7 @@ Passed:
 - Android Expo production export: passed.
 - iOS Expo production export: passed.
 - Export scan for public service-role names, service-role name, development auto-login names, and the deletion worker secret: no matches.
-- Migration mirror byte comparison: passed.
+- Canonical migration manifest/hash validation: passed under Phase 3.
 - Production-hardening issue register validation: passed.
 
 Known repository baselines, honestly retained:
@@ -299,14 +301,11 @@ No new validation regression was introduced.
 
 ## Migration details and PH-301
 
-Phase 1B adds byte-identical migrations at:
-
-- `supabase/migrations/202607130002_complete_account_deletion.sql`
-- `mobile/supabase/migrations/202607130002_complete_account_deletion.sql`
+Phase 1B originally added byte-identical migrations to two temporary roots. Phase 3 retains only `supabase/migrations/202607130002_complete_account_deletion.sql` as executable and preserves the retired hash in `docs/database/migration-history-manifest.json`.
 
 The migration uses guarded runtime relation discovery for mobile-only optional tables so the root migration can reset and lint cleanly without fabricating missing product tables.
 
-The root migration history resets cleanly. The independent mobile migration root still stops at the known earlier `202607080001_circle_production_hardening.sql` preflight because `public.post_views` is missing. That happens before Phase 1A/1B and is PH-301. This phase did not rewrite applied history or attempt broad migration reconciliation.
+The canonical migration history resets cleanly. The retired mobile history's earlier missing-`post_views` failure remains documented in Phase 3 as an unsupported ambiguous hosted state requiring explicit operator reconciliation; no applied history was rewritten.
 
 ## Disposable staging execution matrix
 
@@ -315,7 +314,7 @@ Do not use production accounts for the first hosted run.
 ### Dry run
 
 1. Create a disposable Supabase staging branch/project and snapshot it.
-2. Confirm Phase 1A is deployed and PH-301 has an approved migration path for this environment.
+2. Confirm Phase 1A is deployed and run the explicit Phase 3 hosted drift/history audit for this environment.
 3. Apply the Phase 1B migration only through the normal migration pipeline.
 4. Deploy the app server with `ACCOUNT_DELETION_WORKER_SECRET`; do not schedule the worker yet.
 5. Create an owner and another user. Seed public/circle/private posts, generic source/canonical/thumbnail/poster variants, review/avatar final and quarantine objects, shared/sole Memory rooms, moderation report, push token, likes/comments/wishlist/Circle/block rows.
@@ -372,7 +371,7 @@ Rollback is roll-forward only for in-flight deletion jobs:
 - No hosted Supabase project, production database, production Storage, or production Auth tenant was changed.
 - Real hosted Storage/CDN timing, provider throttling, and scheduler behavior remain unverified.
 - Deletion under production-like object counts and concurrent requests has not been load-tested.
-- The mobile migration root remains blocked by PH-301 before Phase 1B.
+- A hosted project based on the retired mobile-only history requires the explicit Phase 3 operator reconciliation before Phase 1B deployment.
 - PH-302 transactional database/RLS/Storage CI coverage is still open; the real validator is strong local evidence but not a replacement for deployed pgTAP/hosted gates.
 - Phase 1A hosted migration/backfill, credential-owner rotation assessment, and native authenticated iOS validation remain blocked exactly as previously recorded.
 - Already-downloaded media and already-issued signed URLs cannot be erased immediately; Phase 1A bounds fresh URL validity to five minutes.

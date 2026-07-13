@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const migration = readFileSync(
-  "mobile/supabase/migrations/202606250001_profile_media_username_hardening.sql",
+  "supabase/migrations/202606250001_profile_media_username_hardening.sql",
   "utf8"
 );
 const reviewMedia = readFileSync("lib/server/review-media.ts", "utf8");
@@ -12,7 +12,7 @@ const finalizeRoute = readFileSync("app/api/mobile/review-media/finalize-upload/
 const reviewsRoute = readFileSync("app/api/reviews/route.ts", "utf8");
 const reviewDeleteRoute = readFileSync("app/api/reviews/[id]/route.ts", "utf8");
 const deleteAccountRoute = readFileSync("app/api/delete-account/route.ts", "utf8");
-const accountDeletionMigration = readFileSync("mobile/supabase/migrations/202607130002_complete_account_deletion.sql", "utf8");
+const accountDeletionMigration = readFileSync("supabase/migrations/202607130002_complete_account_deletion.sql", "utf8");
 const accountDeletionHelper = readFileSync("lib/server/account-deletion.ts", "utf8");
 const accountDeletionWorkerRoute = readFileSync("app/api/internal/account-deletion/route.ts", "utf8");
 const cleanupWorkerRoute = readFileSync("app/api/internal/account-media-cleanup/route.ts", "utf8");

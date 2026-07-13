@@ -1,8 +1,8 @@
 # Supabase Schema Notes
 
-Canonical source: `supabase/schema.sql`. Migrations in `supabase/migrations/*` show recent root additions.
+The canonical executable migration root is `supabase/migrations`; `supabase/config.toml` is the only Supabase CLI configuration. Run database commands from the repository root through the `npm run db:*` interface. The mobile application shares this backend schema and has no independent executable migration history.
 
-Mobile/Profile hardening migrations live under `mobile/supabase/migrations/*` and are validated from the `mobile/` directory because the Supabase CLI config is `mobile/supabase/config.toml`. That chain starts with `202505010001_core_schema_baseline.sql`, an additive baseline for the core tables/functions expected by later mobile migrations. Do not validate the mobile chain from `mobile/supabase/`; the CLI project root is `mobile/`.
+`supabase/schema.sql` is a reference snapshot only; ordered migrations are authoritative. Historical mobile migration hashes and their canonical mapping are locked in `docs/database/migration-history-manifest.json`, while conflicting retired copies are preserved under `docs/database/legacy-mobile-migrations` outside CLI discovery.
 
 ## Identity
 

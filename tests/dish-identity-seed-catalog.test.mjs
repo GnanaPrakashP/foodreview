@@ -156,10 +156,8 @@ function createMemoryDb(seed = {}) {
   };
 }
 
-const mobileMigrationPath = "mobile/supabase/migrations/202607110002_dish_identity_seed_catalog.sql";
 const rootMigrationPath = "supabase/migrations/202607110002_dish_identity_seed_catalog.sql";
 const migration = source(rootMigrationPath);
-const mobileMigration = source(mobileMigrationPath);
 const aliasBlock = migration.match(/with seed_aliases[\s\S]+?normalized_seed_aliases as/i)?.[0] ?? "";
 const { normalizeDishIdentityName, resolveDishIdentity } = loadDishIdentityModule();
 
@@ -197,8 +195,8 @@ function seededResolverDb() {
   });
 }
 
-test("dish identity seed catalog migration is mirrored across Supabase project trees", () => {
-  assert.equal(mobileMigration, migration);
+test("dish identity seed catalog migration comes from the canonical root history", () => {
+  assert.match(migration, /dish identity/i);
 });
 
 test("seed catalog uses stable UUIDs and idempotent inserts without destructive writes", () => {

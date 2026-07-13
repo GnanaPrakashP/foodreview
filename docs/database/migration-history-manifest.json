@@ -1,0 +1,2224 @@
+{
+  "canonicalRoot": "supabase/migrations",
+  "conflicts": [
+    {
+      "canonicalHash": "cec7bb5ab31a33be30e9ab366f60ceb29c8fef2bcad52d0f937e98d86afa1f3a",
+      "legacyMobileHash": "05d5fb01544622fff97c0522d9df3f44b5f4b058047a68fe570aeaa7e6c4655d",
+      "resolution": "canonical_root_selected_executable_sql_equivalent_mobile_variant_archived",
+      "version": "202505010001"
+    },
+    {
+      "canonicalHash": "f17722fa92e3b973fdede58581cbc419c0b0ff8419665e57adff8a14b5ff22ed",
+      "legacyMobileHash": "7f57c83e00b89f593728c6a4a5d4278a92f83191986b0301630e01226fac0aee",
+      "resolution": "canonical_root_selected_executable_sql_equivalent_mobile_variant_archived",
+      "version": "202607100001"
+    }
+  ],
+  "deprecatedRoot": "mobile/supabase/migrations",
+  "generatedOn": "2026-07-13",
+  "schemaVersion": 1,
+  "totals": {
+    "conflictingVersions": 2,
+    "identicalVersions": 16,
+    "mobileMigrations": 49,
+    "mobileOnlyVersions": 31,
+    "rootMigrations": 29,
+    "rootOnlyVersions": 11
+  },
+  "entries": [
+    {
+      "canonicalDisposition": "archive-conflicting-variant",
+      "dependencyHints": [
+        "buckets",
+        "can_read_review_id",
+        "can_read_review_row",
+        "circle_memberships",
+        "circle_requests",
+        "comments",
+        "current_profile_name",
+        "likes",
+        "objects",
+        "profiles",
+        "review_is_unsuppressed",
+        "review_photos",
+        "reviews",
+        "uid",
+        "users",
+        "wishlist"
+      ],
+      "description": "core_schema_baseline",
+      "duplicateStatus": "conflicting",
+      "filename": "202505010001_core_schema_baseline.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "05d5fb01544622fff97c0522d9df3f44b5f4b058047a68fe570aeaa7e6c4655d",
+      "sizeBytes": 33141,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202505010001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "buckets",
+        "can_read_review_id",
+        "can_read_review_row",
+        "circle_memberships",
+        "circle_requests",
+        "comments",
+        "current_profile_name",
+        "likes",
+        "objects",
+        "profiles",
+        "review_is_unsuppressed",
+        "review_photos",
+        "reviews",
+        "uid",
+        "users",
+        "wishlist"
+      ],
+      "description": "core_schema_baseline",
+      "duplicateStatus": "conflicting",
+      "filename": "202505010001_core_schema_baseline.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "cec7bb5ab31a33be30e9ab366f60ceb29c8fef2bcad52d0f937e98d86afa1f3a",
+      "sizeBytes": 33217,
+      "sourceRoot": "supabase/migrations",
+      "version": "202505010001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_story_row",
+        "circle_memberships",
+        "current_profile_name",
+        "stories"
+      ],
+      "description": "stories",
+      "duplicateStatus": "root-only",
+      "filename": "202605180001_stories.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "indexes",
+        "rls",
+        "social"
+      ],
+      "sha256": "04c8c745d47b21daf02f8d89482c8ca73bff332a35ea03c8cb9bd406c6c1429d",
+      "sizeBytes": 4741,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605180001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "buckets",
+        "profiles",
+        "review_photos"
+      ],
+      "description": "profile_bio_review_media",
+      "duplicateStatus": "root-only",
+      "filename": "202605200001_profile_bio_review_media.sql",
+      "objectCategories": [
+        "constraints",
+        "profiles",
+        "social",
+        "storage"
+      ],
+      "sha256": "03eb4b791b54a48b4b92e1399c1f34f20c18b1b1e22b4b32294918c94195fafb",
+      "sizeBytes": 876,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605200001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_review_id",
+        "current_profile_name",
+        "profiles",
+        "recommendation_feedback",
+        "reviews",
+        "uid",
+        "user_tried_items"
+      ],
+      "description": "taste_trust",
+      "duplicateStatus": "root-only",
+      "filename": "202605240001_taste_trust.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "1c53572373ba23a4c36de2f26e9ea9a98acc331167ed2e0fad0cbf76f518fb1b",
+      "sizeBytes": 8301,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605240001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "reviews"
+      ],
+      "description": "review_tags",
+      "duplicateStatus": "root-only",
+      "filename": "202605240002_review_tags.sql",
+      "objectCategories": [
+        "indexes",
+        "social"
+      ],
+      "sha256": "c81fb5cdcbacf3a3869204de89ecef41fc15db345ed14b9a0551813db94fe73e",
+      "sizeBytes": 183,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605240002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "post_visit_attributions",
+        "profiles",
+        "reviews",
+        "uid",
+        "user_badges",
+        "user_reputation"
+      ],
+      "description": "user_reputation_badges",
+      "duplicateStatus": "root-only",
+      "filename": "202605270001_user_reputation_badges.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "7f86c1a88cc4bea190c875ac7234268c2c19c48213cbe6e8b256eae8f0441bdc",
+      "sizeBytes": 3389,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605270001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "profiles",
+        "recommendation_feedback"
+      ],
+      "description": "taste_trust_confidence_scoring",
+      "duplicateStatus": "root-only",
+      "filename": "202605300001_taste_trust_confidence_scoring.sql",
+      "objectCategories": [
+        "profiles",
+        "social"
+      ],
+      "sha256": "99c82bb518530d42e2a33f9c9a0e5de520094af97162409dc5c28a6fe0daaa6a",
+      "sizeBytes": 2636,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605300001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "recommendation_feedback"
+      ],
+      "description": "feedback_label_rename",
+      "duplicateStatus": "root-only",
+      "filename": "202605310001_feedback_label_rename.sql",
+      "objectCategories": [
+        "constraints",
+        "social"
+      ],
+      "sha256": "ec19e5a91660d3b46d90d069ba0ab902f3f3c327270af5978ed7bb7111e576cf",
+      "sizeBytes": 930,
+      "sourceRoot": "supabase/migrations",
+      "version": "202605310001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_review_id",
+        "current_profile_name",
+        "hungry_picks",
+        "reviews"
+      ],
+      "description": "hungry_picks",
+      "duplicateStatus": "root-only",
+      "filename": "202606010001_hungry_picks.sql",
+      "objectCategories": [
+        "explore",
+        "indexes",
+        "rls",
+        "social"
+      ],
+      "sha256": "65b543974d4ca6edc289423370e1ac9be4b29ff0339b87451dde4f77e3a985c5",
+      "sizeBytes": 1364,
+      "sourceRoot": "supabase/migrations",
+      "version": "202606010001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_review_id",
+        "post_views",
+        "profiles",
+        "reviews",
+        "uid"
+      ],
+      "description": "post_views",
+      "duplicateStatus": "root-only",
+      "filename": "202606020001_post_views.sql",
+      "objectCategories": [
+        "auth",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "7a946f545bed3a7a77457a4a131d7f53e46a3d723145bcf6548241382a2340eb",
+      "sizeBytes": 1572,
+      "sourceRoot": "supabase/migrations",
+      "version": "202606020001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "profiles",
+        "reviews",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_rooms",
+        "uid"
+      ],
+      "description": "shared_memory_rooms",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606060001_shared_memory_rooms.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "memory",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "efebd2ff0bbe19741ccf9a2cd17db3d690c426bbdaf5248025d8b74143ba436b",
+      "sizeBytes": 7397,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606060001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "create_shared_memory_room",
+        "profiles",
+        "shared_memory_members",
+        "shared_memory_rooms",
+        "uid"
+      ],
+      "description": "create_shared_memory_room_rpc",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606060002_create_shared_memory_room_rpc.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "memory",
+        "profiles"
+      ],
+      "sha256": "cc7e2c8561ca31a0c45d76d7bb9b2779fb248dc9259153043e70e9915029f6e9",
+      "sizeBytes": 2282,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606060002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_photos"
+      ],
+      "description": "shared_memory_media_type",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606060003_shared_memory_media_type.sql",
+      "objectCategories": [
+        "constraints",
+        "memory"
+      ],
+      "sha256": "0eeafbfac956de75258774195bcaf91fabaf9527acb36d6b6768281d37bff8d8",
+      "sizeBytes": 461,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606060003"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_messages",
+        "shared_memory_photos"
+      ],
+      "description": "shared_memory_photo_message_groups",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606070001_shared_memory_photo_message_groups.sql",
+      "objectCategories": [
+        "indexes",
+        "memory"
+      ],
+      "sha256": "2bfc253f2eb1205d16deffa9138d417e670adfdeb51c7b8644fbb27d3c9664a8",
+      "sizeBytes": 531,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606070001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "shared_memory_messages",
+        "shared_memory_photos"
+      ],
+      "description": "shared_memory_message_edit_delete",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606080001_shared_memory_message_edit_delete.sql",
+      "objectCategories": [
+        "memory",
+        "rls"
+      ],
+      "sha256": "4a78c11f411d9d16640b152ac81afd64922bae5a2138648a46ae94ffbd448b3e",
+      "sizeBytes": 1260,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606080001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_realtime",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606080002_shared_memory_realtime.sql",
+      "objectCategories": [
+        "memory"
+      ],
+      "sha256": "570a2c69b9e4fd6a7da640deb1ec3460d12ed078b3d1cc8b57d4207a3182a593",
+      "sizeBytes": 1792,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606080002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_photos"
+      ],
+      "description": "shared_memory_media_dimensions",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606090001_shared_memory_media_dimensions.sql",
+      "objectCategories": [
+        "constraints",
+        "memory",
+        "social"
+      ],
+      "sha256": "8b0d4c6efcdec27c787c9a6340795bf4980bede37c1552704f4673d2916fd6cf",
+      "sizeBytes": 556,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606090001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "shared_memory_reads",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_reads",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606090002_shared_memory_reads.sql",
+      "objectCategories": [
+        "indexes",
+        "memory",
+        "rls"
+      ],
+      "sha256": "54334ba7fe120d09ebd50e3e158a8f54d9cfda9cc65a4518fcfcad08ae600c25",
+      "sizeBytes": 1637,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606090002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "current_profile_name",
+        "push_tokens"
+      ],
+      "description": "push_tokens",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606090003_push_tokens.sql",
+      "objectCategories": [
+        "constraints",
+        "indexes",
+        "notifications",
+        "rls"
+      ],
+      "sha256": "838e1a5124f7423d2aaaf19f320256291fa2af721419a3a56903712601862870",
+      "sizeBytes": 1613,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606090003"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_messages"
+      ],
+      "description": "shared_memory_message_replies",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606090004_shared_memory_message_replies.sql",
+      "objectCategories": [
+        "indexes",
+        "memory"
+      ],
+      "sha256": "15322c5e15b07aada668288bd71ab49e9f8813ff98fc3d9f08bbeb7dd8b904d7",
+      "sizeBytes": 345,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606090004"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "profiles",
+        "search_user_profiles"
+      ],
+      "description": "profile_search",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606120001_profile_search.sql",
+      "objectCategories": [
+        "functions",
+        "indexes",
+        "profiles",
+        "social"
+      ],
+      "sha256": "e7d8054f4351214e20a4d4bac6e51bfecd7e056c315575402dd7ea8b4803e754",
+      "sizeBytes": 3118,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606120001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "shared_memory_invites",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_invites",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606120002_shared_memory_invites.sql",
+      "objectCategories": [
+        "constraints",
+        "indexes",
+        "memory",
+        "rls",
+        "social"
+      ],
+      "sha256": "f51437dafb946c66848e575e0b1ecc7729d0bf0a7f4ce66d792b138f1b01b83c",
+      "sizeBytes": 2300,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606120002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "buckets",
+        "can_read_shared_memory",
+        "current_profile_name",
+        "foldername",
+        "memory_media_room_id",
+        "objects",
+        "shared_memory_members",
+        "shared_memory_reads",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_privacy_hardening",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606140001_shared_memory_privacy_hardening.sql",
+      "objectCategories": [
+        "functions",
+        "memory",
+        "rls",
+        "storage"
+      ],
+      "sha256": "dd4d637967d9463467288522859a388c8ccff0a25a82c0cd7ebddac084e54835",
+      "sizeBytes": 3629,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606140001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "current_profile_name",
+        "delete_current_account",
+        "notification_category_enabled",
+        "notification_settings",
+        "profiles",
+        "uid",
+        "users"
+      ],
+      "description": "settings_account_management",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606140002_settings_account_management.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "memory",
+        "notifications",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "a38ace8a3249c6f2297fd48ef05dc1c9929f363b210625d3230ec62f68f8d3fa",
+      "sizeBytes": 7247,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606140002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "comments",
+        "current_profile_name",
+        "is_blocked_with",
+        "likes",
+        "not_blocked_from_post",
+        "reviews"
+      ],
+      "description": "block_visibility",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606140003_block_visibility.sql",
+      "objectCategories": [
+        "functions",
+        "rls",
+        "social"
+      ],
+      "sha256": "e905e14f487e122ffb94d22ea6aeb2f88243bd577e204473e5d12a0578c8e625",
+      "sizeBytes": 3880,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606140003"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "shared_memory_dish_ratings",
+        "shared_memory_dishes",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_dish_ratings",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606160001_shared_memory_dish_ratings.sql",
+      "objectCategories": [
+        "constraints",
+        "indexes",
+        "memory",
+        "rls"
+      ],
+      "sha256": "d8e6976cdb76e88f30ba1b468e9afde8713b1013ca0e431e6cdca23b3f6978ff",
+      "sizeBytes": 3045,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606160001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "can_read_shared_memory",
+        "current_profile_name",
+        "foldername",
+        "memory_media_room_id",
+        "objects",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship",
+        "validate_shared_memory_message_write",
+        "validate_shared_memory_photo_integrity"
+      ],
+      "description": "shared_memory_phase1_security",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180001_shared_memory_phase1_security.sql",
+      "objectCategories": [
+        "functions",
+        "memory",
+        "profiles",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "31405d3ead7cc10743a7b72bf0b04116338c62ecc82373ad832fad1cc2d190bc",
+      "sizeBytes": 9384,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship",
+        "validate_shared_memory_message_write",
+        "validate_shared_memory_photo_integrity"
+      ],
+      "description": "shared_memory_phase1_1_cleanup",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180002_shared_memory_phase1_1_cleanup.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "memory",
+        "social"
+      ],
+      "sha256": "32691df17c8a1d3271d944de1bf445612f2ea2200163f3b98f3da2eec603585d",
+      "sizeBytes": 10565,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_memory_media_object",
+        "can_read_shared_memory",
+        "current_profile_name",
+        "foldername",
+        "memory_media_room_id",
+        "memory_upload_intent_allows_object",
+        "objects",
+        "profiles",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_rooms",
+        "shared_memory_upload_intents",
+        "uid",
+        "validate_shared_memory_photo_integrity"
+      ],
+      "description": "shared_memory_phase2_media_upload_hardening",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180003_shared_memory_phase2_media_upload_hardening.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "memory",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "028cb00f375e2b4cc152a1c6bf6ab2440b11d5af24a732acdf05d30dec4bd96b",
+      "sizeBytes": 12419,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180003"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "buckets",
+        "profiles",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_photos_storage_path_unique_idx",
+        "shared_memory_photos_upload_intent_unique_idx",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_upload_intents",
+        "validate_shared_memory_photo_integrity"
+      ],
+      "description": "shared_memory_phase2_1_trust_boundary",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180004_shared_memory_phase2_1_trust_boundary.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "indexes",
+        "memory",
+        "profiles",
+        "social",
+        "storage"
+      ],
+      "sha256": "80f52a0b60ccb11370006c581297bb8b41247166dc35fc5dd726ee5f8b1f6215",
+      "sizeBytes": 8207,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180004"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "cleanup_shared_memory_media",
+        "role",
+        "shared_memory_account_media_paths",
+        "shared_memory_photos",
+        "shared_memory_room_media_paths",
+        "shared_memory_upload_intents"
+      ],
+      "description": "shared_memory_phase2_2_cleanup_verification",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180005_shared_memory_phase2_2_cleanup_verification.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "ca9c5d38f572180fc40ce793e5abf6cddb41c78484826a63b0f2d65de9812854",
+      "sizeBytes": 7141,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180005"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "current_profile_name",
+        "role",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_room_summaries",
+        "shared_memory_rooms"
+      ],
+      "description": "shared_memory_phase3_scalability",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180006_shared_memory_phase3_scalability.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "indexes",
+        "memory",
+        "social"
+      ],
+      "sha256": "9f31231b40de7ffa286590e021bbae0843cb81dac30644696a110567d4c65744",
+      "sizeBytes": 6291,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180006"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "can_read_shared_memory",
+        "create_shared_memory_room",
+        "current_profile_name",
+        "finalize_shared_memory_upload_intent",
+        "profiles",
+        "role",
+        "shared_memory_account_media_paths",
+        "shared_memory_members",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_rooms",
+        "shared_memory_upload_intents",
+        "shared_memory_user_pair_blocked",
+        "uid",
+        "validate_shared_memory_member_write"
+      ],
+      "description": "shared_memory_final_audit_hardening",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606180007_shared_memory_final_audit_hardening.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "memory",
+        "profiles",
+        "rls",
+        "social",
+        "triggers"
+      ],
+      "sha256": "ebdee8ccddb531a7508a992b21b69522c540bc592ffbd332989f9e0fb4ed7791",
+      "sizeBytes": 17161,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606180007"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "create_shared_memory_room",
+        "profiles",
+        "shared_memory_members",
+        "shared_memory_rooms",
+        "shared_memory_user_pair_blocked",
+        "uid"
+      ],
+      "description": "shared_memory_room_occasion_title",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606210001_shared_memory_room_occasion_title.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "7d6979bee536f445cbf85b03d78a729c3e6e2d2083014dc766c404041c488a3d",
+      "sizeBytes": 3013,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606210001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "create_shared_memory_room",
+        "current_profile_name",
+        "profiles",
+        "role",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_room_summaries",
+        "shared_memory_rooms",
+        "shared_memory_user_pair_blocked",
+        "uid",
+        "update_shared_memory_room_occasion"
+      ],
+      "description": "shared_memory_room_occasion_classification",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606210002_shared_memory_room_occasion_classification.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "98745a77ea6fb4874dc37f0892ad549dd16648a4825694630b0606f0362dc992",
+      "sizeBytes": 11865,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606210002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "shared_memory_dishes",
+        "shared_memory_photos",
+        "shared_memory_rooms",
+        "shared_memory_stops"
+      ],
+      "description": "shared_memory_stops",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606220001_shared_memory_stops.sql",
+      "objectCategories": [
+        "constraints",
+        "indexes",
+        "memory",
+        "rls"
+      ],
+      "sha256": "53977a32dd7bb45f9f59083acadc09956f0dd883f0f91e58b2a890339ee86748",
+      "sizeBytes": 3021,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606220001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "account_media_cleanup_jobs",
+        "buckets",
+        "can_read_review_row",
+        "enforce_review_photo_upload_intent",
+        "objects",
+        "prevent_untrusted_review_media_urls",
+        "profile_post_stats",
+        "profiles",
+        "review_media_account_storage_paths",
+        "review_media_path_is_owned_by",
+        "review_media_upload_intents",
+        "review_photos",
+        "reviews",
+        "role",
+        "uid",
+        "users"
+      ],
+      "description": "profile_media_username_hardening",
+      "duplicateStatus": "mobile-only",
+      "filename": "202606250001_profile_media_username_hardening.sql",
+      "objectCategories": [
+        "auth",
+        "explore",
+        "functions",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "c7f1caa07ace9e36cca0b1ff9a06d775225fbbbbdf7e8969e061fd8e2d44ed32",
+      "sizeBytes": 23051,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606250001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "content_reports",
+        "current_profile_name",
+        "profiles",
+        "uid"
+      ],
+      "description": "content_reports",
+      "duplicateStatus": "identical",
+      "filename": "202606300001_content_reports.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "f7dfcbf41379696eb796961f381dcf218aa94073d5052be4b929d222d17859cd",
+      "sizeBytes": 2403,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606300001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "content_reports",
+        "current_profile_name",
+        "profiles",
+        "uid"
+      ],
+      "description": "content_reports",
+      "duplicateStatus": "identical",
+      "filename": "202606300001_content_reports.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "f7dfcbf41379696eb796961f381dcf218aa94073d5052be4b929d222d17859cd",
+      "sizeBytes": 2403,
+      "sourceRoot": "supabase/migrations",
+      "version": "202606300001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "circle_memberships",
+        "current_profile_name",
+        "explore_discovery_v1",
+        "profiles",
+        "review_photos",
+        "reviews"
+      ],
+      "description": "explore_discovery_rpc",
+      "duplicateStatus": "identical",
+      "filename": "202606300002_explore_discovery_rpc.sql",
+      "objectCategories": [
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "08b755af11ef40ba3fe97dcb5ab6fb720bd12180311e5a782e122e9729a6758e",
+      "sizeBytes": 14052,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202606300002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "circle_memberships",
+        "current_profile_name",
+        "explore_discovery_v1",
+        "profiles",
+        "review_photos",
+        "reviews"
+      ],
+      "description": "explore_discovery_rpc",
+      "duplicateStatus": "identical",
+      "filename": "202606300002_explore_discovery_rpc.sql",
+      "objectCategories": [
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "08b755af11ef40ba3fe97dcb5ab6fb720bd12180311e5a782e122e9729a6758e",
+      "sizeBytes": 14052,
+      "sourceRoot": "supabase/migrations",
+      "version": "202606300002"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "buckets",
+        "shared_memory_photos",
+        "shared_memory_upload_intents"
+      ],
+      "description": "shared_memory_audio_messages",
+      "duplicateStatus": "mobile-only",
+      "filename": "202607030001_shared_memory_audio_messages.sql",
+      "objectCategories": [
+        "constraints",
+        "memory",
+        "storage"
+      ],
+      "sha256": "27b72be3b9e00a1e4bbc398c0c9df64ae7d3a9193173cae6eac202df0cb84835",
+      "sizeBytes": 1196,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607030001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "profiles",
+        "shared_memory_chat_page",
+        "shared_memory_messages",
+        "shared_memory_photos"
+      ],
+      "description": "shared_memory_chat_page_rpc",
+      "duplicateStatus": "mobile-only",
+      "filename": "202607050001_shared_memory_chat_page_rpc.sql",
+      "objectCategories": [
+        "functions",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "0796201576deb094c55fc25f2a6161c70fe089e6b4a87144d0fc50106a0b1b18",
+      "sizeBytes": 6159,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607050001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "can_read_review_id",
+        "current_profile_name",
+        "post_impressions",
+        "post_views",
+        "profiles",
+        "reviews",
+        "uid"
+      ],
+      "description": "circle_feed_seen_ranking",
+      "duplicateStatus": "mobile-only",
+      "filename": "202607060001_circle_feed_seen_ranking.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "9fd9f965f1d36d2ffa4b2a1c5fc51481200dfd8c6e1f15ee7cb8b5475d17185e",
+      "sizeBytes": 3329,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607060001"
+    },
+    {
+      "canonicalDisposition": "promote-to-canonical",
+      "dependencyHints": [
+        "circle_feed_page_v1",
+        "circle_memberships",
+        "circle_requests",
+        "comments",
+        "current_profile_name",
+        "is_blocked_with",
+        "likes",
+        "post_impressions",
+        "review_photos",
+        "reviews",
+        "uid",
+        "wishlist"
+      ],
+      "description": "circle_feed_page_rpc",
+      "duplicateStatus": "mobile-only",
+      "filename": "202607060002_circle_feed_page_rpc.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "social"
+      ],
+      "sha256": "e78d212b8f13e6e6e09a28430f9fc7dd5b13d61ca4f1a614da1fb2290056becb",
+      "sizeBytes": 11373,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607060002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_review_id",
+        "profiles",
+        "recommendation_feedback",
+        "reviews",
+        "uid"
+      ],
+      "description": "allow_self_recommendation_feedback",
+      "duplicateStatus": "root-only",
+      "filename": "202607070001_allow_self_recommendation_feedback.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "c34a302aa75c7e3be4855d94ea766d79b1be4c0441bc049db87878df2532373a",
+      "sizeBytes": 1459,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607070001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "likes",
+        "likes_post_user_unique",
+        "post_impressions",
+        "post_views",
+        "post_views_user_post_unique",
+        "recommendation_feedback",
+        "recommendation_feedback_unique_user_post_idx",
+        "wishlist",
+        "wishlist_user_post_unique"
+      ],
+      "description": "circle_production_hardening",
+      "duplicateStatus": "identical",
+      "filename": "202607080001_circle_production_hardening.sql",
+      "objectCategories": [
+        "indexes",
+        "social"
+      ],
+      "sha256": "8e12bd6e0c9fd402dc513ad1b0a0133953feb8770a0a0f7c50caf2c3fcf7cdf8",
+      "sizeBytes": 2815,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607080001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "likes",
+        "likes_post_user_unique",
+        "post_impressions",
+        "post_views",
+        "post_views_user_post_unique",
+        "recommendation_feedback",
+        "recommendation_feedback_unique_user_post_idx",
+        "wishlist",
+        "wishlist_user_post_unique"
+      ],
+      "description": "circle_production_hardening",
+      "duplicateStatus": "identical",
+      "filename": "202607080001_circle_production_hardening.sql",
+      "objectCategories": [
+        "indexes",
+        "social"
+      ],
+      "sha256": "8e12bd6e0c9fd402dc513ad1b0a0133953feb8770a0a0f7c50caf2c3fcf7cdf8",
+      "sizeBytes": 2815,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607080001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "recommendation_feedback"
+      ],
+      "description": "collapse_feedback_to_helpful_disagree",
+      "duplicateStatus": "identical",
+      "filename": "202607090001_collapse_feedback_to_helpful_disagree.sql",
+      "objectCategories": [
+        "constraints"
+      ],
+      "sha256": "6d3f21242efebce9b30122687d0a815fb37ad0764207e61ddabe60a1f87e58f3",
+      "sizeBytes": 1736,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607090001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "recommendation_feedback"
+      ],
+      "description": "collapse_feedback_to_helpful_disagree",
+      "duplicateStatus": "identical",
+      "filename": "202607090001_collapse_feedback_to_helpful_disagree.sql",
+      "objectCategories": [
+        "constraints"
+      ],
+      "sha256": "6d3f21242efebce9b30122687d0a815fb37ad0764207e61ddabe60a1f87e58f3",
+      "sizeBytes": 1736,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607090001"
+    },
+    {
+      "canonicalDisposition": "archive-conflicting-variant",
+      "dependencyHints": [
+        "account_media_cleanup_jobs",
+        "buckets",
+        "media_assets",
+        "media_derivatives",
+        "media_processing_jobs",
+        "objects",
+        "profiles",
+        "review_photos",
+        "shared_memory_photos",
+        "uid",
+        "users"
+      ],
+      "description": "media_pipeline",
+      "duplicateStatus": "conflicting",
+      "filename": "202607100001_media_pipeline.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "7f57c83e00b89f593728c6a4a5d4278a92f83191986b0301630e01226fac0aee",
+      "sizeBytes": 10663,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607100001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "account_media_cleanup_jobs",
+        "buckets",
+        "media_assets",
+        "media_derivatives",
+        "media_processing_jobs",
+        "objects",
+        "profiles",
+        "review_photos",
+        "shared_memory_photos",
+        "uid",
+        "users"
+      ],
+      "description": "media_pipeline",
+      "duplicateStatus": "conflicting",
+      "filename": "202607100001_media_pipeline.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social",
+        "storage"
+      ],
+      "sha256": "f17722fa92e3b973fdede58581cbc419c0b0ff8419665e57adff8a14b5ff22ed",
+      "sizeBytes": 10690,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607100001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "backfill_review_dish_mentions",
+        "can_read_review_id",
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_candidates",
+        "dish_families",
+        "dish_merge_history",
+        "dish_place_stats",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "profiles",
+        "review_dish_mentions",
+        "reviews",
+        "role",
+        "users"
+      ],
+      "description": "dish_identity_foundation",
+      "duplicateStatus": "identical",
+      "filename": "202607110001_dish_identity_foundation.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "3a24f331b743a81fddcd4a5eef046b1d320ee0837fc1f98fe8afdc8308ca12f7",
+      "sizeBytes": 23034,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "backfill_review_dish_mentions",
+        "can_read_review_id",
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_candidates",
+        "dish_families",
+        "dish_merge_history",
+        "dish_place_stats",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "profiles",
+        "review_dish_mentions",
+        "reviews",
+        "role",
+        "users"
+      ],
+      "description": "dish_identity_foundation",
+      "duplicateStatus": "identical",
+      "filename": "202607110001_dish_identity_foundation.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "3a24f331b743a81fddcd4a5eef046b1d320ee0837fc1f98fe8afdc8308ca12f7",
+      "sizeBytes": 23034,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_families",
+        "normalize_dish_identity_name"
+      ],
+      "description": "dish_identity_seed_catalog",
+      "duplicateStatus": "identical",
+      "filename": "202607110002_dish_identity_seed_catalog.sql",
+      "objectCategories": [
+        "dish-identity"
+      ],
+      "sha256": "6807a67442423701aa8f1c6692d7bfb9bf1a1a8f4ded70471b39d24caa296acd",
+      "sizeBytes": 11127,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_families",
+        "normalize_dish_identity_name"
+      ],
+      "description": "dish_identity_seed_catalog",
+      "duplicateStatus": "identical",
+      "filename": "202607110002_dish_identity_seed_catalog.sql",
+      "objectCategories": [
+        "dish-identity"
+      ],
+      "sha256": "6807a67442423701aa8f1c6692d7bfb9bf1a1a8f4ded70471b39d24caa296acd",
+      "sizeBytes": 11127,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110002"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dishes",
+        "circle_memberships",
+        "current_profile_name",
+        "dish_families",
+        "explore_discovery_canonical_v1",
+        "media_assets",
+        "media_derivatives",
+        "profiles",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews"
+      ],
+      "description": "canonical_explore_discovery_rpc",
+      "duplicateStatus": "identical",
+      "filename": "202607110003_canonical_explore_discovery_rpc.sql",
+      "objectCategories": [
+        "dish-identity",
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "f61e3796a3ce9c8195ee8493ae728ea29f3e93743952ef426d67ba03152b363b",
+      "sizeBytes": 14442,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "circle_memberships",
+        "current_profile_name",
+        "dish_families",
+        "explore_discovery_canonical_v1",
+        "media_assets",
+        "media_derivatives",
+        "profiles",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews"
+      ],
+      "description": "canonical_explore_discovery_rpc",
+      "duplicateStatus": "identical",
+      "filename": "202607110003_canonical_explore_discovery_rpc.sql",
+      "objectCategories": [
+        "dish-identity",
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "f61e3796a3ce9c8195ee8493ae728ea29f3e93743952ef426d67ba03152b363b",
+      "sizeBytes": 14442,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110003"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_families",
+        "normalize_dish_identity_name"
+      ],
+      "description": "dish_identity_safe_seed_expansion",
+      "duplicateStatus": "identical",
+      "filename": "202607110004_dish_identity_safe_seed_expansion.sql",
+      "objectCategories": [
+        "dish-identity",
+        "social"
+      ],
+      "sha256": "6835abf0498cfcad3df67effef213fbc51482f475866b2d1ebc824de8b29872f",
+      "sizeBytes": 4270,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110004"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "dish_aliases",
+        "dish_families",
+        "normalize_dish_identity_name"
+      ],
+      "description": "dish_identity_safe_seed_expansion",
+      "duplicateStatus": "identical",
+      "filename": "202607110004_dish_identity_safe_seed_expansion.sql",
+      "objectCategories": [
+        "dish-identity",
+        "social"
+      ],
+      "sha256": "6835abf0498cfcad3df67effef213fbc51482f475866b2d1ebc824de8b29872f",
+      "sizeBytes": 4270,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110004"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dishes",
+        "current_profile_name",
+        "dish_families",
+        "dish_place_stats",
+        "explore_discovery_canonical_v2",
+        "media_assets",
+        "media_derivatives",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "profiles",
+        "rebuild_dish_identity_stats",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "dish_identity_curation_v1",
+      "duplicateStatus": "identical",
+      "filename": "202607110005_dish_identity_curation_v1.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "b64354a674b9b8cf18850023705fc3c5bf9de8ecea3f255f18eea2f82020f33e",
+      "sizeBytes": 22803,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110005"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "current_profile_name",
+        "dish_families",
+        "dish_place_stats",
+        "explore_discovery_canonical_v2",
+        "media_assets",
+        "media_derivatives",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "profiles",
+        "rebuild_dish_identity_stats",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "dish_identity_curation_v1",
+      "duplicateStatus": "identical",
+      "filename": "202607110005_dish_identity_curation_v1.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "b64354a674b9b8cf18850023705fc3c5bf9de8ecea3f255f18eea2f82020f33e",
+      "sizeBytes": 22803,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110005"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dishes",
+        "current_profile_name",
+        "dish_identity_explore_categories",
+        "dish_identity_family_tokens",
+        "dish_place_stats",
+        "explore_discovery_canonical_v2",
+        "media_assets",
+        "media_derivatives",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "rebuild_dish_identity_stats",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "dish_identity_token_families",
+      "duplicateStatus": "identical",
+      "filename": "202607110006_dish_identity_token_families.sql",
+      "objectCategories": [
+        "auth",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "12b38faa0c42cbb272a2c4b6b48ab0dc86595bd0ddde7f202f54959e76e0dea9",
+      "sizeBytes": 28034,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110006"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "current_profile_name",
+        "dish_identity_explore_categories",
+        "dish_identity_family_tokens",
+        "dish_place_stats",
+        "explore_discovery_canonical_v2",
+        "media_assets",
+        "media_derivatives",
+        "normalize_dish_identity_name",
+        "place_dish_stats",
+        "place_stats",
+        "rebuild_dish_identity_stats",
+        "review_dish_mentions",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "dish_identity_token_families",
+      "duplicateStatus": "identical",
+      "filename": "202607110006_dish_identity_token_families.sql",
+      "objectCategories": [
+        "auth",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "12b38faa0c42cbb272a2c4b6b48ab0dc86595bd0ddde7f202f54959e76e0dea9",
+      "sizeBytes": 28034,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110006"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "profiles",
+        "uid",
+        "user_location_preferences"
+      ],
+      "description": "user_location_preferences",
+      "duplicateStatus": "identical",
+      "filename": "202607110007_user_location_preferences.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "explore",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "c9157a68244c04e7d5254694de40c5dabba801150232b51839c9d0ebbc2ebc0f",
+      "sizeBytes": 2447,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110007"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "profiles",
+        "uid",
+        "user_location_preferences"
+      ],
+      "description": "user_location_preferences",
+      "duplicateStatus": "identical",
+      "filename": "202607110007_user_location_preferences.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "explore",
+        "indexes",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "c9157a68244c04e7d5254694de40c5dabba801150232b51839c9d0ebbc2ebc0f",
+      "sizeBytes": 2447,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110007"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "reviews"
+      ],
+      "description": "explore_place_search_indexes",
+      "duplicateStatus": "identical",
+      "filename": "202607110008_explore_place_search_indexes.sql",
+      "objectCategories": [
+        "explore",
+        "indexes",
+        "social"
+      ],
+      "sha256": "fa992718822247e6ca281944d0865f1ad9148f9392bc437b88a1d21ceb20f30b",
+      "sizeBytes": 492,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607110008"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "reviews"
+      ],
+      "description": "explore_place_search_indexes",
+      "duplicateStatus": "identical",
+      "filename": "202607110008_explore_place_search_indexes.sql",
+      "objectCategories": [
+        "explore",
+        "indexes",
+        "social"
+      ],
+      "sha256": "fa992718822247e6ca281944d0865f1ad9148f9392bc437b88a1d21ceb20f30b",
+      "sizeBytes": 492,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607110008"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "reviews"
+      ],
+      "description": "reviews_place_types",
+      "duplicateStatus": "root-only",
+      "filename": "202607120001_reviews_place_types.sql",
+      "objectCategories": [
+        "explore",
+        "social"
+      ],
+      "sha256": "7ae4c64fd3643f01acaeb2bee2f6568f1f4a701781777a476a7331300bd21139",
+      "sizeBytes": 878,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607120001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "canonical_dish_images",
+        "canonical_dishes",
+        "users"
+      ],
+      "description": "canonical_dish_images",
+      "duplicateStatus": "identical",
+      "filename": "202607120002_canonical_dish_images.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "indexes",
+        "rls",
+        "social"
+      ],
+      "sha256": "250ae8a14dd23ad066f57ace8f6cd52ed64484d94a345691bc0476bb8734fddd",
+      "sizeBytes": 3290,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607120002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dish_images",
+        "canonical_dishes",
+        "users"
+      ],
+      "description": "canonical_dish_images",
+      "duplicateStatus": "identical",
+      "filename": "202607120002_canonical_dish_images.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "indexes",
+        "rls",
+        "social"
+      ],
+      "sha256": "250ae8a14dd23ad066f57ace8f6cd52ed64484d94a345691bc0476bb8734fddd",
+      "sizeBytes": 3290,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607120002"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "enforce_visibility_aware_media_derivative",
+        "media_assets",
+        "media_derivatives",
+        "media_privacy_migration_jobs",
+        "objects",
+        "review_photos",
+        "reviews",
+        "set_review_visibility_with_media_access"
+      ],
+      "description": "visibility_aware_post_media",
+      "duplicateStatus": "identical",
+      "filename": "202607130001_visibility_aware_post_media.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "0fef8a5335c9d7ae2bc35a588cd18fc5af4646e9a3b35e45d51def1599168ebf",
+      "sizeBytes": 8633,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607130001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "enforce_visibility_aware_media_derivative",
+        "media_assets",
+        "media_derivatives",
+        "media_privacy_migration_jobs",
+        "objects",
+        "review_photos",
+        "reviews",
+        "set_review_visibility_with_media_access"
+      ],
+      "description": "visibility_aware_post_media",
+      "duplicateStatus": "identical",
+      "filename": "202607130001_visibility_aware_post_media.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "0fef8a5335c9d7ae2bc35a588cd18fc5af4646e9a3b35e45d51def1599168ebf",
+      "sizeBytes": 8633,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130001"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "account_deletion_ambiguous_items",
+        "account_deletion_jobs",
+        "account_deletion_storage_candidates",
+        "account_deletion_storage_items",
+        "account_is_active",
+        "claim_account_deletion_jobs",
+        "current_profile_name",
+        "media_assets",
+        "objects",
+        "profiles",
+        "reject_frozen_account_write",
+        "request_account_deletion",
+        "review_media_upload_intents",
+        "reviews",
+        "role",
+        "uid"
+      ],
+      "description": "complete_account_deletion",
+      "duplicateStatus": "identical",
+      "filename": "202607130002_complete_account_deletion.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "17cfad7f776112eeeab960849d6053715c31cd3c24a873b552604b32652498dc",
+      "sizeBytes": 35964,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607130002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "account_deletion_ambiguous_items",
+        "account_deletion_jobs",
+        "account_deletion_storage_candidates",
+        "account_deletion_storage_items",
+        "account_is_active",
+        "claim_account_deletion_jobs",
+        "current_profile_name",
+        "media_assets",
+        "objects",
+        "profiles",
+        "reject_frozen_account_write",
+        "request_account_deletion",
+        "review_media_upload_intents",
+        "reviews",
+        "role",
+        "uid"
+      ],
+      "description": "complete_account_deletion",
+      "duplicateStatus": "identical",
+      "filename": "202607130002_complete_account_deletion.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "dish-identity",
+        "explore",
+        "functions",
+        "indexes",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "storage",
+        "triggers"
+      ],
+      "sha256": "17cfad7f776112eeeab960849d6053715c31cd3c24a873b552604b32652498dc",
+      "sizeBytes": 35964,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130002"
+    },
+    {
+      "canonicalDisposition": "retire-identical-copy",
+      "dependencyHints": [
+        "cancel_media_jobs_for_frozen_account",
+        "cancel_media_processing_job",
+        "claim_media_processing_jobs",
+        "complete_media_processing_job",
+        "fail_media_processing_job",
+        "heartbeat_media_processing_job",
+        "media_assets",
+        "media_derivatives",
+        "media_processing_events",
+        "media_processing_events_id_seq",
+        "media_processing_jobs",
+        "media_processing_jobs_ready_idx",
+        "media_processing_lease_is_current",
+        "profiles",
+        "requeue_media_processing_job",
+        "role"
+      ],
+      "description": "media_worker_reliability",
+      "duplicateStatus": "identical",
+      "filename": "202607130003_media_worker_reliability.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social",
+        "triggers"
+      ],
+      "sha256": "552531ef59b4525a08007a51f0bd3d43fbb25b5456bac7608e8032933797ff89",
+      "sizeBytes": 37274,
+      "sourceRoot": "mobile/supabase/migrations",
+      "version": "202607130003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "cancel_media_jobs_for_frozen_account",
+        "cancel_media_processing_job",
+        "claim_media_processing_jobs",
+        "complete_media_processing_job",
+        "fail_media_processing_job",
+        "heartbeat_media_processing_job",
+        "media_assets",
+        "media_derivatives",
+        "media_processing_events",
+        "media_processing_events_id_seq",
+        "media_processing_jobs",
+        "media_processing_jobs_ready_idx",
+        "media_processing_lease_is_current",
+        "profiles",
+        "requeue_media_processing_job",
+        "role"
+      ],
+      "description": "media_worker_reliability",
+      "duplicateStatus": "identical",
+      "filename": "202607130003_media_worker_reliability.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "profiles",
+        "rls",
+        "social",
+        "triggers"
+      ],
+      "sha256": "552531ef59b4525a08007a51f0bd3d43fbb25b5456bac7608e8032933797ff89",
+      "sizeBytes": 37274,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "buckets",
+        "production_schema_contract",
+        "role"
+      ],
+      "description": "canonical_schema_contract",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130004_canonical_schema_contract.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "dish-identity",
+        "functions",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "social",
+        "storage"
+      ],
+      "sha256": "a3f9b1379d6acbbf435303e068279803b40221d79723b3af9ad98cf0db010316",
+      "sizeBytes": 6795,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130004"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "profiles",
+        "review_owner_account_is_active",
+        "reviews"
+      ],
+      "description": "canonical_policy_reconciliation",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130005_canonical_policy_reconciliation.sql",
+      "objectCategories": [
+        "account-deletion",
+        "functions",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "4824225edf2306561ee6e6b083aabb8108c10c152defcd099d386289ad8b5bd1",
+      "sizeBytes": 1223,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130005"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "hungry_picks",
+        "notification_settings",
+        "post_views",
+        "push_tokens",
+        "shared_memory_dish_ratings",
+        "shared_memory_dishes",
+        "shared_memory_invites",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_rooms",
+        "shared_memory_stops",
+        "shared_memory_upload_intents",
+        "stories"
+      ],
+      "description": "canonical_role_grants",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130006_canonical_role_grants.sql",
+      "objectCategories": [
+        "explore",
+        "memory",
+        "notifications",
+        "social"
+      ],
+      "sha256": "9804e71a9b308150cbf26d58e90e7c4aa032e732e4b3d3c44a506a3c8ec4a525",
+      "sizeBytes": 2533,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130006"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "review_media_path_is_owned_by"
+      ],
+      "description": "canonical_review_media_path_reconciliation",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130007_canonical_review_media_path_reconciliation.sql",
+      "objectCategories": [
+        "functions",
+        "social"
+      ],
+      "sha256": "74c72227d4bfa93a8b9d5af16740eeaa954cbebec6d552e1ffac03d608f56cf3",
+      "sizeBytes": 1253,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130007"
+    }
+  ],
+  "currentCanonicalMigrations": 64
+}

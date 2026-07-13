@@ -21,7 +21,7 @@ function localStatus() {
     const parsed = JSON.parse(readFileSync(process.env.ACCOUNT_DELETION_SUPABASE_STATUS_FILE, "utf8"));
     return { anonKey: parsed.ANON_KEY, serviceKey: parsed.SERVICE_ROLE_KEY, url: parsed.API_URL };
   }
-  const result = spawnSync("npx", ["supabase", "status", "-o", "json"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], { encoding: "utf8" });
   if (result.status !== 0) throw new Error("Local Supabase is not running");
   const parsed = JSON.parse(result.stdout);
   return { anonKey: parsed.ANON_KEY, serviceKey: parsed.SERVICE_ROLE_KEY, url: parsed.API_URL };
@@ -177,10 +177,19 @@ async function seed(admin, owner, other) {
   }).throwOnError();
   await upload(admin, "review-photos", legacyPath, "legacy");
 
-  const quarantinePath = `pending/${owner.id}/${crypto.randomUUID()}/original.jpg`;
-  const finalPath = `avatars/${owner.id}/${crypto.randomUUID()}/avatar.jpg`;
+  const reviewIntentId = crypto.randomUUID();
+  const quarantinePath = `pending/${owner.id}/${reviewIntentId}/original.jpg`;
+  const finalPath = `avatars/${owner.id}/${reviewIntentId}/avatar.jpg`;
   await admin.from("review_media_upload_intents").insert({
+    category: "avatar",
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    extension: "jpg",
+    file_size_bytes: 7,
     final_bucket_id: "review-photos",
+    id: reviewIntentId,
+    max_file_size_bytes: 10 * 1024 * 1024,
+    media_type: "image",
+    mime_type: "image/jpeg",
     quarantine_bucket_id: "review-media-quarantine",
     quarantine_storage_path: quarantinePath,
     status: "created",

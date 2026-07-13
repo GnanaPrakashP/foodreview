@@ -12,26 +12,26 @@ const cleanupRoute = readFileSync("app/api/mobile/memories/uploads/cleanup/route
 const memoryStorage = readFileSync("mobile/src/services/memoryStorage.ts", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const phase2Migration = readFileSync(
-  "mobile/supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql",
+  "supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql",
   "utf8"
 );
 const phase21Migration = readFileSync(
-  "mobile/supabase/migrations/202606180004_shared_memory_phase2_1_trust_boundary.sql",
+  "supabase/migrations/202606180004_shared_memory_phase2_1_trust_boundary.sql",
   "utf8"
 );
 const phase22Migration = readFileSync(
-  "mobile/supabase/migrations/202606180005_shared_memory_phase2_2_cleanup_verification.sql",
+  "supabase/migrations/202606180005_shared_memory_phase2_2_cleanup_verification.sql",
   "utf8"
 );
 const finalAuditMigration = readFileSync(
-  "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
+  "supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
   "utf8"
 );
 const audioMessagesMigration = readFileSync(
-  "mobile/supabase/migrations/202607030001_shared_memory_audio_messages.sql",
+  "supabase/migrations/202607030001_shared_memory_audio_messages.sql",
   "utf8"
 );
-const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
+const supabaseReadme = readFileSync("docs/database/MIGRATIONS.md", "utf8");
 
 test("root and mobile media policy constants stay in sync", () => {
   for (const constant of [
@@ -248,7 +248,7 @@ test("phase 2.2 adds service-role room and account media sweep helpers without u
 test("phase 2.2 docs include Supabase staging and manual verification steps", () => {
   assert.match(supabaseReadme, /202606180005_shared_memory_phase2_2_cleanup_verification\.sql/);
   assert.match(supabaseReadme, /Manual Phase 2\.2 staging verification/);
-  assert.match(supabaseReadme, /supabase db push/);
+  assert.match(supabaseReadme, /supabase(?:@2\.109\.1)? db push/);
   assert.match(supabaseReadme, /Direct authenticated client insert must still fail with RLS/i);
   assert.match(supabaseReadme, /Duplicate upload_intent_id and duplicate storage_path must fail/i);
   assert.match(supabaseReadme, /Pending media visibility must be checked with real authenticated users/i);

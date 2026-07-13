@@ -2,15 +2,25 @@
 
 Current phase: Final production-readiness audit
 
-Production-hardening program phase: Phase 2 — production-reliable media processing
+Production-hardening program phase: Phase 3 — canonical Supabase migration history
 
-Phase 2 implementation status: PASS locally on `hardening/04-media-worker`. Atomic leased claims, fencing/heartbeats, bounded retries and dead letter, idempotent image/video derivatives, durable cleanup, owner-scoped mobile recovery, a protected operator path, and a non-root ffmpeg Docker worker pass local behavior and real Supabase/Storage processing validation.
+Phase 3 implementation status: PASS locally on `hardening/05-migrations`. One canonical root, locked historical hashes, additive convergence migrations, pgTAP contracts, real Auth/RLS/Storage policy tests, supported upgrade fixtures, read-only drift tooling, and CI enforcement are implemented and locally verified.
 
-Phase 2 release verification status: BLOCKED pending hosted worker/process supervision, two-instance crash/interruption validation, hosted source-retention cleanup, alerts/dashboards, production-like throughput testing, PH-301 migration-root resolution, and the earlier Phase 1A/1B/1C release blockers. No hosted project was mutated.
+Phase 3 release verification status: BLOCKED pending hosted history/schema drift inspection, hosted Storage-policy verification, disposable-staging upgrades, and production backup/PITR confirmation, plus the earlier Phase 1A–2 release blockers. No hosted project was mutated.
 
 Next required phase: Authenticated staging smoke verification
 
-Production-hardening next required phase: Execute the documented Phase 2 hosted staging matrix together with the earlier Phase 1A/1B/1C release gates. Do not start Phase 3 automatically.
+Production-hardening next required phase: execute the documented hosted/staging database gate together with the earlier Phase 1A–2 release gates. Do not start Phase 4 automatically.
+
+## Production Hardening Phase 3 — Canonical Supabase Migrations (2026-07-13)
+
+- Selected `supabase/migrations` and root `supabase/config.toml` as the sole executable database authority; retired the mobile config and executable SQL behind a sentinel README.
+- Inventoried 29 original root files and 49 mobile files: 16 identical versions, 11 root-only, 31 mobile-only, and two byte-conflicting versions. All 78 original file hashes, categories, dependency hints, and dispositions are locked in `docs/database/migration-history-manifest.json`.
+- Promoted 31 unique mobile versions mechanically without editing historical SQL. Preserved both conflicting mobile variants outside CLI discovery; their executable SQL is equivalent to the selected root versions and differs only in comments.
+- Added a service-only read-only schema/RLS/Storage/grant contract, real pgTAP, and real Auth/PostgREST/Storage policy actors. The merged chain exposed and additively corrected anonymous public-review denial, missing API table grants on promoted RLS tables, and the older Profile path guard's incompatibility with same-owner Phase 1A private derivatives.
+- Added supported historical upgrade fixtures, explicit detection of the incomplete mobile-only state, a read-only local/explicit-hosted drift report, canonical `npm run db:*` commands pinned to Supabase CLI 2.109.1, and independent CI enforcement.
+- Final local evidence passes: manifest 64 migrations/82 entries/two conflicts; upgrades 7/7; two resets; pgTAP 21/21; real policies 10/10; drift zero; Profile production/runtime 6/6 and 17/17; Phase 1A runtime 13/13; root/mobile typecheck, zero-error lint, Next build, and Android/iOS exports. The full root suite is 1,067/1,087 with the same 20 PH-002 failures, and Memory remains 71/72 with the same PH-002 failure.
+- Hosted history, hosted drift, staged upgrades, Storage/CDN behavior, and backup/PITR are not yet verified. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md` and `docs/database/MIGRATIONS.md`.
 
 ## Production Hardening Phase 2 — Production-Reliable Media Processing (2026-07-13)
 
@@ -47,19 +57,19 @@ Production-hardening next required phase: Execute the documented Phase 2 hosted 
 - Added a protected worker, lease recovery, bounded retries, dry-run reconciliation with opt-in one-step apply, and scheduler tooling. The legacy `delete_current_account()` now fails closed.
 - Clean root reset and SQL lint pass. Real local lifecycle validation passes 9/9, focused changed/security tests pass 35/35, Phase 1A remains 6/6, root/mobile typecheck and Next build pass, and Android/iOS Expo production exports are clean of privileged/development worker names.
 - Repository baselines improve from 1030/1051 to 1042/1062 because new Phase 1B tests pass and one changed stale assertion was corrected; the remaining 20 full-suite failures are pre-existing PH-002 UI/architecture assertions. Memory remains at its existing 71/72 baseline.
-- The mobile migration root still reproduces PH-301 at missing `post_views` before Phase 1B. Hosted Storage/CDN, production-like scale, worker scheduling/alerts, failure injection, and operator recovery remain unverified. See `docs/production-hardening/PHASE_1B_ACCOUNT_DELETION.md`.
+- Phase 3 retired the mobile migration root and preserved its missing-`post_views` failure as unsupported-history evidence. Hosted Storage/CDN, production-like scale, worker scheduling/alerts, failure injection, and operator recovery remain unverified. See `docs/production-hardening/PHASE_1B_ACCOUNT_DELETION.md`.
 
 ## Production Hardening Phase 1A — Visibility-Aware Post Media (2026-07-13)
 
 - Selected private canonical post media with current-authorized, five-minute signed delivery. Public, circle, and me posts now use explicit access classes while post derivatives remain in `media-private`; avatar and Memory behavior retain their existing classifications.
 - Added owner-bound visibility-aware upload intents, exact post-creation attachment validation, batched mobile access, web authorization redirects, fail-closed suppression/block/membership checks, and a service-role-only atomic visibility transition RPC.
-- Added byte-identical root/mobile migrations and an operator-run, paginated, durable, retryable legacy backfill. Public post objects must be removed only after private replacement verification.
+- Originally added byte-identical root/mobile migrations and an operator-run, paginated, durable, retryable legacy backfill. Phase 3 now retains only the root migration as executable and locks the retired hash. Public post objects must be removed only after private replacement verification.
 - Updated active public/Circle/Profile/Explore/detail consumers to use canonical authorized media DTOs. Status/access responses expose no raw Storage path.
 - Added Expo configuration containment that rejects public privileged Supabase names and production/EAS development auto-login variables. The ignored forbidden Supabase entry and local auto-login entries were removed without reading or printing values. An Android release scan found the auto-login exposure before containment; the rebuilt Android asset and production Android/iOS exports are clean. Credential-owner assessment and possible cloud rotation remain mandatory because Phase 1A does not rotate credentials automatically.
 - Added a repeatable real local validator using four Auth users, actual RLS/Storage objects, active Next routes, and the operator backfill. It passes 13/13, including private direct-read denial, all six visibility transitions, membership/block/suppression/deletion revocation, interrupted-state recovery/idempotency, and exact 300-second URL expiry.
-- A clean root Supabase reset through Phase 1A passes. The mobile migration root still fails at its known pre-Phase-1A `post_views` dependency, confirming PH-301. The runtime gate therefore uses a clearly test-only root compatibility fixture; no migration history was concealed or rewritten.
+- A clean canonical Supabase reset through Phase 1A and Phase 3 passes. The former mobile history's `post_views` failure remains locked as reconciliation evidence; current runtime gates use the complete canonical chain without a compatibility fixture.
 - Physical Android native development-client login/feed/Profile validation passes, the Android Gradle release APK builds, and production Android/iOS Expo exports pass. An isolated temporary iOS prebuild also resolves Nitro/MMKV, builds and locally signs the arm64 Release simulator app, passes the forbidden-name scan, installs, and cold-launches on an iPhone 17 simulator. Authenticated iOS media/revocation validation remains blocked because there is no checked-in native iOS project or staging configuration; Expo Go is not a valid substitute.
-- Focused Phase 1A tests pass 6/6; root/mobile typecheck, zero-error lint, and Next production build pass. Existing suite baselines remain `npm test` 1030/1051 and Memory 71/72. Production remains blocked on hosted Storage/CDN and production-like backfill, credential assessment, PH-301/PH-302, and native iOS; the five-minute previously-issued URL window is intentional.
+- Focused Phase 1A tests pass 6/6; root/mobile typecheck, zero-error lint, and Next production build pass. Existing suite baselines remain `npm test` 1030/1051 and Memory 71/72. Production remains blocked on hosted Storage/CDN and production-like backfill, credential assessment, hosted Phase 3 audit, and native iOS; the five-minute previously-issued URL window is intentional.
 - The hosted matrix was not run because this checkout has no Supabase CLI access token or linked staging session; no hosted project was mutated.
 
 ## Production Hardening Phase 0 Baseline (2026-07-12)
@@ -105,27 +115,18 @@ Latest Profile blocker-fix verification:
 - `node --test tests/delete-account-route.test.mjs`: 4/4.
 - `node --test tests/review-media-image-validation.test.mjs tests/account-media-cleanup-worker.test.mjs`: covered image decode/re-encode, spoof/corrupt/zero-byte/large-dimension rejection, HEIC rejection, cleanup path ownership, paginated Storage enumeration, and cleanup job owner filtering.
 
-Supabase migration-chain validation status:
+Supabase migration-chain validation status (superseded by Phase 3):
 
-- `npx supabase --version`: 2.108.0.
-- Root Supabase project: `supabase/config.toml`, run CLI commands from the repository root.
-- Mobile/Profile Supabase project: `mobile/supabase/config.toml`, run CLI commands from `mobile/`.
-- Root `npx supabase start`: passed after adding the additive core schema baseline migration.
-- Root `npx supabase db reset`: passed through all root migrations.
-- Root `npx supabase db lint`: passed with no schema errors found.
-- Root `npx supabase test db`: passed with `Files=0, Tests=0` because no pgTAP test files are present.
-- Root `npx supabase db diff --schema public,storage`: passed with no schema changes found.
-- Mobile `npx supabase start`: passed and applied through `202606250001_profile_media_username_hardening.sql`.
-- Mobile `npx supabase db reset`: passed and applied through `202606250001_profile_media_username_hardening.sql`.
-- Mobile `npx supabase db lint`: passed with no schema errors found.
-- Mobile `npx supabase test db`: passed with `Files=0, Tests=0` because no pgTAP test files are present.
-- Mobile `npx supabase db diff --schema public,storage`: passed with no schema changes found.
-- `node tests/supabase-profile-runtime-validation.mjs`: passed 17/17 against the real local mobile Supabase stack and local Next routes. It created real Auth users and verified private quarantine bucket visibility, owner-scoped upload intent, quarantine upload policy denials, non-public pending media, owner-only finalization, JPEG re-encode through Sharp, PNG/WebP acceptance, HEIC/video/zero-byte/corrupt/spoofed/oversized rejection, consumed/cross-user post media rejection, arbitrary media URL insertion rejection, username RPC auth/normalization/duplicate/race behavior, profile stats RPC counting, and cleanup worker protection/idempotency.
+- Supabase CLI compatibility is pinned/documented at 2.109.1; PostgreSQL is 17.
+- `supabase/config.toml` and `supabase/migrations` are the only active project/history, and commands run from the repository root through `npm run db:*`.
+- The zero-test pgTAP state is closed by a committed contract under `supabase/tests`; CI fails on contract, RLS, Storage, grant, upgrade, or drift errors.
+- The former mobile config/history and compatibility-fixture workflow are retired. Historical hashes and conflicts remain in the locked manifest/archive.
+- The Profile runtime and production-gate scripts now target the root local stack.
 
 Supabase validation still incomplete before production:
 
-- Existing-data migration validation with representative legacy media, duplicate usernames, malformed usernames, and large profiles still needs to run.
-- The targeted real local Auth/RLS/Storage and HTTP route validator passed, but the full exhaustive staging matrix, cleanup retry failure injection, profile pagination with 0/24/25/500 seeded posts, and production-like existing-data migration run still need disposable-staging validation.
+- Local existing-data migration validation now passes with representative legacy media, case-insensitive duplicate preflight, malformed usernames, rollback injection, durable deletion acceptance, cleanup retry, and 0/24/25/500-post pagination. The focused real local Auth/RLS/Storage and HTTP route validator also passes 17/17.
+- The same exhaustive matrix still needs to run in disposable production-like staging against the reviewed hosted history and Storage configuration; local success is not hosted evidence.
 - Native mobile iOS/Android Profile validation must still run on simulator/emulator/device before production.
 
 ## Verified Result

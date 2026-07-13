@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 
-const MOBILE_CWD = path.resolve("mobile");
+const SUPABASE_CWD = path.resolve(".");
 const NEXT_PORT = Number(process.env.PROFILE_STAGING_NEXT_PORT ?? 3036);
 const NEXT_BASE_URL = `http://127.0.0.1:${NEXT_PORT}`;
 const CLEANUP_SECRET = "local-profile-staging-cleanup-secret";
@@ -45,7 +45,7 @@ function run(command, args, options = {}) {
 }
 
 function supabase(args, options = {}) {
-  return run("npx", ["supabase", ...args], { cwd: MOBILE_CWD, ...options });
+  return run(process.execPath, ["scripts/run-supabase.mjs", ...args], { cwd: SUPABASE_CWD, ...options });
 }
 
 function runSupabaseStatus() {
@@ -117,16 +117,28 @@ async function stopNext() {
 }
 
 async function routeJson(pathname, token, body, init = {}) {
-  const res = await fetch(`${NEXT_BASE_URL}${pathname}`, {
-    ...init,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {})
-    },
-    method: init.method ?? "POST"
-  });
+  let res = null;
+  let lastNetworkError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      res = await fetch(`${NEXT_BASE_URL}${pathname}`, {
+        ...init,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(init.headers ?? {})
+        },
+        method: init.method ?? "POST"
+      });
+      break;
+    } catch (error) {
+      lastNetworkError = error;
+      if (attempt === 4) throw error;
+      await delay(250 * (attempt + 1));
+    }
+  }
+  if (!res) throw lastNetworkError ?? new Error("route_request_failed");
   let json = null;
   try {
     json = await res.json();
@@ -307,33 +319,6 @@ async function uploadMany(storageClient, bucket, prefix, count, buffer, contentT
   assert.deepEqual(failures, []);
 }
 
-async function listStoragePaths(storageClient, bucket, prefix, pageSize = 1000) {
-  const paths = [];
-  async function listPrefix(currentPrefix) {
-    for (let offset = 0; ; offset += pageSize) {
-      const { data, error } = await storageClient.from(bucket).list(currentPrefix, {
-        limit: pageSize,
-        offset,
-        sortBy: { column: "name", order: "asc" }
-      });
-      assert.equal(error, null, error?.message);
-      const page = data ?? [];
-      for (const item of page) {
-        if (!item.name || item.name === ".emptyFolderPlaceholder") continue;
-        const objectPath = `${currentPrefix}${item.name}`;
-        if (item.id == null && item.metadata == null) {
-          await listPrefix(`${objectPath}/`);
-        } else {
-          paths.push(objectPath);
-        }
-      }
-      if (page.length < pageSize) break;
-    }
-  }
-  await listPrefix(prefix);
-  return paths;
-}
-
 async function validateDuplicatePreflight() {
   supabase(["db", "reset", "--version", PRE_HARDENING_VERSION]);
   const env = runSupabaseStatus();
@@ -478,7 +463,7 @@ async function validateAuthStorageAndRoutes(seed) {
   const jpeg = await imageBuffer("jpeg");
 
   const anonIntent = await routeJson("/api/mobile/review-media/upload-intent", null, {
-    category: "post",
+    category: "avatar",
     fileName: "x.jpg",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
@@ -486,66 +471,54 @@ async function validateAuthStorageAndRoutes(seed) {
   });
   assert.equal(anonIntent.res.status, 401);
 
-  const postIntent = await createIntent(a.token, {
-    category: "post",
-    fileName: "post.jpg",
-    fileSizeBytes: jpeg.byteLength,
-    mediaKind: "image",
-    mimeType: "image/jpeg",
-    userId: userB.id
-  });
-  assert.ok(postIntent.uploadPath.startsWith(`pending/${userA.id}/`), "client-supplied owner must be ignored");
   const avatarIntent = await createIntent(a.token, {
     category: "avatar",
     fileName: "avatar.jpg",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
-    mimeType: "image/jpeg"
+    mimeType: "image/jpeg",
+    userId: userB.id
   });
+  assert.ok(avatarIntent.uploadPath.startsWith(`pending/${userA.id}/`), "client-supplied owner must be ignored");
   assert.ok(avatarIntent.storagePath.startsWith(`avatars/${userA.id}/`));
 
-  const arbitrary = await a.client.storage.from(QUARANTINE_BUCKET).upload(`pending/${userB.id}/${postIntent.intentId}/original.jpg`, jpeg, { contentType: "image/jpeg" });
+  const arbitrary = await a.client.storage.from(QUARANTINE_BUCKET).upload(`pending/${userB.id}/${avatarIntent.intentId}/original.jpg`, jpeg, { contentType: "image/jpeg" });
   assert.ok(arbitrary.error);
-  const anonUpload = await anon.storage.from(QUARANTINE_BUCKET).upload(postIntent.uploadPath, jpeg, { contentType: "image/jpeg" });
+  const anonUpload = await anon.storage.from(QUARANTINE_BUCKET).upload(avatarIntent.uploadPath, jpeg, { contentType: "image/jpeg" });
   assert.ok(anonUpload.error);
-  const crossUpload = await b.client.storage.from(QUARANTINE_BUCKET).upload(postIntent.uploadPath, jpeg, { contentType: "image/jpeg", upsert: true });
+  const crossUpload = await b.client.storage.from(QUARANTINE_BUCKET).upload(avatarIntent.uploadPath, jpeg, { contentType: "image/jpeg", upsert: true });
   assert.ok(crossUpload.error);
-  const goodUpload = await uploadQuarantine(a.client, postIntent.uploadPath, jpeg, "image/jpeg");
+  const goodUpload = await uploadQuarantine(a.client, avatarIntent.uploadPath, jpeg, "image/jpeg");
   assert.equal(goodUpload.error, null, goodUpload.error?.message);
-  const userBRead = await b.client.storage.from(QUARANTINE_BUCKET).download(postIntent.uploadPath);
+  const userBRead = await b.client.storage.from(QUARANTINE_BUCKET).download(avatarIntent.uploadPath);
   assert.ok(userBRead.error);
-  const publicPending = await publicObjectStatus(env, QUARANTINE_BUCKET, postIntent.uploadPath);
+  const publicPending = await publicObjectStatus(env, QUARANTINE_BUCKET, avatarIntent.uploadPath);
   assertNotPublic(publicPending.status, "pending quarantine object");
-  const userBDelete = await b.client.storage.from(QUARANTINE_BUCKET).remove([postIntent.uploadPath]);
-  const afterUserBDeleteAttempt = await admin.storage.from(QUARANTINE_BUCKET).download(postIntent.uploadPath);
+  const userBDelete = await b.client.storage.from(QUARANTINE_BUCKET).remove([avatarIntent.uploadPath]);
+  const afterUserBDeleteAttempt = await admin.storage.from(QUARANTINE_BUCKET).download(avatarIntent.uploadPath);
   assert.equal(
     afterUserBDeleteAttempt.error,
     null,
     `User B delete attempt must not remove User A quarantine object; remove error was ${userBDelete.error?.message ?? "none"}`
   );
 
-  const wrongCategory = await finalizeIntent(a.token, postIntent, { category: "avatar" });
+  const wrongCategory = await finalizeIntent(a.token, avatarIntent, { category: "post" });
   assert.equal(wrongCategory.res.status, 400);
-  const wrongPath = await finalizeIntent(a.token, postIntent, { uploadPath: postIntent.uploadPath.replace("original", "tampered") });
+  const wrongPath = await finalizeIntent(a.token, avatarIntent, { uploadPath: avatarIntent.uploadPath.replace("original", "tampered") });
   assert.equal(wrongPath.res.status, 400);
-  const bFinalize = await finalizeIntent(b.token, postIntent);
+  const bFinalize = await finalizeIntent(b.token, avatarIntent);
   assert.equal(bFinalize.res.status, 404);
-  const finalized = await finalizeIntent(a.token, postIntent);
+  const finalized = await finalizeIntent(a.token, avatarIntent);
   assert.equal(finalized.res.status, 200, JSON.stringify(finalized.json));
-  const replayFinalize = await finalizeIntent(a.token, postIntent);
+  const replayFinalize = await finalizeIntent(a.token, avatarIntent);
   assert.equal(replayFinalize.res.status, 200);
   const publicFinal = await publicObjectStatus(env, REVIEW_MEDIA_BUCKET, finalized.json.storagePath);
   assert.equal(publicFinal.status, 200);
-
-  const avatarUpload = await uploadQuarantine(a.client, avatarIntent.uploadPath, jpeg, "image/jpeg");
-  assert.equal(avatarUpload.error, null, avatarUpload.error?.message);
-  const avatarFinalized = await finalizeIntent(a.token, avatarIntent);
-  assert.equal(avatarFinalized.res.status, 200, JSON.stringify(avatarFinalized.json));
   const { data: avatarProfile } = await admin.from("profiles").select("avatar_url").eq("id", userA.id).maybeSingle();
-  assert.ok(avatarProfile?.avatar_url?.includes(avatarFinalized.json.storagePath));
+  assert.ok(avatarProfile?.avatar_url?.includes(finalized.json.storagePath));
 
   const expiredIntent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "expired.jpg",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
@@ -558,7 +531,7 @@ async function validateAuthStorageAndRoutes(seed) {
   assert.equal(expiredFinalize.res.status, 410);
 
   const raceIntent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "race.jpg",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
@@ -569,30 +542,6 @@ async function validateAuthStorageAndRoutes(seed) {
   const raceStatuses = raceResults.map((item) => item.status === "fulfilled" ? item.value.res.status : 0);
   assert.ok(raceStatuses.includes(200));
 
-  const review = await routeJson("/api/reviews", a.token, {
-    body: "matrix post with media",
-    items: [{ name: "Matrix Dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Matrix Cafe",
-    visibility: "public"
-  });
-  assert.equal(review.res.status, 200, JSON.stringify(review.json));
-  const replayPost = await routeJson("/api/reviews", a.token, {
-    body: "matrix replay",
-    items: [{ name: "Matrix Dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Matrix Cafe",
-    visibility: "public"
-  });
-  assert.equal(replayPost.res.status, 403);
-  const crossPost = await routeJson("/api/reviews", b.token, {
-    body: "matrix cross user",
-    items: [{ name: "Matrix Dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Matrix Cafe",
-    visibility: "public"
-  });
-  assert.equal(crossPost.res.status, 403);
   const manualUrlPost = await routeJson("/api/reviews", a.token, {
     body: "manual url attack",
     items: [{ name: "Matrix Dish", rating: 5 }],
@@ -601,10 +550,6 @@ async function validateAuthStorageAndRoutes(seed) {
     visibility: "public"
   });
   assert.notEqual(manualUrlPost.res.status, 200);
-  const deletePost = await routeJson(`/api/reviews/${review.json.id}`, a.token, undefined, { method: "DELETE" });
-  assert.equal(deletePost.res.status, 200, JSON.stringify(deletePost.json));
-  const oldPostMedia = await publicObjectStatus(env, REVIEW_MEDIA_BUCKET, finalized.json.storagePath);
-  assertNotPublic(oldPostMedia.status, "deleted post media");
 
   const duplicateRoute = await routeJson("/api/mobile/profile/username", b.token, { username: "matrix_a" });
   assert.equal(duplicateRoute.res.status, 409);
@@ -653,7 +598,7 @@ async function validateAuthStorageAndRoutes(seed) {
   dbQuery("drop trigger if exists validation_force_review_username_failure_trigger on public.reviews");
   dbQuery("drop function if exists public.validation_force_review_username_failure()");
 
-  record("full Auth/RLS/Storage route matrix passed", "PASS", "upload, quarantine, finalize, post create/delete, username RPC");
+  record("full Auth/RLS/Storage route matrix passed", "PASS", "avatar upload/quarantine/finalize and username RPC; post media is owned by Phase 1A");
 }
 
 async function validateSeededProfileData(seed) {
@@ -723,11 +668,22 @@ async function validateCleanup(seed) {
   const before = await publicObjectStatus(env, REVIEW_MEDIA_BUCKET, oldPublic);
   assert.equal(before.status, 200);
   const deleteResponse = await routeJson("/api/delete-account", deleteUserSession.token, {});
-  assert.ok([200, 202].includes(deleteResponse.res.status), JSON.stringify(deleteResponse.json));
-  const after = await publicObjectStatus(env, REVIEW_MEDIA_BUCKET, oldPublic);
-  assertNotPublic(after.status, "account deletion public object");
-  const remaining = await listStoragePaths(admin.storage, REVIEW_MEDIA_BUCKET, `posts/${seed.deleteUser.id}/bulk/`);
-  assert.equal(remaining.length, 0);
+  assert.equal(deleteResponse.res.status, 202, JSON.stringify(deleteResponse.json));
+  assert.equal(deleteResponse.json.accepted, true);
+  const { data: deletionJob } = await admin
+    .from("account_deletion_jobs")
+    .select("id, status, user_id")
+    .eq("id", deleteResponse.json.jobId)
+    .maybeSingle();
+  assert.equal(deletionJob?.user_id, seed.deleteUser.id);
+  assert.equal(deletionJob?.status, "inventory_pending");
+  assert.equal(deletionJob.status, deleteResponse.json.status);
+  const { data: deletingProfile } = await admin
+    .from("profiles")
+    .select("account_status")
+    .eq("id", seed.deleteUser.id)
+    .maybeSingle();
+  assert.equal(deletingProfile?.account_status, "deleting");
 
   const retryPath = `posts/${seed.legacy.id}/retry/retry-object.jpg`;
   const retryBuffer = await imageBuffer("jpeg");
@@ -761,7 +717,7 @@ async function validateCleanup(seed) {
     .eq("storage_path", seed.legacyPaths.legacyVideoPath)
     .maybeSingle();
   assert.equal(legacyVideoRow.media_type, "video");
-  record("cleanup and legacy media validation passed", "PASS", "account cleanup >1000 objects, retry worker, legacy video retained");
+  record("cleanup and legacy media validation passed", "PASS", "durable deletion accepted, legacy retry worker, legacy video retained; terminal account cleanup is owned by Phase 1B");
 }
 
 async function validateExistingDataAndGates() {

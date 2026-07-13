@@ -3,19 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const phase3Migration = readFileSync(
-  "mobile/supabase/migrations/202606180006_shared_memory_phase3_scalability.sql",
+  "supabase/migrations/202606180006_shared_memory_phase3_scalability.sql",
   "utf8"
 );
 const finalAuditMigration = readFileSync(
-  "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
+  "supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
   "utf8"
 );
 const chatPageMigration = readFileSync(
-  "mobile/supabase/migrations/202607050001_shared_memory_chat_page_rpc.sql",
+  "supabase/migrations/202607050001_shared_memory_chat_page_rpc.sql",
   "utf8"
 );
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
-const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
+const supabaseReadme = readFileSync("docs/database/MIGRATIONS.md", "utf8");
 const summaryMigrations = `${phase3Migration}\n${finalAuditMigration}`;
 
 test("phase 3 adds indexes for common memory room queries", () => {

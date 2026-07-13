@@ -19,7 +19,7 @@ const profiles = readFileSync(
   "utf8"
 );
 const placeSearchIndexes = readFileSync(
-  new URL("../mobile/supabase/migrations/202607110008_explore_place_search_indexes.sql", import.meta.url),
+  new URL("../supabase/migrations/202607110008_explore_place_search_indexes.sql", import.meta.url),
   "utf8"
 );
 const locationMenuSource = explore.slice(

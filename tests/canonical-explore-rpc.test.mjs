@@ -6,10 +6,7 @@ function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
 }
 
-const mobileMigrationPath = "mobile/supabase/migrations/202607110003_canonical_explore_discovery_rpc.sql";
-const rootMigrationPath = "supabase/migrations/202607110003_canonical_explore_discovery_rpc.sql";
-const migration = source(mobileMigrationPath);
-const rootMigration = source(rootMigrationPath);
+const migration = source("supabase/migrations/202607110003_canonical_explore_discovery_rpc.sql");
 
 function blockBetween(start, end) {
   const startIndex = migration.indexOf(start);
@@ -19,8 +16,8 @@ function blockBetween(start, end) {
   return migration.slice(startIndex, endIndex);
 }
 
-test("canonical Explore RPC migration is mirrored across Supabase project trees", () => {
-  assert.equal(rootMigration, migration);
+test("canonical Explore RPC migration comes from the root Supabase history", () => {
+  assert.match(migration, /canonical Explore/i);
 });
 
 test("canonical Explore RPC is additive and keeps the legacy RPC intact", () => {

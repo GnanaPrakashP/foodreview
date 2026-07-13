@@ -27,7 +27,7 @@ function localStatus() {
       url: process.env.MEDIA_WORKER_SUPABASE_URL
     };
   }
-  const status = spawnSync("npx", ["supabase", "status", "-o", "json"], {
+  const status = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
     cwd: process.cwd(),
     encoding: "utf8"
   });

@@ -6,15 +6,12 @@ function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
 }
 
-const mobileMigrationPath = "mobile/supabase/migrations/202607120002_canonical_dish_images.sql";
-const rootMigrationPath = "supabase/migrations/202607120002_canonical_dish_images.sql";
-const migration = source(mobileMigrationPath);
-const rootMigration = source(rootMigrationPath);
+const migration = source("supabase/migrations/202607120002_canonical_dish_images.sql");
 const packageJson = JSON.parse(source("package.json"));
 const backfillScript = source("scripts/backfill-canonical-dish-images.mjs");
 
-test("canonical dish images migration is mirrored across Supabase project trees", () => {
-  assert.equal(rootMigration, migration);
+test("canonical dish images migration comes from the canonical root history", () => {
+  assert.match(migration, /canonical dish/i);
 });
 
 test("canonical dish images store curated approved image metadata", () => {

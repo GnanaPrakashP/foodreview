@@ -16,6 +16,19 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Local database
+
+FoodReview has one shared Supabase backend for web and mobile. Run all database commands from this repository root; `supabase/migrations` is the only executable history.
+
+```bash
+npm run db:start
+npm run db:reset
+npm run db:test
+npm run db:lint
+```
+
+Use `npm run db:verify` for the complete two-reset, policy/Storage, upgrade, and local drift gate. Supabase CLI compatibility is pinned to 2.109.1. See `docs/database/MIGRATIONS.md` before creating or deploying a migration; never edit applied history or add SQL under `mobile/supabase`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

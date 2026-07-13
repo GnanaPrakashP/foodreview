@@ -204,10 +204,8 @@ test("Expo configuration rejects privileged public Supabase variable names witho
   assert.match(autoLoginSource, /devAutoLoginPassword = __DEV__/);
 });
 
-test("Phase 1A migration and backfill are mirrored and fail closed", () => {
+test("Phase 1A canonical migration and backfill fail closed", () => {
   const rootMigration = source("supabase/migrations/202607130001_visibility_aware_post_media.sql");
-  const mobileMigration = source("mobile/supabase/migrations/202607130001_visibility_aware_post_media.sql");
-  assert.equal(rootMigration, mobileMigration);
   assert.match(rootMigration, /private_media_derivative_requires_private_bucket/);
   assert.match(rootMigration, /review_media_requires_private_backfill/);
   assert.match(rootMigration, /privacy_state <> 'stable'/);

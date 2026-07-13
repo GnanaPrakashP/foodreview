@@ -3,31 +3,31 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const phase1Migration = readFileSync(
-  "mobile/supabase/migrations/202606180001_shared_memory_phase1_security.sql",
+  "supabase/migrations/202606180001_shared_memory_phase1_security.sql",
   "utf8"
 );
 const phase11Migration = readFileSync(
-  "mobile/supabase/migrations/202606180002_shared_memory_phase1_1_cleanup.sql",
+  "supabase/migrations/202606180002_shared_memory_phase1_1_cleanup.sql",
   "utf8"
 );
 const privacyMigration = readFileSync(
-  "mobile/supabase/migrations/202606140001_shared_memory_privacy_hardening.sql",
+  "supabase/migrations/202606140001_shared_memory_privacy_hardening.sql",
   "utf8"
 );
 const finalAuditMigration = readFileSync(
-  "mobile/supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
+  "supabase/migrations/202606180007_shared_memory_final_audit_hardening.sql",
   "utf8"
 );
 const occasionTitleMigration = readFileSync(
-  "mobile/supabase/migrations/202606210001_shared_memory_room_occasion_title.sql",
+  "supabase/migrations/202606210001_shared_memory_room_occasion_title.sql",
   "utf8"
 );
 const occasionClassificationMigration = readFileSync(
-  "mobile/supabase/migrations/202606210002_shared_memory_room_occasion_classification.sql",
+  "supabase/migrations/202606210002_shared_memory_room_occasion_classification.sql",
   "utf8"
 );
 const baseMigration = readFileSync(
-  "mobile/supabase/migrations/202606060001_shared_memory_rooms.sql",
+  "supabase/migrations/202606060001_shared_memory_rooms.sql",
   "utf8"
 );
 const notifyRoute = readFileSync("app/api/mobile/memories/notify/route.ts", "utf8");

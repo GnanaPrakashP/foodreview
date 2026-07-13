@@ -21,8 +21,8 @@ function record(name, status, detail = "") {
 }
 
 function runSupabaseStatus() {
-  const status = spawnSync("npx", ["supabase", "status", "-o", "json"], {
-    cwd: "mobile",
+  const status = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
+    cwd: ".",
     encoding: "utf8"
   });
   if (status.status !== 0) {
@@ -190,7 +190,7 @@ function assertNotPubliclyRetrievable(status, label) {
 
 async function validateImageRouteCase({ admin, buffer, contentType, name, token, userClient }) {
   const intent = await createIntent(token, {
-    category: "post",
+    category: "avatar",
     fileName: `runtime.${contentType.split("/")[1]}`,
     fileSizeBytes: buffer.byteLength,
     mediaKind: "image",
@@ -201,7 +201,7 @@ async function validateImageRouteCase({ admin, buffer, contentType, name, token,
   const finalized = await finalize(token, intent);
   assert.equal(finalized.res.status, 200, `${name} finalize failed: ${JSON.stringify(finalized.json)}`);
   assert.equal(finalized.json.mimeType, "image/jpeg");
-  assert.match(finalized.json.storagePath, new RegExp(`^posts/.+/${intent.intentId}/media\\.jpg$`));
+  assert.match(finalized.json.storagePath, new RegExp(`^avatars/.+/${intent.intentId}/avatar\\.jpg$`));
 
   const { data: finalObject, error: downloadError } = await admin.storage
     .from(REVIEW_MEDIA_BUCKET)
@@ -249,7 +249,7 @@ async function main() {
   record("bucket visibility", "PASS", "quarantine private, review-photos public");
 
   const anonIntent = await routeJson("/api/mobile/review-media/upload-intent", null, {
-    category: "post",
+    category: "avatar",
     fileName: "x.jpg",
     fileSizeBytes: 1,
     mediaKind: "image",
@@ -260,7 +260,7 @@ async function main() {
 
   const jpeg = await imageBuffer("jpeg");
   const intent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "food.jpg",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
@@ -268,7 +268,7 @@ async function main() {
   });
   assert.ok(intent.uploadPath.includes(`/`));
   assert.ok(intent.uploadPath.startsWith(`pending/${userA.id}/${intent.intentId}/`));
-  assert.ok(intent.storagePath.startsWith(`posts/${userA.id}/${intent.intentId}/`));
+  assert.ok(intent.storagePath.startsWith(`avatars/${userA.id}/${intent.intentId}/`));
   record("User A upload intent owner-scoped", "PASS");
 
   const anonUpload = await anon.storage.from(QUARANTINE_BUCKET).upload(intent.uploadPath, jpeg, { contentType: "image/jpeg" });
@@ -305,7 +305,7 @@ async function main() {
   await validateImageRouteCase({ admin, buffer: webp, contentType: "image/webp", name: "webp", token: a.token, userClient: a.client });
 
   const zeroIntent = await routeJson("/api/mobile/review-media/upload-intent", a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "zero.jpg",
     fileSizeBytes: 0,
     mediaKind: "image",
@@ -313,7 +313,7 @@ async function main() {
   });
   assert.equal(zeroIntent.res.status, 400);
   const heicIntent = await routeJson("/api/mobile/review-media/upload-intent", a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "photo.heic",
     fileSizeBytes: 10,
     mediaKind: "image",
@@ -321,7 +321,7 @@ async function main() {
   });
   assert.equal(heicIntent.res.status, 400);
   const videoIntent = await routeJson("/api/mobile/review-media/upload-intent", a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "video.mp4",
     fileSizeBytes: 10,
     mediaKind: "video",
@@ -332,7 +332,7 @@ async function main() {
 
   const corrupt = Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x01, 0x02, 0x03]);
   const corruptIntent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "corrupt.jpg",
     fileSizeBytes: corrupt.byteLength,
     mediaKind: "image",
@@ -343,7 +343,7 @@ async function main() {
   assert.equal(corruptFinalize.res.status, 415);
 
   const spoofIntent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "spoof.png",
     fileSizeBytes: jpeg.byteLength,
     mediaKind: "image",
@@ -355,7 +355,7 @@ async function main() {
 
   const hugeDimension = await imageBuffer("png", { height: 1, width: 6001 });
   const hugeIntent = await createIntent(a.token, {
-    category: "post",
+    category: "avatar",
     fileName: "huge.png",
     fileSizeBytes: hugeDimension.byteLength,
     mediaKind: "image",
@@ -366,32 +366,15 @@ async function main() {
   assert.equal(hugeFinalize.res.status, 415);
   record("invalid image finalization rejected", "PASS", "corrupt, MIME spoof, oversized dimensions");
 
-  const review = await routeJson("/api/reviews", a.token, {
-    body: "runtime validation review",
-    items: [{ name: "runtime dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Runtime Cafe",
-    visibility: "public"
+  const retiredPostIntent = await routeJson("/api/mobile/review-media/upload-intent", a.token, {
+    category: "post",
+    fileName: "retired-post.jpg",
+    fileSizeBytes: jpeg.byteLength,
+    mediaKind: "image",
+    mimeType: "image/jpeg"
   });
-  assert.equal(review.res.status, 200, JSON.stringify(review.json));
-  assert.ok(review.json.id);
-  const replayReview = await routeJson("/api/reviews", a.token, {
-    body: "runtime validation replay",
-    items: [{ name: "runtime dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Runtime Cafe",
-    visibility: "public"
-  });
-  assert.equal(replayReview.res.status, 403);
-  const userBReview = await routeJson("/api/reviews", b.token, {
-    body: "runtime validation cross user",
-    items: [{ name: "runtime dish", rating: 5 }],
-    media: [{ intentId: finalized.json.intentId, mediaType: "image" }],
-    restaurantName: "Runtime Cafe",
-    visibility: "public"
-  });
-  assert.equal(userBReview.res.status, 403);
-  record("post media lifecycle rejects consumed and cross-user intents", "PASS");
+  assert.equal(retiredPostIntent.res.status, 410);
+  record("legacy Profile post-media intent fails closed", "PASS", "canonical post media is owned by Phase 1A");
 
   const rawReviewInsert = await a.client.from("reviews").insert({
     items: [],
@@ -423,10 +406,10 @@ async function main() {
 
   const stats = await a.client.rpc("profile_post_stats", { p_username: "runtime_a2" });
   assert.equal(stats.error, null, stats.error?.message);
-  assert.equal(stats.data?.[0]?.total_visits, 1);
-  assert.equal(stats.data?.[0]?.unique_places, 1);
-  assert.equal(stats.data?.[0]?.unique_dishes, 1);
-  record("profile stats RPC counts complete visible data for runtime user", "PASS");
+  assert.equal(stats.data?.[0]?.total_visits, 0);
+  assert.equal(stats.data?.[0]?.unique_places, 0);
+  assert.equal(stats.data?.[0]?.unique_dishes, 0);
+  record("profile stats RPC returns a complete zero state for a new runtime user", "PASS");
 
   const { error: jobError } = await admin.from("account_media_cleanup_jobs").insert({
     bucket_id: REVIEW_MEDIA_BUCKET,

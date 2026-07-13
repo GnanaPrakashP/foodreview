@@ -38,7 +38,7 @@ function supabaseStatus() {
       url: process.env.POST_MEDIA_SUPABASE_URL
     };
   }
-  const status = spawnSync("npx", ["supabase", "status", "-o", "json"], {
+  const status = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
     cwd: process.cwd(),
     encoding: "utf8"
   });
@@ -282,7 +282,6 @@ async function seedLegacyBackfill({ admin, image, owner, visibility, simulateCop
     id: photoId,
     media_type: "image",
     mime_type: "image/jpeg",
-    owner_id: owner.id,
     position: 0,
     public_url: publicUrl,
     review_id: review.data.id,
@@ -339,7 +338,7 @@ async function main() {
   const anon = createClient(env.url, env.anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
   startNext(env);
   await waitForNext();
-  record("real Next Phase 1A routes booted against root local Supabase plus the documented PH-301 test fixture");
+  record("real Next Phase 1A routes booted against the complete canonical root Supabase chain");
 
   const [owner, member, stranger, blocked] = await Promise.all([
     createUser(admin, "owner"),
@@ -445,8 +444,8 @@ async function main() {
   assert.equal(dryRun.failed, 0);
   assert.equal(dryRun.ambiguous, 0);
   const applied = runBackfill(env, ["--apply", "--limit=500"]);
-  assert.equal(applied.failed, 0);
-  assert.equal(applied.ambiguous, 0);
+  assert.equal(applied.failed, 0, JSON.stringify(applied));
+  assert.equal(applied.ambiguous, 0, JSON.stringify(applied));
   for (const fixture of legacy) {
     const photo = await admin.from("review_photos").select("media_asset_id, public_url, storage_path").eq("id", fixture.photoId).single();
     if (photo.error) throw photo.error;

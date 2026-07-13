@@ -38,10 +38,8 @@ function loadModule() {
   return mod.exports;
 }
 
-test("Phase 1B migration is mirrored and creates a service-only resumable state machine", () => {
+test("Phase 1B canonical migration creates a service-only resumable state machine", () => {
   const root = source("supabase/migrations/202607130002_complete_account_deletion.sql");
-  const mobile = source("mobile/supabase/migrations/202607130002_complete_account_deletion.sql");
-  assert.equal(root, mobile);
   assert.match(root, /create table if not exists public\.account_deletion_jobs/);
   assert.match(root, /create table if not exists public\.account_deletion_storage_items/);
   assert.match(root, /create table if not exists public\.account_deletion_ambiguous_items/);

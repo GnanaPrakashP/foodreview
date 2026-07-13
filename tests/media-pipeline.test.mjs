@@ -49,7 +49,7 @@ function loadMediaPipelineModule() {
 }
 
 test("media pipeline migration creates generic assets, derivatives, jobs, buckets, and scoped source uploads", () => {
-  const migration = source("mobile/supabase/migrations/202607100001_media_pipeline.sql");
+  const migration = source("supabase/migrations/202607100001_media_pipeline.sql");
 
   assert.match(migration, /create table if not exists public\.media_assets/);
   assert.match(migration, /create table if not exists public\.media_derivatives/);
@@ -65,7 +65,7 @@ test("media pipeline migration creates generic assets, derivatives, jobs, bucket
   assert.match(migration, /add column if not exists media_asset_id/);
   assert.match(migration, /avatar_media_asset_id/);
   assert.match(migration, /media-sources', 'media-public', 'media-private/);
-  const visibilityMigration = source("mobile/supabase/migrations/202607130001_visibility_aware_post_media.sql");
+  const visibilityMigration = source("supabase/migrations/202607130001_visibility_aware_post_media.sql");
   assert.match(visibilityMigration, /access_class/);
   assert.match(visibilityMigration, /private_media_derivative_requires_private_bucket/);
 });

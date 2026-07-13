@@ -9,7 +9,7 @@ const cleanupRoute = readFileSync("app/api/mobile/memories/uploads/cleanup/route
 const notifyRoute = readFileSync("app/api/mobile/memories/notify/route.ts", "utf8");
 const participantsRoute = readFileSync("app/api/mobile/memories/[roomId]/participants/route.ts", "utf8");
 const accountDeleteRoute = readFileSync("app/api/delete-account/route.ts", "utf8");
-const supabaseReadme = readFileSync("mobile/supabase/README.md", "utf8");
+const supabaseReadme = readFileSync("docs/database/MIGRATIONS.md", "utf8");
 
 test("phase 5 observability helper allowlists only non-sensitive fields", () => {
   assert.match(observability, /SAFE_MEMORY_METRIC_KEYS/);

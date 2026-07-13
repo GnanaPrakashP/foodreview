@@ -149,11 +149,8 @@ test("candidate classifier marks Mutton as too_vague", () => {
   assert.equal(result.classification, "too_vague");
 });
 
-test("safe seed expansion migration is mirrored, idempotent, and avoids junk inputs", () => {
+test("safe seed expansion canonical migration is idempotent and avoids junk inputs", () => {
   const rootMigration = source("supabase/migrations/202607110004_dish_identity_safe_seed_expansion.sql");
-  const mobileMigration = source("mobile/supabase/migrations/202607110004_dish_identity_safe_seed_expansion.sql");
-
-  assert.equal(mobileMigration, rootMigration);
   assert.match(rootMigration, /where not exists/i);
   assert.doesNotMatch(rootMigration, /\bdelete\s+from\b/i);
   assert.doesNotMatch(rootMigration, /\btruncate\b/i);

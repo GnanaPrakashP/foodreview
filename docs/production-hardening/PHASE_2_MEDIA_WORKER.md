@@ -10,6 +10,8 @@ Implementation status: PASS locally
 
 Release verification status: BLOCKED pending hosted worker deployment, scheduler/process supervision, hosted Storage and database interruption testing, two-instance staging termination tests, alert/dashboard wiring, production-like throughput validation, and the earlier production-hardening blockers.
 
+Phase 3 supersession note (2026-07-13): the temporary mirrored migration roots are reconciled. `supabase/migrations/202607130003_media_worker_reliability.sql` is the sole executable copy; the former identical mobile hash remains locked in the migration manifest. Current database gates run through `npm run db:*` from the repository root.
+
 ## Executive result
 
 FoodReview's generic post-media path is now a durable at-least-once processing system with an exactly-once authoritative result. Upload finalisation and job creation are atomic. Workers claim jobs through a service-only PostgreSQL RPC using `FOR UPDATE SKIP LOCKED`, an expiring lease, a generation, and a random claim token. A crashed worker can be replaced; an old worker cannot complete after its lease is reclaimed. Image and video derivative paths are deterministic and safe to overwrite, while the database completion RPC verifies the current lease, active account, authoritative asset contract, and complete derivative set before publishing `ready` metadata.
@@ -400,22 +402,21 @@ Requeue is service-only, idempotent for already queued work, allowed only for de
 
 ## Database migration
 
-One corrective migration was added byte-for-byte to both temporary roots:
+One corrective migration was originally added byte-for-byte to both temporary roots. Phase 3 retains the following sole executable copy:
 
 ```text
 supabase/migrations/202607130003_media_worker_reliability.sql
-mobile/supabase/migrations/202607130003_media_worker_reliability.sql
 ```
 
 It adds lease/fencing/retry/failure/cleanup columns and indexes, the service-only events table, claim/heartbeat/current-lease/complete/fail/requeue/cancel RPCs, cleanup claim/complete/fail RPCs, the account-freeze cancellation trigger, and atomic uploaded-asset job creation.
 
-Applied migration history was not edited. Legacy `failed` jobs are normalized to `retry_wait` or `dead_letter`. Legacy `running` rows had no fencing identity, so the migration explicitly clears their locks, advances generation, and moves them to due `retry_wait` with `legacy_worker_lease_recovered`. Other non-running rows are normalized to the new lease-shape constraint. The root clean reset and SQL lint pass. The independent mobile root still reproduces the existing pre-Phase-2 PH-301 split; Phase 2 does not conceal or repair it.
+Applied migration history was not edited. Legacy `failed` jobs are normalized to `retry_wait` or `dead_letter`. Legacy `running` rows had no fencing identity, so the migration explicitly clears their locks, advances generation, and moves them to due `retry_wait` with `legacy_worker_lease_recovered`. Other non-running rows are normalized to the new lease-shape constraint. The canonical clean reset and SQL lint pass. Phase 3 later retired the second executable copy and preserved its hash.
 
 ## Tests and local failure injection
 
 Phase 2 focused behavior tests cover:
 
-- mirror/state/RPC/security contracts;
+- canonical migration/state/RPC/security contracts;
 - retryable/permanent classification and invalid configuration;
 - two-worker claim race;
 - stale completion fencing;
@@ -449,7 +450,7 @@ Unit failure injection covers infrastructure failures without requiring a real o
 | Android/iOS production Expo exports | pass; server-only name/value scans clean |
 | Worker Docker build/runtime | pass locally; ffmpeg/ffprobe, UID 10001, health metadata, temp write, missing-config failure |
 | Root clean Supabase reset / SQL lint | pass |
-| Migration mirror / syntax / diff checks | pass |
+| Canonical manifest / syntax / contract checks | pass |
 | Full root suite | 1,061/1,081; same 20 PH-002 failures |
 | Memory hardening | 71/72; same one PH-002 failure |
 
@@ -461,7 +462,7 @@ The production image's `npm ci` reported three dependency audit advisories (one 
 
 No hosted worker or production scheduler was deployed. Execute this matrix in a disposable linked staging project:
 
-1. Apply the corrective migration and verify root/mobile migration IDs/checksums match the deployment plan.
+1. Run the hosted read-only drift audit and verify the canonical migration IDs/checksums match the deployment plan.
 2. Deploy two worker replicas with different IDs, equal validated configuration, secret-manager injection, no public port, a persistent process supervisor, and at least 1 GiB temp disk/2 GiB memory initially.
 3. Verify readiness, container restart policy, `SIGTERM` grace period, and alert ingestion.
 4. Upload real supported image/video/invalid/over-duration/large-dimension fixtures from Android and iOS.
@@ -511,8 +512,8 @@ Derivative upserts and fenced completion make worker image roll-forward safe. Da
 - No production-like throughput/capacity test was run; 1,000-user readiness is not claimed from local functional tests.
 - Actual hosted worker `SIGKILL`, database restart, network partition, Storage outage/throttling, and out-of-memory behavior remain unverified.
 - Android/iOS production bundles pass, but a physical two-account mobile process-kill/background/restart matrix was not repeated specifically for Phase 2.
-- The mobile independent migration root remains blocked before Phase 2 by PH-301. The new Phase 2 migration mirrors exactly but does not unify history.
-- PH-001 credential-owner assessment/rotation, PH-002 baseline adjudication, PH-301/PH-302, and prior hosted/native gates remain open.
+- The retired mobile-only history remains an unsupported ambiguous hosted state unless explicitly reconciled through the Phase 3 operator process.
+- PH-001 credential-owner assessment/rotation, PH-002 baseline adjudication, and prior hosted/native gates remain open.
 - The container dependency advisories require authorized registry/audit review and normal dependency remediation.
 - A worker can upload deterministic partial derivatives immediately before a concurrent account freeze; completion is fenced and Phase 1B/cleanup inventory removes them, but hosted race cleanup must still be exercised.
 - OS/framework media caches remain outside the owner-scoped file store's purge guarantees; Phase 1A signed URL expiry limits future access but cannot revoke bytes already downloaded.

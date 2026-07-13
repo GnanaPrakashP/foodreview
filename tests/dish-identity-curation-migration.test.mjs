@@ -6,13 +6,10 @@ function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
 }
 
-const mobileMigrationPath = "mobile/supabase/migrations/202607110005_dish_identity_curation_v1.sql";
-const rootMigrationPath = "supabase/migrations/202607110005_dish_identity_curation_v1.sql";
-const migration = source(mobileMigrationPath);
-const rootMigration = source(rootMigrationPath);
+const migration = source("supabase/migrations/202607110005_dish_identity_curation_v1.sql");
 
-test("dish identity curation migration is mirrored across Supabase project trees", () => {
-  assert.equal(rootMigration, migration);
+test("dish identity curation migration comes from the canonical root history", () => {
+  assert.match(migration, /dish identity/i);
 });
 
 test("SQL normalizer gains accent stripping and keeps the server fallback semantics", () => {

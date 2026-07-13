@@ -15,7 +15,7 @@ function record(name) {
 }
 
 function localStatus() {
-  const status = spawnSync("npx", ["supabase", "status", "-o", "json"], {
+  const status = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
     cwd: process.cwd(),
     encoding: "utf8"
   });

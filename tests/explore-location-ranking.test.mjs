@@ -7,9 +7,7 @@ function source(relativePath) {
 }
 
 const exploreSqlPaths = [
-  "mobile/supabase/migrations/202606300002_explore_discovery_rpc.sql",
   "supabase/migrations/202606300002_explore_discovery_rpc.sql",
-  "mobile/supabase/migrations/202607110006_dish_identity_token_families.sql",
   "supabase/migrations/202607110006_dish_identity_token_families.sql"
 ];
 

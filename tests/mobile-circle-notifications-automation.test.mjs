@@ -21,7 +21,7 @@ const notificationListRouteSource = source("app/api/notifications/route.ts");
 const notificationUnreadRouteSource = source("app/api/notifications/unread-count/route.ts");
 const pushBootstrapSource = source("mobile/src/providers/PushNotificationBootstrap.tsx");
 const serverNotificationSource = source("lib/notifications.ts");
-const hardeningMigrationSource = source("mobile/supabase/migrations/202607080001_circle_production_hardening.sql");
+const hardeningMigrationSource = source("supabase/migrations/202607080001_circle_production_hardening.sql");
 
 test("circle feed automation uses server APIs, cursor pagination, and canonical post_views", () => {
   assert.match(apiClientSource, /Authorization: `Bearer \$\{token\}`/);

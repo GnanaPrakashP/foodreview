@@ -6,13 +6,10 @@ function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
 }
 
-const mobileMigrationPath = "mobile/supabase/migrations/202607110001_dish_identity_foundation.sql";
-const rootMigrationPath = "supabase/migrations/202607110001_dish_identity_foundation.sql";
-const migration = source(mobileMigrationPath);
-const rootMigration = source(rootMigrationPath);
+const migration = source("supabase/migrations/202607110001_dish_identity_foundation.sql");
 
-test("dish identity migration is mirrored across Supabase project trees", () => {
-  assert.equal(rootMigration, migration);
+test("dish identity migration comes from the canonical root history", () => {
+  assert.match(migration, /dish identity/i);
 });
 
 test("dish identity migration creates stable canonical, alias, candidate, mention, and merge tables", () => {
