@@ -6,6 +6,9 @@ import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Review } from "@/lib/types";
 import { getPostEngagementState } from "@/lib/server/post-engagement-state";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST", "DELETE"];
 
 const ENGAGEMENT_REVIEW_SELECT = "id, reviewer_name, restaurant_name, photo_url, photo_urls, visibility";
 
@@ -60,8 +63,10 @@ function scheduleLikeRemovedSideEffects(input: {
 }
 
 export async function POST(req: NextRequest) {
-  const { postId } = await req.json();
-  if (!postId) {
+  const parsed = await readBoundedJson<{ postId?: unknown }>(req, 2048);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const postId = parsed.value?.postId;
+  if (typeof postId !== "string" || !/^[0-9a-f-]{36}$/i.test(postId)) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
@@ -69,6 +74,8 @@ export async function POST(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
   const access = await canActorReadPost(writeDb, postId, actor.actorName);
@@ -100,8 +107,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { postId } = await req.json();
-  if (!postId) {
+  const parsed = await readBoundedJson<{ postId?: unknown }>(req, 2048);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const postId = parsed.value?.postId;
+  if (typeof postId !== "string" || !/^[0-9a-f-]{36}$/i.test(postId)) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
@@ -109,6 +118,8 @@ export async function DELETE(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
   const review = await fetchPostForEngagement(writeDb, postId);

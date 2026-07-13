@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 function transpile(src) {
   const { outputText } = ts.transpileModule(src, {
@@ -144,13 +145,18 @@ function loadMeRoute({ db, authUser }) {
           },
         };
       }
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({
+        json: (body, opts) => ({ _body: body, _status: opts?.status ?? 200 }),
+      });
       if (id === "@/lib/server/route-supabase") {
         return {
-          createRouteSupabase: async () => ({
-            auth: {
-              getUser: async () => ({ data: { user: authUser ?? null } }),
-            },
-            from: (...args) => db.from(...args),
+          getRouteActor: async () => ({
+            actor: authUser ? {
+              userId: authUser.id,
+              actorName: authUser.user_metadata?.username ?? "Alice",
+              displayName: authUser.user_metadata?.full_name ?? authUser.user_metadata?.username ?? "Alice",
+            } : null,
+            supabase: { from: (...args) => db.from(...args) },
           }),
         };
       }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { convertOpenDishCandidates, runMajorityRenameSweep } from "@/lib/server/dish-self-curation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { configuredInternalSecret, internalRequestSecret, readBoundedJson, timingSafeSecretMatch } from "@/lib/server/api-security";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -8,19 +9,11 @@ export const maxDuration = 300;
 // Operational endpoint only — the dish identity loop is fully self-curating.
 // Actions here are maintenance jobs, not approval decisions.
 
-function configuredSecret() {
-  return process.env.DISH_CURATION_SECRET ?? "";
-}
-
-function requestSecret(req: NextRequest) {
-  const authorization = req.headers.get("authorization") ?? "";
-  if (authorization.toLowerCase().startsWith("bearer ")) return authorization.slice(7).trim();
-  return req.headers.get("x-dish-curation-secret")?.trim() ?? "";
-}
-
 function authorized(req: NextRequest) {
-  const secret = configuredSecret();
-  return Boolean(secret) && requestSecret(req) === secret;
+  return timingSafeSecretMatch(
+    internalRequestSecret(req, "x-dish-curation-secret"),
+    configuredInternalSecret("DISH_CURATION_SECRET")
+  );
 }
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number) {
@@ -32,7 +25,9 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
 export async function POST(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 16 * 1024);
+  if (!parsed.ok) return NextResponse.json({ error: "Invalid request" }, { status: parsed.reason === "too_large" ? 413 : 400 });
+  const body = parsed.value;
   const action = typeof body?.action === "string" ? body.action : "";
   const admin = createAdminClient();
 

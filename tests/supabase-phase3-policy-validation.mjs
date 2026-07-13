@@ -194,13 +194,15 @@ try {
   const forgedNotification = await alice.client.from("notifications").insert({ recipient_name: carol.username, type: "forged" });
   assertDenied(forgedNotification, "client notification creation");
   const ownToken = await bob.client.from("push_tokens").insert({
-    expo_push_token: `ExponentPushToken[p3-${suffix}]`, platform: "android", user_name: bob.username
+    expo_push_token: `ExponentPushToken[p3-${suffix}]`, install_id: randomUUID(), platform: "android", user_name: bob.username
   });
   assertAllowed(ownToken, "own push token");
   const forgedToken = await bob.client.from("push_tokens").insert({
-    expo_push_token: `ExponentPushToken[p3-forged-${suffix}]`, platform: "android", user_name: alice.username
-  });
-  assertDenied(forgedToken, "forged push token owner");
+    expo_push_token: `ExponentPushToken[p3-forged-${suffix}]`, install_id: randomUUID(), platform: "android", user_name: alice.username
+  }).select("user_id, user_name").single();
+  assertAllowed(forgedToken, "client push token registration");
+  assert.equal(forgedToken.data.user_id, bob.id);
+  assert.equal(forgedToken.data.user_name, bob.username);
   record("notification and push-token authority boundaries pass");
 
   const room = await admin.from("shared_memory_rooms").insert({
@@ -339,7 +341,7 @@ try {
   });
   assertDenied(frozenReview, "frozen review write");
   const frozenToken = await eve.client.from("push_tokens").insert({
-    expo_push_token: `ExponentPushToken[p3-frozen-${suffix}]`, platform: "android", user_name: eve.username
+    expo_push_token: `ExponentPushToken[p3-frozen-${suffix}]`, install_id: randomUUID(), platform: "android", user_name: eve.username
   });
   assertDenied(frozenToken, "frozen push token write");
   const frozenMemoryWrite = await eve.client.from("shared_memory_messages").insert({

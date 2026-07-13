@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { enforceRateLimit, fetchWithDeadline, mobileApiJson, mobileOptions, rateLimitResponse } from "@/lib/server/api-security";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 type GoogleAutocompleteSuggestion = {
   placePrediction?: {
@@ -24,58 +26,40 @@ type RestaurantSuggestion = {
 
 type GoogleErrorResponse = {
   error?: {
-    code?: number;
-    message?: string;
     status?: string;
-    details?: {
-      metadata?: {
-        activationUrl?: string;
-        serviceTitle?: string;
-      };
-    }[];
   };
 };
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["GET"];
 const loggedGoogleErrors = new Set<string>();
 
-function placesJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function placesJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 export async function GET(req: NextRequest) {
-  const input = req.nextUrl.searchParams.get("input")?.trim() ?? "";
+  const { actor } = await getRouteActor(req);
+  if (!actor) return placesJson(req, { error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "provider.places-autocomplete", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+
+  const input = req.nextUrl.searchParams.get("input")?.trim().slice(0, 120) ?? "";
   const sessionToken = req.nextUrl.searchParams.get("sessionToken")?.trim() ?? "";
   const latStr = req.nextUrl.searchParams.get("lat") ?? "";
   const lngStr = req.nextUrl.searchParams.get("lng") ?? "";
   const lat = latStr ? parseFloat(latStr) : NaN;
   const lng = lngStr ? parseFloat(lngStr) : NaN;
 
-  if (!input) {
-    return placesJson({ error: "input is required" }, { status: 400 });
+  if (input.length < 2 || input.length > 120 || (sessionToken && !/^[A-Za-z0-9._:-]{8,96}$/.test(sessionToken))) {
+    return placesJson(req, { error: "Invalid search request" }, { status: 400 });
   }
 
   const googleApiKey = process.env.GOOGLE_API_KEY?.trim();
   const placesApiKey = process.env.GOOGLE_PLACES_API_KEY?.trim();
   const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
   const apiKey = googleApiKey || placesApiKey || mapsApiKey;
-  const apiKeySource = googleApiKey
-    ? "GOOGLE_API_KEY"
-    : placesApiKey
-      ? "GOOGLE_PLACES_API_KEY"
-      : "GOOGLE_MAPS_API_KEY";
   if (!apiKey) {
-    return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+    return placesJson(req, { suggestions: [] as RestaurantSuggestion[] }, { status: 503 });
   }
 
   try {
@@ -99,7 +83,7 @@ export async function GET(req: NextRequest) {
     };
 
     // Bias results toward the user's current location (30 km radius, soft bias — not a restriction).
-    if (!isNaN(lat) && !isNaN(lng)) {
+    if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
       body.locationBias = {
         circle: {
           center: { latitude: lat, longitude: lng },
@@ -110,44 +94,30 @@ export async function GET(req: NextRequest) {
 
     if (sessionToken) body.sessionToken = sessionToken;
 
-    const response = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+    const response = await fetchWithDeadline("https://places.googleapis.com/v1/places:autocomplete", {
       method: "POST",
       headers: googleHeaders,
       body: JSON.stringify(body),
       cache: "no-store",
-    });
+    }, 5_000);
 
     if (!response.ok) {
       const errorPayload = (await response.json().catch(() => null)) as GoogleErrorResponse | null;
       const googleError = errorPayload?.error;
-      const activationUrl = googleError?.details
-        ?.map((detail) => detail.metadata?.activationUrl)
-        .find(Boolean);
       const status = googleError?.status ?? "UNKNOWN";
-      const message = googleError?.message ?? response.statusText;
-      const logKey = `${response.status}:${status}:${message}`;
+      const logKey = `${response.status}:${status}`;
       if (!loggedGoogleErrors.has(logKey)) {
         loggedGoogleErrors.add(logKey);
-        const restrictionHint = message.includes("referer <empty>")
-          ? `${apiKeySource} is HTTP-referrer restricted, but this server route needs a key with Application restrictions set to None for local dev or IP addresses for production.`
-          : "";
-        console.warn(
-          "[places/autocomplete] Google Places request failed",
-          response.status,
-          status,
-          message,
-          activationUrl ? `Enable: ${activationUrl}` : "",
-          restrictionHint,
-        );
+        console.warn("[places/autocomplete] provider request failed", { httpStatus: response.status, providerStatus: status });
       }
-      return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+      return placesJson(req, { suggestions: [] as RestaurantSuggestion[] }, { status: response.status === 429 ? 429 : 502 });
     }
 
     const payload = (await response.json()) as GoogleAutocompleteResponse;
     const suggestions: RestaurantSuggestion[] = [];
     const seen = new Set<string>();
 
-    for (const item of payload.suggestions ?? []) {
+    for (const item of (payload.suggestions ?? []).slice(0, 10)) {
       const prediction = item.placePrediction;
       const placeId = prediction?.placeId?.trim();
       if (!placeId) continue;
@@ -169,15 +139,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return placesJson({ suggestions }, { status: 200 });
+    return placesJson(req, { suggestions: suggestions.slice(0, 8) }, { status: 200 });
   } catch {
-    return placesJson({ suggestions: [] as RestaurantSuggestion[] }, { status: 200 });
+    return placesJson(req, { suggestions: [] as RestaurantSuggestion[] }, { status: 504 });
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

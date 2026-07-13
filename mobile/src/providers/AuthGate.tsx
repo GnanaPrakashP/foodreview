@@ -2,7 +2,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useEffect } from "react";
 import { useSessionStore } from "@/stores/sessionStore";
 
-const signedOutRoutes = new Set(["/login", "/signup", "/auth/callback"]);
+const signedOutRoutes = new Set(["/login", "/signup", "/auth/callback", "/auth/recovery"]);
 
 export function AuthGate() {
   const router = useRouter();
@@ -23,6 +23,7 @@ export function AuthGate() {
       return;
     }
 
+    if (pathname === "/auth/recovery") return;
     if (signedOutRoutes.has(pathname)) {
       router.replace(profile ? "/" : "/onboarding/profile");
     }

@@ -98,9 +98,9 @@ test("notification inbox automation uses backend list and unread-count truth", (
   assert.doesNotMatch(notificationServiceSource, /\.from\("notifications"\)/);
   assert.doesNotMatch(notificationServiceSource, /filter\(.*!notification\.isRead/);
 
-  assert.match(notificationListRouteSource, /createRouteSupabase\(req\)/);
+  assert.match(notificationListRouteSource, /getNotificationRouteContext\(req\)/);
   assert.match(notificationListRouteSource, /filterValidNotifications/);
-  assert.match(notificationUnreadRouteSource, /createRouteSupabase\(req\)/);
+  assert.match(notificationUnreadRouteSource, /getNotificationRouteContext\(req\)/);
   assert.match(notificationUnreadRouteSource, /filterValidNotifications/);
 
   assert.match(notificationScreenSource, /SectionList/);

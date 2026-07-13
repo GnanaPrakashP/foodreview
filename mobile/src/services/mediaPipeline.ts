@@ -1,5 +1,6 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { apiBaseUrl, apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import { stageAccountFile } from "@/services/accountFileStore";
 import {
@@ -188,17 +189,9 @@ async function authorizedMobileJson<T>(
 ): Promise<T> {
   if (!apiBaseUrl) throw new Error("Media uploads require the API server.");
 
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error("Log in before uploading media");
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before uploading media");
-
   const response = await fetch(apiUrl(path), {
     body: body ? JSON.stringify(body) : undefined,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("uploading media", method),
     method,
     signal
   });

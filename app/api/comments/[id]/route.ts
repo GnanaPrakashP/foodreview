@@ -5,6 +5,9 @@ import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPostEngagementState } from "@/lib/server/post-engagement-state";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["DELETE"];
 
 async function fetchPostReviewerName(db: ReturnType<typeof createAdminClient>, postId: string): Promise<string> {
   const { data } = await db.from("reviews").select("reviewer_name").eq("id", postId).maybeSingle();
@@ -24,6 +27,8 @@ export async function DELETE(
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
   const { data: comment, error: fetchError } = await writeDb

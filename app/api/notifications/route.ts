@@ -3,7 +3,7 @@ import type { Notification } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayName } from "@/lib/profile-names";
 import { LEGACY_NOTIFICATION_SELECT, NOTIFICATION_SELECT } from "@/lib/selects";
-import { createRouteSupabase, filterValidNotifications, getNotificationViewer, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
+import { filterValidNotifications, getNotificationRouteContext, isNotificationSchemaError, mergeNotifications, unauthorized } from "./_utils";
 
 type ProfileLookupDb = {
   from: (table: string) => any;
@@ -70,8 +70,7 @@ async function buildNotificationProfileMap(
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createRouteSupabase(req);
-  const viewer = await getNotificationViewer(supabase);
+  const { supabase, viewer } = await getNotificationRouteContext(req);
   if (!viewer) return unauthorized();
 
   const limitParam = Number(req.nextUrl.searchParams.get("limit") ?? 50);
@@ -108,7 +107,7 @@ export async function GET(req: NextRequest) {
         .limit(limit);
 
       if (legacyError) {
-        console.error("[notifications] legacy list failed:", legacyError.message, legacyError.code, legacyError.details);
+        console.error("[notifications] legacy list failed");
         return NextResponse.json({ error: legacyError.message }, { status: 500 });
       }
 
@@ -120,7 +119,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    console.error("[notifications] list failed:", byIdError ?? byNameError);
+    console.error("[notifications] list failed");
     return NextResponse.json({ error: byIdError?.message ?? byNameError?.message }, { status: 500 });
   }
 

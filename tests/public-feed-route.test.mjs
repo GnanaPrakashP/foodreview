@@ -93,7 +93,7 @@ function hasOp(entry, name) {
 // Small page size so hasMore tests are easy
 const PAGE_SIZE = 5;
 
-function loadRoute({ db }) {
+function loadRoute({ db, viewerName = "" }) {
   const mod = { exports: {} };
   vm.runInNewContext(routeSource, {
     module: mod,
@@ -157,7 +157,13 @@ function loadRoute({ db }) {
         return { normalizeReview: (review) => review };
       }
       if (id === "@/lib/server/route-supabase") {
-        return { getRouteActor: async () => ({ actor: null }) };
+        return {
+          getRouteActor: async () => ({
+            actor: viewerName
+              ? { userId: "viewer-id", actorName: viewerName, displayName: viewerName }
+              : null,
+          }),
+        };
       }
       if (id === "@/lib/server/post-views") {
         return { loadSeenPostIdsForUser: async (_db, _userId, extraPostIds = []) => new Set(extraPostIds) };
@@ -209,7 +215,7 @@ test("public feed: query uses eq('visibility', 'public')", async () => {
   const db = spyDb(
     { data: [], error: null }, // reviews
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "viewer" });
   await GET(makeReq());
   const reviewCall = db._calls.find((c) => c.table === "reviews");
   assert.ok(reviewCall, "should query reviews table");
@@ -221,7 +227,7 @@ test("public feed: location params constrain reviews to nearby restaurants", asy
   const db = spyDb(
     { data: [], error: null }, // reviews
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "carol" });
   await GET(makeReq("lat=17.4239&lng=78.4738"));
   const reviewCall = db._calls.find((c) => c.table === "reviews");
   assert.ok(reviewCall, "should query reviews table");
@@ -329,7 +335,7 @@ test("public feed: viewer's own posts are included in the public universe", asyn
     { data: [], error: null },
     { data: [], error: null },
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "viewer" });
   const res = await GET(makeReq("viewer=viewer"));
   assert.equal(status(res), 200);
   assert.deepEqual(body(res).reviews.map((r) => r.reviewer_name), ["carol", "viewer"]);
@@ -434,7 +440,7 @@ test("public feed: likedByMeMap marks posts liked by the viewer", async () => {
     { data: [], error: null }, // wishlist (viewer present)
     { data: [], error: null }, // profiles
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "viewer" });
   const res = await GET(makeReq("viewer=viewer"));
   assert.equal(body(res).likedByMeMap["post-2"], true);
 });
@@ -449,7 +455,7 @@ test("public feed: likedByMeMap does not mark posts not liked by the viewer", as
     { data: [], error: null },
     { data: [], error: null },
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "carol" });
   const res = await GET(makeReq("viewer=carol"));
   assert.equal(body(res).likedByMeMap["post-3"], undefined);
 });
@@ -487,7 +493,7 @@ test("public feed: bookmarkedPostMap marks posts in viewer's wishlist", async ()
     { data: [{ post_id: "post-5" }], error: null }, // wishlist
     { data: [], error: null }, // profiles
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "carol" });
   const res = await GET(makeReq("viewer=carol"));
   assert.equal(body(res).bookmarkedPostMap["post-5"], true);
 });
@@ -501,7 +507,7 @@ test("public feed: wishlist lookup is keyed by visible post ids, not restaurant 
     { data: [], error: null }, // wishlist
     { data: [], error: null }, // profiles
   );
-  const { GET } = loadRoute({ db });
+  const { GET } = loadRoute({ db, viewerName: "viewer" });
   await GET(makeReq("viewer=viewer"));
 
   const wishlistCall = db._calls.find((c) => c.table === "wishlist");

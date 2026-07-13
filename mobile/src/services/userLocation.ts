@@ -2,6 +2,7 @@ import * as Location from "expo-location";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { supabase } from "@/api/supabase";
 import { compactLocationLabel, isGenericLocationLabel } from "@/services/locationLabels";
 import {
@@ -339,7 +340,9 @@ export async function reverseGeocodeUserLocation(lat: number, lng: number) {
 async function reverseGeocodeUserLocationFromBackend(lat: number, lng: number) {
   try {
     const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
-    const response = await fetch(apiUrl(`/api/places/reverse-geocode?${params.toString()}`));
+    const response = await fetch(apiUrl(`/api/places/reverse-geocode?${params.toString()}`), {
+      headers: await authorizedApiHeaders("resolving your location")
+    });
     if (!response.ok) return null;
     const payload = (await response.json()) as { label?: string | null };
     return normalizeUserLocationLabel(payload.label);

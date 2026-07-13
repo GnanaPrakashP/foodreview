@@ -7,6 +7,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isOwnedReviewMediaPath, REVIEW_MEDIA_BUCKET } from "@/lib/server/review-media";
 import { MEDIA_PRIVATE_BUCKET, MEDIA_PUBLIC_BUCKET, MEDIA_SOURCE_BUCKET } from "@/lib/server/media-pipeline";
 import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["DELETE", "PATCH"];
 
 type ReviewDeleteRow = {
   reviewer_name: string;
@@ -14,7 +17,7 @@ type ReviewDeleteRow = {
 };
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -22,11 +25,13 @@ export async function DELETE(
     return NextResponse.json({ error: "Invalid review id" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor(_req);
+  const { actor } = await getRouteActor(req);
 
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const admin = createAdminClient();
   const { data: review, error: fetchError } = await admin
@@ -134,6 +139,8 @@ export async function PATCH(
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const admin = createAdminClient();
   const { data: review, error: fetchError } = await admin
@@ -150,7 +157,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Not your review" }, { status: 403 });
   }
 
-  const body = await req.json();
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 64 * 1024);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value ?? {};
   const { visibility, body: reviewBody, items } = body;
   const updates: Record<string, unknown> = {};
   let normalizedItemsForMentions: ReturnType<typeof normalizeReviewItems>["items"] | null = null;
@@ -208,7 +217,7 @@ export async function PATCH(
       userId: actor.userId
     });
     if (!mentionResult.ok) {
-      console.error("[reviews] Failed to refresh dish mentions:", mentionResult.error);
+      console.error("[reviews] dish mention refresh failed");
       return NextResponse.json({ error: "Could not update review dishes" }, { status: 500 });
     }
   }

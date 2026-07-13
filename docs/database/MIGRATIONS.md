@@ -30,7 +30,7 @@ npx supabase@2.109.1 migration new descriptive_name
 
 Then run `npm run db:verify`. That command validates the locked history, performs two consecutive clean resets, lints SQL, runs pgTAP plus real Auth/RLS/Storage checks, exercises supported upgrade fixtures, and finishes with the read-only local drift audit.
 
-The final Phase 3 local run verified 64 canonical migrations and 82 tracked historical entries, passed the five supported data-preserving upgrades plus two history classifications (7/7), passed two consecutive resets, passed the explicit 21-test pgTAP plan and 10/10 real policy/Storage matrix, and reported zero local drift. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md` for the complete application and prior-phase evidence.
+Phase 3 verified 64 canonical migrations and 82 tracked historical entries. Phase 4 adds one forward-only migration, so the current manifest contains 65 canonical migrations and 83 tracked entries. The database contract now runs 35 pgTAP assertions plus the real Phase 3 and Phase 4 Auth/RLS/Storage/security behavior matrices. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md` for reconciliation evidence and `docs/production-hardening/PHASE_4_API_SECURITY.md` for the additive security contract.
 
 ## Historical inventory
 
@@ -102,6 +102,7 @@ The mechanically merged chain reset successfully without changing old SQL. Runti
 - `202607130005_canonical_policy_reconciliation.sql` restores anonymous reads of eligible public reviews without allowing anonymous profile-table discovery, while preserving deleting-account suppression.
 - `202607130006_canonical_role_grants.sql` supplies least-privilege API grants for promoted RLS tables while keeping Memory photo/upload-intent finalization and all worker/deletion authority server-only.
 - `202607130007_canonical_review_media_path_reconciliation.sql` teaches the older Profile ownership guard the server-derived Phase 1A `private-posts/<owner>/...` shape, allowing existing-data backfill and deletion inventory while still rejecting cross-owner paths.
+- `202607130008_mobile_api_security.sql` adds durable HMAC-keyed API rate buckets, idempotency state, install/Auth-bound push tokens, active generic-media moderation quarantine/audit, audited report decisions, service-only grants, and the additive Phase 4 schema-contract extension.
 
 ## Upgrade support
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCircleFeedPage, parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
 import { getAccountTypesForNames } from "@/lib/circle-db";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { FoodReactionState, PostEngagementState } from "@/lib/server/post-engagement-state";
@@ -30,7 +30,8 @@ function parseCsvIds(value: string | null): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createRouteSupabase(req);
+  const { actor, supabase } = await getRouteActor(req);
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const limit = parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE);
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);

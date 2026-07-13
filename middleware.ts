@@ -6,11 +6,26 @@ export async function middleware(request: NextRequest) {
   const { hostname } = request.nextUrl;
 
   const isQaRoute = pathname === "/qa" || pathname.startsWith("/qa/");
+  const isApiRoute = pathname === "/api" || pathname.startsWith("/api/");
   const isLocalhost =
     hostname === "localhost" ||
     hostname === "127.0.0.1" ||
     hostname === "::1" ||
     hostname.endsWith(".localhost");
+
+  // Route handlers apply tighter endpoint-specific streaming limits. This is a
+  // universal outer ceiling for ordinary mobile requests and keeps API traffic
+  // out of the browser-cookie refresh path below.
+  if (isApiRoute) {
+    const rawLength = request.headers.get("content-length");
+    if (rawLength) {
+      const length = Number(rawLength);
+      if (!Number.isSafeInteger(length) || length < 0 || length > 1024 * 1024) {
+        return NextResponse.json({ error: "Request too large" }, { status: 413 });
+      }
+    }
+    return NextResponse.next({ request });
+  }
 
   // Keep /qa local-only without paying the Supabase auth round trip.
   if (isQaRoute) {
@@ -89,6 +104,7 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     "/",
+    "/api/:path*",
     "/comments/:path*",
     "/dishes/:path*",
     "/login",

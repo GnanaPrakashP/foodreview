@@ -1,4 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { enforceRateLimit, fetchWithDeadline, mobileApiJson, mobileOptions, rateLimitResponse } from "@/lib/server/api-security";
+import { getRouteActor } from "@/lib/server/route-supabase";
+
+const METHODS = ["GET"];
 
 type GeocodingResult = {
   address_components: {
@@ -88,32 +92,42 @@ function shortLabel(results: GeocodingResult[]): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  const { actor } = await getRouteActor(req);
+  if (!actor) return mobileApiJson(req, METHODS, { error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "provider.reverse-geocode", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
   const lat = req.nextUrl.searchParams.get("lat");
   const lng = req.nextUrl.searchParams.get("lng");
 
-  if (!lat || !lng) {
-    return NextResponse.json({ label: null }, { status: 400 });
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!lat || !lng || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return mobileApiJson(req, METHODS, { label: null }, { status: 400 });
   }
 
   const apiKey =
     process.env.GOOGLE_API_KEY?.trim() ||
     process.env.GOOGLE_PLACES_API_KEY?.trim() ||
     process.env.GOOGLE_MAPS_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ label: null }, { status: 200 });
+  if (!apiKey) return mobileApiJson(req, METHODS, { label: null }, { status: 503 });
 
   try {
     const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-    url.searchParams.set("latlng", `${lat},${lng}`);
+    url.searchParams.set("latlng", `${latitude},${longitude}`);
     url.searchParams.set("key", apiKey);
 
-    const res = await fetch(url.toString(), { cache: "no-store" });
-    if (!res.ok) return NextResponse.json({ label: null }, { status: 200 });
+    const res = await fetchWithDeadline(url, { cache: "no-store" }, 5_000);
+    if (!res.ok) return mobileApiJson(req, METHODS, { label: null }, { status: res.status === 429 ? 429 : 502 });
 
     const payload = (await res.json()) as GeocodingResponse;
-    if (payload.status !== "OK") return NextResponse.json({ label: null }, { status: 200 });
+    if (payload.status !== "OK") return mobileApiJson(req, METHODS, { label: null }, { status: 502 });
 
-    return NextResponse.json({ label: shortLabel(payload.results) }, { status: 200 });
+    return mobileApiJson(req, METHODS, { label: shortLabel(payload.results.slice(0, 10)) }, { status: 200 });
   } catch {
-    return NextResponse.json({ label: null }, { status: 200 });
+    return mobileApiJson(req, METHODS, { label: null }, { status: 504 });
   }
+}
+
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

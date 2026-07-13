@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
+import { authorizedApiHeaders } from "@/api/client";
 import { normalizeDishInput } from "@/services/dishNormalizer";
 import { completeRecoveredMediaUploads, uploadPostMediaAsset, type MediaCropRect } from "@/services/mediaPipeline";
 import { getCurrentUserProfile } from "@/services/profiles";
@@ -212,10 +213,7 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
       tags: input.tags,
       visibility: input.visibility
     }),
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("sharing a post", "POST"),
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as { id?: string; error?: string } | null;

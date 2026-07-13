@@ -143,6 +143,14 @@ try {
       uploaded_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq("id", fixture.id), "asset_finalize");
+    const moderation = await admin.rpc("apply_media_moderation_action", {
+      p_action: "approved",
+      p_asset_id: fixture.id,
+      p_operator_hash: "a".repeat(64),
+      p_reason_code: "phase2_processing_verified"
+    });
+    assertNoError(moderation, "asset_moderation");
+    assert.equal(moderation.data, true, "test operator should release the quarantined asset");
   }
   const queued = assertNoError(await admin.from("media_processing_jobs").select("asset_id,status").in("asset_id", fixtures.map((row) => row.id)), "queued_jobs");
   assert.equal(queued.length, 3);

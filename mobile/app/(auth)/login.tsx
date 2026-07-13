@@ -190,7 +190,7 @@ export default function LoginScreen() {
         {mode === "email" ? (
           <AuthFlowPane styles={styles}>
             <BackLink onPress={() => changeMode("entry")} styles={styles} themeColors={themeColors}>Back</BackLink>
-            <AuthHeader title="Continue with email" text="Enter your email and we'll take you to the right next step." styles={styles} />
+            <AuthHeader title="Continue with email" text="Enter your email to sign in or create an account." styles={styles} />
 
             <AuthInput
               autoComplete="email"
@@ -255,6 +255,11 @@ export default function LoginScreen() {
             >
               Sign In
             </AuthButton>
+            <View style={styles.forgotRow}>
+              <Pressable onPress={() => changeMode("sign_up")} hitSlop={8}>
+                <Text style={styles.forgotText}>New to CircleBites? Create an account</Text>
+              </Pressable>
+            </View>
           </AuthFlowPane>
         ) : null}
 

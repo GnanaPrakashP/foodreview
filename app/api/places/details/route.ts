@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { enforceRateLimit, fetchWithDeadline, mobileApiJson, mobileOptions, rateLimitResponse } from "@/lib/server/api-security";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 type GoogleAddressComponent = {
   longText?: string;
@@ -22,7 +24,6 @@ type GooglePlaceDetailsResponse = {
 
 type GoogleErrorResponse = {
   error?: {
-    message?: string;
     status?: string;
   };
 };
@@ -39,11 +40,7 @@ type PlaceDetails = {
   longitude: number | null;
 };
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["GET"];
 const loggedGoogleErrors = new Set<string>();
 
 // The label is derived from Google's address-component types (below); admin areas,
@@ -107,22 +104,20 @@ function structuredLocationLabel(components: GoogleAddressComponent[] | undefine
   return joinParts([pickComponent(components, ...AREA_TYPES), pickComponent(components, ...CITY_TYPES)]) ?? "";
 }
 
-function placesJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function placesJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 export async function GET(req: NextRequest) {
+  const { actor } = await getRouteActor(req);
+  if (!actor) return placesJson(req, { error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "provider.places-details", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
   const placeId = req.nextUrl.searchParams.get("placeId")?.trim() ?? "";
   const sessionToken = req.nextUrl.searchParams.get("sessionToken")?.trim() ?? "";
 
-  if (!placeId) {
-    return placesJson({ error: "placeId is required" }, { status: 400 });
+  if (!/^[A-Za-z0-9_-]{8,256}$/.test(placeId) || (sessionToken && !/^[A-Za-z0-9._:-]{8,96}$/.test(sessionToken))) {
+    return placesJson(req, { error: "Invalid place request" }, { status: 400 });
   }
 
   const apiKey =
@@ -131,7 +126,7 @@ export async function GET(req: NextRequest) {
     process.env.GOOGLE_MAPS_API_KEY?.trim();
 
   if (!apiKey) {
-    return placesJson({ details: null }, { status: 200 });
+    return placesJson(req, { details: null }, { status: 503 });
   }
 
   const url = new URL(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`);
@@ -139,7 +134,7 @@ export async function GET(req: NextRequest) {
   if (sessionToken) url.searchParams.set("sessionToken", sessionToken);
 
   try {
-    const response = await fetch(url.toString(), {
+    const response = await fetchWithDeadline(url, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -156,18 +151,17 @@ export async function GET(req: NextRequest) {
         ].join(","),
       },
       cache: "no-store",
-    });
+    }, 5_000);
 
     if (!response.ok) {
       const errorPayload = (await response.json().catch(() => null)) as GoogleErrorResponse | null;
       const status = errorPayload?.error?.status ?? "UNKNOWN";
-      const message = errorPayload?.error?.message ?? response.statusText;
-      const logKey = `${response.status}:${status}:${message}`;
+      const logKey = `${response.status}:${status}`;
       if (!loggedGoogleErrors.has(logKey)) {
         loggedGoogleErrors.add(logKey);
-        console.warn("[places/details] Google Place Details request failed", response.status, status, message);
+        console.warn("[places/details] provider request failed", { httpStatus: response.status, providerStatus: status });
       }
-      return placesJson({ details: null }, { status: 200 });
+      return placesJson(req, { details: null }, { status: response.status === 429 ? 429 : 502 });
     }
 
     const payload = (await response.json()) as GooglePlaceDetailsResponse;
@@ -179,21 +173,18 @@ export async function GET(req: NextRequest) {
       locationLabel: structuredLocationLabel(payload.addressComponents),
       primaryType: payload.primaryType?.trim() || "",
       types: Array.isArray(payload.types)
-        ? payload.types.filter((type): type is string => typeof type === "string" && type.trim().length > 0).map((type) => type.trim())
+        ? payload.types.filter((type): type is string => typeof type === "string" && type.trim().length > 0).slice(0, 32).map((type) => type.trim().slice(0, 80))
         : [],
       latitude: typeof payload.location?.latitude === "number" ? payload.location.latitude : null,
       longitude: typeof payload.location?.longitude === "number" ? payload.location.longitude : null,
     };
 
-    return placesJson({ details }, { status: 200 });
+    return placesJson(req, { details }, { status: 200 });
   } catch {
-    return placesJson({ details: null }, { status: 200 });
+    return placesJson(req, { details: null }, { status: 504 });
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

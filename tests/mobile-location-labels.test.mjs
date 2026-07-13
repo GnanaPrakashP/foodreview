@@ -61,6 +61,7 @@ function loadUserLocation({ fetchImpl, reverseGeocodeAsync }) {
       };
     }
     if (specifier === "react-native") return { Platform: { OS: "android" } };
+    if (specifier === "@/api/client") return { authorizedApiHeaders: async () => ({ Authorization: "Bearer test-token" }) };
     if (specifier === "@/api/config") return { apiUrl: (path) => `https://app.test${path}` };
     if (specifier === "@/api/supabase") return { supabase: {} };
     if (specifier === "@/security/cacheOwnership") return {

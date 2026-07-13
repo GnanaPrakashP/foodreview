@@ -1,6 +1,5 @@
-import { authorizedJson } from "@/api/client";
+import { authorizedApiHeaders, authorizedJson } from "@/api/client";
 import { apiUrl } from "@/api/config";
-import { supabase } from "@/api/supabase";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { PostEngagementState } from "@/types/models";
 
@@ -23,14 +22,6 @@ async function getViewerName() {
   const profile = await getCurrentUserProfile();
   if (!profile) throw new Error("Log in before updating this post");
   return profile.username;
-}
-
-async function authToken(action: string) {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error(`Log in before ${action}`);
-  return token;
 }
 
 type EngagementPayload = PostEngagementState & {
@@ -62,12 +53,8 @@ export async function togglePostBookmark(input: ToggleBookmarkInput): Promise<Po
 
 export async function deletePost(input: { postId: string }) {
   await getViewerName();
-  const token = await authToken("deleting this post");
-
   const response = await fetch(apiUrl(`/api/reviews/${encodeURIComponent(input.postId)}`), {
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
+    headers: await authorizedApiHeaders("deleting this post", "DELETE"),
     method: "DELETE"
   });
   const payload = await response.json().catch(() => null) as { error?: string } | null;

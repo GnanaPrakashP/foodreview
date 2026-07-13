@@ -15,7 +15,7 @@ function transpile(src) {
   return outputText;
 }
 
-function loadUtils({ profileName = "Alice" } = {}) {
+function loadUtils({ actor = { userId: "user-1", actorName: "Priya Kumar" } } = {}) {
   const source = readFileSync(new URL("../app/api/notifications/_utils.ts", import.meta.url), "utf8");
   const mod = { exports: {} };
   vm.runInNewContext(transpile(source), {
@@ -26,7 +26,10 @@ function loadUtils({ profileName = "Alice" } = {}) {
     require(id) {
       if (id === "@supabase/ssr") return { createServerClient: () => ({}) };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
-      if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => ({}) };
+      if (id === "@/lib/server/route-supabase") return {
+        createRouteSupabase: async () => ({}),
+        getRouteActor: async (req) => ({ actor, supabase: req?.supabase ?? {} }),
+      };
       if (id === "next/server") {
         return {
           NextResponse: {
@@ -34,11 +37,6 @@ function loadUtils({ profileName = "Alice" } = {}) {
               return { _body: body, _status: opts?.status ?? 200 };
             },
           },
-        };
-      }
-      if (id === "@/lib/notifications") {
-        return {
-          getAuthenticatedProfileName: async () => profileName,
         };
       }
       if (id === "@/lib/types") return {};
@@ -114,31 +112,20 @@ test("notification utils: unauthorized returns a 401 JSON response", () => {
   assert.equal(res._body.error, "Unauthorized");
 });
 
-test("notification utils: viewer resolves authenticated user id and profile name", async () => {
-  const { getNotificationViewer } = loadUtils({ profileName: "Priya Kumar" });
-  const supabase = {
-    auth: {
-      getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }),
-    },
-  };
+test("notification utils: context resolves canonical actor id and profile name", async () => {
+  const { getNotificationRouteContext } = loadUtils();
+  const supabase = {};
+  const context = await getNotificationRouteContext({ supabase });
 
-  const viewer = await getNotificationViewer(supabase);
-
-  assert.equal(viewer.id, "user-1");
-  assert.equal(viewer.name, "Priya Kumar");
+  assert.equal(context.viewer.id, "user-1");
+  assert.equal(context.viewer.name, "Priya Kumar");
+  assert.equal(context.supabase, supabase);
 });
 
-test("notification utils: viewer is null when auth fails or no user is present", async () => {
-  const { getNotificationViewer } = loadUtils();
-
-  assert.equal(
-    await getNotificationViewer({ auth: { getUser: async () => ({ data: { user: null }, error: null }) } }),
-    null
-  );
-  assert.equal(
-    await getNotificationViewer({ auth: { getUser: async () => ({ data: { user: { id: "u1" } }, error: { message: "bad token" } }) } }),
-    null
-  );
+test("notification utils: viewer is null when canonical actor is absent", async () => {
+  const { getNotificationRouteContext } = loadUtils({ actor: null });
+  const context = await getNotificationRouteContext({ supabase: {} });
+  assert.equal(context.viewer, null);
 });
 
 test("notification utils: mergeNotifications normalizes, dedupes, and sorts by effective date", () => {

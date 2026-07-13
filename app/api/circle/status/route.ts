@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { getAccountTypeForName, getAccountTypesForNames } from "@/lib/circle-db";
 import type { CircleRelationshipState } from "@/lib/types";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
 
 export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name");
@@ -23,9 +22,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const supabase = await createRouteSupabase(req);
-
-  const actor = await getAuthenticatedCircleActor(supabase);
+  const { actor, supabase } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

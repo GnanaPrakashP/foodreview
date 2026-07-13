@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 const { outputText } = ts.transpileModule(
   readFileSync(new URL("../app/api/delete-account/route.ts", import.meta.url), "utf8"),
@@ -32,10 +33,18 @@ function loadRoute({ rpcData = [{ job_id: "job-1", job_status: "inventory_pendin
           }
         };
       }
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({
+        json: (body, options) => ({ body, headers: options?.headers ?? {}, status: options?.status ?? 200 }),
+      });
       if (id === "@/lib/server/memory-observability") {
         return { memoryErrorKind: () => "test", memoryOperationDurationMs: () => 1, recordMemoryOperation: () => {} };
       }
-      if (id === "@/lib/server/route-supabase") return { createRouteSupabase: async () => client };
+      if (id === "@/lib/server/route-supabase") return {
+        getRouteActor: async () => ({
+          actor: user ? { userId: user.id, actorName: "Alice", displayName: "Alice" } : null,
+          supabase: client,
+        }),
+      };
       throw new Error(`Unexpected require: ${id}`);
     }
   });

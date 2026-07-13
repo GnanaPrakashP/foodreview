@@ -10,7 +10,7 @@ function parseNumber(value: string | null, fallback: number): number {
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, actor } = await getRouteActor();
+    const { supabase, actor } = await getRouteActor(req);
     const myName = actor?.actorName ?? "";
     const limit = parseNumber(req.nextUrl.searchParams.get("limit"), 48);
 

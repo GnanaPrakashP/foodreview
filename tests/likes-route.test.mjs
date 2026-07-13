@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 // ── transpile ─────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ function loadRoute(code, { db, authName }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { after: () => undefined, NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/notifications") {
         return {
@@ -150,7 +152,7 @@ function loadRoute(code, { db, authName }) {
 
 test("POST /likes: logged-out user is rejected with 401", async () => {
   const { POST } = loadRoute(src, { db: spyDb(), authName: null });
-  const res = await POST(makeReq({ postId: "post-1" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 401);
 });
 
@@ -164,7 +166,7 @@ test("POST /likes: missing postId returns 400", async () => {
 test("POST /likes: user_name is always the authenticated actor, not the request body", async () => {
   const db = spyDb({ error: null });
   const { POST } = loadRoute(src, { db, authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1", userName: "Mallory" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", userName: "Mallory" }));
   assert.equal(status(res), 200);
   const likeEntry = db._calls.find((c) => c.ops.some(([op]) => op === "insert"));
   assert.ok(likeEntry, "Expected an insert call");
@@ -175,9 +177,9 @@ test("POST /likes: user_name is always the authenticated actor, not the request 
 test("POST /likes: insert contains correct post_id", async () => {
   const db = spyDb({ error: null });
   const { POST } = loadRoute(src, { db, authName: "Alice" });
-  await POST(makeReq({ postId: "post-42" }));
+  await POST(makeReq({ postId: "22222222-2222-4222-8222-222222222222" }));
   const likeEntry = db._calls.find((c) => c.ops.some(([op]) => op === "insert"));
-  assert.equal(insertArg(likeEntry)?.post_id, "post-42");
+  assert.equal(insertArg(likeEntry)?.post_id, "22222222-2222-4222-8222-222222222222");
 });
 
 test("POST /likes: duplicate like (23505) returns ok with alreadyLiked flag", async () => {
@@ -188,7 +190,7 @@ test("POST /likes: duplicate like (23505) returns ok with alreadyLiked flag", as
     ),
     authName: "Alice",
   });
-  const res = await POST(makeReq({ postId: "post-1" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 200);
   assert.equal(body(res).alreadyLiked, true);
 });
@@ -201,7 +203,7 @@ test("POST /likes: other DB error returns 500", async () => {
     ),
     authName: "Alice",
   });
-  const res = await POST(makeReq({ postId: "post-1" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 500);
 });
 
@@ -209,7 +211,7 @@ test("POST /likes: other DB error returns 500", async () => {
 
 test("DELETE /likes: logged-out user is rejected with 401", async () => {
   const { DELETE } = loadRoute(src, { db: spyDb(), authName: null });
-  const res = await DELETE(makeReq({ postId: "post-1" }));
+  const res = await DELETE(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 401);
 });
 
@@ -223,7 +225,7 @@ test("DELETE /likes: missing postId returns 400", async () => {
 test("DELETE /likes: unlike uses authenticated actor's user_name, not request body", async () => {
   const db = spyDb({ error: null });
   const { DELETE } = loadRoute(src, { db, authName: "Alice" });
-  const res = await DELETE(makeReq({ postId: "post-1", userName: "Mallory" }));
+  const res = await DELETE(makeReq({ postId: "11111111-1111-4111-8111-111111111111", userName: "Mallory" }));
   assert.equal(status(res), 200);
   const deleteEntry = db._calls.find((c) => c.ops.some(([op]) => op === "delete"));
   assert.ok(deleteEntry, "Expected a delete call");
@@ -234,7 +236,7 @@ test("DELETE /likes: unlike uses authenticated actor's user_name, not request bo
 test("DELETE /likes: another user cannot unlike by forging the owner name", async () => {
   const db = spyDb({ error: null });
   const { DELETE } = loadRoute(src, { db, authName: "Bob" });
-  const res = await DELETE(makeReq({ postId: "post-1", userName: "Alice" }));
+  const res = await DELETE(makeReq({ postId: "11111111-1111-4111-8111-111111111111", userName: "Alice" }));
   assert.equal(status(res), 200);
   const deleteEntry = db._calls.find((c) => c.ops.some(([op]) => op === "delete"));
   assert.ok(deleteEntry, "Expected a delete call");
@@ -245,9 +247,9 @@ test("DELETE /likes: another user cannot unlike by forging the owner name", asyn
 test("DELETE /likes: unlike filters by the correct post_id", async () => {
   const db = spyDb({ error: null });
   const { DELETE } = loadRoute(src, { db, authName: "Alice" });
-  await DELETE(makeReq({ postId: "post-99" }));
+  await DELETE(makeReq({ postId: "99999999-9999-4999-8999-999999999999" }));
   const deleteEntry = db._calls.find((c) => c.ops.some(([op]) => op === "delete"));
-  assert.equal(eqFilters(deleteEntry).post_id, "post-99");
+  assert.equal(eqFilters(deleteEntry).post_id, "99999999-9999-4999-8999-999999999999");
 });
 
 test("DELETE /likes: successful unlike returns ok", async () => {
@@ -255,7 +257,7 @@ test("DELETE /likes: successful unlike returns ok", async () => {
     db: spyDb({ error: null }),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({ postId: "post-1" }));
+  const res = await DELETE(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 200);
   assert.equal(body(res).ok, true);
 });
@@ -268,7 +270,7 @@ test("DELETE /likes: DB error returns 500", async () => {
     ),
     authName: "Alice",
   });
-  const res = await DELETE(makeReq({ postId: "post-1" }));
+  const res = await DELETE(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 500);
   assert.match(body(res).error, /delete failed/);
 });

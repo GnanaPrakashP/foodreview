@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,6 +27,8 @@ async function removeFromCircle(req: NextRequest) {
 
   const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "mutation.circle", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const admin = createAdminClient();
   const me = actor.actorName;

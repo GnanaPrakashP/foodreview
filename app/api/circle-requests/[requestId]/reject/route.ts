@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
-import { getNotificationViewer, unauthorized } from "@/app/api/notifications/_utils";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import { unauthorized } from "@/app/api/notifications/_utils";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 type CircleRequestRow = {
   id: string;
@@ -10,10 +13,12 @@ type CircleRequestRow = {
   status: "pending" | "accepted" | "rejected";
 };
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ requestId: string }> }) {
-  const supabase = await createRouteSupabase();
-  const viewer = await getNotificationViewer(supabase);
-  if (!viewer?.name) return unauthorized();
+export async function POST(req: NextRequest, { params }: { params: Promise<{ requestId: string }> }) {
+  const { actor } = await getRouteActor(req);
+  if (!actor) return unauthorized();
+  const rate = await enforceRateLimit(req, "mutation.circle", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+  const viewer = { id: actor.userId, name: actor.actorName };
 
   const admin = createAdminClient();
   const { requestId } = await params;

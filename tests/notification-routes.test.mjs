@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 function transpile(src) {
   const { outputText } = ts.transpileModule(src, {
@@ -124,6 +125,7 @@ function loadRoute(code, {
     URLSearchParams,
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
       if (id === "@/lib/types") return {};
       if (id === "@/lib/selects") {
         return {
@@ -143,6 +145,7 @@ function loadRoute(code, {
         return {
           createRouteSupabase: async () => db,
           getNotificationViewer: async () => viewer,
+          getNotificationRouteContext: async () => ({ supabase: db, viewer }),
           isNotificationSchemaError: (error) => error?.code === "42703" || error?.code === "PGRST204",
           unauthorized: () => mockNextResponse.json({ error: "Unauthorized" }, { status: 401 }),
           mergeNotifications,

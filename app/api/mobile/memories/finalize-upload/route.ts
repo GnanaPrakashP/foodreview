@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   assertSafeMemoryStoragePath,
   mediaLimitResponse,
@@ -11,14 +11,11 @@ import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } fro
 import { assertMemoryRoomMutationAllowed, memoryRoomSecurityErrorStatus } from "@/lib/server/memory-room-security";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { apiJson, boundedJsonError, enforceRateLimit, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
 export const maxDuration = 60;
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
 type UploadIntentRow = {
   duration_ms: number | null;
@@ -67,13 +64,7 @@ type MemoryPhotoFinalizeRow = {
 const MEMORY_PHOTO_FINALIZE_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
 
 function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+  return apiJson(body, init);
 }
 
 function normalizeString(value: unknown) {
@@ -155,8 +146,12 @@ export async function POST(req: NextRequest) {
   try {
     const { actor, supabase } = await getRouteActor(req);
     if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+    const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-    const body = await req.json().catch(() => null);
+    const parsed = await readBoundedJson<Record<string, unknown>>(req, 16 * 1024);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+    const body = parsed.value;
     const intentId = normalizeString(body?.intentId);
     const roomId = normalizeString(body?.roomId);
     const messageId = normalizeString(body?.messageId);
@@ -353,9 +348,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

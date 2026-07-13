@@ -53,8 +53,9 @@ test("engagement mutations own notifications and mobile clients use API routes",
   assert.match(commentDeleteRoute, /removeCommentNotification/);
   assert.match(eventsRoute, /SERVER_OWNED_ENGAGEMENT_EVENTS/);
   assert.match(eventsRoute, /Engagement notifications are handled by mutation routes/);
-  assert.match(mobileEngagement, /authorizedJson\("\/api\/likes"/);
-  assert.match(mobileComments, /authorizedJson<CommentRow>\("\/api\/comments"/);
+  assert.match(mobileEngagement, /authorizedJson(?:<[^>]+>)?\("\/api\/likes"/);
+  assert.match(mobileComments, /authorizedJson as authorizedApiJson/);
+  assert.match(mobileComments, />\("\/api\/comments", \{/);
   assert.match(mobileComments, /`\/api\/comments\/\$\{encodeURIComponent\(input\.commentId\)\}`/);
   assert.doesNotMatch(mobileEngagement, /\.from\("likes"\)[\s\S]{0,220}\.(insert|delete)/);
   assert.doesNotMatch(mobileComments, /\.from\("comments"\)[\s\S]{0,220}\.(insert|delete)/);
@@ -70,7 +71,10 @@ test("reports and cleanup are native FoodReview protected interfaces", () => {
   assert.match(reportRoute, /content_reports/);
   assert.match(reportRoute, /canActorReadPost/);
   assert.match(reportRoute, /reporter_id: actor\.userId/);
-  assert.match(moderationRoute, /x-cleanup-secret/);
+  assert.match(moderationRoute, /x-moderation-operator-secret/);
+  assert.match(moderationRoute, /MODERATION_OPERATOR_SECRET/);
+  assert.match(cleanupRoute, /x-review-media-cleanup-secret/);
+  assert.match(cleanupRoute, /REVIEW_MEDIA_CLEANUP_SECRET/);
   assert.match(cleanupRoute, /runReviewMediaCleanup/);
   assert.match(cleanupHelper, /status", "created"/);
   assert.match(cleanupHelper, /status: "expired"/);

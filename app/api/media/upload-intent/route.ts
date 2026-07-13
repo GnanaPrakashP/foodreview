@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   MEDIA_SOURCE_BUCKET,
   assertSafeMediaSourcePath,
@@ -9,30 +9,26 @@ import {
 } from "@/lib/server/media-pipeline";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson, requireIdempotencyKey } from "@/lib/server/api-security";
 
 export const runtime = "nodejs";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
-function mediaJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function mediaJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
-  if (!actor) return mediaJson({ error: "Unauthorized" }, { status: 401 });
+  if (!actor) return mediaJson(req, { error: "Unauthorized" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+  if (!requireIdempotencyKey(req)) return mediaJson(req, { error: "A valid idempotency key is required" }, { status: 400 });
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 16 * 1024);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   let media;
   try {
     media = normalizeMediaIntentInput({
@@ -48,7 +44,7 @@ export async function POST(req: NextRequest) {
       width: body?.width
     });
   } catch (error) {
-    return mediaJson({ error: safeMediaPipelineErrorMessage(error) }, { status: 400 });
+    return mediaJson(req, { error: safeMediaPipelineErrorMessage(error) }, { status: 400 });
   }
 
   const sourceStoragePath = buildMediaSourcePath({
@@ -67,8 +63,8 @@ export async function POST(req: NextRequest) {
   const expiresAt = mediaIntentExpiresAt();
   const admin = createAdminClient();
   const { data: accountActive, error: accountError } = await admin.rpc("account_is_active", { p_user_id: actor.userId });
-  if (accountError) return mediaJson({ error: "Unable to authorize media upload" }, { status: 500 });
-  if (accountActive !== true) return mediaJson({ error: "Account deletion is in progress" }, { status: 409 });
+  if (accountError) return mediaJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
+  if (accountActive !== true) return mediaJson(req, { error: "Account deletion is in progress" }, { status: 409 });
   const { error } = await admin
     .from("media_assets")
     .insert({
@@ -92,9 +88,9 @@ export async function POST(req: NextRequest) {
       visibility: media.visibility
     });
 
-  if (error) return mediaJson({ error: "Unable to authorize media upload" }, { status: 500 });
+  if (error) return mediaJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
 
-  return mediaJson({
+  return mediaJson(req, {
     assetId: media.assetId,
     accessClass: media.accessClass,
     cropRect: media.cropRect,
@@ -109,9 +105,6 @@ export async function POST(req: NextRequest) {
   });
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

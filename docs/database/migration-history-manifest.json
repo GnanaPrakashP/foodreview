@@ -2218,7 +2218,48 @@
       "sizeBytes": 1253,
       "sourceRoot": "supabase/migrations",
       "version": "202607130007"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "api_idempotency_records",
+        "api_rate_limit_buckets",
+        "apply_media_moderation_action",
+        "cleanup_api_security_state",
+        "consume_api_rate_limits",
+        "enforce_push_token_owner",
+        "media_assets",
+        "media_derivatives",
+        "media_moderation_actions",
+        "media_moderation_actions_id_seq",
+        "media_processing_jobs",
+        "profiles",
+        "push_tokens",
+        "role",
+        "uid",
+        "users"
+      ],
+      "description": "mobile_api_security",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607130008_mobile_api_security.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "indexes",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "triggers"
+      ],
+      "sha256": "3eeed66ba25b5d76c8083ce6290f8cbea29dbaf01984c4c370c560b0e461d61d",
+      "sizeBytes": 27232,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607130008"
     }
   ],
-  "currentCanonicalMigrations": 64
+  "currentCanonicalMigrations": 65
 }

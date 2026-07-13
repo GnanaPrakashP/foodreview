@@ -485,7 +485,7 @@ test("mobile explore detail screens use the settings-style slide-over animation"
   assert.match(circleService, /fetchCircleApi<\{ ok\?: boolean \}>\("\/api\/circle\/cancel"/);
   assert.match(circleService, /fetchCircleApi<\{ ok\?: boolean \}>\("\/api\/circle\/remove"/);
   assert.match(circleService, /fetchCircleApi<\{ ok\?: boolean; state\?: string \}>\("\/api\/circle\/respond"/);
-  assert.match(circleStatusRoute, /createRouteSupabase\(req\)/);
+  assert.match(circleStatusRoute, /getRouteActor\(req\)/);
   assert.match(circleCancelRoute, /getRouteActor\(req\)/);
   assert.match(circleRespondRoute, /getRouteActor\(req\)/);
   assert.match(apiConfig, /function shouldUseAndroidEmulatorHost\(value: string\) \{\s*return value === "localhost";\s*\}/);

@@ -1,4 +1,5 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { stageAccountFile } from "@/services/accountFileStore";
@@ -81,17 +82,9 @@ async function fileBodyFromUri(uri: string): Promise<ArrayBuffer> {
 async function authorizedMobileJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   if (!apiBaseUrl) throw new Error("Media uploads require the API server.");
 
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error("Log in before uploading media");
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before uploading media");
-
   const response = await fetch(apiUrl(path), {
     body: JSON.stringify(body),
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("uploading media", "POST"),
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;

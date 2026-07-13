@@ -2,6 +2,7 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
 
 import { apiBaseUrl, apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
 import {
   MEMORY_IMAGE_MAX_RESOLUTION,
@@ -105,7 +106,8 @@ export async function removeMemoryMediaFiles(paths: string[]) {
   if (legacyResult.error) throw new Error(legacyResult.error.message);
 }
 
-export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, _username: string) {
+export async function uploadMemoryPhoto(input: AddMemoryMediaAsset & { roomId: string }, username: string) {
+  void username;
   const sourceUri = input.mediaUri ?? input.imageUri;
   if (!sourceUri) throw new Error("Choose a photo, video, or audio message");
   const originalUri = await stageAccountFile(sourceUri, "memory-upload-source");
@@ -362,16 +364,9 @@ async function createMemoryMediaUploadIntent(input: {
 async function authorizedMobileJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   if (!apiBaseUrl) throw new Error("Media uploads require the API server.");
 
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in to upload media.");
-
   const response = await fetch(apiUrl(path), {
     body: JSON.stringify(body),
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("uploading memory media", "POST"),
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;

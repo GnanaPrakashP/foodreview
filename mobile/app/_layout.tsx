@@ -104,6 +104,7 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
             <Stack.Screen name="(auth)" options={{ animation: "none" }} />
             <Stack.Screen name="auth/callback" />
+            <Stack.Screen name="auth/recovery" />
             <Stack.Screen name="onboarding/profile" />
             {/* Camera opens with a snappier fade than the global default so it
                 feels instant; a quick fade also hides the brief sensor warm-up. */}

@@ -1,5 +1,6 @@
 import { apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
+import { authorizedApiHeaders } from "@/api/client";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { AccountType } from "@/types/models";
 
@@ -38,23 +39,11 @@ function displayNameForRow(row: { first_name: string | null; last_name: string |
   return [row.first_name, row.last_name].filter(Boolean).join(" ").trim() || row.username;
 }
 
-async function getAccessToken(message = "Log in to update your circle") {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error(message);
-  return token;
-}
-
 async function fetchCircleApi<T>(path: string, options: { body?: unknown; method?: "GET" | "POST" } = {}): Promise<T> {
-  const token = await getAccessToken();
   const method = options.method ?? (options.body ? "POST" : "GET");
   const response = await fetch(apiUrl(path), {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {})
-    },
+    headers: await authorizedApiHeaders("updating your circle", method),
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const payload = await response.json().catch(() => null) as (T & { error?: unknown }) | null;

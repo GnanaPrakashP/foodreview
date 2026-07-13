@@ -5,6 +5,7 @@ import { apiBaseUrl, apiUrl } from "@/api/config";
 import { assertSupabaseConfigured, clearSupabaseLocalSessionStorage, isSupabaseConfigured, supabase } from "@/api/supabase";
 import { actorFromProfile, getCurrentUserProfile } from "@/services/profiles";
 import type { ActorProfile, AuthSnapshot } from "@/types/models";
+import { beginAuthFlow, consumeAuthFlow, createRequestId, getInstallId, type AuthFlowKind } from "@/services/installIdentity";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -61,7 +62,8 @@ export async function resolveEmailAuthMode(input: ResolveEmailAuthModeInput): Pr
     response = await fetch(apiUrl("/api/mobile/auth/resolve-email"), {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-FoodReview-Install-Id": await getInstallId()
       },
       body: JSON.stringify({ email })
     });
@@ -69,16 +71,15 @@ export async function resolveEmailAuthMode(input: ResolveEmailAuthModeInput): Pr
     throw new Error("Unable to reach the CircleBites server. Check EXPO_PUBLIC_API_BASE_URL and make sure Next.js is running.");
   }
 
-  const payload = await response.json().catch(() => null) as { mode?: unknown; error?: unknown } | null;
+  const payload = await response.json().catch(() => null) as { ok?: unknown; error?: unknown } | null;
   if (!response.ok) {
     throw new Error(typeof payload?.error === "string" ? payload.error : "Unable to continue with this email");
   }
 
-  if (payload?.mode !== "sign_in" && payload?.mode !== "sign_up") {
+  if (payload?.ok !== true) {
     throw new Error("Unable to continue with this email");
   }
-
-  return payload.mode;
+  return "sign_in";
 }
 
 export async function getAuthSnapshot(): Promise<AuthSnapshot> {
@@ -104,7 +105,10 @@ export async function getAccountLifecycleStatus(accessToken: string): Promise<Ac
   const timeout = setTimeout(() => controller.abort(), 5_000);
   try {
     const response = await fetch(apiUrl("/api/mobile/auth/account-status"), {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "X-FoodReview-Install-Id": await getInstallId()
+      },
       signal: controller.signal
     });
     const payload = await response.json().catch(() => null) as { status?: string } | null;
@@ -139,25 +143,41 @@ export async function login(input: LoginInput): Promise<{ session: Session; prof
   };
 }
 
-export function getOAuthRedirectUrl() {
-  return Linking.createURL("auth/callback");
+function authRedirectUrl(path: "callback" | "recovery", flowNonce: string) {
+  return Linking.createURL(`auth/${path}`, { queryParams: { flow: flowNonce } });
+}
+
+function callbackParameters(url: string, kind: AuthFlowKind) {
+  const parsedUrl = new URL(url);
+  const expectedPath = kind === "oauth" ? "callback" : "recovery";
+  const customSchemeAllowed = parsedUrl.protocol === "circlebites:"
+    && parsedUrl.hostname === "auth"
+    && parsedUrl.pathname === `/${expectedPath}`;
+  const developmentSchemeAllowed = __DEV__
+    && (parsedUrl.protocol === "exp:" || parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:")
+    && parsedUrl.pathname.endsWith(`/auth/${expectedPath}`);
+  if (!customSchemeAllowed && !developmentSchemeAllowed) throw new Error("Invalid authentication callback");
+  if (parsedUrl.username || parsedUrl.password || parsedUrl.searchParams.has("redirect")) {
+    throw new Error("Invalid authentication callback");
+  }
+  const params = new URLSearchParams(parsedUrl.search);
+  const fragment = new URLSearchParams(parsedUrl.hash.replace(/^#/, ""));
+  fragment.forEach((value, key) => {
+    if (!params.has(key)) params.set(key, value);
+  });
+  return params;
 }
 
 export async function completeOAuthSessionFromUrl(url: string): Promise<OAuthResult> {
   assertSupabaseConfigured();
-  const parsedUrl = new URL(url);
-  const params = new URLSearchParams(parsedUrl.hash.replace(/^#/, ""));
-  const accessToken = params.get("access_token");
-  const refreshToken = params.get("refresh_token");
+  const params = callbackParameters(url, "oauth");
+  const flowNonce = params.get("flow") ?? "";
   const errorDescription = params.get("error_description") ?? params.get("error");
-
   if (errorDescription) throw new Error(errorDescription);
-  if (!accessToken || !refreshToken) throw new Error("Google sign-in did not return a valid session");
-
-  const { data, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken
-  });
+  if (!await consumeAuthFlow("oauth", flowNonce)) throw new Error("Google sign-in link is invalid or expired");
+  const code = params.get("code");
+  if (!code) throw new Error("Google sign-in did not return a valid session");
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) throw new Error(error.message);
   if (!data.session) throw new Error("Google sign-in did not create a session");
@@ -171,7 +191,8 @@ export async function completeOAuthSessionFromUrl(url: string): Promise<OAuthRes
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
   assertSupabaseConfigured();
-  const redirectTo = getOAuthRedirectUrl();
+  const flowNonce = await beginAuthFlow("oauth");
+  const redirectTo = authRedirectUrl("callback", flowNonce);
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
@@ -228,8 +249,55 @@ export async function logout() {
 export async function sendPasswordReset(input: ResetPasswordInput) {
   if (!input.email.trim()) throw new Error("Email is required");
   assertSupabaseConfigured();
-  const { error } = await supabase.auth.resetPasswordForEmail(input.email.trim());
-  if (error) throw new Error(error.message);
+  if (!apiBaseUrl) throw new Error("auth_unavailable");
+  const flowNonce = await beginAuthFlow("recovery");
+  const response = await fetch(apiUrl("/api/mobile/auth/password-recovery"), {
+    body: JSON.stringify({ email: normalizeEmail(input.email), flowNonce }),
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": createRequestId(),
+      "X-FoodReview-Install-Id": await getInstallId()
+    },
+    method: "POST"
+  });
+  if (!response.ok && response.status !== 429) throw new Error("Unable to request password recovery");
+  if (response.status === 429) throw new Error("Too many reset attempts. Try again later.");
+}
+
+export async function completePasswordRecoveryFromUrl(url: string) {
+  assertSupabaseConfigured();
+  const params = callbackParameters(url, "recovery");
+  const flowNonce = params.get("flow") ?? "";
+  if (!await consumeAuthFlow("recovery", flowNonce)) throw new Error("Recovery link is invalid or expired");
+  const errorDescription = params.get("error_description") ?? params.get("error");
+  if (errorDescription) throw new Error("Recovery link is invalid or expired");
+  const callbackType = params.get("type");
+  const code = params.get("code");
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error || !data.session) throw new Error("Recovery link is invalid or expired");
+    return data.session;
+  }
+  const tokenHash = params.get("token_hash");
+  if (tokenHash && callbackType === "recovery") {
+    const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
+    if (error || !data.session) throw new Error("Recovery link is invalid or expired");
+    return data.session;
+  }
+  const accessToken = params.get("access_token");
+  const refreshToken = params.get("refresh_token");
+  if (accessToken && refreshToken && callbackType === "recovery") {
+    const { data, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    if (error || !data.session) throw new Error("Recovery link is invalid or expired");
+    return data.session;
+  }
+  throw new Error("Recovery link is invalid or expired");
+}
+
+export async function updateRecoveredPassword(password: string) {
+  if (password.length < 8 || password.length > 128) throw new Error("Password must be 8 to 128 characters");
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw new Error("Unable to update password");
 }
 
 export function onAuthStateChange(

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 // ---- transpile helpers ----
 
@@ -121,6 +122,7 @@ function loadRoute(code, { db, circleDb, notifications, authName = "Alice" }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/server/cache-invalidation") {
         return {

@@ -43,6 +43,7 @@ function assetRow(userId, ownerName, assetId, status = "uploaded") {
     expires_at: new Date(Date.now() + 600_000).toISOString(),
     id: assetId,
     media_type: "image",
+    moderation_status: "approved",
     original_extension: "jpg",
     original_file_size_bytes: 100,
     original_mime_type: "image/jpeg",

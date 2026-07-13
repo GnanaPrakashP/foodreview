@@ -1,31 +1,19 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { runAccountDeletionJobs } from "@/lib/server/account-deletion";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-function configuredSecret() {
-  return process.env.ACCOUNT_DELETION_WORKER_SECRET ?? "";
-}
-
-function requestSecret(req: NextRequest) {
-  const authorization = req.headers.get("authorization") ?? "";
-  if (authorization.toLowerCase().startsWith("bearer ")) return authorization.slice(7).trim();
-  return req.headers.get("x-account-deletion-secret")?.trim() ?? "";
-}
-
-function secretsMatch(left: string, right: string) {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
+import { configuredInternalSecret, internalRequestSecret, readBoundedJson, timingSafeSecretMatch } from "@/lib/server/api-security";
 
 export async function POST(req: NextRequest) {
-  const secret = configuredSecret();
-  if (!secret || !secretsMatch(requestSecret(req), secret)) {
+  if (!timingSafeSecretMatch(
+    internalRequestSecret(req, "x-account-deletion-secret"),
+    configuredInternalSecret("ACCOUNT_DELETION_WORKER_SECRET")
+  )) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+  if (!parsed.ok) return NextResponse.json({ error: "Invalid request" }, { status: parsed.reason === "too_large" ? 413 : 400 });
+  const body = parsed.value;
   const requestedLimit = Number(body?.limit);
   const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
     ? Math.min(requestedLimit, 50)

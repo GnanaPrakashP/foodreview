@@ -7,6 +7,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Comment, Review } from "@/lib/types";
 import { getPostEngagementState } from "@/lib/server/post-engagement-state";
 import { profileDisplayName } from "@/lib/profile-names";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 const ENGAGEMENT_REVIEW_SELECT = "id, reviewer_name, restaurant_name, photo_url, photo_urls, visibility";
 
@@ -122,6 +125,7 @@ export async function GET(req: NextRequest) {
       .select("id, post_id, user_name, content, created_at")
       .eq("post_id", postId)
       .order("created_at", { ascending: true })
+      .limit(100)
       .returns<CommentListRow[]>(),
     blockedUsernamesForViewer(readDb, actor.actorName),
   ]);
@@ -137,12 +141,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { postId, content } = await req.json();
+  const parsed = await readBoundedJson<{ content?: unknown; postId?: unknown }>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const postId = parsed.value?.postId;
+  const content = parsed.value?.content;
 
-  if (!postId) {
+  if (typeof postId !== "string" || !/^[0-9a-f-]{36}$/i.test(postId)) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
-  if (!content?.trim()) {
+  if (typeof content !== "string" || !content.trim()) {
     return NextResponse.json({ error: "content is required" }, { status: 400 });
   }
   if (content.trim().length > 500) {
@@ -153,6 +160,8 @@ export async function POST(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
   const access = await canActorReadPost(writeDb, postId, actor.actorName);

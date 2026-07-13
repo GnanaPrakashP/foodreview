@@ -1,16 +1,28 @@
 # Chat Production Status
 
-Current phase: Final production-readiness audit
+Current phase: Production Hardening Phase 4 — mobile API security
 
-Production-hardening program phase: Phase 3 — canonical Supabase migration history
+Production-hardening program phase: Phase 4 — mobile API security, authentication hardening, and abuse controls
 
-Phase 3 implementation status: PASS locally on `hardening/05-migrations`. One canonical root, locked historical hashes, additive convergence migrations, pgTAP contracts, real Auth/RLS/Storage policy tests, supported upgrade fixtures, read-only drift tooling, and CI enforcement are implemented and locally verified.
+Phase 4 implementation status: PASS locally on `hardening/06-api-security`. One canonical actor resolver, enumeration-safe authentication helpers, a shared PostgreSQL limiter, active-mobile mutation policies, bounded provider/notification/report/media routes, validated recovery/OAuth deep links, install-bound push tokens, moderation quarantine/audit, internal-secret separation, safe errors, headers/CORS, pgTAP, and real local API/database behavior gates are implemented.
 
-Phase 3 release verification status: BLOCKED pending hosted history/schema drift inspection, hosted Storage-policy verification, disposable-staging upgrades, and production backup/PITR confirmation, plus the earlier Phase 1A–2 release blockers. No hosted project was mutated.
+Phase 4 release verification status: BLOCKED pending hosted multi-replica limiter proof, real email delivery, real Android/iOS recovery and OAuth callbacks, provider quota/restriction tests, hosted moderation/operator availability, production proxy/secret-manager configuration, hosted Phase 3 drift/history verification, and the earlier Phase 1A–2 release blockers. No hosted project was mutated.
 
-Next required phase: Authenticated staging smoke verification
+Next required phase: Phase 4 manual staging/release matrix
 
-Production-hardening next required phase: execute the documented hosted/staging database gate together with the earlier Phase 1A–2 release gates. Do not start Phase 4 automatically.
+Production-hardening next required phase: execute the Phase 4 staging matrix in `docs/production-hardening/PHASE_4_API_SECURITY.md` together with the Phase 1A–3 hosted gates. Do not start Phase 5 automatically.
+
+## Production Hardening Phase 4 — Mobile API Security (2026-07-13)
+
+- Inventory: 69 API route files and 93 operations; 62 traced active-mobile operations, nine internal operations, two retired legacy moderation bypasses, and 60 explicitly shared-rate-limited operations. Every traced active-mobile mutation has a policy.
+- Identity: active mobile APIs use the memoized canonical Auth UUID/profile resolver; client viewer/actor/owner/recipient/device values do not establish authority. Public feed viewer override was removed.
+- Auth: public Auth directory scanning was removed. Existing/missing email and recovery requests return identical generic responses with body/rate bounds. OAuth uses PKCE/state; recovery accepts only allowlisted, state-bound recovery callbacks and clears parameters.
+- Abuse: PostgreSQL atomically applies HMAC-keyed user/IP/install/subject/cost policies across replicas, fails closed, returns Retry-After, and has bounded service-only cleanup. A real 20-request concurrent test admitted exactly five at limit five.
+- Notifications/push: token owner is derived from `auth.uid()`, installation is required, cross-account reassignment is rejected, frozen users are denied, recipients are derived, and spam/idempotency/block/preferences are enforced.
+- Providers/moderation: Places is authenticated, bounded, weighted, timed out, and sanitized. Generic media remains pending/unclaimable/unpublishable until audited approval; review/avatar image moderation fails closed. Old caller-selected moderation routes return 410.
+- Database: canonical migration `202607130008_mobile_api_security.sql`; 65 canonical migrations/83 manifest entries; two Phase 4 state/audit tables plus limiter/idempotency tables are RLS/service-only; Phase 4 extends the service schema contract.
+- Local behavior: Phase 4 static/database/HTTP gates pass 10/10, 9/9, and 10/10; pgTAP passes 35/35; upgrades pass 7/7; real Phase 3 policies pass 10/10; drift is zero; and the clean runtime report has no security backlog or privileged grant drift. Phase 1A, 1B, 1C, and Phase 2 regressions pass 13/13, 9/9, 8/8, and 11/11 + 14/14 + 10/10. Root/mobile typecheck, zero-error lint, Next build, Android/iOS exports, Android Gradle release, and secret scans pass. Root tests are 1,077/1,097 with the same 20 PH-002 names as the 1,067/1,087 Phase 3 baseline; Memory remains 71/72 with the same PH-002 assertion.
+- Manual release blockers remain exactly those listed above. Local passing tests are not hosted, real-provider, real-device, or 1,000-user capacity evidence.
 
 ## Production Hardening Phase 3 — Canonical Supabase Migrations (2026-07-13)
 

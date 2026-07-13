@@ -44,6 +44,12 @@ jobs:
       - name: Validate production-hardening issue register
         run: npm run validate:hardening-register
 
+      - name: Validate mobile API trust-boundary inventory
+        run: npm run validate:mobile-api-security
+
+      - name: Run Phase 4 static security contracts
+        run: npm run test:mobile-api-security
+
       - name: Run root lint
         run: npm run lint
 
@@ -135,6 +141,15 @@ jobs:
       - name: Run schema, RLS, Storage, and grant contracts
         run: npm run db:test
 
+      - name: Run Phase 4 database security behaviors
+        run: npm run validate:mobile-api-security:db
+
+      - name: Run Phase 4 API and local recovery behaviors
+        run: npm run validate:mobile-api-security:api
+
+      - name: Report sanitized API-security runtime health
+        run: npm run report:mobile-api-security:runtime
+
       - name: Run supported upgrade fixtures
         run: npm run db:test:upgrades
 
@@ -170,6 +185,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
           MEMORY_UPLOAD_CLEANUP_SECRET: ci-placeholder-cleanup-secret
           MEDIA_WORKER_SECRET: ci-placeholder-media-worker-secret
+          API_RATE_LIMIT_HMAC_SECRET: ci-placeholder-rate-limit-hmac-material-0123456789
+          API_TRUSTED_PROXY_HOPS: "1"
+          MOBILE_AUTH_REDIRECT_BASE: circlebites://
+          MODERATION_OPERATOR_SECRET: ci-placeholder-moderation-operator-material-0123456789
 
   mobile-export:
     name: Expo Android production export
@@ -193,8 +212,22 @@ jobs:
         run: npm ci
 
       - name: Export Android bundle
-        run: npx expo export --platform android --output-dir /tmp/circlebites-expo-export --clear
+        run: npx expo export --platform android --output-dir /tmp/circlebites-expo-export-android --clear
         env:
           EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
           EXPO_PUBLIC_API_BASE_URL: https://example.invalid
+
+      - name: Export iOS bundle
+        run: npx expo export --platform ios --output-dir /tmp/circlebites-expo-export-ios --clear
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          EXPO_PUBLIC_API_BASE_URL: https://example.invalid
+
+      - name: Scan mobile exports for forbidden server-only configuration names
+        run: |
+          if rg -n 'EXPO_PUBLIC_SUPABASE_SERVICE|SUPABASE_SERVICE_ROLE_KEY|API_RATE_LIMIT_HMAC_SECRET|MODERATION_OPERATOR_SECRET|MEDIA_WORKER_SECRET|ACCOUNT_DELETION_WORKER_SECRET' /tmp/circlebites-expo-export-android /tmp/circlebites-expo-export-ios; then
+            echo 'Forbidden server-only configuration name found in mobile export' >&2
+            exit 1
+          fi

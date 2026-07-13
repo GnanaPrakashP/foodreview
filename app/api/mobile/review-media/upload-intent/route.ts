@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   assertSafeReviewStoragePath,
   buildReviewMediaUploadPath,
@@ -9,30 +9,26 @@ import {
 } from "@/lib/server/review-media";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson, requireIdempotencyKey } from "@/lib/server/api-security";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
-  if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+  if (!actor) return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+  if (!requireIdempotencyKey(req)) return mobileJson(req, { error: "A valid idempotency key is required" }, { status: 400 });
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 16 * 1024);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   if (body?.category === "post") {
-    return mobileJson({ error: "Use the visibility-aware media upload endpoint for posts" }, { status: 410 });
+    return mobileJson(req, { error: "Use the visibility-aware media upload endpoint for posts" }, { status: 410 });
   }
   let media;
   try {
@@ -45,7 +41,7 @@ export async function POST(req: NextRequest) {
       mimeType: body?.mimeType
     });
   } catch (error) {
-    return mobileJson({ error: safeReviewMediaErrorMessage(error) }, { status: 400 });
+    return mobileJson(req, { error: safeReviewMediaErrorMessage(error) }, { status: 400 });
   }
 
   const { intentId, quarantineStoragePath, storagePath } = buildReviewMediaUploadPath({
@@ -83,10 +79,10 @@ export async function POST(req: NextRequest) {
     });
 
   if (error) {
-    return mobileJson({ error: "Unable to authorize media upload" }, { status: 500 });
+    return mobileJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
   }
 
-  return mobileJson({
+  return mobileJson(req, {
     category: media.category,
     expiresAt,
     intentId,
@@ -100,9 +96,6 @@ export async function POST(req: NextRequest) {
   });
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

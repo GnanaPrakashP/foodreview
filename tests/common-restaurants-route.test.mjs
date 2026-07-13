@@ -91,6 +91,26 @@ function loadRoute({ db, access = {}, computeCommonRestaurants } = {}) {
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/supabase/server") return { createClient: async () => db };
+      if (id === "@/lib/server/route-supabase") return {
+        getRouteActor: async () => {
+          const { data, error } = await db.auth.getUser();
+          const user = data?.user;
+          if (error || !user) return { actor: null, supabase: db };
+          const { data: profile } = await db
+            .from("profiles")
+            .select("id, username")
+            .eq("id", user.id)
+            .maybeSingle();
+          return {
+            actor: {
+              userId: user.id,
+              actorName: profile?.username ?? "",
+              displayName: profile?.username ?? "",
+            },
+            supabase: db,
+          };
+        },
+      };
       if (id === "@/lib/types") return {};
       if (id === "@/lib/circle-db") {
         return {

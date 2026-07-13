@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 type DeletionRequestRow = {
   job_id: string;
@@ -10,11 +13,14 @@ type DeletionRequestRow = {
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
-    const supabase = await createRouteSupabase(req);
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
+    const { actor, actorResolution, authenticatedUserId, supabase } = await getRouteActor(req);
+    const deletionUserId = actor?.userId
+      ?? (actorResolution.status === "frozen" ? authenticatedUserId : null);
+    if (!deletionUserId) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
+    const rate = await enforceRateLimit(req, "account.deletion", { actorUserId: deletionUserId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
     // The owner-only RPC creates or reuses a durable job and freezes/suppresses
     // the account in the same transaction. Storage, database, and Auth cleanup

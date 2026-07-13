@@ -1,4 +1,6 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
+import { createRequestId, getInstallId } from "@/services/installIdentity";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
@@ -409,7 +411,9 @@ async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) 
     }),
     headers: {
       "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "Idempotency-Key": createRequestId(),
+      "X-FoodReview-Install-Id": await getInstallId()
     },
     method: "POST"
   });
@@ -1296,10 +1300,7 @@ export async function addMemoryParticipant(roomId: string, rawUsername: string) 
 
   const response = await fetch(apiUrl(`/api/mobile/memories/${roomId}/participants`), {
     body: JSON.stringify({ usernames: [username] }),
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("inviting people", "POST"),
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as (Partial<AddMemoryParticipantResult> & { error?: string }) | null;

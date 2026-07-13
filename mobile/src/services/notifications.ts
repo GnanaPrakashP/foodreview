@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { authorizedJson } from "@/api/client";
 import { supabase } from "@/api/supabase";
 import type { AppNotification, NotificationsPage } from "@/types/models";
+import { getInstallId } from "@/services/installIdentity";
 
 type PushRegistrationResult =
   | { granted: true; token: string }
@@ -149,11 +150,13 @@ export async function registerForPushNotifications(username: string): Promise<Pu
   }
 
   const token = await Notifications.getExpoPushTokenAsync({ projectId });
+  const installId = await getInstallId();
   const now = new Date().toISOString();
   const { error } = await supabase
     .from("push_tokens")
     .upsert({
       expo_push_token: token.data,
+      install_id: installId,
       platform: Platform.OS,
       updated_at: now,
       user_name: username

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { createClient } from "@supabase/supabase-js";
@@ -13,6 +14,8 @@ const SOURCE_BUCKET = "media-sources";
 const PRIVATE_BUCKET = "media-private";
 const LEGACY_BUCKET = "review-photos";
 const SIGNED_URL_TTL_SECONDS = 300;
+const INSTALL_ID = randomUUID();
+const TEST_IP = `203.0.113.${(parseInt(INSTALL_ID.slice(0, 2), 16) % 200) + 1}`;
 
 const results = [];
 let nextProcess = null;
@@ -56,6 +59,8 @@ function startNext(env) {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      API_RATE_LIMIT_HMAC_SECRET: "phase1a-local-runtime-hmac-secret-0123456789",
+      API_TRUSTED_PROXY_HOPS: "1",
       MEDIA_WORKER_SECRET: WORKER_SECRET,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       NEXT_PUBLIC_SUPABASE_URL: env.url,
@@ -97,6 +102,9 @@ async function routeJson(pathname, token, body, method = "POST") {
     body: body === undefined ? undefined : JSON.stringify(body),
     headers: {
       "Content-Type": "application/json",
+      "X-Forwarded-For": TEST_IP,
+      "X-FoodReview-Install-Id": INSTALL_ID,
+      "Idempotency-Key": randomUUID(),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
     method
@@ -165,6 +173,15 @@ async function createPostAsset({ admin, image, owner, ownerSession, visibility }
     uploadPath: intent.json.uploadPath
   });
   assert.equal(finalized.response.status, 200, JSON.stringify(finalized.json));
+
+  const moderation = await admin.rpc("apply_media_moderation_action", {
+    p_action: "approved",
+    p_asset_id: intent.json.assetId,
+    p_operator_hash: "a".repeat(64),
+    p_reason_code: "phase1a_runtime_verified"
+  });
+  assert.equal(moderation.error, null, moderation.error?.message);
+  assert.equal(moderation.data, true, "test operator should release the quarantined asset");
 
   const worker = await routeJson("/api/internal/media/process", null, { limit: 5 });
   assert.equal(worker.response.status, 404);

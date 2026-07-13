@@ -634,6 +634,7 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
     };
     const pipeline = loadTs("mobile/src/services/mediaPipeline.ts", (id) => {
       if (id === "expo-image-manipulator") return { ImageManipulator: {}, SaveFormat: { JPEG: "jpeg" } };
+      if (id === "@/api/client") return { authorizedApiHeaders: async () => ({ Authorization: "Bearer test-token" }) };
       if (id === "@/api/config") return { apiBaseUrl: "http://local.test", apiUrl: (value) => value };
       if (id === "@/api/supabase") return { resolvedSupabaseAnonKey: "anon", resolvedSupabaseUrl: "http://supabase.test", supabase };
       if (id === "@/services/accountFileStore") return { stageAccountFile: async (uri) => uri };

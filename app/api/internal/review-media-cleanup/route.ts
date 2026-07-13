@@ -1,24 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runReviewMediaCleanup } from "@/lib/server/review-media-cleanup";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-function configuredSecret() {
-  return process.env.ACCOUNT_MEDIA_CLEANUP_SECRET ?? process.env.MEMORY_UPLOAD_CLEANUP_SECRET ?? "";
-}
-
-function requestSecret(req: NextRequest) {
-  const authorization = req.headers.get("authorization") ?? "";
-  if (authorization.toLowerCase().startsWith("bearer ")) return authorization.slice(7).trim();
-  return req.headers.get("x-cleanup-secret")?.trim() ?? "";
-}
+import { configuredInternalSecret, internalRequestSecret, readBoundedJson, timingSafeSecretMatch } from "@/lib/server/api-security";
 
 export async function POST(req: NextRequest) {
-  const secret = configuredSecret();
-  if (!secret || requestSecret(req) !== secret) {
+  if (!timingSafeSecretMatch(
+    internalRequestSecret(req, "x-review-media-cleanup-secret"),
+    configuredInternalSecret("REVIEW_MEDIA_CLEANUP_SECRET")
+  )) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+  if (!parsed.ok) return NextResponse.json({ error: "Invalid request" }, { status: parsed.reason === "too_large" ? 413 : 400 });
+  const body = parsed.value;
   const requestedLimit = Number(body?.limit);
   const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
     ? Math.min(requestedLimit, 200)

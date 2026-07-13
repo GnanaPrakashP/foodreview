@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  createRouteSupabase,
   filterValidNotifications,
-  getNotificationViewer,
+  getNotificationRouteContext,
   isNotificationSchemaError,
   mergeNotifications,
   unauthorized,
@@ -37,8 +36,7 @@ function isUnread(notification: Notification): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createRouteSupabase(req);
-  const viewer = await getNotificationViewer(supabase);
+  const { supabase, viewer } = await getNotificationRouteContext(req);
   if (!viewer) return unauthorized();
 
   const byIdPromise = supabase
@@ -71,7 +69,7 @@ export async function GET(req: NextRequest) {
         .eq("read", false);
 
       if (legacyError) {
-        console.error("[notifications] legacy unread count failed:", legacyError.message, legacyError.code, legacyError.details);
+        console.error("[notifications] legacy unread count failed");
         return NextResponse.json({ error: legacyError.message }, { status: 500 });
       }
 
@@ -80,7 +78,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ unreadCount: validNotifications.filter(isUnread).length });
     }
 
-    console.error("[notifications] unread count failed:", idError ?? nameError);
+    console.error("[notifications] unread count failed");
     return NextResponse.json({ error: idError?.message ?? nameError?.message }, { status: 500 });
   }
 

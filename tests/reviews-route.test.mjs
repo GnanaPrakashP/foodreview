@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 // ── transpile ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ function validIntent(overrides = {}) {
     duration_ms: null,
     id: "11111111-1111-4111-8111-111111111112",
     media_type: "image",
+    moderation_status: "approved",
     original_mime_type: "image/jpeg",
     owner_id: "uid-alice",
     owner_name: "Alice",
@@ -168,6 +170,7 @@ function loadRoute(code, { db, adminDb, authName, dishIdentity }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
       if (id === "@/lib/server/cache-invalidation") {
         return {
           invalidateCircleFeedCacheForNames() {},

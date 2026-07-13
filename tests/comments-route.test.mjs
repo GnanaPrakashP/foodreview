@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 // ── transpile ─────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ function loadRoute(code, { db, authName }) {
       if (id === "@supabase/ssr") return { createServerClient: () => db };
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { after: () => undefined, NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
       if (id === "@/lib/notifications") {
         return {
@@ -184,7 +186,7 @@ function loadRoute(code, { db, authName }) {
 
 test("POST /comments: logged-out user is rejected with 401", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: null });
-  const res = await POST(makeReq({ postId: "post-1", content: "Great food!" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "Great food!" }));
   assert.equal(status(res), 401);
 });
 
@@ -197,14 +199,14 @@ test("POST /comments: missing postId returns 400", async () => {
 
 test("POST /comments: missing content returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111" }));
   assert.equal(status(res), 400);
   assert.match(body(res).error, /content/i);
 });
 
 test("POST /comments: whitespace-only content returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1", content: "   " }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "   " }));
   assert.equal(status(res), 400);
   assert.match(body(res).error, /content/i);
 });
@@ -212,7 +214,7 @@ test("POST /comments: whitespace-only content returns 400", async () => {
 test("POST /comments: content over 500 characters returns 400", async () => {
   const { POST } = loadRoute(src.create, { db: mockDb(), authName: "Alice" });
   const longContent = "x".repeat(501);
-  const res = await POST(makeReq({ postId: "post-1", content: longContent }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: longContent }));
   assert.equal(status(res), 400);
   assert.match(body(res).error, /500/);
 });
@@ -223,7 +225,7 @@ test("POST /comments: content exactly 500 characters is accepted", async () => {
     { data: { id: "33333333-3333-4333-8333-333333333333" }, error: null }
   );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1", content: "x".repeat(500) }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "x".repeat(500) }));
   assert.equal(status(res), 200);
 });
 
@@ -234,7 +236,7 @@ test("POST /comments: user_name is always the authenticated actor, not the reque
   );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
   const res = await POST(
-    makeReq({ postId: "post-1", content: "Nice!", userName: "Mallory" })
+    makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "Nice!", userName: "Mallory" })
   );
   assert.equal(status(res), 200);
   const inserted = insertArg(db._calls);
@@ -249,10 +251,10 @@ test("POST /comments: inserted content is trimmed and tied to the post id", asyn
     { data: { id: "33333333-3333-4333-8333-333333333333" }, error: null }
   );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1", content: "  Delicious!  " }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "  Delicious!  " }));
   assert.equal(status(res), 200);
   const inserted = insertArg(db._calls);
-  assert.equal(inserted.post_id, "post-1");
+  assert.equal(inserted.post_id, "11111111-1111-4111-8111-111111111111");
   assert.equal(inserted.content, "Delicious!");
 });
 
@@ -262,7 +264,7 @@ test("POST /comments: valid comment returns the new comment id", async () => {
     { data: { id: "cmt-xyz" }, error: null }
   );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
-  const res = await POST(makeReq({ postId: "post-1", content: "Delicious!" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "Delicious!" }));
   assert.equal(status(res), 200);
   assert.equal(body(res).id, "cmt-xyz");
 });
@@ -275,7 +277,7 @@ test("POST /comments: DB error returns 500", async () => {
     ),
     authName: "Alice",
   });
-  const res = await POST(makeReq({ postId: "post-1", content: "Nice!" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "Nice!" }));
   assert.equal(status(res), 500);
 });
 
@@ -382,7 +384,7 @@ test("DELETE /comments/[id]: DB fetch error returns 404", async () => {
 test("POST /comments: success response includes full comment row (id, post_id, user_name, content, created_at)", async () => {
   const fullRow = {
     id: "cmt-1",
-    post_id: "post-1",
+    post_id: "11111111-1111-4111-8111-111111111111",
     user_name: "Alice",
     content: "Delicious!",
     created_at: "2026-05-01T00:00:00.000Z",
@@ -393,11 +395,11 @@ test("POST /comments: success response includes full comment row (id, post_id, u
   );
   const { POST } = loadRoute(src.create, { db, authName: "Alice" });
 
-  const res = await POST(makeReq({ postId: "post-1", content: "Delicious!" }));
+  const res = await POST(makeReq({ postId: "11111111-1111-4111-8111-111111111111", content: "Delicious!" }));
 
   assert.equal(status(res), 200);
   assert.equal(body(res).id, "cmt-1");
-  assert.equal(body(res).post_id, "post-1");
+  assert.equal(body(res).post_id, "11111111-1111-4111-8111-111111111111");
   assert.equal(body(res).user_name, "Alice");
   assert.equal(body(res).content, "Delicious!");
   assert.equal(typeof body(res).created_at, "string");

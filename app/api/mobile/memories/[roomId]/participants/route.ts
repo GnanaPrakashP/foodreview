@@ -4,6 +4,9 @@ import { createNotificationForNames } from "@/lib/notifications";
 import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
 import { assertMemoryRoomMutationAllowed, memoryRoomSecurityErrorStatus } from "@/lib/server/memory-room-security";
 import { getRouteActor } from "@/lib/server/route-supabase";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 type RoomRow = {
   id: string;
@@ -60,15 +63,18 @@ export async function POST(
   const startedAt = Date.now();
   try {
     const { roomId } = await context.params;
-    const body = await req.json().catch(() => null) as { usernames?: unknown } | null;
+    const { actor, supabase } = await getRouteActor(req);
+    if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    const rate = await enforceRateLimit(req, "memory.participant", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+    const parsed = await readBoundedJson<{ usernames?: unknown }>(req, 4096);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+    const body = parsed.value;
     const usernames = uniqueUsernames(Array.isArray(body?.usernames) ? body.usernames : []);
 
     if (!roomId || usernames.length === 0) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
-
-    const { actor, supabase } = await getRouteActor(req);
-    if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
     const admin = createAdminClient();
     const inviter = actor.actorName;

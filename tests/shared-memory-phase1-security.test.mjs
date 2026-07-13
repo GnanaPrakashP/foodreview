@@ -73,7 +73,7 @@ test("blocked user cannot upload shared memory media where blocked-user rules ap
 test("blocked user cannot trigger a notification where blocked-user rules apply", () => {
   assert.match(notifyRoute, /from\("blocked_users"\)/);
   assert.match(notifyRoute, /hasBlockedRoomRelationship/);
-  assert.match(notifyRoute, /return mobileJson\(\{ sent: 0 \}\)/);
+  assert.match(notifyRoute, /return mobileJson\(req, \{ sent: 0 \}\)/);
 });
 
 test("blocked users cannot be added to or keep reading memory rooms", () => {

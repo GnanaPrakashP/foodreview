@@ -1,7 +1,6 @@
-import { NextResponse } from "next/server";
-import { getAuthenticatedProfileName } from "@/lib/notifications";
+import { NextRequest, NextResponse } from "next/server";
 import type { Json, Notification } from "@/lib/types";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { createRouteSupabase, getRouteActor } from "@/lib/server/route-supabase";
 
 export { createRouteSupabase };
 
@@ -11,12 +10,12 @@ type SupabaseLikeError = {
   details?: string | null;
 } | null | undefined;
 
-export async function getNotificationViewer(supabase: Awaited<ReturnType<typeof createRouteSupabase>>) {
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) return null;
-  const name = await getAuthenticatedProfileName(supabase, user.id);
-  if (!name) return null;
-  return { id: user.id, name };
+export async function getNotificationRouteContext(req: NextRequest) {
+  const { actor, supabase } = await getRouteActor(req);
+  return {
+    supabase,
+    viewer: actor ? { id: actor.userId, name: actor.actorName } : null,
+  };
 }
 
 export function unauthorized() {

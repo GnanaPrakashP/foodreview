@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizeDishIdentityName } from "@/lib/server/dish-identity";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
 export const runtime = "nodejs";
 
@@ -9,6 +10,7 @@ export const runtime = "nodejs";
 // tap (or a single confused user) cannot rewrite the alias dictionary.
 const ALIAS_ACTIVATION_CONFIRMATIONS = 3;
 const MAX_DISH_NAME_LENGTH = 80;
+const METHODS = ["POST"];
 
 type AliasRow = {
   canonical_dish_id: string;
@@ -20,8 +22,12 @@ type AliasRow = {
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-  const body = await req.json().catch(() => null) as { canonicalDishId?: unknown; rawName?: unknown } | null;
+  const parsed = await readBoundedJson<{ canonicalDishId?: unknown; rawName?: unknown }>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const rawName = typeof body?.rawName === "string" ? body.rawName.trim() : "";
   const canonicalDishId = typeof body?.canonicalDishId === "string" ? body.canonicalDishId.trim() : "";
   if (!rawName || rawName.length > MAX_DISH_NAME_LENGTH || !canonicalDishId) {

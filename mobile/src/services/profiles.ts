@@ -1,5 +1,6 @@
 import { supabase } from "@/api/supabase";
 import { apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import type { AccountType, ActorProfile, Profile, ProfilePageData, ProfilePostsPage, ProfileStats } from "@/types/models";
 import {
   displayNameForProfile,
@@ -273,17 +274,9 @@ export async function updateCurrentProfileDetails(input: ProfileDetailsInput): P
 }
 
 async function updateCurrentUsername(username: string) {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before updating your username");
-
   const response = await fetch(apiUrl("/api/mobile/profile/username"), {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
+    headers: await authorizedApiHeaders("updating your username", "POST"),
     body: JSON.stringify({ username })
   });
   const payload = await response.json().catch(() => null) as { error?: string } | null;

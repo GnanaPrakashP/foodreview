@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   isOwnedReviewMediaPath,
   isOwnedReviewMediaQuarantinePath,
@@ -13,14 +13,12 @@ import {
 } from "@/lib/server/review-media";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { moderateImageContent } from "@/lib/server/content-moderation";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
 export const maxDuration = 60;
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
 type UploadIntentRow = {
   category: ReviewMediaCategory;
@@ -30,6 +28,8 @@ type UploadIntentRow = {
   max_file_size_bytes: number;
   media_type: ReviewMediaKind;
   mime_type: string;
+  moderation_reason: string | null;
+  moderation_status: string | null;
   quarantine_bucket_id: string;
   quarantine_storage_path: string;
   status: string;
@@ -44,14 +44,8 @@ type StorageObjectMetadata = {
   size?: number;
 };
 
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 function normalizeString(value: unknown) {
@@ -138,33 +132,37 @@ async function finalizeAvatarProfile(admin: ReturnType<typeof createAdminClient>
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
-  if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+  if (!actor) return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const intentId = normalizeString(body?.intentId);
   const requestedPath = normalizeString(body?.uploadPath ?? body?.storagePath);
   const requestedCategory = normalizeString(body?.category);
-  if (!intentId) return mobileJson({ error: "intentId is required" }, { status: 400 });
+  if (!/^[0-9a-f-]{36}$/i.test(intentId)) return mobileJson(req, { error: "Invalid intent" }, { status: 400 });
 
   const admin = createAdminClient();
   const { data: intent, error: intentError } = await admin
     .from("review_media_upload_intents")
-    .select("id, user_id, user_name, category, media_type, mime_type, file_size_bytes, max_file_size_bytes, quarantine_bucket_id, quarantine_storage_path, storage_path, status, expires_at")
+    .select("id, user_id, user_name, category, media_type, mime_type, file_size_bytes, max_file_size_bytes, quarantine_bucket_id, quarantine_storage_path, storage_path, status, moderation_status, moderation_reason, expires_at")
     .eq("id", intentId)
     .maybeSingle<UploadIntentRow>();
 
-  if (intentError) return mobileJson({ error: "Unable to finalize upload" }, { status: 500 });
+  if (intentError) return mobileJson(req, { error: "Unable to finalize upload" }, { status: 500 });
   if (!intent || intent.user_id !== actor.userId || intent.user_name !== actor.actorName) {
-    return mobileJson({ error: "Upload intent not found" }, { status: 404 });
+    return mobileJson(req, { error: "Upload intent not found" }, { status: 404 });
   }
   if (intent.category === "post") {
-    return mobileJson({ error: "Legacy post media finalization is disabled" }, { status: 410 });
+    return mobileJson(req, { error: "Legacy post media finalization is disabled" }, { status: 410 });
   }
   if (requestedCategory && requestedCategory !== intent.category) {
-    return mobileJson({ error: "Upload intent category mismatch" }, { status: 400 });
+    return mobileJson(req, { error: "Upload intent category mismatch" }, { status: 400 });
   }
   if (requestedPath && requestedPath !== intent.quarantine_storage_path) {
-    return mobileJson({ error: "Upload path does not match intent" }, { status: 400 });
+    return mobileJson(req, { error: "Upload path does not match intent" }, { status: 400 });
   }
   if (intent.media_type === "video") {
     if (intent.status === "created") {
@@ -174,12 +172,12 @@ export async function POST(req: NextRequest) {
         .eq("id", intent.id)
         .eq("status", "created");
     }
-    return mobileJson({ error: "Video uploads are temporarily unavailable" }, { status: 400 });
+    return mobileJson(req, { error: "Video uploads are temporarily unavailable" }, { status: 400 });
   }
   if (intent.status === "finalized") {
     const { data: publicUrlData } = admin.storage.from(REVIEW_MEDIA_BUCKET).getPublicUrl(intent.storage_path);
     if (intent.category === "avatar") await finalizeAvatarProfile(admin, intent, publicUrlData.publicUrl);
-    return mobileJson({
+    return mobileJson(req, {
       category: intent.category,
       fileSizeBytes: intent.file_size_bytes,
       intentId: intent.id,
@@ -190,18 +188,18 @@ export async function POST(req: NextRequest) {
     });
   }
   if (intent.status !== "created") {
-    return mobileJson({ error: "Upload intent is not active" }, { status: 409 });
+    return mobileJson(req, { error: "Upload intent is not active" }, { status: 409 });
   }
   if (
     intent.quarantine_bucket_id !== REVIEW_MEDIA_QUARANTINE_BUCKET ||
     !isOwnedReviewMediaQuarantinePath(intent.quarantine_storage_path, actor.userId) ||
     !isOwnedReviewMediaPath(intent.storage_path, actor.userId)
   ) {
-    return mobileJson({ error: "Upload intent path is invalid" }, { status: 400 });
+    return mobileJson(req, { error: "Upload intent path is invalid" }, { status: 400 });
   }
   if (new Date(intent.expires_at).getTime() <= Date.now()) {
     await admin.from("review_media_upload_intents").update({ status: "expired" }).eq("id", intent.id);
-    return mobileJson({ error: "Upload intent expired" }, { status: 410 });
+    return mobileJson(req, { error: "Upload intent expired" }, { status: 410 });
   }
 
   let finalObjectUploaded = false;
@@ -209,23 +207,23 @@ export async function POST(req: NextRequest) {
     const metadata = await storageObjectMetadata(admin, REVIEW_MEDIA_QUARANTINE_BUCKET, intent.quarantine_storage_path);
     const metadataSize = metadata?.size && Number.isFinite(metadata.size) ? Number(metadata.size) : null;
     if (metadataSize !== null && metadataSize > intent.max_file_size_bytes) {
-      return mobileJson({ error: "Uploaded object is too large" }, { status: 413 });
+      return mobileJson(req, { error: "Uploaded object is too large" }, { status: 413 });
     }
     if (metadataSize !== null && metadataSize !== intent.file_size_bytes) {
-      return mobileJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
+      return mobileJson(req, { error: "Uploaded object size does not match intent" }, { status: 400 });
     }
 
     const { data: blob, error: downloadError } = await admin.storage
       .from(REVIEW_MEDIA_QUARANTINE_BUCKET)
       .download(intent.quarantine_storage_path);
-    if (downloadError || !blob) return mobileJson({ error: "Uploaded object not found" }, { status: 404 });
+    if (downloadError || !blob) return mobileJson(req, { error: "Uploaded object not found" }, { status: 404 });
 
     const buffer = Buffer.from(await blob.arrayBuffer());
     if (buffer.byteLength > intent.max_file_size_bytes) {
-      return mobileJson({ error: "Uploaded object is too large" }, { status: 413 });
+      return mobileJson(req, { error: "Uploaded object is too large" }, { status: 413 });
     }
     if (buffer.byteLength !== intent.file_size_bytes) {
-      return mobileJson({ error: "Uploaded object size does not match intent" }, { status: 400 });
+      return mobileJson(req, { error: "Uploaded object size does not match intent" }, { status: 400 });
     }
 
     const finalizedMedia = intent.media_type === "image"
@@ -251,6 +249,32 @@ export async function POST(req: NextRequest) {
             width: null
           };
         })();
+
+    const moderation = intent.moderation_status === "approved"
+      ? { decision: "approved" as const }
+      : await moderateImageContent(finalizedMedia.buffer);
+    if (moderation.decision === "pending") {
+      await admin.storage.from(REVIEW_MEDIA_QUARANTINE_BUCKET).upload(
+        intent.quarantine_storage_path,
+        finalizedMedia.buffer,
+        { contentType: finalizedMedia.mimeType, upsert: true }
+      );
+      await admin.from("review_media_upload_intents").update({
+        file_size_bytes: finalizedMedia.fileSizeBytes,
+        mime_type: finalizedMedia.mimeType,
+        moderation_reason: moderation.reasonCode,
+        moderation_status: "pending"
+      }).eq("id", intent.id).eq("status", "created");
+      return mobileJson(req, { error: "Media is awaiting moderation" }, { status: 423 });
+    }
+    if (moderation.decision === "rejected") {
+      await admin.storage.from(REVIEW_MEDIA_QUARANTINE_BUCKET).remove([intent.quarantine_storage_path]).catch(() => undefined);
+      await admin.from("review_media_upload_intents").update({
+        finalized_at: new Date().toISOString(), moderation_reason: moderation.reasonCode,
+        moderation_status: "rejected", status: "rejected"
+      }).eq("id", intent.id).eq("status", "created");
+      return mobileJson(req, { error: "Media was rejected by moderation" }, { status: 422 });
+    }
 
     const { error: finalUploadError } = await admin.storage
       .from(REVIEW_MEDIA_BUCKET)
@@ -294,7 +318,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return mobileJson({
+    return mobileJson(req, {
       category: intent.category,
       fileSizeBytes: finalizedMedia.fileSizeBytes,
       height: finalizedMedia.height,
@@ -331,7 +355,7 @@ export async function POST(req: NextRequest) {
         .from("review_media_upload_intents")
         .update({
           finalized_at: new Date().toISOString(),
-          moderation_reason: error instanceof Error ? error.message.slice(0, 500) : "review_media_validation_failed",
+          moderation_reason: "review_media_validation_failed",
           moderation_status: "rejected",
           status: "rejected"
         })
@@ -340,13 +364,10 @@ export async function POST(req: NextRequest) {
     } catch {
       // Sanitized response below; internal write failure is not exposed to mobile.
     }
-    return mobileJson({ error: safeReviewMediaErrorMessage(error) }, { status: 415 });
+    return mobileJson(req, { error: safeReviewMediaErrorMessage(error) }, { status: 415 });
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

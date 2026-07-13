@@ -19,7 +19,7 @@ test("mobile saved-post and block writes go through trusted API routes", () => {
   assert.doesNotMatch(wishlistRoute, /getRouteActor\(\)/);
   assert.match(settings, /authorizedSettingsJson\("\/api\/mobile\/blocks"/);
   assert.doesNotMatch(settings, /from\("blocked_users"\)[\s\S]*\.upsert/);
-  assert.match(blocksRoute, /getRouteActor\(\)/);
+  assert.match(blocksRoute, /getRouteActor\(req\)/);
   assert.match(blocksRoute, /from\("blocked_users"\)/);
   assert.match(blocksRoute, /invalidateSocialCachesForNames\(\[actor\.actorName, target\.username\]\)/);
 });

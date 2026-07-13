@@ -370,6 +370,8 @@ test("session boundary, realtime, notifications, deletion, and offline logout sh
   assert.match(settings, /cleanupCurrentLocalData\("account_deletion"/);
   assert.match(auth, /Promise\.race/);
   assert.match(auth, /clearSupabaseLocalSessionStorage/);
-  assert.match(statusRoute, /supabase\.auth\.getUser/);
+  assert.match(statusRoute, /getRouteActor\(req\)/);
+  assert.match(statusRoute, /actorResolution\.status/);
+  assert.doesNotMatch(statusRoute, /supabase\.auth\.getUser/);
   assert.match(statusRoute, /Cache-Control.*private, no-store/);
 });

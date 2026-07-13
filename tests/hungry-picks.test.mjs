@@ -63,7 +63,7 @@ test("right swipes are stored as hungry picks, not wishlist saves", () => {
 });
 
 test("hungry picks are server-backed and owner-scoped", () => {
-  assert.match(picksRouteSource, /getRouteActor\(\)/);
+  assert.match(picksRouteSource, /getRouteActor\(req\)/);
   assert.match(picksRouteSource, /\.from\("hungry_picks"\)/);
   assert.match(picksRouteSource, /canActorReadPost\(db, postId\.trim\(\), actor\.actorName\)/);
   assert.match(picksRouteSource, /hungryPicksForActor\(db, actor\.actorName\)/);

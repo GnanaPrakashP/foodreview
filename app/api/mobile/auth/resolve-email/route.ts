@@ -1,75 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { NextRequest } from "next/server";
+import {
+  boundedJsonError,
+  enforceRateLimit,
+  mobileApiJson,
+  mobileOptions,
+  rateLimitResponse,
+  readBoundedJson,
+} from "@/lib/server/api-security";
 
-type AuthMode = "sign_in" | "sign_up";
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PAGE_SIZE = 1000;
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
-
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
-}
+const METHODS = ["POST"];
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,189}$/;
+const GENERIC_RESPONSE = { ok: true } as const;
 
 function normalizeEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-async function emailExistsInAuthUsers(email: string) {
-  const admin = createAdminClient();
-
-  const { data, error } = await admin
-    .schema("auth")
-    .from("users")
-    .select("id")
-    .eq("email", email)
-    .limit(1);
-
-  if (!error) return Boolean(data?.length);
-
-  // Fallback for hosted projects that do not expose auth.users through PostgREST.
-  for (let page = 1; page < 100; page += 1) {
-    const result = await admin.auth.admin.listUsers({ page, perPage: PAGE_SIZE });
-    if (result.error) throw result.error;
-
-    const users = result.data.users ?? [];
-    if (users.some((user) => user.email?.toLowerCase() === email)) return true;
-    if (users.length < PAGE_SIZE) return false;
-  }
-
-  throw new Error("Unable to resolve email");
+  return typeof value === "string" ? value.trim().toLowerCase().slice(0, 254) : "";
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json().catch(() => null);
-    const email = normalizeEmail(body?.email);
+  const startedAt = Date.now();
+  const parsed = await readBoundedJson<{ email?: unknown }>(req, 1024);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const email = normalizeEmail(parsed.value?.email);
+  const rate = await enforceRateLimit(req, "auth.resolve-email", {
+    subject: EMAIL_RE.test(email) ? email : "invalid-email",
+  });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-    if (!EMAIL_RE.test(email)) {
-      return mobileJson({ error: "Enter a valid email address" }, { status: 400 });
-    }
-
-    const mode: AuthMode = await emailExistsInAuthUsers(email) ? "sign_in" : "sign_up";
-    return mobileJson({ mode });
-  } catch (error) {
-    console.error("[mobile auth resolve-email] failed:", error);
-    return mobileJson({ error: "Unable to continue with this email" }, { status: 500 });
-  }
+  // Never query auth.users and never branch on account existence. A small fixed
+  // response floor also avoids making validation branches observable remotely.
+  const remainingDelay = 75 - (Date.now() - startedAt);
+  if (remainingDelay > 0) await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+  return mobileApiJson(req, METHODS, GENERIC_RESPONSE, { status: 202 });
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

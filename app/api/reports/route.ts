@@ -1,12 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { canActorReadPost } from "@/lib/server/review-access";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { isValidUuid } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  abandonIdempotency,
+  boundedJsonError,
+  claimIdempotency,
+  completeIdempotency,
+  enforceRateLimit,
+  idempotencyFailure,
+  mobileApiJson,
+  rateLimitResponse,
+  readBoundedJson,
+} from "@/lib/server/api-security";
 
 const TARGET_TYPES = new Set(["review", "comment", "profile", "media"]);
 const REASONS = new Set(["spam", "harassment", "unsafe", "off_topic", "copyright", "other"]);
 const MAX_DETAILS_LENGTH = 1000;
+const METHODS = ["POST"];
 
 type ReportTargetType = "review" | "comment" | "profile" | "media";
 
@@ -63,22 +75,31 @@ async function canReportTarget(
 
 export async function POST(req: NextRequest) {
   const { actor } = await getRouteActor(req);
-  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  if (!actor) return mobileApiJson(req, METHODS, { error: "Authentication required" }, { status: 401 });
 
-  const body = await req.json().catch(() => null);
+  const rate = await enforceRateLimit(req, "mutation.report", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const targetType = cleanString(body?.targetType).toLowerCase() as ReportTargetType;
   const targetId = cleanString(body?.targetId);
   const reason = cleanString(body?.reason).toLowerCase();
   const details = cleanString(body?.details);
 
-  if (!TARGET_TYPES.has(targetType)) return NextResponse.json({ error: "Invalid target type" }, { status: 400 });
-  if (!targetId) return NextResponse.json({ error: "targetId is required" }, { status: 400 });
-  if (!REASONS.has(reason)) return NextResponse.json({ error: "Invalid report reason" }, { status: 400 });
-  if (details.length > MAX_DETAILS_LENGTH) return NextResponse.json({ error: "Report details are too long" }, { status: 400 });
+  if (!TARGET_TYPES.has(targetType)) return mobileApiJson(req, METHODS, { error: "Invalid target type" }, { status: 400 });
+  if (!targetId || targetId.length > 128) return mobileApiJson(req, METHODS, { error: "Invalid target id" }, { status: 400 });
+  if (!REASONS.has(reason)) return mobileApiJson(req, METHODS, { error: "Invalid report reason" }, { status: 400 });
+  if (details.length > MAX_DETAILS_LENGTH) return mobileApiJson(req, METHODS, { error: "Report details are too long" }, { status: 400 });
 
   const db = createAdminClient();
   const target = await canReportTarget(db, actor.actorName, targetType, targetId);
-  if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
+  if (!target.ok) return mobileApiJson(req, METHODS, { error: target.error }, { status: target.status });
+  const idempotency = await claimIdempotency(req, "mutation.report", actor.userId, {
+    details, reason, targetId, targetType,
+  });
+  if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
 
   const { data, error } = await db
     .from("content_reports")
@@ -96,9 +117,14 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     if (error.code === "23505") {
-      return NextResponse.json({ duplicate: true, ok: true });
+      const responseBody = { duplicate: true, ok: true };
+      await completeIdempotency(idempotency, 200, responseBody);
+      return mobileApiJson(req, METHODS, responseBody);
     }
-    return NextResponse.json({ error: "Could not create report" }, { status: 500 });
+    await abandonIdempotency(idempotency);
+    return mobileApiJson(req, METHODS, { error: "Could not create report" }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, report: data });
+  const responseBody = { ok: true, report: data };
+  await completeIdempotency(idempotency, 200, responseBody);
+  return mobileApiJson(req, METHODS, responseBody);
 }

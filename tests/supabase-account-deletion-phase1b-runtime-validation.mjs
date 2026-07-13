@@ -8,6 +8,8 @@ import { createClient } from "@supabase/supabase-js";
 const PORT = Number(process.env.ACCOUNT_DELETION_RUNTIME_NEXT_PORT ?? 3041);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const WORKER_SECRET = "local-phase1b-account-deletion-secret";
+const INSTALL_ID = crypto.randomUUID();
+const TEST_IP = `203.0.113.${(parseInt(INSTALL_ID.slice(0, 2), 16) % 200) + 1}`;
 let nextProcess = null;
 const passed = [];
 
@@ -33,6 +35,8 @@ function startNext(env) {
     env: {
       ...process.env,
       ACCOUNT_DELETION_WORKER_SECRET: WORKER_SECRET,
+      API_RATE_LIMIT_HMAC_SECRET: "phase1b-local-runtime-hmac-secret-0123456789",
+      API_TRUSTED_PROXY_HOPS: "1",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       NEXT_PUBLIC_SUPABASE_URL: env.url,
       SUPABASE_SERVICE_ROLE_KEY: env.serviceKey
@@ -71,6 +75,9 @@ async function route(path, token, body, method = "POST", secret = null) {
     body: body === undefined ? undefined : JSON.stringify(body),
     headers: {
       "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+      "X-FoodReview-Install-Id": INSTALL_ID,
+      "X-Forwarded-For": TEST_IP,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(secret ? { "x-account-deletion-secret": secret } : {})
     },
@@ -267,11 +274,15 @@ async function main() {
   const fixture = await seed(admin, owner, other);
   record("real Auth actors and cross-subsystem deletion fixture created");
 
+  const actorStatus = await route("/api/mobile/auth/account-status", owner.token, undefined, "GET");
+  assert.equal(actorStatus.response.status, 200, JSON.stringify(actorStatus.body));
+  assert.equal(actorStatus.body.status, "active", JSON.stringify(actorStatus.body));
+
   const requested = await route("/api/delete-account", owner.token);
-  assert.equal(requested.response.status, 202);
+  assert.equal(requested.response.status, 202, JSON.stringify(requested.body));
   assert.equal(requested.body.accepted, true);
   const repeated = await route("/api/delete-account", owner.token);
-  assert.equal(repeated.response.status, 202);
+  assert.equal(repeated.response.status, 202, JSON.stringify(repeated.body));
   assert.equal(repeated.body.jobId, requested.body.jobId);
   record("owner-only request freezes atomically and repeated request reuses the durable job");
 

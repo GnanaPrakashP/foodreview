@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST", "DELETE"];
 
 function normalizeUsername(value: unknown) {
   return typeof value === "string" ? value.trim().replace(/^@+/, "").toLowerCase() : "";
@@ -28,13 +31,18 @@ async function validateTarget(db: ReturnType<typeof createAdminClient>, actorNam
 }
 
 export async function POST(req: NextRequest) {
-  const { actor } = await getRouteActor();
-  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const { actor } = await getRouteActor(req);
+  if (!actor) return mobileApiJson(req, METHODS, { error: "Authentication required" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
+  const rate = await enforceRateLimit(req, "mutation.block", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 2048);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const db = createAdminClient();
   const target = await validateTarget(db, actor.actorName, body?.username);
-  if (target.error) return NextResponse.json({ error: target.error }, { status: target.status });
+  if (target.error) return mobileApiJson(req, METHODS, { error: target.error }, { status: target.status });
 
   const { error } = await db
     .from("blocked_users")
@@ -43,20 +51,25 @@ export async function POST(req: NextRequest) {
       { onConflict: "blocker_name,blocked_name" }
     );
 
-  if (error) return NextResponse.json({ error: "Could not block user" }, { status: 500 });
+  if (error) return mobileApiJson(req, METHODS, { error: "Could not block user" }, { status: 500 });
 
   invalidateSocialCachesForNames([actor.actorName, target.username]);
-  return NextResponse.json({ blocked: true, ok: true, username: target.username });
+  return mobileApiJson(req, METHODS, { blocked: true, ok: true, username: target.username });
 }
 
 export async function DELETE(req: NextRequest) {
-  const { actor } = await getRouteActor();
-  if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const { actor } = await getRouteActor(req);
+  if (!actor) return mobileApiJson(req, METHODS, { error: "Authentication required" }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
+  const rate = await enforceRateLimit(req, "mutation.block", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 2048);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const db = createAdminClient();
   const target = await validateTarget(db, actor.actorName, body?.username);
-  if (target.error) return NextResponse.json({ error: target.error }, { status: target.status });
+  if (target.error) return mobileApiJson(req, METHODS, { error: target.error }, { status: target.status });
 
   const { error } = await db
     .from("blocked_users")
@@ -64,8 +77,8 @@ export async function DELETE(req: NextRequest) {
     .eq("blocker_name", actor.actorName)
     .eq("blocked_name", target.username);
 
-  if (error) return NextResponse.json({ error: "Could not unblock user" }, { status: 500 });
+  if (error) return mobileApiJson(req, METHODS, { error: "Could not unblock user" }, { status: 500 });
 
   invalidateSocialCachesForNames([actor.actorName, target.username]);
-  return NextResponse.json({ blocked: false, ok: true, username: target.username });
+  return mobileApiJson(req, METHODS, { blocked: false, ok: true, username: target.username });
 }

@@ -316,7 +316,7 @@ test("settings engagement APIs resolve the authenticated actor server-side", () 
   const helper = source("lib/server/engagement-list.ts");
 
   for (const src of [liked, saved, comments]) {
-    assert.match(src, /getRouteActor\(\)/);
+    assert.match(src, /getRouteActor\(req\)/);
     assert.match(src, /createAdminClient\(\)/);
     assert.match(src, /actor\.actorName/);
   }

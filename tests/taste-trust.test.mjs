@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 function transpile(src) {
   const { outputText } = ts.transpileModule(src, {
@@ -198,6 +199,7 @@ function loadFeedbackRoute({ db, authName = "Alice", userId = "alice-id", recalc
   );
   return loadCommonJs(code, {
     "next/server": { NextRequest: class {}, NextResponse: mockNextResponse },
+    "@/lib/server/api-security": createApiSecurityStub({ json: mockNextResponse.json }),
     "@/lib/circle-db": { hasCircleAccess: async () => true },
     "@/lib/server/cache-invalidation": { invalidateSocialCachesForNames() {} },
     "@/lib/server/review-access": { canActorReadPost: async () => ({ allowed: true }) },

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 function transpile(src) {
   const { outputText } = ts.transpileModule(src, {
@@ -69,7 +70,6 @@ function spyDb(...responses) {
 function loadRoute({
   admin = spyDb(),
   viewer = { id: "viewer-id", name: "Alice" },
-  fallbackProfileName = "Alice",
   notifications = {},
 } = {}) {
   const calls = {
@@ -83,7 +83,6 @@ function loadRoute({
     createPostLikeNotification: async (...args) => calls.createPostLikeNotification.push(args),
     createPostCommentNotifications: async (...args) => calls.createPostCommentNotifications.push(args),
     createCirclePostNotifications: async (...args) => calls.createCirclePostNotifications.push(args),
-    getAuthenticatedProfileName: async () => fallbackProfileName,
     removeLikeNotification: async (...args) => calls.removeLikeNotification.push(args),
     removeCommentNotification: async (...args) => calls.removeCommentNotification.push(args),
     ...notifications,
@@ -96,6 +95,12 @@ function loadRoute({
     console,
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({ json: mockNextResponse.json });
+      if (id === "@/lib/server/route-supabase") return {
+        getRouteActor: async () => ({
+          actor: viewer ? { userId: viewer.id, actorName: viewer.name, displayName: viewer.name } : null,
+        }),
+      };
       if (id === "@/lib/types") return {};
       if (id === "@/lib/selects") {
         return {
@@ -126,7 +131,7 @@ function loadRoute({
 
 function review(overrides = {}) {
   return {
-    id: "review-1",
+    id: "11111111-1111-4111-8111-111111111111",
     reviewer_name: "Bob",
     restaurant_name: "Cafe One",
     visibility: "public",
@@ -134,56 +139,50 @@ function review(overrides = {}) {
   };
 }
 
-function actorProfile(firstName = "Alice", lastName = "Ate") {
-  return { data: { first_name: firstName, last_name: lastName }, error: null };
-}
-
 test("events: logged-out direct API call is rejected", async () => {
   const { route } = loadRoute({ viewer: null });
 
-  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Alice" }));
+  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Alice" }));
 
   assert.equal(status(res), 401);
-  assert.equal(body(res).error, "Unauthorized");
+  assert.equal(body(res).error, "Authentication required");
 });
 
-test("events: forged actorName is rejected before notification work", async () => {
+test("events: client actorName is ignored and engagement remains server-owned", async () => {
   const admin = spyDb();
   const { route, calls } = loadRoute({ admin, viewer: { id: "viewer-id", name: "Alice" } });
 
-  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Mallory" }));
+  const res = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Mallory" }));
 
-  assert.equal(status(res), 400);
-  assert.equal(body(res).error, "Invalid actor");
+  assert.equal(status(res), 410);
+  assert.match(body(res).error, /mutation routes/i);
   assert.equal(admin._calls.length, 0);
   assert.equal(calls.createPostLikeNotification.length, 0);
 });
 
-test("events: actorName falls back to authenticated profile name for circle post events", async () => {
+test("events: canonical actor name owns circle post events", async () => {
   const admin = spyDb(
-    actorProfile(),
     { data: review({ reviewer_name: "Alice" }), error: null }
   );
   const { route, calls } = loadRoute({
     admin,
-    viewer: { id: "viewer-id", name: "" },
-    fallbackProfileName: "Alice",
+    viewer: { id: "viewer-id", name: "Alice" },
   });
 
-  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1" }));
+  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "11111111-1111-4111-8111-111111111111" }));
 
   assert.equal(status(res), 200);
   assert.equal(calls.createCirclePostNotifications.length, 1);
 });
 
 test("events: engagement notifications are owned by mutation routes", async () => {
-  const admin = spyDb(actorProfile(), { data: review(), error: null });
+  const admin = spyDb();
   const { route, calls } = loadRoute({ admin });
 
-  const liked = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "review-1", actorName: "Alice" }));
+  const liked = await route.POST(makeReq({ event: "POST_LIKED", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Alice" }));
   const commented = await route.POST(makeReq({
     event: "POST_COMMENTED",
-    reviewId: "review-1",
+    reviewId: "11111111-1111-4111-8111-111111111111",
     commentId: "comment-1",
     actorName: "Alice",
   }));
@@ -197,10 +196,10 @@ test("events: engagement notifications are owned by mutation routes", async () =
 });
 
 test("events: CIRCLE_POST_CREATED rejects posts not owned by the actor", async () => {
-  const admin = spyDb(actorProfile(), { data: review({ reviewer_name: "Bob" }), error: null });
+  const admin = spyDb({ data: review({ reviewer_name: "Bob" }), error: null });
   const { route, calls } = loadRoute({ admin });
 
-  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1", actorName: "Alice" }));
+  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Alice" }));
 
   assert.equal(status(res), 400);
   assert.equal(body(res).error, "Invalid actor");
@@ -208,10 +207,10 @@ test("events: CIRCLE_POST_CREATED rejects posts not owned by the actor", async (
 });
 
 test("events: CIRCLE_POST_CREATED notifies only for actor-owned posts", async () => {
-  const admin = spyDb(actorProfile(), { data: review({ reviewer_name: "Alice" }), error: null });
+  const admin = spyDb({ data: review({ reviewer_name: "Alice" }), error: null });
   const { route, calls } = loadRoute({ admin });
 
-  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "review-1", actorName: "Alice" }));
+  const res = await route.POST(makeReq({ event: "CIRCLE_POST_CREATED", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Alice" }));
 
   assert.equal(status(res), 200);
   assert.equal(calls.createCirclePostNotifications.length, 1);
@@ -219,13 +218,10 @@ test("events: CIRCLE_POST_CREATED notifies only for actor-owned posts", async ()
 });
 
 test("events: unsupported event returns 400 without fetching the review", async () => {
-  const admin = spyDb(
-    actorProfile(),                   // actor display-name lookup (always happens)
-    { data: review(), error: null }   // review fetch — must NOT be consumed
-  );
+  const admin = spyDb({ data: review(), error: null });
   const { route } = loadRoute({ admin });
 
-  const res = await route.POST(makeReq({ event: "NOT_REAL", reviewId: "review-1", actorName: "Alice" }));
+  const res = await route.POST(makeReq({ event: "NOT_REAL", reviewId: "11111111-1111-4111-8111-111111111111", actorName: "Alice" }));
 
   assert.equal(status(res), 400);
   assert.equal(body(res).error, "Unsupported event");

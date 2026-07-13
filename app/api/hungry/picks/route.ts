@@ -5,8 +5,8 @@ import { canActorReadPost } from "@/lib/server/review-access";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET() {
-  const { actor } = await getRouteActor();
+export async function GET(req: NextRequest) {
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -54,7 +54,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "postId is required" }, { status: 400 });
   }
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

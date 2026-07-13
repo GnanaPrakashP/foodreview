@@ -61,7 +61,7 @@ function loadRoute({ authActor = null, db = mockDb() } = {}) {
       if (id === "next/headers") return { cookies: async () => ({ getAll: () => [] }) };
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/server/route-supabase") {
-        return { createRouteSupabase: async () => db };
+        return { getRouteActor: async () => ({ actor: authActor, supabase: db }) };
       }
       if (id === "@/lib/circle-auth") {
         return { getAuthenticatedCircleActor: async () => authActor };

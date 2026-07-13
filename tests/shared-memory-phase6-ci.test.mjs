@@ -51,6 +51,6 @@ test("phase 6 workflow instructions keep the hardening command discoverable", ()
 });
 
 test("phase 6 status remains phase-gated or records completed hardening", () => {
-  assert.match(status, /Current phase: (Phase 6|Complete|Final production-readiness audit|Production DB deployment verification)/);
-  assert.match(status, /Next required phase: (Tests and CI\/CD|None|Production DB deployment verification|Authenticated staging smoke verification)/);
+  assert.match(status, /Current phase: (Production Hardening Phase 4|Phase 6|Complete|Final production-readiness audit|Production DB deployment verification)/);
+  assert.match(status, /Next required phase: (Phase 4 manual staging\/release matrix|Tests and CI\/CD|None|Production DB deployment verification|Authenticated staging smoke verification)/);
 });

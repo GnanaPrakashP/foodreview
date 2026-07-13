@@ -4,6 +4,9 @@ import { addCircleEdge, getAccountTypeForName, hasCircleEdge } from "@/lib/circl
 import { createNotificationForNames, upsertCircleRequestNotification } from "@/lib/notifications";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 type CircleSupabaseClient = { from: (table: string) => any };
 
@@ -83,6 +86,8 @@ async function handleCircleRequest(req: NextRequest) {
 
   const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "mutation.circle", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const admin = createAdminClient();
   const sender = actor.actorName;

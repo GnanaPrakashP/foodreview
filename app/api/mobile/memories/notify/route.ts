@@ -1,7 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  abandonIdempotency,
+  boundedJsonError,
+  claimIdempotency,
+  completeIdempotency,
+  enforceRateLimit,
+  fetchWithDeadline,
+  idempotencyFailure,
+  mobileApiJson,
+  mobileOptions,
+  rateLimitResponse,
+  readBoundedJson,
+} from "@/lib/server/api-security";
 
 type MemoryNotificationKind = "message" | "media" | "dish";
 type MemoryBlockRow = {
@@ -12,20 +25,10 @@ type MemoryBlockRow = {
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const MEMORY_NOTIFICATION_BODY = "You have a new memory update.";
 const MEMORY_NOTIFICATION_TITLE = "Table Memory";
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 function normalizeKind(value: unknown): MemoryNotificationKind {
@@ -47,27 +50,32 @@ function blockedCounterpart(row: MemoryBlockRow, actorName: string) {
 async function sendExpoPush(messages: Array<Record<string, unknown>>) {
   if (messages.length === 0) return;
 
-  const response = await fetch(EXPO_PUSH_URL, {
+  const response = await fetchWithDeadline(EXPO_PUSH_URL, {
     body: JSON.stringify(messages),
     headers: {
       "Accept": "application/json",
       "Content-Type": "application/json"
     },
     method: "POST"
-  });
+  }, 5_000);
 
   if (!response.ok) throw new Error(`Expo push send failed with ${response.status}`);
 }
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
+  let activeIdempotency: Extract<Awaited<ReturnType<typeof claimIdempotency>>, { state: "claimed" }> | null = null;
   try {
     const { actor, supabase } = await getRouteActor(req);
-    if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+    if (!actor) return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
+    const rate = await enforceRateLimit(req, "notification.memory", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-    const body = await req.json().catch(() => null);
+    const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+    const body = parsed.value;
     const roomId = normalizeText(body?.roomId, 80);
-    if (!roomId) return mobileJson({ error: "roomId is required" }, { status: 400 });
+    if (!/^[0-9a-f-]{36}$/i.test(roomId)) return mobileJson(req, { error: "Invalid room" }, { status: 400 });
 
     const kind = normalizeKind(body?.kind);
     // Ignore preview text/captions; memory notifications stay generic by default.
@@ -79,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     if (membersError) throw membersError;
     if (!readableMembers?.some((member: { user_name: string }) => member.user_name === actor.actorName)) {
-      return mobileJson({ error: "Room not found" }, { status: 404 });
+      return mobileJson(req, { error: "Room not found" }, { status: 404 });
     }
 
     const roomMemberNames = Array.from(new Set(
@@ -95,7 +103,7 @@ export async function POST(req: NextRequest) {
         status: "no_recipients",
         statusCode: 200
       });
-      return mobileJson({ sent: 0 });
+      return mobileJson(req, { sent: 0 });
     }
 
     const admin = createAdminClient();
@@ -119,8 +127,12 @@ export async function POST(req: NextRequest) {
         status: "blocked_relationship",
         statusCode: 200
       });
-      return mobileJson({ sent: 0 });
+      return mobileJson(req, { sent: 0 });
     }
+
+    const idempotency = await claimIdempotency(req, "notification.memory", actor.userId, { kind, roomId });
+    if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
+    activeIdempotency = idempotency;
 
     const [
       { data: tokens, error: tokensError },
@@ -156,7 +168,7 @@ export async function POST(req: NextRequest) {
         .map((pref) => pref.user_name)
     );
 
-    const pushMessages = (tokens ?? [])
+    const pushMessages = (tokens ?? []).slice(0, 100)
       .filter((token: { expo_push_token: string; user_name: string }) => !mutedRecipients.has(token.user_name))
       .filter((token: { expo_push_token: string; user_name: string }) => Boolean(token.expo_push_token))
       .map((token: { expo_push_token: string; user_name: string }) => ({
@@ -180,21 +192,22 @@ export async function POST(req: NextRequest) {
       status: "success",
       statusCode: 200
     });
-    return mobileJson({ sent: pushMessages.length });
+    const responseBody = { sent: pushMessages.length };
+    await completeIdempotency(idempotency, 200, responseBody);
+    activeIdempotency = null;
+    return mobileJson(req, responseBody);
   } catch (error) {
+    if (activeIdempotency) await abandonIdempotency(activeIdempotency).catch(() => undefined);
     recordMemoryOperation("memory_notification.send", {
       durationMs: memoryOperationDurationMs(startedAt),
       errorKind: memoryErrorKind(error),
       status: "error",
       statusCode: 500
     });
-    return mobileJson({ error: "Unable to send memory notification" }, { status: 500 });
+    return mobileJson(req, { error: "Unable to send memory notification" }, { status: 500 });
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }

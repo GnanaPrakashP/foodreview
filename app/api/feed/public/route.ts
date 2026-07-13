@@ -76,7 +76,6 @@ export async function GET(req: NextRequest) {
   // Keep an explicit exclude override for callers that need a narrower view.
   const excludeParam = req.nextUrl.searchParams.get("exclude") ?? "";
   const excludeSeenParam = req.nextUrl.searchParams.get("excludeSeen") ?? "";
-  const requestedViewerName = req.nextUrl.searchParams.get("viewer") ?? "";
   const excludeSynthetic = req.nextUrl.searchParams.get("excludeSynthetic") === "1";
   // When true, return an empty result set rather than falling back to base rows when all
   // candidates are excluded. Used by Circle suggested-fallback to avoid reintroducing seen posts.
@@ -88,8 +87,8 @@ export async function GET(req: NextRequest) {
   const bounds = lat != null && lng != null ? nearbyBounds(lat, lng) : null;
 
   try {
-    const { actor } = await getRouteActor().catch(() => ({ actor: null }));
-    const myName = actor?.actorName ?? requestedViewerName;
+    const { actor } = await getRouteActor(req).catch(() => ({ actor: null }));
+    const myName = actor?.actorName ?? "";
     const db = createAdminClient();
     const excludeNames = Array.from(new Set([
       ...excludeParam

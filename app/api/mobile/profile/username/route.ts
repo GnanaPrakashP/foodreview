@@ -1,23 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { apiJson, boundedJsonError, enforceRateLimit, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
 const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
 function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+  return apiJson(body, init);
 }
 
 function normalizeUsername(value: unknown) {
@@ -44,15 +35,19 @@ function usernameErrorResponse(error: unknown) {
   return mobileJson({ error: "Could not update username" }, { status: 500 });
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, { headers: CORS_HEADERS });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }
 
 export async function POST(req: NextRequest) {
   const { actor, supabase } = await getRouteActor(req);
   if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "profile.username", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-  const body = await req.json().catch(() => null);
+  const parsed = await readBoundedJson<{ username?: unknown }>(req, 2048);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value;
   const nextUsername = normalizeUsername(body?.username);
 
   if (!USERNAME_REGEX.test(nextUsername)) {

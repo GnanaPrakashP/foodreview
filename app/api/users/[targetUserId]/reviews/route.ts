@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
 import { loadProfileReviewsPage, parseProfileReviewsCursor } from "@/lib/profile-reviews";
 
 function parseNumber(value: string | null, fallback: number): number {
@@ -22,9 +22,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ targ
   }
 
   try {
-    const supabase = await createRouteSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-    const viewerName = (user?.user_metadata?.username as string) || user?.email?.split("@")[0] || "";
+    const { actor } = await getRouteActor(req);
+    const viewerName = actor?.actorName ?? "";
     const page = await loadProfileReviewsPage(createAdminClient(), ownerName, viewerName, {
       cursor,
       limit,

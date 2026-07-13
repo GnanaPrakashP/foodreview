@@ -1,5 +1,6 @@
 import { apiUrl } from "@/api/config";
 import { compactAddressText, compactLocationLabel } from "@/services/locationLabels";
+import { authorizedApiHeaders } from "@/api/client";
 
 export type PlaceSuggestion = {
   mainText: string;
@@ -57,7 +58,10 @@ async function fetchWithTimeout(url: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PLACES_REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, {
+      headers: await authorizedApiHeaders("searching restaurants"),
+      signal: controller.signal
+    });
   } finally {
     clearTimeout(timeout);
   }

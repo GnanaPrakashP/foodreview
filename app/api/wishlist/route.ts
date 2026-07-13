@@ -5,6 +5,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { canActorReadPost } from "@/lib/server/review-access";
 import { recalculateUserReputation } from "@/lib/server/reputation";
 import { getPostEngagementState } from "@/lib/server/post-engagement-state";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST", "DELETE"];
 
 async function refreshPostAuthorReputation(db: { from: (table: string) => any }, postId: unknown): Promise<string> {
   if (typeof postId !== "string" || !postId.trim()) return "";
@@ -45,7 +48,10 @@ function scheduleWishlistSideEffects(input: {
 }
 
 export async function POST(req: NextRequest) {
-  const { restaurantName, postId } = await req.json();
+  const parsed = await readBoundedJson<{ postId?: unknown; restaurantName?: unknown }>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const restaurantName = parsed.value?.restaurantName;
+  const postId = parsed.value?.postId;
   if (typeof restaurantName !== "string" || !restaurantName.trim()) {
     return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
   }
@@ -54,8 +60,11 @@ export async function POST(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
+  const restaurantNameValue = typeof restaurantName === "string" ? restaurantName.trim().slice(0, 200) : "";
   if (typeof postId === "string") {
     const access = await canActorReadPost(writeDb, postId, actor.actorName);
     if (!access.allowed) {
@@ -67,7 +76,7 @@ export async function POST(req: NextRequest) {
     .from("wishlist")
     .insert({
       user_name: actor.actorName,
-      restaurant_name: restaurantName.trim(),
+      restaurant_name: restaurantNameValue,
       post_id: typeof postId === "string" ? postId : null,
     });
 
@@ -83,7 +92,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { restaurantName, postId } = await req.json();
+  const parsed = await readBoundedJson<{ postId?: unknown; restaurantName?: unknown }>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const restaurantName = parsed.value?.restaurantName;
+  const postId = parsed.value?.postId;
   if (
     (typeof postId !== "string" || !postId.trim()) &&
     (typeof restaurantName !== "string" || !restaurantName.trim())
@@ -95,8 +107,11 @@ export async function DELETE(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const writeDb = createAdminClient();
+  const restaurantNameValue = typeof restaurantName === "string" ? restaurantName.trim().slice(0, 200) : "";
   let query = writeDb
     .from("wishlist")
     .delete()
@@ -104,7 +119,7 @@ export async function DELETE(req: NextRequest) {
 
   query = typeof postId === "string" && postId.trim()
     ? query.eq("post_id", postId.trim())
-    : query.eq("restaurant_name", restaurantName.trim()).is("post_id", null);
+    : query.eq("restaurant_name", restaurantNameValue).is("post_id", null);
 
   const { error } = await query;
 

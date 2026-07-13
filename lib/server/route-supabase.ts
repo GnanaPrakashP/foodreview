@@ -2,7 +2,23 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
-import { getAuthenticatedCircleActor } from "@/lib/circle-auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+export type RequestActor = {
+  actorName: string;
+  displayName: string;
+  userId: string;
+};
+
+export type RequestActorResolution =
+  | { actor: RequestActor; status: "active" }
+  | { actor: null; status: "frozen" | "invalid" | "missing_profile" | "unauthenticated" | "unavailable" };
+
+const actorResolutionCache = new WeakMap<NextRequest, Promise<{
+  actorResolution: RequestActorResolution;
+  authenticatedUserId: string | null;
+  supabase: Awaited<ReturnType<typeof createRouteSupabase>>;
+}>>();
 
 export async function createRouteSupabase(req?: NextRequest) {
   const bearerToken = req?.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -40,7 +56,89 @@ export async function createRouteSupabase(req?: NextRequest) {
 }
 
 export async function getRouteActor(req?: NextRequest) {
+  if (!req) {
+    const supabase = await createRouteSupabase();
+    return {
+      actor: null,
+      actorResolution: { actor: null, status: "unauthenticated" } as RequestActorResolution,
+      authenticatedUserId: null,
+      supabase,
+    };
+  }
+  let pending = actorResolutionCache.get(req);
+  if (!pending) {
+    pending = resolveRouteActor(req);
+    actorResolutionCache.set(req, pending);
+  }
+  const { actorResolution, authenticatedUserId, supabase } = await pending;
+  return { actor: actorResolution.actor, actorResolution, authenticatedUserId, supabase };
+}
+
+async function resolveRouteActor(req: NextRequest) {
   const supabase = await createRouteSupabase(req);
-  const actor = await getAuthenticatedCircleActor(supabase);
-  return { supabase, actor };
+  const presentedCredential = Boolean(
+    req.headers.get("authorization")?.trim() || req.headers.get("cookie")?.trim()
+  );
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    return {
+      actorResolution: {
+        actor: null,
+        status: presentedCredential ? "invalid" : "unauthenticated",
+      } as RequestActorResolution,
+      authenticatedUserId: null,
+      supabase,
+    };
+  }
+  try {
+    const { data: profile, error: profileError } = await createAdminClient()
+      .from("profiles")
+      .select("username, first_name, last_name, account_status, deletion_started_at")
+      .eq("id", user.id)
+      .maybeSingle<{
+        account_status: string | null;
+        deletion_started_at: string | null;
+        first_name: string | null;
+        last_name: string | null;
+        username: string | null;
+      }>();
+    if (profileError) {
+      return {
+        actorResolution: { actor: null, status: "unavailable" } as RequestActorResolution,
+        authenticatedUserId: user.id,
+        supabase,
+      };
+    }
+    if (!profile?.username?.trim()) {
+      return {
+        actorResolution: { actor: null, status: "missing_profile" } as RequestActorResolution,
+        authenticatedUserId: user.id,
+        supabase,
+      };
+    }
+    if (profile.account_status !== "active" || profile.deletion_started_at) {
+      return {
+        actorResolution: { actor: null, status: "frozen" } as RequestActorResolution,
+        authenticatedUserId: user.id,
+        supabase,
+      };
+    }
+    const actorName = profile.username.trim().toLowerCase();
+    const displayName = [profile.first_name, profile.last_name]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join(" ") || actorName;
+    const actor: RequestActor = { actorName, displayName, userId: user.id };
+    return {
+      actorResolution: { actor, status: "active" } as RequestActorResolution,
+      authenticatedUserId: user.id,
+      supabase,
+    };
+  } catch {
+    return {
+      actorResolution: { actor: null, status: "unavailable" } as RequestActorResolution,
+      authenticatedUserId: user.id,
+      supabase,
+    };
+  }
 }

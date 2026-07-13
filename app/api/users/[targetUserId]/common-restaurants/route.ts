@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getRouteActor } from "@/lib/server/route-supabase";
 import type { Review } from "@/lib/types";
 import { hasCircleAccess } from "@/lib/circle-db";
 import { computeCommonRestaurants } from "@/lib/common-restaurants";
@@ -26,26 +26,14 @@ interface Props {
   params: Promise<{ targetUserId: string }>;
 }
 
-export async function GET(_req: NextRequest, { params }: Props) {
+export async function GET(req: NextRequest, { params }: Props) {
   const { targetUserId } = await params;
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  const { actor, supabase } = await getRouteActor(req);
+  if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const { data: viewerProfile } = await supabase
-    .from("profiles")
-    .select("id, username")
-    .eq("id", user.id)
-    .maybeSingle()
-    .returns<ProfileRow>();
-
-  const viewerName = (viewerProfile as ProfileRow | null)?.username
-    || (user.user_metadata?.username as string)
-    || user.email?.split("@")[0]
-    || "";
+  const viewerName = actor.actorName;
   if (!viewerName) {
     return NextResponse.json({ error: "Viewer profile is missing a username" }, { status: 400 });
   }

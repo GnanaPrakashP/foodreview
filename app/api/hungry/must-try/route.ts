@@ -196,7 +196,7 @@ export async function GET(req: NextRequest) {
   const lng = parseCoordinate(req.nextUrl.searchParams.get("lng"), -180, 180);
 
   try {
-    const { actor } = await getRouteActor();
+    const { actor } = await getRouteActor(req);
     const db = createAdminClient();
     const circleMembers = await loadCircleMembers(db, actor?.actorName ?? null);
     const circleSet = new Set(circleMembers);
@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
 
   if (!postId) return NextResponse.json({ error: "postId is required" }, { status: 400 });
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
   try {
@@ -436,7 +436,7 @@ export async function DELETE(req: NextRequest) {
   const postId = req.nextUrl.searchParams.get("postId")?.trim() ?? "";
   if (!postId) return NextResponse.json({ error: "postId is required" }, { status: 400 });
 
-  const { actor } = await getRouteActor();
+  const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
   try {

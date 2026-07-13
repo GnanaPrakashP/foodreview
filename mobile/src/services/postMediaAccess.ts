@@ -1,6 +1,7 @@
 import { apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import type { ReviewMedia } from "@/types/models";
+import { createRequestId, getInstallId } from "@/services/installIdentity";
 
 type PostMediaDto = {
   accessClass: ReviewMedia["accessClass"];
@@ -29,7 +30,9 @@ export async function fetchPostMediaAccess(assetIdsInput: string[]) {
       body: JSON.stringify({ assetIds: batch }),
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Idempotency-Key": createRequestId(),
+        "X-FoodReview-Install-Id": await getInstallId()
       },
       method: "POST"
     });

@@ -8,6 +8,9 @@ import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 import { REVIEW_MEDIA_BUCKET, REVIEW_POST_MAX_ITEMS, type ReviewMediaKind } from "@/lib/server/review-media";
 import { accessClassForPostVisibility, MEDIA_PRIVATE_BUCKET, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
 import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 // Matches the mobile camera's 30s recording cap.
 const MAX_REVIEW_VIDEO_DURATION_SECONDS = 30;
@@ -85,8 +88,12 @@ export async function POST(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-  const body = await req.json();
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 64 * 1024);
+  if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+  const body = parsed.value ?? {};
   const {
     restaurantName,
     items,
@@ -128,7 +135,10 @@ export async function POST(req: NextRequest) {
         )
       : [];
 
-  if (!restaurantName?.trim()) {
+  const restaurantNameValue = typeof restaurantName === "string" ? restaurantName.trim().slice(0, 200) : "";
+  const areaValue = typeof area === "string" ? area.trim().slice(0, 200) : "";
+  const restaurantAddressValue = typeof restaurantAddress === "string" ? restaurantAddress.trim().slice(0, 500) : "";
+  if (!restaurantNameValue) {
     return NextResponse.json({ error: "restaurantName is required" }, { status: 400 });
   }
 
@@ -187,16 +197,16 @@ export async function POST(req: NextRequest) {
     .from("reviews")
     .insert({
       reviewer_name: actor.actorName,
-      restaurant_name: restaurantName.trim(),
+      restaurant_name: restaurantNameValue,
       items: normalizedItems.items,
       body: normalizedBody.body ?? null,
       tags: normalizedTags,
       visibility,
       photo_url: null,
       photo_urls: [],
-      area: area?.trim() || null,
+      area: areaValue || null,
       restaurant_id: restaurantId ?? null,
-      restaurant_address: restaurantAddress?.trim() || null,
+      restaurant_address: restaurantAddressValue || null,
       restaurant_lat: typeof restaurantLat === "number" ? restaurantLat : null,
       restaurant_lng: typeof restaurantLng === "number" ? restaurantLng : null,
       restaurant_primary_type: restaurantPrimaryTypeValue,
@@ -218,7 +228,7 @@ export async function POST(req: NextRequest) {
     userId: actor.userId
   });
   if (!mentionResult.ok) {
-    console.error("[reviews] Failed to write dish mentions:", mentionResult.error);
+    console.error("[reviews] dish mention write failed");
     await writeDb.from("reviews").delete().eq("id", data.id);
     await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
     return NextResponse.json({ error: "Could not create review" }, { status: 500 });
@@ -316,6 +326,7 @@ async function loadFinalizedReviewMedia(
     duration_ms: number | null;
     id: string;
     media_type: ReviewMediaKind;
+    moderation_status: string;
     original_mime_type: string;
     owner_id: string;
     owner_name: string;
@@ -325,7 +336,7 @@ async function loadFinalizedReviewMedia(
   const { data: assetRows, error: assetError } = uniqueAssetIds.length > 0
     ? await admin
       .from("media_assets")
-      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status, access_class, consumed_at")
+      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status, moderation_status, access_class, consumed_at")
       .in("id", uniqueAssetIds)
       .returns<ReadyMediaAsset[]>()
     : { data: [], error: null };
@@ -355,6 +366,7 @@ async function loadFinalizedReviewMedia(
         asset.owner_name !== actor.actorName ||
         asset.surface !== "post" ||
         asset.status !== "ready" ||
+        asset.moderation_status !== "approved" ||
         asset.consumed_at !== null ||
         asset.access_class !== accessClassForPostVisibility(visibility) ||
         !canonical ||

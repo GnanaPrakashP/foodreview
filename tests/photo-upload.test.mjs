@@ -43,9 +43,10 @@ test("PhotoUpload uses one add button before showing a bottom-sheet media picker
   assert.doesNotMatch(source, /\{!showSourceMenu \? \(/);
 });
 
-test("photo moderation route limits posts to four photos", () => {
-  assert.match(moderateRouteSource, /const MAX_PHOTOS = 4/);
-  assert.match(moderateRouteSource, /Maximum \$\{MAX_PHOTOS\} photos allowed/);
+test("legacy photo moderation route is retired instead of publishing caller-selected paths", () => {
+  assert.match(moderateRouteSource, /Legacy media moderation endpoint is retired/);
+  assert.match(moderateRouteSource, /status: 410/);
+  assert.doesNotMatch(moderateRouteSource, /\.storage\./);
 });
 
 test("PhotoUpload crops selected photos to the post portrait ratio before upload", () => {

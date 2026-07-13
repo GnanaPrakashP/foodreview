@@ -13,6 +13,9 @@ import {
   type TasteTrustFeedbackLabel,
 } from "@/lib/taste-trust";
 import { refreshUserReputationFoundation, updateUserStreaks } from "@/lib/server/reputation";
+import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+
+const MUTATION_METHODS = ["POST", "DELETE"];
 
 type ReviewFeedbackRow = {
   id: string;
@@ -286,7 +289,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}));
+  const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
+  if (!parsed.ok) return boundedJsonError(req, MUTATION_METHODS, parsed.reason);
+  const body = parsed.value ?? {};
   const postId = typeof body.postId === "string" ? body.postId.trim() : "";
   const feedbackLabel = typeof body.feedbackLabel === "string" ? body.feedbackLabel.trim() : "";
   const feedbackValue = feedbackValueForLabel(feedbackLabel);
@@ -303,6 +308,8 @@ export async function POST(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, MUTATION_METHODS, rate);
 
   const db = createAdminClient();
   const access = await canActorReadPost(db, postId, actor.actorName);
@@ -402,6 +409,8 @@ export async function DELETE(req: NextRequest) {
   if (!actor) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, MUTATION_METHODS, rate);
 
   const db = createAdminClient();
   const access = await canActorReadPost(db, postId, actor.actorName);

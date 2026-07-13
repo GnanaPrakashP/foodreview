@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { apiBaseUrl, apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { supabase } from "@/api/supabase";
 
 export type DishNameSuggestion = {
@@ -153,10 +154,7 @@ export async function confirmDishAlias(rawName: string, canonicalDishId: string)
     if (!token) return;
     await fetch(apiUrl("/api/dishes/confirm-alias"), {
       body: JSON.stringify({ canonicalDishId, rawName }),
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
+      headers: await authorizedApiHeaders("confirming a dish", "POST"),
       method: "POST"
     });
   } catch {

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createApiSecurityStub } from "./helpers/api-security-stub.mjs";
 
 function transpile(src) {
   const { outputText } = ts.transpileModule(src, {
@@ -65,6 +66,18 @@ function loadRoute(kind, { env = {}, fetchImpl = async () => googleResponse({}) 
     },
     require(id) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
+      if (id === "@/lib/server/api-security") return createApiSecurityStub({
+        json: mockNextResponse.json,
+        fetchImpl: async (...args) => {
+          fetchCalls.push(args);
+          return fetchImpl(...args);
+        },
+      });
+      if (id === "@/lib/server/route-supabase") return {
+        getRouteActor: async () => ({
+          actor: { userId: "00000000-0000-4000-8000-000000000002", actorName: "Alice", displayName: "Alice" },
+        }),
+      };
       throw new Error(`Unexpected require in places ${kind} tests: ${id}`);
     },
   });
@@ -76,13 +89,13 @@ test("places autocomplete: missing input returns 400", async () => {
   const { route } = loadRoute("autocomplete");
   const res = await route.GET(makeReq("/api/places/autocomplete"));
   assert.equal(status(res), 400);
-  assert.equal(body(res).error, "input is required");
+  assert.equal(body(res).error, "Invalid search request");
 });
 
 test("places autocomplete: missing API key safely returns no suggestions", async () => {
   const { route, fetchCalls } = loadRoute("autocomplete", { env: {} });
   const res = await route.GET(makeReq("/api/places/autocomplete?input=bawa"));
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 503);
   assert.deepEqual(body(res), { suggestions: [] });
   assert.equal(fetchCalls.length, 0);
 });
@@ -180,7 +193,7 @@ test("places autocomplete: Google errors are hidden from clients", async () => {
   });
 
   const res = await route.GET(makeReq("/api/places/autocomplete?input=bawa"));
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 502);
   assert.deepEqual(body(res), { suggestions: [] });
 });
 
@@ -188,13 +201,13 @@ test("places details: missing placeId returns 400", async () => {
   const { route } = loadRoute("details");
   const res = await route.GET(makeReq("/api/places/details"));
   assert.equal(status(res), 400);
-  assert.equal(body(res).error, "placeId is required");
+  assert.equal(body(res).error, "Invalid place request");
 });
 
 test("places details: missing API key safely returns null details", async () => {
   const { route, fetchCalls } = loadRoute("details", { env: {} });
-  const res = await route.GET(makeReq("/api/places/details?placeId=place-1"));
-  assert.equal(status(res), 200);
+  const res = await route.GET(makeReq("/api/places/details?placeId=place-001"));
+  assert.equal(status(res), 503);
   assert.deepEqual(body(res), { details: null });
   assert.equal(fetchCalls.length, 0);
 });
@@ -203,7 +216,7 @@ test("places details: maps Google details payload", async () => {
   const { route, fetchCalls } = loadRoute("details", {
     env: { GOOGLE_PLACES_API_KEY: "places-key" },
     fetchImpl: async () => googleResponse({
-      id: "place-1",
+      id: "place-001",
       formattedAddress: "Gachibowli, Hyderabad, Telangana 500032, India",
       shortFormattedAddress: "Gachibowli, Hyderabad",
       primaryType: "coffee_shop",
@@ -212,11 +225,11 @@ test("places details: maps Google details payload", async () => {
     }),
   });
 
-  const res = await route.GET(makeReq("/api/places/details?placeId=place-1&sessionToken=session-1"));
+  const res = await route.GET(makeReq("/api/places/details?placeId=place-001&sessionToken=session-1"));
   assert.equal(status(res), 200);
   assert.deepEqual(body(res), {
     details: {
-      placeId: "place-1",
+      placeId: "place-001",
       name: "",
       formattedAddress: "Gachibowli, Hyderabad, Telangana 500032, India",
       shortFormattedAddress: "Gachibowli, Hyderabad",
@@ -231,7 +244,7 @@ test("places details: maps Google details payload", async () => {
   assert.equal(fetchCalls.length, 1);
   const [url, options] = fetchCalls[0];
   const requestUrl = new URL(url);
-  assert.equal(requestUrl.origin + requestUrl.pathname, "https://places.googleapis.com/v1/places/place-1");
+  assert.equal(requestUrl.origin + requestUrl.pathname, "https://places.googleapis.com/v1/places/place-001");
   assert.equal(requestUrl.searchParams.get("regionCode"), "in");
   assert.equal(requestUrl.searchParams.get("sessionToken"), "session-1");
   assert.equal(options.method, "GET");
@@ -246,7 +259,7 @@ test("places details: derives an area + city label from address components", asy
   const { route } = loadRoute("details", {
     env: { GOOGLE_PLACES_API_KEY: "places-key" },
     fetchImpl: async () => googleResponse({
-      id: "place-2",
+      id: "place-002",
       displayName: { text: "Cafe Bahar" },
       formattedAddress: "Old MLA Quarters, Basheer Bagh, Hyderabad, Telangana 500029, India",
       shortFormattedAddress: "Basheer Bagh, Hyderabad",
@@ -261,7 +274,7 @@ test("places details: derives an area + city label from address components", asy
     }),
   });
 
-  const res = await route.GET(makeReq("/api/places/details?placeId=place-2"));
+  const res = await route.GET(makeReq("/api/places/details?placeId=place-002"));
   assert.equal(status(res), 200);
   assert.equal(body(res).details.locationLabel, "Basheer Bagh, Hyderabad");
 });
@@ -270,7 +283,7 @@ test("places details: falls back to city when no sublocality is present", async 
   const { route } = loadRoute("details", {
     env: { GOOGLE_PLACES_API_KEY: "places-key" },
     fetchImpl: async () => googleResponse({
-      id: "place-3",
+      id: "place-003",
       formattedAddress: "Hyderabad, Telangana, India",
       shortFormattedAddress: "Hyderabad",
       addressComponents: [
@@ -282,7 +295,7 @@ test("places details: falls back to city when no sublocality is present", async 
     }),
   });
 
-  const res = await route.GET(makeReq("/api/places/details?placeId=place-3"));
+  const res = await route.GET(makeReq("/api/places/details?placeId=place-003"));
   assert.equal(status(res), 200);
   assert.equal(body(res).details.locationLabel, "Hyderabad");
 });
@@ -296,8 +309,8 @@ test("places details: Google errors are hidden from clients", async () => {
     ),
   });
 
-  const res = await route.GET(makeReq("/api/places/details?placeId=bad"));
-  assert.equal(status(res), 200);
+  const res = await route.GET(makeReq("/api/places/details?placeId=place-bad"));
+  assert.equal(status(res), 502);
   assert.deepEqual(body(res), { details: null });
 });
 
@@ -312,7 +325,7 @@ test("reverse-geocode: missing lat/lng returns 400", async () => {
 test("reverse-geocode: missing API key returns null label without calling Google", async () => {
   const { route, fetchCalls } = loadRoute("reverse-geocode", { env: {} });
   const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.415&lng=78.434"));
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 503);
   assert.deepEqual(body(res), { label: null });
   assert.equal(fetchCalls.length, 0);
 });
@@ -459,7 +472,7 @@ test("reverse-geocode: non-OK Google status returns null label", async () => {
   });
 
   const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=0&lng=0"));
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 502);
   assert.deepEqual(body(res), { label: null });
 });
 
@@ -470,6 +483,6 @@ test("reverse-geocode: Google HTTP error returns null label", async () => {
   });
 
   const res = await route.GET(makeReq("/api/places/reverse-geocode?lat=17.415&lng=78.434"));
-  assert.equal(status(res), 200);
+  assert.equal(status(res), 502);
   assert.deepEqual(body(res), { label: null });
 });

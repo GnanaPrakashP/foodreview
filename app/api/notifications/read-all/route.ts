@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createRouteSupabase, getNotificationViewer, isNotificationSchemaError, unauthorized } from "../_utils";
+import { getNotificationRouteContext, isNotificationSchemaError, unauthorized } from "../_utils";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["PATCH"];
 
 export async function PATCH(req: NextRequest) {
-  const supabase = await createRouteSupabase(req);
-  const viewer = await getNotificationViewer(supabase);
+  const { supabase, viewer } = await getNotificationRouteContext(req);
   if (!viewer) return unauthorized();
+  const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: viewer.id });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const now = new Date().toISOString();
   const updates = [
@@ -36,9 +40,9 @@ export async function PATCH(req: NextRequest) {
         .eq("read", false);
 
       if (!legacyError) return NextResponse.json({ ok: true });
-      return NextResponse.json({ error: legacyError.message }, { status: 500 });
+      return NextResponse.json({ error: "Unable to update notifications" }, { status: 500 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Unable to update notifications" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

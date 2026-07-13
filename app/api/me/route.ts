@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMePageData, invalidateMePageCacheForNames, type MeCursor } from "@/lib/me-page-data";
 import { invalidatePeoplePageCacheForNames } from "@/lib/people-page-data";
 import { invalidateCircleFeedCacheForNames } from "@/lib/server/cache-invalidation";
-import { createRouteSupabase } from "@/lib/server/route-supabase";
+import { getRouteActor } from "@/lib/server/route-supabase";
 import { tasteTrustSummaryFromProfile } from "@/lib/taste-trust";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUserProfileReputation } from "@/lib/server/reputation";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
 
 const ME_PAGE_MIN_LIMIT = 1;
 const ME_PAGE_MAX_LIMIT = 100;
@@ -14,10 +15,7 @@ const ME_PAGE_MAX_LIMIT = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Strict ISO 8601 datetime to prevent PostgREST filter injection via cursor values
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
-
-function getMyName(user: { user_metadata?: Record<string, unknown>; email?: string | null }) {
-  return (user.user_metadata?.username as string) || user.email?.split("@")[0] || "";
-}
+const POST_METHODS = ["POST"];
 
 function displayNameFromProfile(
   profile: { first_name?: string | null; last_name?: string | null } | null,
@@ -29,22 +27,16 @@ function displayNameFromProfile(
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = await createRouteSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const myName = getMyName(user);
+    const { actor, supabase } = await getRouteActor(req);
+    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const myName = actor.actorName;
     const { data: profile } = await supabase
       .from("profiles")
       .select("first_name, last_name, bio, trust_score, trust_level, confirmed_recommendations_count, positive_confirmations_count, negative_confirmations_count, total_feedback_points")
-      .eq("id", user.id)
+      .eq("id", actor.userId)
       .maybeSingle();
-    const metadataDisplayName =
-      (user.user_metadata?.full_name as string) ||
-      (user.user_metadata?.name as string) ||
-      myName;
-    const displayName = displayNameFromProfile(profile, metadataDisplayName);
-    const bio = (profile?.bio as string | null) || (user.user_metadata?.bio as string) || "";
+    const displayName = displayNameFromProfile(profile, actor.displayName);
+    const bio = (profile?.bio as string | null) || "";
 
     if (!myName) return NextResponse.json({ reviews: [], circleMembers: [], hasMore: false, nextCursor: null });
 
@@ -74,7 +66,7 @@ export async function GET(req: NextRequest) {
 
     const [data, reputation] = await Promise.all([
       getMePageData(supabase, myName, { cursor, limit }),
-      getUserProfileReputation(createAdminClient(), user.id),
+      getUserProfileReputation(createAdminClient(), actor.userId),
     ]);
     return NextResponse.json({ ...data, myName, displayName, bio, tasteTrust: tasteTrustSummaryFromProfile(profile), reputation });
   } catch (error) {
@@ -85,12 +77,13 @@ export async function GET(req: NextRequest) {
 
 // Called by the settings page after account-type changes to drop stale server-side
 // private-cache entries for this user (me-page, people-page).
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const supabase = await createRouteSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const myName = getMyName(user);
+    const { actor } = await getRouteActor(req);
+    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const rate = await enforceRateLimit(req, "mutation.social", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, POST_METHODS, rate);
+    const myName = actor.actorName;
     if (myName) {
       invalidateMePageCacheForNames([myName]);
       invalidatePeoplePageCacheForNames([myName]);

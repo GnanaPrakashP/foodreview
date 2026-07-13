@@ -296,7 +296,7 @@ test("username changes are centralized in one authenticated database transaction
 });
 
 test("post and account deletion remove only owner-scoped storage and fail closed on storage errors", () => {
-  assert.match(reviewDeleteRoute, /getRouteActor\(_req\)/);
+  assert.match(reviewDeleteRoute, /getRouteActor\(req\)/);
   assert.match(reviewDeleteRoute, /review\.reviewer_name !== actor\.actorName/);
   assert.match(reviewDeleteRoute, /isOwnedReviewMediaPath\(path, actor\.userId\)/);
   assert.match(reviewDeleteRoute, /removeStorageObjectsOrQueue\(admin/);
@@ -308,7 +308,7 @@ test("post and account deletion remove only owner-scoped storage and fail closed
     "post media must be removed before the review row is deleted"
   );
   assert.match(engagementService, /fetch\(apiUrl\(`\/api\/reviews\/\$\{encodeURIComponent\(input\.postId\)\}`\)/);
-  assert.match(engagementService, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(engagementService, /authorizedApiHeaders\("deleting this post", "DELETE"\)/);
 
   assert.match(deleteAccountRoute, /\.rpc\("request_account_deletion"/);
   assert.match(deleteAccountRoute, /status: 202/);
@@ -336,7 +336,8 @@ test("cleanup jobs have an operational protected worker and paginated storage en
   assert.match(cleanupHelper, /status: "succeeded"/);
   assert.match(cleanupHelper, /status: "failed"/);
   assert.match(cleanupWorkerRoute, /ACCOUNT_MEDIA_CLEANUP_SECRET/);
-  assert.match(cleanupWorkerRoute, /MEMORY_UPLOAD_CLEANUP_SECRET/);
+  assert.match(cleanupWorkerRoute, /x-account-media-cleanup-secret/);
+  assert.doesNotMatch(cleanupWorkerRoute, /MEMORY_UPLOAD_CLEANUP_SECRET/);
   assert.match(cleanupWorkerRoute, /runAccountMediaCleanupJobs\(createAdminClient\(\), limit\)/);
   assert.match(cleanupWorkerRoute, /status: 404/);
 });

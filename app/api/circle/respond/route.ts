@@ -4,6 +4,9 @@ import { addCircleEdge } from "@/lib/circle-db";
 import { createNotificationForNames } from "@/lib/notifications";
 import { invalidateSocialCachesForNames } from "@/lib/server/cache-invalidation";
 import { getRouteActor } from "@/lib/server/route-supabase";
+import { enforceRateLimit, rateLimitResponse } from "@/lib/server/api-security";
+
+const METHODS = ["POST"];
 
 export async function POST(req: NextRequest) {
   const { senderName, action } = await req.json();
@@ -13,6 +16,8 @@ export async function POST(req: NextRequest) {
 
   const { actor } = await getRouteActor(req);
   if (!actor) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const rate = await enforceRateLimit(req, "mutation.circle", { actorUserId: actor.userId });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
   const admin = createAdminClient();
   const me = actor.actorName;

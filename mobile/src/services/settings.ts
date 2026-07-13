@@ -1,5 +1,6 @@
 import { supabase } from "@/api/supabase";
 import { apiUrl } from "@/api/config";
+import { authorizedApiHeaders } from "@/api/client";
 import { addEngagementToRows } from "@/services/feeds";
 import { getCurrentUserProfile } from "@/services/profiles";
 import { removePushTokensForUser } from "@/services/notifications";
@@ -88,21 +89,12 @@ async function getViewerProfile() {
   return profile;
 }
 
-async function authToken(action: string) {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw new Error(error.message);
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before " + action);
-  return token;
-}
-
 async function authorizedSettingsJson(path: string, init: RequestInit & { body?: string }, action: string) {
-  const token = await authToken(action);
+  const headers = await authorizedApiHeaders(action, init.method ?? "GET");
   const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
-      Authorization: "Bearer " + token,
-      "Content-Type": "application/json",
+      ...headers,
       ...(init.headers ?? {})
     }
   });
@@ -361,14 +353,8 @@ export async function unblockUser(username: string): Promise<void> {
 export async function deleteCurrentAccount(): Promise<AccountDeletionAccepted> {
   await getViewerProfile();
 
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Log in before deleting your account");
-
   const response = await fetch(apiUrl("/api/delete-account"), {
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
+    headers: await authorizedApiHeaders("deleting your account", "POST"),
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as (Partial<AccountDeletionAccepted> & { error?: string }) | null;

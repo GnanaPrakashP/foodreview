@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   assertSafeMemoryStoragePath,
   buildMemoryUploadPath,
@@ -11,21 +11,12 @@ import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } fro
 import { assertMemoryRoomMutationAllowed, memoryRoomSecurityErrorStatus } from "@/lib/server/memory-room-security";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Origin": "*"
-};
+const METHODS = ["POST"];
 
-function mobileJson(body: unknown, init?: ResponseInit) {
-  return NextResponse.json(body, {
-    ...init,
-    headers: {
-      ...CORS_HEADERS,
-      ...init?.headers
-    }
-  });
+function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
+  return mobileApiJson(req, METHODS, body, init);
 }
 
 function validationMessage(error: unknown) {
@@ -56,9 +47,13 @@ export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const { actor, supabase } = await getRouteActor(req);
-    if (!actor) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+    if (!actor) return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
+    const rate = await enforceRateLimit(req, "media.intent", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-    const body = await req.json().catch(() => null);
+    const parsed = await readBoundedJson<Record<string, unknown>>(req, 16 * 1024);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+    const body = parsed.value;
     let media;
     try {
       media = normalizeMemoryMediaIntentInput({
@@ -78,7 +73,7 @@ export async function POST(req: NextRequest) {
         status: "validation_error",
         statusCode: 400
       });
-      return mobileJson({ error: validationMessage(error) }, { status: 400 });
+      return mobileJson(req, { error: validationMessage(error) }, { status: 400 });
     }
 
     const admin = createAdminClient();
@@ -131,7 +126,7 @@ export async function POST(req: NextRequest) {
       status: "success",
       statusCode: 200
     });
-    return mobileJson({
+    return mobileJson(req, {
       ...mediaLimitResponse(media.kind),
       expiresAt,
       intentId,
@@ -146,16 +141,13 @@ export async function POST(req: NextRequest) {
       status: "error",
       statusCode: memoryRoomSecurityErrorStatus(error)
     });
-    return mobileJson(
+    return mobileJson(req,
       { error: "Unable to create memory media upload intent" },
       { status: memoryRoomSecurityErrorStatus(error) }
     );
   }
 }
 
-export function OPTIONS() {
-  return new NextResponse(null, {
-    headers: CORS_HEADERS,
-    status: 204
-  });
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
 }
