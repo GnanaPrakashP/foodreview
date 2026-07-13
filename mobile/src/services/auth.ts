@@ -6,6 +6,7 @@ import { assertSupabaseConfigured, clearSupabaseLocalSessionStorage, isSupabaseC
 import { actorFromProfile, getCurrentUserProfile } from "@/services/profiles";
 import type { ActorProfile, AuthSnapshot } from "@/types/models";
 import { beginAuthFlow, consumeAuthFlow, createRequestId, getInstallId, type AuthFlowKind } from "@/services/installIdentity";
+import { authSchemeForEnvironment } from "@/config/releaseEnvironment";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -150,7 +151,7 @@ function authRedirectUrl(path: "callback" | "recovery", flowNonce: string) {
 function callbackParameters(url: string, kind: AuthFlowKind) {
   const parsedUrl = new URL(url);
   const expectedPath = kind === "oauth" ? "callback" : "recovery";
-  const customSchemeAllowed = parsedUrl.protocol === "circlebites:"
+  const customSchemeAllowed = parsedUrl.protocol === `${authSchemeForEnvironment()}:`
     && parsedUrl.hostname === "auth"
     && parsedUrl.pathname === `/${expectedPath}`;
   const developmentSchemeAllowed = __DEV__

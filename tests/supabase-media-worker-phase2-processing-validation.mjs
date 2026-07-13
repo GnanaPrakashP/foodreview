@@ -33,7 +33,10 @@ async function waitForHealth(baseUrl, secret, server) {
   for (let attempt = 0; attempt < 90; attempt += 1) {
     if (server.exitCode !== null) throw new Error("media_server_exited");
     try {
-      const response = await fetch(`${baseUrl}/api/internal/media/health`, {
+      // Phase 7 adds scheduler-heartbeat freshness to the steady-state health
+      // endpoint. Processing validation needs the explicit startup probe so it
+      // verifies database/ffmpeg/ffprobe readiness before a scheduler exists.
+      const response = await fetch(`${baseUrl}/api/internal/media/health?startup=1`, {
         headers: { Authorization: `Bearer ${secret}` }
       });
       if (response.ok && (await response.json()).ready === true) return;

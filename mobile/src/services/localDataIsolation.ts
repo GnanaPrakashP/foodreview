@@ -44,6 +44,7 @@ import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useComposerStore } from "@/stores/composerStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
 import { createLocalMMKV } from "@/security/localMMKV";
+import { clearPostDraftForScope } from "@/services/postDraftStore";
 import { clearMediaUploadRecoveryForScope } from "@/services/mediaUploadRecovery";
 import { captureMobileError, clearMobileTelemetryIdentity, recordMobileFlow } from "@/observability/mobileTelemetry";
 
@@ -221,6 +222,7 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
         clearOccasionCorrectionsForScope(next.ownerScope)
       ]);
       clearMediaUploadRecoveryForScope(next.ownerScope);
+      clearPostDraftForScope(next.ownerScope);
       if (reasonInvalidatesSession(next.reason)) await clearSupabaseLocalSessionStorage();
     });
 

@@ -2,6 +2,7 @@ import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useRef } from "react";
 import { BackHandler, useWindowDimensions } from "react-native";
 import { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 
 // Slide timing matched to the table-memory members panel (PeoplePanel).
 const ENTER_MS = 150;
@@ -27,6 +28,7 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
   const { fallbackHref, onBack } = options;
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const reducedMotion = useReducedMotionPreference();
   const progress = useSharedValue(0);
   const closingRef = useRef(false);
   const onBackRef = useRef(onBack);
@@ -34,8 +36,8 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
 
   const travel = Math.min(width, PANEL_TRAVEL_MAX);
   const slideStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 0.35, 1], [0.92, 1, 1]),
-    transform: [{ translateX: interpolate(progress.value, [0, 1], [travel, 0]) }]
+    opacity: reducedMotion ? 1 : interpolate(progress.value, [0, 0.35, 1], [0.92, 1, 1]),
+    transform: [{ translateX: reducedMotion ? 0 : interpolate(progress.value, [0, 1], [travel, 0]) }]
   }));
 
   const performBack = useCallback(() => {
@@ -47,23 +49,23 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
     if (onBackRef.current?.()) return;
     if (closingRef.current) return;
     closingRef.current = true;
-    progress.value = withTiming(0, { duration: EXIT_MS, easing: Easing.in(Easing.cubic) }, (finished) => {
+    progress.value = withTiming(0, { duration: reducedMotion ? 0 : EXIT_MS, easing: Easing.in(Easing.cubic) }, (finished) => {
       if (finished) runOnJS(performBack)();
     });
-  }, [performBack, progress]);
+  }, [performBack, progress, reducedMotion]);
 
   // Hardware back should play the exit slide; keep this scoped to while focused.
   useFocusEffect(
     useCallback(() => {
       closingRef.current = false;
       progress.value = 0;
-      progress.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
+      progress.value = withTiming(1, { duration: reducedMotion ? 0 : ENTER_MS, easing: Easing.out(Easing.cubic) });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close, progress])
+    }, [close, progress, reducedMotion])
   );
 
   return { slideStyle, close };

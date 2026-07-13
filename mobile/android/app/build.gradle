@@ -67,6 +67,26 @@ react {
  * Set this to true in release builds to optimize the app using [R8](https://developer.android.com/topic/performance/app-optimization/enable-app-optimization).
  */
 def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
+def appEnvironment = (System.getenv("EXPO_PUBLIC_APP_ENVIRONMENT") ?: "local").trim().toLowerCase()
+if (!(appEnvironment in ["local", "development", "preview", "production"])) {
+    throw new GradleException("Unsupported CircleBites application environment: ${appEnvironment}")
+}
+def nativeIdentity = appEnvironment == "production"
+    ? [applicationId: "com.circlebites.mobile", label: "CircleBites", scheme: "circlebites"]
+    : appEnvironment == "preview"
+        ? [applicationId: "com.circlebites.mobile.preview", label: "CircleBites Preview", scheme: "circlebites-preview"]
+        : [applicationId: "com.circlebites.mobile.dev", label: "CircleBites Dev", scheme: "circlebites-dev"]
+def releaseSigningValues = [
+    storeFile: System.getenv("CIRCLEBITES_RELEASE_STORE_FILE") ?: findProperty("CIRCLEBITES_RELEASE_STORE_FILE"),
+    storePassword: System.getenv("CIRCLEBITES_RELEASE_STORE_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_STORE_PASSWORD"),
+    keyAlias: System.getenv("CIRCLEBITES_RELEASE_KEY_ALIAS") ?: findProperty("CIRCLEBITES_RELEASE_KEY_ALIAS"),
+    keyPassword: System.getenv("CIRCLEBITES_RELEASE_KEY_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_KEY_PASSWORD")
+]
+def configuredReleaseSigning = releaseSigningValues.values().every { value -> value != null && value.toString().trim() }
+def partialReleaseSigning = releaseSigningValues.values().any { value -> value != null && value.toString().trim() } && !configuredReleaseSigning
+if (partialReleaseSigning) {
+    throw new GradleException("CircleBites release signing configuration is incomplete")
+}
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -89,11 +109,12 @@ android {
 
     namespace 'com.circlebites.mobile'
     defaultConfig {
-        applicationId 'com.circlebites.mobile'
+        applicationId nativeIdentity.applicationId
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "0.1.0"
+        versionName "1.0.0"
+        manifestPlaceholders = [circleBitesAppLabel: nativeIdentity.label, circleBitesAuthScheme: nativeIdentity.scheme]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -104,15 +125,27 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (configuredReleaseSigning) {
+            release {
+                storeFile file(releaseSigningValues.storeFile)
+                storePassword releaseSigningValues.storePassword
+                keyAlias releaseSigningValues.keyAlias
+                keyPassword releaseSigningValues.keyPassword
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+                enableV4Signing true
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (configuredReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
@@ -129,6 +162,16 @@ android {
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def releaseRequested = graph.allTasks.any { task ->
+        task.project == project && task.name.toLowerCase().matches(".*(assemble|bundle).*release.*")
+    }
+    def injectedSigning = findProperty("android.injected.signing.store.file")
+    if (releaseRequested && !configuredReleaseSigning && !injectedSigning) {
+        throw new GradleException("Release signing credentials are required; debug signing is forbidden")
     }
 }
 

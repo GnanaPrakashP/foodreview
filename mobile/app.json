@@ -3,7 +3,7 @@
     "name": "CircleBites",
     "slug": "circlebites-mobile",
     "scheme": "circlebites",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -18,56 +18,126 @@
       "enforceContrast": false
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.circlebites.mobile",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
-        "NSCameraUsageDescription": "CircleBites uses the camera to capture food photos and short food videos for posts.",
-        "NSMicrophoneUsageDescription": "CircleBites uses the microphone to record voice notes and sound with food videos.",
-        "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library so you can add food photos and videos to posts.",
-        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location to show nearby restaurants and dishes.",
-        "ITSAppUsesNonExemptEncryption": false
+        "NSCameraUsageDescription": "CircleBites uses the camera when you choose to capture food photos or short videos.",
+        "NSMicrophoneUsageDescription": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
+        "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library only when you choose media for a post or Memory.",
+        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location only when you choose nearby restaurant discovery."
+      },
+      "privacyManifests": {
+        "NSPrivacyTracking": false,
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": ["C617.1", "0A2A.1", "3B52.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": ["E174.1", "85F4.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": ["35F9.1"]
+          }
+        ]
       }
     },
     "android": {
       "package": "com.circlebites.mobile",
+      "versionCode": 1,
+      "allowBackup": false,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ],
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ]
     },
     "plugins": [
       "expo-router",
       "expo-asset",
-      "expo-camera",
-      "expo-secure-store",
-      "expo-image-picker",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "CircleBites uses the camera when you choose to capture food photos or short videos.",
+          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound."
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": false,
+          "faceIDPermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "CircleBites uses the camera when you choose to capture food photos or short videos.",
+          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
+          "photosPermission": "CircleBites uses your photo library only when you choose media for a post or Memory."
+        }
+      ],
       [
         "expo-media-library",
         {
+          "photosPermission": "CircleBites uses your photo library only when you open the recent-photo picker.",
+          "savePhotosPermission": false,
           "granularPermissions": [
             "photo"
           ]
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "CircleBites uses your location only when you choose nearby restaurant discovery.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
       "expo-notifications",
       "expo-font",
       "expo-web-browser",
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound."
+        }
+      ],
       "expo-video",
       "react-native-compressor"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "updates": {
+      "enabled": false
     },
     "extra": {
       "router": {},

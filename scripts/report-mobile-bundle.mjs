@@ -42,18 +42,23 @@ const normalized = files.map((file) => {
   const relativePath = relative(exportDir, file.path).replaceAll("\\", "/");
   return { ...file, effectiveExtension: assetExtensions.get(relativePath) ?? extname(file.path).toLowerCase(), relativePath };
 });
-const hermes = normalized.filter((file) => extname(file.path) === ".hbc" || /\/static\/js\/(android|ios)\//.test(`/${file.relativePath}`));
-const fonts = normalized.filter((file) => [".otf", ".ttf", ".woff", ".woff2"].includes(file.effectiveExtension));
-const assets = normalized.filter((file) => !hermes.includes(file));
+// Source maps are retained release diagnostics and are uploaded to telemetry;
+// they are not shipped as app assets. Keep their size visible without charging
+// them against the distributable native-export/Hermes budgets.
+const sourceMaps = normalized.filter((file) => file.effectiveExtension === ".map");
+const distributable = normalized.filter((file) => !sourceMaps.includes(file));
+const hermes = distributable.filter((file) => extname(file.path) === ".hbc" || /\/static\/js\/(android|ios)\//.test(`/${file.relativePath}`));
+const fonts = distributable.filter((file) => [".otf", ".ttf", ".woff", ".woff2"].includes(file.effectiveExtension));
+const assets = distributable.filter((file) => !hermes.includes(file));
 const sum = (items) => items.reduce((total, item) => total + item.bytes, 0);
 const largestByPlatform = Object.fromEntries(["android", "ios"].map((platform) => {
   const matches = hermes.filter((file) => file.relativePath.includes(`/${platform}/`) || file.relativePath.startsWith(`${platform}/`));
   return [platform, matches.reduce((largest, file) => Math.max(largest, file.bytes), 0)];
 }));
 const apkBytes = existsSync(apkPath) ? statSync(apkPath).size : null;
-const exportTotalBytes = sum(normalized);
+const exportTotalBytes = sum(distributable);
 const platformTotals = Object.fromEntries(["android", "ios"].map((platform) => [platform, {
-  exportBytes: sum(normalized.filter((file) => file.relativePath.startsWith(`${platform}/`))),
+  exportBytes: sum(distributable.filter((file) => file.relativePath.startsWith(`${platform}/`))),
   fontBytes: sum(fonts.filter((file) => file.relativePath.startsWith(`${platform}/`)))
 }]));
 const failures = [];
@@ -74,6 +79,7 @@ const report = {
   totals: {
     files: files.length,
     exportTotalBytes,
+    sourceMapBytes: sum(sourceMaps),
     hermesBytes: sum(hermes),
     fontBytes: sum(fonts),
     otherAssetBytes: sum(assets),

@@ -18,7 +18,13 @@ function recoveryRedirect(flowNonce: string) {
   const configured = process.env.MOBILE_AUTH_REDIRECT_BASE?.trim() || "circlebites://";
   const separator = configured.endsWith("://") || configured.endsWith("/") ? "" : "/";
   const url = new URL(`${configured}${separator}auth/recovery?flow=${encodeURIComponent(flowNonce)}`);
-  if (process.env.NODE_ENV === "production" && url.protocol !== "circlebites:") {
+  const environment = (process.env.APP_ENVIRONMENT || "local").trim().toLowerCase();
+  const expectedScheme = environment === "preview"
+    ? "circlebites-preview:"
+    : environment === "development"
+      ? "circlebites-dev:"
+      : "circlebites:";
+  if (process.env.NODE_ENV === "production" && url.protocol !== expectedScheme) {
     throw new Error("mobile_recovery_redirect_invalid");
   }
   if (url.hostname !== "auth" || url.pathname !== "/recovery") {

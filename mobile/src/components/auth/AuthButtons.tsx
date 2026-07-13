@@ -27,6 +27,8 @@ export function AuthButton({ children, disabled, loading, onPress }: AuthButtonP
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ busy: loading, disabled: Boolean(disabled || loading) }}
       disabled={disabled || loading}
       onPress={onPress}
       style={[styles.orangeButton, (disabled || loading) && styles.orangeButtonDisabled]}
@@ -44,7 +46,7 @@ export function GhostButton({ children, onPress }: { children: ReactNode; onPres
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
-    <Pressable onPress={onPress} style={styles.ghostButton}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.ghostButton}>
       <Text style={styles.ghostButtonText}>{children}</Text>
     </Pressable>
   );
@@ -113,6 +115,9 @@ export function AuthMethodButton({
 
   return (
     <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: loading, disabled: Boolean(disabled || loading) }}
       disabled={disabled || loading}
       onPress={onPress}
       style={[

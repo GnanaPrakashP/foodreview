@@ -176,6 +176,7 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
     if (id === "@/features/occasions/occasionStorage") return { clearOccasionCorrectionsForScope: async (scope) => calls.push(`occasion.clear:${scope}`) };
     if (id === "@/services/memoryCaptureSession") return { clearMemoryCaptureSession: () => calls.push("memory.capture.clear") };
     if (id === "@/services/postCaptureSession") return { clearPostCaptureSession: () => calls.push("post.capture.clear") };
+    if (id === "@/services/postDraftStore") return { clearPostDraftForScope: (scope) => calls.push(`post.draft.clear:${scope}`) };
     if (["@/stores/commentsSheetStore", "@/stores/composerStore", "@/stores/userLocationStore"].includes(id)) {
       const exportName = id.includes("comments") ? "useCommentsSheetStore" : id.includes("composer") ? "useComposerStore" : "useUserLocationStore";
       return { [exportName]: stateStore };
@@ -205,6 +206,7 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
   for (const cleanupCall of [
     "memory.capture.clear",
     "post.capture.clear",
+    `post.draft.clear:${alice.owner.scope}`,
     "comments.reset",
     "composer.reset",
     "location.reset"

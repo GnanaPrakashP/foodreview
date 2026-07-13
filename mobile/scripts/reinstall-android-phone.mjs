@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const APP_ID = "com.circlebites.mobile";
-const SCHEME = "circlebites";
+const APP_ID = "com.circlebites.mobile.dev";
+const SCHEME = "circlebites-dev";
 const DEFAULT_PORT = 8081;
 const DEFAULT_HOST = "127.0.0.1";
 const METRO_START_TIMEOUT_MS = 60_000;

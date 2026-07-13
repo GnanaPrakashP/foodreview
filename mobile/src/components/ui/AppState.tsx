@@ -17,7 +17,7 @@ type StateProps = {
 function StateShell({ actionLabel, icon, message, onAction, title, loading }: StateProps & { loading?: boolean }) {
   const { themeColors } = useThemePreference();
   return (
-    <AppCard style={styles.card}>
+    <AppCard accessibilityLiveRegion={loading ? "polite" : "assertive"} style={styles.card}>
       <View style={[styles.iconWrap, { backgroundColor: themeColors.orangeDim }]}>
         {loading ? (
           <ActivityIndicator color={themeColors.orange} />

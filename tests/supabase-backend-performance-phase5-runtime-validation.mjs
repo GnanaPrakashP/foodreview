@@ -15,19 +15,25 @@ if (!database) throw new Error("Local FoodReview Supabase database container is 
 const fixture = readFileSync(new URL("./fixtures/phase5-performance.sql", import.meta.url), "utf8");
 const output = run("docker", ["exec", "-i", database, "psql", "-X", "-q", "-U", "postgres", "-d", "postgres"], { input: fixture });
 
+// Circle can legitimately start from the chronological active cursor or from a
+// reviewer-scoped index when the local profile cardinality is small. Both plans
+// remain indexed; the large-table sequential-scan guard below is authoritative.
 const plans = [
-  ["CIRCLE", "reviews_active_cursor_idx"],
-  ["PUBLIC", "reviews_public_cursor_idx"],
-  ["COMMENTS", "comments_post_cursor_idx"],
-  ["NOTIFICATIONS", "notifications_recipient_user_cursor_idx"],
-  ["CHAT", "shared_memory_messages_room_created_id_desc_idx"]
+  ["CIRCLE", ["reviews_active_cursor_idx", "reviews_reviewer_name_idx", "reviews_reviewer_visible_cursor_idx"]],
+  ["PUBLIC", ["reviews_public_cursor_idx"]],
+  ["COMMENTS", ["comments_post_cursor_idx"]],
+  ["NOTIFICATIONS", ["notifications_recipient_user_cursor_idx"]],
+  ["CHAT", ["shared_memory_messages_room_created_id_desc_idx"]]
 ];
 const timings = [];
-for (const [label, index] of plans) {
+for (const [label, acceptedIndexes] of plans) {
   const match = output.match(new RegExp(`PHASE5_PLAN_${label}_BEGIN([\\s\\S]*?)PHASE5_PLAN_${label}_END`));
   assert.ok(match, `${label} plan output is missing`);
   const usedIndexes = Array.from(match[1].matchAll(/"Index Name": "([^"]+)"/g), (entry) => entry[1]);
-  assert.ok(usedIndexes.includes(index), `${label} did not use ${index}; used ${usedIndexes.join(", ") || "no index"}`);
+  assert.ok(
+    acceptedIndexes.some((index) => usedIndexes.includes(index)),
+    `${label} did not use an accepted cursor/filter index (${acceptedIndexes.join(", ")}); used ${usedIndexes.join(", ") || "no index"}`
+  );
   const sequentialRelations = Array.from(
     match[1].matchAll(/"Node Type": "Seq Scan"[\s\S]{0,600}?"Relation Name": "([^"]+)"/g),
     (entry) => entry[1]

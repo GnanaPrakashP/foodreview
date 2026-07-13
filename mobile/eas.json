@@ -6,19 +6,55 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_APP_ENVIRONMENT": "development",
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "development"
+      }
     },
     "ios-simulator": {
       "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_APP_ENVIRONMENT": "development",
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "development"
+      },
       "ios": {
         "simulator": true
       }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_ENVIRONMENT": "preview",
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "preview"
+      },
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "remote"
+      },
+      "ios": {
+        "credentialsSource": "remote"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENVIRONMENT": "production",
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "production",
+        "EX_DEV_CLIENT_NETWORK_INSPECTOR": "false"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "remote"
+      },
+      "ios": {
+        "credentialsSource": "remote"
+      }
     }
   },
   "submit": {

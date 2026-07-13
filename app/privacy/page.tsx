@@ -10,24 +10,40 @@ export default function PrivacyPage() {
         Privacy Policy
       </h1>
       <p style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "28px", fontFamily: "'DM Sans', sans-serif" }}>
-        Last updated: May 2025
+        Last updated: July 14, 2026
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "20px", fontSize: "14px", color: "var(--muted)", lineHeight: 1.7, fontFamily: "'DM Sans', sans-serif" }}>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>What we collect</h2>
-          <p>We collect your name, email address, and the food reviews you post. Photos you upload are stored securely. We do not sell your data to any third party.</p>
+          <p>CircleBites processes account and profile details, email, posts, photos, short videos, dish and restaurant selections, optional location, Circle relationships, blocks and reports, private Memory participants, messages, media and voice notes, notification preferences, push tokens, and privacy-filtered operational diagnostics.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>How we use it</h2>
-          <p>Your data is used solely to power the CircleBites experience — showing your reviews to your circle and letting you discover what friends are eating.</p>
+          <p>We use this data to authenticate you, provide visibility-aware sharing and Memories, recommend food, deliver notifications, prevent abuse, moderate reports, provide support and operate the service. We do not sell personal data.</p>
+        </section>
+        <section>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Permissions and local storage</h2>
+          <p>Location, camera, photo-library, microphone and notification permissions are requested only when you choose related features. The app stores owner-scoped caches, pending uploads and drafts for offline use and recovery. These files use non-backed-up cache storage, Android app backup is disabled, and account-ending transitions clear the active owner data; operating-system caches and already issued short-lived links may remain briefly.</p>
+        </section>
+        <section>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Sharing, processors and diagnostics</h2>
+          <p>Circle and Just me media use access-controlled Storage, and Memories are limited to current participants subject to blocking and deletion rules. Supabase provides authentication, database and Storage services; Expo provides push and build services; Sentry receives privacy-filtered crash and performance diagnostics; restaurant, processing and moderation providers receive bounded requests when used. Telemetry excludes private content, media paths, signed URLs, push tokens and account identifiers.</p>
+        </section>
+        <section>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Retention and moderation</h2>
+          <p>Active content remains until deletion or moderation. Temporary uploads, operational records and local caches use bounded retention. Reports, security records and encrypted provider backups may remain for their documented period where needed for recovery, fraud prevention or legal obligations.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Deleting your data</h2>
-          <p>You can delete your account at any time from the Me tab. This permanently removes your profile and all your reviews from our systems.</p>
+          <p>Request deletion from Profile &gt; Settings &gt; Security &amp; Account. After acceptance, the app signs out and a retryable background process removes owned database records and media. Some safety records and encrypted backups may remain until their stated retention expires. Contact support if deletion remains pending.</p>
+        </section>
+        <section>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Children and choices</h2>
+          <p>CircleBites is not intended for children under 13. You may deny optional permissions, change notifications, remove content, leave Memories, block accounts and request deletion.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Contact</h2>
-          <p>Questions? Email us at privacy@foodcircle.app</p>
+          <p>Privacy: privacy@circlebites.in. Support and deletion help: hello@circlebites.in.</p>
         </section>
       </div>
     </div>

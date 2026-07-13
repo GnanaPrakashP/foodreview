@@ -40,6 +40,7 @@ export function AuthInput({
     <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
       <Ionicons name={icon} size={16} color={themeColors.muted} />
       <TextInput
+        accessibilityLabel={placeholder}
         autoCapitalize={autoCapitalize}
         autoComplete={autoComplete}
         keyboardType={keyboardType}
@@ -75,6 +76,7 @@ export function PasswordInput({
     <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
       <Ionicons name="lock-closed-outline" size={16} color={themeColors.muted} />
       <TextInput
+        accessibilityLabel={placeholder}
         autoCapitalize="none"
         autoComplete="password"
         onChangeText={onChangeText}
@@ -89,7 +91,7 @@ export function PasswordInput({
         style={styles.input}
         value={value}
       />
-      <Pressable hitSlop={8} onPress={onToggle}>
+      <Pressable accessibilityLabel={show ? "Hide password" : "Show password"} accessibilityRole="button" hitSlop={8} onPress={onToggle}>
         <Text style={styles.toggleText}>{show ? "Hide" : "Show"}</Text>
       </Pressable>
     </View>

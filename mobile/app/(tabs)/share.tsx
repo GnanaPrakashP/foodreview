@@ -44,6 +44,7 @@ import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
+import { clearActivePostDraft, loadActivePostDraft, saveActivePostDraft } from "@/services/postDraftStore";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
@@ -180,6 +181,7 @@ export default function ShareScreen() {
   const [customTag, setCustomTag] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [visibility, setVisibility] = useState<Visibility>("public");
+  const draftHydratedRef = useRef(false);
   const [success, setSuccess] = useState("");
   const [memoryOccasionTitle, setMemoryOccasionTitle] = useState("");
   const [memoryParticipants, setMemoryParticipants] = useState("");
@@ -239,7 +241,51 @@ export default function ShareScreen() {
     return () => setComposing(false);
   }, [composing, setComposing]);
 
+  useEffect(() => {
+    if (!isReady || !isAuthenticated || !actor?.userId || draftHydratedRef.current) return;
+    try {
+      const draft = loadActivePostDraft();
+      if (draft) {
+        setCaption(draft.caption);
+        setDishes(draft.dishes);
+        setMediaItems(draft.mediaItems);
+        setRestaurantName(draft.restaurantName);
+        setRestaurantPlace(draft.restaurantPlace);
+        setSelectedTags(draft.selectedTags);
+        setSoloStep(draft.soloStep);
+        setVisibility(draft.visibility);
+        setShareMode("solo");
+      }
+      draftHydratedRef.current = true;
+    } catch {
+      // AccountSessionBoundary may still be installing the owner marker. A
+      // later mount/focus retries; never hydrate a draft without owner proof.
+    }
+  }, [actor?.userId, isAuthenticated, isReady]);
+
+  useEffect(() => {
+    if (!draftHydratedRef.current || !isAuthenticated || shareMode !== "solo" || mediaItems.length === 0) return;
+    const timeout = setTimeout(() => {
+      try {
+        saveActivePostDraft({
+          caption,
+          dishes,
+          mediaItems,
+          restaurantName,
+          restaurantPlace,
+          selectedTags,
+          soloStep,
+          visibility
+        });
+      } catch {
+        // Draft persistence must not interrupt composing or uploading.
+      }
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [caption, dishes, isAuthenticated, mediaItems, restaurantName, restaurantPlace, selectedTags, shareMode, soloStep, visibility]);
+
   function cancelShareMode() {
+    try { clearActivePostDraft(); } catch {}
     setShareMode("choice");
     setSoloStep("review");
     setMediaItems([]);
@@ -516,6 +562,7 @@ export default function ShareScreen() {
         tags: selectedTags,
         visibility
       });
+      try { clearActivePostDraft(); } catch {}
       setMediaItems([]);
       setRestaurantName("");
       setRestaurantPlace(null);

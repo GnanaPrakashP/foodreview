@@ -236,7 +236,7 @@ export default function PersonProfileScreen() {
     if (!reason) return;
     try {
       await reportContent.mutateAsync({ targetId: username, targetType: "profile", reason });
-      notify("Report sent", "Thanks. FoodReview moderation will review it.");
+      notify("Report sent", "Thanks. CircleBites moderation will review it.");
     } catch (error) {
       notify("Could not send report", error instanceof Error ? error.message : "Please try again.");
     }

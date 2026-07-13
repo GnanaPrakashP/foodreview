@@ -48,7 +48,7 @@ export function ProfileSubScreen({
   else if (contentStyle) screenStyle.push(contentStyle);
 
   return (
-    <Animated.View style={[styles.slide, { backgroundColor: themeColors.bg }, slideStyle]}>
+    <Animated.View accessibilityViewIsModal style={[styles.slide, { backgroundColor: themeColors.bg }, slideStyle]}>
       <Screen
         backgroundColor={themeColors.bg}
         padded={false}

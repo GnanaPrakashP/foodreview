@@ -37,3 +37,17 @@ Emergency containment uses existing deployment/scheduler controls and deny-by-de
 Every disablement records incident owner, start time, affected release, correlation ID, customer impact, restoration criteria, and rollback command in the incident system. Re-enable through a single canary request/job before normal traffic.
 
 Verification after recovery includes health/release identity, auth and cache isolation, feed/profile/Memory/comments, private media authorization, media processing, account deletion, push tickets/receipts, moderation, scheduler heartbeats, and alert resolution.
+
+## Native release-candidate sequence
+
+Native store releases are manual and use the protected `production-release` environment. No CI job publishes or submits automatically.
+
+1. Assign the historical PH-001 credential to an owner and rotate/revoke it if privileged.
+2. Deploy the complete canonical migrations to disposable staging, then deploy API, workers, scheduler and matching Sentry release metadata.
+3. Configure staging-only recovery, OAuth, push, provider and moderation credentials; keep production credentials absent from staging builds.
+4. Build Android with the production upload key and iOS with the production distribution profile. Retain signed artifacts, hashes, merged manifest/entitlements, dependency inventories, Android mapping/native symbols, iOS dSYM and Hermes maps.
+5. Run the two-account physical-device matrix for auth/deep links, private media, uploads/process death, push, account lifecycle, backup/restore attempt and accessibility.
+6. Execute restore and rollback/roll-forward drills, then run the separate Phase 9 load/soak/failure gate.
+7. Obtain legal and store-console declaration approval, build a fresh production candidate, repeat the smoke matrix and submit manually only after every gate is signed off.
+
+The bad-mobile-release runbook governs rollout stops. Expo Updates is disabled, so recovery is API/provider containment plus a compatible new store binary; never attempt to recall or mutate an installed binary remotely. Production mobile config validation rejects localhost/private-LAN endpoints, placeholder public values, development auto-login, privileged Supabase variable names and non-production environment/channel bindings.

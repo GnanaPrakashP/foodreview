@@ -9,7 +9,7 @@ export function ErrorMessage({ children }: { children: ReactNode }) {
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
-    <View style={styles.errorBox}>
+    <View accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.errorBox}>
       <Ionicons name="warning-outline" size={14} color={themeColors.danger} />
       <Text style={styles.errorText}>{children}</Text>
     </View>
@@ -20,7 +20,7 @@ export function NoticeMessage({ children }: { children: ReactNode }) {
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   return (
-    <View style={styles.noticeBox}>
+    <View accessibilityLiveRegion="polite" style={styles.noticeBox}>
       <Ionicons name="mail-outline" size={16} color={themeColors.green} />
       <Text style={styles.noticeText}>{children}</Text>
     </View>

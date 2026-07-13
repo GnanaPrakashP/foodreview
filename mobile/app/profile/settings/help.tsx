@@ -10,7 +10,7 @@ import { notify } from "@/utils/confirm";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
-const supportEmail = "hello@circlebites.app";
+const supportEmail = "hello@circlebites.in";
 
 export default function HelpContactScreen() {
   const { themeColors } = useThemePreference();

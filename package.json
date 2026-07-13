@@ -2,6 +2,11 @@
   "name": "foodreview",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10"
+    }
+  },
   "scripts": {
     "dev": "next dev",
     "dev:turbo": "next dev --turbopack",
@@ -18,6 +23,7 @@
     "test:e2e:ui": "playwright test --ui",
     "validate:hardening-register": "node scripts/validate-production-hardening-issues.mjs",
     "validate:observability": "node scripts/validate-observability-inventory.mjs",
+    "validate:native-release": "node scripts/validate-native-release.mjs && node scripts/validate-release-smoke-matrix.mjs",
     "validate:mobile-api-security": "node scripts/report-mobile-api-security.mjs",
     "report:mobile-api-security": "node scripts/report-mobile-api-security.mjs --json",
     "report:mobile-api-security:runtime": "node scripts/report-mobile-api-security.mjs --runtime",
@@ -26,6 +32,7 @@
     "test:backend-performance": "node --test tests/backend-performance-phase5.test.mjs",
     "test:mobile-performance": "node --test tests/mobile-performance-phase6.test.mjs",
     "test:observability-operations": "node --test tests/observability-operations-phase7.test.mjs tests/push-delivery-phase7.test.mjs",
+    "test:native-release": "node --test tests/native-release-phase8.test.mjs",
     "validate:mobile-performance": "node scripts/report-mobile-performance.mjs",
     "report:mobile-performance": "node scripts/report-mobile-performance.mjs --json",
     "report:mobile-bundle": "node scripts/report-mobile-bundle.mjs --json",
@@ -97,7 +104,7 @@
     "autoprefixer": "^10.5.0",
     "fuse.js": "^7.3.0",
     "lucide-react": "^1.14.0",
-    "next": "15.5.15",
+    "next": "15.5.20",
     "postcss": "^8.5.12",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -112,7 +119,7 @@
     "@types/react-dom": "^19",
     "c8": "^10.1.3",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^15.5.15",
+    "eslint-config-next": "15.5.20",
     "typescript": "^5"
   }
 }

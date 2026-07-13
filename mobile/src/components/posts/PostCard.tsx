@@ -476,7 +476,7 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
     if (!reason) return;
     try {
       await reportMutation.mutateAsync({ targetId, targetType, reason });
-      Alert.alert("Report sent", "Thanks. FoodReview moderation will review it.");
+      Alert.alert("Report sent", "Thanks. CircleBites moderation will review it.");
     } catch (error) {
       Alert.alert("Could not send report", error instanceof Error ? error.message : "Please try again.");
     }

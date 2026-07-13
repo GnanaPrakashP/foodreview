@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "product": {
+    "name": "CircleBites",
+    "androidApplicationId": "com.circlebites.mobile",
+    "iosBundleIdentifier": "com.circlebites.mobile",
+    "deepLinkScheme": "circlebites",
+    "webBaseUrl": "https://www.circlebites.in",
+    "privacyUrl": "https://www.circlebites.in/privacy",
+    "termsUrl": "https://www.circlebites.in/terms",
+    "supportUrl": "https://www.circlebites.in/support",
+    "accountDeletionUrl": "https://www.circlebites.in/delete-account",
+    "supportEmail": "hello@circlebites.in",
+    "privacyEmail": "privacy@circlebites.in"
+  },
+  "version": {
+    "semanticVersion": "1.0.0",
+    "androidVersionCode": 1,
+    "iosBuildNumber": "1",
+    "source": "EAS remote auto-increment for store builds; repository values are the minimum release floor"
+  },
+  "profiles": {
+    "development": { "environment": "development", "scheme": "circlebites-dev", "distribution": "internal" },
+    "preview": { "environment": "preview", "scheme": "circlebites-preview", "distribution": "internal" },
+    "production": { "environment": "production", "scheme": "circlebites", "distribution": "store" }
+  },
+  "updates": {
+    "enabled": false,
+    "strategy": "store-distributed native binaries only; EAS Update/Expo Updates publication is disabled"
+  },
+  "supportedDevices": {
+    "android": { "minimumApi": 24, "minimumVersion": "7.0", "orientation": "portrait", "tabletClaim": false },
+    "ios": { "minimumVersion": "15.1", "orientation": "portrait", "tabletClaim": false }
+  },
+  "androidPermissions": {
+    "required": [
+      "android.permission.INTERNET",
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.VIBRATE"
+    ],
+    "blocked": [
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.USE_FINGERPRINT"
+    ]
+  },
+  "environmentVariables": {
+    "mobilePublic": [
+      "EXPO_PUBLIC_SUPABASE_URL",
+      "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+      "EXPO_PUBLIC_API_BASE_URL",
+      "EXPO_PUBLIC_WEB_BASE_URL",
+      "EXPO_PUBLIC_APP_ENVIRONMENT",
+      "EXPO_PUBLIC_RELEASE_CHANNEL",
+      "EXPO_PUBLIC_RELEASE_ID",
+      "EXPO_PUBLIC_SENTRY_DSN",
+      "EXPO_PUBLIC_SENTRY_TRACES_SAMPLE_RATE"
+    ],
+    "buildOnly": ["SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT", "EXPO_TOKEN"],
+    "serverOnly": [
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "API_RATE_LIMIT_HMAC_SECRET",
+      "OBSERVABILITY_HASH_SECRET",
+      "GOOGLE_API_KEY",
+      "GOOGLE_PLACES_API_KEY",
+      "GOOGLE_MAPS_API_KEY",
+      "GOOGLE_VISION_API_KEY",
+      "MODERATION_OPERATOR_SECRET"
+    ],
+    "workerOnly": [
+      "MEDIA_WORKER_SECRET",
+      "ACCOUNT_DELETION_WORKER_SECRET",
+      "ACCOUNT_MEDIA_CLEANUP_SECRET",
+      "REVIEW_MEDIA_CLEANUP_SECRET",
+      "PUSH_DELIVERY_WORKER_SECRET"
+    ],
+    "schedulerOnly": ["CRON_SECRET", "MEMORY_UPLOAD_CLEANUP_SECRET", "DISH_CURATION_SECRET"]
+  },
+  "externalReleaseBlockers": [
+    "production Android upload key and Play App Signing ownership",
+    "Apple distribution certificate, provisioning profile and App Store Connect access",
+    "physical Android and iOS devices",
+    "production OAuth, push and Sentry credentials",
+    "hosted staging deployment",
+    "legal review and store-console declarations",
+    "Phase 9 capacity and failure testing"
+  ]
+}

@@ -47,6 +47,12 @@ jobs:
       - name: Validate observability, schedules, alerts and runbooks
         run: npm run validate:observability
 
+      - name: Validate native release, store and smoke inventories
+        run: npm run validate:native-release
+
+      - name: Run Phase 8 native release contracts
+        run: npm run test:native-release
+
       - name: Validate mobile API trust-boundary inventory
         run: npm run validate:mobile-api-security
 

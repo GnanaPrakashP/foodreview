@@ -7,24 +7,40 @@ import { fontStyles, spacing } from "@/theme";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
-const LAST_UPDATED = "Last updated: June 2026";
+const LAST_UPDATED = "Last updated: July 14, 2026";
 
 const sections = [
   {
     title: "Using CircleBites",
-    body: "CircleBites is a private food journal for you and your friends. You must be 13 or older to use the app. You are responsible for the content you post."
+    body: "CircleBites lets people share food reviews and private Memories. You must be at least 13 and legally able to use the service. Keep your account secure and provide accurate registration information."
   },
   {
     title: "Your content",
-    body: "You own what you post. By sharing a review you grant CircleBites a licence to display it to your circle. We will never use your content for advertising without your consent."
+    body: "You retain rights you have in your content. You grant CircleBites a limited licence to host, process, reproduce and display it only as needed to operate, secure and improve the service according to the visibility you select. You must have permission to upload the content."
   },
   {
     title: "Acceptable use",
-    body: "Do not post spam, false information, or content that harms others. We reserve the right to remove content or suspend accounts that violate these terms."
+    body: "Do not upload unlawful, infringing, deceptive, abusive or unsafe content; impersonate others; scrape the service; bypass access controls; or misuse reports, notifications or private rooms. We may restrict content or accounts to enforce these rules and protect users."
+  },
+  {
+    title: "Moderation and reporting",
+    body: "Users can report content and block accounts. Automated providers and authorised operators may review bounded content for safety. Decisions may be delayed, corrected or appealed through support; availability of a particular appeal route may depend on the decision and applicable law."
+  },
+  {
+    title: "Service changes and availability",
+    body: "Features may change and third-party services may be unavailable. We do not promise uninterrupted operation or that recommendations, restaurant details or user content are accurate. Use your own judgment for allergies, health and safety decisions."
+  },
+  {
+    title: "Ending use",
+    body: "You may stop using CircleBites or request account deletion in Settings. We may suspend access for serious or repeated violations. Content removal, operational retention and backup expiry follow the Privacy Policy."
+  },
+  {
+    title: "Copyright and complaints",
+    body: "Send copyright, safety or policy complaints with enough information to investigate to hello@circlebites.in. Do not send passwords, authentication tokens or unnecessary private content."
   },
   {
     title: "Contact",
-    body: "Questions? Email us at hello@circlebites.app"
+    body: "Questions and support: hello@circlebites.in. Canonical terms: https://www.circlebites.in/terms. These terms require review by qualified counsel before store submission."
   }
 ];
 
