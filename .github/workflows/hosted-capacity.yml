@@ -1,0 +1,188 @@
+name: Hosted staging capacity
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Only disposable production-like staging is permitted"
+        required: true
+        type: choice
+        options: [staging]
+      release:
+        description: "Exact API release under test"
+        required: true
+        type: string
+      worker_release:
+        description: "Exact media/deletion worker release under test"
+        required: true
+        type: string
+      scenario:
+        description: "Capacity action"
+        required: true
+        type: choice
+        options: [smoke, launch, stress, soak, realtime, media, abuse, deletion, failure, seed, cleanup, reconcile]
+      workload_tier:
+        description: "Launch or stress tier for Realtime/media; ignored by other scenarios"
+        required: true
+        type: choice
+        options: [launch, stress]
+      duration_seconds:
+        description: "Scenario duration; report still enforces the canonical minimum"
+        required: true
+        default: "20"
+        type: string
+      target_concurrency:
+        description: "Users or uploads; repository caps still apply"
+        required: true
+        default: "4"
+        type: string
+      total_uploads:
+        description: "Media scenario total; use 3000 when preparing the full production-like seed"
+        required: true
+        default: "20"
+        type: string
+      failure_case:
+        description: "Required only for failure scenario"
+        required: false
+        type: string
+      confirmation:
+        description: "CIRCLEBITES_STAGING_LOAD, _SEED, _DELETION or _CLEANUP as appropriate"
+        required: true
+        type: string
+      failure_confirmation:
+        description: "Failure scenario additionally requires CIRCLEBITES_STAGING_FAILURE"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-capacity-${{ inputs.environment }}-${{ inputs.scenario }}
+  cancel-in-progress: false
+
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 540
+    environment: capacity-staging
+    env:
+      LOAD_ENVIRONMENT: staging
+      LOAD_STAGING_ID: ${{ vars.LOAD_STAGING_ID }}
+      LOAD_STAGING_API_URL: ${{ vars.LOAD_STAGING_API_URL }}
+      LOAD_STAGING_SUPABASE_URL: ${{ vars.LOAD_STAGING_SUPABASE_URL }}
+      LOAD_ALLOWED_STAGING_HOSTS: ${{ vars.LOAD_ALLOWED_STAGING_HOSTS }}
+      LOAD_SAFETY_TELEMETRY_URL: ${{ vars.LOAD_SAFETY_TELEMETRY_URL }}
+      LOAD_ALLOWED_SAFETY_HOSTS: ${{ vars.LOAD_ALLOWED_SAFETY_HOSTS }}
+      LOAD_SAFETY_TELEMETRY_TOKEN: ${{ secrets.LOAD_SAFETY_TELEMETRY_TOKEN }}
+      LOAD_API_RELEASE: ${{ inputs.release }}
+      LOAD_WORKER_RELEASE: ${{ inputs.worker_release }}
+      LOAD_GIT_COMMIT: ${{ github.sha }}
+      LOAD_MIGRATION_HEAD: ${{ vars.LOAD_MIGRATION_HEAD }}
+      LOAD_DB_TIER: ${{ vars.LOAD_DB_TIER }}
+      LOAD_API_TOPOLOGY: ${{ vars.LOAD_API_TOPOLOGY }}
+      LOAD_WORKER_TOPOLOGY: ${{ vars.LOAD_WORKER_TOPOLOGY }}
+      LOAD_REGIONS: ${{ vars.LOAD_REGIONS }}
+      LOAD_STAGING_SUPABASE_ANON_KEY: ${{ secrets.LOAD_STAGING_SUPABASE_ANON_KEY }}
+      LOAD_STAGING_SERVICE_ROLE_KEY: ${{ secrets.LOAD_STAGING_SERVICE_ROLE_KEY }}
+      LOAD_ACTOR_PASSWORD: ${{ secrets.LOAD_ACTOR_PASSWORD }}
+      LOAD_ACTOR_EMAIL_DOMAIN: ${{ vars.LOAD_ACTOR_EMAIL_DOMAIN }}
+      LOAD_FAILURE_CONTROLLER_URL: ${{ vars.LOAD_FAILURE_CONTROLLER_URL }}
+      LOAD_FAILURE_CONTROLLER_TOKEN: ${{ secrets.LOAD_FAILURE_CONTROLLER_TOKEN }}
+      LOAD_MEDIA_FIXTURES_LICENSE: synthetic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Validate harness and deterministic local smoke
+        run: npm run validate:load-capacity && npm run test:load-capacity && npm run load:ci-smoke
+      - name: Validate explicit staging confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          FAILURE_CONFIRMATION: ${{ inputs.failure_confirmation }}
+          SCENARIO: ${{ inputs.scenario }}
+        run: |
+          case "$SCENARIO" in
+            seed) test "$CONFIRMATION" = "CIRCLEBITES_STAGING_SEED" ;;
+            cleanup) test "$CONFIRMATION" = "CIRCLEBITES_STAGING_CLEANUP" ;;
+            deletion) test "$CONFIRMATION" = "CIRCLEBITES_STAGING_DELETION" ;;
+            failure)
+              test "$CONFIRMATION" = "CIRCLEBITES_STAGING_LOAD"
+              test "$FAILURE_CONFIRMATION" = "CIRCLEBITES_STAGING_FAILURE"
+              ;;
+            *) test "$CONFIRMATION" = "CIRCLEBITES_STAGING_LOAD" ;;
+          esac
+      - name: Materialize protected actor fixture
+        env:
+          ACTORS_B64: ${{ secrets.LOAD_ACTORS_JSON_BASE64 }}
+        run: |
+          node -e "const fs=require('fs'); if(process.env.ACTORS_B64) fs.writeFileSync(process.env.RUNNER_TEMP+'/actors.json',Buffer.from(process.env.ACTORS_B64,'base64'),{mode:0o600});"
+      - name: Generate licence-safe deterministic media fixtures
+        run: npm run load:fixtures -- --output="${RUNNER_TEMP}"
+      - name: Execute selected staging action
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+          DURATION: ${{ inputs.duration_seconds }}
+          CONCURRENCY: ${{ inputs.target_concurrency }}
+          TOTAL_UPLOADS: ${{ inputs.total_uploads }}
+          LOAD_TIER: ${{ inputs.workload_tier }}
+          FAILURE_CASE: ${{ inputs.failure_case }}
+          NORMAL_CONFIRMATION: ${{ inputs.confirmation }}
+          FAILURE_CONFIRMATION: ${{ inputs.failure_confirmation }}
+          LOAD_ACTORS_FILE: ${{ runner.temp }}/actors.json
+          LOAD_IMAGE_FIXTURE_PATH: ${{ runner.temp }}/synthetic.jpg
+          LOAD_VIDEO_FIXTURE_PATH: ${{ runner.temp }}/synthetic.mp4
+          LOAD_VIDEO_DURATION_MS: "1000"
+        run: |
+          case "$SCENARIO" in
+            seed)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:seed -- --apply
+              ;;
+            cleanup)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:cleanup -- --apply
+              ;;
+            failure)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" LOAD_FAILURE_CONFIRMATION="$FAILURE_CONFIRMATION" npm run load:failure -- --case="$FAILURE_CASE" --pressure-seconds="$DURATION"
+              ;;
+            realtime)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:realtime -- --tier="$LOAD_TIER" --rooms="$CONCURRENCY"
+              ;;
+            media)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:media -- --tier="$LOAD_TIER" --concurrency="$CONCURRENCY" --total="$TOTAL_UPLOADS"
+              ;;
+            abuse)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:abuse
+              ;;
+            deletion)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:deletion -- --users="$CONCURRENCY" --completion-timeout="$DURATION"
+              ;;
+            reconcile)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run load:reconcile
+              ;;
+            *)
+              LOAD_CONFIRMATION="$NORMAL_CONFIRMATION" npm run "load:$SCENARIO" -- --duration="$DURATION" --concurrency="$CONCURRENCY"
+              ;;
+          esac
+      - name: Encrypt seed actor manifest before artifact retention
+        if: ${{ inputs.scenario == 'seed' }}
+        env:
+          MANIFEST_PASSWORD: ${{ secrets.LOAD_ACTOR_MANIFEST_ENCRYPTION_PASSWORD }}
+        run: |
+          test -n "$MANIFEST_PASSWORD"
+          test -f load-results/actors.json
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in load-results/actors.json -out load-results/actors.json.enc -pass env:MANIFEST_PASSWORD
+      - name: Retain capacity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: circlebites-capacity-${{ inputs.scenario }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 90
+          include-hidden-files: false
+          path: |
+            load-results/*.json
+            !load-results/actors.json
+            load-results/actors.json.enc

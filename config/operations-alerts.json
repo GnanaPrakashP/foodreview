@@ -44,6 +44,11 @@
     { "id": "rate-limit-state-growth", "source": "operations-health", "metric": "operationalTables.rateLimitRows", "comparison": "above", "warning": 50000, "critical": 200000, "runbook": "database-saturation", "owner": "platform" },
     { "id": "idempotency-state-growth", "source": "operations-health", "metric": "operationalTables.idempotencyRows", "comparison": "above", "warning": 50000, "critical": 200000, "runbook": "database-saturation", "owner": "platform" },
     { "id": "scheduler-missed", "source": "operations-health", "metric": "scheduler.missedJobs", "comparison": "above", "warning": 0, "critical": 2, "runbook": "scheduler-missed-run", "owner": "platform" },
-    { "id": "scheduler-failing", "source": "operations-health", "metric": "scheduler.failingJobs", "comparison": "above", "warning": 0, "critical": 2, "runbook": "scheduler-missed-run", "owner": "platform" }
+    { "id": "scheduler-failing", "source": "operations-health", "metric": "scheduler.failingJobs", "comparison": "above", "warning": 0, "critical": 2, "runbook": "scheduler-missed-run", "owner": "platform" },
+    { "id": "database-pool-wait-p95", "source": "hosted-dashboard", "metric": "database.poolWaitP95Ms", "comparison": "above", "warning": 500, "critical": 1000, "runbook": "database-saturation", "owner": "platform" },
+    { "id": "realtime-delivery-p95", "source": "capacity-realtime", "metric": "realtime.deliveryP95Ms", "comparison": "above", "warning": 1000, "critical": 2000, "runbook": "realtime-fanout-degradation", "owner": "platform" },
+    { "id": "realtime-subscription-failure", "source": "capacity-realtime", "metric": "realtime.subscriptionFailureRatePercent", "comparison": "above", "warning": 0.5, "critical": 2, "runbook": "realtime-fanout-degradation", "owner": "platform" },
+    { "id": "worker-memory-growth", "source": "hosted-dashboard", "metric": "worker.memoryGrowthPercentPerHour", "comparison": "above", "warning": 10, "critical": 20, "runbook": "load-slo-breach", "owner": "media" },
+    { "id": "capacity-correctness-drift", "source": "capacity-reconciliation", "metric": "capacity.correctnessViolations", "comparison": "above", "warning": 0, "critical": 0, "runbook": "load-slo-breach", "owner": "platform" }
   ]
 }

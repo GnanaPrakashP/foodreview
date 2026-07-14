@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "program": "FoodReview Production Hardening",
   "updatedAt": "2026-07-14",
-  "sourceCommit": "ac2a2a5b1dd9caae670c616837b5d8dbe5119d67",
+  "sourceCommit": "f9321a9ce43be75cc31eca0135ad3f3beb5dc718",
   "canonicalBranch": "production-hardening",
-  "currentBranch": "hardening/10-native-release",
+  "currentBranch": "hardening/11-load-capacity",
   "statusValues": ["open", "in_progress", "blocked", "complete", "accepted_risk"],
   "issues": [
     {
@@ -396,12 +396,12 @@
       "id": "PH-901",
       "title": "Prove launch capacity and failure recovery under load",
       "severity": "P0",
-      "status": "open",
+      "status": "blocked",
       "phase": "9",
-      "branch": "hardening/11-load-testing",
-      "affectedFiles": ["tests/load", "docs/operations", "supabase"],
-      "dependencies": ["PH-502", "PH-503", "PH-505", "PH-602", "PH-603", "PH-701", "PH-703", "PH-801", "PH-802"],
-      "acceptanceCriteria": ["Expected peak, two-times stress and sustained soak tests run", "API, database, realtime, media, storage and client metrics meet budgets", "Worker restart and partial storage failure recover", "Capacity report supports 100 peak concurrent users"]
+      "branch": "hardening/11-load-capacity",
+      "affectedFiles": ["config/load-capacity.json", "scripts/load", "tests/load-capacity-phase9.test.mjs", ".github/workflows/hosted-capacity.yml", "docs/performance", "docs/operations"],
+      "dependencies": ["PH-502", "PH-503", "PH-505", "PH-602", "PH-603", "PH-701", "PH-703", "PH-801", "PH-802", "Disposable production-like hosted staging, protected credentials, chaos-controller access, provider restore authority and signed physical Android/iOS devices are unavailable"],
+      "acceptanceCriteria": ["Expected 100-user/30-room/20-upload peak, two-times stress and four-hour soak tests run", "API, database, pool, Realtime, media, Storage, worker and physical-client metrics meet checked-in SLOs", "All failure cases, queue recovery, alert delivery and isolated restore pass", "Reconciliation has zero unexplained drift and the report proves only the exact recorded profile"]
     },
     {
       "id": "PH-902",

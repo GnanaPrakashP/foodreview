@@ -233,7 +233,7 @@ The full-suite baseline requires transparent reconciliation. The current checkou
 | PH-804 hosted environments | Blocked | Install/verify protected EAS production values and real provider ownership |
 | PH-805 accessibility/devices | Blocked | Physical TalkBack/VoiceOver, large-text, contrast, targets and reduced-motion evidence |
 | Phase 7 hosted operations | Blocked | Live symbolication/alerts/push/restore/canary/rollback drills |
-| Phase 9 | Not started | Run load, soak, failure and 1,000-user capacity gate separately |
+| Phase 9 | Local harness complete; hosted proof blocked | Run the checked-in load, soak, failure, restore and physical-device capacity matrix on disposable production-like staging |
 
 ## Reviewed manual release order
 

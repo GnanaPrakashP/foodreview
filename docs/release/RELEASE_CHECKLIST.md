@@ -30,7 +30,10 @@
 - [ ] TalkBack/VoiceOver, large text, contrast, focus, targets and reduced motion pass.
 - [ ] Controlled Sentry JS/native crash and ANR/app-hang symbolicate without private data.
 - [ ] API/worker/scheduler canary, restore and rollback/roll-forward drills pass.
-- [ ] Phase 9 load, soak and failure testing passes separately.
+- [ ] Phase 9 result is `PASS — CAPACITY PROVEN`; a local harness-only pass cannot authorize release.
+- [ ] The exact 1,000 registered/200 DAU/100 peak/30-room/20-upload launch tier, 2× stress and four-hour soak evidence share the release candidate and migration head.
+- [ ] Hosted Realtime, real private Storage/media workers, all failure cases, isolated restore, reconciliation and signed Android/iOS under-load evidence pass.
+- [ ] Database/pool, API/worker topology, regions, provider limits, bottleneck and scaling triggers are recorded with the retained capacity report.
 
 ## Store consoles
 

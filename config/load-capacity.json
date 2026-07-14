@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "harness": {
+    "name": "circlebites-node-load",
+    "version": "1.0.0",
+    "requiredNodeMajor": 22,
+    "resultSchemaVersion": 1
+  },
+  "safety": {
+    "normalConfirmation": "CIRCLEBITES_STAGING_LOAD",
+    "localValidationConfirmation": "CIRCLEBITES_LOCAL_SEED_CONTRACT",
+    "seedConfirmation": "CIRCLEBITES_STAGING_SEED",
+    "cleanupConfirmation": "CIRCLEBITES_STAGING_CLEANUP",
+    "deletionConfirmation": "CIRCLEBITES_STAGING_DELETION",
+    "failureConfirmation": "CIRCLEBITES_STAGING_FAILURE",
+    "productionHostSuffixes": [
+      "circlebites.in",
+      "foodreview.app"
+    ],
+    "requiredEnvironment": "staging",
+    "maxRunSeconds": 28800,
+    "maxConcurrentUsers": 250,
+    "maxConcurrentUploads": 50,
+    "telemetryPollSeconds": 10,
+    "telemetryRequiredScenarios": ["launch", "stress", "soak", "realtime", "media"],
+    "abort": {
+      "unexpectedErrorRate": 0.05,
+      "databaseCpuPercent": 85,
+      "databasePoolWaitP95Ms": 1000,
+      "mediaOldestQueueAgeSeconds": 900
+    }
+  },
+  "launchModel": {
+    "registeredUsers": 1000,
+    "monthlyActiveUsers": 500,
+    "dailyActiveUsers": 200,
+    "peakConcurrentUsers": 100,
+    "activeMemoryRooms": 30,
+    "concurrentUploads": 20,
+    "sessionDurationMinutes": 15,
+    "requestsPerSession": 42,
+    "activityStepsPerSession": 18,
+    "feedPagesPerSession": 3,
+    "messagesPerActiveRoomPerMinute": 4,
+    "activityRates": {
+      "postCreatesPer100Sessions": 8,
+      "commentsPer100Sessions": 35,
+      "reactionsPer100Sessions": 60,
+      "mediaUploadsPer100Sessions": 10,
+      "notificationsGeneratedPerDailyActiveUser": 6,
+      "avatarUpdatesPer100Sessions": 2
+    },
+    "mediaMix": {
+      "imagePercent": 80,
+      "shortVideoPercent": 20,
+      "maximumVideoSeconds": 30
+    },
+    "scenarioWeights": {
+      "auth": 5,
+      "circle": 24,
+      "explore": 12,
+      "restaurantDish": 8,
+      "profile": 10,
+      "comments": 8,
+      "notifications": 7,
+      "memoryRooms": 8,
+      "memoryChat": 12,
+      "mutations": 4,
+      "mediaIntent": 2
+    }
+  },
+  "seed": {
+    "namespace": "circlebites-phase9-v1",
+    "emailPrefix": "circlebites-load9+",
+    "volumes": {
+      "users": 1000,
+      "profiles": 1000,
+      "circleMemberships": 5000,
+      "blocks": 120,
+      "posts": 12000,
+      "imagePosts": 1920,
+      "videoPosts": 480,
+      "likes": 24000,
+      "bookmarks": 6000,
+      "reactions": 6000,
+      "comments": 18000,
+      "notifications": 30000,
+      "postViews": 50000,
+      "memoryRooms": 120,
+      "memoryMemberships": 900,
+      "memoryMessages": 30000,
+      "roomMedia": 600,
+      "mediaUploads": 3000,
+      "memoryDishes": 1200,
+      "places": 400,
+      "dishMentions": 18000,
+      "contentReports": 300,
+      "accountDeletionJobs": 10
+    },
+    "distribution": {
+      "highEngagementPostPercent": 2,
+      "largeCircleUserPercent": 5,
+      "privatePostPercent": 10,
+      "circlePostPercent": 25,
+      "suppressedAccountPercent": 1,
+      "popularRoomPercent": 5,
+      "manyRoomUserRooms": 50,
+      "unreadNotificationPercent": 35
+    }
+  },
+  "tiers": {
+    "smoke": {
+      "mode": "closed",
+      "durationSeconds": 20,
+      "concurrentUsers": 4,
+      "activeMemoryRooms": 2,
+      "concurrentUploads": 1,
+      "maxIterationsPerUser": 3,
+      "thresholdProfile": "launch"
+    },
+    "launch": {
+      "mode": "closed",
+      "durationSeconds": 900,
+      "concurrentUsers": 100,
+      "activeMemoryRooms": 30,
+      "concurrentUploads": 20,
+      "thresholdProfile": "launch"
+    },
+    "stress": {
+      "mode": "arrival",
+      "durationSeconds": 900,
+      "concurrentUsers": 200,
+      "arrivalRatePerSecond": 4,
+      "activeMemoryRooms": 60,
+      "concurrentUploads": 40,
+      "thresholdProfile": "stress"
+    },
+    "soak": {
+      "mode": "closed",
+      "durationSeconds": 14400,
+      "concurrentUsers": 100,
+      "activeMemoryRooms": 30,
+      "concurrentUploads": 20,
+      "thresholdProfile": "soak"
+    }
+  },
+  "thresholds": {
+    "launch": {
+      "httpP50Ms": 300,
+      "httpP95Ms": 800,
+      "httpP99Ms": 1500,
+      "unexpectedErrorRate": 0.01,
+      "maximumPayloadBytes": 262144,
+      "realtimeSubscribeP95Ms": 2000,
+      "realtimeDeliveryP95Ms": 1000,
+      "realtimeMissRate": 0.001,
+      "realtimeDuplicateRate": 0.001,
+      "mediaUploadP95Ms": 15000,
+      "mediaProcessingP95Ms": 120000,
+      "mediaOldestQueueAgeSeconds": 300,
+      "correctnessViolations": 0
+    },
+    "stress": {
+      "httpP50Ms": 500,
+      "httpP95Ms": 1500,
+      "httpP99Ms": 3000,
+      "unexpectedErrorRate": 0.03,
+      "maximumPayloadBytes": 262144,
+      "realtimeSubscribeP95Ms": 3000,
+      "realtimeDeliveryP95Ms": 2000,
+      "realtimeMissRate": 0.005,
+      "realtimeDuplicateRate": 0.005,
+      "mediaUploadP95Ms": 30000,
+      "mediaProcessingP95Ms": 240000,
+      "mediaOldestQueueAgeSeconds": 600,
+      "correctnessViolations": 0
+    },
+    "soak": {
+      "httpP50Ms": 300,
+      "httpP95Ms": 800,
+      "httpP99Ms": 1500,
+      "unexpectedErrorRate": 0.01,
+      "maximumPayloadBytes": 262144,
+      "realtimeSubscribeP95Ms": 2000,
+      "realtimeDeliveryP95Ms": 1000,
+      "realtimeMissRate": 0.001,
+      "realtimeDuplicateRate": 0.001,
+      "mediaUploadP95Ms": 15000,
+      "mediaProcessingP95Ms": 120000,
+      "mediaOldestQueueAgeSeconds": 300,
+      "correctnessViolations": 0,
+      "maximumLatencyTrendPercent": 10,
+      "maximumConnectionGrowthPercent": 5,
+      "maximumWorkerMemoryGrowthPercent": 10
+    }
+  },
+  "requiredResultSections": [
+    "harness",
+    "environment",
+    "release",
+    "migrationHead",
+    "scenario",
+    "startedAt",
+    "durationSeconds",
+    "metrics",
+    "thresholds",
+    "thresholdFailures",
+    "correctness",
+    "capacityConclusion"
+  ],
+  "externalEvidenceRequirements": {
+    "restore": ["rpoSeconds", "rtoSeconds", "databaseRpoSeconds", "databaseRtoSeconds", "storageRpoSeconds", "storageRtoSeconds", "databaseRestored", "storageRestored", "schemaContractPassed", "rlsStorageTestsPassed", "representativeRowsVerified", "operationalJobsVerified"],
+    "mobile-android": ["physicalDevice", "releaseBuild", "crashCount", "anrCount", "coldLaunchP95Ms", "warmLaunchP95Ms", "circleUsefulContentP95Ms", "frameP95Ms", "memoryPeakMb", "memoryGrowthMb", "jsStallCount", "uiStallCount", "apiErrorRate", "cachedContentPreserved", "crossAccountViolations"],
+    "mobile-ios": ["physicalDevice", "releaseBuild", "crashCount", "watchdogCount", "coldLaunchP95Ms", "warmLaunchP95Ms", "circleUsefulContentP95Ms", "frameP95Ms", "memoryPeakMb", "memoryGrowthMb", "jsStallCount", "uiStallCount", "apiErrorRate", "cachedContentPreserved", "crossAccountViolations"],
+    "platform-telemetry": ["apiReplicaCount", "apiCpuPeakPercent", "apiMemoryPeakMb", "databaseCpuPeakPercent", "databaseMemoryPeakPercent", "databaseCacheHitPercent", "databaseReadIoPeakMbps", "databaseWriteIoPeakMbps", "poolMode", "poolSize", "poolWaitP95Ms", "connectionsPeak", "idleTransactionsPeak", "lockWaitP95Ms", "deadlocks", "maximumRowsScanned", "storageThroughputPeakMbps", "storageErrorRate", "workerReplicaCount", "workerCpuPeakPercent", "workerMemoryPeakMb", "workerDiskPeakMb", "workerTemporaryDiskPeakMb", "queueDepthPeak", "queueOldestAgeSeconds", "realtimeConnectionsPeak"],
+    "soak-telemetry": ["latencyTrendPercent", "errorRateTrendPercent", "connectionGrowthPercent", "databaseMemoryGrowthPercent", "workerMemoryGrowthPercent", "temporaryDiskGrowthPercent", "queueGrowth", "pushBacklogGrowth", "moderationBacklogGrowth", "schedulerMissedRuns", "alertFlaps"],
+    "stress-recovery": ["breakpointConcurrentUsers", "firstSloBreach", "firstResourceSaturation", "maximumStableThroughput", "primaryBottleneck", "gracefulDegradationVerified", "recoverySeconds", "queuesRecovered", "poolRecovered"],
+    "push": ["jobs", "successRate", "retryRate", "ticketBacklogPeak", "receiptBacklogPeak", "oldestQueueAgeSeconds", "invalidTokensRemoved", "provider429Count", "provider5xxCount", "providerTimeoutCount", "deadLetterRate", "permanentFailureRate"],
+    "moderation": ["approved", "rejected", "uncertain", "approvalThroughputPerMinute", "providerFailures", "oldestPendingAgeSeconds", "pendingPeak", "quarantineStorageGrowthBytes", "publicationFailClosed"],
+    "operations-alerts": ["alertsTriggered", "alertsDelivered", "runbooksExecuted", "recoveryVerified", "schedulerMissedRunsDetected", "deadLettersAlerted", "alertFlaps"]
+  }
+}

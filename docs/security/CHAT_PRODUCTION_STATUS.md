@@ -1,8 +1,8 @@
 # Chat Production Status
 
-Current phase: Production Hardening Phase 8 — native release, store, privacy and accessibility readiness
+Current phase: Production Hardening Phase 9 — load, soak, fanout, failure recovery and capacity proof
 
-Production-hardening program phase: Phase 8 — fail-closed production configuration, environment-bound EAS profiles, hardened Android/iOS native policy, release artifacts and scans, canonical CircleBites identity, store/legal worksheets, durable owner-scoped drafts, accessibility semantics, release CI and physical-device smoke matrices
+Production-hardening program phase: Phase 9 — production-rejecting hosted load harness, deterministic synthetic data, authenticated mobile API traffic, Realtime and private-media fanout, failure recovery, reconciliation, external evidence binding and an explicit capacity gate
 
 Phase 8 implementation status: PASS locally on `hardening/10-native-release`. Production configuration rejects missing, placeholder, localhost/LAN, development-channel and privileged-public values; production identity is CircleBites with `com.circlebites.mobile` and `circlebites://`; OTA is disabled; Android release signing fails closed and production manifest/backup/permission policy is hardened; generated iOS production policy, usage strings and privacy manifests are validated; auth/recovery callbacks are environment-bound and replay-safe; owner-scoped post drafts survive termination and join account cleanup; release/store/device documentation and manual release CI are present.
 
@@ -10,9 +10,9 @@ Phase 8 release verification status: BLOCKED. The local Android APK/AAB use an e
 
 Local evidence includes Android APK/AAB release builds with R8/resource shrinking, mapping/native symbols/Hermes maps, signature/package/version/merged-manifest inspection and artifact scans; an arm64 generic-iPhone Release compile with privacy manifest, minimal generated Info.plist, dSYM and Hermes map; environment/EAS inventory validation; clean root production dependency audit; mobile audit with 18 moderate and no high/critical advisories; passing Phase 8 and Phase 1A–7 focused regressions; root/mobile typechecks; zero-error lint; Memory hardening; canonical database reset/policies/upgrades/drift; and Next production build. Exact command totals and hashes are recorded in `docs/production-hardening/PHASE_8_NATIVE_RELEASE.md`.
 
-Next required work: execute the Phase 8 external release gates and Phase 9 separately.
+Next required work: execute the Phase 8 external release gates and the checked-in Phase 9 hosted/physical matrix on disposable production-like staging.
 
-Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry credentials; deploy canonical staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run Phase 9 separately. Do not publish or begin Phase 9 automatically.
+Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry/load credentials; deploy canonical disposable staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run the Phase 9 launch, stress, soak, recovery, restore and physical-device evidence matrix. Do not publish automatically.
 
 ## Production Hardening Phase 8 — Native Release Readiness (2026-07-14)
 
@@ -407,3 +407,11 @@ Not verified:
 - Add server-side media probing for actual image dimensions and video duration.
 - Add background upload queue and resumable uploads.
 - Add load/performance tests for large rooms and many-room users.
+
+## Phase 9 load, fanout and resilience status
+
+Phase 9 adds a production-rejecting, staging-allowlisted Node 22 harness for authenticated HTTP/RPC, Memory Realtime fanout, private Storage/media-worker processing, deterministic synthetic seeding/cleanup, controlled failure recovery, reconciliation and capacity aggregation. Actor sessions remain isolated and in memory; results exclude tokens, content, signed URLs and private paths. RLS, private media, moderation and rate limits remain enabled during every normal workload.
+
+The model is 1,000 registered users, 200 DAU, 100 peak concurrently active users, 30 Memory rooms and 20 concurrent uploads, with 2× stress and a four-hour soak. This is a target, not a result. No hosted staging identity/topology/release, Realtime/provider evidence, failure controller, provider restore or signed physical-device run is available in this checkout.
+
+Security conclusion: **NOT PROVEN** for hosted capacity. Any unauthorized Realtime delivery, cross-account state, private-media access, deletion resurrection or reconciliation drift is a zero-tolerance release blocker. The allowable implementation gate is `PASS LOCALLY — HOSTED CAPACITY NOT PROVEN`; it does not authorize a 1,000-user readiness claim.

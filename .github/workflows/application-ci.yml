@@ -50,6 +50,9 @@ jobs:
       - name: Validate native release, store and smoke inventories
         run: npm run validate:native-release
 
+      - name: Validate Phase 9 load and capacity harness
+        run: npm run validate:load-capacity && npm run test:load-capacity && npm run load:ci-smoke
+
       - name: Run Phase 8 native release contracts
         run: npm run test:native-release
 
@@ -170,6 +173,9 @@ jobs:
 
       - name: Run Phase 7 database health and missed-scheduler behaviors
         run: npm run validate:observability:db
+
+      - name: Validate deterministic Phase 9 seed and cleanup against the canonical schema
+        run: npm run validate:load-seed:db
 
       - name: Run Phase 4 API and local recovery behaviors
         run: npm run validate:mobile-api-security:api
