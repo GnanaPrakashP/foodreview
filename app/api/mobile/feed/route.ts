@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getRouteActor } from "@/lib/server/route-supabase";
+import { mobileApiJson, mobileOptions } from "@/lib/server/api-security";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
 import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
@@ -14,6 +15,12 @@ type PublicFeedPayload = {
   reviews?: unknown[];
   viewerName?: string;
 };
+
+const METHODS = ["GET"];
+
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
+}
 
 function parseLimit(raw: string | null) {
   const value = Number(raw ?? 24);
@@ -55,19 +62,19 @@ function mediaForReview(review: Review, mediaByAssetId: Map<string, PostMediaDto
 export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get("scope") ?? "public";
   if (!new Set(["public", "restaurant", "dish", "detail", "profile"]).has(scope)) {
-    return NextResponse.json({ error: "Invalid feed scope" }, { status: 400 });
+    return mobileApiJson(req, METHODS, { error: "Invalid feed scope" }, { status: 400 });
   }
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);
-  if (rawCursor && !cursor) return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+  if (rawCursor && !cursor) return mobileApiJson(req, METHODS, { error: "Invalid cursor" }, { status: 400 });
 
   const { actor } = await getRouteActor(req).catch(() => ({ actor: null }));
   const db = createAdminClient();
   const postId = uuidOrNull(req.nextUrl.searchParams.get("postId"));
   if (scope === "detail") {
-    if (!postId) return NextResponse.json({ error: "postId is required" }, { status: 400 });
+    if (!postId) return mobileApiJson(req, METHODS, { error: "postId is required" }, { status: 400 });
     const access = await canActorReadPost(db, postId, actor?.actorName ?? "");
-    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    if (!access.allowed) return mobileApiJson(req, METHODS, { error: access.error }, { status: access.status });
   }
   const { data, error } = await db.rpc("mobile_public_feed_page_v1", {
     p_canonical_dish_id: uuidOrNull(req.nextUrl.searchParams.get("canonicalDishId")),
@@ -85,7 +92,7 @@ export async function GET(req: NextRequest) {
   });
   if (error) {
     console.error("[mobile/feed] canonical RPC failed:", error.message);
-    return NextResponse.json({ error: "Mobile feed deployment contract unavailable" }, { status: 503 });
+    return mobileApiJson(req, METHODS, { error: "Mobile feed deployment contract unavailable" }, { status: 503 });
   }
 
   const payload = (data ?? {}) as PublicFeedPayload;
@@ -133,7 +140,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({
+  return mobileApiJson(req, METHODS, {
     hasMore: Boolean(payload.hasMore),
     nextCursor: serializeCircleFeedCursor(payload.nextCursor),
     posts,

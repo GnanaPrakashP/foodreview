@@ -190,6 +190,7 @@ test("mobile explore cards navigate to existing native detail routes", () => {
   const layout = source("mobile/src/providers/AuthGate.tsx");
   const restaurant = source("mobile/app/restaurants/[placeId].tsx");
   const services = source("mobile/src/services/feeds.ts");
+  const profileNavigation = source("mobile/src/navigation/profileNavigation.ts");
   const personCardMatch = explore.match(/function PersonCard\([\s\S]*?\nfunction SearchResults/);
   assert.ok(personCardMatch);
   const personCard = personCardMatch[0];
@@ -197,7 +198,8 @@ test("mobile explore cards navigate to existing native detail routes", () => {
   assert.match(explore, /router\.push\(\{\s*pathname: "\/restaurants\/\[placeId\]"/);
   assert.match(explore, /router\.push\(\{\s*pathname: "\/restaurants\/by-name\/\[restaurant\]"/);
   assert.match(explore, /router\.push\(\{\s*pathname: "\/dishes\/\[dish\]"/);
-  assert.match(explore, /router\.push\(\{ pathname: "\/people\/\[username\]"/);
+  assert.match(explore, /openProfileRoute\(\{ queryClient, router, username, viewerUsername: viewerName \}\)/);
+  assert.match(profileNavigation, /pathname: "\/people\/\[username\]"/);
   assert.match(explore, /function PlaceCard\(\{ onOpen, place \}/);
   assert.match(explore, /function DishCard\(\{ dish, onOpen \}/);
   assert.match(explore, /<Pressable accessibilityRole="button" onPress=\{onOpen\}/);
@@ -405,7 +407,8 @@ test("mobile explore detail screens use the settings-style slide-over animation"
   assert.match(people, /const \{ slideStyle, close \} = useSlideOverScreen\(\{ fallbackHref: "\/explore" \}\)/);
   assert.match(people, /<Reanimated\.View style=\{\[styles\.screenRoot, slideStyle\]\}>/);
   assert.match(people, /onPress=\{close\}/);
-  assert.match(people, /useProfileCircleRelationshipQuery\(username, \{ enabled: Boolean\(showRelationshipAction && currentUsername\) \}\)/);
+  assert.match(people, /useOtherProfileShellQuery\(username\)/);
+  assert.doesNotMatch(people, /useProfileCircleRelationshipQuery/);
   assert.match(people, /useRequestCircleAccessMutation\(\)/);
   assert.match(people, /useCancelCircleRequestMutation\(\)/);
   assert.match(people, /useLeaveCircleMutation\(\)/);

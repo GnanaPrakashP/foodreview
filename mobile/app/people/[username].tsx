@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
 import { useLocalSearchParams } from "expo-router";
 import { CalendarDays } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
@@ -11,15 +11,16 @@ import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
   useCancelCircleRequestMutation,
   useLeaveCircleMutation,
-  useProfileCircleRelationshipQuery,
   useRespondToCircleRequestMutation
 } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
-import { useProfilePageQuery } from "@/hooks/useProfiles";
+import { useOtherProfileShellQuery, useProfilePostsInfiniteQuery } from "@/hooks/useProfiles";
 import { useReportContentMutation } from "@/hooks/useReports";
-import { useBlockedUsersQuery, useBlockUserMutation, useUnblockUserMutation } from "@/hooks/useSettings";
+import { useBlockUserMutation, useUnblockUserMutation } from "@/hooks/useSettings";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import { recordProfileShellVisible } from "@/navigation/profileNavigation";
+import { recordPerformanceSample } from "@/performance/mobilePerformance";
 import type { CircleAccessStatus } from "@/services/circle";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, screenLayout, spacing } from "@/theme";
@@ -57,31 +58,36 @@ export default function PersonProfileScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/explore" });
   const params = useLocalSearchParams<{ username?: string }>();
-  const username = typeof params.username === "string" ? params.username : "";
-  const page = useProfilePageQuery(username);
+  const username = typeof params.username === "string" ? params.username.trim().toLowerCase() : "";
+  const shell = useOtherProfileShellQuery(username);
+  const posts = useProfilePostsInfiniteQuery(username);
+  const refetchShell = shell.refetch;
+  const refetchPosts = posts.refetch;
+  const fetchNextPostsPage = posts.fetchNextPage;
   const currentUsername = useSessionStore((state) => state.profile?.username ?? "");
   const [relationshipOverride, setRelationshipOverride] = useState<ProfileRelationshipStatus | null>(null);
   const [incomingRequestOverride, setIncomingRequestOverride] = useState<boolean | null>(null);
   const [circleCountOverride, setCircleCountOverride] = useState<number | null>(null);
   const [relationshipAction, setRelationshipAction] = useState<ProfileRelationshipAction>(null);
-  const blocked = useBlockedUsersQuery();
   const blockUser = useBlockUserMutation();
   const unblockUser = useUnblockUserMutation();
   const reportContent = useReportContentMutation();
+  const endReachedInFlightRef = useRef(false);
+  const mountedAtRef = useRef(Date.now());
+  const firstPostsRecordedRef = useRef(false);
+  const renderedPostCountRef = useRef(0);
 
   const isSelf = !username || username === currentUsername;
-  const isBlocked = (blocked.data ?? []).some((user) => user.username === username);
-  const showRelationshipAction = Boolean(username) && !isSelf && !isBlocked;
-  const circleRelationship = useProfileCircleRelationshipQuery(username, { enabled: Boolean(showRelationshipAction && currentUsername) });
+  const isBlocked = shell.data?.blockedByViewer === true;
+  const showRelationshipAction = Boolean(username) && !isSelf && !shell.data?.interactionBlocked;
   const requestCircle = useRequestCircleAccessMutation();
   const cancelCircleRequest = useCancelCircleRequestMutation();
   const leaveCircle = useLeaveCircleMutation();
   const respondToCircleRequest = useRespondToCircleRequestMutation();
 
-  const relationshipStatus = relationshipOverride ?? circleRelationship.data?.status ?? "idle";
-  const hasIncomingRequest = incomingRequestOverride ?? circleRelationship.data?.hasIncomingRequest ?? false;
-  const relationshipCircleCount = circleCountOverride ?? circleRelationship.data?.circleCount ?? null;
-  const relationshipChecking = showRelationshipAction && circleRelationship.isPending && !circleRelationship.data && !relationshipOverride;
+  const relationshipStatus = relationshipOverride ?? shell.data?.relationship.status ?? "idle";
+  const hasIncomingRequest = incomingRequestOverride ?? shell.data?.relationship.hasIncomingRequest ?? false;
+  const relationshipCircleCount = circleCountOverride ?? shell.data?.circleCount ?? null;
   const relationshipBusy =
     relationshipStatus === "loading" ||
     relationshipAction !== null ||
@@ -95,27 +101,62 @@ export default function PersonProfileScreen() {
     : relationshipStatus === "joined"
       ? "In Circle"
       : "Request";
-  const joinedAt = page.data ? joinedLabel(page.data.profile.createdAt) : "";
+  const joinedAt = shell.data ? joinedLabel(shell.data.profile.createdAt) : "";
+  const pagedPosts = useMemo(() => {
+    const seen = new Set<string>();
+    return (posts.data?.pages ?? []).flatMap((postPage) => postPage.posts).filter((post) => {
+      if (seen.has(post.id)) return false;
+      seen.add(post.id);
+      return true;
+    });
+  }, [posts.data?.pages]);
 
   useEffect(() => {
     setRelationshipOverride(null);
     setIncomingRequestOverride(null);
     setCircleCountOverride(null);
     setRelationshipAction(null);
+    mountedAtRef.current = Date.now();
+    firstPostsRecordedRef.current = false;
   }, [username]);
 
+  useEffect(() => {
+    if (shell.data) recordProfileShellVisible(username);
+  }, [shell.data, username]);
+
+  useEffect(() => {
+    if (pagedPosts.length === 0 || firstPostsRecordedRef.current) return;
+    firstPostsRecordedRef.current = true;
+    recordPerformanceSample("profile.other.first_posts_visible", {
+      durationMs: Date.now() - mountedAtRef.current
+    });
+  }, [pagedPosts.length]);
+
+  useEffect(() => {
+    if (!posts.isFetchingNextPage) endReachedInFlightRef.current = false;
+  }, [posts.isFetchingNextPage]);
+
+  const onPostMount = useCallback(() => {
+    renderedPostCountRef.current += 1;
+    recordPerformanceSample("profile.other.rendered_post_cards", { value: renderedPostCountRef.current });
+    return () => {
+      renderedPostCountRef.current = Math.max(0, renderedPostCountRef.current - 1);
+      recordPerformanceSample("profile.other.rendered_post_cards", { value: renderedPostCountRef.current });
+    };
+  }, []);
+
   function currentCircleCount() {
-    return circleCountOverride ?? circleRelationship.data?.circleCount ?? page.data?.circleCount ?? 0;
+    return circleCountOverride ?? shell.data?.circleCount ?? 0;
   }
 
   async function reconcileRelationship() {
-    const result = await circleRelationship.refetch();
+    const result = await refetchShell();
     if (result.data) {
       setRelationshipOverride(null);
       setIncomingRequestOverride(null);
       setCircleCountOverride(null);
     }
-    void page.refetch();
+    void refetchPosts();
   }
 
   async function requestCircleAccess() {
@@ -127,7 +168,7 @@ export default function PersonProfileScreen() {
 
     const previousStatus = relationshipStatus;
     const previousCount = currentCircleCount();
-    const targetAccountType = circleRelationship.data?.accountType ?? page.data?.profile.accountType ?? "private";
+    const targetAccountType = shell.data?.profile.accountType ?? "private";
     const optimisticStatus: CircleAccessStatus = targetAccountType === "public" ? "joined" : "pending";
     setRelationshipAction("request");
     setRelationshipOverride(optimisticStatus);
@@ -140,6 +181,7 @@ export default function PersonProfileScreen() {
       } else if (result !== "joined" && optimisticStatus === "joined") {
         setCircleCountOverride(previousCount);
       }
+      await reconcileRelationship();
     } catch (error) {
       setRelationshipOverride(previousStatus);
       setCircleCountOverride(previousCount);
@@ -153,7 +195,7 @@ export default function PersonProfileScreen() {
     if (!username || relationshipDisabled) return;
     const confirmed = await confirmAction({
       title: "Cancel request?",
-      message: `Cancel request to join ${page.data?.displayName ?? username}'s circle?`,
+      message: `Cancel request to join ${shell.data?.displayName ?? username}'s circle?`,
       confirmLabel: "Cancel request"
     });
     if (!confirmed) return;
@@ -176,7 +218,7 @@ export default function PersonProfileScreen() {
     if (!username || relationshipDisabled) return;
     const confirmed = await confirmAction({
       title: "Leave circle?",
-      message: `Do you no longer want to be in ${page.data?.displayName ?? username}'s circle?`,
+      message: `Do you no longer want to be in ${shell.data?.displayName ?? username}'s circle?`,
       confirmLabel: "Leave",
       destructive: true
     });
@@ -285,146 +327,188 @@ export default function PersonProfileScreen() {
     ]);
   }
 
+  const onRefresh = useCallback(async () => {
+    await Promise.all([refetchShell(), refetchPosts()]);
+  }, [refetchPosts, refetchShell]);
+
+  const onEndReached = useCallback(() => {
+    if (!posts.hasNextPage || posts.isFetchingNextPage || endReachedInFlightRef.current) return;
+    endReachedInFlightRef.current = true;
+    void fetchNextPostsPage().finally(() => {
+      endReachedInFlightRef.current = false;
+    });
+  }, [fetchNextPostsPage, posts.hasNextPage, posts.isFetchingNextPage]);
+
+  const onRetryPosts = useCallback(() => {
+    void refetchPosts();
+  }, [refetchPosts]);
+
+  const topBar = (
+    <View style={styles.topBar}>
+      <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={close} style={styles.backButton}>
+        <Ionicons name="arrow-back" size={21} color={themeColors.cream} />
+      </Pressable>
+      <Text numberOfLines={1} style={styles.headerTitle}>Profile</Text>
+      {isSelf ? (
+        <View style={styles.headerSpacer} />
+      ) : (
+        <Pressable
+          accessibilityLabel="More options"
+          accessibilityRole="button"
+          disabled={blockUser.isPending || unblockUser.isPending || reportContent.isPending}
+          hitSlop={8}
+          onPress={openActions}
+          style={styles.backButton}
+        >
+          <Ionicons name="ellipsis-horizontal" size={21} color={themeColors.cream} />
+        </Pressable>
+      )}
+    </View>
+  );
+
+  const profileHeader = shell.data ? (
+    <View style={styles.stack}>
+      {topBar}
+      <View style={styles.hero}>
+        <View style={styles.avatar}>
+          {shell.data.profile.avatarUrl ? (
+            <Image
+              cachePolicy="memory-disk"
+              contentFit="cover"
+              enforceEarlyResizing
+              recyclingKey={shell.data.profile.avatarUrl}
+              source={{ uri: shell.data.profile.avatarUrl }}
+              style={styles.avatarImage}
+            />
+          ) : (
+            <Text style={styles.avatarText}>{initialsForName(shell.data.displayName, shell.data.profile.username)}</Text>
+          )}
+        </View>
+        <View style={styles.identity}>
+          <Text numberOfLines={1} style={styles.name}>{shell.data.displayName}</Text>
+          <Text numberOfLines={1} style={styles.handle}>@{shell.data.profile.username}</Text>
+          {joinedAt ? (
+            <View style={styles.joinedRow}>
+              <CalendarDays size={13} color={themeColors.muted} strokeWidth={2} />
+              <Text style={styles.joinedText}>{joinedAt}</Text>
+            </View>
+          ) : null}
+          {shell.data.profile.bio ? <Text style={styles.bio}>{shell.data.profile.bio}</Text> : null}
+        </View>
+      </View>
+
+      <View style={styles.statsRow}>
+        <ProfileStat styles={styles} label="Trust" value={formatTrustScore(shell.data.profile.trustScore)} />
+        <ProfileStat styles={styles} label="Places" value={String(shell.data.stats.uniquePlaces)} />
+        <ProfileStat styles={styles} label="Dishes" value={String(shell.data.stats.uniqueDishes)} />
+        <ProfileStat styles={styles} label="Circle" value={String(relationshipCircleCount ?? shell.data.circleCount)} />
+      </View>
+
+      {showRelationshipAction ? (
+        <Pressable
+          accessibilityLabel={`${relationshipLabel} ${shell.data.displayName}`}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: relationshipDisabled }}
+          disabled={relationshipDisabled}
+          onPress={handleRelationshipPress}
+          style={[
+            styles.relationshipButton,
+            relationshipStatus === "joined" && styles.relationshipButtonJoined,
+            relationshipDisabled && styles.relationshipButtonMuted
+          ]}
+        >
+          <Text style={[styles.relationshipButtonText, relationshipStatus === "joined" && styles.relationshipButtonTextJoined]}>
+            {relationshipLabel}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {showRelationshipAction && hasIncomingRequest && relationshipStatus !== "joined" ? (
+        <View style={styles.incomingCard}>
+          <Text style={styles.incomingText}>
+            {shell.data.displayName} requested to join your circle.
+          </Text>
+          <View style={styles.incomingActions}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={relationshipAction === "accept" || relationshipAction === "reject"}
+              onPress={() => respondToIncomingRequest("reject")}
+              style={[
+                styles.incomingButton,
+                (relationshipAction === "accept" || relationshipAction === "reject") && styles.relationshipButtonMuted
+              ]}
+            >
+              <Text style={styles.incomingButtonText}>{relationshipAction === "reject" ? "Rejecting" : "Reject"}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={relationshipAction === "accept" || relationshipAction === "reject"}
+              onPress={() => respondToIncomingRequest("accept")}
+              style={[
+                styles.incomingButton,
+                styles.incomingButtonPrimary,
+                (relationshipAction === "accept" || relationshipAction === "reject") && styles.relationshipButtonMuted
+              ]}
+            >
+              <Text style={[styles.incomingButtonText, styles.incomingButtonTextPrimary]}>
+                {relationshipAction === "accept" ? "Accepting" : "Accept"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {isBlocked ? (
+        <View style={styles.blockedCard}>
+          <Text style={styles.blockedTitle}>You blocked @{shell.data.profile.username}</Text>
+          <Text style={styles.blockedBody}>
+            You won't see their posts or comments, and they can't see or interact with yours. Use the menu above to unblock.
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
     <Reanimated.View style={[styles.screenRoot, slideStyle]}>
-      <Screen padded={false} scroll>
-        <View style={styles.stack}>
-          <View style={styles.topBar}>
-            <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={close} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={21} color={themeColors.cream} />
-            </Pressable>
-            <Text numberOfLines={1} style={styles.headerTitle}>Profile</Text>
-            {isSelf ? (
-              <View style={styles.headerSpacer} />
-            ) : (
-              <Pressable
-                accessibilityLabel="More options"
-                accessibilityRole="button"
-                disabled={blockUser.isPending || unblockUser.isPending || reportContent.isPending}
-                hitSlop={8}
-                onPress={openActions}
-                style={styles.backButton}
-              >
-                <Ionicons name="ellipsis-horizontal" size={21} color={themeColors.cream} />
-              </Pressable>
-            )}
-          </View>
-
-          {!username ? (
+      <Screen padded={false} scroll={false}>
+        {!username || shell.isLoading || shell.isError ? (
+          <View style={styles.stack}>
+            {topBar}
+            {!username ? (
             <EmptyState icon="person-circle-outline" message="This profile link is missing a username." title="Profile unavailable" />
-          ) : page.isLoading ? (
+            ) : shell.isLoading ? (
             <LoadingState message="Fetching profile." title="Loading profile" />
-          ) : page.isError ? (
+            ) : shell.isError ? (
             <ErrorState
               actionLabel="Try again"
-              message={page.error.message}
-              onAction={() => page.refetch()}
+              message={shell.error.message}
+              onAction={refetchShell}
               title="Profile unavailable"
             />
-          ) : page.data ? (
-            <>
-              <View style={styles.hero}>
-                <View style={styles.avatar}>
-                  {page.data.profile.avatarUrl ? (
-                    <Image contentFit="cover" source={{ uri: page.data.profile.avatarUrl }} style={styles.avatarImage} />
-                  ) : (
-                    <Text style={styles.avatarText}>{initialsForName(page.data.displayName, page.data.profile.username)}</Text>
-                  )}
-                </View>
-                <View style={styles.identity}>
-                  <Text numberOfLines={1} style={styles.name}>{page.data.displayName}</Text>
-                  <Text numberOfLines={1} style={styles.handle}>@{page.data.profile.username}</Text>
-                  {joinedAt ? (
-                    <View style={styles.joinedRow}>
-                      <CalendarDays size={13} color={themeColors.muted} strokeWidth={2} />
-                      <Text style={styles.joinedText}>{joinedAt}</Text>
-                    </View>
-                  ) : null}
-                  {page.data.profile.bio ? <Text style={styles.bio}>{page.data.profile.bio}</Text> : null}
-                </View>
-              </View>
-
-              <View style={styles.statsRow}>
-                <ProfileStat styles={styles} label="Trust" value={formatTrustScore(page.data.profile.trustScore)} />
-                <ProfileStat styles={styles} label="Places" value={String(page.data.stats.uniquePlaces)} />
-                <ProfileStat styles={styles} label="Dishes" value={String(page.data.stats.uniqueDishes)} />
-                <ProfileStat styles={styles} label="Circle" value={String(relationshipCircleCount ?? page.data.circleCount)} />
-              </View>
-
-              {showRelationshipAction ? (
-                <Pressable
-                  accessibilityLabel={`${relationshipLabel} ${page.data.displayName}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: relationshipDisabled }}
-                  disabled={relationshipDisabled}
-                  onPress={handleRelationshipPress}
-                  style={[
-                    styles.relationshipButton,
-                    relationshipStatus === "joined" && styles.relationshipButtonJoined,
-                    relationshipChecking && styles.relationshipButtonMuted,
-                    relationshipDisabled && styles.relationshipButtonMuted
-                  ]}
-                >
-                  <Text style={[styles.relationshipButtonText, relationshipStatus === "joined" && styles.relationshipButtonTextJoined]}>
-                    {relationshipLabel}
-                  </Text>
-                </Pressable>
-              ) : null}
-
-              {showRelationshipAction && hasIncomingRequest && relationshipStatus !== "joined" ? (
-                <View style={styles.incomingCard}>
-                  <Text style={styles.incomingText}>
-                    {page.data.displayName} requested to join your circle.
-                  </Text>
-                  <View style={styles.incomingActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={relationshipAction === "accept" || relationshipAction === "reject"}
-                      onPress={() => respondToIncomingRequest("reject")}
-                      style={[
-                        styles.incomingButton,
-                        (relationshipAction === "accept" || relationshipAction === "reject") && styles.relationshipButtonMuted
-                      ]}
-                    >
-                      <Text style={styles.incomingButtonText}>{relationshipAction === "reject" ? "Rejecting" : "Reject"}</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={relationshipAction === "accept" || relationshipAction === "reject"}
-                      onPress={() => respondToIncomingRequest("accept")}
-                      style={[
-                        styles.incomingButton,
-                        styles.incomingButtonPrimary,
-                        (relationshipAction === "accept" || relationshipAction === "reject") && styles.relationshipButtonMuted
-                      ]}
-                    >
-                      <Text style={[styles.incomingButtonText, styles.incomingButtonTextPrimary]}>
-                        {relationshipAction === "accept" ? "Accepting" : "Accept"}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : null}
-
-              {isBlocked ? (
-                <View style={styles.blockedCard}>
-                  <Text style={styles.blockedTitle}>You blocked @{page.data.profile.username}</Text>
-                  <Text style={styles.blockedBody}>
-                    You won't see their posts or comments, and they can't see or interact with yours. Use the menu above to unblock.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.postsWrap}>
-                  <PostFeed
-                    emptyMessage={`${page.data.displayName} has not shared public posts yet.`}
-                    emptyTitle="No posts yet"
-                    posts={page.data.posts}
-                  />
-                </View>
-              )}
-            </>
-          ) : null}
-        </View>
+            ) : null}
+          </View>
+        ) : shell.data ? (
+          <PostFeed
+            emptyMessage={`${shell.data.displayName} has not shared posts visible to you yet.`}
+            emptyTitle="No posts yet"
+            endReachedLabel="You're all caught up."
+            errorMessage={posts.error instanceof Error ? posts.error.message : "Could not load posts."}
+            hasMore={Boolean(posts.hasNextPage)}
+            isError={!isBlocked && posts.isError && pagedPosts.length === 0}
+            isFetchingMore={posts.isFetchingNextPage}
+            isLoading={!isBlocked && posts.isLoading && pagedPosts.length === 0}
+            ListHeaderComponent={profileHeader}
+            onEndReached={onEndReached}
+            onPostMount={onPostMount}
+            onRefresh={onRefresh}
+            onRetry={onRetryPosts}
+            posts={isBlocked ? [] : pagedPosts}
+            refreshing={shell.isRefetching || posts.isRefetching}
+            scrollEnabled
+            suppressEmptyState={isBlocked}
+          />
+        ) : null}
       </Screen>
     </Reanimated.View>
   );
@@ -448,6 +532,7 @@ function createStyles(c: ThemeColors) {
     },
     stack: {
       gap: screenLayout.headerContentGap,
+      paddingBottom: screenLayout.headerContentGap,
       paddingHorizontal: spacing.lg,
       paddingTop: screenLayout.topGap
     },
@@ -628,9 +713,6 @@ function createStyles(c: ThemeColors) {
       color: c.muted,
       fontSize: 11,
       lineHeight: 14
-    },
-    postsWrap: {
-      marginHorizontal: -spacing.lg
     },
     blockedCard: {
       backgroundColor: c.card,

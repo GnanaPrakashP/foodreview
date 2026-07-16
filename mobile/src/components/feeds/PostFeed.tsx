@@ -29,6 +29,7 @@ type PostFeedProps = {
   emptyTitle: string;
   errorMessage?: string;
   hasMore?: boolean;
+  hidePostDividers?: boolean;
   isError?: boolean;
   isFetchingMore?: boolean;
   isLoading?: boolean;
@@ -38,13 +39,17 @@ type PostFeedProps = {
   listStyle?: StyleProp<ViewStyle>;
   onEmptyAction?: () => void;
   onEndReached?: () => void;
+  onPostMount?: () => (() => void) | void;
   onPostsViewed?: (postIds: string[]) => void;
   onRefresh?: () => void;
   onRetry?: () => void;
   posts?: ReviewPost[];
+  postSpacing?: number;
   refreshing?: boolean;
   showSectionLabels?: boolean;
   scrollEnabled?: boolean;
+  suppressEmptyState?: boolean;
+  useGreenJoinedRequestState?: boolean;
 };
 
 const FEED_INITIAL_RENDER_COUNT = 4;
@@ -53,18 +58,30 @@ const FEED_WINDOW_SIZE = 5;
 const FEED_THUMBNAIL_PREFETCH_DEPTH = 2;
 
 function PostFeedRow({
+  hideDivider,
   mediaActive,
+  onMount,
   post,
-  sectionLabel
+  sectionLabel,
+  useGreenJoinedRequestState
 }: {
+  hideDivider: boolean;
   mediaActive: boolean;
+  onMount?: () => (() => void) | void;
   post: ReviewPost;
   sectionLabel: ReactElement | null;
+  useGreenJoinedRequestState: boolean;
 }) {
+  useEffect(() => onMount?.(), [onMount]);
   return (
     <>
       {sectionLabel}
-      <PostCard mediaActive={mediaActive} post={post} />
+      <PostCard
+        hideDivider={hideDivider}
+        mediaActive={mediaActive}
+        post={post}
+        useGreenJoinedRequestState={useGreenJoinedRequestState}
+      />
     </>
   );
 }
@@ -76,6 +93,7 @@ export function PostFeed({
   emptyTitle,
   errorMessage,
   hasMore = false,
+  hidePostDividers = false,
   isError,
   isFetchingMore = false,
   isLoading,
@@ -85,13 +103,17 @@ export function PostFeed({
   listStyle,
   onEmptyAction,
   onEndReached,
+  onPostMount,
   onPostsViewed,
   onRefresh,
   onRetry,
   posts = [],
+  postSpacing = 0,
   refreshing = false,
   showSectionLabels = false,
-  scrollEnabled = false
+  scrollEnabled = false,
+  suppressEmptyState = false,
+  useGreenJoinedRequestState = false
 }: PostFeedProps) {
   const { themeColors } = useThemePreference();
   const runtime = useRuntimeActivity();
@@ -180,7 +202,7 @@ export function PostFeed({
       );
     }
 
-    if (posts.length === 0) {
+    if (posts.length === 0 && !suppressEmptyState) {
       return (
         <View style={styles.stateWrap}>
           <EmptyState
@@ -214,11 +236,16 @@ export function PostFeed({
 
   const renderPost = useCallback(({ item, index }: { item: ReviewPost; index: number }) => (
     <PostFeedRow
+      hideDivider={hidePostDividers}
       mediaActive={mediaPlaybackEnabled && runtime.isForeground && item.id === activeMediaPostId}
+      onMount={onPostMount}
       post={item}
       sectionLabel={renderSectionLabel(item, index)}
+      useGreenJoinedRequestState={useGreenJoinedRequestState}
     />
-  ), [activeMediaPostId, mediaPlaybackEnabled, renderSectionLabel, runtime.isForeground]);
+  ), [activeMediaPostId, hidePostDividers, mediaPlaybackEnabled, onPostMount, renderSectionLabel, runtime.isForeground, useGreenJoinedRequestState]);
+
+  const renderPostSeparator = useCallback(() => <View style={{ height: postSpacing }} />, [postSpacing]);
 
   function renderFooter() {
     if (isFetchingMore) {
@@ -246,6 +273,7 @@ export function PostFeed({
         contentContainerStyle={[styles.virtualizedContent, contentContainerStyle]}
         data={state ? [] : posts}
         initialNumToRender={FEED_INITIAL_RENDER_COUNT}
+        ItemSeparatorComponent={postSpacing > 0 ? renderPostSeparator : undefined}
         keyExtractor={(post) => post.id}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={state}
@@ -281,9 +309,13 @@ export function PostFeed({
     <View style={styles.stack}>
       {ListHeaderComponent}
       {posts.map((post, index) => (
-        <View key={post.id}>
+        <View key={post.id} style={index > 0 && postSpacing > 0 ? { marginTop: postSpacing } : undefined}>
           {renderSectionLabel(post, index)}
-          <PostCard post={post} />
+          <PostCard
+            hideDivider={hidePostDividers}
+            post={post}
+            useGreenJoinedRequestState={useGreenJoinedRequestState}
+          />
         </View>
       ))}
       {renderFooter()}

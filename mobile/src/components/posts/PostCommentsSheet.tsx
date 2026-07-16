@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { MessageCircle, Send, Trash2 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +35,7 @@ import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, spacing, typography } from "@/theme";
 import type { PostComment } from "@/types/models";
+import { openProfileRoute } from "@/navigation/profileNavigation";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
@@ -110,6 +112,7 @@ function PostCommentsSheet({
   const [frozenBottomInset] = useState(() => insets.bottom);
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const queryClient = useQueryClient();
   const comments = usePostCommentsQuery(postId);
   const addComment = useAddPostCommentMutation(postId);
   const deleteComment = useDeletePostCommentMutation(postId);
@@ -209,11 +212,7 @@ function PostCommentsSheet({
     // The overlay sits above the whole navigator, so it must close as the
     // profile screen opens (the old per-card Modal had the same stacking).
     closeSheet();
-    if (sameUsername(comment.userName, viewerName)) {
-      router.push("/profile");
-      return;
-    }
-    router.push({ pathname: "/people/[username]", params: { username: comment.userName } });
+    openProfileRoute({ queryClient, router, username: comment.userName, viewerUsername: viewerName });
   }
 
   async function submitComment() {
@@ -267,7 +266,11 @@ function PostCommentsSheet({
           accessibilityRole="button"
           hitSlop={8}
           onPress={() => openCommentAuthor(comment)}
-          style={[styles.drawerCommentAvatar, { backgroundColor: avatarColor(visibleName) }]}
+          style={({ pressed }) => [
+            styles.drawerCommentAvatar,
+            { backgroundColor: avatarColor(visibleName) },
+            pressed && styles.profilePressablePressed
+          ]}
         >
           <Text style={styles.drawerCommentAvatarText}>{comment.authorInitials}</Text>
         </Pressable>
@@ -278,7 +281,7 @@ function PostCommentsSheet({
               accessibilityRole="button"
               hitSlop={6}
               onPress={() => openCommentAuthor(comment)}
-              style={styles.drawerCommentMeta}
+              style={({ pressed }) => [styles.drawerCommentMeta, pressed && styles.profilePressablePressed]}
             >
               <Text numberOfLines={1} style={styles.drawerCommentAuthor}>{visibleName}</Text>
               {isOwnComment ? (
@@ -502,6 +505,9 @@ function CommentSkeletonRows({ styles }: { styles: ReturnType<typeof createStyle
 
 function createStyles(c: ThemeColors) {
   return StyleSheet.create({
+    profilePressablePressed: {
+      opacity: 0.58
+    },
     commentsOverlay: {
       ...StyleSheet.absoluteFillObject,
       zIndex: 60

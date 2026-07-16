@@ -2401,7 +2401,62 @@
       "sizeBytes": 53220,
       "sourceRoot": "supabase/migrations",
       "version": "202607160001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "circle_memberships",
+        "circle_requests",
+        "is_profile_complete",
+        "mobile_other_profile_shell_v1",
+        "profiles",
+        "reviews"
+      ],
+      "description": "other_profile_performance",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607170001_other_profile_performance.sql",
+      "objectCategories": [
+        "functions",
+        "profiles",
+        "social"
+      ],
+      "sha256": "2f4caec9431a15837b1feb5b9249a360522b0dec84c356b9b35f5290110fd57f",
+      "sizeBytes": 6597,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607170001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "canonical_dishes",
+        "dish_place_stats",
+        "explore_discovery_canonical_v3",
+        "explore_discovery_canonical_v3_core",
+        "explore_v3_pipeline_reconciliation",
+        "place_dish_stats",
+        "place_identity_explore_categories",
+        "place_stats",
+        "rebuild_dish_identity_stats",
+        "rebuild_explore_v3_projections",
+        "review_dish_mentions",
+        "reviews",
+        "role"
+      ],
+      "description": "explore_v3_pipeline_integrity",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607170002_explore_v3_pipeline_integrity.sql",
+      "objectCategories": [
+        "dish-identity",
+        "explore",
+        "functions",
+        "social"
+      ],
+      "sha256": "55d0da7d595f36c838857d332feda5213a3ba4c0fb474322dcf3cd8082d27d5f",
+      "sizeBytes": 18304,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607170002"
     }
   ],
-  "currentCanonicalMigrations": 69
+  "currentCanonicalMigrations": 71
 }

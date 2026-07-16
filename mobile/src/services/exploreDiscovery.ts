@@ -22,6 +22,8 @@ export type ExplorePlaceSpotlight = {
   key: string;
   name: string;
   placeId: string | null;
+  primaryType: string | null;
+  types: string[];
   area: string | null;
   photo: string | null;
   averageRating: number | null;
@@ -336,6 +338,8 @@ function buildPlaces(posts: ReviewPost[], inputLocation?: ExploreFeedInput["loca
       circleReviewers,
       name: place.name,
       placeId: place.placeId,
+      primaryType: place.primaryType,
+      types: Array.from(place.types),
       photo: place.photo,
       ratingCount: ratings.ratingCount,
       tags: Array.from(place.tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([tag]) => tag),
@@ -802,10 +806,14 @@ function parsePlaceSpotlight(value: unknown): ExplorePlaceSpotlight | null {
   const topDishes = stringArrayValue(value.topDishes);
   const categoryTags = placeCategoryArrayValue(value.categoryTags);
   const rawArea = nullableStringValue(value.area);
+  const primaryType = nullableStringValue(value.primaryType);
+  const types = stringArrayValue(value.types);
   return {
     key,
     name,
     placeId: nullableStringValue(value.placeId),
+    primaryType,
+    types,
     area: compactAreaLabel(rawArea) ?? rawArea,
     photo: explorePhotoUrl(nullableStringValue(value.photo)),
     averageRating: numberValue(value.averageRating),
@@ -813,7 +821,7 @@ function parsePlaceSpotlight(value: unknown): ExplorePlaceSpotlight | null {
       ? categoryTags
       : PLACE_CATEGORIES
         .map((category) => category.id)
-        .filter((category) => category !== "all" && placeMatchesCategory({ area: rawArea, name, topDishes }, category))
+        .filter((category) => category !== "all" && placeMatchesCategory({ area: rawArea, name, topDishes, primaryType, types }, category))
         .slice(0, 2),
     circleReviewers: stringArrayValue(value.circleReviewers),
     ratingCount: integerValue(value.ratingCount),

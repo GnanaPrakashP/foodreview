@@ -9,6 +9,7 @@ import {
   removeMyCircleMember,
   respondToCircleRequest
 } from "@/services/circle";
+import { patchOtherProfileShell, profileKeys } from "@/hooks/useProfiles";
 
 export const circleKeys = {
   accessStatuses: (usernames: string[]) => ["circle", "access-statuses", usernames] as const,
@@ -45,12 +46,16 @@ export function useProfileCircleRelationshipQuery(username: string, options: { e
 function useInvalidateCircleQueries() {
   const queryClient = useQueryClient();
 
-  return () => {
+  return (username?: string) => {
     queryClient.invalidateQueries({ queryKey: ["circle"] });
     queryClient.invalidateQueries({ queryKey: ["profile"] });
     queryClient.invalidateQueries({ queryKey: ["feed"] });
     queryClient.invalidateQueries({ queryKey: notificationKeys.list });
     queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
+    if (username) {
+      queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(username) });
+      queryClient.invalidateQueries({ queryKey: profileKeys.posts(username) });
+    }
   };
 }
 
@@ -59,7 +64,7 @@ export function useCancelCircleRequestMutation() {
 
   return useMutation({
     mutationFn: cancelCircleRequest,
-    onSettled: invalidate
+    onSettled: (_data, _error, username) => invalidate(username)
   });
 }
 
@@ -68,7 +73,7 @@ export function useLeaveCircleMutation() {
 
   return useMutation({
     mutationFn: leaveCircle,
-    onSettled: invalidate
+    onSettled: (_data, _error, username) => invalidate(username)
   });
 }
 
@@ -78,10 +83,19 @@ export function useRespondToCircleRequestMutation() {
   return useMutation({
     mutationFn: respondToCircleRequest,
     onSuccess: (_result, variables) => {
+      patchOtherProfileShell(queryClient, variables.senderName, (current) => ({
+        ...current,
+        relationship: {
+          hasIncomingRequest: false,
+          status: current.relationship.status
+        }
+      }));
       queryClient.invalidateQueries({ queryKey: circleKeys.mine });
       queryClient.invalidateQueries({ queryKey: circleKeys.relationship(variables.senderName) });
       queryClient.invalidateQueries({ queryKey: ["profile", "current-page"] });
       queryClient.invalidateQueries({ queryKey: ["feed", "circle"] });
+      queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(variables.senderName) });
+      queryClient.invalidateQueries({ queryKey: profileKeys.posts(variables.senderName) });
     }
   });
 }
@@ -91,10 +105,11 @@ export function useRemoveCircleMemberMutation() {
 
   return useMutation({
     mutationFn: removeMyCircleMember,
-    onSuccess: () => {
+    onSuccess: (_result, username) => {
       queryClient.invalidateQueries({ queryKey: circleKeys.mine });
       queryClient.invalidateQueries({ queryKey: ["profile", "current-page"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
+      queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(username) });
     }
   });
 }

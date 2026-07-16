@@ -103,6 +103,8 @@ export default function ProfileScreen() {
   const isFocused = useIsFocused();
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
+  const sessionProfile = useSessionStore((state) => state.profile);
+  const sessionUsername = sessionProfile?.profileComplete === false ? "" : sessionProfile?.username ?? "";
   const page = useCurrentProfilePageQuery({ enabled: isFocused && isReady && isAuthenticated });
   useTabPerformance(
     "profile",
@@ -110,7 +112,7 @@ export default function ProfileScreen() {
     isReady && (!isAuthenticated || Boolean(page.data) || (!page.isLoading && !page.isError)),
     !page.isFetching
   );
-  const memories = useMemoryRoomsQuery({ enabled: isFocused && isReady && isAuthenticated && Boolean(page.data) });
+  const memories = useMemoryRoomsQuery({ enabled: isFocused && isReady && isAuthenticated && Boolean(sessionUsername) });
   const canRefresh = isReady && isAuthenticated;
   const [settingsVisible, setSettingsVisible] = useState(false);
   const openingSettingsRef = useRef(false);
@@ -142,6 +144,7 @@ export default function ProfileScreen() {
             onSettingsPress={openSettings}
             page={page.data ?? null}
             pageQuery={page}
+            profileUsername={sessionUsername}
           />
         </View>
       </Screen>
@@ -157,7 +160,8 @@ function ProfileContent({
   memories,
   onSettingsPress,
   page,
-  pageQuery
+  pageQuery,
+  profileUsername
 }: {
   canRefresh: boolean;
   isAuthenticated: boolean;
@@ -166,6 +170,7 @@ function ProfileContent({
   onSettingsPress: () => void;
   page: ProfilePageData | null;
   pageQuery: ReturnType<typeof useCurrentProfilePageQuery>;
+  profileUsername: string;
 }) {
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const router = useRouter();
@@ -202,7 +207,6 @@ function ProfileContent({
 
   const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
   useMemoryRoomsRealtime(isActiveMainTab && isReady && isAuthenticated && Boolean(memoriesData));
-  const profileUsername = page?.profile.username ?? "";
   const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: isActiveMainTab && Boolean(profileUsername) });
   const pagedPosts = useMemo(
     () => posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page?.posts ?? [],

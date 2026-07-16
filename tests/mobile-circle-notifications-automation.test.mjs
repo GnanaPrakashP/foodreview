@@ -61,7 +61,7 @@ test("circle feed automation uses server APIs, cursor pagination, and canonical 
   assert.match(feedHookSource, /initialPageParam: null as string \| null/);
   assert.match(feedHookSource, /patchCachedPostEngagementFields/);
   assert.match(feedHookSource, /setQueriesData<unknown>/);
-  assert.match(feedHookSource, /return scope === "feed" \|\| scope === "profile"/);
+  assert.match(feedHookSource, /return scope === "feed" \|\| scope === "profile" \|\| scope === "settings"/);
 
   assert.match(circleTabSource, /useCircleFeedInfiniteQuery/);
   assert.match(circleTabSource, /const fetchNextPage = feed\.fetchNextPage/);

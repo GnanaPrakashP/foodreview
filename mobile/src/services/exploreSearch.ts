@@ -62,6 +62,8 @@ type ReviewSearchRow = {
   restaurant_lat: number | null;
   restaurant_lng: number | null;
   restaurant_name: string;
+  restaurant_primary_type: string | null;
+  restaurant_types: string[] | null;
   reviewer_name: string;
   review_photos?: Array<{
     media_asset_id?: string | null;
@@ -82,8 +84,10 @@ type PlaceAccumulator = {
   photo: string | null;
   placeId: string | null;
   postCount: number;
+  primaryType: string | null;
   ratings: number[];
   tags: Map<string, number>;
+  types: Set<string>;
 };
 
 const REVIEW_SEARCH_SELECT = [
@@ -95,6 +99,8 @@ const REVIEW_SEARCH_SELECT = [
   "restaurant_address",
   "restaurant_lat",
   "restaurant_lng",
+  "restaurant_primary_type",
+  "restaurant_types",
   "items",
   "body",
   "photo_url",
@@ -235,7 +241,7 @@ function placeFromAccumulator(place: PlaceAccumulator, term: string): ExplorePla
   const ratings = ratingStats(place.ratings);
   const categoryTags = PLACE_CATEGORIES
     .map((category) => category.id)
-    .filter((category) => category !== "all" && placeMatchesCategory({ area: place.area, name: place.name, topDishes }, category))
+    .filter((category) => category !== "all" && placeMatchesCategory({ area: place.area, name: place.name, topDishes, primaryType: place.primaryType, types: Array.from(place.types) }, category))
     .slice(0, 2);
 
   return {
@@ -249,10 +255,12 @@ function placeFromAccumulator(place: PlaceAccumulator, term: string): ExplorePla
     photo: place.photo,
     placeId: place.placeId,
     postCount: place.postCount,
+    primaryType: place.primaryType,
     ratingCount: ratings.ratingCount,
     searchScore: placeSearchScore(place, term),
     tags: tagList(place.tags),
-    topDishes
+    topDishes,
+    types: Array.from(place.types)
   };
 }
 
@@ -405,14 +413,18 @@ export async function searchExplorePlaces(termInput: string, options: ExplorePla
       photo: firstPhoto(row, mediaByAssetId),
       placeId: row.restaurant_id,
       postCount: 0,
+      primaryType: null,
       ratings: [],
-      tags: new Map<string, number>()
+      tags: new Map<string, number>(),
+      types: new Set<string>()
     };
 
     if (!current.photo) current.photo = firstPhoto(row, mediaByAssetId);
     if (!current.placeId && row.restaurant_id) current.placeId = row.restaurant_id;
     current.locationRankScore = nearestLocationScore(current.locationRankScore, locationRankScore(row, options.location ?? null));
     current.postCount += 1;
+    if (!current.primaryType && row.restaurant_primary_type) current.primaryType = row.restaurant_primary_type;
+    for (const type of row.restaurant_types ?? []) current.types.add(type);
 
     for (const item of itemRows(row.items)) {
       current.dishCounts.set(item.name, (current.dishCounts.get(item.name) ?? 0) + 1);

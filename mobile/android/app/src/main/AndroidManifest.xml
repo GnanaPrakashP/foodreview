@@ -20,7 +20,7 @@
       <data android:scheme="https"/>
     </intent>
   </queries>
-  <application android:name=".MainApplication" android:label="${circleBitesAppLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:usesCleartextTraffic="false" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" tools:replace="android:allowBackup,android:label">
+  <application android:name=".MainApplication" android:label="${circleBitesAppLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:usesCleartextTraffic="${circleBitesUsesCleartextTraffic}" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" tools:replace="android:allowBackup,android:label">
     <!-- These dependency-only components are not part of CircleBites runtime behavior. -->
     <activity android:name="com.canhub.cropper.CropImageActivity" tools:node="remove"/>
     <activity android:name="androidx.compose.ui.tooling.PreviewActivity" tools:node="remove"/>

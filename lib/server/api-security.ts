@@ -83,6 +83,7 @@ export function mobileEndpointLabel(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
   return segments.map((segment, index) => {
     if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(segment) || /^\d+$/.test(segment)) return ":id";
+    if (segments[index - 1] === "profiles" && segments[index + 1] === "shell") return ":username";
     if (segments[index - 1] === "memories" && !["read", "notify", "upload-intent", "finalize-upload", "uploads"].includes(segment)) return ":room";
     return /^[a-z0-9-]{1,40}$/i.test(segment) ? segment.toLowerCase() : ":value";
   }).join("/").slice(0, 120) || "api";

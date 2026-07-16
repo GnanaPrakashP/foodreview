@@ -7,7 +7,7 @@ const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("Phase 5 inventories every primary screen with bounded budgets", async () => {
   const budget = JSON.parse(await read("config/backend-performance-budgets.json"));
-  assert.equal(budget.screens.length, 16);
+  assert.equal(budget.screens.length, 17);
   for (const screen of budget.screens) {
     assert.ok(screen.networkRequests <= 2);
     assert.ok(screen.databaseStatements <= 6);

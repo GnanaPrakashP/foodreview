@@ -73,6 +73,8 @@ export function shouldPersistQuery(query: Query) {
     (key[0] === "feed" && key[1] === "circle" && key[2] === "pages") ||
     (key[0] === "feed" && key[1] === "explore-discovery") ||
     (key.length === 2 && key[0] === "profile" && key[1] === "current-page") ||
+    (key.length === 4 && key[0] === "profile" && key[1] === "other" && key[3] === "shell") ||
+    (key.length === 3 && key[0] === "profile" && key[2] === "posts") ||
     (key.length === 2 && key[0] === "notifications" && key[1] === "unread-count")
   );
 }
@@ -142,6 +144,21 @@ function boundQueryData(queryKey: readonly unknown[], data: unknown) {
     return {
       ...data,
       posts: Array.isArray(data.posts) ? data.posts.slice(0, PERSISTED_FIRST_PAGE_LIMIT) : []
+    };
+  }
+  if (queryKey[0] === "profile" && queryKey[2] === "posts" && isRecord(data) && Array.isArray(data.pages)) {
+    const firstPage = data.pages[0];
+    return {
+      ...data,
+      pageParams: Array.isArray(data.pageParams) ? data.pageParams.slice(0, 1) : [null],
+      pages: firstPage
+        ? [{
+          ...(isRecord(firstPage) ? firstPage : {}),
+          posts: isRecord(firstPage) && Array.isArray(firstPage.posts)
+            ? firstPage.posts.slice(0, PERSISTED_FIRST_PAGE_LIMIT)
+            : []
+        }]
+        : []
     };
   }
   return data;

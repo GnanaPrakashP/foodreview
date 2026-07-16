@@ -34,7 +34,6 @@ const reactionPalettes: Record<FoodReactionType, ReactionPalette> = {
     glow: "#B45353"
   }
 };
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 function voteLabel(count: number) {
   return `${count} ${count === 1 ? "vote" : "votes"}`;
@@ -53,18 +52,9 @@ export function ReactionButton({
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const Icon = reactionIcons[reaction];
   const palette = reactionPalettes[reaction];
-  const activeProgress = useRef(new Animated.Value(selected ? 1 : 0)).current;
   const countScale = useRef(new Animated.Value(1)).current;
   const countOpacity = useRef(new Animated.Value(1)).current;
   const previousCount = useRef(count);
-
-  useEffect(() => {
-    Animated.timing(activeProgress, {
-      duration: selected ? 180 : 140,
-      toValue: selected ? 1 : 0,
-      useNativeDriver: false
-    }).start();
-  }, [activeProgress, selected]);
 
   useEffect(() => {
     if (previousCount.current === count) return;
@@ -93,30 +83,18 @@ export function ReactionButton({
     onPress();
   }
 
-  const animatedSurfaceStyle = {
-    backgroundColor: activeProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [themeColors.surface, palette.fill]
-    }),
-    borderColor: activeProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [themeColors.border, palette.accent]
-    }),
-    shadowOpacity: activeProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, 0.18]
-    })
+  const selectedSurfaceStyle = {
+    backgroundColor: selected ? palette.fill : themeColors.surface,
+    borderColor: selected ? palette.accent : themeColors.border,
+    shadowOpacity: selected ? 0.18 : 0
   };
-  const animatedLabelStyle = {
-    color: activeProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [themeColors.mutedStrong, palette.accent]
-    })
+  const selectedLabelStyle = {
+    color: selected ? palette.accent : themeColors.mutedStrong
   };
   const iconColor = selected ? palette.accent : themeColors.mutedStrong;
 
   return (
-    <AnimatedPressable
+    <Pressable
       accessibilityLabel={`${accessibilityName} reaction, ${voteLabel(count)}`}
       accessibilityRole="button"
       accessibilityState={{ disabled, selected }}
@@ -126,7 +104,7 @@ export function ReactionButton({
       style={[
         styles.shell,
         { shadowColor: palette.glow },
-        animatedSurfaceStyle,
+        selectedSurfaceStyle,
         disabled && styles.disabled
       ]}
     >
@@ -138,7 +116,7 @@ export function ReactionButton({
           size={20}
           strokeWidth={2.25}
         />
-        <Animated.Text numberOfLines={1} style={[styles.label, animatedLabelStyle]}>
+        <Animated.Text numberOfLines={1} style={[styles.label, selectedLabelStyle]}>
           {label}
         </Animated.Text>
       </View>
@@ -146,7 +124,7 @@ export function ReactionButton({
         numberOfLines={1}
         style={[
           styles.count,
-          animatedLabelStyle,
+          selectedLabelStyle,
           {
             opacity: countOpacity,
             transform: [{ scale: countScale }]
@@ -155,7 +133,7 @@ export function ReactionButton({
       >
         {count}
       </Animated.Text>
-    </AnimatedPressable>
+    </Pressable>
   );
 }
 

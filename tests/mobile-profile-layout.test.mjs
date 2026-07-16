@@ -31,7 +31,7 @@ test("profile liked and saved screens embed PostFeed without nesting FlatList in
   assert.match(postFeedSource, /embedded\?: boolean/);
   assert.match(postFeedSource, /scrollEnabled = false/);
   assert.match(postFeedSource, /if \(scrollEnabled\) \{[\s\S]*<FlatList/);
-  assert.match(postFeedSource, /<View style=\{styles\.stack\}>[\s\S]*posts\.map\(\(post, index\) => \([\s\S]*<PostCard post=\{post\} \/>/);
+  assert.match(postFeedSource, /<View style=\{styles\.stack\}>[\s\S]*posts\.map\(\(post, index\) => \([\s\S]*<PostCard[\s\S]*post=\{post\}[\s\S]*\/>/);
   assert.match(likedSource, /<PostFeed\s+embedded[\s\S]*emptyMessage="Posts you like will appear here\."/);
   assert.match(savedSource, /<PostFeed\s+embedded[\s\S]*emptyMessage="Posts you save will appear here\."/);
 });
@@ -120,7 +120,7 @@ test("main bottom tabs use the standard Expo Router tab navigator", () => {
 
 test("offscreen Profile and Explore queries are focus-gated", () => {
   assert.match(profileTabSource, /useCurrentProfilePageQuery\(\{ enabled: isFocused && isReady && isAuthenticated \}\)/);
-  assert.match(profileTabSource, /useMemoryRoomsQuery\(\{ enabled: isFocused && isReady && isAuthenticated && Boolean\(page\.data\) \}\)/);
+  assert.match(profileTabSource, /useMemoryRoomsQuery\(\{ enabled: isFocused && isReady && isAuthenticated && Boolean\(sessionUsername\) \}\)/);
   assert.match(profileTabSource, /useProfilePostsInfiniteQuery\(profileUsername, \{ enabled: isActiveMainTab && Boolean\(profileUsername\) \}\)/);
   assert.match(exploreTabSource, /const isActiveMainTab = isFocused/);
   assert.match(exploreTabSource, /\{ enabled: locationHydrated && isActiveMainTab \}/);

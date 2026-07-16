@@ -12,6 +12,9 @@ import {
   writeResult
 } from "./lib.mjs";
 import { buildSeedPlan, seedCounts } from "./seed-plan.mjs";
+import { loadServerModule } from "../load-server-module.mjs";
+
+const { replaceReviewDishMentionBatch } = loadServerModule("lib/server/dish-identity.ts");
 
 const config = await loadCapacityConfig();
 const scale = Number(argument("scale", 1));
@@ -98,6 +101,35 @@ await upsertBatches("profiles", plan.rows.profiles.map((profile) => ({
 })));
 await upsertBatches("circle_memberships", plan.rows.circleMemberships);
 await upsertBatches("reviews", plan.rows.reviews);
+
+const mentionResolution = {
+  createdCanonicals: 0,
+  errors: [],
+  matchCounts: { alias: 0, exact: 0, highConfidence: 0 },
+  mentionsWritten: 0,
+  reviewsScanned: 0,
+  reviewsUnchanged: 0,
+  reviewsWritten: 0
+};
+for (let offset = 0; offset < plan.rows.dishMentionInputs.length; offset += 200) {
+  const batch = await replaceReviewDishMentionBatch(
+    admin,
+    plan.rows.dishMentionInputs.slice(offset, offset + 200)
+  );
+  mentionResolution.createdCanonicals += batch.createdCanonicals;
+  mentionResolution.errors.push(...batch.errors);
+  mentionResolution.matchCounts.alias += batch.matchCounts.alias;
+  mentionResolution.matchCounts.exact += batch.matchCounts.exact;
+  mentionResolution.matchCounts.highConfidence += batch.matchCounts.highConfidence;
+  mentionResolution.mentionsWritten += batch.mentionsWritten;
+  mentionResolution.reviewsScanned += batch.reviewsScanned;
+  mentionResolution.reviewsUnchanged += batch.reviewsUnchanged;
+  mentionResolution.reviewsWritten += batch.reviewsWritten;
+  if (!batch.ok) {
+    throw new Error(`seed_dish_resolution_failed:${batch.errors[0]?.reviewId ?? "unknown"}`);
+  }
+}
+
 await upsertBatches("likes", plan.rows.likes);
 await upsertBatches("wishlist", plan.rows.bookmarks);
 await upsertBatches("recommendation_feedback", plan.rows.reactions);
@@ -113,12 +145,18 @@ await upsertBatches("shared_memory_dishes", plan.rows.memoryDishes);
 // while the fixture intentionally also models rooms whose members block one
 // another later so blocked-read behavior can be exercised under load.
 await upsertBatches("blocked_users", plan.rows.blocks);
-await upsertBatches("review_dish_mentions", plan.rows.dishMentions);
 await upsertBatches("content_reports", plan.rows.contentReports);
 // Freeze deletion fixtures only after their representative owned data exists.
 // This preserves the same no-new-writes invariant exercised in production.
 await upsertBatches("profiles", plan.rows.profiles);
 await upsertBatches("account_deletion_jobs", plan.rows.accountDeletionJobs);
+
+const { data: projectionRebuild, error: projectionRebuildError } = await admin.rpc(
+  "rebuild_explore_v3_projections"
+);
+if (projectionRebuildError) throw new Error("seed_explore_projection_rebuild_failed");
+const reconciliation = projectionRebuild?.reconciliation ?? projectionRebuild;
+if (!reconciliation?.ready) throw new Error("seed_explore_projection_reconciliation_failed");
 
 const insertedCounts = {
   users: identities.length,
@@ -137,7 +175,7 @@ const insertedCounts = {
   memoryMessages: plan.rows.roomMessages.length,
   memoryDishes: plan.rows.memoryDishes.length,
   places: new Set(plan.rows.reviews.map((row) => row.restaurant_id)).size,
-  dishMentions: plan.rows.dishMentions.length,
+  dishMentions: plan.rows.dishMentionInputs.reduce((total, input) => total + input.items.length, 0),
   contentReports: plan.rows.contentReports.length,
   accountDeletionJobs: plan.rows.accountDeletionJobs.length
 };
@@ -156,7 +194,14 @@ const result = {
   startedAt,
   completedAt: new Date().toISOString(),
   durationSeconds: Math.max(1, Math.round((Date.now() - Date.parse(startedAt)) / 1000)),
-  metrics: { plannedCounts: plan.counts, insertedCounts, deferredCounts, actors: plan.actors.length },
+  metrics: {
+    plannedCounts: plan.counts,
+    insertedCounts,
+    deferredCounts,
+    actors: plan.actors.length,
+    mentionResolution,
+    projectionReconciliation: reconciliation
+  },
   thresholds: { exactDatabaseCountsRequired: true, mediaPopulationRequiredSeparately: true },
   thresholdFailures: [],
   correctness: { violations: 0 },

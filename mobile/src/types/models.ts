@@ -194,6 +194,19 @@ export type ProfilePageData = {
   nextPostsCursor: string | null;
 };
 
+export type OtherProfileShellData = {
+  profile: Profile;
+  displayName: string;
+  stats: ProfileStats;
+  circleCount: number;
+  blockedByViewer: boolean;
+  interactionBlocked: boolean;
+  relationship: {
+    hasIncomingRequest: boolean;
+    status: "idle" | "pending" | "joined";
+  };
+};
+
 export type ProfilePostsPage = {
   posts: ReviewPost[];
   nextCursor: string | null;

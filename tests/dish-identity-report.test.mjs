@@ -58,6 +58,9 @@ function createReadOnlyDb(seed = {}) {
     canonical_dishes: [...(seed.canonical_dishes ?? [])],
     dish_aliases: [...(seed.dish_aliases ?? [])],
     dish_candidates: [...(seed.dish_candidates ?? [])],
+    dish_place_stats: [...(seed.dish_place_stats ?? [])],
+    place_dish_stats: [...(seed.place_dish_stats ?? [])],
+    place_stats: [...(seed.place_stats ?? [])],
     profiles: [...(seed.profiles ?? [{ id: "user-alice", username: "alice" }, { id: "user-bob", username: "bob" }])],
     review_dish_mentions: [...(seed.review_dish_mentions ?? [])],
     reviews: [...(seed.reviews ?? [])]
@@ -160,6 +163,7 @@ function baseSeed() {
       created_at: "2026-01-03T00:00:00.000Z",
       deleted_at: null,
       family_id: "family-biryani",
+      family_tokens: ["chicken", "biryani"],
       id: "mention-canonical",
       item_position: 0,
       match_status: "exact",
@@ -175,6 +179,7 @@ function baseSeed() {
       created_at: "2026-01-04T00:00:00.000Z",
       deleted_at: null,
       family_id: null,
+      family_tokens: [],
       id: "mention-candidate",
       item_position: 0,
       match_status: "candidate",
@@ -238,6 +243,53 @@ test("report emits duplicate active mention warnings", async () => {
 
   assert.equal(report.integrity.duplicateActiveMentionKeys.length, 1);
   assert.equal(report.readiness.status, "NEEDS_DATA_CLEANUP");
+});
+
+test("mention rows with no canonical or candidate fail readiness instead of counting as coverage", async () => {
+  const seed = baseSeed();
+  seed.reviews = [createReview({ id: "review-orphan" })];
+  seed.review_dish_mentions = [{
+    candidate_id: null,
+    canonical_dish_id: null,
+    created_at: "2026-01-03T00:00:00.000Z",
+    deleted_at: null,
+    family_id: null,
+    family_tokens: [],
+    id: "mention-orphan",
+    item_position: 0,
+    match_status: "unresolved",
+    normalized_name: "chicken biryani",
+    place_id: "ChIJPlaceOne",
+    raw_name: "Chicken Biryani",
+    review_id: "review-orphan",
+    source: "admin",
+    user_id: "user-alice"
+  }];
+  seed.place_stats = [{ place_id: "ChIJPlaceOne" }];
+
+  const report = await buildDishIdentityReport(createReadOnlyDb(seed), { limit: 10 });
+
+  assert.equal(report.reviewCoverage.coveragePercentage, 100);
+  assert.equal(report.mentionDistribution.totalActiveMentions, 1);
+  assert.equal(report.mentionDistribution.canonicallyResolved, 0);
+  assert.equal(report.mentionDistribution.candidateBacked, 0);
+  assert.equal(report.mentionDistribution.structurallyOrphaned, 1);
+  assert.equal(report.readiness.status, "NEEDS_DATA_CLEANUP");
+  assert.ok(report.readiness.blockers.some((blocker) => /neither a canonical dish nor a candidate/i.test(blocker)));
+});
+
+test("readiness is valid only when mention identity and all three projections reconcile", async () => {
+  const seed = baseSeed();
+  seed.reviews = [createReview({ id: "review-canonical" })];
+  seed.review_dish_mentions = [seed.review_dish_mentions[0]];
+  seed.place_stats = [{ place_id: "ChIJPlaceOne" }];
+  seed.place_dish_stats = [{ canonical_dish_id: "dish-chicken-biryani", place_id: "ChIJPlaceOne" }];
+  seed.dish_place_stats = [{ canonical_dish_id: "dish-chicken-biryani", place_id: "ChIJPlaceOne" }];
+
+  const report = await buildDishIdentityReport(createReadOnlyDb(seed), { limit: 10 });
+
+  assert.equal(report.projectionReconciliation.ready, true);
+  assert.equal(report.readiness.status, "READY_FOR_EXPLORE_MIGRATION");
 });
 
 test("report suggests alias opportunities without mutating aliases", async () => {

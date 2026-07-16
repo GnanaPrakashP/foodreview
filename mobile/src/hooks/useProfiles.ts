@@ -4,7 +4,7 @@ import {
   checkUsernameAvailability,
   getCurrentProfilePage,
   getCurrentUserProfile,
-  getProfilePage,
+  getOtherProfileShell,
   getProfilePostsPage,
   setupCurrentUserProfile,
   updateCurrentAccountType,
@@ -14,7 +14,7 @@ import {
   type ProfileDetailsInput,
   type ProfileSetupInput
 } from "@/services/profiles";
-import type { AccountType, Profile, ProfilePageData } from "@/types/models";
+import type { AccountType, OtherProfileShellData, Profile, ProfilePageData } from "@/types/models";
 import { useSessionStore } from "@/stores/sessionStore";
 
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
@@ -28,8 +28,8 @@ export const profileKeys = {
   current: ["profile", "current"] as const,
   currentPage: ["profile", "current-page"] as const,
   usernameAvailability: (username: string) => ["profile", "username-availability", username] as const,
-  byUsername: (username: string) => ["profile", username] as const,
-  posts: (username: string) => ["profile", username, "posts"] as const
+  otherShell: (username: string) => ["profile", "other", username.trim().toLowerCase(), "shell"] as const,
+  posts: (username: string) => ["profile", username.trim().toLowerCase(), "posts"] as const
 };
 
 export function useUsernameAvailabilityQuery(username: string, enabled: boolean) {
@@ -49,6 +49,11 @@ export function patchCurrentProfileCaches(queryClient: QueryClient, profile: Pro
     displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || profile.username,
     profile
   }) : current);
+  patchOtherProfileShell(queryClient, profile.username, (current) => ({
+    ...current,
+    displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || profile.username,
+    profile
+  }));
 }
 
 export function useCurrentUserProfileQuery(options: { enabled?: boolean } = {}) {
@@ -69,13 +74,27 @@ export function useCurrentProfilePageQuery(options: { enabled?: boolean } = {}) 
   });
 }
 
-export function useProfilePageQuery(username: string) {
+export function useOtherProfileShellQuery(username: string) {
   return useQuery({
-    queryKey: profileKeys.byUsername(username),
-    queryFn: () => getProfilePage(username),
+    queryKey: profileKeys.otherShell(username),
+    queryFn: () => getOtherProfileShell(username),
     enabled: Boolean(username),
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    refetchOnWindowFocus: true,
+    // The screen owns an explicit retry action. Avoid React Query's default
+    // backoff delaying deterministic auth, unavailable, or contract failures.
+    retry: false,
+    staleTime: 5 * 60_000
   });
+}
+
+export function patchOtherProfileShell(
+  queryClient: QueryClient,
+  username: string,
+  update: (current: OtherProfileShellData) => OtherProfileShellData
+) {
+  queryClient.setQueryData<OtherProfileShellData>(profileKeys.otherShell(username), (current) => (
+    current ? update(current) : current
+  ));
 }
 
 export function useProfilePostsInfiniteQuery(username: string, options: { enabled?: boolean } = {}) {

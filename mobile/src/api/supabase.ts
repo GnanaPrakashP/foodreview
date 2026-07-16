@@ -36,8 +36,8 @@ function runtimeEnvValue(name: string) {
   return (globalThis as RuntimeProcessGlobal).process?.env?.[name];
 }
 
-function isLoopbackHostname(value: string) {
-  return value === "localhost" || value === "127.0.0.1";
+function shouldUseAndroidEmulatorHost(value: string) {
+  return value === "localhost";
 }
 
 function normalizeSupabaseUrl(value: string) {
@@ -45,11 +45,11 @@ function normalizeSupabaseUrl(value: string) {
 
   try {
     const url = new URL(value);
-    if (!isLoopbackHostname(url.hostname)) return value.replace(/\/$/, "");
+    if (!shouldUseAndroidEmulatorHost(url.hostname)) return value.replace(/\/$/, "");
     url.hostname = "10.0.2.2";
     return url.toString().replace(/\/$/, "");
   } catch {
-    return value.replace("://localhost", "://10.0.2.2").replace("://127.0.0.1", "://10.0.2.2");
+    return value.replace("://localhost", "://10.0.2.2");
   }
 }
 

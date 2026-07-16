@@ -61,6 +61,7 @@ async function main() {
   mkdirSync(artifactDir, { recursive: true });
   validateConfiguration();
 
+  const existingMailIds = configuredOtp ? new Set() : await mailIds();
   await ensureNextServer();
 
   const adb = await resolveAdb();
@@ -82,13 +83,21 @@ async function main() {
     console.log(`Clearing ${appPackage} data.`);
     await adbExec(adb, ["-s", serial, "shell", "pm", "clear", appPackage], { allowFailure: true });
   }
+  // This automation validates login/profile behavior, not notification consent.
+  // Avoid leaving the Android 13+ runtime dialog over the logged-in shell.
+  await adbExec(adb, [
+    "-s", serial, "shell", "pm", "grant", appPackage, "android.permission.POST_NOTIFICATIONS"
+  ], { allowFailure: true });
 
+  // Keep installed-build automation from silently polling behind an ambient or
+  // non-secure keyguard. A secure device still has to be unlocked by its owner.
+  await adbExec(adb, ["-s", serial, "shell", "input", "keyevent", "224"], { allowFailure: true });
+  await adbExec(adb, ["-s", serial, "shell", "wm", "dismiss-keyguard"], { allowFailure: true });
   console.log(`Launching ${appPackage}/${appActivity}.`);
   await adbExec(adb, ["-s", serial, "shell", "am", "force-stop", appPackage], { allowFailure: true });
   await adbExec(adb, ["-s", serial, "shell", "am", "start", "-n", `${appPackage}/${appActivity}`]);
 
   await openEmailLogin(adb, serial);
-  const existingMailIds = configuredOtp ? new Set() : await mailIds();
   await fillEmailAndSendCode(adb, serial);
   await fillOtpAndContinue(adb, serial, await verificationCode(existingMailIds));
   await openProfile(adb, serial);
@@ -150,7 +159,10 @@ async function emailOtpWorks() {
     const response = await fetch(new URL("/api/mobile/auth/email-otp", apiBaseUrl), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: loginEmail })
+      // The endpoint deliberately returns the same accepted response for an
+      // invalid address, which makes this a side-effect-free readiness probe.
+      // Using the fixture email here would issue and then supersede its OTP.
+      body: JSON.stringify({ email: "invalid-readiness-probe" })
     });
     const payload = await response.json().catch(() => null);
     return response.ok && payload?.ok === true;

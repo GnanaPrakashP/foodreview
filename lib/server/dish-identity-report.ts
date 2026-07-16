@@ -44,6 +44,7 @@ type MentionRow = {
   created_at: string | null;
   deleted_at: string | null;
   family_id: string | null;
+  family_tokens: string[] | null;
   id: string;
   item_position: number | null;
   match_status: string | null;
@@ -85,6 +86,23 @@ type ProfileRow = {
   username: string;
 };
 
+type PlaceStatsRow = { place_id: string };
+type PlaceDishStatsRow = { canonical_dish_id: string; place_id: string };
+
+export type ProjectionReconciliation = {
+  dishPlaceStats: ProjectionReconciliationCounts;
+  placeDishStats: ProjectionReconciliationCounts;
+  placeStats: ProjectionReconciliationCounts;
+  ready: boolean;
+};
+
+export type ProjectionReconciliationCounts = {
+  actual: number;
+  expected: number;
+  extra: number;
+  missing: number;
+};
+
 export type DishIdentityReportOptions = {
   includePrivate?: boolean;
   includeSuppressed?: boolean;
@@ -116,10 +134,15 @@ export type DishIdentityReport = {
     mentionsWithNeitherCanonicalNorCandidate: string[];
   };
   mentionDistribution: {
+    ambiguousBacked: number;
     bySourceAndStatus: Record<string, number>;
+    candidateBacked: number;
     candidateId: { missing: number; present: number };
+    canonicallyResolved: number;
     canonicalDishId: { missing: number; present: number };
     familyId: { missing: number; present: number };
+    missingRequiredFamilyTokens: number;
+    structurallyOrphaned: number;
     totalActiveMentions: number;
   };
   missingProfileAudit: {
@@ -153,6 +176,7 @@ export type DishIdentityReport = {
     topPlacesByCanonicalCount: PlaceReadinessRow[];
     topPlacesByMentionCount: PlaceReadinessRow[];
   };
+  projectionReconciliation: ProjectionReconciliation;
   readiness: {
     blockers: string[];
     coverageThreshold: number;
@@ -457,10 +481,14 @@ function missingProfileRecommendation(input: {
 
 function readinessFor(input: {
   aliasOpportunityCount: number;
+  ambiguousMentionCount: number;
   candidateShare: number;
   duplicateActiveMentionCount: number;
   hiddenCanonicalMentionCount: number;
+  missingRequiredFamilyTokens: number;
+  orphanMentionCount: number;
   placeIdCoverage: number;
+  projectionReady: boolean;
   reportCoverage: number;
   scopedReviewCount: number;
 }): DishIdentityReport["readiness"] {
@@ -480,6 +508,22 @@ function readinessFor(input: {
     status = "NEEDS_DATA_CLEANUP";
     if (input.duplicateActiveMentionCount > 0) blockers.push("Duplicate active mentions exist for review/item positions.");
     if (input.hiddenCanonicalMentionCount > 0) blockers.push("Some canonical mentions point to hidden/rejected/merged dishes.");
+  }
+  if (input.orphanMentionCount > 0 || input.ambiguousMentionCount > 0 || input.missingRequiredFamilyTokens > 0) {
+    status = "NEEDS_DATA_CLEANUP";
+    if (input.orphanMentionCount > 0) {
+      blockers.push(`${input.orphanMentionCount} active mentions have neither a canonical dish nor a candidate.`);
+    }
+    if (input.ambiguousMentionCount > 0) {
+      blockers.push(`${input.ambiguousMentionCount} active mentions have both canonical and candidate backings.`);
+    }
+    if (input.missingRequiredFamilyTokens > 0) {
+      blockers.push(`${input.missingRequiredFamilyTokens} canonical mentions are missing required family tokens.`);
+    }
+  }
+  if (!input.projectionReady) {
+    status = "NEEDS_DATA_CLEANUP";
+    blockers.push("Explore projection rows do not reconcile with eligible source reviews and mentions.");
   }
   if (input.placeIdCoverage < PLACE_ID_THRESHOLD && input.scopedReviewCount > 0) {
     status = status === "READY_FOR_EXPLORE_MIGRATION" ? "NEEDS_DATA_CLEANUP" : status;
@@ -514,16 +558,19 @@ export async function buildDishIdentityReport(
     placeId: options.placeId?.trim() || null
   };
   const size = pageSize(options.pageSize);
-  const [reviewsResult, mentionsResult, candidatesResult, canonicalsResult, aliasesResult, profilesResult] = await Promise.all([
+  const [reviewsResult, mentionsResult, candidatesResult, canonicalsResult, aliasesResult, profilesResult, placeStatsResult, placeDishStatsResult, dishPlaceStatsResult] = await Promise.all([
     fetchAll<ReviewRow>(db, "reviews", "id, reviewer_name, restaurant_id, restaurant_name, area, items, visibility, deleted_at, hidden_at, reported_at, status", size),
-    fetchAll<MentionRow>(db, "review_dish_mentions", "id, review_id, user_id, place_id, item_position, raw_name, normalized_name, canonical_dish_id, candidate_id, family_id, source, match_status, created_at, deleted_at", size),
+    fetchAll<MentionRow>(db, "review_dish_mentions", "id, review_id, user_id, place_id, item_position, raw_name, normalized_name, canonical_dish_id, candidate_id, family_id, family_tokens, source, match_status, created_at, deleted_at", size),
     fetchAll<CandidateRow>(db, "dish_candidates", "id, raw_name, normalized_name, evidence_count, status, place_id", size),
     fetchAll<CanonicalDishRow>(db, "canonical_dishes", "id, display_name, normalized_name, status, merged_into_dish_id", size),
     fetchAll<AliasRow>(db, "dish_aliases", "id, canonical_dish_id, alias_text, normalized_alias, status", size),
-    fetchAll<ProfileRow>(db, "profiles", "id, username", size)
+    fetchAll<ProfileRow>(db, "profiles", "id, username", size),
+    fetchAll<PlaceStatsRow>(db, "place_stats", "place_id", size),
+    fetchAll<PlaceDishStatsRow>(db, "place_dish_stats", "place_id, canonical_dish_id", size),
+    fetchAll<PlaceDishStatsRow>(db, "dish_place_stats", "place_id, canonical_dish_id", size)
   ]);
 
-  for (const result of [reviewsResult, mentionsResult, candidatesResult, canonicalsResult, aliasesResult, profilesResult]) {
+  for (const result of [reviewsResult, mentionsResult, candidatesResult, canonicalsResult, aliasesResult, profilesResult, placeStatsResult, placeDishStatsResult, dishPlaceStatsResult]) {
     if (result.error) throw new Error(result.error.message ?? "Could not build dish identity report");
   }
 
@@ -533,7 +580,6 @@ export async function buildDishIdentityReport(
   const reviews = allReviews.filter((review) => !resolvedOptions.placeId || review.restaurant_id === resolvedOptions.placeId);
   const reviewsWithItems = reviews.filter(hasItems);
   const scopedReviews = reviewsWithItems.filter((review) => scopedReview(review, resolvedOptions));
-  const scopedReviewIds = new Set(scopedReviews.map((review) => review.id));
 
   const activeMentions = (mentionsResult.data ?? []).filter(activeMention);
   const placeScopedActiveMentions = activeMentions.filter((mention) => {
@@ -562,17 +608,32 @@ export async function buildDishIdentityReport(
 
   const bySourceAndStatus: Record<string, number> = {};
   const distribution = {
+    ambiguousBacked: 0,
     bySourceAndStatus,
+    candidateBacked: 0,
     candidateId: { missing: 0, present: 0 },
+    canonicallyResolved: 0,
     canonicalDishId: { missing: 0, present: 0 },
     familyId: { missing: 0, present: 0 },
-    totalActiveMentions: scopedMentions.length
+    missingRequiredFamilyTokens: 0,
+    structurallyOrphaned: 0,
+    totalActiveMentions: placeScopedActiveMentions.length
   };
-  for (const mention of scopedMentions) {
+  for (const mention of placeScopedActiveMentions) {
     inc(bySourceAndStatus, `${mention.source ?? "unknown"} ${mention.match_status ?? "unknown"}`);
-    mention.candidate_id ? distribution.candidateId.present += 1 : distribution.candidateId.missing += 1;
-    mention.canonical_dish_id ? distribution.canonicalDishId.present += 1 : distribution.canonicalDishId.missing += 1;
-    mention.family_id ? distribution.familyId.present += 1 : distribution.familyId.missing += 1;
+    if (mention.candidate_id) distribution.candidateId.present += 1;
+    else distribution.candidateId.missing += 1;
+    if (mention.canonical_dish_id) distribution.canonicalDishId.present += 1;
+    else distribution.canonicalDishId.missing += 1;
+    if (mention.family_id) distribution.familyId.present += 1;
+    else distribution.familyId.missing += 1;
+    if (mention.canonical_dish_id && !mention.candidate_id) distribution.canonicallyResolved += 1;
+    if (mention.candidate_id && !mention.canonical_dish_id) distribution.candidateBacked += 1;
+    if (mention.candidate_id && mention.canonical_dish_id) distribution.ambiguousBacked += 1;
+    if (!mention.canonical_dish_id && !mention.candidate_id) distribution.structurallyOrphaned += 1;
+    if (mention.canonical_dish_id && (!mention.family_tokens || mention.family_tokens.length === 0)) {
+      distribution.missingRequiredFamilyTokens += 1;
+    }
   }
 
   const candidates = candidatesResult.data ?? [];
@@ -691,8 +752,63 @@ export async function buildDishIdentityReport(
   const aliasOpportunities = bestAliasOpportunities(candidateQuality, canonicals, aliasesResult.data ?? [], limit);
   const duplicateCandidates = duplicateCandidateSuggestions(candidateQuality, limit);
   const placeIdCoverage = scopedMentions.length === 0 ? 1 : placeReadiness.mentionsWithPlaceId / scopedMentions.length;
-  const candidateShare = scopedMentions.length === 0 ? 0 : distribution.candidateId.present / scopedMentions.length;
+  const candidateShare = distribution.totalActiveMentions === 0
+    ? 0
+    : distribution.candidateBacked / distribution.totalActiveMentions;
   const coverageRatio = scopedReviews.length === 0 ? 1 : scopedReviewsWithActiveMentionRows / scopedReviews.length;
+
+  const eligibleProjectionReviews = reviews.filter((review) => (
+    !isSuppressedReview(review)
+    && (!review.visibility || review.visibility === "public")
+    && !/^e2e_/i.test(review.reviewer_name)
+    && !/^e2e\b/i.test(review.restaurant_name ?? "")
+    && Boolean(review.restaurant_id?.trim())
+  ));
+  const eligibleProjectionReviewIds = new Set(eligibleProjectionReviews.map((review) => review.id));
+  const expectedPlaceIds = new Set(eligibleProjectionReviews.map((review) => review.restaurant_id as string));
+  const expectedPairKeys = new Set(
+    placeScopedActiveMentions
+      .filter((mention) => (
+        eligibleProjectionReviewIds.has(mention.review_id)
+        && Boolean(mention.place_id)
+        && Boolean(mention.canonical_dish_id)
+        && !mention.candidate_id
+        && safeCanonicalDish(canonicalById.get(mention.canonical_dish_id as string))
+      ))
+      .map((mention) => `${mention.place_id}:${mention.canonical_dish_id}`)
+  );
+  const actualPlaceIds = new Set(
+    (placeStatsResult.data ?? [])
+      .filter((row) => !resolvedOptions.placeId || row.place_id === resolvedOptions.placeId)
+      .map((row) => row.place_id)
+  );
+  const actualPlaceDishKeys = new Set(
+    (placeDishStatsResult.data ?? [])
+      .filter((row) => !resolvedOptions.placeId || row.place_id === resolvedOptions.placeId)
+      .map((row) => `${row.place_id}:${row.canonical_dish_id}`)
+  );
+  const actualDishPlaceKeys = new Set(
+    (dishPlaceStatsResult.data ?? [])
+      .filter((row) => !resolvedOptions.placeId || row.place_id === resolvedOptions.placeId)
+      .map((row) => `${row.place_id}:${row.canonical_dish_id}`)
+  );
+  const reconcile = (expected: Set<string>, actual: Set<string>): ProjectionReconciliationCounts => ({
+    actual: actual.size,
+    expected: expected.size,
+    extra: [...actual].filter((key) => !expected.has(key)).length,
+    missing: [...expected].filter((key) => !actual.has(key)).length
+  });
+  const projectionReconciliation: ProjectionReconciliation = {
+    dishPlaceStats: reconcile(expectedPairKeys, actualDishPlaceKeys),
+    placeDishStats: reconcile(expectedPairKeys, actualPlaceDishKeys),
+    placeStats: reconcile(expectedPlaceIds, actualPlaceIds),
+    ready: false
+  };
+  projectionReconciliation.ready = [
+    projectionReconciliation.placeStats,
+    projectionReconciliation.placeDishStats,
+    projectionReconciliation.dishPlaceStats
+  ].every((counts) => counts.missing === 0 && counts.extra === 0);
 
   const integrity = {
     activeReviewsWithItemsButNoMentions: scopedReviewsMissing.map((review) => review.id).slice(0, limit),
@@ -756,12 +872,17 @@ export async function buildDishIdentityReport(
     missingProfileAudit,
     options: resolvedOptions,
     placeReadiness,
+    projectionReconciliation,
     readiness: readinessFor({
       aliasOpportunityCount: aliasOpportunities.length,
+      ambiguousMentionCount: distribution.ambiguousBacked,
       candidateShare,
       duplicateActiveMentionCount: integrity.duplicateActiveMentionKeys.length,
       hiddenCanonicalMentionCount: integrity.canonicalMentionsToUnsafeDishes.length,
+      missingRequiredFamilyTokens: distribution.missingRequiredFamilyTokens,
+      orphanMentionCount: distribution.structurallyOrphaned,
       placeIdCoverage,
+      projectionReady: projectionReconciliation.ready,
       reportCoverage: coverageRatio,
       scopedReviewCount: scopedReviews.length
     }),
@@ -802,6 +923,12 @@ export function formatDishIdentityReport(report: DishIdentityReport): string {
   lines.push(`  coverage: ${report.reviewCoverage.coveragePercentage.toFixed(2)}%`);
   lines.push("");
   lines.push("2. Mention Distribution");
+  lines.push(`  total active mentions: ${report.mentionDistribution.totalActiveMentions}`);
+  lines.push(`  canonically resolved: ${report.mentionDistribution.canonicallyResolved}`);
+  lines.push(`  candidate-backed: ${report.mentionDistribution.candidateBacked}`);
+  lines.push(`  ambiguously backed: ${report.mentionDistribution.ambiguousBacked}`);
+  lines.push(`  structurally orphaned: ${report.mentionDistribution.structurallyOrphaned}`);
+  lines.push(`  canonical mentions missing family tokens: ${report.mentionDistribution.missingRequiredFamilyTokens}`);
   lines.push(...linesForRows(Object.entries(report.mentionDistribution.bySourceAndStatus), ([key, count]) => `${key}: ${count}`));
   lines.push(`  canonical_dish_id present/missing: ${report.mentionDistribution.canonicalDishId.present}/${report.mentionDistribution.canonicalDishId.missing}`);
   lines.push(`  candidate_id present/missing: ${report.mentionDistribution.candidateId.present}/${report.mentionDistribution.candidateId.missing}`);
@@ -838,7 +965,13 @@ export function formatDishIdentityReport(report: DishIdentityReport): string {
   lines.push(`  duplicate active mention keys: ${report.integrity.duplicateActiveMentionKeys.length}`);
   lines.push(`  active mentions for suppressed reviews: ${report.integrity.mentionsForSuppressedReviews.length}`);
   lines.push("");
-  lines.push("8. Missing Profile Audit");
+  lines.push("8. Projection Reconciliation");
+  lines.push(`  place_stats expected/actual/missing/extra: ${report.projectionReconciliation.placeStats.expected}/${report.projectionReconciliation.placeStats.actual}/${report.projectionReconciliation.placeStats.missing}/${report.projectionReconciliation.placeStats.extra}`);
+  lines.push(`  place_dish_stats expected/actual/missing/extra: ${report.projectionReconciliation.placeDishStats.expected}/${report.projectionReconciliation.placeDishStats.actual}/${report.projectionReconciliation.placeDishStats.missing}/${report.projectionReconciliation.placeDishStats.extra}`);
+  lines.push(`  dish_place_stats expected/actual/missing/extra: ${report.projectionReconciliation.dishPlaceStats.expected}/${report.projectionReconciliation.dishPlaceStats.actual}/${report.projectionReconciliation.dishPlaceStats.missing}/${report.projectionReconciliation.dishPlaceStats.extra}`);
+  lines.push(`  projection ready: ${report.projectionReconciliation.ready}`);
+  lines.push("");
+  lines.push("9. Missing Profile Audit");
   lines.push(`  reviews missing profile: ${report.missingProfileAudit.reviewsMissingProfile}`);
   lines.push(`  active public missing profile: ${report.missingProfileAudit.activePublicReviewsMissingProfile}`);
   lines.push(`  active circle/private missing profile: ${report.missingProfileAudit.activeCircleOrPrivateReviewsMissingProfile}`);
@@ -852,7 +985,7 @@ export function formatDishIdentityReport(report: DishIdentityReport): string {
   lines.push(`  example reviewer names: ${report.missingProfileAudit.exampleReviewerNames.join(", ") || "none"}`);
   lines.push(`  recommendation: ${report.missingProfileAudit.recommendation}`);
   lines.push("");
-  lines.push("9. Backfill Readiness Recommendation");
+  lines.push("10. Backfill Readiness Recommendation");
   lines.push(`  ${report.readiness.status}`);
   for (const blocker of report.readiness.blockers) lines.push(`  blocker: ${blocker}`);
   for (const note of report.readiness.notes) lines.push(`  note: ${note}`);

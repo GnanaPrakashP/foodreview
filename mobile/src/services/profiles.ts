@@ -1,7 +1,7 @@
 import { supabase } from "@/api/supabase";
 import { apiUrl } from "@/api/config";
 import { authorizedApiHeaders, authorizedJson as authorizedApiJson } from "@/api/client";
-import type { AccountType, ActorProfile, FeedPage, Profile, ProfilePageData, ProfilePostsPage, ProfileStats } from "@/types/models";
+import type { AccountType, ActorProfile, FeedPage, OtherProfileShellData, Profile, ProfilePageData, ProfilePostsPage } from "@/types/models";
 import {
   displayNameForProfile,
   mapProfile,
@@ -378,45 +378,6 @@ function isMissingUserSearchRpcError(error: unknown) {
   return code === "PGRST202" || message.includes("search_user_profiles");
 }
 
-async function getProfileStats(profile: Profile): Promise<ProfileStats> {
-  const { data, error } = await supabase
-    .rpc("profile_post_stats", { p_username: profile.username })
-    .maybeSingle<{
-      total_visits: number | string | null;
-      unique_dishes: number | string | null;
-      unique_places: number | string | null;
-    }>();
-
-  if (!error && data) {
-    return {
-      totalVisits: Number(data.total_visits ?? 0),
-      uniqueDishes: Number(data.unique_dishes ?? 0),
-      uniquePlaces: Number(data.unique_places ?? 0)
-    };
-  }
-
-  if (error && isMissingProfileStatsRpcError(error)) {
-    throw new Error("Profile deployment contract unavailable (profile_post_stats).");
-  }
-  throw new Error(error?.message ?? "Unable to load profile statistics");
-}
-
-function isMissingProfileStatsRpcError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
-  return code === "PGRST202" || message.includes("profile_post_stats");
-}
-
-async function getCircleMemberCount(username: string): Promise<number> {
-  const { count, error } = await supabase
-    .from("circle_memberships")
-    .select("member_name", { count: "exact", head: true })
-    .eq("user_name", username);
-
-  if (error) return 0;
-  return count ?? 0;
-}
-
 export async function getProfilePostsPage(
   username: string,
   cursor?: string | null
@@ -437,25 +398,14 @@ export async function getProfilePostsPage(
   };
 }
 
-export async function getProfilePage(username: string): Promise<ProfilePageData> {
-  const profile = await getProfileByUsername(username);
-  if (!profile) throw new Error("Profile not found");
-
-  const displayName = displayNameForProfile(profile);
-  const [postPage, stats, circleCount] = await Promise.all([
-    getProfilePostsPage(profile.username),
-    getProfileStats(profile),
-    getCircleMemberCount(profile.username)
-  ]);
-
-  return {
-    profile,
-    displayName,
-    stats,
-    circleCount,
-    posts: postPage.posts,
-    nextPostsCursor: postPage.nextCursor
-  };
+export async function getOtherProfileShell(username: string): Promise<OtherProfileShellData> {
+  const normalized = normalizeUsername(username);
+  assertValidUsername(normalized);
+  return authorizedApiJson<OtherProfileShellData>(
+    `/api/mobile/profiles/${encodeURIComponent(normalized)}/shell`,
+    { method: "GET" },
+    { action: "loading profile", timeoutMs: 10_000 }
+  );
 }
 
 export async function getCurrentProfilePage(): Promise<ProfilePageData | null> {

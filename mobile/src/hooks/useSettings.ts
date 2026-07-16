@@ -14,6 +14,7 @@ import {
 import { useSessionStore } from "@/stores/sessionStore";
 import { cleanupCurrentLocalData } from "@/services/localDataIsolation";
 import { logout } from "@/services/auth";
+import { patchOtherProfileShell, profileKeys } from "@/hooks/useProfiles";
 
 export const settingsKeys = {
   blocked: ["settings", "blocked"] as const,
@@ -80,7 +81,15 @@ export function useBlockUserMutation() {
 
   return useMutation({
     mutationFn: (username: string) => blockUser(username),
-    onSuccess: () => {
+    onSuccess: (_result, username) => {
+      patchOtherProfileShell(queryClient, username, (current) => ({
+        ...current,
+        blockedByViewer: true,
+        interactionBlocked: true,
+        relationship: { hasIncomingRequest: false, status: "idle" }
+      }));
+      queryClient.removeQueries({ queryKey: profileKeys.posts(username) });
+      queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(username) });
       queryClient.invalidateQueries({ queryKey: settingsKeys.blocked });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
     }
@@ -92,7 +101,13 @@ export function useUnblockUserMutation() {
 
   return useMutation({
     mutationFn: (username: string) => unblockUser(username),
-    onSuccess: () => {
+    onSuccess: (_result, username) => {
+      patchOtherProfileShell(queryClient, username, (current) => ({
+        ...current,
+        blockedByViewer: false
+      }));
+      queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(username) });
+      queryClient.invalidateQueries({ queryKey: profileKeys.posts(username) });
       queryClient.invalidateQueries({ queryKey: settingsKeys.blocked });
       queryClient.invalidateQueries({ queryKey: ["feed"] });
     }

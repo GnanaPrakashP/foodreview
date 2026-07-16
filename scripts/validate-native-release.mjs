@@ -54,13 +54,22 @@ const [manifest, gradle, gradleProperties, appConfig, privacy, terms, welcome, l
   read(".github/workflows/native-release.yml")
 ]);
 
-check(/android:usesCleartextTraffic="false"/.test(manifest), "release manifest rejects cleartext");
+check(/android:usesCleartextTraffic="\$\{circleBitesUsesCleartextTraffic\}"/.test(manifest), "release manifest binds cleartext policy to the application environment");
+check(/allowLocalCleartext = appEnvironment in \["local", "development"\]/.test(gradle), "only local development identities allow cleartext traffic");
+check(/circleBitesUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/.test(gradle), "Android manifest receives the environment-bound cleartext policy");
 check(/android:allowBackup="false"/.test(manifest), "release manifest disables backup");
 for (const permission of inventory.androidPermissions.blocked) {
   check(new RegExp(`android:name="${permission.replaceAll(".", "\\.")}"[^>]*tools:node="remove"`).test(manifest), `merged-source manifest removes ${permission}`);
 }
 check(!/signingConfig\s+signingConfigs\.debug/.test(gradle.match(/release\s*\{[\s\S]*?\n\s*\}/)?.[0] ?? ""), "release never uses debug signing");
 check(/Release signing credentials are required; debug signing is forbidden/.test(gradle), "release signing fails closed");
+check(/activeReleaseSigning = android\.buildTypes\.release\.signingConfig/.test(gradle), "release signing validates the effective Gradle configuration");
+check(/!activeReleaseSigning\.name\.equalsIgnoreCase\("debug"\)/.test(gradle), "effective release signing rejects debug identity");
+for (const value of ["storeFile", "storePassword", "keyAlias", "keyPassword"]) {
+  check(new RegExp(`activeReleaseSigning\\.${value}`).test(gradle), `effective release signing requires ${value}`);
+}
+check(/Injected release signing configuration is incomplete/.test(gradle), "command-line signing injection must be complete");
+check(!/EAS_BUILD[^\n]*(?:sign|credential)|(?:sign|credential)[^\n]*EAS_BUILD/i.test(gradle), "EAS mode cannot bypass release signing validation");
 check(/com\.circlebites\.mobile\.preview/.test(gradle) && /circlebites-preview/.test(gradle), "checked-in Android environment identity separation");
 check(/android:scheme="\$\{circleBitesAuthScheme\}"/.test(manifest), "Android auth scheme is environment-bound");
 check(/android\.enableMinifyInReleaseBuilds=true/.test(gradleProperties), "release minification enabled");

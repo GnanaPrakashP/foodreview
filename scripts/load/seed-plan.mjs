@@ -53,16 +53,26 @@ export function buildSeedPlan(config, identities, scale = 1) {
     blocked_name: user(index * 7 + 3).username,
     created_at: at(index)
   }));
+  const baseMentionsPerReview = Math.floor(counts.dishMentions / counts.posts);
+  const reviewsWithExtraMention = counts.dishMentions % counts.posts;
+  let dishCursor = 0;
+  const dishNames = ["Masala Dosa", "Biryani", "Idli", "Pizza"];
   const reviews = Array.from({ length: counts.posts }, (_, index) => {
     const owner = user(index * 13);
     const hidden = index > 0 && index % 100 === 0;
+    const itemCount = baseMentionsPerReview + (index < reviewsWithExtraMention ? 1 : 0);
+    const items = Array.from({ length: itemCount }, () => {
+      const itemIndex = dishCursor;
+      dishCursor += 1;
+      return { name: dishNames[itemIndex % dishNames.length], rating: 3 + (itemIndex % 3) };
+    });
     return {
       area: `Load Area ${index % 40}`,
       body: `Synthetic staging review ${index}`,
       created_at: at(index),
       hidden_at: hidden ? at(index, 1) : null,
       id: deterministicUuid(namespace, `review:${index}`),
-      items: [{ name: ["Masala Dosa", "Biryani", "Idli", "Pizza"][index % 4], rating: 3 + (index % 3) }],
+      items,
       restaurant_id: `load9-place-${String(index % counts.places).padStart(4, "0")}`,
       restaurant_lat: 12.85 + (index % 100) * 0.001,
       restaurant_lng: 77.5 + (index % 100) * 0.001,
@@ -178,16 +188,16 @@ export function buildSeedPlan(config, identities, scale = 1) {
       id: deterministicUuid(namespace, `memory-dish:${index}`), note: "Synthetic fixture", rating: 3 + (index % 3), room_id: room.id
     };
   });
-  const dishMentions = Array.from({ length: counts.dishMentions }, (_, index) => {
-    const review = reviews[index % reviews.length];
+  invariant(dishCursor === counts.dishMentions, "seed_dish_mention_distribution_mismatch");
+  const dishMentionInputs = reviews.map((review) => {
     const owner = users.find((entry) => entry.username === review.reviewer_name);
-    const dish = ["masala dosa", "biryani", "idli", "pizza"][index % 4];
     return {
-      created_at: at(index), display_name: dish.replace(/\b\w/g, (letter) => letter.toUpperCase()),
-      id: deterministicUuid(namespace, `dish-mention:${index}`), item_position: Math.floor(index / reviews.length),
-      legacy_metadata: { synthetic: true }, match_confidence: 0.5, match_status: "unresolved", normalized_name: dish,
-      place_id: review.restaurant_id, raw_name: dish, review_id: review.id, review_rating: 3 + (index % 3),
-      source: "admin", updated_at: at(index), user_id: owner.id
+      items: review.items,
+      placeId: review.restaurant_id,
+      reviewId: review.id,
+      source: "backfill",
+      submittedItems: review.items,
+      userId: owner.id
     };
   });
   const contentReports = Array.from({ length: counts.contentReports }, (_, index) => {
@@ -234,7 +244,7 @@ export function buildSeedPlan(config, identities, scale = 1) {
   }; });
   return {
     counts,
-    rows: { profiles, circleMemberships, blocks, reviews, likes, bookmarks, reactions, comments, notifications, postViews, rooms, roomMembers, roomMessages, memoryDishes, dishMentions, contentReports, accountDeletionJobs },
+    rows: { profiles, circleMemberships, blocks, reviews, likes, bookmarks, reactions, comments, notifications, postViews, rooms, roomMembers, roomMessages, memoryDishes, dishMentionInputs, contentReports, accountDeletionJobs },
     actors
   };
 }

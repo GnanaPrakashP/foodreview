@@ -105,8 +105,28 @@ export type ReviewDishMentionItem = Partial<Omit<FoodItem, "name" | "rating">> &
 };
 
 export type MentionWriteResult =
-  | { ok: true; rows: Array<Record<string, unknown>> }
+  | {
+      createdCanonicalIds: string[];
+      ok: true;
+      rows: Array<Record<string, unknown>>;
+      unchanged: boolean;
+    }
   | { error: string; ok: false };
+
+export type MentionBatchWriteResult = {
+  createdCanonicals: number;
+  errors: Array<{ error: string; reviewId: string }>;
+  matchCounts: {
+    alias: number;
+    exact: number;
+    highConfidence: number;
+  };
+  mentionsWritten: number;
+  ok: boolean;
+  reviewsScanned: number;
+  reviewsUnchanged: number;
+  reviewsWritten: number;
+};
 
 type QueryBuilder<T> = PromiseLike<DatabaseResult<T>> & Record<string, (...args: unknown[]) => QueryBuilder<T>>;
 
@@ -574,26 +594,68 @@ export async function softDeleteReviewDishMentions(
   return { ok: true };
 }
 
-export async function replaceReviewDishMentions(
+const IDEMPOTENCE_FIELDS = [
+  "candidate_id",
+  "canonical_dish_id",
+  "display_name",
+  "family_id",
+  "family_tokens",
+  "item_position",
+  "legacy_metadata",
+  "match_confidence",
+  "match_status",
+  "normalized_name",
+  "normalizer_version",
+  "place_id",
+  "raw_name",
+  "review_id",
+  "review_rating",
+  "source",
+  "user_id"
+] as const;
+
+function comparableMention(row: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.fromEntries(IDEMPOTENCE_FIELDS.map((field) => [field, row[field] ?? null]))
+  );
+}
+
+async function activeReviewDishMentions(
   db: DatabaseClient,
+  reviewId: string
+): Promise<DatabaseResult<Array<Record<string, unknown>>>> {
+  return query<Array<Record<string, unknown>>>(db, "review_dish_mentions")
+    .select(IDEMPOTENCE_FIELDS.join(", "))
+    .eq("review_id", reviewId)
+    .is("deleted_at", null);
+}
+
+async function buildResolvedMentionRows(
+  db: DatabaseClient,
+  catalog: DishCatalog,
   input: ReviewMentionWriteInput
-): Promise<MentionWriteResult> {
-  const catalogResult = await loadDishCatalog(db);
-  if (catalogResult.error || !catalogResult.data) {
-    return { ok: false, error: catalogResult.error?.message ?? "Could not load dish catalog" };
-  }
-  const catalog = catalogResult.data;
-
-  const cleared = await softDeleteReviewDishMentions(db, input.reviewId);
-  if (!cleared.ok) return cleared;
-
+): Promise<
+  | {
+      createdCanonicalIds: string[];
+      ok: true;
+      rows: Array<Record<string, unknown>>;
+    }
+  | { error: string; ok: false }
+> {
   const rows: Array<Record<string, unknown>> = [];
+  const createdCanonicalIds: string[] = [];
+
   for (const [index, item] of input.items.entries()) {
     const rawName = mentionNameForItem(item, input.submittedItems, index);
     const normalizedName = normalizeDishIdentityName(rawName);
+    if (!normalizedName) return { ok: false, error: "Dish names cannot be empty" };
+
     const resolution = await resolveDishIdentityWithCatalog(db, catalog, { normalizedName, rawName });
     if (resolution.error || !resolution.data) {
       return { ok: false, error: resolution.error?.message ?? "Could not resolve review dish mentions" };
+    }
+    if (resolution.data.createdCanonical) {
+      createdCanonicalIds.push(resolution.data.canonicalDishId);
     }
 
     rows.push({
@@ -617,19 +679,202 @@ export async function replaceReviewDishMentions(
     });
   }
 
-  if (rows.length === 0) return { ok: true, rows };
+  return { createdCanonicalIds, ok: true, rows };
+}
 
-  const insert = await query<unknown>(db, "review_dish_mentions").insert(rows);
-  if (insert.error) return { ok: false, error: insert.error.message ?? "Could not write review dish mentions" };
+async function replaceReviewDishMentionsWithCatalog(
+  db: DatabaseClient,
+  catalog: DishCatalog,
+  input: ReviewMentionWriteInput,
+  options: { applyMajority: boolean }
+): Promise<MentionWriteResult> {
+  const resolved = await buildResolvedMentionRows(db, catalog, input);
+  if (!resolved.ok) return resolved;
 
-  // Self-correction: this review's spellings may have shifted the majority for
-  // the dishes it touched. Best-effort — never fails the review write.
-  try {
-    const touchedDishIds = Array.from(new Set(rows.map((row) => row.canonical_dish_id as string)));
-    await applyMajorityDishDisplayNames(db, touchedDishIds);
-  } catch (error) {
-    console.error("[dish-identity] majority rename pass failed:", error);
+  const existing = await activeReviewDishMentions(db, input.reviewId);
+  if (existing.error) {
+    return { ok: false, error: existing.error.message ?? "Could not read existing review dish mentions" };
+  }
+  const existingRows = (existing.data ?? []).sort(
+    (left, right) => Number(left.item_position ?? 0) - Number(right.item_position ?? 0)
+  );
+  const unchanged =
+    existingRows.length === resolved.rows.length &&
+    existingRows.every((row, index) => comparableMention(row) === comparableMention(resolved.rows[index]));
+  if (unchanged) {
+    return {
+      createdCanonicalIds: resolved.createdCanonicalIds,
+      ok: true,
+      rows: resolved.rows,
+      unchanged: true
+    };
   }
 
-  return { ok: true, rows };
+  const cleared = await softDeleteReviewDishMentions(db, input.reviewId);
+  if (!cleared.ok) return cleared;
+
+  if (resolved.rows.length > 0) {
+    const insert = await query<unknown>(db, "review_dish_mentions").insert(resolved.rows);
+    if (insert.error) return { ok: false, error: insert.error.message ?? "Could not write review dish mentions" };
+  }
+
+  if (options.applyMajority && resolved.rows.length > 0) {
+    // Self-correction is best-effort and must never fail the review write.
+    try {
+      const touchedDishIds = Array.from(
+        new Set(resolved.rows.map((row) => row.canonical_dish_id as string))
+      );
+      await applyMajorityDishDisplayNames(db, touchedDishIds);
+    } catch (error) {
+      console.error("[dish-identity] majority rename pass failed:", error);
+    }
+  }
+
+  return {
+    createdCanonicalIds: resolved.createdCanonicalIds,
+    ok: true,
+    rows: resolved.rows,
+    unchanged: false
+  };
+}
+
+export async function replaceReviewDishMentions(
+  db: DatabaseClient,
+  input: ReviewMentionWriteInput
+): Promise<MentionWriteResult> {
+  const catalogResult = await loadDishCatalog(db);
+  if (catalogResult.error || !catalogResult.data) {
+    return { ok: false, error: catalogResult.error?.message ?? "Could not load dish catalog" };
+  }
+  return replaceReviewDishMentionsWithCatalog(db, catalogResult.data, input, { applyMajority: true });
+}
+
+// API writes, load seeding, and other bulk producers all use this entry point.
+// It loads one catalog per batch and deliberately runs majority naming only
+// after the whole batch has landed.
+export async function replaceReviewDishMentionBatch(
+  db: DatabaseClient,
+  inputs: ReviewMentionWriteInput[]
+): Promise<MentionBatchWriteResult> {
+  const summary: MentionBatchWriteResult = {
+    createdCanonicals: 0,
+    errors: [],
+    matchCounts: { alias: 0, exact: 0, highConfidence: 0 },
+    mentionsWritten: 0,
+    ok: true,
+    reviewsScanned: inputs.length,
+    reviewsUnchanged: 0,
+    reviewsWritten: 0
+  };
+  if (inputs.length === 0) return summary;
+
+  const catalogResult = await loadDishCatalog(db);
+  if (catalogResult.error || !catalogResult.data) {
+    return {
+      ...summary,
+      errors: [{ error: catalogResult.error?.message ?? "Could not load dish catalog", reviewId: "*" }],
+      ok: false
+    };
+  }
+
+  const touchedDishIds = new Set<string>();
+  const createdDishIds = new Set<string>();
+  const resolvedInputs: Array<{
+    createdCanonicalIds: string[];
+    input: ReviewMentionWriteInput;
+    rows: Array<Record<string, unknown>>;
+  }> = [];
+  for (const input of inputs) {
+    const resolved = await buildResolvedMentionRows(db, catalogResult.data, input);
+    if (!resolved.ok) {
+      summary.ok = false;
+      summary.errors.push({ error: resolved.error, reviewId: input.reviewId });
+      continue;
+    }
+    resolvedInputs.push({ createdCanonicalIds: resolved.createdCanonicalIds, input, rows: resolved.rows });
+    for (const id of resolved.createdCanonicalIds) createdDishIds.add(id);
+    for (const row of resolved.rows) {
+      touchedDishIds.add(row.canonical_dish_id as string);
+      const status = String(row.match_status);
+      if (status === "exact") summary.matchCounts.exact += 1;
+      else if (status === "alias") summary.matchCounts.alias += 1;
+      else if (status === "high_confidence") summary.matchCounts.highConfidence += 1;
+    }
+  }
+  summary.createdCanonicals = createdDishIds.size;
+
+  if (resolvedInputs.length > 0) {
+    const reviewIds = resolvedInputs.map(({ input }) => input.reviewId);
+    const existing = await query<Array<Record<string, unknown>>>(db, "review_dish_mentions")
+      .select(IDEMPOTENCE_FIELDS.join(", "))
+      .in("review_id", reviewIds)
+      .is("deleted_at", null);
+    if (existing.error) {
+      summary.ok = false;
+      for (const reviewId of reviewIds) {
+        summary.errors.push({
+          error: existing.error.message ?? "Could not read existing review dish mentions",
+          reviewId
+        });
+      }
+      return summary;
+    }
+
+    const existingByReview = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of existing.data ?? []) {
+      const reviewId = String(row.review_id);
+      const rows = existingByReview.get(reviewId) ?? [];
+      rows.push(row);
+      existingByReview.set(reviewId, rows);
+    }
+
+    const changed = resolvedInputs.filter(({ input, rows }) => {
+      const current = (existingByReview.get(input.reviewId) ?? []).sort(
+        (left, right) => Number(left.item_position ?? 0) - Number(right.item_position ?? 0)
+      );
+      const isUnchanged = current.length === rows.length
+        && current.every((row, index) => comparableMention(row) === comparableMention(rows[index]));
+      if (isUnchanged) summary.reviewsUnchanged += 1;
+      return !isUnchanged;
+    });
+
+    if (changed.length > 0) {
+      const changedReviewIds = changed.map(({ input }) => input.reviewId);
+      const cleared = await query<unknown>(db, "review_dish_mentions")
+        .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .in("review_id", changedReviewIds)
+        .is("deleted_at", null);
+      if (cleared.error) {
+        summary.ok = false;
+        for (const reviewId of changedReviewIds) {
+          summary.errors.push({ error: cleared.error.message ?? "Could not clear dish mentions", reviewId });
+        }
+        return summary;
+      }
+
+      const rowsToInsert = changed.flatMap(({ rows }) => rows);
+      if (rowsToInsert.length > 0) {
+        const insert = await query<unknown>(db, "review_dish_mentions").insert(rowsToInsert);
+        if (insert.error) {
+          summary.ok = false;
+          for (const reviewId of changedReviewIds) {
+            summary.errors.push({ error: insert.error.message ?? "Could not write dish mentions", reviewId });
+          }
+          return summary;
+        }
+      }
+      summary.reviewsWritten = changed.length;
+      summary.mentionsWritten = rowsToInsert.length;
+    }
+  }
+
+  if (touchedDishIds.size > 0) {
+    try {
+      await applyMajorityDishDisplayNames(db, [...touchedDishIds]);
+    } catch (error) {
+      console.error("[dish-identity] batch majority rename pass failed:", error);
+    }
+  }
+
+  return summary;
 }

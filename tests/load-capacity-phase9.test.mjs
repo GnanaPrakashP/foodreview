@@ -143,7 +143,12 @@ test("small deterministic seed plan covers privacy, social, Memory, moderation a
   assert.equal(plan.rows.profiles.length, counts.profiles);
   assert.ok(plan.rows.reviews.some((row) => row.visibility === "me"));
   assert.ok(plan.rows.roomMessages.length > 0);
-  assert.ok(plan.rows.dishMentions.length > 0);
+  assert.ok(plan.rows.dishMentionInputs.length > 0);
+  assert.equal(
+    plan.rows.dishMentionInputs.reduce((total, input) => total + input.items.length, 0),
+    counts.dishMentions
+  );
+  assert.ok(plan.rows.dishMentionInputs.every((input) => input.items.every((item) => item.name)));
   assert.ok(plan.rows.contentReports.length > 0);
   assert.ok(plan.rows.accountDeletionJobs.length > 0);
   assert.ok(plan.actors.every((actor) => actor.loadFixtureVersion === 1 && actor.username.startsWith("load9_") && actor.postIds.length > 0));

@@ -2,6 +2,7 @@ import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, BackHandler, Easing, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
@@ -47,6 +48,7 @@ import { useExploreLocationActivation } from "@/providers/UserLocationBootstrap"
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import { useTabPerformance } from "@/performance/useTabPerformance";
+import { openProfileRoute } from "@/navigation/profileNavigation";
 
 type ExploreTab = "places" | "dishes" | "people";
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -164,6 +166,7 @@ function circleProofText(names: string[]) {
 
 export default function ExploreScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();
@@ -466,13 +469,8 @@ export default function ExploreScreen() {
 
   const openProfile = useCallback((username: string) => {
     if (!isActiveMainTabRef.current) return;
-    if (!username) return;
-    if (username === viewerName) {
-      router.push("/profile");
-      return;
-    }
-    router.push({ pathname: "/people/[username]", params: { username } });
-  }, [router, viewerName]);
+    openProfileRoute({ queryClient, router, username, viewerUsername: viewerName });
+  }, [queryClient, router, viewerName]);
 
   const personStatusFor = useCallback((person: PersonSpotlight): PersonRequestStatus => {
     if (person.username === viewerName) return "joined";
@@ -1455,7 +1453,7 @@ function PersonCard({
         accessibilityLabel={`Open ${person.displayName} profile`}
         accessibilityRole="button"
         onPress={onOpenProfile}
-        style={styles.personCard}
+        style={({ pressed }) => [styles.personCard, pressed && styles.personCardPressed]}
       >
         <View style={styles.personIdentityButton}>
           <View style={[styles.personAvatar, { backgroundColor: avatarColor(person.displayName || person.username) }]}>
@@ -2286,6 +2284,9 @@ function createStyles(c: ThemeColors) {
       flexDirection: "row",
       gap: spacing.md,
       paddingVertical: 12
+    },
+    personCardPressed: {
+      opacity: 0.62
     },
     personIdentityButton: {
       alignItems: "center",

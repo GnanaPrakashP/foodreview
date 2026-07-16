@@ -167,7 +167,7 @@ export function patchCachedPostById(
       predicate: (query) => {
         const key = query.queryKey;
         const scope = Array.isArray(key) ? key[0] : null;
-        return scope === "feed" || scope === "profile";
+        return scope === "feed" || scope === "profile" || scope === "settings";
       }
     },
     (current: unknown) => patchPostCacheValue(current, postId, updater)
@@ -231,7 +231,7 @@ function findPostInCacheValue(value: unknown, postId: string): ReviewPost | null
 
 export function findCachedPostById(queryClient: QueryClient, postId: string) {
   for (const [, data] of queryClient.getQueriesData<unknown>({
-    predicate: (query) => query.queryKey[0] === "feed" || query.queryKey[0] === "profile"
+    predicate: (query) => query.queryKey[0] === "feed" || query.queryKey[0] === "profile" || query.queryKey[0] === "settings"
   })) {
     const found = findPostInCacheValue(data, postId);
     if (found) return found;

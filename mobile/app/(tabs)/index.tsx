@@ -14,6 +14,8 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing } from "@/theme";
 import { useTabPerformance } from "@/performance/useTabPerformance";
 
+const HOME_FEED_POST_SPACING = 24;
+
 export default function CircleScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
@@ -130,6 +132,7 @@ export default function CircleScreen() {
           endReachedLabel="You're caught up"
           errorMessage="We couldn't load your circle feed. Please try again."
           hasMore={Boolean(hasNextPage)}
+          hidePostDividers
           isError={feed.isError && posts.length === 0}
           isFetchingMore={isFetchingNextPage}
           isLoading={feed.isLoading && posts.length === 0}
@@ -139,9 +142,10 @@ export default function CircleScreen() {
           onRefresh={canRefresh ? () => { void feed.refetch(); } : undefined}
           onRetry={() => feed.refetch()}
           posts={posts}
+          postSpacing={HOME_FEED_POST_SPACING}
           refreshing={canRefresh && feed.isRefetching && !isFetchingNextPage}
           scrollEnabled
-          showSectionLabels
+          useGreenJoinedRequestState
         />
       )}
     </Screen>
@@ -165,9 +169,9 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     title: {
       ...fontStyles.regular,
       color: c.cream,
-      fontSize: 28,
+      fontSize: 26,
       letterSpacing: 0,
-      lineHeight: 34
+      lineHeight: 32
     },
     titleAccent: {
       ...fontStyles.regularItalic,

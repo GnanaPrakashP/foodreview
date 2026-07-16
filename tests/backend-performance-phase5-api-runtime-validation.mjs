@@ -230,6 +230,10 @@ async function cleanup(admin, fixture) {
   await admin.from("notifications").delete().eq("recipient_user_id", fixture.viewerId);
   await admin.from("comments").delete().eq("post_id", fixture.postId);
   await admin.from("reviews").delete().in("id", fixture.reviewIds);
+  await admin.from("circle_requests").delete()
+    .or(`and(sender_name.eq.${fixture.viewerName},receiver_name.eq.${fixture.authorName}),and(sender_name.eq.${fixture.authorName},receiver_name.eq.${fixture.viewerName})`);
+  await admin.from("blocked_users").delete()
+    .or(`and(blocker_name.eq.${fixture.viewerName},blocked_name.eq.${fixture.authorName}),and(blocker_name.eq.${fixture.authorName},blocked_name.eq.${fixture.viewerName})`);
   await admin.from("circle_memberships").delete().eq("member_name", fixture.viewerName).eq("user_name", fixture.authorName);
   await admin.from("place_stats").delete().eq("place_id", fixture.placeId);
   await admin.from("profiles").delete().in("id", [fixture.viewerId, fixture.authorId]);
@@ -266,6 +270,83 @@ try {
     if (error) throw error;
     return Buffer.byteLength(JSON.stringify(data ?? null));
   };
+  const json = async (path) => {
+    const response = await fetch(`${BASE_URL}${path}`, { headers });
+    const payload = await response.json().catch(() => null);
+    assert.equal(response.status, 200, `${path} returned ${response.status}`);
+    return payload;
+  };
+
+  const shellPath = `/api/mobile/profiles/${encodeURIComponent(fixture.authorName)}/shell`;
+  const initialShell = await json(shellPath);
+  assert.equal(initialShell.relationship.status, "joined");
+  assert.equal(initialShell.relationship.hasIncomingRequest, false);
+  assert.equal(initialShell.blockedByViewer, false);
+  assert.equal(initialShell.interactionBlocked, false);
+
+  await admin.from("circle_memberships").delete()
+    .eq("member_name", fixture.viewerName).eq("user_name", fixture.authorName).throwOnError();
+  assert.equal((await json(shellPath)).relationship.status, "idle");
+
+  await admin.from("circle_requests").insert({
+    receiver_name: fixture.authorName,
+    sender_name: fixture.viewerName,
+    status: "pending"
+  }).throwOnError();
+  assert.equal((await json(shellPath)).relationship.status, "pending");
+  await admin.from("circle_requests").delete()
+    .eq("sender_name", fixture.viewerName).eq("receiver_name", fixture.authorName).throwOnError();
+
+  await admin.from("circle_requests").insert({
+    receiver_name: fixture.viewerName,
+    sender_name: fixture.authorName,
+    status: "pending"
+  }).throwOnError();
+  assert.equal((await json(shellPath)).relationship.hasIncomingRequest, true);
+  await admin.from("circle_requests").delete()
+    .eq("sender_name", fixture.authorName).eq("receiver_name", fixture.viewerName).throwOnError();
+  await admin.from("circle_memberships").insert({
+    member_name: fixture.viewerName,
+    user_name: fixture.authorName
+  }).throwOnError();
+
+  await admin.from("blocked_users").insert({
+    blocked_name: fixture.authorName,
+    blocker_name: fixture.viewerName
+  }).throwOnError();
+  const viewerBlockShell = await json(shellPath);
+  assert.equal(viewerBlockShell.blockedByViewer, true);
+  assert.equal(viewerBlockShell.interactionBlocked, true);
+  assert.equal(viewerBlockShell.relationship.status, "idle");
+  await admin.from("blocked_users").delete()
+    .eq("blocker_name", fixture.viewerName).eq("blocked_name", fixture.authorName).throwOnError();
+
+  await admin.from("blocked_users").insert({
+    blocked_name: fixture.viewerName,
+    blocker_name: fixture.authorName
+  }).throwOnError();
+  const targetBlockShell = await json(shellPath);
+  assert.equal(targetBlockShell.blockedByViewer, false);
+  assert.equal(targetBlockShell.interactionBlocked, true);
+  await admin.from("blocked_users").delete()
+    .eq("blocker_name", fixture.authorName).eq("blocked_name", fixture.viewerName).throwOnError();
+  assert.equal((await json(shellPath)).relationship.status, "joined");
+
+  const paginatedPostIds = [];
+  let profileCursor = null;
+  do {
+    const params = new URLSearchParams({
+      limit: "24",
+      profileName: fixture.authorName,
+      scope: "profile"
+    });
+    if (profileCursor) params.set("cursor", profileCursor);
+    const page = await json(`/api/mobile/feed?${params.toString()}`);
+    paginatedPostIds.push(...page.posts.map((post) => post.id));
+    profileCursor = page.nextCursor ?? null;
+  } while (profileCursor);
+  assert.equal(paginatedPostIds.length, fixture.reviewIds.length);
+  assert.equal(new Set(paginatedPostIds).size, fixture.reviewIds.length);
 
   const flows = [
     await measure("circle", http("/api/feed/circle?limit=24")),
@@ -274,6 +355,7 @@ try {
     await measure("restaurant-feed", http(`/api/mobile/feed?scope=restaurant&placeId=${encodeURIComponent(fixture.placeId)}&limit=24`)),
     await measure("dish-feed", http("/api/mobile/feed?scope=dish&dishName=Phase%205%20API%20Dish&limit=24")),
     await measure("profile-shell", http("/api/mobile/profile/shell")),
+    await measure("other-profile-shell", http(`/api/mobile/profiles/${encodeURIComponent(fixture.authorName)}/shell`)),
     await measure("profile-posts", http(`/api/mobile/feed?scope=profile&profileName=${encodeURIComponent(fixture.authorName)}&limit=24`)),
     await measure("post-detail", http(`/api/mobile/feed?scope=detail&postId=${fixture.postId}`)),
     await measure("comments", http(`/api/comments?postId=${fixture.postId}&limit=30`)),
@@ -284,7 +366,16 @@ try {
   ];
 
   console.log(JSON.stringify({
-    architecture: { duplicatePrimaryRequestsPerScreen: 0, primaryRequestsPerScreen: 1 },
+    architecture: {
+      duplicatePrimaryRequestsPerScreen: 0,
+      otherProfilePrimaryRequests: 2,
+      primaryRequestsPerOwner: 1
+    },
+    otherProfileContract: {
+      blockDirectionsValidated: 2,
+      paginationPosts: paginatedPostIds.length,
+      relationshipStatesValidated: ["idle", "pending", "joined", "incoming"]
+    },
     flows,
     mode: "local-production-next-with-local-supabase",
     samplesPerFlow: SAMPLE_COUNT,

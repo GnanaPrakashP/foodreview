@@ -76,6 +76,7 @@ def nativeIdentity = appEnvironment == "production"
     : appEnvironment == "preview"
         ? [applicationId: "com.circlebites.mobile.preview", label: "CircleBites Preview", scheme: "circlebites-preview"]
         : [applicationId: "com.circlebites.mobile.dev", label: "CircleBites Dev", scheme: "circlebites-dev"]
+def allowLocalCleartext = appEnvironment in ["local", "development"]
 def releaseSigningValues = [
     storeFile: System.getenv("CIRCLEBITES_RELEASE_STORE_FILE") ?: findProperty("CIRCLEBITES_RELEASE_STORE_FILE"),
     storePassword: System.getenv("CIRCLEBITES_RELEASE_STORE_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_STORE_PASSWORD"),
@@ -114,7 +115,11 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
-        manifestPlaceholders = [circleBitesAppLabel: nativeIdentity.label, circleBitesAuthScheme: nativeIdentity.scheme]
+        manifestPlaceholders = [
+            circleBitesAppLabel: nativeIdentity.label,
+            circleBitesAuthScheme: nativeIdentity.scheme,
+            circleBitesUsesCleartextTraffic: allowLocalCleartext.toString()
+        ]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -169,8 +174,29 @@ gradle.taskGraph.whenReady { graph ->
     def releaseRequested = graph.allTasks.any { task ->
         task.project == project && task.name.toLowerCase().matches(".*(assemble|bundle).*release.*")
     }
-    def injectedSigning = findProperty("android.injected.signing.store.file")
-    if (releaseRequested && !configuredReleaseSigning && !injectedSigning) {
+    def nonBlankSigningValue = { value -> value != null && value.toString().trim() }
+    def activeReleaseSigning = android.buildTypes.release.signingConfig
+    def activeReleaseSigningValues = activeReleaseSigning == null ? [] : [
+        activeReleaseSigning.storeFile,
+        activeReleaseSigning.storePassword,
+        activeReleaseSigning.keyAlias,
+        activeReleaseSigning.keyPassword
+    ]
+    def completeActiveReleaseSigning = activeReleaseSigning != null &&
+        !activeReleaseSigning.name.equalsIgnoreCase("debug") &&
+        activeReleaseSigningValues.every(nonBlankSigningValue)
+    def injectedSigningValues = [
+        findProperty("android.injected.signing.store.file"),
+        findProperty("android.injected.signing.store.password"),
+        findProperty("android.injected.signing.key.alias"),
+        findProperty("android.injected.signing.key.password")
+    ]
+    def anyInjectedSigning = injectedSigningValues.any(nonBlankSigningValue)
+    def completeInjectedSigning = injectedSigningValues.every(nonBlankSigningValue)
+    if (releaseRequested && anyInjectedSigning && !completeInjectedSigning) {
+        throw new GradleException("Injected release signing configuration is incomplete")
+    }
+    if (releaseRequested && !completeActiveReleaseSigning && !completeInjectedSigning) {
         throw new GradleException("Release signing credentials are required; debug signing is forbidden")
     }
 }

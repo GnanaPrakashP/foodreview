@@ -1,6 +1,7 @@
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { usePathname, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bookmark,
   Flag,
@@ -30,6 +31,10 @@ import {
   type FoodReactionType
 } from "@/components/reactions/ReactionBar";
 import {
+  commitPostBookmarkState,
+  commitPostLikeState,
+  displayPostBookmarkState,
+  displayPostLikeState,
   useDeletePostMutation,
   useSetCircleAccessStatusMutation,
   useTogglePostBookmarkMutation,
@@ -38,6 +43,7 @@ import {
 import { useReportContentMutation } from "@/hooks/useReports";
 import { useBlockUserMutation } from "@/hooks/useSettings";
 import {
+  displayPostTasteTrustState,
   usePostTasteTrustQuery,
   useRemovePostTasteTrustMutation,
   useSubmitPostTasteTrustMutation
@@ -57,11 +63,22 @@ import type { ReviewPost } from "@/types/models";
 import type { ReportTargetType } from "@/services/reports";
 import { adjustPerformanceCounter } from "@/performance/mobilePerformance";
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
+import { openProfileRoute } from "@/navigation/profileNavigation";
+import {
+  LatestIntentQueue,
+  optimisticBookmarkIntentState,
+  optimisticLikeIntentState,
+  optimisticReactionIntentState,
+  type BookmarkIntentState,
+  type LikeIntentState
+} from "@/state/latestPostEngagement";
 
 type PostCardProps = {
+  hideDivider?: boolean;
   loadDetailEngagement?: boolean;
   mediaActive?: boolean;
   post: ReviewPost;
+  useGreenJoinedRequestState?: boolean;
 };
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -173,31 +190,15 @@ function tasteTrustStateFromPost(post: ReviewPost): TasteTrustFeedbackState {
   return tasteTrustStateFromValues(post.foodReaction, post.mustTryCount, post.notWorthItCount);
 }
 
-function optimisticTasteTrustState(
-  current: TasteTrustFeedbackState,
-  nextLabel: TasteTrustFeedbackLabel | null
-): TasteTrustFeedbackState {
-  const previousLabel = current.myFeedbackLabel;
-  const feedbackCounts = { ...current.summary.feedback_counts };
-
-  if (previousLabel && previousLabel !== nextLabel) {
-    feedbackCounts[previousLabel] = Math.max(0, (feedbackCounts[previousLabel] ?? 0) - 1);
-  }
-  if (nextLabel && previousLabel !== nextLabel) {
-    feedbackCounts[nextLabel] = (feedbackCounts[nextLabel] ?? 0) + 1;
-  }
-
-  return {
-    summary: {
-      ...current.summary,
-      feedback_counts: feedbackCounts
-    },
-    myFeedbackLabel: nextLabel
-  };
-}
-
-function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, post }: PostCardProps) {
+function PostCardComponent({
+  hideDivider = false,
+  loadDetailEngagement = false,
+  mediaActive = false,
+  post,
+  useGreenJoinedRequestState = false
+}: PostCardProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
@@ -225,16 +226,12 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
   );
   const [requestInteracted, setRequestInteracted] = useState(false);
   const [showPostActions, setShowPostActions] = useState(false);
-  const likedRef = useRef(post.likedByMe);
-  const likeCountRef = useRef(post.likeCount);
-  const syncedLikedRef = useRef(post.likedByMe);
-  const syncedLikeCountRef = useRef(post.likeCount);
-  const desiredLikedRef = useRef(post.likedByMe);
-  const likeInFlightRef = useRef(false);
-  const bookmarkedRef = useRef(post.bookmarkedByMe);
-  const syncedBookmarkedRef = useRef(post.bookmarkedByMe);
-  const desiredBookmarkedRef = useRef(post.bookmarkedByMe);
-  const bookmarkInFlightRef = useRef(false);
+  const currentPostIdRef = useRef(post.id);
+  currentPostIdRef.current = post.id;
+  const likeMutateRef = useRef(likeMutation.mutateAsync);
+  likeMutateRef.current = likeMutation.mutateAsync;
+  const bookmarkMutateRef = useRef(bookmarkMutation.mutateAsync);
+  bookmarkMutateRef.current = bookmarkMutation.mutateAsync;
   const requestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
   const syncedRequestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
   const desiredRequestStatusRef = useRef(initialCircleRequestStatus(post.circleRequestStatus, post.isPublicDiscovery));
@@ -254,22 +251,56 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
   const showRequestButton = !isOwnPost && post.isPublicDiscovery && (requestStatus !== "joined" || requestInteracted);
   const postActionsBusy = deletePostMutation.isPending || reportMutation.isPending || blockUserMutation.isPending;
 
-  useEffect(() => {
-    likedRef.current = post.likedByMe;
-    likeCountRef.current = post.likeCount;
-    syncedLikedRef.current = post.likedByMe;
-    syncedLikeCountRef.current = post.likeCount;
-    desiredLikedRef.current = post.likedByMe;
-    setLiked(post.likedByMe);
-    setLikeCount(post.likeCount);
-  }, [post.id, post.likeCount, post.likedByMe]);
+  const likeQueue = useMemo(() => new LatestIntentQueue<boolean, LikeIntentState>({
+    execute: ({ to }) => likeMutateRef.current({ liked: !to, postId: post.id }),
+    getIntent: (result) => result.likedByMe,
+    initialResult: { likeCount: post.likeCount, likedByMe: post.likedByMe, postId: post.id },
+    onDisplay: (result, meta) => {
+      if (currentPostIdRef.current === post.id) {
+        setLiked(result.likedByMe);
+        setLikeCount(result.likeCount);
+      }
+      if (meta.source === "optimistic") displayPostLikeState(queryClient, result);
+      else commitPostLikeState(queryClient, result);
+    },
+    onError: (error) => {
+      if (currentPostIdRef.current !== post.id) return;
+      Alert.alert("Could not update like", error instanceof Error ? error.message : "Please try again.");
+    },
+    optimisticResult: optimisticLikeIntentState
+    // Queue lifetime is post-scoped. Prop echoes are rebased below and must not recreate it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [post.id, queryClient]);
+
+  const bookmarkQueue = useMemo(() => new LatestIntentQueue<boolean, BookmarkIntentState>({
+    execute: ({ to }) => bookmarkMutateRef.current({
+      bookmarked: !to,
+      postId: post.id,
+      restaurantName: post.restaurantName
+    }),
+    getIntent: (result) => result.bookmarkedByMe,
+    initialResult: { bookmarkedByMe: post.bookmarkedByMe, postId: post.id },
+    onDisplay: (result, meta) => {
+      if (currentPostIdRef.current === post.id) setBookmarked(result.bookmarkedByMe);
+      if (meta.source === "optimistic") displayPostBookmarkState(queryClient, result);
+      else commitPostBookmarkState(queryClient, result);
+    },
+    onError: (error) => {
+      if (currentPostIdRef.current !== post.id) return;
+      Alert.alert("Could not update save", error instanceof Error ? error.message : "Please try again.");
+    },
+    optimisticResult: optimisticBookmarkIntentState
+    // Queue lifetime is post-scoped. Prop echoes are rebased below and must not recreate it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [post.id, post.restaurantName, queryClient]);
 
   useEffect(() => {
-    bookmarkedRef.current = post.bookmarkedByMe;
-    syncedBookmarkedRef.current = post.bookmarkedByMe;
-    desiredBookmarkedRef.current = post.bookmarkedByMe;
-    setBookmarked(post.bookmarkedByMe);
-  }, [post.bookmarkedByMe, post.id]);
+    likeQueue.rebase({ likeCount: post.likeCount, likedByMe: post.likedByMe, postId: post.id });
+  }, [likeQueue, post.id, post.likeCount, post.likedByMe]);
+
+  useEffect(() => {
+    bookmarkQueue.rebase({ bookmarkedByMe: post.bookmarkedByMe, postId: post.id });
+  }, [bookmarkQueue, post.bookmarkedByMe, post.id]);
 
   useEffect(() => {
     setCommentCount(post.commentCount);
@@ -286,23 +317,14 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
 
   useEffect(() => {
     setVisualTasteTrustState(undefined);
-  }, [post.foodReaction, post.id, post.mustTryCount, post.notWorthItCount]);
+  }, [post.id]);
 
   useEffect(() => {
     setShowPostActions(false);
   }, [post.id]);
 
-  useEffect(() => {
-    setVisualTasteTrustState(feedbackQuery.data);
-  }, [feedbackQuery.data, post.id]);
-
   function openProfile() {
-    if (!targetUsername) return;
-    if (targetUsername.toLowerCase() === viewerName.toLowerCase()) {
-      router.push("/profile");
-      return;
-    }
-    router.push({ pathname: "/people/[username]", params: { username: targetUsername } });
+    openProfileRoute({ queryClient, router, username: targetUsername, viewerUsername: viewerName });
   }
 
   function openRestaurant() {
@@ -367,86 +389,12 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
     }
   }
 
-  function setVisualLike(nextLiked: boolean, nextLikeCount: number) {
-    likedRef.current = nextLiked;
-    likeCountRef.current = nextLikeCount;
-    setLiked(nextLiked);
-    setLikeCount(nextLikeCount);
-  }
-
-  async function flushLikeRequest() {
-    if (likeInFlightRef.current) return;
-    const targetLiked = desiredLikedRef.current;
-    if (targetLiked === syncedLikedRef.current) return;
-
-    likeInFlightRef.current = true;
-    try {
-      const engagement = await likeMutation.mutateAsync({ liked: !targetLiked, postId: post.id });
-      syncedLikedRef.current = engagement.likedByMe;
-      syncedLikeCountRef.current = engagement.likeCount;
-      if (desiredLikedRef.current === targetLiked) {
-        setVisualLike(engagement.likedByMe, engagement.likeCount);
-      }
-    } catch (error) {
-      if (desiredLikedRef.current === targetLiked) {
-        setVisualLike(syncedLikedRef.current, syncedLikeCountRef.current);
-        Alert.alert("Could not update like", error instanceof Error ? error.message : "Please try again.");
-      }
-    } finally {
-      likeInFlightRef.current = false;
-      if (desiredLikedRef.current !== syncedLikedRef.current) {
-        void flushLikeRequest();
-      }
-    }
-  }
-
   function toggleLike() {
-    const nextLiked = !likedRef.current;
-    const nextLikeCount = nextLiked ? likeCountRef.current + 1 : Math.max(0, likeCountRef.current - 1);
-    desiredLikedRef.current = nextLiked;
-    setVisualLike(nextLiked, nextLikeCount);
-    void flushLikeRequest();
-  }
-
-  function setVisualBookmark(nextBookmarked: boolean) {
-    bookmarkedRef.current = nextBookmarked;
-    setBookmarked(nextBookmarked);
-  }
-
-  async function flushBookmarkRequest() {
-    if (bookmarkInFlightRef.current) return;
-    const targetBookmarked = desiredBookmarkedRef.current;
-    if (targetBookmarked === syncedBookmarkedRef.current) return;
-
-    bookmarkInFlightRef.current = true;
-    try {
-      const engagement = await bookmarkMutation.mutateAsync({
-        bookmarked: !targetBookmarked,
-        postId: post.id,
-        restaurantName: post.restaurantName
-      });
-      syncedBookmarkedRef.current = engagement.bookmarkedByMe;
-      if (desiredBookmarkedRef.current === targetBookmarked) {
-        setVisualBookmark(engagement.bookmarkedByMe);
-      }
-    } catch (error) {
-      if (desiredBookmarkedRef.current === targetBookmarked) {
-        setVisualBookmark(syncedBookmarkedRef.current);
-        Alert.alert("Could not update save", error instanceof Error ? error.message : "Please try again.");
-      }
-    } finally {
-      bookmarkInFlightRef.current = false;
-      if (desiredBookmarkedRef.current !== syncedBookmarkedRef.current) {
-        void flushBookmarkRequest();
-      }
-    }
+    likeQueue.setDesiredIntent(!likeQueue.getDisplayedResult().likedByMe);
   }
 
   function toggleBookmark() {
-    const nextBookmarked = !bookmarkedRef.current;
-    desiredBookmarkedRef.current = nextBookmarked;
-    setVisualBookmark(nextBookmarked);
-    void flushBookmarkRequest();
+    bookmarkQueue.setDesiredIntent(!bookmarkQueue.getDisplayedResult().bookmarkedByMe);
   }
 
   function confirmDeletePost() {
@@ -549,14 +497,18 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
   }
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, hideDivider && styles.cardWithoutDivider]}>
       <View style={styles.recommendationHeader}>
         <Pressable
           accessibilityLabel={`Open ${post.authorName}'s profile`}
           accessibilityRole="button"
           hitSlop={8}
           onPress={openProfile}
-          style={[styles.avatar, { backgroundColor: avatarBackground }]}
+          style={({ pressed }) => [
+            styles.avatar,
+            { backgroundColor: avatarBackground },
+            pressed && styles.profilePressablePressed
+          ]}
         >
           <Text style={styles.avatarText}>{post.authorInitials || "?"}</Text>
         </Pressable>
@@ -567,7 +519,7 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
               accessibilityRole="button"
               hitSlop={8}
               onPress={openProfile}
-              style={styles.authorButton}
+              style={({ pressed }) => [styles.authorButton, pressed && styles.profilePressablePressed]}
             >
               <Text numberOfLines={1} style={styles.author}>{post.authorName}</Text>
             </Pressable>
@@ -580,9 +532,19 @@ function PostCardComponent({ loadDetailEngagement = false, mediaActive = false, 
           <Pressable
             hitSlop={8}
             onPress={toggleCircleRequest}
-            style={styles.requestButton}
+            style={[
+              styles.requestButton,
+              useGreenJoinedRequestState && requestStatus === "joined" && styles.requestButtonJoined
+            ]}
           >
-            <Text style={styles.requestButtonText}>{circleRequestLabel(requestStatus)}</Text>
+            <Text
+              style={[
+                styles.requestButtonText,
+                useGreenJoinedRequestState && requestStatus === "joined" && styles.requestButtonJoinedText
+              ]}
+            >
+              {circleRequestLabel(requestStatus)}
+            </Text>
           </Pressable>
         ) : null}
         <View style={styles.postActionsWrap}>
@@ -832,11 +794,18 @@ function TasteTrustFeedback({
   post: ReviewPost;
   viewerName: string;
 }) {
+  const queryClient = useQueryClient();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const isPrivatePost = post.visibility === "me";
   const submitFeedback = useSubmitPostTasteTrustMutation(post.id);
   const removeFeedback = useRemovePostTasteTrustMutation(post.id);
+  const submitFeedbackRef = useRef(submitFeedback.mutateAsync);
+  submitFeedbackRef.current = submitFeedback.mutateAsync;
+  const removeFeedbackRef = useRef(removeFeedback.mutateAsync);
+  removeFeedbackRef.current = removeFeedback.mutateAsync;
+  const currentPostIdRef = useRef(post.id);
+  currentPostIdRef.current = post.id;
   const [statusText, setStatusText] = useState("");
   const fallbackFeedbackState = useMemo(
     () => tasteTrustStateFromValues(post.foodReaction, post.mustTryCount, post.notWorthItCount),
@@ -844,72 +813,36 @@ function TasteTrustFeedback({
   );
   const initialFeedbackState = feedbackState ?? fallbackFeedbackState;
   const [localFeedbackState, setLocalFeedbackState] = useState<TasteTrustFeedbackState>(initialFeedbackState);
-  const localFeedbackStateRef = useRef<TasteTrustFeedbackState>(initialFeedbackState);
-  const latestFeedbackStateRef = useRef<TasteTrustFeedbackState | undefined>(feedbackState);
-  const hasLocalReactionInteraction = useRef(false);
-  const desiredFeedbackLabelRef = useRef<TasteTrustFeedbackLabel | null>(initialFeedbackState.myFeedbackLabel);
-  const syncedFeedbackStateRef = useRef<TasteTrustFeedbackState>(initialFeedbackState);
-  const reactionInFlightRef = useRef(false);
   const summary = localFeedbackState.summary;
   const selectedLabel = localFeedbackState.myFeedbackLabel;
   const canSubmit = isAuthenticated && Boolean(viewerName) && !isPrivatePost;
   const selectedReaction = reactionTypeForFeedbackLabel(selectedLabel);
   const reactionCounts = foodReactionCountsFor(summary);
-  latestFeedbackStateRef.current = feedbackState;
+  const reactionQueue = useMemo(() => new LatestIntentQueue<TasteTrustFeedbackLabel | null, TasteTrustFeedbackState>({
+    execute: ({ to }) => to ? submitFeedbackRef.current(to) : removeFeedbackRef.current(),
+    getIntent: (result) => result.myFeedbackLabel,
+    initialResult: initialFeedbackState,
+    onDisplay: (result, meta) => {
+      if (currentPostIdRef.current === post.id) {
+        setLocalFeedbackState(result);
+        onVisualStateChange(result);
+      }
+      displayPostTasteTrustState(queryClient, post.id, result, { cancelReads: meta.source === "optimistic" });
+    },
+    onError: (error) => {
+      if (currentPostIdRef.current !== post.id) return;
+      setStatusText(error instanceof Error ? error.message : "Could not update Taste Trust feedback.");
+    },
+    optimisticResult: optimisticReactionIntentState
+    // Queue lifetime is post-scoped. Query/cache echoes are rebased below while taps stay authoritative.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [post.id, queryClient]);
 
   useEffect(() => {
-    hasLocalReactionInteraction.current = false;
-    const nextState = latestFeedbackStateRef.current ?? fallbackFeedbackState;
-    localFeedbackStateRef.current = nextState;
-    syncedFeedbackStateRef.current = nextState;
-    desiredFeedbackLabelRef.current = nextState.myFeedbackLabel;
-    setLocalFeedbackState(nextState);
-    onVisualStateChange(nextState);
-  }, [fallbackFeedbackState, onVisualStateChange, post.id]);
-
-  useEffect(() => {
-    if (hasLocalReactionInteraction.current || !feedbackState) return;
-    localFeedbackStateRef.current = feedbackState;
-    syncedFeedbackStateRef.current = feedbackState;
-    desiredFeedbackLabelRef.current = feedbackState.myFeedbackLabel;
-    setLocalFeedbackState(feedbackState);
-    onVisualStateChange(feedbackState);
-  }, [feedbackState, onVisualStateChange]);
+    reactionQueue.rebase(feedbackState ?? fallbackFeedbackState);
+  }, [fallbackFeedbackState, feedbackState, reactionQueue]);
 
   if (isPrivatePost) return null;
-
-  function setVisualFeedbackState(nextState: TasteTrustFeedbackState) {
-    localFeedbackStateRef.current = nextState;
-    setLocalFeedbackState(nextState);
-    onVisualStateChange(nextState);
-  }
-
-  async function flushReactionRequest() {
-    if (reactionInFlightRef.current) return;
-    const targetLabel = desiredFeedbackLabelRef.current;
-    if (targetLabel === syncedFeedbackStateRef.current.myFeedbackLabel) return;
-
-    reactionInFlightRef.current = true;
-    try {
-      const nextState = targetLabel
-        ? await submitFeedback.mutateAsync(targetLabel)
-        : await removeFeedback.mutateAsync();
-      syncedFeedbackStateRef.current = nextState;
-      if (desiredFeedbackLabelRef.current === targetLabel) {
-        setVisualFeedbackState(nextState);
-      }
-    } catch (error) {
-      if (desiredFeedbackLabelRef.current === targetLabel) {
-        setVisualFeedbackState(syncedFeedbackStateRef.current);
-        setStatusText(error instanceof Error ? error.message : "Could not update Taste Trust feedback.");
-      }
-    } finally {
-      reactionInFlightRef.current = false;
-      if (desiredFeedbackLabelRef.current !== syncedFeedbackStateRef.current.myFeedbackLabel) {
-        void flushReactionRequest();
-      }
-    }
-  }
 
   function updateDesiredFeedback(label: TasteTrustFeedbackLabel | null) {
     if (!canSubmit) {
@@ -921,15 +854,12 @@ function TasteTrustFeedback({
       return;
     }
     setStatusText("");
-    hasLocalReactionInteraction.current = true;
-    desiredFeedbackLabelRef.current = label;
-    setVisualFeedbackState(optimisticTasteTrustState(localFeedbackStateRef.current, label));
-    void flushReactionRequest();
+    reactionQueue.setDesiredIntent(label);
   }
 
   function reactToFood(reaction: FoodReactionType) {
     const label = reactionFeedbackLabelByType[reaction];
-    if (localFeedbackStateRef.current.myFeedbackLabel === label) {
+    if (reactionQueue.getDisplayedResult().myFeedbackLabel === label) {
       updateDesiredFeedback(null);
       return;
     }
@@ -990,6 +920,9 @@ function createStyles(c: ThemeColors) {
       borderBottomColor: c.border,
       borderBottomWidth: 1
     },
+    cardWithoutDivider: {
+      borderBottomWidth: 0
+    },
     recommendationHeader: {
       alignItems: "center",
       flexDirection: "row",
@@ -1035,6 +968,9 @@ function createStyles(c: ThemeColors) {
     authorButton: {
       flexShrink: 1,
       minWidth: 0
+    },
+    profilePressablePressed: {
+      opacity: 0.58
     },
     author: {
       ...fontStyles.semiBold,
@@ -1153,11 +1089,18 @@ function createStyles(c: ThemeColors) {
     requestButtonMuted: {
       opacity: 0.78
     },
+    requestButtonJoined: {
+      backgroundColor: c.greenDim,
+      borderColor: c.greenBorder
+    },
     requestButtonText: {
       ...fontStyles.extraBold,
       color: c.orange,
       fontSize: typography.eyebrow,
       lineHeight: 14
+    },
+    requestButtonJoinedText: {
+      color: c.green
     },
     placeBlock: {
       paddingBottom: 0,

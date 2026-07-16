@@ -33,8 +33,9 @@ test("mobile public share URLs are separate from API/dev base URLs", () => {
   assert.doesNotMatch(postCardSource, /apiBaseUrl/);
 });
 
-test("mobile Supabase config maps Android loopback to emulator host without changing remote hosts", () => {
+test("mobile Supabase config supports Android emulators and physical-device reverse tunnels", () => {
   assert.match(supabaseConfigSource, /function normalizeSupabaseUrl/);
+  assert.match(supabaseConfigSource, /function shouldUseAndroidEmulatorHost/);
   assert.match(supabaseConfigSource, /function runtimeEnvValue/);
   assert.match(supabaseConfigSource, /const runtimeSupabaseUrl = runtimeEnvValue\(["']EXPO_PUBLIC_SUPABASE_URL["']\) \?\? supabaseUrl;/);
   assert.match(
@@ -42,8 +43,9 @@ test("mobile Supabase config maps Android loopback to emulator host without chan
     /const runtimeSupabaseAnonKey = runtimeEnvValue\(["']EXPO_PUBLIC_SUPABASE_ANON_KEY["']\) \?\? supabaseAnonKey;/
   );
   assert.match(supabaseConfigSource, /if \(Platform\.OS !== ["']android["']\) return value;/);
-  assert.match(supabaseConfigSource, /if \(!isLoopbackHostname\(url\.hostname\)\) return value\.replace/);
+  assert.match(supabaseConfigSource, /if \(!shouldUseAndroidEmulatorHost\(url\.hostname\)\) return value\.replace/);
   assert.match(supabaseConfigSource, /url\.hostname = ["']10\.0\.2\.2["']/);
+  assert.doesNotMatch(supabaseConfigSource, /\.replace\(["']:\/\/127\.0\.0\.1["'], ["']:\/\/10\.0\.2\.2["']\)/);
   assert.match(
     supabaseConfigSource,
     /export const resolvedSupabaseUrl = isSupabaseConfigured \? normalizeSupabaseUrl\(runtimeSupabaseUrl\) : fallbackSupabaseUrl;/

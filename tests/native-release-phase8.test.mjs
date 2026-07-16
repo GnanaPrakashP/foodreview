@@ -102,13 +102,23 @@ test("production environment rejects privileged public Supabase names without ex
 test("Android source manifest and Gradle release fail closed", () => {
   const manifest = read("mobile/android/app/src/main/AndroidManifest.xml");
   const gradle = read("mobile/android/app/build.gradle");
-  assert.match(manifest, /android:usesCleartextTraffic="false"/);
+  assert.match(manifest, /android:usesCleartextTraffic="\$\{circleBitesUsesCleartextTraffic\}"/);
+  assert.match(gradle, /allowLocalCleartext = appEnvironment in \["local", "development"\]/);
+  assert.match(gradle, /circleBitesUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/);
   assert.match(manifest, /android:allowBackup="false"/);
   for (const permission of inventory.androidPermissions.blocked) {
     assert.match(manifest, new RegExp(`android:name="${permission.replaceAll(".", "\\.")}"[^>]*tools:node="remove"`));
   }
   assert.doesNotMatch(gradle.match(/release\s*\{[\s\S]*?\n\s*\}/)?.[0] ?? "", /signingConfigs\.debug/);
   assert.match(gradle, /Release signing credentials are required; debug signing is forbidden/);
+  assert.match(gradle, /activeReleaseSigning = android\.buildTypes\.release\.signingConfig/);
+  assert.match(gradle, /!activeReleaseSigning\.name\.equalsIgnoreCase\("debug"\)/);
+  for (const value of ["storeFile", "storePassword", "keyAlias", "keyPassword"]) {
+    assert.match(gradle, new RegExp(`activeReleaseSigning\\.${value}`));
+    assert.match(gradle, new RegExp(`android\\.injected\\.signing\\.${value === "storeFile" ? "store\\.file" : value === "storePassword" ? "store\\.password" : value === "keyAlias" ? "key\\.alias" : "key\\.password"}`));
+  }
+  assert.match(gradle, /Injected release signing configuration is incomplete/);
+  assert.doesNotMatch(gradle, /EAS_BUILD[^\n]*(?:sign|credential)|(?:sign|credential)[^\n]*EAS_BUILD/i);
   assert.match(gradle, /com\.circlebites\.mobile\.preview/);
   assert.match(gradle, /circlebites-preview/);
   assert.match(manifest, /android:scheme="\$\{circleBitesAuthScheme\}"/);
