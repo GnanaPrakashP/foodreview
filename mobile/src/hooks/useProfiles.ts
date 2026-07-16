@@ -1,6 +1,7 @@
 import { type QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actorFromProfile,
+  checkUsernameAvailability,
   getCurrentProfilePage,
   getCurrentUserProfile,
   getProfilePage,
@@ -26,9 +27,20 @@ const EXPIRING_MEDIA_QUERY_OPTIONS = {
 export const profileKeys = {
   current: ["profile", "current"] as const,
   currentPage: ["profile", "current-page"] as const,
+  usernameAvailability: (username: string) => ["profile", "username-availability", username] as const,
   byUsername: (username: string) => ["profile", username] as const,
   posts: (username: string) => ["profile", username, "posts"] as const
 };
+
+export function useUsernameAvailabilityQuery(username: string, enabled: boolean) {
+  return useQuery({
+    queryKey: profileKeys.usernameAvailability(username),
+    queryFn: () => checkUsernameAvailability(username),
+    enabled,
+    retry: false,
+    staleTime: 30_000
+  });
+}
 
 export function patchCurrentProfileCaches(queryClient: QueryClient, profile: Profile) {
   queryClient.setQueryData(profileKeys.current, profile);

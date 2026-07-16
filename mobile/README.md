@@ -69,9 +69,9 @@ npx expo start -c
 For local Android Profile validation, use the root automation script instead of typing credentials into the emulator:
 
 ```sh
-EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL='local-test-user@example.test' EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD='your-local-password' npm run validate:android-profile
+ANDROID_LOGIN_EMAIL='local-test-user@example.test' npm run validate:android-profile
 ```
 
-The script starts or reuses Expo Metro, sets `adb reverse`, force-stops Expo Go to clear stale overlays, launches the app, waits for the Profile UI, and writes screenshots/logs to `/private/tmp/profile-android-validation`.
+The installed-app script requests an email OTP, reads the local Mailpit message, signs in through the real passwordless UI, and writes screenshots/logs to `/private/tmp/profile-android-validation`.
 
-Keep the validation email and password in your local shell or gitignored `mobile/.env`; do not commit them.
+Keep the validation email in your local shell or gitignored `mobile/.env`; do not commit personal test identities.

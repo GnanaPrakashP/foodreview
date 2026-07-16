@@ -43,7 +43,11 @@ if (hasFlag("dry-run")) {
 }
 
 assertNodeRuntime(config);
-const target = safeTargetMetadata(config);
+const target = safeTargetMetadata(
+  config,
+  process.env,
+  process.env.LOAD_TOPOLOGY_MODE === "development" ? { allowDevelopment: true } : {}
+);
 const apiBase = process.env.LOAD_STAGING_API_URL.replace(/\/$/, "");
 const supabaseBase = process.env.LOAD_STAGING_SUPABASE_URL.replace(/\/$/, "");
 const anonKey = process.env.LOAD_STAGING_SUPABASE_ANON_KEY;
@@ -56,6 +60,7 @@ const frozenDefinition = definitions.find((actor) => actor.frozenFixture);
 const frozenActor = frozenDefinition ? (await authenticateActors([frozenDefinition], 1))[0] : null;
 const metrics = new MetricRegistry();
 const actorRequestCounts = new Map(actors.map((actor) => [actor.username, 0]));
+const readableRoomIds = new Map();
 const runId = safeRunId();
 const safety = new ExternalSafetyMonitor(config, { runId, scenario });
 const startedAt = new Date().toISOString();
@@ -78,12 +83,6 @@ function actorPost(actor) {
   return postId;
 }
 
-function actorRoom(actor) {
-  const roomId = actor.roomIds[0];
-  if (!roomId) metrics.violation("actor_missing_room_id");
-  return roomId;
-}
-
 function engagementPost(actor) {
   const postId = actor.engagementPostIds[0];
   if (!postId) metrics.violation("actor_missing_engagement_post_id");
@@ -104,6 +103,19 @@ async function apiRequest(group, actor, path, options = {}) {
 async function actorRequest(group, actor, url, options = {}) {
   actorRequestCounts.set(actor.username, (actorRequestCounts.get(actor.username) ?? 0) + 1);
   return timedRequest(metrics, group, url, options);
+}
+
+function roomIdFromList(payload) {
+  const roomId = payload?.rooms?.[0]?.id;
+  return typeof roomId === "string" ? roomId : null;
+}
+
+async function readableRoom(actor) {
+  if (readableRoomIds.has(actor.username)) return readableRoomIds.get(actor.username);
+  const list = await apiRequest("memory-room-discovery", actor, "/api/mobile/memories/read?action=rooms&limit=1");
+  const roomId = roomIdFromList(list.payload);
+  readableRoomIds.set(actor.username, roomId);
+  return roomId;
 }
 
 async function authScenario(actor, random) {
@@ -216,13 +228,14 @@ async function notificationsScenario(actor, random) {
 }
 
 async function memoryRoomsScenario(actor) {
-  await apiRequest("memory-room-list", actor, "/api/mobile/memories/read?action=rooms&limit=50");
-  const roomId = actorRoom(actor);
+  const list = await apiRequest("memory-room-list", actor, "/api/mobile/memories/read?action=rooms&limit=50");
+  const roomId = roomIdFromList(list.payload);
+  readableRoomIds.set(actor.username, roomId);
   if (roomId) await apiRequest("memory-room-detail", actor, `/api/mobile/memories/read?action=detail&roomId=${roomId}&limit=50`);
 }
 
 async function memoryChatScenario(actor) {
-  const roomId = actorRoom(actor);
+  const roomId = await readableRoom(actor);
   if (!roomId) return;
   const first = await apiRequest("memory-chat", actor, `/api/mobile/memories/read?action=chat&roomId=${roomId}&limit=50`);
   if (first.payload?.nextCursor) {
@@ -257,7 +270,7 @@ async function mutationScenario(actor, random) {
 }
 
 async function mediaIntentScenario(actor) {
-  const roomId = actorRoom(actor);
+  const roomId = await readableRoom(actor);
   if (!roomId) return;
   await apiRequest("media-intent", actor, "/api/mobile/memories/upload-intent", {
     body: JSON.stringify({

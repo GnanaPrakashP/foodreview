@@ -13,7 +13,7 @@ iPad/tablet support is disabled. Orientation is portrait. On every row verify sa
 
 ## Two-account matrix
 
-Use synthetic Owner and Other accounts in disposable staging. Run email signup/login, Google OAuth, recovery from killed app, invalid/replayed link, expiry, logout online/offline, account switch, invalid token, frozen/deleting account and deletion acceptance. Confirm no prior-account flash, mutation replay, signed-URL reuse or restored cache.
+Use synthetic Owner and Other accounts in disposable staging. Run existing-user and new-user email OTP, Google OAuth, invalid/expired code, resend cooldown, logout online/offline, account switch, invalid token, frozen/deleting account and deletion acceptance. Confirm complete profiles enter Circle, incomplete profiles enter profile creation, and there is no prior-account flash, mutation replay, signed-URL reuse or restored cache.
 
 Run public/Circle/Just me media, visibility transitions, membership removal, two-way blocking, suppression, deletion and signed-URL expiry separately on Android and iOS. Run image/video capture, limited gallery, crop, four media, background/process kill/network loss, same-owner recovery, different-owner denial and deletion during processing.
 

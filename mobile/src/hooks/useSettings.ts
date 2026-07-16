@@ -101,16 +101,18 @@ export function useUnblockUserMutation() {
 
 export function useDeleteAccountMutation() {
   const queryClient = useQueryClient();
+  const beginTransition = useSessionStore((state) => state.beginTransition);
   const clearSession = useSessionStore((state) => state.clearSession);
 
   return useMutation({
     mutationFn: async () => {
       const accepted = await deleteCurrentAccount();
+      beginTransition();
       await cleanupCurrentLocalData("account_deletion", queryClient);
       await logout();
       return accepted;
     },
-    onSuccess: () => {
+    onSettled: () => {
       clearSession();
       queryClient.clear();
     }

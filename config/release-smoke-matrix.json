@@ -5,7 +5,7 @@
   "cases": [
     { "id": "launch", "owner": "mobile-release", "evidence": "safe launch recording and build hash" },
     { "id": "signup-login", "owner": "identity", "evidence": "synthetic account result" },
-    { "id": "password-recovery", "owner": "identity", "evidence": "killed-app callback and replay rejection" },
+    { "id": "email-otp", "owner": "identity", "evidence": "new/existing account OTP, restart restoration, and resend throttling" },
     { "id": "oauth", "owner": "identity", "evidence": "environment-bound callback result" },
     { "id": "circle-load", "owner": "mobile", "evidence": "fresh/cached feed result" },
     { "id": "explore-load", "owner": "mobile", "evidence": "optional-location allow/deny result" },

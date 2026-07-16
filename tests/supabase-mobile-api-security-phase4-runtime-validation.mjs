@@ -40,7 +40,9 @@ async function actor(label) {
   });
   if (profile.error) throw profile.error;
   const client = createClient(env.url, env.anonKey, options);
-  const signed = await client.auth.signInWithPassword({ email, password });
+  const link = await admin.auth.admin.generateLink({ email, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) throw link.error ?? new Error("Actor magiclink failed");
+  const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("Actor sign-in failed");
   return { client, email, id, token: signed.data.session.access_token, username };
 }
@@ -54,6 +56,12 @@ async function must(result, label) {
   return result.data;
 }
 
+function limiterResult(result) {
+  if (result.error || !Array.isArray(result.data) || result.data.length !== 1) return null;
+  const parsed = result.data[0];
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+}
+
 try {
   const alice = await actor("alice");
   const bob = await actor("bob");
@@ -63,6 +71,7 @@ try {
   for (const key of [
     "missingApiSecurityTables", "rlsDisabledApiSecurityTables", "missingApiSecurityFunctions",
     "clientApiSecurityFunctionGrants", "clientApiSecurityTableGrants", "unsafeApiSecurityDefiners",
+    "guardedClientServiceWrapperDrift", "rawServiceRpcAclDrift",
   ]) assert.deepEqual(contractData[key], [], `${key} contains drift`);
   record("Phase 4 schema contract reports no table, RLS, grant, function, or definer drift");
 
@@ -76,21 +85,24 @@ try {
   const concurrent = await Promise.all(Array.from({ length: 20 }, () =>
     admin.rpc("consume_api_rate_limits", { p_entries: [entry(endpoint, hash)] })
   ));
-  const allowed = concurrent.filter((result) => !result.error && result.data?.allowed === true).length;
+  const concurrentResults = concurrent.map(limiterResult);
+  const allowed = concurrentResults.filter((result) => result?.allowed === true).length;
   assert.equal(allowed, 5);
-  assert.equal(concurrent.filter((result) => result.data?.allowed === false).length, 15);
-  assert.ok(concurrent.filter((result) => result.data?.allowed === false).every((result) => result.data.retryAfterSeconds >= 1));
+  assert.equal(concurrentResults.filter((result) => result?.allowed === false).length, 15);
+  assert.ok(concurrentResults.filter((result) => result?.allowed === false).every((result) => result.retryAfterSeconds >= 1));
   record("atomic concurrent limiter admits exactly the configured shared burst and returns retry-after");
 
   const atomicEndpoint = `phase4.atomic.${suffix}`;
   const first = await admin.rpc("consume_api_rate_limits", {
     p_entries: [entry(atomicEndpoint, "b".repeat(64), 1), entry(atomicEndpoint, "c".repeat(64), 1)],
   });
-  assert.equal((await must(first, "first multi-dimensional limit")).allowed, true);
+  await must(first, "first multi-dimensional limit");
+  assert.equal(limiterResult(first)?.allowed, true);
   const denied = await admin.rpc("consume_api_rate_limits", {
     p_entries: [entry(atomicEndpoint, "d".repeat(64), 1), entry(atomicEndpoint, "c".repeat(64), 1)],
   });
-  assert.equal((await must(denied, "denied multi-dimensional limit")).allowed, false);
+  await must(denied, "denied multi-dimensional limit");
+  assert.equal(limiterResult(denied)?.allowed, false);
   const untouched = await admin.from("api_rate_limit_buckets").select("used").eq("endpoint", atomicEndpoint).eq("identifier_hash", "d".repeat(64)).single();
   assert.equal((await must(untouched, "atomic non-consumption check")).used, 0);
   record("multi-dimensional rejection does not partially consume another dimension");

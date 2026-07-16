@@ -281,10 +281,14 @@ export async function enforceRateLimit(
   }
   try {
     const { data, error } = await createAdminClient().rpc("consume_api_rate_limits", { p_entries: entries });
-    if (error || !data || typeof data !== "object") {
+    if (error || !Array.isArray(data) || data.length !== 1) {
       return { allowed: false, remaining: 0, retryAfterSeconds: 30 };
     }
-    const result = data as Record<string, unknown>;
+    const parsed: unknown = data[0];
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { allowed: false, remaining: 0, retryAfterSeconds: 30 };
+    }
+    const result = parsed as Record<string, unknown>;
     return {
       allowed: result.allowed === true,
       remaining: Number.isFinite(Number(result.remaining)) ? Math.max(0, Number(result.remaining)) : 0,

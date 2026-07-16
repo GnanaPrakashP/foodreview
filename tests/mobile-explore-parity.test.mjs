@@ -418,7 +418,7 @@ test("mobile dish detail is place-first and drills into scoped dish-place posts"
 });
 
 test("mobile explore detail screens use the settings-style slide-over animation", () => {
-  const layout = source("mobile/app/_layout.tsx");
+  const layout = source("mobile/src/providers/AuthGate.tsx");
   const restaurant = source("mobile/app/restaurants/[placeId].tsx");
   const dish = source("mobile/app/dishes/[dish].tsx");
   const people = source("mobile/app/people/[username].tsx");
@@ -431,7 +431,7 @@ test("mobile explore detail screens use the settings-style slide-over animation"
   const hook = source("mobile/src/hooks/useSlideOverScreen.ts");
 
   assert.match(layout, /const SLIDE_OVER_OPTIONS = \{\s*presentation: "transparentModal",\s*animation: "none"/);
-  assert.match(layout, /const SLIDE_OVER_ROUTES = \[\s*"restaurants\/\[placeId\]",\s*"restaurants\/by-name\/\[restaurant\]",\s*"dishes\/\[dish\]",\s*"people\/\[username\]"/);
+  assert.match(layout, /const SLIDE_OVER_ROUTES = new Set<string>\(\[\s*"restaurants\/\[placeId\]",\s*"restaurants\/by-name\/\[restaurant\]",\s*"dishes\/\[dish\]",\s*"people\/\[username\]"/);
   assert.doesNotMatch(layout, /<Stack\.Screen name="people\/\[username\]" \/>/);
   assert.match(restaurant, /import Reanimated from "react-native-reanimated"/);
   assert.match(restaurant, /import \{ useSlideOverScreen \}/);
@@ -495,6 +495,7 @@ test("mobile explore detail screens use the settings-style slide-over animation"
 
 test("mobile root and memory surfaces use the active theme", () => {
   const layout = source("mobile/app/_layout.tsx");
+  const authGate = source("mobile/src/providers/AuthGate.tsx");
   const memoryRouteHeader = source("mobile/src/components/memories/MemoryRouteHeader.tsx");
   const themedMemorySurfaces = [
     "mobile/app/(tabs)/share.tsx",
@@ -514,7 +515,7 @@ test("mobile root and memory surfaces use the active theme", () => {
   assert.match(layout, /<StatusBar[\s\S]*backgroundColor="transparent"[\s\S]*style=\{resolvedTheme === "light" \? "dark" : "light"\}[\s\S]*\/>/);
   assert.match(layout, /<StatusBar[\s\S]*hidden=\{false\}/);
   assert.match(layout, /<StatusBar[\s\S]*translucent=\{IS_ANDROID_EDGE_TO_EDGE\}/);
-  assert.match(layout, /contentStyle: \{ backgroundColor: themeColors\.bg \}/);
+  assert.match(authGate, /contentStyle: \{ backgroundColor: themeColors\.bg \}/);
   assert.doesNotMatch(layout, /colors\.dark\.bg/);
 
   assert.match(memoryRouteHeader, /themeColors: providedThemeColors/);

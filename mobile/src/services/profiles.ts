@@ -8,6 +8,7 @@ import {
   type ProfileRow
 } from "@/services/reviewMapper";
 import { uploadReviewMedia } from "@/services/reviewMedia";
+import { isProfileComplete, isValidProfileUsername } from "@/utils/profileCompleteness";
 
 const PROFILE_SELECT = [
   "id",
@@ -28,14 +29,11 @@ const PROFILE_SELECT = [
 
 export const PROFILE_POST_PAGE_SIZE = 24;
 
-export type SignupProfileInput = {
-  userId: string;
+export type ProfileSetupInput = {
   firstName: string;
   lastName: string;
   username: string;
 };
-
-export type ProfileSetupInput = Omit<SignupProfileInput, "userId">;
 
 export type ProfileDetailsInput = {
   bio: string;
@@ -47,6 +45,11 @@ export type UserSearchResult = {
   accountType: AccountType;
   displayName: string;
   username: string;
+};
+
+export type UsernameAvailability = {
+  available: boolean;
+  suggestions: string[];
 };
 
 type UserSearchRow = Pick<ProfileRow, "username" | "first_name" | "last_name" | "account_type">;
@@ -61,6 +64,22 @@ function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
 
+export async function checkUsernameAvailability(username: string): Promise<UsernameAvailability> {
+  const normalized = normalizeUsername(username);
+  assertValidUsername(normalized);
+  const result = await authorizedApiJson<UsernameAvailability>(
+    `/api/mobile/profile/username?username=${encodeURIComponent(normalized)}`,
+    {},
+    { action: "checking username availability" }
+  );
+  return {
+    available: result.available === true,
+    suggestions: Array.isArray(result.suggestions)
+      ? result.suggestions.filter((value) => isValidProfileUsername(value)).slice(0, 3)
+      : []
+  };
+}
+
 export function normalizeUserProfileSearchQuery(query: string) {
   return query
     .trim()
@@ -72,25 +91,30 @@ export function normalizeUserProfileSearchQuery(query: string) {
 }
 
 function assertValidProfileInput(input: ProfileSetupInput) {
-  if (!input.firstName.trim()) throw new Error("First name is required");
-  if (!input.lastName.trim()) throw new Error("Last name is required");
-  if (!/^[a-z0-9_]{3,20}$/.test(normalizeUsername(input.username))) {
+  if (!isProfileComplete(input)) {
+    const name = [input.firstName, input.lastName].filter(Boolean).join(" ").trim();
+    if (!name) throw new Error("Name is required");
+  }
+  if (!isValidProfileUsername(normalizeUsername(input.username))) {
     throw new Error("Username must be 3-20 chars: lowercase letters, numbers, or underscore");
   }
 }
 
 function assertValidUsername(username: string) {
-  if (!/^[a-z0-9_]{3,20}$/.test(normalizeUsername(username))) {
+  if (!isValidProfileUsername(normalizeUsername(username))) {
     throw new Error("Username must be 3-20 chars: lowercase letters, numbers, or underscore");
   }
 }
 
 export function actorFromProfile(profile: Profile): ActorProfile {
+  const profileName = [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim();
   return {
     userId: profile.id,
     username: profile.username,
     displayName: displayNameForProfile(profile),
-    accountType: profile.accountType
+    accountType: profile.accountType,
+    profileComplete: isProfileComplete(profile),
+    profileName
   };
 }
 
@@ -98,32 +122,14 @@ function isUsernameTakenError(error: { code?: string; message?: string } | null 
   return error?.code === "23505" || /profiles_username_unique|duplicate key/i.test(error?.message ?? "");
 }
 
-export async function createProfile(input: SignupProfileInput): Promise<Profile> {
+async function completeCurrentProfile(input: ProfileSetupInput): Promise<Profile> {
   assertValidProfileInput(input);
   const username = normalizeUsername(input.username);
-
-  // Match the Edit Profile flow: report a taken username with a friendly message
-  // instead of letting the DB unique constraint surface a raw Postgres error.
-  const { data: existing, error: existingError } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("username", username)
-    .maybeSingle<{ id: string }>();
-
-  if (existingError) throw new Error(existingError.message);
-  if (existing && existing.id !== input.userId) {
-    throw new Error("Username is already taken");
-  }
-
   const { data, error } = await supabase
-    .from("profiles")
-    .upsert({
-      id: input.userId,
-      first_name: input.firstName.trim(),
-      last_name: input.lastName.trim(),
-      username
-    }, { onConflict: "id" })
-    .select(PROFILE_SELECT)
+    .rpc("complete_current_profile", {
+      p_name: [input.firstName, input.lastName].filter(Boolean).join(" ").trim(),
+      p_username: username
+    })
     .single<ProfileRow>();
 
   if (error) {
@@ -142,12 +148,7 @@ export async function setupCurrentUserProfile(input: ProfileSetupInput): Promise
   const user = userData.user;
   if (!user) throw new Error("Log in before setting up your profile");
 
-  const profile = await createProfile({
-    userId: user.id,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    username: input.username
-  });
+  const profile = await completeCurrentProfile(input);
 
   // Keep auth metadata in sync with the profile, matching the Edit Profile flow.
   await supabase.auth.updateUser({
@@ -219,10 +220,7 @@ export async function updateCurrentAccountType(accountType: AccountType): Promis
   if (authError) throw new Error(authError.message);
 
   const { data, error } = await supabase
-    .from("profiles")
-    .update({ account_type: accountType })
-    .eq("id", user.id)
-    .select(PROFILE_SELECT)
+    .rpc("update_current_account_type", { p_account_type: accountType })
     .single<ProfileRow>();
 
   if (error) throw new Error(error.message);
@@ -247,19 +245,13 @@ export async function updateCurrentProfileDetails(input: ProfileDetailsInput): P
     await updateCurrentUsername(username);
   }
 
-  const [firstName, ...lastParts] = trimmedName.split(/\s+/);
-  const lastName = lastParts.join(" ");
   const bio = input.bio.trim().slice(0, 160);
 
   const { data, error } = await supabase
-    .from("profiles")
-    .update({
-      bio: bio || null,
-      first_name: firstName,
-      last_name: lastName
+    .rpc("update_current_profile_details", {
+      p_bio: bio || null,
+      p_name: trimmedName
     })
-    .eq("id", user.id)
-    .select(PROFILE_SELECT)
     .single<ProfileRow>();
 
   if (error) throw new Error(error.message);

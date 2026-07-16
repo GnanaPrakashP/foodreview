@@ -28,7 +28,7 @@ check(config.seed.volumes.users >= 1000 && config.seed.volumes.posts >= 10000 &&
 check(config.seed.volumes.imagePosts + config.seed.volumes.videoPosts <= config.seed.volumes.posts, "load_seed_media_distribution_invalid");
 check(config.seed.distribution.manyRoomUserRooms === 50, "load_seed_many_room_fixture_invalid");
 check(config.launchModel.mediaMix.imagePercent + config.launchModel.mediaMix.shortVideoPercent === 100, "load_media_mix_invalid");
-check(new Set([config.safety.normalConfirmation, config.safety.localValidationConfirmation, config.safety.seedConfirmation, config.safety.cleanupConfirmation, config.safety.deletionConfirmation, config.safety.failureConfirmation]).size === 6, "load_confirmations_not_separated");
+check(new Set([config.safety.developmentConfirmation, config.safety.normalConfirmation, config.safety.localValidationConfirmation, config.safety.seedConfirmation, config.safety.cleanupConfirmation, config.safety.deletionConfirmation, config.safety.failureConfirmation]).size === 7, "load_confirmations_not_separated");
 check(config.safety.productionHostSuffixes.includes("circlebites.in"), "load_production_host_guard_missing");
 check(config.safety.maxConcurrentUsers >= config.tiers.stress.concurrentUsers && config.safety.maxConcurrentUsers < 1000, "load_concurrency_safety_invalid");
 check(["launch", "stress", "soak", "realtime", "media"].every((scenario) => config.safety.telemetryRequiredScenarios.includes(scenario)), "load_external_safety_monitor_incomplete");
@@ -47,7 +47,7 @@ for (const entry of failures.cases) {
   await access(new URL(`docs/operations/runbooks/${entry.runbook}.md`, root));
 }
 
-for (const command of ["validate:load-seed:db", "load:ci-smoke", "load:smoke", "load:launch", "load:stress", "load:soak", "load:realtime", "load:media", "load:fixtures", "load:abuse", "load:deletion", "load:failure", "load:seed", "load:cleanup", "load:reconcile", "load:report", "load:evidence"]) {
+for (const command of ["validate:load-seed:db", "load:ci-smoke", "load:development", "load:smoke", "load:launch", "load:stress", "load:soak", "load:realtime", "load:media", "load:fixtures", "load:abuse", "load:deletion", "load:failure", "load:seed", "load:cleanup", "load:reconcile", "load:report", "load:evidence"]) {
   check(typeof packageJson.scripts[command] === "string", `load_command_missing:${command}`);
 }
 for (const path of [

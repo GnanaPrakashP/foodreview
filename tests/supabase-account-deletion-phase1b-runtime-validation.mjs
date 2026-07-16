@@ -102,7 +102,9 @@ async function createActor(admin, env, label) {
   });
   if (profile.error) throw profile.error;
   const client = createClient(env.url, env.anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const signed = await client.auth.signInWithPassword({ email, password });
+  const link = await admin.auth.admin.generateLink({ email, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) throw link.error ?? new Error("Magiclink failed");
+  const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("Sign-in failed");
   return { client, id: created.data.user.id, token: signed.data.session.access_token, username };
 }

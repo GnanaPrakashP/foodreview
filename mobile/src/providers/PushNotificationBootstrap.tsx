@@ -1,10 +1,11 @@
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { loadNotificationsModule, registerForPushNotifications } from "@/services/notifications";
 import { notificationKeys } from "@/hooks/useNotifications";
 import { useSessionStore } from "@/stores/sessionStore";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
+import { safeProtectedPath } from "@/navigation/authNavigationPolicy";
 
 type NotificationResponseLike = {
   notification: {
@@ -84,26 +85,31 @@ export function PushNotificationBootstrap() {
       if (!stableId || handledNotificationRef.current === stableId) return;
       handledNotificationRef.current = stableId;
 
+      const openProtectedPath = (candidate: string) => {
+        const safePath = safeProtectedPath(candidate);
+        if (safePath) router.push(safePath as Href);
+      };
+
       const roomId = roomIdFromNotificationResponse(response);
       if (roomId) {
-        router.push(`/memories/${roomId}`);
+        openProtectedPath(`/memories/${encodeURIComponent(roomId)}`);
         return;
       }
 
       const postId = stringData(response, "postId");
       if (postId) {
-        router.push(`/reviews/${encodeURIComponent(postId)}`);
+        openProtectedPath(`/reviews/${encodeURIComponent(postId)}`);
         return;
       }
 
       const entityType = stringData(response, "entityType");
       const actorName = stringData(response, "actorName");
       if ((entityType === "USER" || entityType === "CIRCLE_REQUEST") && actorName) {
-        router.push(`/people/${encodeURIComponent(actorName)}`);
+        openProtectedPath(`/people/${encodeURIComponent(actorName)}`);
         return;
       }
 
-      router.push("/notifications");
+      openProtectedPath("/notifications");
     }
 
     loadNotificationsModule()

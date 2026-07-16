@@ -28,6 +28,17 @@ function assertAllowed(result, label) {
   assert.equal(result.error, null, `${label} was denied`);
 }
 
+async function schemaContractWithTransientRetry() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await admin.rpc("production_schema_contract");
+    if (!result.error || !["PGRST000", "PGRST002"].includes(result.error.code) || attempt === 2) {
+      return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw new Error("schema_contract_retry_exhausted");
+}
+
 const env = localStatus();
 const clientOptions = { auth: { autoRefreshToken: false, persistSession: false } };
 const admin = createClient(env.url, env.serviceKey, clientOptions);
@@ -43,10 +54,11 @@ let currentCheck = "startup";
 async function createActor(label, accountType = "public") {
   const username = `p3${label}${suffix}`.slice(0, 20).toLowerCase();
   const email = `phase3.${label}.${suffix}@example.test`;
-  const password = `Phase3-${label}-${suffix}!`;
-  const created = await admin.auth.admin.createUser({ email, email_confirm: true, password });
-  if (created.error || !created.data.user) throw new Error(`actor_create_failed:${label}`);
-  const actor = { email, id: created.data.user.id, label, password, username };
+  const created = await admin.auth.admin.createUser({ email, email_confirm: true });
+  if (created.error || !created.data.user) {
+    throw new Error(`actor_create_failed:${label}:${created.error?.message ?? "missing_user"}`);
+  }
+  const actor = { email, id: created.data.user.id, label, username };
   actors.push(actor);
   const profile = await admin.from("profiles").insert({
     account_status: "active",
@@ -57,10 +69,17 @@ async function createActor(label, accountType = "public") {
     last_name: "PhaseThree",
     username
   });
-  if (profile.error) throw new Error(`profile_create_failed:${label}`);
+  if (profile.error) throw new Error(`profile_create_failed:${label}:${profile.error.message}`);
   const client = createClient(env.url, env.anonKey, clientOptions);
-  const signedIn = await client.auth.signInWithPassword({ email, password });
-  if (signedIn.error) throw new Error(`actor_sign_in_failed:${label}`);
+  const link = await admin.auth.admin.generateLink({ email, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) {
+    throw new Error(`actor_link_failed:${label}:${link.error?.message ?? "missing_token"}`);
+  }
+  const signedIn = await client.auth.verifyOtp({
+    token_hash: link.data.properties.hashed_token,
+    type: "magiclink"
+  });
+  if (signedIn.error) throw new Error(`actor_sign_in_failed:${label}:${signedIn.error.message}`);
   actor.client = client;
   return actor;
 }
@@ -94,7 +113,7 @@ try {
   assertDenied(anonContract, "anonymous schema contract");
   const authContract = await alice.client.rpc("production_schema_contract");
   assertDenied(authContract, "authenticated schema contract");
-  const serviceContract = await admin.rpc("production_schema_contract");
+  const serviceContract = await schemaContractWithTransientRetry();
   assertAllowed(serviceContract, "service schema contract");
   for (const key of [
     "missingCriticalTables", "rlsDisabledTables", "privateBucketDrift",
@@ -105,18 +124,20 @@ try {
   record("service-only schema contract reports no critical drift");
 
   const anonProfiles = await anon.from("profiles").select("id").in("id", actors.map((actor) => actor.id));
-  assertAllowed(anonProfiles, "anonymous profile query");
-  assert.equal(anonProfiles.data.length, 0);
+  assertDenied(anonProfiles, "anonymous profile query");
   const aliceProfiles = await alice.client.from("profiles").select("id").in("id", actors.map((actor) => actor.id));
   assertAllowed(aliceProfiles, "authenticated profile discovery");
   assert.equal(aliceProfiles.data.length, 4);
   const ownUpdate = await alice.client.from("profiles").update({ bio: "phase3-owner-update" }).eq("id", alice.id).select("id");
-  assertAllowed(ownUpdate, "own profile update");
-  assert.equal(ownUpdate.data.length, 1);
+  assertDenied(ownUpdate, "direct own profile update");
   const foreignUpdate = await bob.client.from("profiles").update({ bio: "forged" }).eq("id", alice.id).select("id");
-  assertAllowed(foreignUpdate, "foreign profile update query");
-  assert.equal(foreignUpdate.data.length, 0);
-  record("profile reads and owner-only updates obey RLS");
+  assertDenied(foreignUpdate, "direct foreign profile update");
+  const restrictedUpdate = await alice.client.rpc("update_current_profile_details", {
+    p_bio: "phase3-owner-update",
+    p_name: "alice PhaseThree"
+  });
+  assertAllowed(restrictedUpdate, "restricted own profile update");
+  record("profile reads and restricted owner-derived updates obey the hardened boundary");
 
   currentCheck = "seed circle membership";
   const membership = await admin.from("circle_memberships").insert({ member_name: bob.username, user_name: alice.username });
@@ -353,7 +374,8 @@ try {
   record("owner-only deletion request freezes writes and hides service-owned jobs");
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? String(error.code) : "assertion_failed";
-  console.error(`phase3-policy-validation failed:${currentCheck}:${code}`);
+  const message = error instanceof Error ? error.message : "unknown_error";
+  console.error(`phase3-policy-validation failed:${currentCheck}:${code}:${message}`);
   process.exitCode = 1;
 } finally {
   for (const [bucket, objectPath] of createdStorageObjects) {

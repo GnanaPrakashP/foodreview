@@ -3,7 +3,7 @@ import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
 
-const METHODS = ["POST"];
+const METHODS = ["GET", "POST"];
 
 const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
@@ -13,6 +13,25 @@ function mobileJson(req: NextRequest, body: unknown, init?: ResponseInit) {
 
 function normalizeUsername(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function suggestionCandidates(username: string) {
+  const stem = username
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "foodie";
+  let fingerprint = 0;
+  for (const character of username) fingerprint = (fingerprint * 31 + character.charCodeAt(0)) % 997;
+  const suffixes = [
+    "_bites",
+    "_eats",
+    "_food",
+    "_reviews",
+    ...Array.from({ length: 12 }, (_, index) => String(100 + ((fingerprint + index * 37) % 900)))
+  ];
+  return Array.from(new Set(suffixes.map((suffix) => {
+    const base = stem.slice(0, Math.max(1, 20 - suffix.length));
+    return `${base}${suffix}`;
+  }))).filter((candidate) => USERNAME_REGEX.test(candidate) && candidate !== username);
 }
 
 function usernameErrorResponse(req: NextRequest, error: unknown) {
@@ -37,6 +56,53 @@ function usernameErrorResponse(req: NextRequest, error: unknown) {
 
 export function OPTIONS(req: NextRequest) {
   return mobileOptions(req, METHODS);
+}
+
+export async function GET(req: NextRequest) {
+  const { actorResolution, authenticatedUserId } = await getRouteActor(req);
+  if (
+    actorResolution.status === "unauthenticated" ||
+    actorResolution.status === "invalid" ||
+    !authenticatedUserId
+  ) {
+    return mobileJson(req, { error: "Unauthorized" }, { status: 401 });
+  }
+  if (actorResolution.status === "frozen") {
+    return mobileJson(req, { error: "Account unavailable" }, { status: 403 });
+  }
+  if (actorResolution.status === "unavailable") {
+    return mobileJson(req, { error: "Could not check username" }, { status: 503 });
+  }
+
+  const rate = await enforceRateLimit(req, "profile.username-availability", {
+    actorUserId: authenticatedUserId
+  });
+  if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+
+  const username = normalizeUsername(req.nextUrl.searchParams.get("username"));
+  if (!USERNAME_REGEX.test(username)) {
+    return mobileJson(req, {
+      error: "Username must be 3-20 chars: lowercase letters, numbers, or underscore"
+    }, { status: 400 });
+  }
+
+  const candidates = suggestionCandidates(username);
+  const { data, error } = await createAdminClient()
+    .from("profiles")
+    .select("id, username")
+    .in("username", [username, ...candidates]);
+  if (error) return mobileJson(req, { error: "Could not check username" }, { status: 503 });
+
+  const occupied = new Set((data ?? [])
+    .filter((row) => row.id !== authenticatedUserId)
+    .map((row) => row.username));
+  const available = !occupied.has(username);
+  return mobileJson(req, {
+    available,
+    suggestions: available
+      ? []
+      : candidates.filter((candidate) => !occupied.has(candidate)).slice(0, 3)
+  });
 }
 
 export async function POST(req: NextRequest) {

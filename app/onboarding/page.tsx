@@ -78,11 +78,12 @@ export default function OnboardingPage() {
 
     const fullName = `${fn} ${ln}`;
 
-    // Insert profile row
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: profileError } = await (supabase as any)
-      .from("profiles")
-      .insert({ id: user.id, first_name: fn, last_name: ln, username: un, account_type: DEFAULT_ACCOUNT_TYPE });
+    // The database derives ownership from auth.uid() and accepts only Name and
+    // Username; clients never receive direct profile-table write privileges.
+    const { error: profileError } = await supabase.rpc("complete_current_profile", {
+      p_name: fullName,
+      p_username: un.toLowerCase()
+    } as never);
 
     if (profileError) {
       if (profileError.code === "23505") {

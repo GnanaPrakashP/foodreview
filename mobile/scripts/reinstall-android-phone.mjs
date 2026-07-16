@@ -381,7 +381,7 @@ function startApiServer(url) {
   const logPath = join(tmpdir(), `circlebites-next-api-${port}.log`);
   const out = openSync(logPath, "a");
   const err = openSync(logPath, "a");
-  const child = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
+  const child = spawn("npm", ["run", "dev", "--", "-H", url.hostname, "-p", String(port)], {
     cwd: projectRoot,
     detached: true,
     env: process.env,

@@ -18,8 +18,9 @@ const args = new Set(process.argv.slice(2));
 const artifactDir = envValue("ANDROID_PROFILE_ARTIFACT_DIR", "/private/tmp/profile-android-validation");
 const apiBaseUrl = envValue("EXPO_PUBLIC_API_BASE_URL");
 const apiPort = localUrlPort(apiBaseUrl);
-const loginEmail = envValue("ANDROID_LOGIN_EMAIL", envValue("EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL", ""));
-const loginPassword = envValue("ANDROID_LOGIN_PASSWORD", envValue("EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD", ""));
+const loginEmail = envValue("ANDROID_LOGIN_EMAIL", "");
+const configuredOtp = envValue("ANDROID_LOGIN_OTP", "");
+const mailpitUrl = envValue("ANDROID_MAILPIT_URL", "http://127.0.0.1:54324");
 const appPackage = envValue("ANDROID_APP_PACKAGE", "com.circlebites.mobile");
 const appActivity = envValue("ANDROID_APP_ACTIVITY", ".MainActivity");
 const apkPath = envValue("ANDROID_APK_PATH", "");
@@ -87,8 +88,9 @@ async function main() {
   await adbExec(adb, ["-s", serial, "shell", "am", "start", "-n", `${appPackage}/${appActivity}`]);
 
   await openEmailLogin(adb, serial);
-  await fillEmailAndContinue(adb, serial);
-  await fillPasswordAndSignIn(adb, serial);
+  const existingMailIds = configuredOtp ? new Set() : await mailIds();
+  await fillEmailAndSendCode(adb, serial);
+  await fillOtpAndContinue(adb, serial, await verificationCode(existingMailIds));
   await openProfile(adb, serial);
 
   const xml = await waitForUiText(adb, serial, profileTerms, "Profile");
@@ -104,8 +106,8 @@ async function main() {
 
 function validateConfiguration() {
   if (!apiBaseUrl) throw new Error("Missing EXPO_PUBLIC_API_BASE_URL");
-  if (!loginEmail.trim()) throw new Error("Missing ANDROID_LOGIN_EMAIL or EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL");
-  if (!loginPassword) throw new Error("Missing ANDROID_LOGIN_PASSWORD or EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD");
+  if (!loginEmail.trim()) throw new Error("Missing ANDROID_LOGIN_EMAIL");
+  if (configuredOtp && !/^\d{6}$/.test(configuredOtp)) throw new Error("ANDROID_LOGIN_OTP must contain exactly six digits");
   if (apkPath && !existsSync(apkPath)) throw new Error(`ANDROID_APK_PATH does not exist: ${apkPath}`);
 }
 
@@ -114,13 +116,13 @@ async function ensureNextServer() {
     await stopPort(apiPort);
   }
 
-  if (await resolveEmailWorks()) {
+  if (await emailOtpWorks()) {
     console.log(`Next API ready on ${apiBaseUrl}.`);
     return;
   }
 
   if (!apiPort) {
-    throw new Error("Configured EXPO_PUBLIC_API_BASE_URL did not pass /api/mobile/auth/resolve-email preflight");
+    throw new Error("Configured EXPO_PUBLIC_API_BASE_URL did not pass /api/mobile/auth/email-otp preflight");
   }
 
   writeFileSync(serverLogPath, "");
@@ -137,21 +139,21 @@ async function ensureNextServer() {
   await waitForPort("127.0.0.1", Number(apiPort), 45_000, "Next API");
   const started = Date.now();
   while (Date.now() - started < 45_000) {
-    if (await resolveEmailWorks()) return;
+    if (await emailOtpWorks()) return;
     await delay(1_000);
   }
-  throw new Error("Next API started, but /api/mobile/auth/resolve-email did not return mode=sign_in");
+  throw new Error("Next API started, but /api/mobile/auth/email-otp did not accept the request");
 }
 
-async function resolveEmailWorks() {
+async function emailOtpWorks() {
   try {
-    const response = await fetch(new URL("/api/mobile/auth/resolve-email", apiBaseUrl), {
+    const response = await fetch(new URL("/api/mobile/auth/email-otp", apiBaseUrl), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: loginEmail })
     });
     const payload = await response.json().catch(() => null);
-    return response.ok && payload?.mode === "sign_in";
+    return response.ok && payload?.ok === true;
   } catch {
     return false;
   }
@@ -168,35 +170,69 @@ async function stopPort(port) {
 
 async function openEmailLogin(adb, serial) {
   const xml = await waitForAnyUiText(adb, serial, ["Continue with Email", "Continue with email"], "auth entry");
-  if (normalizedXml(xml).includes("continue with email") && normalizedXml(xml).includes("your@email.com")) return;
+  if (normalizedXml(xml).includes("continue with email") && normalizedXml(xml).includes("name@example.com")) return;
   await tapText(adb, serial, xml, "Continue with Email", fallbackPoint(await screenSize(adb, serial), 0.5, 0.75));
-  await waitForUiText(adb, serial, ["your@email.com", "Continue"], "email form");
+  await waitForUiText(adb, serial, ["name@example.com", "Send code"], "email form");
   await captureScreenshot(adb, serial, resolve(artifactDir, "installed-email-form.png"));
 }
 
-async function fillEmailAndContinue(adb, serial) {
+async function fillEmailAndSendCode(adb, serial) {
   let xml = await readUiXml(adb, serial);
-  await tapText(adb, serial, xml, "your@email.com", fallbackPoint(await screenSize(adb, serial), 0.5, 0.79));
+  await tapText(adb, serial, xml, "name@example.com", fallbackPoint(await screenSize(adb, serial), 0.5, 0.79));
   await clearFocusedText(adb, serial, 48);
   await adbExec(adb, ["-s", serial, "shell", "input", "text", loginEmail]);
   await adbExec(adb, ["-s", serial, "shell", "input", "keyevent", "111"], { allowFailure: true });
 
   xml = await readUiXml(adb, serial);
-  await tapText(adb, serial, xml, "Continue", fallbackPoint(await screenSize(adb, serial), 0.5, 0.88));
-  await waitForUiText(adb, serial, ["Password", "Sign In"], "password form");
-  await captureScreenshot(adb, serial, resolve(artifactDir, "installed-password-form.png"));
+  await tapText(adb, serial, xml, "Send code", fallbackPoint(await screenSize(adb, serial), 0.5, 0.88));
+  await waitForUiText(adb, serial, ["Enter verification code", "Verify and continue"], "verification code form");
+  await captureScreenshot(adb, serial, resolve(artifactDir, "installed-otp-form.png"));
 }
 
-async function fillPasswordAndSignIn(adb, serial) {
+async function fillOtpAndContinue(adb, serial, otp) {
   let xml = await readUiXml(adb, serial);
-  await tapText(adb, serial, xml, "Password", fallbackPoint(await screenSize(adb, serial), 0.5, 0.73));
-  await clearFocusedText(adb, serial, 48);
-  await adbExec(adb, ["-s", serial, "shell", "input", "text", loginPassword]);
+  await tapText(adb, serial, xml, "Verification code", fallbackPoint(await screenSize(adb, serial), 0.5, 0.58));
+  await adbExec(adb, ["-s", serial, "shell", "input", "text", otp]);
   await adbExec(adb, ["-s", serial, "shell", "input", "keyevent", "111"], { allowFailure: true });
 
   xml = await readUiXml(adb, serial);
-  await tapText(adb, serial, xml, "Sign In", fallbackPoint(await screenSize(adb, serial), 0.5, 0.86));
+  await tapText(adb, serial, xml, "Verify and continue", fallbackPoint(await screenSize(adb, serial), 0.5, 0.75));
   await waitForLoggedInShell(adb, serial);
+}
+
+async function mailIds() {
+  const response = await fetch(`${mailpitUrl}/api/v1/messages`);
+  if (!response.ok) throw new Error("Mailpit is unavailable; set ANDROID_LOGIN_OTP for a non-local email provider");
+  const payload = await response.json();
+  return new Set((payload.messages ?? []).map((message) => message.ID));
+}
+
+async function verificationCode(existingMailIds) {
+  if (configuredOtp) return configuredOtp;
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${mailpitUrl}/api/v1/messages`);
+    if (!response.ok) throw new Error("Mailpit is unavailable; set ANDROID_LOGIN_OTP for a non-local email provider");
+    const payload = await response.json();
+    for (const message of payload.messages ?? []) {
+      if (existingMailIds.has(message.ID)) continue;
+      const detailResponse = await fetch(`${mailpitUrl}/api/v1/message/${message.ID}`);
+      if (!detailResponse.ok) continue;
+      const content = allStrings(await detailResponse.json()).join("\n");
+      if (!content.toLowerCase().includes(loginEmail.toLowerCase())) continue;
+      const otp = content.match(/\b\d{6}\b/)?.[0];
+      if (otp) return otp;
+    }
+    await delay(300);
+  }
+  throw new Error("Timed out waiting for the CircleBites verification code in Mailpit");
+}
+
+function allStrings(value, output = []) {
+  if (typeof value === "string") output.push(value);
+  else if (Array.isArray(value)) for (const item of value) allStrings(item, output);
+  else if (value && typeof value === "object") for (const item of Object.values(value)) allStrings(item, output);
+  return output;
 }
 
 async function openProfile(adb, serial) {

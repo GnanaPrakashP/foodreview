@@ -37,8 +37,7 @@ Initial policies are centralized in `lib/server/mobile-api-policies.ts`:
 
 | Category | Initial policy |
 | --- | --- |
-| Resolve email | IP 8/5 min; install 12/5 min; normalized subject 4/15 min |
-| Password recovery | IP 5/15 min; install 5/15 min; subject 3/hour |
+| Email OTP request | IP 8/5 min; install 12/5 min; normalized subject 4/15 min |
 | Places autocomplete | user 30/min; install 40/min; IP 80/min; cost 1 |
 | Place details | user budget 30/min; install 40/min; IP 80/min; cost 2 |
 | Reverse geocode | user 20/min; install 30/min; IP 60/min |
@@ -73,22 +72,21 @@ Codes distinguish authentication, invalid input, request size, rate limiting, in
 
 ## Authentication and account enumeration
 
-`/api/mobile/auth/resolve-email` never queries Auth or application tables and always returns the same `202 {"ok":true}` response after a small fixed response floor. Password recovery also always returns a generic 202 response for valid, invalid, existing, and non-existing accounts. Both are size-bounded and limited by hashed IP/install/subject.
+`/api/mobile/auth/email-otp` sends a six-digit Supabase email OTP with account creation enabled and always returns the same `202 {"ok":true}` response for existing and new addresses. It never queries the Auth directory or application tables. The endpoint is size-bounded and limited by hashed IP/install/subject.
 
-The mobile login flow no longer asks the server whether the account exists. Sign-in is generic and account creation is an explicit user choice. Signup and recovery errors must not be changed to reveal provider or account state.
+The mobile login flow never asks whether the account exists and has no email/password branch. The user enters an email, requests a code, and verifies the six-digit OTP. Verification establishes the Supabase session; the root authentication gate sends a complete profile to Circle and a new or incomplete profile to profile creation. Google OAuth continues through the environment-bound app callback. Errors must not reveal provider or account state.
 
-## Password recovery, OAuth, and deep links
+## Password prevention, OAuth, and deep links
 
 Allowed production callbacks are only:
 
 ```text
 circlebites://auth/callback
-circlebites://auth/recovery
 ```
 
-Supabase must allow the query-bearing forms using explicit `circlebites://auth/callback**` and `circlebites://auth/recovery**` patterns. The server constructs the recovery destination; it does not accept a client redirect. Mobile creates a cryptographic 256-bit flow nonce in SecureStore with a 30-minute expiry. Callback mode, scheme, host, path, credentials, redirect parameters, state/nonce, and recovery type are validated before establishing a session. The nonce is consumed once, so duplicate/replayed callbacks fail. OAuth uses PKCE code exchange. Recovery accepts a PKCE code, recovery token hash, or Supabase's mode-tagged implicit recovery session, but never an implicit normal-login session. Navigation immediately replaces the token-bearing callback URL with `/auth/recovery`.
+Supabase must allow the query-bearing OAuth form using explicit `circlebites://auth/callback**`, with equivalent development and preview schemes confined to those environments. Mobile creates a cryptographic 256-bit OAuth nonce in SecureStore with a 30-minute expiry. Callback scheme, host, path, credentials, redirect parameters, state/nonce, and flow mode are validated before PKCE code exchange. The nonce is consumed once, so duplicate/replayed callbacks fail.
 
-After validation, the user sets an 8–128 character password. The app updates the Supabase user, signs out locally, clears recovery state, and returns to sign-in. Expired, malformed, wrong-mode, missing-state, or replayed callbacks receive one generic invalid/expired message.
+Password login/signup/reset/recovery UI, APIs, callbacks, and navigation are absent. The hosted Custom Access Token Hook rejects password token issuance. If Supabase reports a legacy `PASSWORD_RECOVERY` event, mobile signs it out before protected state mounts. See `docs/security/AUTH_PROFILE_BOUNDARY.md` for the provider-level recovery limitation and release gates.
 
 ## Viewer privacy and mutations
 

@@ -344,8 +344,11 @@ export async function unblockUser(username: string): Promise<void> {
 
 export async function deleteCurrentAccount(): Promise<AccountDeletionAccepted> {
   const startedAt = Date.now();
-  await getViewerProfile();
+  const viewer = await getViewerProfile();
   try {
+    // Remove every device association while the account is still active; the
+    // deletion RPC freezes authenticated writes in the same transaction.
+    await removePushTokensForUser(viewer.username).catch(() => {});
     const response = await fetch(apiUrl("/api/delete-account"), {
       headers: await authorizedApiHeaders("deleting your account", "POST"),
       method: "POST"

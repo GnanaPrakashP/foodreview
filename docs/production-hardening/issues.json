@@ -146,7 +146,7 @@
       "status": "complete",
       "phase": "4",
       "branch": "hardening/06-api-security",
-      "affectedFiles": ["app/api/mobile/auth/resolve-email/route.ts", "mobile/src/services/auth.ts", "mobile/app/(auth)/login.tsx"],
+      "affectedFiles": ["app/api/mobile/auth/email-otp/route.ts", "mobile/src/services/auth.ts", "mobile/app/(auth)/login.tsx"],
       "dependencies": [],
       "acceptanceCriteria": ["Existing and non-existing email responses are indistinguishable", "No auth-user pagination scan occurs", "Endpoint has abuse throttling", "Authentication UX remains complete"]
     },
@@ -196,14 +196,14 @@
     },
     {
       "id": "PH-406",
-      "title": "Complete mobile password recovery",
+      "title": "Remove password and recovery product surfaces",
       "severity": "P1",
-      "status": "blocked",
+      "status": "complete",
       "phase": "4",
       "branch": "hardening/06-api-security",
       "affectedFiles": ["mobile/src/services/auth.ts", "mobile/app/(auth)", "mobile/app/_layout.tsx"],
       "dependencies": ["PH-801", "PH-802"],
-      "acceptanceCriteria": ["Recovery email uses an approved app redirect", "Deep link establishes a recovery session", "User can set a new password after app termination", "Android and iOS real-device flows pass"]
+      "acceptanceCriteria": ["Google and email OTP are the only product sign-in methods", "Password and recovery UI/API/callback/navigation are absent", "Hosted Auth hook rejects password token issuance", "Legacy recovery events fail closed before protected state mounts"]
     },
     {
       "id": "PH-501",

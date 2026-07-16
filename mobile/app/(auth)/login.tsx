@@ -1,372 +1,242 @@
-import type { ActorProfile } from "@/types/models";
-import Ionicons from "@expo/vector-icons/Ionicons";
-import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { Alert, BackHandler, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   AuthButton,
   AuthDivider,
-  EmailAuthButton,
   AuthInput,
   AuthShell,
+  EmailAuthButton,
   ErrorMessage,
   GoogleAuthButton,
-  NoticeMessage,
-  PasswordInput
+  OtpCodeInput
 } from "@/components/auth/AuthUi";
 import {
   useGoogleLoginMutation,
-  useLoginMutation,
-  usePasswordResetMutation,
-  useResolveEmailAuthModeMutation,
-  useSignupMutation
+  useRequestEmailOtpMutation,
+  useVerifyEmailOtpMutation
 } from "@/hooks/useAuth";
 import { userFacingAuthError } from "@/services/auth";
+import { openLegalDocument, type LegalDocument } from "@/services/legalDocuments";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing } from "@/theme";
 
-type AuthMode = "entry" | "email" | "sign_in" | "sign_up" | "forgot";
+type AuthMode = "entry" | "email" | "otp";
 type AuthStyles = ReturnType<typeof createStyles>;
-const heroSource = require("../../assets/onboarding/food-decision-hero.webp");
+
+const OTP_RESEND_SECONDS = 30;
 
 export default function LoginScreen() {
-  const router = useRouter();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
-  const login = useLoginMutation();
   const googleLogin = useGoogleLoginMutation();
-  const resolveEmail = useResolveEmailAuthModeMutation();
-  const signup = useSignupMutation();
-  const resetPassword = usePasswordResetMutation();
+  const requestEmailOtp = useRequestEmailOtpMutation();
+  const verifyEmailOtp = useVerifyEmailOtpMutation();
   const [mode, setMode] = useState<AuthMode>("entry");
   const [email, setEmail] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [localError, setLocalError] = useState("");
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const shouldCompactHero = mode !== "entry" && keyboardVisible;
+  const [verificationCode, setVerificationCode] = useState("");
+  const [resendRemaining, setResendRemaining] = useState(0);
+  const resetGoogleLogin = googleLogin.reset;
+  const resetEmailOtpRequest = requestEmailOtp.reset;
+  const resetEmailOtpVerification = verifyEmailOtp.reset;
 
-  useEffect(() => {
-    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+  const clearMessages = useCallback(() => {
+    resetGoogleLogin();
+    resetEmailOtpRequest();
+    resetEmailOtpVerification();
+  }, [resetEmailOtpRequest, resetEmailOtpVerification, resetGoogleLogin]);
 
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
-
-  function routeAfterAuth(profile: ActorProfile | null) {
-    router.replace(profile ? "/" : "/onboarding/profile");
-  }
-
-  function clearMessages() {
-    setNotice("");
-    setLocalError("");
-    googleLogin.reset();
-    login.reset();
-    resolveEmail.reset();
-    signup.reset();
-    resetPassword.reset();
-  }
-
-  function changeMode(nextMode: AuthMode) {
+  const changeMode = useCallback((nextMode: AuthMode) => {
     clearMessages();
     setMode(nextMode);
-  }
+    if (nextMode !== "otp") setVerificationCode("");
+  }, [clearMessages]);
+
+  useEffect(() => {
+    if (mode !== "otp" || resendRemaining <= 0) return;
+    const timer = setTimeout(() => {
+      setResendRemaining((remaining) => Math.max(0, remaining - 1));
+    }, 1_000);
+    return () => clearTimeout(timer);
+  }, [mode, resendRemaining]);
+
+  useEffect(() => {
+    if (mode === "entry") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      changeMode(mode === "otp" ? "email" : "entry");
+      return true;
+    });
+    return () => subscription.remove();
+  }, [changeMode, mode]);
 
   async function submitGoogleLogin() {
     clearMessages();
     try {
-      const result = await googleLogin.mutateAsync();
-      routeAfterAuth(result.profile);
+      await googleLogin.mutateAsync();
     } catch {
       // Mutation error is rendered below.
     }
   }
 
-  async function submitLogin() {
+  async function sendVerificationCode() {
     clearMessages();
     try {
-      const result = await login.mutateAsync({ email, password });
-      routeAfterAuth(result.profile);
+      await requestEmailOtp.mutateAsync({ email });
+      setVerificationCode("");
+      setResendRemaining(OTP_RESEND_SECONDS);
+      setMode("otp");
     } catch {
       // Mutation error is rendered below.
     }
   }
 
-  async function submitEmailContinue() {
+  async function verifyCode() {
     clearMessages();
     try {
-      const nextMode = await resolveEmail.mutateAsync({ email });
-      setMode(nextMode);
-    } catch {
-      // Mutation error is rendered below.
-    }
-  }
-
-  async function submitSignup() {
-    clearMessages();
-    if (password !== confirmPassword) {
-      setLocalError("Passwords don't match.");
-      return;
-    }
-    if (password.length < 8) {
-      setLocalError("Password must be at least 8 characters.");
-      return;
-    }
-
-    try {
-      const result = await signup.mutateAsync({ firstName, lastName, email, password });
-      if (!result.session) {
-        setNotice(`We sent a confirmation link to ${email.trim()}. Click it to activate your account, then sign in.`);
-        setMode("sign_in");
-        return;
-      }
-      routeAfterAuth(result.profile);
-    } catch {
-      // Mutation error is rendered below.
-    }
-  }
-
-  async function submitReset() {
-    clearMessages();
-    try {
-      await resetPassword.mutateAsync({ email });
-      setNotice(`We sent a password reset link to ${email.trim()}.`);
+      await verifyEmailOtp.mutateAsync({ email, token: verificationCode });
+      // Session-driven navigation is owned by the root authentication gate.
     } catch {
       // Mutation error is rendered below.
     }
   }
 
   return (
-    <AuthShell contentHorizontalPadding={0} contentTopPadding={0} edges={["top", "bottom"]} showGlow={false} showHero={false}>
-      <View style={styles.entryPanel}>
-        <View pointerEvents="none" style={styles.backgroundVisual}>
-          <Image source={heroSource} style={styles.backgroundImage} contentFit="cover" />
-          <LinearGradient
-            colors={[
-              "rgba(14, 11, 8, 0.08)",
-              "rgba(14, 11, 8, 0.48)",
-              "rgba(14, 11, 8, 0.86)",
-              themeColors.bg
-            ]}
-            locations={[0, 0.28, 0.58, 0.86]}
-            style={styles.screenFade}
-          />
-        </View>
-        <EntryHero compact={shouldCompactHero} styles={styles} />
-        <View style={[styles.entryBody, mode !== "entry" && styles.flowBody, shouldCompactHero && styles.flowBodyKeyboard]}>
+    <AuthShell
+      addTopInsetToContent={mode === "entry"}
+      contentHorizontalPadding={0}
+      contentTopPadding={0}
+      edges={mode === "entry" ? ["top", "bottom"] : []}
+      scrollEnabled={mode !== "entry"}
+      showGlow={false}
+      showHero={false}
+    >
+      <View style={[styles.entryPanel, mode === "entry" && styles.entryPanelWelcome]}>
+        {mode === "entry" ? <EntryHero styles={styles} /> : null}
+
+        <View style={[styles.entryBody, mode === "entry" ? styles.entryBodyWelcome : styles.flowBody]}>
           {mode === "entry" ? (
-            <>
-              <View style={styles.entryActions}>
-                <View style={styles.entryMethodButton}>
-                  <GoogleAuthButton
-                    disabled={login.isPending || signup.isPending || resetPassword.isPending}
-                    loading={googleLogin.isPending}
-                    onPress={submitGoogleLogin}
-                  />
-                </View>
-                {googleLogin.isError ? <ErrorMessage>{userFacingAuthError(googleLogin.error, "Google sign-in failed. Please try again.")}</ErrorMessage> : null}
-
-                <View style={styles.entryMethodButton}>
-                  <AuthDivider />
-                </View>
-
-                <View style={styles.entryMethodButton}>
-                  <EmailAuthButton onPress={() => changeMode("email")} />
-                </View>
+            <View style={styles.entryActions}>
+              <View style={styles.entryMethodButton}>
+                <GoogleAuthButton
+                  disabled={requestEmailOtp.isPending || verifyEmailOtp.isPending}
+                  loading={googleLogin.isPending}
+                  onPress={submitGoogleLogin}
+                />
               </View>
-            </>
+
+              {googleLogin.isError ? (
+                <ErrorMessage>{userFacingAuthError(googleLogin.error, "Google sign-in failed. Please try again.")}</ErrorMessage>
+              ) : null}
+
+              <View style={styles.entryMethodButton}>
+                <AuthDivider />
+              </View>
+
+              <View style={styles.entryMethodButton}>
+                <EmailAuthButton
+                  disabled={googleLogin.isPending}
+                  onPress={() => changeMode("email")}
+                />
+              </View>
+            </View>
           ) : null}
 
-        {mode === "email" ? (
-          <AuthFlowPane styles={styles}>
-            <BackLink onPress={() => changeMode("entry")} styles={styles} themeColors={themeColors}>Back</BackLink>
-            <AuthHeader title="Continue with email" text="Enter your email to sign in or create an account." styles={styles} />
-
-            <AuthInput
-              autoComplete="email"
-              error={resolveEmail.isError}
-              icon="mail-outline"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              onFocus={clearMessages}
-              placeholder="your@email.com"
-              value={email}
-            />
-
-            {resolveEmail.isError ? <ErrorMessage>{userFacingAuthError(resolveEmail.error, "We couldn't continue with that email. Please try again.")}</ErrorMessage> : null}
-
-            <AuthButton
-              disabled={!email.trim()}
-              loading={resolveEmail.isPending}
-              onPress={submitEmailContinue}
-            >
-              Continue
-            </AuthButton>
-          </AuthFlowPane>
-        ) : null}
-
-        {mode === "sign_in" ? (
-          <AuthFlowPane styles={styles}>
-            <BackLink onPress={() => changeMode("email")} styles={styles} themeColors={themeColors}>Back</BackLink>
-            <AuthHeader title="Welcome back" text="Enter your password to sign in." styles={styles} />
-
-            <AuthInput
-              autoComplete="email"
-              error={login.isError}
-              icon="mail-outline"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              onFocus={clearMessages}
-              placeholder="your@email.com"
-              value={email}
-            />
-            <PasswordInput
-              error={login.isError}
-              onChangeText={setPassword}
-              onFocus={clearMessages}
-              onToggle={() => setShowPassword((value) => !value)}
-              placeholder="Password"
-              show={showPassword}
-              value={password}
-            />
-
-            {login.isError ? <ErrorMessage>{userFacingAuthError(login.error, "Sign in failed. Please try again.")}</ErrorMessage> : null}
-
-            <View style={styles.forgotRow}>
-              <Pressable onPress={() => changeMode("forgot")} hitSlop={8}>
-                <Text style={styles.forgotText}>Forgot password?</Text>
-              </Pressable>
-            </View>
-
-            <AuthButton
-              disabled={!email.trim() || !password.trim()}
-              loading={login.isPending}
-              onPress={submitLogin}
-            >
-              Sign In
-            </AuthButton>
-            <View style={styles.forgotRow}>
-              <Pressable onPress={() => changeMode("sign_up")} hitSlop={8}>
-                <Text style={styles.forgotText}>New to CircleBites? Create an account</Text>
-              </Pressable>
-            </View>
-          </AuthFlowPane>
-        ) : null}
-
-        {mode === "sign_up" ? (
-          <AuthFlowPane styles={styles}>
-            <BackLink onPress={() => changeMode("email")} styles={styles} themeColors={themeColors}>Back</BackLink>
-            <AuthHeader title="Create your account" text="Set your name and password. You'll choose a username next." styles={styles} />
-
-            <View style={styles.nameRow}>
-              <View style={styles.nameField}>
-                <AuthInput
-                  autoCapitalize="words"
-                  autoComplete="name"
-                  error={Boolean(localError || signup.isError)}
-                  icon="person-outline"
-                  onChangeText={setFirstName}
-                  onFocus={clearMessages}
-                  placeholder="First name"
-                  value={firstName}
+          {mode === "email" ? (
+            <AuthFlowPane styles={styles}>
+              <BackButton onPress={() => changeMode("entry")} styles={styles} themeColors={themeColors} />
+              <View style={styles.flowContent}>
+                <AuthHeader
+                  title="What’s your email?"
+                  text="We’ll send you a six-digit verification code."
+                  styles={styles}
                 />
+
+                <View style={styles.primaryFormFields}>
+                  <AuthInput
+                    autoComplete="email"
+                    error={requestEmailOtp.isError}
+                    icon="mail-outline"
+                    keyboardType="email-address"
+                    onChangeText={setEmail}
+                    onFocus={clearMessages}
+                    placeholder="name@example.com"
+                    value={email}
+                  />
+
+                  {requestEmailOtp.isError ? (
+                    <ErrorMessage>{userFacingAuthError(requestEmailOtp.error, "We couldn't send a code right now. Please try again.")}</ErrorMessage>
+                  ) : null}
+
+                  <AuthButton
+                    disabled={!email.trim()}
+                    loading={requestEmailOtp.isPending}
+                    onPress={sendVerificationCode}
+                  >
+                    Send code
+                  </AuthButton>
+                </View>
               </View>
-              <View style={styles.nameField}>
-                <AuthInput
-                  autoCapitalize="words"
-                  autoComplete="name"
-                  error={Boolean(localError || signup.isError)}
-                  icon="person-outline"
-                  onChangeText={setLastName}
-                  onFocus={clearMessages}
-                  placeholder="Last name"
-                  value={lastName}
+            </AuthFlowPane>
+          ) : null}
+
+          {mode === "otp" ? (
+            <AuthFlowPane styles={styles}>
+              <BackButton onPress={() => changeMode("email")} styles={styles} themeColors={themeColors} />
+              <View style={styles.flowContent}>
+                <AuthHeader
+                  title="Enter verification code"
+                  text={`Sent to ${email.trim().toLowerCase()}`}
+                  styles={styles}
                 />
+
+                <View style={styles.primaryFormFields}>
+                  <OtpCodeInput
+                    error={verifyEmailOtp.isError}
+                    onChangeText={(value) => {
+                      verifyEmailOtp.reset();
+                      setVerificationCode(value);
+                    }}
+                    value={verificationCode}
+                  />
+
+                  {verifyEmailOtp.isError ? (
+                    <ErrorMessage>{userFacingAuthError(verifyEmailOtp.error, "We couldn't verify that code. Please try again.")}</ErrorMessage>
+                  ) : null}
+                  {requestEmailOtp.isError ? (
+                    <ErrorMessage>{userFacingAuthError(requestEmailOtp.error, "We couldn't resend the code. Please try again.")}</ErrorMessage>
+                  ) : null}
+
+                  <AuthButton
+                    disabled={verificationCode.length !== 6}
+                    loading={verifyEmailOtp.isPending}
+                    onPress={verifyCode}
+                  >
+                    Verify and continue
+                  </AuthButton>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: resendRemaining > 0 || requestEmailOtp.isPending }}
+                    disabled={resendRemaining > 0 || requestEmailOtp.isPending}
+                    hitSlop={8}
+                    onPress={sendVerificationCode}
+                    style={styles.resendButton}
+                  >
+                    <Text style={[styles.resendText, resendRemaining > 0 && styles.resendTextDisabled]}>
+                      {requestEmailOtp.isPending
+                        ? "Sending code…"
+                        : resendRemaining > 0
+                          ? `Resend code in ${resendRemaining} seconds`
+                          : "Resend code"}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
-            </View>
-            <AuthInput
-              autoComplete="email"
-              error={Boolean(localError || signup.isError)}
-              icon="mail-outline"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              onFocus={clearMessages}
-              placeholder="your@email.com"
-              value={email}
-            />
-            <PasswordInput
-              error={Boolean(localError || signup.isError)}
-              onChangeText={setPassword}
-              onFocus={clearMessages}
-              onToggle={() => setShowPassword((value) => !value)}
-              placeholder="Password (min. 8 chars)"
-              show={showPassword}
-              value={password}
-            />
-            <PasswordInput
-              error={Boolean(localError || signup.isError)}
-              onChangeText={setConfirmPassword}
-              onFocus={clearMessages}
-              onToggle={() => setShowPassword((value) => !value)}
-              placeholder="Confirm password"
-              show={showPassword}
-              value={confirmPassword}
-            />
-
-            {localError ? <ErrorMessage>{localError}</ErrorMessage> : null}
-            {signup.isError ? <ErrorMessage>{userFacingAuthError(signup.error, "We couldn't create your account. Please try again.")}</ErrorMessage> : null}
-            {notice ? <NoticeMessage>{notice}</NoticeMessage> : null}
-
-            <AuthButton
-              disabled={!firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()}
-              loading={signup.isPending}
-              onPress={submitSignup}
-            >
-              Create Account
-            </AuthButton>
-            <SignupTermsBlock styles={styles} />
-          </AuthFlowPane>
-        ) : null}
-
-        {mode === "forgot" ? (
-          <AuthFlowPane styles={styles}>
-            <BackLink onPress={() => changeMode("sign_in")} styles={styles} themeColors={themeColors}>Back to Sign In</BackLink>
-            <AuthHeader title="Reset password" text="Enter your email and we'll send a reset link." styles={styles} />
-
-            <AuthInput
-              autoComplete="email"
-              error={resetPassword.isError}
-              icon="mail-outline"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              onFocus={clearMessages}
-              placeholder="your@email.com"
-              value={email}
-            />
-
-            {resetPassword.isError ? <ErrorMessage>{userFacingAuthError(resetPassword.error, "We couldn't send the reset link. Please try again.")}</ErrorMessage> : null}
-            {notice ? <NoticeMessage>{notice}</NoticeMessage> : null}
-
-            <AuthButton
-              disabled={!email.trim()}
-              loading={resetPassword.isPending}
-              onPress={submitReset}
-            >
-              Send reset link
-            </AuthButton>
-          </AuthFlowPane>
-        ) : null}
+            </AuthFlowPane>
+          ) : null}
         </View>
+
         {mode === "entry" ? (
           <View style={styles.termsWrap}>
             <TermsBlock styles={styles} />
@@ -378,49 +248,77 @@ export default function LoginScreen() {
 }
 
 function AuthFlowPane({ children, styles }: { children: ReactNode; styles: AuthStyles }) {
+  return <View style={styles.entryForm}>{children}</View>;
+}
+
+function BackButton({
+  onPress,
+  styles,
+  themeColors
+}: {
+  onPress: () => void;
+  styles: AuthStyles;
+  themeColors: ReturnType<typeof themeColorsFor>;
+}) {
   return (
-    <View style={styles.entryForm}>
-      {children}
+    <View style={styles.flowHeaderWrap}>
+      <Pressable
+        accessibilityLabel="Go back"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onPress}
+        style={({ pressed }) => [styles.flowBackButton, pressed && styles.flowBackButtonPressed]}
+      >
+        <Ionicons color={themeColors.cream} name="arrow-back" size={24} />
+      </Pressable>
     </View>
   );
 }
 
-function BackLink({ children, onPress, styles, themeColors }: { children: ReactNode; onPress: () => void; styles: AuthStyles; themeColors: ReturnType<typeof themeColorsFor> }) {
+function EntryHero({ styles }: { styles: AuthStyles }) {
   return (
-    <Pressable hitSlop={10} onPress={onPress} style={styles.backLink}>
-      <Ionicons name="chevron-back" size={16} color={themeColors.orange} />
-      <Text style={styles.backLinkText}>{children}</Text>
-    </Pressable>
-  );
-}
-
-function EntryHero({ compact, styles }: { compact: boolean; styles: AuthStyles }) {
-  return (
-    <View style={[styles.entryHero, compact && styles.entryHeroCompact]}>
+    <View style={styles.entryHero}>
       <View style={styles.entryHeroContent}>
         <Text style={styles.entryWordmark}>
           Circle<Text style={styles.entryWordmarkAccent}>Bites</Text>
         </Text>
-        {!compact ? <Text style={styles.entryTaglineText}>Food picks from people you trust</Text> : null}
+        <Text style={styles.entryTaglineText}>Food picks from people you trust</Text>
       </View>
     </View>
   );
 }
 
 function TermsBlock({ styles }: { styles: AuthStyles }) {
+  const openDocument = useCallback((document: LegalDocument) => {
+    void openLegalDocument(document).catch(() => {
+      Alert.alert(
+        "Unable to open this document",
+        "Check your internet connection and try again."
+      );
+    });
+  }, []);
+
   return (
     <Text style={styles.termsText}>
-      By continuing, you agree to our{"\n"}
-      <Text style={styles.termsLink}>Terms of Service</Text> and <Text style={styles.termsLink}>Privacy Policy</Text>.
-    </Text>
-  );
-}
-
-function SignupTermsBlock({ styles }: { styles: AuthStyles }) {
-  return (
-    <Text style={styles.signupTermsText}>
-      By creating an account, you agree to our <Text style={styles.termsLink}>Terms of Service</Text> and{" "}
-      <Text style={styles.termsLink}>Privacy Policy</Text>.
+      By continuing, you agree to the{" "}
+      <Text
+        accessibilityHint="Opens the CircleBites Terms of Service"
+        accessibilityRole="link"
+        onPress={() => openDocument("terms")}
+        style={styles.termsLink}
+      >
+        Terms of Service
+      </Text>
+      {"\n"}and acknowledge the{" "}
+      <Text
+        accessibilityHint="Opens the CircleBites Privacy Policy"
+        accessibilityRole="link"
+        onPress={() => openDocument("privacy")}
+        style={styles.termsLink}
+      >
+        Privacy Policy
+      </Text>
+      .
     </Text>
   );
 }
@@ -439,13 +337,12 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     headerBlock: {
       alignItems: "center",
       gap: spacing.sm,
-      marginBottom: spacing.base,
       marginTop: spacing.sm
     },
     cardTitle: {
       ...fontStyles.extraBold,
       color: c.cream,
-      fontSize: 18,
+      fontSize: 20,
       textAlign: "center"
     },
     cardText: {
@@ -455,91 +352,33 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       lineHeight: 19,
       textAlign: "center"
     },
-    nameRow: {
-      flexDirection: "row",
-      gap: spacing.sm
-    },
-    nameField: {
-      flex: 1,
-      minWidth: 0
-    },
-    forgotRow: {
-      alignItems: "flex-end",
-      marginBottom: 14,
-      marginTop: -2
-    },
-    forgotText: {
-      ...fontStyles.bold,
-      color: c.orange,
-      fontSize: 12
-    },
     entryPanel: {
       alignSelf: "center",
       flexGrow: 1,
-      justifyContent: "space-between",
       minHeight: "100%",
-      overflow: "hidden",
       paddingBottom: 24,
-      paddingTop: 0,
-      position: "relative",
       width: "100%"
     },
-    backgroundVisual: {
-      bottom: 0,
-      left: 0,
-      position: "absolute",
-      right: 0,
-      top: 0
-    },
-    backgroundImage: {
-      height: 560,
-      left: 0,
-      position: "absolute",
-      right: 0,
-      top: 0
-    },
-    screenFade: {
-      bottom: 0,
-      left: 0,
-      position: "absolute",
-      right: 0,
-      top: 0
+    entryPanelWelcome: {
+      justifyContent: "space-between",
+      paddingBottom: 8
     },
     entryHero: {
       alignItems: "center",
       paddingHorizontal: 22,
-      paddingTop: 270,
-      width: "100%",
-      zIndex: 1
-    },
-    entryHeroCompact: {
-      paddingTop: 92
+      paddingTop: 206,
+      width: "100%"
     },
     entryHeroContent: {
       alignItems: "center",
       maxWidth: 430,
       width: "100%"
     },
-    entryBody: {
-      alignSelf: "center",
-      marginTop: 34,
-      maxWidth: 430,
-      paddingHorizontal: 22,
-      width: "100%",
-      zIndex: 1
-    },
-    flowBody: {
-      marginTop: 24
-    },
-    flowBodyKeyboard: {
-      marginTop: 18
-    },
     entryWordmark: {
       ...fontStyles.extraBold,
-      color: "#FFFFFF",
-      fontSize: 36,
-      lineHeight: 40,
-      marginTop: 0,
+      color: c.cream,
+      fontSize: 38,
+      lineHeight: 43,
       textAlign: "center"
     },
     entryWordmarkAccent: {
@@ -547,65 +386,99 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     },
     entryTaglineText: {
       ...fontStyles.semiBold,
-      color: "rgba(255, 255, 255, 0.68)",
+      color: c.muted,
       fontSize: 14,
       lineHeight: 20,
-      marginTop: 8,
+      marginTop: 9,
       textAlign: "center"
+    },
+    entryBody: {
+      alignSelf: "center",
+      maxWidth: 430,
+      paddingHorizontal: 22,
+      width: "100%"
+    },
+    entryBodyWelcome: {
+      marginTop: 0,
+      transform: [{ translateY: 16 }]
+    },
+    flowBody: {
+      marginTop: 76,
+      maxWidth: "100%",
+      paddingHorizontal: 0
     },
     entryActions: {
       gap: 10
     },
     entryForm: {
       alignSelf: "center",
-      gap: 12,
-      maxWidth: 360,
       width: "100%"
+    },
+    flowHeaderWrap: {
+      minHeight: 44,
+      paddingHorizontal: spacing.lg,
+      width: "100%",
+      zIndex: 1
+    },
+    flowBackButton: {
+      alignItems: "center",
+      alignSelf: "flex-start",
+      height: 44,
+      justifyContent: "center",
+      transform: [{ translateY: 8 }],
+      width: 44
+    },
+    flowBackButtonPressed: {
+      opacity: 0.6
+    },
+    flowContent: {
+      alignSelf: "center",
+      gap: spacing.md,
+      marginTop: spacing.xl,
+      maxWidth: 400,
+      paddingHorizontal: spacing.lg,
+      width: "100%"
+    },
+    primaryFormFields: {
+      gap: 2,
+      marginTop: spacing.xl
     },
     entryMethodButton: {
       alignSelf: "center",
       maxWidth: 360,
       width: "100%"
     },
-    backLink: {
-      alignItems: "center",
-      alignSelf: "flex-start",
-      flexDirection: "row",
-      gap: 2,
-      marginBottom: spacing.xs
+    resendButton: {
+      alignSelf: "center",
+      paddingHorizontal: spacing.base,
+      paddingVertical: spacing.sm
     },
-    backLinkText: {
+    resendText: {
       ...fontStyles.bold,
       color: c.orange,
-      fontSize: 13
+      fontSize: 13,
+      textAlign: "center"
+    },
+    resendTextDisabled: {
+      color: c.muted
     },
     termsWrap: {
       alignSelf: "center",
       maxWidth: 360,
       paddingHorizontal: 22,
-      paddingTop: 28,
-      width: "100%",
-      zIndex: 1
+      paddingTop: 16,
+      width: "100%"
     },
     termsText: {
       ...fontStyles.medium,
       color: c.muted,
       fontSize: 13,
       lineHeight: 21,
-      marginTop: 0,
       textAlign: "center"
     },
     termsLink: {
       ...fontStyles.bold,
       color: c.orange
-    },
-    signupTermsText: {
-      ...fontStyles.medium,
-      color: c.muted,
-      fontSize: 12,
-      lineHeight: 18,
-      marginTop: spacing.xs,
-      textAlign: "center"
     }
   });
 }

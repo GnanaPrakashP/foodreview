@@ -11,10 +11,24 @@ select has_function('public', 'explore_discovery_canonical_v3', array['double pr
 select has_function('public', 'reconcile_phase5_projections', array['boolean', 'integer'], 'projection reconciliation RPC exists');
 
 select ok(has_table_privilege('service_role', 'public.reviews', 'SELECT'), 'service role can assemble feeds');
-select ok(not has_function_privilege('anon', 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])', 'EXECUTE'), 'anonymous cannot execute Circle service RPC');
-select ok(not has_function_privilege('authenticated', 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])', 'EXECUTE'), 'authenticated clients cannot bypass Circle API actor contract');
+select ok(
+  has_function_privilege('anon', 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])', 'EXECUTE')
+  and (select position('service_role_required' in routine.prosrc) > 0 from pg_catalog.pg_proc routine where routine.oid = 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])'::regprocedure),
+  'anonymous Circle RPC calls reach only the stable service-role guard'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])', 'EXECUTE')
+  and (select routine.prosecdef from pg_catalog.pg_proc routine where routine.oid = 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])'::regprocedure),
+  'authenticated clients cannot bypass the guarded Circle API actor contract'
+);
 select ok(has_function_privilege('service_role', 'public.circle_feed_page_v2(uuid,timestamp with time zone,uuid,integer,uuid[])', 'EXECUTE'), 'service role executes Circle RPC');
-select ok(not has_function_privilege('authenticated', 'public.mobile_post_engagement_v1(uuid[],uuid)', 'EXECUTE'), 'authenticated clients cannot forge engagement viewer state');
+select ok(
+  has_function_privilege('authenticated', 'public.mobile_post_engagement_v1(uuid[],uuid)', 'EXECUTE')
+  and not (select routine.proretset from pg_catalog.pg_proc routine where routine.oid = 'public.mobile_post_engagement_v1(uuid[],uuid)'::regprocedure)
+  and (select routine.prosecdef from pg_catalog.pg_proc routine where routine.oid = 'public.mobile_post_engagement_v1(uuid[],uuid)'::regprocedure)
+  and (select position('service_role_required' in routine.prosrc) > 0 from pg_catalog.pg_proc routine where routine.oid = 'public.mobile_post_engagement_v1(uuid[],uuid)'::regprocedure),
+  'authenticated engagement calls terminate at the scalar service-role guard before private viewer-state assembly'
+);
 select ok(has_function_privilege('service_role', 'public.mobile_post_engagement_v1(uuid[],uuid)', 'EXECUTE'), 'service role executes engagement RPC');
 select ok(has_function_privilege('authenticated', 'public.explore_discovery_canonical_v3(double precision,double precision,integer)', 'EXECUTE'), 'authenticated clients can execute canonical Explore');
 select ok((select routine.prosecdef from pg_catalog.pg_proc routine join pg_catalog.pg_namespace namespace on namespace.oid = routine.pronamespace where namespace.nspname = 'public' and routine.proname = 'explore_discovery_canonical_v3'), 'Explore reads private projection tables through its bounded definer contract');

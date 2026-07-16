@@ -6,9 +6,13 @@
 - [ ] PH-002 full-suite failures are closed or release owner documents a reviewed blocking decision.
 - [ ] PH-003 root advisories are fixed and mobile moderate advisories receive dated security-owner disposition.
 - [ ] Production Supabase/API/worker/scheduler/Sentry environments and canonical migrations are deployed to disposable staging.
-- [ ] Production, preview and development OAuth/recovery/push credentials and schemes are isolated.
+- [ ] Production, preview and development Google OAuth/push credentials and callback schemes are isolated; no recovery callback is allowlisted.
+- [ ] `202607160001_auth_profile_boundary_hardening.sql` is validated on a disposable staging copy; legacy profile audit has no incompatible rows.
+- [ ] Hosted Supabase activates `public.circlebites_access_token_hook` as the SQL Custom Access Token Hook and a real password grant is rejected.
+- [ ] Effective `profiles` grants/policies match `supabase/snippets/verify_auth_profile_boundary.sql`; authenticated has SELECT only and no direct write policy remains.
 - [ ] Apple/Google/EAS/Sentry credentials are present only in protected release infrastructure.
 - [ ] Legal counsel approves policy, terms, controller identity, retention, age/copyright and store declarations.
+- [ ] On a signed-out production build, Terms and Privacy are separately accessible from Welcome, open the canonical public HTTPS documents and return cleanly to authentication when closed.
 
 ## Build and inspect
 
@@ -23,7 +27,9 @@
 ## Staging smoke and device evidence
 
 - [ ] Clean install and compatible authenticated upgrade pass on required physical Android/iOS devices.
-- [ ] Signup/login, recovery, OAuth, Circle, Explore, Profile, post image/video, comments/reaction/bookmark and notifications pass.
+- [ ] New/existing email OTP, Google OAuth, same-email identity linking, incomplete onboarding restore, complete-session restore, logout and account switching pass.
+- [ ] Password login/signup/recovery/reset routes and UI remain absent; direct provider password grants fail before issuing a session.
+- [ ] Terms and Privacy open from both pre-auth Welcome and authenticated Settings; browser-unavailable handling is understandable and does not change auth state.
 - [ ] Memory room/message/media/dish/chat and voice permission paths pass.
 - [ ] Two-account isolation, private media, upload recovery, logout/switch/deletion and backup/device-transfer attempts pass.
 - [ ] Push foreground/background/cold routing and invalid-token receipts pass.

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getRouteActor } from "@/lib/server/route-supabase";
@@ -7,6 +7,7 @@ import type { PostEngagementState } from "@/lib/server/post-engagement-state";
 import type { Review } from "@/lib/types";
 import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
 import { loadCanonicalCircleFeedPage, type CanonicalCircleFeedPage } from "@/lib/server/canonical-circle-feed";
+import { beginRequestPerformanceTrace, tracedJson } from "@/lib/server/request-performance";
 
 type CirclePostRequestStatus = "idle" | "pending" | "joined";
 
@@ -29,8 +30,9 @@ function parseCsvIds(value: string | null): string[] {
 }
 
 export async function GET(req: NextRequest) {
+  const trace = beginRequestPerformanceTrace(req, "api.feed.circle");
   const { actor } = await getRouteActor(req);
-  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!actor) return tracedJson(trace, { error: "Unauthorized" }, { status: 401 });
   const limit = parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE);
   const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
   const rawCursor = req.nextUrl.searchParams.get("cursor");
@@ -38,7 +40,7 @@ export async function GET(req: NextRequest) {
   const excludePostIds = parseCsvIds(req.nextUrl.searchParams.get("excludeSeen"));
 
   if (rawCursor && !cursor) {
-    return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+    return tracedJson(trace, { error: "Invalid cursor" }, { status: 400 });
   }
 
   try {
@@ -48,17 +50,22 @@ export async function GET(req: NextRequest) {
       limit,
       excludePostIds,
       bypassCache: refreshMode && !cursor,
+      trace,
     });
     if (!page.myName) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return tracedJson(trace, { error: "Unauthorized" }, { status: 401 });
     }
     const mediaAssetIds = page.reviews.flatMap((review) => (review.media_items ?? []).map((item) => item.media_asset_id).filter((id): id is string => Boolean(id)));
     const engagementByPostId = buildPageEngagementStates(page);
     const accountTypeByReviewer = new Map(Object.entries(page.accountTypeMap));
     const requestStatusByReviewer = new Map(Object.entries(page.requestStatusMap));
-    const authorisedMedia = await resolvePostMediaAccess(admin, mediaAssetIds, page.myName);
+    const authorisedMedia = await trace.measure(
+      "media",
+      "feed.media_authorization",
+      () => resolvePostMediaAccess(admin, mediaAssetIds, page.myName, trace)
+    );
     const mediaByAssetId = new Map(authorisedMedia.map((item) => [item.id, item]));
-    return NextResponse.json({
+    const responseBody = await trace.measure("assembly", "feed.response_assembly", () => ({
       ...page,
       nextCursorString: serializeCircleFeedCursor(page.nextCursor),
       posts: page.reviews.map((review) => {
@@ -68,10 +75,11 @@ export async function GET(req: NextRequest) {
           engagement,
         };
       }),
-    });
+    }));
+    return tracedJson(trace, responseBody);
   } catch (error) {
     console.error("[feed/circle] failed to load page:", error);
-    return NextResponse.json({ error: "Unable to load feed" }, { status: 500 });
+    return tracedJson(trace, { error: "Unable to load feed" }, { status: 500 });
   }
 }
 

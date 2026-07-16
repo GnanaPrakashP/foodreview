@@ -53,15 +53,16 @@ test("hosted staging requires an explicit host allowlist and release topology", 
   assert.throws(() => safeTargetMetadata(config, env), /staging_host_allowlist_required/);
 });
 
-test("local, normal, seed, cleanup, deletion and failure confirmations are different", () => {
+test("development, local, normal, seed, cleanup, deletion and failure confirmations are different", () => {
   assert.equal(new Set([
+    config.safety.developmentConfirmation,
     config.safety.normalConfirmation,
     config.safety.localValidationConfirmation,
     config.safety.seedConfirmation,
     config.safety.cleanupConfirmation,
     config.safety.deletionConfirmation,
     config.safety.failureConfirmation
-  ]).size, 6);
+  ]).size, 7);
 });
 
 test("deterministic weighted selection is repeatable", () => {
@@ -247,7 +248,7 @@ test("manual capacity workflow cannot schedule or target production automaticall
 });
 
 test("all Phase 9 operator commands are registered", () => {
-  for (const name of ["validate:load-capacity", "test:load-capacity", "load:ci-smoke", "load:smoke", "load:launch", "load:stress", "load:soak", "load:realtime", "load:media", "load:fixtures", "load:abuse", "load:deletion", "load:failure", "load:seed", "load:cleanup", "load:reconcile", "load:report", "load:evidence"]) {
+  for (const name of ["validate:load-capacity", "test:load-capacity", "load:ci-smoke", "load:development", "load:smoke", "load:launch", "load:stress", "load:soak", "load:realtime", "load:media", "load:fixtures", "load:abuse", "load:deletion", "load:failure", "load:seed", "load:cleanup", "load:reconcile", "load:report", "load:evidence"]) {
     assert.equal(typeof packageJson.scripts[name], "string", name);
   }
 });
@@ -255,6 +256,8 @@ test("all Phase 9 operator commands are registered", () => {
 test("Phase 9 source never embeds credential values or production capacity claims", () => {
   const combined = ["lib", "run", "realtime", "media", "abuse", "deletion", "failure", "seed", "cleanup", "reconcile", "report"].map((name) => source(`scripts/load/${name}.mjs`)).join("\n");
   assert.doesNotMatch(combined, /eyJ[a-zA-Z0-9_-]{40,}|service_role\s*[:=]\s*["'][^"']+/);
+  assert.doesNotMatch(combined, /grant_type=password|signInWithPassword/);
+  assert.match(combined, /generateLink\(\{ email: actor\.email, type: "magiclink" \}\)/);
   assert.doesNotMatch(combined, /supports 1,000 users/i);
 });
 
@@ -269,7 +272,7 @@ function validEnvironment() {
     LOAD_API_RELEASE: "api-test-release",
     LOAD_GIT_COMMIT: "0123456789abcdef0123456789abcdef01234567",
     LOAD_WORKER_RELEASE: "worker-test-release",
-    LOAD_MIGRATION_HEAD: "202607130010",
+    LOAD_MIGRATION_HEAD: "202607160001",
     LOAD_DB_TIER: "test-tier",
     LOAD_API_TOPOLOGY: "2 replicas",
     LOAD_WORKER_TOPOLOGY: "2 replicas",

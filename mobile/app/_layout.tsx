@@ -1,5 +1,4 @@
 import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from "@react-navigation/native";
-import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useMemo } from "react";
 import { LogBox, Platform } from "react-native";
@@ -8,9 +7,12 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { configureReanimatedLogger, ReanimatedLogLevel } from "react-native-reanimated";
 import { PostCommentsSheetHost } from "@/components/posts/PostCommentsSheet";
 import { AppProviders } from "@/providers/AppProviders";
+import { AuthGate } from "@/providers/AuthGate";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useCircleBitesFonts } from "@/theme";
 import { wrapRootLayout } from "@/observability/mobileTelemetry";
+import { isProfileComplete } from "@/utils/profileCompleteness";
 
 configureReanimatedLogger({
   level: ReanimatedLogLevel.warn,
@@ -21,41 +23,16 @@ configureReanimatedLogger({
 // (fires on dismissTo/replace); the banner is noise until the library updates.
 LogBox.ignoreLogs(["Passing an object as the argument to 'navigate' is deprecated"]);
 
-// The Explore detail screens, notifications, circle screen, settings, and every settings
-// sub-screen present over the screen beneath them and drive their own custom
-// slide. Native animation is disabled and
-// the container is transparent so the screen underneath shows during the slide.
-const SLIDE_OVER_OPTIONS = {
-  presentation: "transparentModal",
-  animation: "none",
-  gestureEnabled: false,
-  contentStyle: { backgroundColor: "transparent" }
-} as const;
-
-const SLIDE_OVER_ROUTES = [
-  "restaurants/[placeId]",
-  "restaurants/by-name/[restaurant]",
-  "dishes/[dish]",
-  "people/[username]",
-  "notifications",
-  "memories/[id]/dish/[dishId]",
-  "profile/circle",
-  "profile/settings",
-  "profile/settings/edit",
-  "profile/settings/security",
-  "profile/settings/notifications",
-  "profile/settings/blocked",
-  "profile/settings/liked",
-  "profile/settings/saved",
-  "profile/settings/comments",
-  "profile/settings/help",
-  "profile/settings/about",
-  "profile/settings/privacy",
-  "profile/settings/terms"
-];
-
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
+
+function AuthenticatedSurfaceHosts() {
+  const isReady = useSessionStore((state) => state.isReady);
+  const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
+  const profile = useSessionStore((state) => state.profile);
+  if (!isReady || !isAuthenticated || !isProfileComplete(profile)) return null;
+  return <PostCommentsSheetHost />;
+}
 
 function RootLayout() {
   const [fontsLoaded] = useCircleBitesFonts();
@@ -95,35 +72,11 @@ function RootLayout() {
           translucent={IS_ANDROID_EDGE_TO_EDGE}
         />
         <ThemeProvider value={navigationTheme}>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              animation: "fade",
-              contentStyle: { backgroundColor: themeColors.bg }
-            }}
-          >
-            <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
-            <Stack.Screen name="(auth)" options={{ animation: "none" }} />
-            <Stack.Screen name="auth/callback" />
-            <Stack.Screen name="auth/recovery" />
-            <Stack.Screen name="onboarding/profile" />
-            {/* Camera opens with a snappier fade than the global default so it
-                feels instant; a quick fade also hides the brief sensor warm-up. */}
-            <Stack.Screen name="memories/[id]/camera" options={{ animation: "fade", animationDuration: 150 }} />
-            <Stack.Screen name="share/camera" options={{ animation: "fade", animationDuration: 150 }} />
-            {/* Settings and its sub-screens present over the screen beneath them and
-                drive their own custom slide. Native
-                animation is disabled because native transparentModal ignores
-                slide_from_right/animationDuration (especially on iOS); the
-                transparent container lets the screen underneath show during the slide. */}
-            {SLIDE_OVER_ROUTES.map((name) => (
-              <Stack.Screen key={name} name={name} options={SLIDE_OVER_OPTIONS} />
-            ))}
-          </Stack>
+          <AuthGate />
           {/* In-tree overlay host for post comments: must live in the main
               window (not a RN Modal) so the composer can track the keyboard
               per-frame via the root KeyboardProvider. */}
-          <PostCommentsSheetHost />
+          <AuthenticatedSurfaceHosts />
         </ThemeProvider>
       </KeyboardProvider>
     </AppProviders>

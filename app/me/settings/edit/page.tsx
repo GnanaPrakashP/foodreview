@@ -51,14 +51,11 @@ export default function EditProfilePage() {
     if (!trimmed || !userId || saving) return;
     setSaving(true);
     setError("");
-    const [firstName, ...lastParts] = trimmed.split(/\s+/);
-    const lastName = lastParts.join(" ");
     const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: profileError } = await (supabase as any)
-      .from("profiles")
-      .update({ first_name: firstName, last_name: lastName, bio: trimmedBio || null })
-      .eq("id", userId);
+    const { error: profileError } = await supabase.rpc("update_current_profile_details", {
+      p_bio: trimmedBio || null,
+      p_name: trimmed
+    } as never);
     if (profileError) {
       setError(profileError.message);
       setSaving(false);

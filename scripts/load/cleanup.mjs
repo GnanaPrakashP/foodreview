@@ -18,7 +18,9 @@ if (!hasFlag("apply")) {
 assertNodeRuntime(config, { localValidation: localContract });
 const target = safeTargetMetadata(config, process.env, localContract
   ? { allowLocal: true }
-  : { confirmation: config.safety.cleanupConfirmation });
+  : process.env.LOAD_TOPOLOGY_MODE === "development"
+    ? { allowDevelopment: true, confirmation: config.safety.cleanupConfirmation }
+    : { confirmation: config.safety.cleanupConfirmation });
 const serviceKey = process.env.LOAD_STAGING_SERVICE_ROLE_KEY;
 invariant(Boolean(serviceKey), "cleanup_service_role_required");
 const admin = createClient(process.env.LOAD_STAGING_SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });

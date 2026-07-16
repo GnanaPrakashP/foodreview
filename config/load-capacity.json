@@ -7,6 +7,7 @@
     "resultSchemaVersion": 1
   },
   "safety": {
+    "developmentConfirmation": "CIRCLEBITES_DEVELOPMENT_LOAD",
     "normalConfirmation": "CIRCLEBITES_STAGING_LOAD",
     "localValidationConfirmation": "CIRCLEBITES_LOCAL_SEED_CONTRACT",
     "seedConfirmation": "CIRCLEBITES_STAGING_SEED",
@@ -109,6 +110,14 @@
     }
   },
   "tiers": {
+    "development": {
+      "mode": "closed",
+      "durationSeconds": 300,
+      "concurrentUsers": 100,
+      "activeMemoryRooms": 12,
+      "concurrentUploads": 4,
+      "thresholdProfile": "launch"
+    },
     "smoke": {
       "mode": "closed",
       "durationSeconds": 20,

@@ -185,3 +185,16 @@ test("mobile bootstrap refreshes coarse manual labels when permission is already
   assert.match(userLocationBootstrapSource, /state\.location\?\.source === "manual" && !isCoarseUserLocationLabel\(state\.location\.label\)/);
   assert.match(userLocationBootstrapSource, /preferFresh: currentLocation \? isCoarseUserLocationLabel\(currentLocation\.label\) : false/);
 });
+
+test("account-scoped location keys remain valid for Expo SecureStore cleanup", () => {
+  assert.match(userLocationSource, /SECURE_STORE_KEY_PATTERN = \/\^\[A-Za-z0-9\._-\]\+\$\//);
+  assert.match(
+    userLocationSource,
+    /`\$\{key\}\.v\$\{ACCOUNT_LOCATION_KEY_VERSION\}\.\$\{ownerScope\}`/
+  );
+  assert.doesNotMatch(
+    userLocationSource,
+    /return `\$\{key\}:v\$\{ACCOUNT_LOCATION_KEY_VERSION\}:\$\{ownerScope\}`/
+  );
+  assert.match(userLocationSource, /Platform\.OS === "web"[\s\S]*legacyWebScopedLocationKey/);
+});

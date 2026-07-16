@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requestPerformanceTrace } from "@/lib/server/request-performance";
 
 export type RequestActor = {
   actorName: string;
@@ -12,7 +13,7 @@ export type RequestActor = {
 
 export type RequestActorResolution =
   | { actor: RequestActor; status: "active" }
-  | { actor: null; status: "frozen" | "invalid" | "missing_profile" | "unauthenticated" | "unavailable" };
+  | { actor: null; status: "frozen" | "incomplete_profile" | "invalid" | "missing_profile" | "unauthenticated" | "unavailable" };
 
 const actorResolutionCache = new WeakMap<NextRequest, Promise<{
   actorResolution: RequestActorResolution;
@@ -75,11 +76,14 @@ export async function getRouteActor(req?: NextRequest) {
 }
 
 async function resolveRouteActor(req: NextRequest) {
+  const trace = requestPerformanceTrace(req);
   const supabase = await createRouteSupabase(req);
   const presentedCredential = Boolean(
     req.headers.get("authorization")?.trim() || req.headers.get("cookie")?.trim()
   );
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data: { user }, error } = trace
+    ? await trace.measure("auth", "auth.get_user", () => supabase.auth.getUser())
+    : await supabase.auth.getUser();
   if (error || !user) {
     return {
       actorResolution: {
@@ -91,7 +95,8 @@ async function resolveRouteActor(req: NextRequest) {
     };
   }
   try {
-    const { data: profile, error: profileError } = await createAdminClient()
+    const admin = createAdminClient();
+    const profileQuery = () => admin
       .from("profiles")
       .select("username, first_name, last_name, account_status, deletion_started_at")
       .eq("id", user.id)
@@ -102,6 +107,9 @@ async function resolveRouteActor(req: NextRequest) {
         last_name: string | null;
         username: string | null;
       }>();
+    const { data: profile, error: profileError } = trace
+      ? await trace.database("actor.profile_status", profileQuery)
+      : await profileQuery();
     if (profileError) {
       return {
         actorResolution: { actor: null, status: "unavailable" } as RequestActorResolution,
@@ -109,7 +117,7 @@ async function resolveRouteActor(req: NextRequest) {
         supabase,
       };
     }
-    if (!profile?.username?.trim()) {
+    if (!profile) {
       return {
         actorResolution: { actor: null, status: "missing_profile" } as RequestActorResolution,
         authenticatedUserId: user.id,
@@ -123,7 +131,25 @@ async function resolveRouteActor(req: NextRequest) {
         supabase,
       };
     }
-    const actorName = profile.username.trim().toLowerCase();
+    const completenessQuery = () => admin.rpc("is_profile_complete", { p_user_id: user.id });
+    const { data: profileComplete, error: completenessError } = trace
+      ? await trace.database("actor.is_profile_complete", completenessQuery)
+      : await completenessQuery();
+    if (completenessError) {
+      return {
+        actorResolution: { actor: null, status: "unavailable" } as RequestActorResolution,
+        authenticatedUserId: user.id,
+        supabase,
+      };
+    }
+    if (profileComplete !== true) {
+      return {
+        actorResolution: { actor: null, status: "incomplete_profile" } as RequestActorResolution,
+        authenticatedUserId: user.id,
+        supabase,
+      };
+    }
+    const actorName = profile.username!.trim().toLowerCase();
     const displayName = [profile.first_name, profile.last_name]
       .map((part) => part?.trim())
       .filter(Boolean)

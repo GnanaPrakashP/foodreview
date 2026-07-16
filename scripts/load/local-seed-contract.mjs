@@ -21,7 +21,6 @@ if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname
 const env = {
   ...process.env,
   LOAD_ACTOR_EMAIL_DOMAIN: "load-contract.invalid",
-  LOAD_ACTOR_PASSWORD: "Local-Phase9-Contract-Password!",
   LOAD_LOCAL_CONFIRMATION: config.safety.localValidationConfirmation,
   LOAD_STAGING_API_URL: local.API_URL,
   LOAD_STAGING_SERVICE_ROLE_KEY: local.SERVICE_ROLE_KEY,

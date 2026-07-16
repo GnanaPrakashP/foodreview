@@ -50,6 +50,17 @@ test("canonical Supabase user IDs create collision-free owners and revoke stale 
   assert.throws(() => ownership.cacheOwnerForUserId("alice@example.com"), /invalid_cache_owner/);
 });
 
+test("every native owner-scoped SecureStore key uses supported characters", () => {
+  const locationStorage = source("mobile/src/services/userLocation.ts");
+  const occasionStorage = source("mobile/src/features/occasions/occasionStorage.ts");
+  for (const storageSource of [locationStorage, occasionStorage]) {
+    assert.match(storageSource, /SECURE_STORE_KEY_PATTERN = \/\^\[A-Za-z0-9\._-\]\+\$\//);
+  }
+  assert.match(locationStorage, /`\$\{key\}\.v\$\{ACCOUNT_LOCATION_KEY_VERSION\}\.\$\{ownerScope\}`/);
+  assert.match(occasionStorage, /`\$\{STORAGE_PREFIX\}\.v\$\{STORAGE_VERSION\}\.\$\{ownerScope\}`/);
+  assert.match(occasionStorage, /Platform\.OS === "web"[\s\S]*legacyWebStorageKeyForScope/);
+});
+
 test("persisted Query caches restore only the matching owner envelope", async () => {
   const ownership = loadTs("mobile/src/security/cacheOwnership.ts");
   const stores = new Map();
@@ -368,6 +379,7 @@ test("native backup rules exclude SecureStore, MMKV, and offline databases", () 
 
 test("session boundary, realtime, notifications, deletion, and offline logout share the isolation path", () => {
   const boundary = source("mobile/src/providers/AccountSessionBoundary.tsx");
+  const authGate = source("mobile/src/providers/AuthGate.tsx");
   const realtime = source("mobile/src/hooks/useMemories.ts");
   const notifications = source("mobile/src/providers/PushNotificationBootstrap.tsx");
   const settings = source("mobile/src/hooks/useSettings.ts");
@@ -375,7 +387,8 @@ test("session boundary, realtime, notifications, deletion, and offline logout sh
   const statusRoute = source("app/api/mobile/auth/account-status/route.ts");
   assert.match(boundary, /prepareLocalDataForOwner/);
   assert.match(boundary, /authoritative_owner_mismatch/);
-  assert.match(boundary, /router\.replace/);
+  assert.doesNotMatch(boundary, /useRouter|router\.replace/);
+  assert.match(authGate, /Stack\.Protected/);
   assert.match(realtime, /isCacheGenerationActive\(ownerGeneration\)/);
   assert.match(notifications, /recipientName/);
   assert.match(settings, /cleanupCurrentLocalData\("account_deletion"/);

@@ -14,7 +14,7 @@ Release verification status: BLOCKED pending hosted multi-replica limiter verifi
 
 Phase 4 replaces FoodReview's inconsistent mobile/API trust boundaries with one server-verified actor, removes the public Auth-directory scan and account-existence response, adds an atomic PostgreSQL-backed multi-dimensional limiter, and covers every active mobile mutation with a centralized rate policy. Public feed personalization no longer accepts a viewer override. Provider, report, block, notification, push-token, media, and internal routes now have bounded work and explicit authority.
 
-Mobile password recovery is complete locally through a real Supabase recovery email and an allowlisted `circlebites://auth/recovery` redirect. OAuth/recovery state is cryptographic, expiring, and single-use. Push tokens are bound by trigger/RLS to Auth UUID plus installation. Generic media is pending-by-default and unclaimable/unpublishable until audited service approval; review/avatar images fail closed into quarantine when moderation is unavailable. Retired caller-selected moderation bypass routes return 410.
+Google OAuth state is cryptographic, expiring, environment-bound, and single-use. Email authentication is OTP-only in the product, and the later `202607160001` boundary migration removes password/recovery surfaces and rejects password token issuance through the hosted Auth hook. Push tokens are bound by trigger/RLS to Auth UUID plus installation. Generic media is pending-by-default and unclaimable/unpublishable until audited service approval; review/avatar images fail closed into quarantine when moderation is unavailable. Retired caller-selected moderation bypass routes return 410.
 
 The phase adds one additive canonical migration, expands the Phase 3 schema contract, adds pgTAP and real local Auth/API/database behavior tests, and preserves the Phase 1A–3 database/security contracts. It does not claim load/capacity readiness for 1,000 users; Phase 9 owns load validation.
 
@@ -63,13 +63,13 @@ Internal operations replace the actor/limiter step with a dedicated timing-safe 
 
 The public feed discards its former `viewer` query authority. Service-role feed assembly receives only the canonical actor name or an empty anonymous viewer. Notification/report/media routes similarly derive actor/recipient/owner state on the server.
 
-### Enumeration and recovery
+### Enumeration and passwordless authentication
 
-The former `/api/mobile/auth/resolve-email` Auth-user pagination scan was removed. Existing and missing emails have identical 202 bodies and the route performs no account lookup. The mobile screen offers generic sign-in and an explicit create-account action.
+The former Auth-user pagination scan was removed. The current `/api/mobile/auth/email-otp` route performs no account lookup, sends the same passwordless OTP request for existing and new addresses, and returns identical 202 bodies. The mobile screen has no sign-in/sign-up or password branch.
 
-The password-recovery API accepts only bounded normalized email and a 256-bit mobile flow nonce, constructs the redirect internally, rate-limits by IP/install/subject, hides account/provider outcomes, and returns one generic 202 response. Local Mailpit verification proved that Supabase preserves the nonce and redirects to the explicit mobile recovery path. Mobile validates scheme/host/path/mode/state, consumes state once, establishes only a recovery session, clears callback parameters, validates the new password, updates it, signs out locally, and returns to sign-in.
+The former password-recovery API, callback, navigation, client methods, and settings action were removed by the 2026-07-16 authentication boundary hardening. A hosted SQL Custom Access Token Hook rejects password token issuance, and mobile rejects a legacy `PASSWORD_RECOVERY` event before protected state mounts. Email OTP keeps the generic, bounded, hashed IP/install/subject limiter contract.
 
-OAuth now uses PKCE and the same single-use state store. Unknown paths, arbitrary redirects, credentials in URLs, wrong modes, missing/replayed state, and malformed callbacks fail before session establishment. Android's custom scheme and Expo Router paths align with the allowlist; real Android/iOS provider tests remain a release gate.
+OAuth uses PKCE and a single-use state store. Unknown paths, arbitrary redirects, credentials in URLs, wrong modes, missing/replayed state, and malformed callbacks fail before session establishment. Android's custom scheme and Expo Router paths align with the callback-only allowlist; real Android/iOS provider tests remain a release gate.
 
 ### Abuse, complexity, and idempotency
 

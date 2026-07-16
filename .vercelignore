@@ -1,0 +1,26 @@
+# The Vercel project serves only the Next.js web/API application.
+/mobile/
+
+# Local build, dependency, VCS, and diagnostic artifacts.
+/.git/
+/.next/
+/node_modules/
+/tmp/
+/.vercel/
+/.claude/
+/.env*
+/.DS_Store
+/*.pem
+/*.log
+/load-results/
+/playwright-report/
+/test-results/
+/coverage/
+/*.tsbuildinfo
+
+# Development-only material that is not required by the runtime bundle.
+/design-preview/
+/docs/
+/e2e/
+/tests/
+/supabase/

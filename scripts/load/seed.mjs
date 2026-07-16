@@ -35,13 +35,14 @@ if (!apply) {
 assertNodeRuntime(config, { localValidation: localContract });
 const target = safeTargetMetadata(config, process.env, localContract
   ? { allowLocal: true }
-  : { confirmation: config.safety.seedConfirmation });
+  : process.env.LOAD_TOPOLOGY_MODE === "development"
+    ? { allowDevelopment: true, confirmation: config.safety.seedConfirmation }
+    : { confirmation: config.safety.seedConfirmation });
 const startedAt = new Date().toISOString();
 const supabaseUrl = process.env.LOAD_STAGING_SUPABASE_URL;
 const serviceKey = process.env.LOAD_STAGING_SERVICE_ROLE_KEY;
-const password = process.env.LOAD_ACTOR_PASSWORD;
 const emailDomain = process.env.LOAD_ACTOR_EMAIL_DOMAIN?.trim().toLowerCase();
-invariant(Boolean(serviceKey && password && password.length >= 16), "seed_admin_and_actor_credentials_required");
+invariant(Boolean(serviceKey), "seed_admin_credentials_required");
 invariant(Boolean(emailDomain && !emailDomain.endsWith("circlebites.in")), "seed_synthetic_email_domain_required");
 
 const admin = createClient(supabaseUrl, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -68,7 +69,6 @@ for (let offset = 0; offset < missing.length; offset += 10) {
     const { error } = await admin.auth.admin.createUser({
       email,
       email_confirm: true,
-      password,
       user_metadata: { synthetic_load_fixture: true, username: `load9_${String(index).padStart(4, "0")}` }
     });
     if (error) throw new Error("seed_auth_user_create_failed");
@@ -97,7 +97,6 @@ await upsertBatches("profiles", plan.rows.profiles.map((profile) => ({
   deletion_started_at: null
 })));
 await upsertBatches("circle_memberships", plan.rows.circleMemberships);
-await upsertBatches("blocked_users", plan.rows.blocks);
 await upsertBatches("reviews", plan.rows.reviews);
 await upsertBatches("likes", plan.rows.likes);
 await upsertBatches("wishlist", plan.rows.bookmarks);
@@ -109,6 +108,11 @@ await upsertBatches("shared_memory_rooms", plan.rows.rooms);
 await upsertBatches("shared_memory_members", plan.rows.roomMembers);
 await upsertBatches("shared_memory_messages", plan.rows.roomMessages);
 await upsertBatches("shared_memory_dishes", plan.rows.memoryDishes);
+// Seed room memberships before block relationships. The production trigger
+// correctly prevents adding a newly blocked participant to an existing room,
+// while the fixture intentionally also models rooms whose members block one
+// another later so blocked-read behavior can be exercised under load.
+await upsertBatches("blocked_users", plan.rows.blocks);
 await upsertBatches("review_dish_mentions", plan.rows.dishMentions);
 await upsertBatches("content_reports", plan.rows.contentReports);
 // Freeze deletion fixtures only after their representative owned data exists.

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MEMORY_MEDIA_BUCKET, MEMORY_MEDIA_PENDING_REVIEW_TTL_HOURS } from "@/lib/memory-media-policy";
 import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
+import {
+  configuredInternalSecret,
+  internalRequestSecret,
+  safeInternalFailure,
+  timingSafeSecretMatch,
+} from "@/lib/server/api-security";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const maxDuration = 60;
@@ -23,9 +29,10 @@ function json(body: unknown, init?: ResponseInit) {
 }
 
 function authorized(req: NextRequest) {
-  const secret = process.env.MEMORY_UPLOAD_CLEANUP_SECRET;
-  if (!secret) return false;
-  return req.headers.get("x-cleanup-secret") === secret;
+  return timingSafeSecretMatch(
+    internalRequestSecret(req, "x-cleanup-secret"),
+    configuredInternalSecret("MEMORY_UPLOAD_CLEANUP_SECRET")
+  );
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -42,9 +49,9 @@ export async function POST(req: NextRequest) {
     recordMemoryOperation("upload_cleanup.run", {
       durationMs: memoryOperationDurationMs(startedAt),
       status: "unauthorized",
-      statusCode: 401
+      statusCode: 404
     });
-    return json({ error: "Unauthorized" }, { status: 401 });
+    return safeInternalFailure();
   }
 
   const admin = createAdminClient();

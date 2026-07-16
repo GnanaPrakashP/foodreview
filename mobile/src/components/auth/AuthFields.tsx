@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, radius, spacing, typography } from "@/theme";
 
@@ -10,26 +10,33 @@ type AuthInputProps = {
   error?: boolean;
   icon: keyof typeof Ionicons.glyphMap;
   keyboardType?: "default" | "email-address";
+  maxLength?: number;
   onChangeText: (value: string) => void;
   onFocus?: () => void;
   placeholder: string;
   value: string;
+  autoCorrect?: boolean;
+  spellCheck?: boolean;
 };
 
-type PasswordInputProps = Omit<AuthInputProps, "autoComplete" | "icon" | "keyboardType"> & {
-  show: boolean;
-  onToggle: () => void;
+type OtpCodeInputProps = {
+  error?: boolean;
+  onChangeText: (value: string) => void;
+  value: string;
 };
 
 export function AuthInput({
   autoCapitalize = "none",
   autoComplete,
+  autoCorrect,
   error,
   icon,
   keyboardType = "default",
+  maxLength,
   onChangeText,
   onFocus,
   placeholder,
+  spellCheck,
   value
 }: AuthInputProps) {
   const [focused, setFocused] = useState(false);
@@ -43,7 +50,9 @@ export function AuthInput({
         accessibilityLabel={placeholder}
         autoCapitalize={autoCapitalize}
         autoComplete={autoComplete}
+        autoCorrect={autoCorrect}
         keyboardType={keyboardType}
+        maxLength={maxLength}
         onChangeText={onChangeText}
         onBlur={() => setFocused(false)}
         onFocus={() => {
@@ -52,6 +61,7 @@ export function AuthInput({
         }}
         placeholder={placeholder}
         placeholderTextColor={themeColors.muted}
+        spellCheck={spellCheck}
         style={styles.input}
         value={value}
       />
@@ -59,41 +69,42 @@ export function AuthInput({
   );
 }
 
-export function PasswordInput({
-  error,
-  onChangeText,
-  onFocus,
-  onToggle,
-  placeholder,
-  show,
-  value
-}: PasswordInputProps) {
+export function OtpCodeInput({ error, onChangeText, value }: OtpCodeInputProps) {
   const [focused, setFocused] = useState(false);
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const digits = value.replace(/\D/g, "").slice(0, 6);
 
   return (
-    <View style={[styles.inputWrap, focused && styles.inputWrapFocused, error && styles.inputWrapError]}>
-      <Ionicons name="lock-closed-outline" size={16} color={themeColors.muted} />
+    <View style={styles.otpWrap}>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.otpBoxes}>
+        {Array.from({ length: 6 }, (_, index) => (
+          <View
+            key={index}
+            style={[
+              styles.otpBox,
+              focused && index === Math.min(digits.length, 5) && styles.otpBoxFocused,
+              error && styles.otpBoxError
+            ]}
+          >
+            <Text style={styles.otpDigit}>{digits[index] ?? ""}</Text>
+          </View>
+        ))}
+      </View>
       <TextInput
-        accessibilityLabel={placeholder}
-        autoCapitalize="none"
-        autoComplete="password"
-        onChangeText={onChangeText}
+        accessibilityLabel="Verification code"
+        autoComplete="one-time-code"
+        autoFocus
+        caretHidden
+        keyboardType="number-pad"
+        maxLength={6}
         onBlur={() => setFocused(false)}
-        onFocus={() => {
-          setFocused(true);
-          onFocus?.();
-        }}
-        placeholder={placeholder}
-        placeholderTextColor={themeColors.muted}
-        secureTextEntry={!show}
-        style={styles.input}
-        value={value}
+        onChangeText={(nextValue) => onChangeText(nextValue.replace(/\D/g, "").slice(0, 6))}
+        onFocus={() => setFocused(true)}
+        style={styles.otpHiddenInput}
+        textContentType="oneTimeCode"
+        value={digits}
       />
-      <Pressable accessibilityLabel={show ? "Hide password" : "Show password"} accessibilityRole="button" hitSlop={8} onPress={onToggle}>
-        <Text style={styles.toggleText}>{show ? "Hide" : "Show"}</Text>
-      </Pressable>
     </View>
   );
 }
@@ -128,12 +139,46 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       outlineWidth: 0,
       padding: 0
     },
-    toggleText: {
-      ...fontStyles.semiBold,
-      color: c.muted,
-      fontSize: typography.caption,
-      letterSpacing: 0.3,
-      lineHeight: 14
+    otpWrap: {
+      marginBottom: spacing.s,
+      position: "relative"
+    },
+    otpBoxes: {
+      flexDirection: "row",
+      gap: 8,
+      justifyContent: "space-between"
+    },
+    otpBox: {
+      alignItems: "center",
+      backgroundColor: c.authField,
+      borderColor: c.authBorder,
+      borderRadius: 12,
+      borderWidth: 1,
+      flex: 1,
+      height: 54,
+      justifyContent: "center",
+      maxWidth: 50
+    },
+    otpBoxFocused: {
+      borderColor: c.orangeBorder,
+      borderWidth: 1.5
+    },
+    otpBoxError: {
+      borderColor: c.danger
+    },
+    otpDigit: {
+      ...fontStyles.bold,
+      color: c.cream,
+      fontSize: 22,
+      lineHeight: 26
+    },
+    otpHiddenInput: {
+      bottom: 0,
+      left: 0,
+      opacity: 0.01,
+      position: "absolute",
+      right: 0,
+      top: 0
     }
   });
 }

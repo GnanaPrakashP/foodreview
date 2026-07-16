@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const matrix = JSON.parse(await readFile(new URL("../config/release-smoke-matrix.json", import.meta.url), "utf8"));
 const required = [
-  "launch", "signup-login", "password-recovery", "oauth", "circle-load", "explore-load", "profile-load",
+  "launch", "signup-login", "email-otp", "oauth", "circle-load", "explore-load", "profile-load",
   "post-image-video", "comments-reaction-bookmark", "notifications", "memory-room-message-media",
   "logout-account-switch", "account-deletion", "private-media-matrix", "upload-process-recovery",
   "install-upgrade", "accessibility"

@@ -15,28 +15,16 @@ export type MobileApiPolicy = {
 };
 
 export const MOBILE_API_POLICIES = {
-  "auth.resolve-email": {
+  "auth.email-otp": {
     authentication: "anonymous",
     bodyBytes: 1024,
     cors: "mobile",
     idempotency: "none",
-    providerCost: "none",
+    providerCost: "medium",
     rateLimits: [
       { cost: 1, dimension: "ip", limit: 8, windowSeconds: 300 },
       { cost: 1, dimension: "install", limit: 12, windowSeconds: 300 },
       { cost: 1, dimension: "subject", limit: 4, windowSeconds: 900 },
-    ],
-  },
-  "auth.password-recovery": {
-    authentication: "anonymous",
-    bodyBytes: 2048,
-    cors: "mobile",
-    idempotency: "recommended",
-    providerCost: "medium",
-    rateLimits: [
-      { cost: 1, dimension: "ip", limit: 5, windowSeconds: 900 },
-      { cost: 1, dimension: "install", limit: 5, windowSeconds: 900 },
-      { cost: 1, dimension: "subject", limit: 3, windowSeconds: 3600 },
     ],
   },
   "provider.places-autocomplete": {
@@ -73,6 +61,16 @@ export const MOBILE_API_POLICIES = {
       { cost: 1, dimension: "user", limit: 20, windowSeconds: 60 },
       { cost: 1, dimension: "install", limit: 30, windowSeconds: 60 },
       { cost: 1, dimension: "ip", limit: 60, windowSeconds: 60 },
+    ],
+  },
+  "public.share-image": {
+    authentication: "anonymous",
+    bodyBytes: 0,
+    cors: "none",
+    idempotency: "none",
+    providerCost: "high",
+    rateLimits: [
+      { cost: 2, dimension: "ip", limit: 60, windowSeconds: 60 },
     ],
   },
   "mutation.social": {
@@ -193,6 +191,18 @@ export const MOBILE_API_POLICIES = {
       { cost: 1, dimension: "user", limit: 8, windowSeconds: 3600 },
       { cost: 1, dimension: "install", limit: 12, windowSeconds: 3600 },
       { cost: 1, dimension: "ip", limit: 30, windowSeconds: 3600 },
+    ],
+  },
+  "profile.username-availability": {
+    authentication: "required",
+    bodyBytes: 0,
+    cors: "mobile",
+    idempotency: "none",
+    providerCost: "none",
+    rateLimits: [
+      { cost: 1, dimension: "user", limit: 60, windowSeconds: 60 },
+      { cost: 1, dimension: "install", limit: 90, windowSeconds: 60 },
+      { cost: 1, dimension: "ip", limit: 180, windowSeconds: 60 },
     ],
   },
   "account.deletion": {

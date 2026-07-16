@@ -7,13 +7,15 @@ const routes = read("scripts/report-mobile-api-security.mjs");
 const actor = read("lib/server/route-supabase.ts");
 const security = read("lib/server/api-security.ts");
 const policies = read("lib/server/mobile-api-policies.ts");
-const resolveEmail = read("app/api/mobile/auth/resolve-email/route.ts");
-const recoveryRoute = read("app/api/mobile/auth/password-recovery/route.ts");
+const emailOtp = read("app/api/mobile/auth/email-otp/route.ts");
 const auth = read("mobile/src/services/auth.ts");
+const boundary = read("mobile/src/providers/AccountSessionBoundary.tsx");
 const install = read("mobile/src/services/installIdentity.ts");
 const publicFeed = read("app/api/feed/public/route.ts");
 const migration = read("supabase/migrations/202607130008_mobile_api_security.sql");
 const moderation = read("lib/server/content-moderation.ts");
+const memoryCleanup = read("app/api/mobile/memories/uploads/cleanup/route.ts");
+const shareImage = read("app/api/posts/[postId]/share-image/route.tsx");
 
 test("canonical actor uses one verified Auth identity and authoritative active profile", () => {
   assert.equal((actor.match(/auth\.getUser\s*\(/g) ?? []).length, 1);
@@ -23,13 +25,13 @@ test("canonical actor uses one verified Auth identity and authoritative active p
   assert.match(routes, /route-local auth\.getUser remains/);
 });
 
-test("email helper and recovery responses do not branch on account existence", () => {
-  assert.doesNotMatch(resolveEmail, /listUsers|admin\.getUser|sign_up|sign_in/);
-  assert.match(resolveEmail, /GENERIC_RESPONSE/);
-  assert.match(resolveEmail, /status:\s*202/);
-  assert.match(recoveryRoute, /GENERIC_RESPONSE/);
-  assert.match(recoveryRoute, /status:\s*202/);
-  assert.doesNotMatch(recoveryRoute, /account exists|user not found/i);
+test("email OTP response does not branch on account existence and recovery API is absent", () => {
+  assert.doesNotMatch(emailOtp, /listUsers|admin\.getUser|account exists|user not found/i);
+  assert.match(emailOtp, /signInWithOtp/);
+  assert.match(emailOtp, /shouldCreateUser:\s*true/);
+  assert.match(emailOtp, /GENERIC_RESPONSE/);
+  assert.match(emailOtp, /status:\s*202/);
+  assert.throws(() => read("app/api/mobile/auth/password-recovery/route.ts"), /ENOENT/);
 });
 
 test("durable limiter is atomic, shared, hashed, fail-closed, and cleanable", () => {
@@ -45,7 +47,7 @@ test("durable limiter is atomic, shared, hashed, fail-closed, and cleanable", ()
 
 test("critical endpoint policies include user, install, IP, subject, and weighted provider limits", () => {
   for (const policy of [
-    "auth.resolve-email", "auth.password-recovery", "provider.places-autocomplete",
+    "auth.email-otp", "provider.places-autocomplete",
     "provider.places-details", "provider.reverse-geocode", "mutation.report",
     "notification.memory", "notification.event", "media.intent", "media.access",
   ]) assert.match(policies, new RegExp(`"${policy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
@@ -62,15 +64,13 @@ test("public feed ignores caller-supplied viewer authority", () => {
   assert.match(publicFeed, /actor\?\.actorName/);
 });
 
-test("mobile recovery and OAuth callbacks are mode-bound, allowlisted, and replay-resistant", () => {
-  assert.match(auth, /callbackParameters\(url, "oauth"\)/);
-  assert.match(auth, /callbackParameters\(url, "recovery"\)/);
+test("OAuth callback is mode-bound and replay-resistant while recovery is fail-closed", () => {
+  assert.match(auth, /callbackParameters\(url\)/);
+  assert.match(auth, /searchParams\.has\("mode"\)[\s\S]*Invalid authentication callback/);
   assert.match(auth, /consumeAuthFlow\("oauth"/);
-  assert.match(auth, /consumeAuthFlow\("recovery"/);
   assert.match(auth, /exchangeCodeForSession/);
-  assert.match(auth, /token_hash/);
-  assert.match(auth, /callbackType === "recovery"/);
-  assert.match(auth, /supabase\.auth\.setSession/);
+  assert.doesNotMatch(auth, /token_hash|callbackType === "recovery"|resetPasswordForEmail/);
+  assert.match(boundary, /event === "PASSWORD_RECOVERY"[\s\S]*bufferedSession = null[\s\S]*logout\(\)/);
   assert.match(install, /deleteItemAsync/);
   assert.match(install, /expiresAt >= Date\.now\(\)/);
 });
@@ -106,4 +106,19 @@ test("API responses use safe headers and sensitive CORS is allowlisted", () => {
   assert.match(security, /X-Frame-Options/);
   assert.match(security, /MOBILE_API_ALLOWED_ORIGINS/);
   assert.doesNotMatch(security, /Access-Control-Allow-Origin["']?\s*:\s*["']\*/);
+});
+
+test("API inventory includes TSX routes, re-exported handlers, and nonstandard internal jobs", () => {
+  assert.match(routes, /route\\\.\(\?:ts\|tsx\)/);
+  assert.match(routes, /function routeSource/);
+  assert.match(routes, /@\\\/app\\\//);
+  assert.match(routes, /\/api\/mobile\/memories\/uploads\/cleanup/);
+  assert.match(memoryCleanup, /timingSafeSecretMatch/);
+  assert.match(memoryCleanup, /configuredInternalSecret\("MEMORY_UPLOAD_CLEANUP_SECRET"\)/);
+  assert.match(memoryCleanup, /safeInternalFailure\(\)/);
+  assert.match(shareImage, /visibility !== "public"/);
+  assert.match(shareImage, /visibility !== "public"\) return new Response\("Not found", \{ status: 404 \}\)/);
+  assert.match(shareImage, /isReviewSuppressed\(review\)/);
+  assert.match(shareImage, /enforceRateLimit\(request, "public\.share-image"\)/);
+  assert.match(shareImage, /fetchWithDeadline/);
 });

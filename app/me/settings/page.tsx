@@ -8,14 +8,13 @@ import { createClient } from "@/lib/supabase/client";
 import { useTheme, type ThemeMode } from "@/lib/useTheme";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { invalidateCachedJson, invalidateViewerCaches } from "@/lib/browser-api-cache";
-import { clearStoredActor, getStoredActorName } from "@/lib/browser-actor";
+import { clearStoredActor } from "@/lib/browser-actor";
 
 type AccountType = "private" | "public";
 
 export default function SettingsPage() {
   const router = useRouter();
   const { mode: themeMode, setThemeMode, mounted: themeMounted } = useTheme();
-  const [myName, setMyName] = useState("");
   const [userId, setUserId] = useState("");
   const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
   const [typeLoaded, setTypeLoaded] = useState(false);
@@ -29,8 +28,6 @@ export default function SettingsPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
       setUserId(user.id);
-      const name = (user.user_metadata?.username as string) || getStoredActorName();
-      setMyName(name);
       // Read from user metadata — always in sync with the authenticated session
       const stored = user.user_metadata?.account_type;
       setAccountType(stored === "private" ? "private" : DEFAULT_ACCOUNT_TYPE);
@@ -44,12 +41,8 @@ export default function SettingsPage() {
     const supabase = createClient();
     // Update user metadata (primary — always works for the current user)
     await supabase.auth.updateUser({ data: { account_type: pendingType } });
-    // Also keep the profiles table in sync
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
-      .from("profiles")
-      .update({ account_type: pendingType })
-      .eq("id", userId);
+    // The database derives the profile owner and permits only this approved field.
+    await supabase.rpc("update_current_account_type", { p_account_type: pendingType } as never);
     setAccountType(pendingType);
     setPendingType(null);
     setSaving(false);
@@ -72,12 +65,7 @@ export default function SettingsPage() {
 
   async function handleDeleteAccount() {
     const supabase = createClient();
-    if (myName) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from("reviews").delete().eq("reviewer_name", myName);
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("profiles").delete().eq("id", userId);
+    await supabase.rpc("request_account_deletion");
     await supabase.auth.signOut();
     clearStoredActor();
     invalidateViewerCaches();

@@ -1,6 +1,7 @@
 import type { Comment, Review } from "@/lib/types";
 import { buildProfileDisplayMap } from "@/lib/profile-display";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
+import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 
 type FeedAssemblyDb = {
   rpc: (functionName: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
@@ -44,7 +45,12 @@ function tasteTrustSummary(mustTryCount: number, notWorthItCount: number): PostT
 export async function buildFeedAssemblyMaps(
   db: FeedAssemblyDb & { from: (table: string) => any },
   reviews: Pick<Review, "id" | "reviewer_name">[],
-  options: { viewerName?: string | null; viewerUserId?: string | null; includeTasteTrust?: boolean } = {}
+  options: {
+    viewerName?: string | null;
+    viewerUserId?: string | null;
+    includeTasteTrust?: boolean;
+    trace?: RequestPerformanceTrace | null;
+  } = {}
 ): Promise<FeedAssemblyMaps> {
   const postIds = Array.from(new Set(reviews.map((review) => review.id).filter(Boolean))).slice(0, 100);
   if (postIds.length === 0) {
@@ -54,12 +60,15 @@ export async function buildFeedAssemblyMaps(
     };
   }
 
-  const [engagementResult, profileMap] = await Promise.all([
-    db.rpc("mobile_post_engagement_v1", {
+  const engagementQuery = () => db.rpc("mobile_post_engagement_v1", {
       p_post_ids: postIds,
       p_viewer_user_id: options.viewerUserId ?? null,
-    }),
-    buildProfileDisplayMap(db, reviews.map((review) => review.reviewer_name)),
+    });
+  const [engagementResult, profileMap] = await Promise.all([
+    options.trace
+      ? options.trace.database("feed.mobile_post_engagement_v1", engagementQuery)
+      : engagementQuery(),
+    buildProfileDisplayMap(db, reviews.map((review) => review.reviewer_name), options.trace),
   ]);
   if (engagementResult.error) {
     throw new Error(`Feed engagement deployment contract unavailable: ${engagementResult.error.message}`);

@@ -6,10 +6,11 @@ Use a disposable, allowlisted staging project with canonical migrations, product
 
 Record `LOAD_STAGING_ID`, API/Supabase hosts, API/worker release, migration head, database tier, API/worker replicas and CPU/RAM, regions and network placement. Node 22 is required. The checked-in Node harness is version 1.0.0; CI and hosted workflow pin Node 22.
 
-Protected values are `LOAD_STAGING_SUPABASE_ANON_KEY`, `LOAD_STAGING_SERVICE_ROLE_KEY`, `LOAD_ACTOR_PASSWORD`, actor manifest, actor-manifest encryption password, safety-telemetry token and chaos-controller token. Image/video fixtures are generated in the runner with checked-in deterministic Sharp/FFmpeg recipes, contain no third-party content and are not secrets. Results contain only hostnames, topology labels, aggregate metrics, safe codes and hashes.
+Protected values are `LOAD_STAGING_SUPABASE_ANON_KEY`, `LOAD_STAGING_SERVICE_ROLE_KEY`, actor manifest, actor-manifest encryption password, safety-telemetry token and chaos-controller token. Load actors are passwordless: the protected runner creates short-lived magic-link verifications through the service client and exchanges them through the normal OTP verification endpoint before measurement. Image/video fixtures are generated in the runner with checked-in deterministic Sharp/FFmpeg recipes, contain no third-party content and are not secrets. Results contain only hostnames, topology labels, aggregate metrics, safe codes and hashes.
 
 ## Safety confirmations
 
+- Remote non-production Supabase plus loopback API diagnostic: `LOAD_DEVELOPMENT_CONFIRMATION=CIRCLEBITES_DEVELOPMENT_LOAD`. This topology can find regressions but can never prove production capacity.
 - Normal traffic: `LOAD_CONFIRMATION=CIRCLEBITES_STAGING_LOAD`
 - Local database contract only: `LOAD_LOCAL_CONFIRMATION=CIRCLEBITES_LOCAL_SEED_CONTRACT`
 - Seed: `CIRCLEBITES_STAGING_SEED`

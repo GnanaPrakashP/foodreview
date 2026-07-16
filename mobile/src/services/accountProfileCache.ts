@@ -31,6 +31,8 @@ function parseProfile(value: string | null, ownerScope: string): ActorProfile | 
     return {
       accountType: parsed.accountType,
       displayName: parsed.displayName,
+      profileComplete: typeof parsed.profileComplete === "boolean" ? parsed.profileComplete : undefined,
+      profileName: typeof parsed.profileName === "string" ? parsed.profileName : undefined,
       userId: parsed.userId,
       username: parsed.username
     };

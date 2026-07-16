@@ -109,7 +109,9 @@ async function createFixtureData(label, version) {
 
   if (version === "202607130002") {
     const client = createClient(env.url, env.anonKey, options);
-    const signedIn = await client.auth.signInWithPassword({ email, password });
+    const link = await admin.auth.admin.generateLink({ email, type: "magiclink" });
+    if (link.error || !link.data.properties?.hashed_token) throw new Error(`${label}_magiclink_failed`);
+    const signedIn = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
     if (signedIn.error) throw new Error(`${label}_sign_in_failed`);
     const requested = await client.rpc("request_account_deletion");
     if (requested.error || requested.data?.length !== 1) throw new Error(`${label}_deletion_seed_failed`);

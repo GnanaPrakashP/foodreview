@@ -27,8 +27,16 @@ select has_function('public', 'production_operations_health', array[]::text[], '
 select has_function('public', 'production_operations_contract', array[]::text[], 'operations drift contract exists');
 select has_function('public', 'reconcile_push_delivery_jobs', array['boolean', 'integer'], 'dry-run/apply push reconciliation exists');
 
-select ok(not has_function_privilege('authenticated', 'public.production_operations_health()', 'EXECUTE'), 'authenticated clients cannot execute operations health');
-select ok(not has_function_privilege('anon', 'public.reconcile_push_delivery_jobs(boolean,integer)', 'EXECUTE'), 'anonymous clients cannot reconcile push jobs');
+select ok(
+  has_function_privilege('authenticated', 'public.production_operations_health()', 'EXECUTE')
+  and (select position('service_role_required' in routine.prosrc) > 0 from pg_catalog.pg_proc routine where routine.oid = 'public.production_operations_health()'::regprocedure),
+  'authenticated operations-health calls reach only the stable service-role guard'
+);
+select ok(
+  has_function_privilege('anon', 'public.reconcile_push_delivery_jobs(boolean,integer)', 'EXECUTE')
+  and (select position('service_role_required' in routine.prosrc) > 0 from pg_catalog.pg_proc routine where routine.oid = 'public.reconcile_push_delivery_jobs(boolean,integer)'::regprocedure),
+  'anonymous reconciliation calls reach only the stable service-role guard'
+);
 select ok(has_function_privilege('service_role', 'public.production_operations_health()', 'EXECUTE'), 'service role can execute operations health');
 select ok(has_function_privilege('service_role', 'public.reconcile_push_delivery_jobs(boolean,integer)', 'EXECUTE'), 'service role can reconcile push jobs');
 

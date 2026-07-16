@@ -1,5 +1,8 @@
 import { ImageResponse } from "next/og";
+import type { NextRequest } from "next/server";
 import sharp from "sharp";
+import { enforceRateLimit, fetchWithDeadline, rateLimitResponse } from "@/lib/server/api-security";
+import { isValidUuid } from "@/lib/server/review-validation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { REVIEW_SELECT } from "@/lib/selects";
 import type { FoodItem, Review } from "@/lib/types";
@@ -110,23 +113,27 @@ function estimateItemRows(items: FoodItem[], contentWidth: number): number {
 
 async function loadGoogleFont(family: string, weight: number): Promise<ArrayBuffer | null> {
   try {
-    const css = await fetch(
+    const css = await fetchWithDeadline(
       `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${weight}&display=swap`,
       { headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" } },
+      3_000,
     ).then((r) => r.text());
     const url = css.match(/url\((https:\/\/fonts\.gstatic\.com[^)]+)\)/)?.[1];
     if (!url) return null;
-    return fetch(url).then((r) => r.arrayBuffer());
+    return fetchWithDeadline(url, {}, 3_000).then((r) => r.arrayBuffer());
   } catch {
     return null;
   }
 }
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ postId: string }> },
 ) {
   const { postId } = await params;
+  const rate = await enforceRateLimit(request, "public.share-image");
+  if (!rate.allowed) return rateLimitResponse(request, ["GET"], rate);
+  if (!isValidUuid(postId)) return new Response("Not found", { status: 404 });
   const requestUrl = new URL(request.url);
   const requestedWidth = Number(requestUrl.searchParams.get("w"));
   const requestedScale = Number(requestUrl.searchParams.get("dpr"));
@@ -145,7 +152,7 @@ export async function GET(
 
   if (!review) return new Response("Not found", { status: 404 });
   if (isReviewSuppressed(review)) return new Response("Not found", { status: 404 });
-  if (review.visibility !== "public") return new Response("Forbidden", { status: 403 });
+  if (review.visibility !== "public") return new Response("Not found", { status: 404 });
 
   const { data: profile } = await db
     .from("profiles")
@@ -405,6 +412,8 @@ export async function GET(
     headers: {
       "Content-Type": "image/png",
       "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
       ...(isDownload
         ? { "Content-Disposition": `attachment; filename="circlebites-${filenameSlug(review.restaurant_name)}.png"` }
         : {}),

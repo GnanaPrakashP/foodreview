@@ -77,6 +77,8 @@ test("production environment accepts complete public configuration", () => {
 test("production environment rejects local, placeholder, wrong-channel and auto-login configuration", () => {
   for (const patch of [
     { EXPO_PUBLIC_API_BASE_URL: "http://10.0.2.2:3000" },
+    { EXPO_PUBLIC_WEB_BASE_URL: "https://policies.example.com" },
+    { EXPO_PUBLIC_WEB_BASE_URL: "https://www.circlebites.in/unexpected-base" },
     { EXPO_PUBLIC_SUPABASE_ANON_KEY: "replace-with-key" },
     { EXPO_PUBLIC_RELEASE_CHANNEL: "preview" },
     { EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD: "not-printed" }
@@ -137,15 +139,17 @@ test("iOS configuration removes unsupported tablet and permission claims", () =>
   assert.match(read("mobile/app.config.js"), /plugins\/withReleaseNativePolicy/);
 });
 
-test("OAuth and recovery are environment-bound and replay-resistant", () => {
+test("OAuth is environment-bound and password recovery is absent from production navigation", () => {
   const auth = read("mobile/src/services/auth.ts");
-  const server = read("app/api/mobile/auth/password-recovery/route.ts");
+  const boundary = read("mobile/src/providers/AccountSessionBoundary.tsx");
+  const config = read("supabase/config.toml");
   assert.match(auth, /authSchemeForEnvironment/);
   assert.match(auth, /consumeAuthFlow\("oauth"/);
-  assert.match(auth, /consumeAuthFlow\("recovery"/);
   assert.match(auth, /searchParams\.has\("redirect"\)/);
-  assert.match(server, /circlebites-preview:/);
-  assert.match(server, /url\.hostname !== "auth"/);
+  assert.doesNotMatch(auth, /consumeAuthFlow\("recovery"|resetPasswordForEmail|updateRecoveredPassword/);
+  assert.match(boundary, /event === "PASSWORD_RECOVERY"[\s\S]*logout\(\)/);
+  assert.doesNotMatch(config, /auth\/recovery/);
+  assert.throws(() => read("app/api/mobile/auth/password-recovery/route.ts"), /ENOENT/);
 });
 
 test("push remains permission-safe, account-bound and authorization-safe on tap", () => {
@@ -246,6 +250,21 @@ test("web/mobile policy identities and material disclosures are reconciled", () 
   assert.match(sources[0], /Sentry/);
   assert.match(sources[0], /children under 13/i);
   assert.match(sources[1], /legal review/i);
+});
+
+test("welcome requires legal acknowledgement and opens both public policies before auth", () => {
+  const welcome = read("mobile/app/(auth)/login.tsx");
+  const legalDocuments = read("mobile/src/services/legalDocuments.ts");
+  assert.match(welcome, /agree to the/);
+  assert.match(welcome, /acknowledge the/);
+  assert.equal((welcome.match(/accessibilityRole="link"/g) ?? []).length, 2);
+  assert.match(welcome, /openDocument\("terms"\)/);
+  assert.match(welcome, /openDocument\("privacy"\)/);
+  assert.match(legalDocuments, /https:\/\/www\.circlebites\.in/);
+  assert.match(legalDocuments, /\/terms/);
+  assert.match(legalDocuments, /\/privacy/);
+  assert.match(legalDocuments, /openBrowserAsync/);
+  assert.match(legalDocuments, /Linking\.openURL/);
 });
 
 test("OTA is disabled and release workflow cannot publish automatically", () => {

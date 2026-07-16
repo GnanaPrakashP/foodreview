@@ -32,7 +32,7 @@ The database remains authoritative for work. Logs do not contain enough private 
 - Database: `production_operations_health()` plus existing Phase 3 drift/schema contracts and provider dashboards.
 - Configuration: `config/observability-inventory.json`, `config/operations-alerts.json`, and `config/operations-schedules.json`.
 
-Production configuration requires a valid environment, non-local release, and Sentry DSN. Safe release output includes environment, application version/build, API/worker release, Git release ID, and expected database migration head `202607130010`. API and worker health surfaces do not expose secrets.
+Production configuration requires a valid environment, non-local release, and Sentry DSN. Safe release output includes environment, application version/build, API/worker release, Git release ID, and expected database migration head `202607160001`. API and worker health surfaces do not expose secrets.
 
 ## Structured logging and redaction
 

@@ -59,7 +59,7 @@ async function waitForNext() {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${BASE_URL}/api/mobile/auth/resolve-email`, { method: "OPTIONS" });
+      const response = await fetch(`${BASE_URL}/api/mobile/auth/email-otp`, { method: "OPTIONS" });
       if (response.status === 204) return;
     } catch {}
     await delay(350);
@@ -100,12 +100,11 @@ const admin = createClient(env.url, env.serviceKey, options);
 const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.slice(-10);
 const email = `phase4.api.${suffix}@example.test`;
 const missingEmail = `phase4.missing.${suffix}@example.test`;
-const password = `Phase4-Api-${suffix}!`;
-const flowNonce = "a".repeat(64);
 let userId;
+let otpCreatedUserId;
 
 try {
-  const created = await admin.auth.admin.createUser({ email, email_confirm: true, password });
+  const created = await admin.auth.admin.createUser({ email, email_confirm: true });
   if (created.error || !created.data.user) throw created.error ?? new Error("Runtime actor creation failed");
   userId = created.data.user.id;
   const username = `p4_api_${suffix}`.slice(0, 20).toLowerCase();
@@ -115,27 +114,30 @@ try {
   });
   if (profile.error) throw profile.error;
   const client = createClient(env.url, env.anonKey, options);
-  const signed = await client.auth.signInWithPassword({ email, password });
+  const link = await admin.auth.admin.generateLink({ email, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) throw link.error ?? new Error("Runtime actor magiclink failed");
+  const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("Runtime actor sign-in failed");
   const token = signed.data.session.access_token;
 
-  const mailBefore = new Set((await mailMessages()).map((message) => message.ID));
   startNext(env);
   await waitForNext();
 
-  const existing = await request("/api/mobile/auth/resolve-email", {
+  const existing = await request("/api/mobile/auth/email-otp", {
     body: JSON.stringify({ email }), headers: headers(), method: "POST",
   });
-  const missing = await request("/api/mobile/auth/resolve-email", {
+  const missing = await request("/api/mobile/auth/email-otp", {
     body: JSON.stringify({ email: missingEmail }), headers: headers(), method: "POST",
   });
   assert.equal(existing.response.status, 202);
   assert.equal(missing.response.status, 202);
   assert.deepEqual(existing.body, missing.body);
   assert.deepEqual(existing.body, { ok: true });
-  console.log("PASS: existing and non-existing email helper responses are identical");
+  const otpUsers = await admin.auth.admin.listUsers({ page: 1, perPage: 1_000 });
+  otpCreatedUserId = otpUsers.data.users.find((user) => user.email === missingEmail)?.id;
+  console.log("PASS: existing and new email OTP request responses are identical");
 
-  const oversized = await request("/api/mobile/auth/resolve-email", {
+  const oversized = await request("/api/mobile/auth/email-otp", {
     body: JSON.stringify({ email, padding: "x".repeat(2_000) }), headers: headers(), method: "POST",
   });
   assert.equal(oversized.response.status, 413);
@@ -143,7 +145,7 @@ try {
 
   const burstEmail = `phase4.burst.${suffix}@example.test`;
   const burst = [];
-  for (let index = 0; index < 5; index += 1) burst.push(await request("/api/mobile/auth/resolve-email", {
+  for (let index = 0; index < 5; index += 1) burst.push(await request("/api/mobile/auth/email-otp", {
     body: JSON.stringify({ email: burstEmail }), headers: headers(), method: "POST",
   }));
   assert.equal(burst.slice(0, 4).every((result) => result.response.status === 202), true);
@@ -163,39 +165,10 @@ try {
   await admin.from("profiles").update({ account_status: "active", deletion_started_at: null }).eq("id", userId);
   console.log("PASS: canonical actor distinguishes missing, malformed, active, and frozen identities");
 
-  const recoveryExisting = await request("/api/mobile/auth/password-recovery", {
-    body: JSON.stringify({ email, flowNonce }), headers: headers(), method: "POST",
-  });
-  const recoveryMissing = await request("/api/mobile/auth/password-recovery", {
-    body: JSON.stringify({ email: missingEmail, flowNonce: "b".repeat(64) }), headers: headers(), method: "POST",
-  });
-  assert.equal(recoveryExisting.response.status, 202);
-  assert.equal(recoveryMissing.response.status, 202);
-  assert.deepEqual(recoveryExisting.body, recoveryMissing.body);
-  const mailDeadline = Date.now() + 10_000;
-  let recoveryMessage;
-  while (Date.now() < mailDeadline && !recoveryMessage) {
-    recoveryMessage = (await mailMessages()).find((message) => !mailBefore.has(message.ID));
-    if (!recoveryMessage) await delay(250);
-  }
-  assert.ok(recoveryMessage, "local recovery email was not delivered to Mailpit");
-  const detailResponse = await fetch(`${MAILPIT_URL}/api/v1/message/${recoveryMessage.ID}`);
-  assert.equal(detailResponse.ok, true);
-  const mailDetail = await detailResponse.json();
-  const mailContent = allStrings(mailDetail).join("\n").replaceAll("&amp;", "&");
-  const verificationLink = mailContent.match(/https?:\/\/[^\s"'<>]+\/auth\/v1\/verify\?[^\s"'<>]+/)?.[0];
-  assert.ok(verificationLink, "recovery verification URL was not found in local email");
-  const verification = await fetch(verificationLink, { redirect: "manual" });
-  const location = verification.headers.get("location") ?? "";
-  const safeLocationBase = location.split("#", 1)[0];
-  assert.ok(location.startsWith("circlebites://auth/recovery?"), `recovery redirect was not allowlisted: ${safeLocationBase}`);
-  assert.ok(decodeURIComponent(location).includes(`flow=${flowNonce}`), "recovery flow nonce was not preserved");
-  console.log("PASS: local Supabase recovery email redirects only to the allowlisted mobile recovery deep link");
-
-  const disallowedCors = await fetch(`${BASE_URL}/api/mobile/auth/resolve-email`, {
+  const disallowedCors = await fetch(`${BASE_URL}/api/mobile/auth/email-otp`, {
     headers: { Origin: "https://evil.example" }, method: "OPTIONS",
   });
-  const allowedCors = await fetch(`${BASE_URL}/api/mobile/auth/resolve-email`, {
+  const allowedCors = await fetch(`${BASE_URL}/api/mobile/auth/email-otp`, {
     headers: { Origin: "https://admin.example.test" }, method: "OPTIONS",
   });
   assert.equal(disallowedCors.status, 403);
@@ -220,11 +193,12 @@ try {
   assert.equal(operator.response.status, 200);
   console.log("PASS: internal operator route fails opaquely and accepts only its dedicated configured authority");
 
-  console.log("PASS: Phase 4 HTTP runtime validation completed (10 behavior groups)");
+  console.log("PASS: Phase 4 HTTP runtime validation completed (9 behavior groups)");
 } finally {
   await stopNext();
   if (userId) {
     await admin.from("profiles").delete().eq("id", userId);
     await admin.auth.admin.deleteUser(userId);
   }
+  if (otpCreatedUserId) await admin.auth.admin.deleteUser(otpCreatedUserId);
 }

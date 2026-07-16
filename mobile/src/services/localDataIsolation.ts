@@ -64,7 +64,12 @@ type CleanupStatus =
   | "clearing_query_cache"
   | "clearing_local_database"
   | "clearing_files"
-  | "clearing_account_storage";
+  | "clearing_account_storage"
+  | "clearing_location_storage"
+  | "clearing_profile_storage"
+  | "clearing_occasion_storage"
+  | "clearing_draft_storage"
+  | "clearing_auth_storage";
 
 type CleanupJournal = {
   attempts: number;
@@ -98,7 +103,12 @@ const cleanupStatuses = new Set<CleanupStatus>([
   "clearing_query_cache",
   "clearing_local_database",
   "clearing_files",
-  "clearing_account_storage"
+  "clearing_account_storage",
+  "clearing_location_storage",
+  "clearing_profile_storage",
+  "clearing_occasion_storage",
+  "clearing_draft_storage",
+  "clearing_auth_storage"
 ]);
 
 function reasonInvalidatesSession(reason: LocalCleanupReason) {
@@ -177,8 +187,14 @@ async function cleanupStep(journal: CleanupJournal, status: CleanupStatus, actio
 }
 
 async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryClient | null) {
-  if (journal.attempts >= MAX_CLEANUP_ATTEMPTS) throw new Error("local_cleanup_retry_exhausted");
-  const next = { ...journal, attempts: journal.attempts + 1 };
+  // A previous release could leave a journal permanently locked after the
+  // retry counter reached its cap. Keep the boundary fail-closed while the
+  // cleanup is incomplete, but allow a later app start to retry the idempotent
+  // cleanup instead of making every future sign-in impossible.
+  const next = {
+    ...journal,
+    attempts: journal.attempts >= MAX_CLEANUP_ATTEMPTS ? 1 : journal.attempts + 1
+  };
   writeJournal(next);
   // Revoke the generation before stopping async work. Any callback already in
   // flight can now prove it belongs to a stale account and must do nothing.
@@ -186,8 +202,11 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
 
   try {
     await cleanupStep(next, "stopping_activity", async () => {
-      const channelCleanup = await supabase.removeAllChannels();
-      if (channelCleanup.some((result) => result !== "ok")) throw new Error("realtime_cleanup_failed");
+      // removeAllChannels detaches channels locally even when the remote
+      // unsubscribe acknowledgement times out. A missing acknowledgement must
+      // not prevent the remaining on-device data from being erased or strand
+      // the cleanup journal forever.
+      await supabase.removeAllChannels().catch(() => []);
       const failedResourceCleanups = await clearRegisteredSensitiveResources();
       if (failedResourceCleanups > 0) throw new Error("sensitive_resource_cleanup_failed");
       clearMemoryCaptureSession();
@@ -214,17 +233,23 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
         Image.clearDiskCache().catch(() => false)
       ]);
     });
-    await cleanupStep(next, "clearing_account_storage", async () => {
-      setUserLocationOwnerScope(null);
-      await Promise.all([
-        clearSavedUserLocationForScope(next.ownerScope),
-        clearAccountProfileCache(next.ownerScope),
-        clearOccasionCorrectionsForScope(next.ownerScope)
-      ]);
+    setUserLocationOwnerScope(null);
+    await cleanupStep(next, "clearing_location_storage", () => (
+      clearSavedUserLocationForScope(next.ownerScope)
+    ));
+    await cleanupStep(next, "clearing_profile_storage", () => (
+      clearAccountProfileCache(next.ownerScope)
+    ));
+    await cleanupStep(next, "clearing_occasion_storage", () => (
+      clearOccasionCorrectionsForScope(next.ownerScope)
+    ));
+    await cleanupStep(next, "clearing_draft_storage", async () => {
       clearMediaUploadRecoveryForScope(next.ownerScope);
       clearPostDraftForScope(next.ownerScope);
-      if (reasonInvalidatesSession(next.reason)) await clearSupabaseLocalSessionStorage();
     });
+    if (reasonInvalidatesSession(next.reason)) {
+      await cleanupStep(next, "clearing_auth_storage", clearSupabaseLocalSessionStorage);
+    }
 
     if (activeOwnerMarker() === next.ownerScope) removeSecurityValue(ACTIVE_OWNER_KEY);
     if (getActiveCacheOwner()?.scope === next.ownerScope) setActiveCacheOwner(null);
@@ -325,11 +350,15 @@ export async function prepareLocalDataForOwner(
   return { generation, owner, ownerChanged };
 }
 
-export async function prepareSignedOutLocalData(queryClient: QueryClient, previousQueryClient?: QueryClient | null) {
+export async function prepareSignedOutLocalData(
+  queryClient: QueryClient,
+  previousQueryClient?: QueryClient | null,
+  cleanupReason: LocalCleanupReason = "session_invalid"
+) {
   await runLegacyCleanupOnce();
   await resumeIncompleteLocalCleanup(previousQueryClient);
   const previousScope = activeOwnerMarker();
-  if (previousScope) await cleanupLocalDataForOwner(previousScope, "session_invalid", previousQueryClient);
+  if (previousScope) await cleanupLocalDataForOwner(previousScope, cleanupReason, previousQueryClient);
   stopOwnerQueryPersistence();
   await previousQueryClient?.cancelQueries().catch(() => {});
   previousQueryClient?.clear();

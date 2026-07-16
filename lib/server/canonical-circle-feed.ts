@@ -5,6 +5,7 @@ import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
 import { rankCircleFeedReviews } from "@/lib/feed-ranking";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
+import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 
 type FeedDb = {
   from: (table: string) => any;
@@ -81,15 +82,24 @@ function buildRankMap(reviews: Review[]) {
 export async function loadCanonicalCircleFeedPage(
   db: FeedDb,
   actor: RequestActor,
-  options: { cursor?: CircleFeedCursor | null; excludePostIds?: string[]; limit?: number; bypassCache?: boolean }
+  options: {
+    cursor?: CircleFeedCursor | null;
+    excludePostIds?: string[];
+    limit?: number;
+    bypassCache?: boolean;
+    trace?: RequestPerformanceTrace | null;
+  }
 ): Promise<CanonicalCircleFeedPage> {
-  const { data, error } = await db.rpc("circle_feed_page_v2", {
+  const circlePageQuery = () => db.rpc("circle_feed_page_v2", {
     p_cursor_created_at: options.cursor?.createdAt ?? null,
     p_cursor_id: options.cursor?.id ?? null,
     p_exclude_post_ids: Array.from(new Set(options.excludePostIds ?? [])).slice(0, 200),
     p_limit: Math.min(Math.max(Math.floor(options.limit ?? 24), 1), 50),
     p_viewer_user_id: actor.userId,
   });
+  const { data, error } = options.trace
+    ? await options.trace.database("feed.circle_feed_page_v2", circlePageQuery)
+    : await circlePageQuery();
   if (error) throw new Error(`Circle feed deployment contract unavailable: ${error.message}`);
 
   const payload = (data ?? {}) as RpcPayload;
@@ -97,11 +107,15 @@ export async function loadCanonicalCircleFeedPage(
     throw new Error("Circle feed actor contract rejected the request");
   }
   const chronologicalReviews = (payload.reviews ?? []).map((row) => normalizeReview(row as Parameters<typeof normalizeReview>[0]));
-  const maps = await buildFeedAssemblyMaps(db, chronologicalReviews, {
-    includeTasteTrust: true,
-    viewerName: actor.actorName,
-    viewerUserId: actor.userId,
-  });
+  const assembly = () => buildFeedAssemblyMaps(db, chronologicalReviews, {
+      includeTasteTrust: true,
+      trace: options.trace,
+      viewerName: actor.actorName,
+      viewerUserId: actor.userId,
+    });
+  const maps = options.trace
+    ? await options.trace.measure("assembly", "feed.enrichment", assembly)
+    : await assembly();
   const seenIds = new Set(payload.seenPostIds ?? []);
   const unseen = rankCircleFeedReviews(chronologicalReviews.filter((review) => !seenIds.has(review.id)), maps);
   const seen = rankCircleFeedReviews(chronologicalReviews.filter((review) => seenIds.has(review.id)), maps);

@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import {
   boundedJsonError,
@@ -17,19 +18,30 @@ function normalizeEmail(value: unknown) {
 }
 
 export async function POST(req: NextRequest) {
-  const startedAt = Date.now();
   const parsed = await readBoundedJson<{ email?: unknown }>(req, 1024);
   if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
   const email = normalizeEmail(parsed.value?.email);
-  const rate = await enforceRateLimit(req, "auth.resolve-email", {
+  const rate = await enforceRateLimit(req, "auth.email-otp", {
     subject: EMAIL_RE.test(email) ? email : "invalid-email",
   });
   if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
 
-  // Never query auth.users and never branch on account existence. A small fixed
-  // response floor also avoids making validation branches observable remotely.
-  const remainingDelay = 75 - (Date.now() - startedAt);
-  if (remainingDelay > 0) await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+  if (EMAIL_RE.test(email)) {
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!supabaseUrl || !anonKey) throw new Error("auth_unavailable");
+      const auth = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
+      await auth.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true },
+      });
+    } catch {
+      // Account/provider details are deliberately hidden. The client always
+      // receives one generic accepted response and verifies only the OTP.
+    }
+  }
+
   return mobileApiJson(req, METHODS, GENERIC_RESPONSE, { status: 202 });
 }
 

@@ -18,7 +18,7 @@ select ok(
 
 select function_privs_are(
   'public', 'consume_api_rate_limits', array['jsonb'], 'service_role', array['EXECUTE'],
-  'only service role receives limiter execution'
+  'service role can execute the guarded limiter wrapper'
 );
 select function_privs_are(
   'public', 'cleanup_api_security_state', array['integer'], 'service_role', array['EXECUTE'],

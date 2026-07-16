@@ -42,13 +42,15 @@ check(eas.build.production.distribution === "store", "production store distribut
 check(eas.build.production.android.credentialsSource === "remote", "production Android remote credentials");
 check(eas.build.production.ios.credentialsSource === "remote", "production iOS remote credentials");
 
-const [manifest, gradle, gradleProperties, appConfig, privacy, terms, releaseWorkflow] = await Promise.all([
+const [manifest, gradle, gradleProperties, appConfig, privacy, terms, welcome, legalDocuments, releaseWorkflow] = await Promise.all([
   read("mobile/android/app/src/main/AndroidManifest.xml"),
   read("mobile/android/app/build.gradle"),
   read("mobile/android/gradle.properties"),
   read("mobile/app.config.js"),
   read("app/privacy/page.tsx"),
   read("app/terms/page.tsx"),
+  read("mobile/app/(auth)/login.tsx"),
+  read("mobile/src/services/legalDocuments.ts"),
   read(".github/workflows/native-release.yml")
 ]);
 
@@ -75,6 +77,11 @@ for (const marker of ["Supabase", "Expo", "Sentry", "Memory", "location", "delet
 for (const marker of ["CircleBites", "Moderation", "Copyright", "at least 13", "legal review"]) {
   check(terms.toLowerCase().includes(marker.toLowerCase()), `terms disclosure ${marker}`);
 }
+check(/agree to the/.test(welcome) && /acknowledge the/.test(welcome), "welcome legal consent wording");
+check((welcome.match(/accessibilityRole="link"/g) ?? []).length === 2, "welcome legal links are accessible");
+check(/openDocument\("terms"\)/.test(welcome) && /openDocument\("privacy"\)/.test(welcome), "welcome legal links are actionable");
+check(/openBrowserAsync/.test(legalDocuments) && /Linking\.openURL/.test(legalDocuments), "legal documents have in-app and external browser paths");
+check(/https:\/\/www\.circlebites\.in/.test(legalDocuments), "legal documents have a canonical release fallback");
 check(/workflow_dispatch/.test(releaseWorkflow), "release workflow requires explicit invocation");
 check(!/eas submit|play.*publish|app-store.*submit/i.test(releaseWorkflow), "release workflow cannot submit to stores");
 

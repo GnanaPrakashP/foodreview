@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { createClient } from "@supabase/supabase-js";
 
 export const repositoryRoot = new URL("../../", import.meta.url);
 export const resultDirectory = new URL("../../load-results/", import.meta.url);
@@ -230,11 +231,24 @@ export function safeTargetMetadata(config, env = process.env, options = {}) {
   const apiUrl = new URL(env.LOAD_STAGING_API_URL ?? "https://missing.invalid");
   const supabaseUrl = new URL(env.LOAD_STAGING_SUPABASE_URL ?? "https://missing.invalid");
   const allowLocal = Boolean(options.allowLocal);
+  const allowDevelopment = Boolean(options.allowDevelopment);
   if (allowLocal) {
     const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
     invariant(loopbackHosts.has(apiUrl.hostname) && loopbackHosts.has(supabaseUrl.hostname), "load_local_target_must_be_loopback");
     invariant(apiUrl.protocol === "http:" && supabaseUrl.protocol === "http:", "load_local_target_must_use_http");
     invariant(env.LOAD_LOCAL_CONFIRMATION === config.safety.localValidationConfirmation, "load_local_confirmation_required");
+  } else if (allowDevelopment) {
+    const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+    invariant(loopbackHosts.has(apiUrl.hostname) && apiUrl.protocol === "http:", "load_development_api_must_be_loopback");
+    invariant(supabaseUrl.protocol === "https:", "load_development_supabase_must_use_https");
+    invariant(!isProductionHostname(supabaseUrl.hostname, config.safety.productionHostSuffixes), "production_supabase_target_rejected");
+    invariant(env.LOAD_DEVELOPMENT_CONFIRMATION === config.safety.developmentConfirmation, "load_development_confirmation_required");
+    if (options.confirmation) invariant(env.LOAD_CONFIRMATION === options.confirmation, "load_confirmation_required");
+    invariant(env.LOAD_ENVIRONMENT === "development-nonproduction", "load_development_environment_required");
+    for (const name of ["LOAD_STAGING_ID", "LOAD_API_RELEASE", "LOAD_WORKER_RELEASE", "LOAD_GIT_COMMIT", "LOAD_MIGRATION_HEAD", "LOAD_DB_TIER", "LOAD_API_TOPOLOGY", "LOAD_WORKER_TOPOLOGY", "LOAD_REGIONS"]) {
+      invariant(Boolean(env[name]?.trim()), `load_metadata_required:${name}`);
+    }
+    invariant(/^[0-9a-f]{7,64}$/i.test(env.LOAD_GIT_COMMIT), "load_git_commit_invalid");
   } else {
     invariant(env.LOAD_ENVIRONMENT === config.safety.requiredEnvironment, "load_environment_must_be_staging");
     invariant(env.LOAD_CONFIRMATION === (options.confirmation ?? config.safety.normalConfirmation), "load_confirmation_required");
@@ -339,25 +353,61 @@ export async function loadActorDefinitions(path = process.env.LOAD_ACTORS_FILE) 
 
 export async function authenticateActors(definitions, count, env = process.env) {
   invariant(definitions.length >= count, `load_actor_count_insufficient:${definitions.length}<${count}`);
-  const password = env.LOAD_ACTOR_PASSWORD;
   const supabaseUrl = env.LOAD_STAGING_SUPABASE_URL?.replace(/\/$/, "");
   const anonKey = env.LOAD_STAGING_SUPABASE_ANON_KEY;
+  const serviceKey = env.LOAD_STAGING_SERVICE_ROLE_KEY;
+  invariant(Boolean(supabaseUrl && anonKey && serviceKey), "load_actor_auth_configuration_required");
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
   const actors = [];
-  for (const actor of definitions.slice(0, count)) {
-    if (actor.accessToken) {
-      actors.push(actor);
-      continue;
-    }
-    invariant(Boolean(password && supabaseUrl && anonKey), "load_actor_auth_configuration_required");
-    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      body: JSON.stringify({ email: actor.email, password }),
-      headers: { apikey: anonKey, "Content-Type": "application/json" },
-      method: "POST",
-      signal: AbortSignal.timeout(15000)
-    });
-    const session = await response.json().catch(() => null);
-    invariant(response.ok && session?.access_token, "load_actor_authentication_failed");
-    actors.push({ ...actor, accessToken: session.access_token, refreshToken: session.refresh_token });
+  const authBatchSize = 2;
+  for (let offset = 0; offset < count; offset += authBatchSize) {
+    const batch = definitions.slice(offset, Math.min(count, offset + authBatchSize));
+    const authenticated = await Promise.all(batch.map(async (actor) => {
+      if (actor.accessToken) return actor;
+      invariant(typeof actor.email === "string", "load_actor_email_required");
+      let generated = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        generated = await admin.auth.admin.generateLink({ email: actor.email, type: "magiclink" });
+        if (!generated.error && generated.data?.properties?.hashed_token) break;
+        const status = Number(generated.error?.status ?? 0);
+        if (status !== 429 && status < 500 && status !== 0) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(10000, 1000 * (2 ** attempt))));
+      }
+      const tokenHash = generated.data?.properties?.hashed_token;
+      invariant(!generated.error && Boolean(tokenHash), `load_actor_magiclink_failed:${generated.error?.status ?? "unknown"}`);
+      let response = null;
+      let session = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          response = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+            body: JSON.stringify({ token_hash: tokenHash, type: "magiclink" }),
+            headers: { apikey: anonKey, "Content-Type": "application/json" },
+            method: "POST",
+            signal: AbortSignal.timeout(15000)
+          });
+          session = await response.json().catch(() => null);
+          if (response.ok && session?.access_token) break;
+          if (response.status !== 429 && response.status < 500) break;
+        } catch {
+          response = null;
+          session = null;
+        }
+        const retryAfterSeconds = Number(response?.headers?.get("retry-after") ?? 0);
+        const backoffMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : Math.min(10000, 1000 * (2 ** attempt));
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+      const safeErrorCode = typeof session?.error_code === "string"
+        ? session.error_code.replace(/[^a-z0-9_-]/gi, "-").slice(0, 60)
+        : "unknown";
+      invariant(response?.ok && session?.access_token, `load_actor_authentication_failed:${response?.status ?? 0}:${safeErrorCode}`);
+      return { ...actor, accessToken: session.access_token, refreshToken: session.refresh_token };
+    }));
+    actors.push(...authenticated);
+    if (offset + batch.length < count) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   return actors;
 }

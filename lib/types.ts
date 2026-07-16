@@ -58,8 +58,11 @@ export interface Database {
           last_name: string;
           username: string;
           avatar_url: string | null;
+          avatar_media_asset_id: string | null;
           bio: string | null;
           account_type: AccountType;
+          account_status: "active" | "deleting";
+          deletion_started_at: string | null;
           trust_score: number;
           trust_level: TasteTrustLevel;
           confirmed_recommendations_count: number;
@@ -74,8 +77,11 @@ export interface Database {
           last_name: string;
           username: string;
           avatar_url?: string | null;
+          avatar_media_asset_id?: string | null;
           bio?: string | null;
           account_type?: AccountType;
+          account_status?: "active" | "deleting";
+          deletion_started_at?: string | null;
           trust_score?: number;
           trust_level?: TasteTrustLevel;
           confirmed_recommendations_count?: number;
@@ -90,8 +96,11 @@ export interface Database {
           last_name?: string;
           username?: string;
           avatar_url?: string | null;
+          avatar_media_asset_id?: string | null;
           bio?: string | null;
           account_type?: AccountType;
+          account_status?: "active" | "deleting";
+          deletion_started_at?: string | null;
           trust_score?: number;
           trust_level?: TasteTrustLevel;
           confirmed_recommendations_count?: number;
@@ -484,8 +493,34 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      complete_current_profile: {
+        Args: { p_name: string; p_username: string };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"][];
+      };
+      is_profile_complete: {
+        Args: { p_user_id: string };
+        Returns: boolean;
+      };
+      request_account_deletion: {
+        Args: Record<PropertyKey, never>;
+        Returns: Json;
+      };
+      update_current_account_type: {
+        Args: { p_account_type: AccountType };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"][];
+      };
+      update_current_profile_details: {
+        Args: { p_bio?: string | null; p_name: string };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"][];
+      };
+      update_current_username: {
+        Args: { p_username: string };
+        Returns: { username: string }[];
+      };
+    };
     Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
   };
 }
 

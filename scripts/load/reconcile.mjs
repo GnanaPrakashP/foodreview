@@ -11,7 +11,11 @@ import {
 
 const config = await loadCapacityConfig();
 assertNodeRuntime(config);
-const target = safeTargetMetadata(config);
+const target = safeTargetMetadata(
+  config,
+  process.env,
+  process.env.LOAD_TOPOLOGY_MODE === "development" ? { allowDevelopment: true } : {}
+);
 const serviceKey = process.env.LOAD_STAGING_SERVICE_ROLE_KEY;
 invariant(Boolean(serviceKey), "reconcile_service_role_required");
 const admin = createClient(process.env.LOAD_STAGING_SUPABASE_URL, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });

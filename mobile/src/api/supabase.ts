@@ -3,6 +3,11 @@ import "react-native-url-polyfill/auto";
 import * as SecureStore from "expo-secure-store";
 import { createClient } from "@supabase/supabase-js";
 import { Platform } from "react-native";
+import {
+  enforceInstallationBoundary,
+  type InstallationBoundaryResult
+} from "@/services/installationBoundary";
+import { legacyInstallationOwnerMatches } from "@/security/legacyInstallationEvidence";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -91,7 +96,18 @@ function parseSecureStoreChunkIndex(value: string | null): SecureStoreChunkIndex
 }
 
 async function getSecureStoreChunkIndex(key: string) {
-  return parseSecureStoreChunkIndex(await SecureStore.getItemAsync(secureStoreChunkIndexKey(key)));
+  const raw = await SecureStore.getItemAsync(secureStoreChunkIndexKey(key));
+  const parsed = parseSecureStoreChunkIndex(raw);
+  if (raw && !parsed) {
+    await Promise.all([
+      SecureStore.deleteItemAsync(key),
+      SecureStore.deleteItemAsync(secureStoreChunkIndexKey(key)),
+      ...Array.from({ length: MAX_SECURE_STORE_CHUNKS }, (_, index) => (
+        SecureStore.deleteItemAsync(secureStoreChunkKey(key, index))
+      ))
+    ]);
+  }
+  return parsed;
 }
 
 async function removeSecureStoreChunks(key: string, index: SecureStoreChunkIndex | null) {
@@ -116,6 +132,11 @@ async function getNativeSecureStoreItem(key: string) {
     if (chunks.every((chunk): chunk is string => typeof chunk === "string")) {
       return chunks.join("");
     }
+    await Promise.all([
+      SecureStore.deleteItemAsync(key),
+      removeSecureStoreChunks(key, chunkIndex)
+    ]);
+    return null;
   }
 
   return SecureStore.getItemAsync(key);
@@ -163,6 +184,7 @@ const supabaseStorageAdapter = {
       return globalThis.localStorage.getItem(key);
     }
 
+    await initializeInstallationBoundary();
     return getNativeSecureStoreItem(key);
   },
   async setItem(key: string, value: string) {
@@ -204,6 +226,27 @@ export const isSupabaseConfigured =
 export const resolvedSupabaseUrl = isSupabaseConfigured ? normalizeSupabaseUrl(runtimeSupabaseUrl) : fallbackSupabaseUrl;
 export const resolvedSupabaseAnonKey = isSupabaseConfigured ? runtimeSupabaseAnonKey : fallbackSupabaseAnonKey;
 export const supabaseAuthStorageKey = `circlebites.auth.${safeStorageKeyScope(resolvedSupabaseUrl)}`;
+
+let installationBoundaryPromise: Promise<InstallationBoundaryResult> | null = null;
+
+export function initializeInstallationBoundary() {
+  if (Platform.OS === "web") {
+    return Promise.resolve({ freshInstallation: false, orphanedUserId: null });
+  }
+  if (!installationBoundaryPromise) {
+    installationBoundaryPromise = enforceInstallationBoundary({
+      clearPersistedAuth: async () => {
+        await Promise.all([
+          removeNativeSecureStoreItem(supabaseAuthStorageKey),
+          removeNativeSecureStoreItem(`${supabaseAuthStorageKey}-code-verifier`)
+        ]);
+      },
+      hasLegacyInstallationEvidence: legacyInstallationOwnerMatches,
+      readPersistedSession: () => getNativeSecureStoreItem(supabaseAuthStorageKey)
+    });
+  }
+  return installationBoundaryPromise;
+}
 
 function safeStorageKeyScope(value: string) {
   try {

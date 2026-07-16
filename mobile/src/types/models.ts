@@ -55,6 +55,8 @@ export type ActorProfile = {
   username: string;
   displayName: string;
   accountType: AccountType;
+  profileComplete?: boolean;
+  profileName?: string;
 };
 
 export type ReviewPost = {

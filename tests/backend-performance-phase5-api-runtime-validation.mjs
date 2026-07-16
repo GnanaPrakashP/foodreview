@@ -246,7 +246,9 @@ let fixture;
 try {
   buildNext(env);
   fixture = await seed(admin, suffix);
-  const signed = await client.auth.signInWithPassword({ email: fixture.viewerEmail, password: fixture.password });
+  const link = await admin.auth.admin.generateLink({ email: fixture.viewerEmail, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) throw link.error ?? new Error("Viewer magiclink failed");
+  const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("Viewer sign-in failed");
   const token = signed.data.session.access_token;
   const headers = { Authorization: `Bearer ${token}`, "X-FoodReview-Install-Id": `phase5-${suffix}` };

@@ -1,7 +1,17 @@
 import type { ReactNode } from "react";
 import { Image } from "expo-image";
 import { useMemo } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type GestureResponderEvent
+} from "react-native";
 import { SafeAreaView, type Edge, useSafeAreaInsets } from "react-native-safe-area-context";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing, typography } from "@/theme";
@@ -9,19 +19,32 @@ import { fontStyles, spacing, typography } from "@/theme";
 const logoSource = require("../../../assets/circlebites-logo.png");
 
 type AuthShellProps = {
+  addTopInsetToContent?: boolean;
   children: ReactNode;
   contentHorizontalPadding?: number;
   contentTopPadding?: number;
   edges?: Edge[];
+  scrollEnabled?: boolean;
   showGlow?: boolean;
   showHero?: boolean;
 };
 
+function dismissFocusedInputOnBackgroundTouch(event: GestureResponderEvent) {
+  const focusedInput = TextInput.State.currentlyFocusedInput();
+  if (!focusedInput) return;
+
+  if (event.target === focusedInput) return;
+
+  Keyboard.dismiss();
+}
+
 export function AuthShell({
+  addTopInsetToContent = true,
   children,
   contentHorizontalPadding,
   contentTopPadding,
   edges = ["top", "bottom"],
+  scrollEnabled = true,
   showGlow = true,
   showHero = true
 }: AuthShellProps) {
@@ -40,17 +63,22 @@ export function AuthShell({
         style={styles.keyboardView}
       >
         <ScrollView
+          alwaysBounceVertical={scrollEnabled}
           automaticallyAdjustKeyboardInsets
+          bounces={scrollEnabled}
           contentContainerStyle={[
             styles.content,
             {
               paddingBottom: spacing.xxl + insets.bottom,
               paddingHorizontal: horizontalPadding,
-              paddingTop: topPadding + insets.top
+              paddingTop: topPadding + (addTopInsetToContent ? insets.top : 0)
             }
           ]}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
+          onTouchEnd={dismissFocusedInputOnBackgroundTouch}
+          overScrollMode={scrollEnabled ? "auto" : "never"}
+          scrollEnabled={scrollEnabled}
           showsVerticalScrollIndicator={false}
         >
           {showHero ? <AuthHero /> : null}

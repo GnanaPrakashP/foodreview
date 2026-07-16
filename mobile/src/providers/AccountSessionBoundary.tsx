@@ -1,25 +1,45 @@
 import type { Session } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
 import { PropsWithChildren, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
-import { supabase } from "@/api/supabase";
+import { initializeInstallationBoundary, supabase } from "@/api/supabase";
 import { getAccountLifecycleStatus, logout } from "@/services/auth";
 import { actorFromProfile, getProfileForVerifiedUserId } from "@/services/profiles";
 import {
   cleanupCurrentLocalData,
+  localDataDiagnostics,
   prepareLocalDataForOwner,
   prepareSignedOutLocalData
 } from "@/services/localDataIsolation";
 import {
   loadAccountProfileCache,
-  saveAccountProfileCache
+  saveAccountProfileCache,
+  clearAccountProfileCache
 } from "@/services/accountProfileCache";
 import { useSessionStore } from "@/stores/sessionStore";
 import { reconcilePendingPostMediaUploads } from "@/services/mediaPipeline";
-import { subscribeRuntimeActivity } from "@/performance/runtimeActivity";
+import { getRuntimeActivitySnapshot, subscribeRuntimeActivity } from "@/performance/runtimeActivity";
 import { recordPerformanceSample } from "@/performance/mobilePerformance";
-import { captureMobileError, clearMobileTelemetryIdentity, recordMobileFlow } from "@/observability/mobileTelemetry";
+import {
+  captureMobileError,
+  clearMobileTelemetryIdentity,
+  recordMobileFlow,
+  safeMobileErrorCode
+} from "@/observability/mobileTelemetry";
+import { cacheOwnerForUserId } from "@/security/cacheOwnership";
+import { clearSavedUserLocationForScope } from "@/services/userLocation";
+import { clearOccasionCorrectionsForScope } from "@/features/occasions/occasionStorage";
+import { isProfileComplete } from "@/utils/profileCompleteness";
+
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 12_000;
+const AUTH_VALIDATION_TIMEOUT_MS = 8_000;
+
+function within<T>(promise: PromiseLike<T>, timeoutMs: number, code: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(code)), timeoutMs);
+    Promise.resolve(promise).then(resolve, reject).finally(() => clearTimeout(timeout));
+  });
+}
 
 function createAccountQueryClient() {
   return new QueryClient({
@@ -52,7 +72,6 @@ type Host = {
 };
 
 export function AccountSessionBoundary({ children }: PropsWithChildren) {
-  const router = useRouter();
   const [host, setHost] = useState<Host | null>(null);
   const hostRef = useRef<Host | null>(null);
   const queueRef = useRef(Promise.resolve());
@@ -73,6 +92,55 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
     let bufferedSession: Session | null | undefined;
     let tokenExpiryTimeout: ReturnType<typeof setTimeout> | null = null;
 
+    const refreshExpiredSession = async () => {
+      try {
+        const { data, error } = await within(
+          supabase.auth.refreshSession(),
+          AUTH_BOOTSTRAP_TIMEOUT_MS,
+          "auth_refresh_timeout"
+        );
+        if (error || !data.session || !sessionIsLocallyValid(data.session)) return null;
+        return data.session;
+      } catch {
+        return null;
+      }
+    };
+
+    async function recoverExpiredSession(ownerHost: Host, reason: "foreground" | "timer") {
+      if (hostRef.current !== ownerHost) return;
+      const previousProfile = useSessionStore.getState().profile;
+      setHost(null);
+      useSessionStore.getState().beginTransition();
+      const refreshed = await refreshExpiredSession();
+      if (hostRef.current !== ownerHost) return;
+      if (refreshed) {
+        try {
+          const lifecycle = await within(
+            getAccountLifecycleStatus(refreshed.access_token),
+            AUTH_VALIDATION_TIMEOUT_MS,
+            "account_status_timeout"
+          );
+          const lifecycleMatchesSession =
+            (lifecycle === "active" && Boolean(previousProfile) && isProfileComplete(previousProfile)) ||
+            (lifecycle === "incomplete" && Boolean(previousProfile) && !isProfileComplete(previousProfile)) ||
+            (lifecycle === "missing" && !previousProfile);
+          if (!lifecycleMatchesSession) throw new Error("refreshed_account_unavailable");
+          useSessionStore.getState().setSession(refreshed, previousProfile);
+          scheduleTokenExpiry(refreshed, ownerHost);
+          if (alive) setHost(ownerHost);
+          recordMobileFlow("auth.token_refresh", 0, "success", { reason });
+          return;
+        } catch {
+          // A refreshed token without an active account is not sufficient to
+          // remount account-owned navigation or caches.
+        }
+      }
+      await cleanupCurrentLocalData("token_expired", ownerHost.client).catch(() => {});
+      await logout().catch(() => {});
+      await transition(null);
+      recordMobileFlow("auth.token_refresh", 0, "failure", { reason });
+    }
+
     const scheduleTokenExpiry = (session: Session, ownerHost: Host) => {
       if (tokenExpiryTimeout) clearTimeout(tokenExpiryTimeout);
       const expiresAt = (session.expires_at ?? 0) * 1000;
@@ -85,17 +153,14 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
             scheduleTokenExpiry(latestSession, ownerHost);
             return;
           }
-          setHost(null);
-          useSessionStore.getState().beginTransition();
-          await cleanupCurrentLocalData("token_expired", ownerHost.client);
-          await logout().catch(() => {});
-          await transition(null);
+          await recoverExpiredSession(ownerHost, "timer");
         });
       }, delay);
     };
 
     const transition = async (session: Session | null) => {
       const transitionStartedAt = Date.now();
+      let resolutionPhase = "start";
       if (!alive) return;
       if (tokenExpiryTimeout) {
         clearTimeout(tokenExpiryTimeout);
@@ -117,6 +182,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
 
       try {
         if (!session || !sessionIsLocallyValid(session)) {
+          resolutionPhase = "signed_out_cleanup";
           await prepareSignedOutLocalData(nextClient, current?.client);
           if (session) await logout();
           useSessionStore.getState().clearSession();
@@ -128,6 +194,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
           return;
         }
 
+        resolutionPhase = "owner_local_data";
         const hydrationStartedAt = Date.now();
         const { owner, ownerChanged } = await prepareLocalDataForOwner(session.user.id, nextClient, current?.client);
         recordPerformanceSample("app.cache_hydration", {
@@ -136,16 +203,35 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         let profile = null;
         let profileLookupFailed = false;
         let lifecycle: Awaited<ReturnType<typeof getAccountLifecycleStatus>> | null = null;
-        const identity = await supabase.auth.getUser(session.access_token);
-        if (identity.error) {
+        resolutionPhase = "identity_validation";
+        const identityResult = await Promise.allSettled([
+          within(
+            supabase.auth.getUser(session.access_token),
+            AUTH_VALIDATION_TIMEOUT_MS,
+            "auth_identity_timeout"
+          )
+        ]);
+        const identity = identityResult[0].status === "fulfilled" ? identityResult[0].value : null;
+        if (!identity) {
+          profileLookupFailed = true;
+        } else if (identity.error) {
           if (isAuthoritativeAuthFailure(identity.error)) throw new Error("authoritative_session_invalid");
           profileLookupFailed = true;
         } else if (!identity.data.user || identity.data.user.id !== session.user.id) {
           throw new Error("authoritative_owner_mismatch");
         } else {
+          resolutionPhase = "profile_lifecycle_validation";
           const [profileResult, lifecycleResult] = await Promise.allSettled([
-            getProfileForVerifiedUserId(session.user.id),
-            getAccountLifecycleStatus(session.access_token)
+            within(
+              getProfileForVerifiedUserId(session.user.id),
+              AUTH_VALIDATION_TIMEOUT_MS,
+              "profile_validation_timeout"
+            ),
+            within(
+              getAccountLifecycleStatus(session.access_token),
+              AUTH_VALIDATION_TIMEOUT_MS,
+              "account_status_timeout"
+            )
           ]);
           if (profileResult.status === "fulfilled") profile = profileResult.value;
           else profileLookupFailed = true;
@@ -159,32 +245,56 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         }
 
         if (lifecycle === "deleting") throw new Error("authoritative_account_frozen");
-        if (lifecycle === "active" && !profile && !profileLookupFailed) throw new Error("authoritative_profile_mismatch");
+        if (
+          lifecycle === "active" &&
+          (!profile || !isProfileComplete(actorFromProfile(profile))) &&
+          !profileLookupFailed
+        ) throw new Error("authoritative_profile_mismatch");
+        if (lifecycle === "incomplete" && !profile && !profileLookupFailed) {
+          throw new Error("authoritative_profile_mismatch");
+        }
         if (lifecycle === "missing" && profile) throw new Error("authoritative_owner_mismatch");
         if (!profile && !profileLookupFailed && lifecycle !== "missing") throw new Error("account_status_unavailable");
 
-        const actor = profile
+        const resolvedActor = profile
           ? actorFromProfile(profile)
           : profileLookupFailed && lifecycle !== "missing"
             ? await loadAccountProfileCache(owner.scope)
             : null;
-        if (profileLookupFailed && !actor) throw new Error("offline_owner_profile_unavailable");
+        const actor = lifecycle === "incomplete" && resolvedActor
+          ? { ...resolvedActor, profileComplete: false }
+          : resolvedActor;
+        // The authenticated account-status endpoint is authoritative for a new
+        // account. If it says the profile is missing, a failed direct profile
+        // lookup must still keep the valid session in onboarding. Existing
+        // accounts continue to fail closed unless their owner-scoped cache can
+        // be restored.
+        if (profileLookupFailed && lifecycle !== "missing" && !actor) {
+          throw new Error("offline_owner_profile_unavailable");
+        }
         if (actor) await saveAccountProfileCache(owner.scope, actor).catch(() => {});
 
+        resolutionPhase = "session_commit";
         useSessionStore.getState().setSession(session, actor);
-        if (ownerChanged || (current?.ownerUserId && current.ownerUserId !== owner.userId)) {
-          router.replace(actor ? "/" : "/onboarding/profile");
-        }
         const nextHost = { client: nextClient, ownerUserId: owner.userId };
         hostRef.current = nextHost;
         scheduleTokenExpiry(session, nextHost);
         if (alive) setHost(nextHost);
         recordMobileFlow("auth.session_resolution", Date.now() - transitionStartedAt, "success", {
           cache_owner_changed: ownerChanged,
-          state: actor ? "active" : "onboarding"
+          state: isProfileComplete(actor) ? "active" : "onboarding"
         });
         void reconcilePendingPostMediaUploads().catch(() => {});
       } catch (error) {
+        if (__DEV__) {
+          console.error("CB_AUTH_SESSION_RESOLUTION_FAILED", {
+            code: safeMobileErrorCode(error),
+            phase: resolutionPhase
+          });
+          void localDataDiagnostics()
+            .then((diagnostics) => console.error("CB_LOCAL_DATA_DIAGNOSTICS", diagnostics))
+            .catch(() => {});
+        }
         const reason = error instanceof Error && error.message === "authoritative_owner_mismatch"
           ? "owner_mismatch"
           : error instanceof Error && error.message === "authoritative_account_frozen"
@@ -219,11 +329,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       if (!sessionIsLocallyValid(session)) {
         queueRef.current = queueRef.current.then(async () => {
           if (!stillCurrent()) return;
-          setHost(null);
-          useSessionStore.getState().beginTransition();
-          await cleanupCurrentLocalData("token_expired", current.client);
-          await logout().catch(() => {});
-          await transition(null);
+          await recoverExpiredSession(current, "foreground");
         });
         return;
       }
@@ -231,6 +337,14 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         .then((status) => {
           if (status === "active" && stillCurrent()) {
             void reconcilePendingPostMediaUploads().catch(() => {});
+          }
+          if (status === "incomplete" && stillCurrent()) {
+            const currentProfile = useSessionStore.getState().profile;
+            useSessionStore.getState().setSession(
+              session,
+              currentProfile ? { ...currentProfile, profileComplete: false } : null
+            );
+            return;
           }
           if (
             status === "active" ||
@@ -259,21 +373,57 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         });
     };
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        // CircleBites is OTP/Google only. Reject any legacy recovery session
+        // before it can mount an account-owned cache or protected route.
+        bufferedSession = null;
+        void logout().catch(() => {});
+        if (initialResolved) enqueue(null);
+        return;
+      }
       if (!initialResolved) {
         bufferedSession = session;
         return;
       }
+      if (session && getRuntimeActivitySnapshot().isForeground) {
+        void supabase.auth.startAutoRefresh();
+      }
+      if (!session) {
+        setHost(null);
+        useSessionStore.getState().beginTransition();
+      }
       enqueue(session);
     });
     const unsubscribeRuntimeActivity = subscribeRuntimeActivity((next, previous) => {
-      if (next.isForeground && !previous.isForeground) validateForegroundAccount();
+      if (!next.isForeground) {
+        void supabase.auth.stopAutoRefresh();
+        return;
+      }
+      if (!previous.isForeground) {
+        void supabase.auth.startAutoRefresh();
+        validateForegroundAccount();
+      }
     });
+    if (getRuntimeActivitySnapshot().isForeground) void supabase.auth.startAutoRefresh();
+    else void supabase.auth.stopAutoRefresh();
 
-    supabase.auth.getSession()
+    initializeInstallationBoundary()
+      .then(async ({ orphanedUserId }) => {
+        if (orphanedUserId) {
+          const orphanedScope = cacheOwnerForUserId(orphanedUserId).scope;
+          await Promise.all([
+            clearAccountProfileCache(orphanedScope),
+            clearSavedUserLocationForScope(orphanedScope),
+            clearOccasionCorrectionsForScope(orphanedScope)
+          ]);
+        }
+        return within(supabase.auth.getSession(), AUTH_BOOTSTRAP_TIMEOUT_MS, "auth_restore_timeout");
+      })
       .then(({ data }) => {
+        const resolvedSession = bufferedSession === undefined ? data.session : bufferedSession;
         initialResolved = true;
-        enqueue(bufferedSession === undefined ? data.session : bufferedSession);
+        enqueue(resolvedSession);
       })
       .catch(async (error) => {
         captureMobileError("auth.initial_session_read_failed", error);
@@ -287,9 +437,10 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       if (tokenExpiryTimeout) clearTimeout(tokenExpiryTimeout);
       authListener.subscription.unsubscribe();
       unsubscribeRuntimeActivity();
+      void supabase.auth.stopAutoRefresh();
       hostRef.current?.client.clear();
     };
-  }, [router]);
+  }, []);
 
   if (!host) return <View style={{ backgroundColor: "#0e0b08", flex: 1 }} />;
   return <QueryClientProvider client={host.client}>{children}</QueryClientProvider>;

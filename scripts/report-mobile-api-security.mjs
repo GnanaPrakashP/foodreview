@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -18,13 +18,14 @@ function filesUnder(directory, predicate = () => true) {
   return files;
 }
 
-const routeFiles = filesUnder(routeRoot, (file) => file.endsWith("/route.ts")).sort();
+const routeFiles = filesUnder(routeRoot, (file) => /\/route\.(?:ts|tsx)$/.test(file)).sort();
 const mobileFiles = mobileRoots.flatMap((directory) => filesUnder(directory, (file) => /\.(ts|tsx)$/.test(file)));
 const mobileSources = mobileFiles.map((file) => ({ file, source: readFileSync(file, "utf8") }));
-const internalRoutes = new Set(routeFiles.filter((file) => file.includes("/api/internal/")));
+const internalSecretRoutes = new Set([
+  "/api/mobile/memories/uploads/cleanup",
+]);
 const anonymousRoutes = new Set([
-  "/api/mobile/auth/resolve-email",
-  "/api/mobile/auth/password-recovery",
+  "/api/mobile/auth/email-otp",
 ]);
 const optionalActorRoutes = new Set([
   "/api/feed/public",
@@ -35,6 +36,25 @@ const optionalActorRoutes = new Set([
 
 function routePath(file) {
   return `/${path.relative(path.join(root, "app"), path.dirname(file)).split(path.sep).join("/")}`;
+}
+
+function routeSource(file, seen = new Set()) {
+  if (seen.has(file)) return "";
+  seen.add(file);
+  const source = readFileSync(file, "utf8");
+  const dependencies = Array.from(
+    source.matchAll(/export\s*\{[^}]+\}\s*from\s*["'](@\/app\/[^"']+\/route)["']/g),
+    (match) => match[1]
+  ).map((specifier) => {
+    const base = path.join(root, specifier.slice(2));
+    const target = [base, `${base}.ts`, `${base}.tsx`].find((candidate) => existsSync(candidate));
+    return target ? routeSource(target, seen) : "";
+  });
+  return [source, ...dependencies].join("\n");
+}
+
+function isInternalRoute(route) {
+  return route.startsWith("/api/internal/") || internalSecretRoutes.has(route);
 }
 
 function mobileConsumers(route) {
@@ -53,7 +73,7 @@ function methods(source) {
 }
 
 function authentication(file, route, source) {
-  if (internalRoutes.has(file)) return "internal secret";
+  if (isInternalRoute(route)) return "internal secret";
   if (anonymousRoutes.has(route)) return "anonymous";
   if (optionalActorRoutes.has(route)) return "optional actor";
   if (/getRouteActor|getNotificationRouteContext/.test(source)) return "authenticated actor";
@@ -61,7 +81,7 @@ function authentication(file, route, source) {
 }
 
 function authorization(route, source) {
-  if (route.startsWith("/api/internal/")) return "dedicated timing-safe server secret";
+  if (isInternalRoute(route)) return "dedicated timing-safe server secret";
   if (/getRouteActor|getNotificationRouteContext/.test(source)) {
     return /createAdminClient/.test(source)
       ? "canonical actor plus server-side ownership/membership checks"
@@ -86,19 +106,19 @@ function providerCost(source) {
 }
 
 function risk(route, method, source) {
-  if (route.startsWith("/api/internal/") || /createAdminClient/.test(source) || providerCost(source) !== "none") return "high";
+  if (isInternalRoute(route) || /createAdminClient/.test(source) || providerCost(source) !== "none") return "high";
   if (method !== "GET" && method !== "OPTIONS") return "medium";
   return "low";
 }
 
 const inventory = routeFiles.flatMap((file) => {
-  const source = readFileSync(file, "utf8");
+  const source = routeSource(file);
   const route = routePath(file);
   const consumers = mobileConsumers(route);
   return methods(source).map((method) => ({
     authentication: authentication(file, route, source),
     authorization: authorization(route, source),
-    classification: route.startsWith("/api/internal/")
+    classification: isInternalRoute(route)
       ? "internal mobile-support"
       : consumers.length > 0 ? "active mobile" : /Legacy media moderation endpoint is retired/.test(source) ? "retired" : "supporting/legacy web",
     idempotency: /claimIdempotency|already|upsert|onConflict|status === "finalized"|Idempotent/.test(source)
@@ -117,8 +137,8 @@ const inventory = routeFiles.flatMap((file) => {
   }));
 });
 
-const allApiSource = routeFiles.map((file) => readFileSync(file, "utf8")).join("\n");
-const actorLookupFiles = filesUnder(path.join(root, "app/api"), (file) => file.endsWith(".ts"))
+const allApiSource = routeFiles.map((file) => routeSource(file)).join("\n");
+const actorLookupFiles = filesUnder(path.join(root, "app/api"), (file) => /\.(?:ts|tsx)$/.test(file))
   .filter((file) => /auth\.getUser\s*\(/.test(readFileSync(file, "utf8")));
 const errors = [];
 if (/auth\.admin\.listUsers|schema\(["']auth["']\)\s*\.from\(["']users["']\)/s.test(allApiSource)) {
@@ -128,7 +148,7 @@ if (/Access-Control-Allow-Origin["']?\s*:\s*["']\*/.test(allApiSource)) errors.p
 if (/getRouteActor\(\)/.test(allApiSource)) errors.push("route calls canonical actor resolver without its request");
 if (actorLookupFiles.length > 0) errors.push(`route-local auth.getUser remains: ${actorLookupFiles.map((file) => path.relative(root, file)).join(", ")}`);
 for (const required of [
-  "/api/mobile/auth/resolve-email", "/api/mobile/auth/password-recovery",
+  "/api/mobile/auth/email-otp",
   "/api/places/autocomplete", "/api/places/details", "/api/places/reverse-geocode",
   "/api/reports", "/api/mobile/blocks", "/api/mobile/memories/notify",
   "/api/media/upload-intent", "/api/media/finalize-upload", "/api/media/access",

@@ -2342,7 +2342,66 @@
       "sizeBytes": 40961,
       "sourceRoot": "supabase/migrations",
       "version": "202607130010"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "profiles"
+      ],
+      "description": "repair_account_lifecycle_schema",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607150001_repair_account_lifecycle_schema.sql",
+      "objectCategories": [
+        "account-deletion",
+        "constraints",
+        "indexes",
+        "profiles"
+      ],
+      "sha256": "379a50d1ad3430aebbc09ae336bf123c63ac0c2e82df0d4e69b5b3b628613dfc",
+      "sizeBytes": 946,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607150001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "account_is_active",
+        "circlebites_access_token_hook",
+        "complete_current_profile",
+        "current_profile_name",
+        "is_profile_complete",
+        "production_schema_contract",
+        "production_schema_contract_jsonb_phase4",
+        "profile_name_is_valid",
+        "profile_username_is_valid",
+        "profiles",
+        "review_owner_account_is_active",
+        "role",
+        "uid",
+        "update_current_account_type",
+        "update_current_profile_details",
+        "update_current_username"
+      ],
+      "description": "auth_profile_boundary_hardening",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607160001_auth_profile_boundary_hardening.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "explore",
+        "functions",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "8f8b520e86a1fb132e85bcefd5903e0f3391fd16d8e1bead58d3d8ae49be40f1",
+      "sizeBytes": 53220,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607160001"
     }
   ],
-  "currentCanonicalMigrations": 67
+  "currentCanonicalMigrations": 69
 }

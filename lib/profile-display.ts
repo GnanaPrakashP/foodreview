@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayMapFromRows } from "@/lib/profile-names";
+import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 
 type ProfileLookupDb = {
   from: (table: string) => any;
@@ -13,7 +14,8 @@ type ProfileDisplayRow = {
 
 export async function buildProfileDisplayMap(
   fallbackDb: ProfileLookupDb,
-  names: Array<string | null | undefined>
+  names: Array<string | null | undefined>,
+  trace?: RequestPerformanceTrace | null
 ): Promise<Record<string, string>> {
   const usernames = Array.from(new Set(names.map((name) => name?.trim()).filter(Boolean))) as string[];
   const profileMap: Record<string, string> = {};
@@ -26,10 +28,13 @@ export async function buildProfileDisplayMap(
     db = fallbackDb;
   }
 
-  const { data } = await db
+  const query = () => db
     .from("profiles")
     .select("username, first_name, last_name")
     .in("username", usernames);
+  const { data } = trace
+    ? await trace.database("feed.profile_display", query)
+    : await query();
 
   return profileDisplayMapFromRows((data ?? []) as ProfileDisplayRow[]);
 }

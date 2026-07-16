@@ -1,5 +1,6 @@
 import { accessClassForPostVisibility, MEDIA_PRIVATE_BUCKET, MEDIA_POST_SIGNED_URL_TTL_SECONDS, type MediaAccessClass, type MediaDerivativeKind } from "@/lib/server/media-pipeline";
 import { canViewerAccessPostMedia, postMediaPolicyPair } from "@/lib/server/post-media-policy";
+import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 
 type AdminClient = {
   from: (table: string) => any;
@@ -72,18 +73,21 @@ function accessClassMatchesReview(asset: AssetRow, review: ReviewAccessRow) {
 export async function resolvePostMediaAccess(
   admin: AdminClient,
   assetIdsInput: string[],
-  viewerName: string
+  viewerName: string,
+  trace?: RequestPerformanceTrace | null
 ): Promise<PostMediaDto[]> {
   const assetIds = Array.from(new Set(assetIdsInput.map((id) => id.trim()).filter(Boolean))).slice(0, 50);
   if (assetIds.length === 0) return [];
 
-  const [{ data: assets, error: assetError }, { data: links, error: linkError }] = await Promise.all([
-    admin.from("media_assets")
+  const assetQuery = () => admin.from("media_assets")
       .select("id, owner_name, surface, media_type, status, access_class, privacy_state")
-      .in("id", assetIds),
-    admin.from("review_photos")
+      .in("id", assetIds);
+  const linkQuery = () => admin.from("review_photos")
       .select("media_asset_id, review_id, media_type, position")
-      .in("media_asset_id", assetIds)
+      .in("media_asset_id", assetIds);
+  const [{ data: assets, error: assetError }, { data: links, error: linkError }] = await Promise.all([
+    trace ? trace.database("media.assets", assetQuery) : assetQuery(),
+    trace ? trace.database("media.review_links", linkQuery) : linkQuery(),
   ]);
   if (assetError || linkError) throw new Error("post_media_lookup_failed");
 
@@ -98,19 +102,25 @@ export async function resolvePostMediaAccess(
   const reviewIds = Array.from(new Set(Array.from(linkByAssetId.values()).map((link) => link.review_id)));
   if (reviewIds.length === 0) return [];
 
-  const { data: reviews, error: reviewError } = await admin.from("reviews")
+  const reviewQuery = () => admin.from("reviews")
     .select("id, reviewer_name, visibility, deleted_at, hidden_at, reported_at, status")
     .in("id", reviewIds);
+  const { data: reviews, error: reviewError } = trace
+    ? await trace.database("media.review_access", reviewQuery)
+    : await reviewQuery();
   if (reviewError) throw new Error("post_media_review_lookup_failed");
   const reviewById = new Map(((reviews ?? []) as ReviewAccessRow[]).map((review) => [review.id, review]));
   const ownerNames = Array.from(new Set(((reviews ?? []) as ReviewAccessRow[]).map((review) => review.reviewer_name).filter(Boolean)));
 
-  const { data: activeProfiles, error: profileError } = ownerNames.length > 0
-    ? await admin.from("profiles")
+  const activeProfileQuery = () => admin.from("profiles")
       .select("username")
       .in("username", ownerNames)
       .eq("account_status", "active")
-      .is("deletion_started_at", null)
+      .is("deletion_started_at", null);
+  const { data: activeProfiles, error: profileError } = ownerNames.length > 0
+    ? trace
+      ? await trace.database("media.active_owners", activeProfileQuery)
+      : await activeProfileQuery()
     : { data: [], error: null };
   if (profileError) throw new Error("post_media_owner_status_lookup_failed");
   const activeOwnerNames = new Set((activeProfiles ?? []).map((profile: { username: string }) => profile.username));
@@ -118,11 +128,13 @@ export async function resolvePostMediaAccess(
   const circleMemberships = new Set<string>();
   const blockedPairs = new Set<string>();
   if (viewerName && ownerNames.length > 0) {
+    const membershipQuery = () => admin.from("circle_memberships").select("user_name, member_name").eq("member_name", viewerName).in("user_name", ownerNames);
+    const blockQuery = () => admin.from("blocked_users").select("blocker_name, blocked_name")
+      .in("blocker_name", Array.from(new Set([...ownerNames, viewerName])))
+      .in("blocked_name", Array.from(new Set([...ownerNames, viewerName])));
     const [{ data: memberships, error: membershipError }, { data: blocks, error: blockError }] = await Promise.all([
-      admin.from("circle_memberships").select("user_name, member_name").eq("member_name", viewerName).in("user_name", ownerNames),
-      admin.from("blocked_users").select("blocker_name, blocked_name")
-        .in("blocker_name", Array.from(new Set([...ownerNames, viewerName])))
-        .in("blocked_name", Array.from(new Set([...ownerNames, viewerName])))
+      trace ? trace.database("media.circle_memberships", membershipQuery) : membershipQuery(),
+      trace ? trace.database("media.blocked_users", blockQuery) : blockQuery(),
     ]);
     if (membershipError || blockError) throw new Error("post_media_relationship_lookup_failed");
     for (const row of memberships ?? []) circleMemberships.add(postMediaPolicyPair(row.user_name, row.member_name));
@@ -145,16 +157,22 @@ export async function resolvePostMediaAccess(
   if (allowed.length === 0) return [];
 
   const allowedIds = allowed.map(({ asset }) => asset.id);
-  const { data: derivatives, error: derivativeError } = await admin.from("media_derivatives")
+  const derivativeQuery = () => admin.from("media_derivatives")
     .select("asset_id, kind, bucket_id, storage_path, mime_type, width, height, duration_ms, blurhash")
     .in("asset_id", allowedIds)
     .eq("bucket_id", MEDIA_PRIVATE_BUCKET);
+  const { data: derivatives, error: derivativeError } = trace
+    ? await trace.database("media.derivatives", derivativeQuery)
+    : await derivativeQuery();
   if (derivativeError) throw new Error("post_media_derivative_lookup_failed");
 
   const derivativeRows = (derivatives ?? []) as DerivativeRow[];
   const paths = Array.from(new Set(derivativeRows.map((row) => row.storage_path).filter(Boolean)));
+  const signing = () => admin.storage.from(MEDIA_PRIVATE_BUCKET).createSignedUrls(paths, MEDIA_POST_SIGNED_URL_TTL_SECONDS);
   const { data: signedRows, error: signError } = paths.length > 0
-    ? await admin.storage.from(MEDIA_PRIVATE_BUCKET).createSignedUrls(paths, MEDIA_POST_SIGNED_URL_TTL_SECONDS)
+    ? trace
+      ? await trace.measure("storage", "media.sign_urls", signing)
+      : await signing()
     : { data: [], error: null };
   if (signError) throw new Error("post_media_signing_failed");
   const signedByPath = new Map<string, string>((signedRows ?? []).map((row: { path?: string | null; signedUrl?: string | null }): [string, string] => [row.path ?? "", row.signedUrl ?? ""]));

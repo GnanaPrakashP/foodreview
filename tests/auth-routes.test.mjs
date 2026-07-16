@@ -43,7 +43,10 @@ function redirectUrl(res) { return res._redirectUrl; }
 
 // ── loader ────────────────────────────────────────────────────────────────────
 
-function loadCallback(code, { exchangeResult = { error: null } } = {}) {
+function loadCallback(code, {
+  complete = true,
+  exchangeResult = { data: { user: { id: "11111111-1111-4111-8111-111111111111" } }, error: null }
+} = {}) {
   const mod = { exports: {} };
   vm.runInNewContext(code, {
     module: mod,
@@ -57,6 +60,7 @@ function loadCallback(code, { exchangeResult = { error: null } } = {}) {
           createServerClient: () => ({
             auth: {
               exchangeCodeForSession: async () => exchangeResult,
+              signOut: async () => ({ error: null })
             },
           }),
         };
@@ -66,6 +70,13 @@ function loadCallback(code, { exchangeResult = { error: null } } = {}) {
       }
       if (id === "next/server") {
         return { NextRequest: class {}, NextResponse: mockNextResponse };
+      }
+      if (id === "@/lib/supabase/admin") {
+        return {
+          createAdminClient: () => ({
+            rpc: async () => ({ data: complete, error: null })
+          })
+        };
       }
       throw new Error(`Unexpected require in callback: ${id}`);
     },
@@ -83,14 +94,20 @@ test("callback: no code param redirects to /login?error=auth_failed", async () =
 });
 
 test("callback: valid code + successful exchange redirects to /", async () => {
-  const { GET } = loadCallback(callbackSrc, { exchangeResult: { error: null } });
+  const { GET } = loadCallback(callbackSrc);
   const res = await GET({ url: "http://localhost:3000/auth/callback?code=abc123" });
   assert.equal(redirectUrl(res), "http://localhost:3000/");
 });
 
 test("callback: valid code + custom next param redirects to that path", async () => {
-  const { GET } = loadCallback(callbackSrc, { exchangeResult: { error: null } });
+  const { GET } = loadCallback(callbackSrc);
   const res = await GET({ url: "http://localhost:3000/auth/callback?code=abc&next=/onboarding" });
+  assert.equal(redirectUrl(res), "http://localhost:3000/onboarding");
+});
+
+test("callback: incomplete profile always redirects to onboarding", async () => {
+  const { GET } = loadCallback(callbackSrc, { complete: false });
+  const res = await GET({ url: "http://localhost:3000/auth/callback?code=abc&next=/reviews/one" });
   assert.equal(redirectUrl(res), "http://localhost:3000/onboarding");
 });
 
@@ -103,7 +120,7 @@ test("callback: code present but exchange fails → redirects to /login?error=au
 });
 
 test("callback: origin is preserved in the redirect URL", async () => {
-  const { GET } = loadCallback(callbackSrc, { exchangeResult: { error: null } });
+  const { GET } = loadCallback(callbackSrc);
   const res = await GET({ url: "https://myapp.vercel.app/auth/callback?code=xyz" });
   assert.ok(redirectUrl(res).startsWith("https://myapp.vercel.app/"));
 });
@@ -116,4 +133,3 @@ test("callback: next param is used even when exchange fails", async () => {
   // exchange failed → should still land on the error page, not /home
   assert.ok(redirectUrl(res).includes("login?error=auth_failed"));
 });
-

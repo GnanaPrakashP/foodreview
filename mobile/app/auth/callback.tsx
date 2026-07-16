@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { AuthButton, AuthCard, AuthShell, ErrorMessage } from "@/components/auth/AuthUi";
-import { completeOAuthSessionFromUrl } from "@/services/auth";
+import { completeAuthCallbackFromUrl } from "@/services/auth";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing } from "@/theme";
 
@@ -20,15 +20,14 @@ export default function AuthCallbackScreen() {
     async function completeSession() {
       try {
         const initialUrl = activeUrl ?? await Linking.getInitialURL();
-        if (!initialUrl) throw new Error("Missing Google sign-in callback URL");
+        if (!initialUrl) throw new Error("Missing authentication callback URL");
 
-        const { profile } = await completeOAuthSessionFromUrl(initialUrl);
+        await completeAuthCallbackFromUrl(initialUrl);
         if (cancelled) return;
-
-        router.replace(profile ? "/" : "/onboarding/profile");
+        // The validated session event drives the root authentication gate.
       } catch (sessionError) {
         if (cancelled) return;
-        setError(sessionError instanceof Error ? sessionError.message : "Google sign-in failed");
+        setError(sessionError instanceof Error ? sessionError.message : "Sign in failed");
       }
     }
 
@@ -44,7 +43,7 @@ export default function AuthCallbackScreen() {
       <AuthCard>
         <View style={styles.headerBlock}>
           <Text style={styles.cardTitle}>Finishing sign in</Text>
-          <Text style={styles.cardText}>Hang tight while CircleBites connects your Google account.</Text>
+          <Text style={styles.cardText}>Hang tight while CircleBites verifies your account.</Text>
         </View>
 
         {error ? <ErrorMessage>{error}</ErrorMessage> : null}

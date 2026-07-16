@@ -13,6 +13,8 @@ export async function GET(req: NextRequest) {
     ? "active"
     : actorResolution.status === "frozen"
       ? "deleting"
-      : "missing";
+      : actorResolution.status === "incomplete_profile"
+        ? "incomplete"
+        : "missing";
   return NextResponse.json({ status }, { headers: { "Cache-Control": "private, no-store" } });
 }

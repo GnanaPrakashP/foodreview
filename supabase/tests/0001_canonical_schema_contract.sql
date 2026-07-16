@@ -131,19 +131,45 @@ select ok(
     join pg_namespace namespace on namespace.oid = function_row.pronamespace
     where namespace.nspname = 'public'
       and function_row.proname = any(array[
-        'claim_media_processing_jobs', 'heartbeat_media_processing_job',
+        'heartbeat_media_processing_job',
         'complete_media_processing_job', 'fail_media_processing_job',
         'requeue_media_processing_job', 'cancel_media_processing_job',
-        'claim_media_cleanup_assets', 'complete_media_cleanup_asset',
-        'fail_media_cleanup_asset', 'claim_account_deletion_jobs',
-        'account_deletion_storage_candidates', 'account_deletion_cleanup_database'
+        'complete_media_cleanup_asset', 'fail_media_cleanup_asset',
+        'account_deletion_cleanup_database'
       ]::text[])
       and (
-        has_function_privilege('anon', function_row.oid, 'execute')
-        or has_function_privilege('authenticated', function_row.oid, 'execute')
+        not function_row.prosecdef
+        or position('service_role_required' in function_row.prosrc) = 0
+        or not has_function_privilege('anon', function_row.oid, 'execute')
+        or not has_function_privilege('authenticated', function_row.oid, 'execute')
+        or not has_function_privilege('service_role', function_row.oid, 'execute')
       )
-  ),
-  'worker and deletion functions have no client execution grant'
+  )
+  and not exists (
+    select 1 from pg_proc function_row
+    join pg_namespace namespace on namespace.oid = function_row.pronamespace
+    where namespace.nspname = 'public'
+      and function_row.proname = any(array[
+        'account_deletion_storage_candidates', 'claim_account_deletion_jobs',
+        'claim_media_cleanup_assets', 'claim_media_processing_jobs',
+        'claim_push_delivery_jobs', 'claim_push_receipt_jobs',
+        'claim_review_moderation_intents', 'cleanup_shared_memory_media',
+        'finalize_shared_memory_upload_intent', 'mobile_post_engagement_v1',
+        'review_media_account_storage_paths', 'shared_memory_account_media_paths',
+        'shared_memory_room_media_paths'
+      ]::text[])
+      and (
+        function_row.proretset
+        or not function_row.prosecdef
+        or position('service_role_required' in function_row.prosrc) = 0
+        or not has_function_privilege('anon', function_row.oid, 'execute')
+        or not has_function_privilege('authenticated', function_row.oid, 'execute')
+        or not has_function_privilege('service_role', function_row.oid, 'execute')
+      )
+  )
+  and not has_schema_privilege('anon', 'private', 'USAGE')
+  and not has_schema_privilege('authenticated', 'private', 'USAGE'),
+  'service implementations are private or client-callable role-checked definers'
 );
 
 select ok(
@@ -201,7 +227,7 @@ select ok(
 
 select ok(
   exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'reviews' and policyname = 'Reviews readable by visibility')
-  and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'Deleting profiles are suppressed')
+  and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'Profiles readable by authenticated users')
   and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'shared_memory_rooms' and policyname = 'Shared memory rooms readable by participants')
   and not has_table_privilege('authenticated', 'public.account_deletion_jobs', 'select')
   and not has_table_privilege('anon', 'public.account_deletion_jobs', 'select'),

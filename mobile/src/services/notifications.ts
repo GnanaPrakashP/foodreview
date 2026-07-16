@@ -186,6 +186,20 @@ export async function removePushTokensForUser(username: string): Promise<void> {
   }
 }
 
+export async function removePushTokenForCurrentInstall(username: string): Promise<void> {
+  if (!username) return;
+  const installId = await getInstallId();
+  const { error } = await supabase
+    .from("push_tokens")
+    .delete()
+    .eq("user_name", username)
+    .eq("install_id", installId);
+
+  if (error && !isMissingPushTokensTable(error)) {
+    throw new Error(error.message);
+  }
+}
+
 function metadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>

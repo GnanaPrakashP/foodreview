@@ -142,8 +142,9 @@ test("push notification automation covers token registration, durable fanout, pr
   assert.match(pushBootstrapSource, /getLastNotificationResponseAsync/);
   assert.match(pushBootstrapSource, /addNotificationResponseReceivedListener/);
   assert.match(pushBootstrapSource, /roomIdFromNotificationResponse/);
-  assert.match(pushBootstrapSource, /router\.push\(`\/memories\/\$\{roomId\}`\)/);
-  assert.match(pushBootstrapSource, /router\.push\(`\/reviews\/\$\{encodeURIComponent\(postId\)\}`\)/);
-  assert.match(pushBootstrapSource, /router\.push\(`\/people\/\$\{encodeURIComponent\(actorName\)\}`\)/);
-  assert.match(pushBootstrapSource, /router\.push\("\/notifications"\)/);
+  assert.match(pushBootstrapSource, /safeProtectedPath\(candidate\)/);
+  assert.match(pushBootstrapSource, /openProtectedPath\(`\/memories\/\$\{encodeURIComponent\(roomId\)\}`\)/);
+  assert.match(pushBootstrapSource, /openProtectedPath\(`\/reviews\/\$\{encodeURIComponent\(postId\)\}`\)/);
+  assert.match(pushBootstrapSource, /openProtectedPath\(`\/people\/\$\{encodeURIComponent\(actorName\)\}`\)/);
+  assert.match(pushBootstrapSource, /openProtectedPath\("\/notifications"\)/);
 });

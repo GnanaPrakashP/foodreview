@@ -39,7 +39,17 @@ export const USER_LOCATION_UPDATED_AT_STORAGE_KEY = "user_location_updated_at";
 export const LEGACY_USER_LOCATION_LAT_STORAGE_KEY = "trending_loc_lat";
 export const LEGACY_USER_LOCATION_LNG_STORAGE_KEY = "trending_loc_lng";
 export const LEGACY_USER_LOCATION_LABEL_STORAGE_KEY = "trending_loc_label";
-const ACCOUNT_LOCATION_KEY_VERSION = 2;
+const ACCOUNT_LOCATION_KEY_VERSION = 3;
+const LEGACY_WEB_ACCOUNT_LOCATION_KEY_VERSION = 2;
+const SECURE_STORE_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
+const ACCOUNT_LOCATION_STORAGE_KEYS = [
+  USER_LOCATION_LAT_STORAGE_KEY,
+  USER_LOCATION_LNG_STORAGE_KEY,
+  USER_LOCATION_LABEL_STORAGE_KEY,
+  USER_LOCATION_SOURCE_STORAGE_KEY,
+  USER_LOCATION_PLACE_ID_STORAGE_KEY,
+  USER_LOCATION_UPDATED_AT_STORAGE_KEY
+] as const;
 let activeLocationOwnerScope: string | null = null;
 
 const MAX_LOCATION_LABEL_LENGTH = 80;
@@ -94,7 +104,13 @@ async function removeStoredValue(key: string) {
 
 function scopedLocationKey(key: string, ownerScope = activeLocationOwnerScope) {
   if (!isValidCacheOwnerScope(ownerScope)) return null;
-  return `${key}:v${ACCOUNT_LOCATION_KEY_VERSION}:${ownerScope}`;
+  const scopedKey = `${key}.v${ACCOUNT_LOCATION_KEY_VERSION}.${ownerScope}`;
+  if (!SECURE_STORE_KEY_PATTERN.test(scopedKey)) throw new Error("invalid_location_storage_key");
+  return scopedKey;
+}
+
+function legacyWebScopedLocationKey(key: string, ownerScope: string) {
+  return `${key}:v${LEGACY_WEB_ACCOUNT_LOCATION_KEY_VERSION}:${ownerScope}`;
 }
 
 export function setUserLocationOwnerScope(ownerScope: string | null) {
@@ -232,14 +248,7 @@ export async function loadSavedUserLocation(): Promise<UserLocation | null> {
   try {
     const ownerScope = activeLocationOwnerScope;
     const ownerGeneration = getActiveCacheGeneration();
-    const keys = [
-      USER_LOCATION_LAT_STORAGE_KEY,
-      USER_LOCATION_LNG_STORAGE_KEY,
-      USER_LOCATION_LABEL_STORAGE_KEY,
-      USER_LOCATION_SOURCE_STORAGE_KEY,
-      USER_LOCATION_PLACE_ID_STORAGE_KEY,
-      USER_LOCATION_UPDATED_AT_STORAGE_KEY
-    ].map((key) => scopedLocationKey(key));
+    const keys = ACCOUNT_LOCATION_STORAGE_KEYS.map((key) => scopedLocationKey(key));
     if (keys.some((key) => !key)) return null;
     const [rawLat, rawLng, rawLabel, rawSource, rawPlaceId, rawUpdatedAt] = await Promise.all([
       ...keys.map((key) => getStoredValue(key as string))
@@ -297,14 +306,13 @@ export async function clearSavedUserLocation() {
 export async function clearSavedUserLocationForScope(ownerScope: string) {
   if (!isValidCacheOwnerScope(ownerScope)) throw new Error("invalid_location_cache_owner");
   try {
-    await Promise.all([
-      removeStoredValue(scopedLocationKey(USER_LOCATION_LAT_STORAGE_KEY, ownerScope) as string),
-      removeStoredValue(scopedLocationKey(USER_LOCATION_LNG_STORAGE_KEY, ownerScope) as string),
-      removeStoredValue(scopedLocationKey(USER_LOCATION_LABEL_STORAGE_KEY, ownerScope) as string),
-      removeStoredValue(scopedLocationKey(USER_LOCATION_SOURCE_STORAGE_KEY, ownerScope) as string),
-      removeStoredValue(scopedLocationKey(USER_LOCATION_PLACE_ID_STORAGE_KEY, ownerScope) as string),
-      removeStoredValue(scopedLocationKey(USER_LOCATION_UPDATED_AT_STORAGE_KEY, ownerScope) as string)
-    ]);
+    const currentKeys = ACCOUNT_LOCATION_STORAGE_KEYS.map((key) => (
+      scopedLocationKey(key, ownerScope) as string
+    ));
+    const legacyWebKeys = Platform.OS === "web"
+      ? ACCOUNT_LOCATION_STORAGE_KEYS.map((key) => legacyWebScopedLocationKey(key, ownerScope))
+      : [];
+    await Promise.all([...currentKeys, ...legacyWebKeys].map(removeStoredValue));
   } catch {
     throw new Error("location_cache_delete_failed");
   }

@@ -7,7 +7,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const NONCE_RE = /^[a-f0-9]{64}$/;
 const FLOW_TTL_MS = 30 * 60_000;
 
-export type AuthFlowKind = "oauth" | "recovery";
+export type AuthFlowKind = "oauth";
 
 function secureRandomBytes(length: number) {
   const bytes = new Uint8Array(length);
@@ -64,4 +64,20 @@ export async function consumeAuthFlow(kind: AuthFlowKind, nonce: string) {
   } catch {
     return false;
   }
+}
+
+export async function clearAuthFlow(kind: AuthFlowKind) {
+  await SecureStore.deleteItemAsync(`${AUTH_FLOW_PREFIX}${kind}`);
+}
+
+export async function clearInstallScopedSecureState() {
+  await Promise.all([
+    SecureStore.deleteItemAsync(INSTALL_ID_KEY),
+    SecureStore.deleteItemAsync(`${AUTH_FLOW_PREFIX}oauth`),
+    // Legacy OTP/password releases used these keys. Continue deleting them at
+    // the installation boundary without exposing a recovery flow.
+    SecureStore.deleteItemAsync(`${AUTH_FLOW_PREFIX}recovery`),
+    SecureStore.deleteItemAsync(`${AUTH_FLOW_PREFIX}signup`),
+    SecureStore.deleteItemAsync("circlebites.security.recovery-session.v1")
+  ]);
 }

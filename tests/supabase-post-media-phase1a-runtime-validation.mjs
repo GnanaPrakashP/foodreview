@@ -131,8 +131,11 @@ async function createUser(admin, prefix) {
 }
 
 async function signIn(env, user) {
+  const admin = createClient(env.url, env.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const client = createClient(env.url, env.anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const signed = await client.auth.signInWithPassword({ email: user.email, password: user.password });
+  const link = await admin.auth.admin.generateLink({ email: user.email, type: "magiclink" });
+  if (link.error || !link.data.properties?.hashed_token) throw link.error ?? new Error("runtime magiclink failed");
+  const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("runtime sign in failed");
   return { client, token: signed.data.session.access_token };
 }
