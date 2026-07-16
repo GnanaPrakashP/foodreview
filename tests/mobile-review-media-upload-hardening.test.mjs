@@ -91,10 +91,11 @@ test("mobile in-app camera retries raw capture when Android post-processing fail
   assert.match(cameraScreen, /skipProcessing: false/);
   assert.match(cameraScreen, /skipProcessing: true/);
   assert.match(cameraScreen, /emitCapturedPhoto\(photo\)/);
-  assert.match(cameraScreen, /ImageManipulator, SaveFormat/);
+  assert.match(cameraScreen, /stageAccountFile\(photo\.uri, "camera-photo"\)/);
   assert.match(cameraScreen, /PhotoCropGuide/);
-  assert.match(cameraScreen, /cropCapturedPhotoToGuide/);
-  assert.match(cameraScreen, /cropRectForVisibleFrame/);
+  assert.match(cameraScreen, /relativeCropRectForVisibleFrame/);
+  assert.match(cameraScreen, /visibleRect: sourceSize \? relativeCropRectForVisibleFrame/);
+  assert.doesNotMatch(cameraScreen, /ImageManipulator|cropCapturedPhotoToGuide/);
   assert.match(cameraScreen, /function chooseGuidedPictureSize\(sizes: string\[\]\)/);
   assert.match(cameraScreen, /Math\.abs\(size\.longEdge \/ size\.shortEdge - 4 \/ 3\) < 0\.02/);
   assert.match(cameraScreen, /const selectedSize = guidedPhotoMode[\s\S]*\? chooseGuidedPictureSize\(sizes \?\? \[\]\)[\s\S]*: chooseMemoryPictureSize\(sizes \?\? \[\]\)/);

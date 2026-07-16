@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const profileSource = readFileSync(new URL("../mobile/app/(tabs)/profile.tsx", import.meta.url), "utf8");
-const segmentedPagerSource = readFileSync(new URL("../mobile/src/hooks/useSegmentedPager.ts", import.meta.url), "utf8");
 
 test("mobile Profile tab does not render raw backend/Auth errors", () => {
   assert.match(profileSource, /function profileErrorMessage/);
@@ -18,46 +17,25 @@ test("mobile Profile tab does not render raw backend/Auth errors", () => {
   assert.match(profileSource, /profileErrorMessage\(setup\.error,\s*"Could not save your profile\. Try again\."\)/);
 });
 
-test("mobile Profile tab keeps one vertical owner with animated Posts/Memories content swipes", () => {
-  const headerIndex = profileSource.indexOf("const profileHeader = useMemo");
-  const scrollIndex = profileSource.indexOf("<GestureHandlerScrollView");
-  assert.match(profileSource, /useSegmentedPager<ProfileTab>\(\{/);
-  assert.match(profileSource, /progress: pageProgress/);
-  assert.match(profileSource, /<ProfileTabs activeTab=\{activeTab\} onChange=\{changeProfileTab\} pageProgress=\{pageProgress\}/);
-  assert.match(profileSource, /const profileHeaderTouchHandlers = useMemo\(\(\) => \(\{/);
-  assert.match(profileSource, /const profileHeaderSwipeHandlers = useMemo\(\(\) => PanResponder\.create\(\{/);
-  assert.match(profileSource, /<GestureDetector gesture=\{profilePagerGesture\}>/);
-  assert.match(segmentedPagerSource, /PanResponder\.create/);
-  assert.match(profileSource, /\{profileHeader\}[\s\S]*profilePagerWindowStyle/);
-  assert.match(profileSource, /updatePagerPageHeight\("posts", event\.nativeEvent\.layout\.height\)/);
-  assert.match(profileSource, /updatePagerPageHeight\("memories", event\.nativeEvent\.layout\.height\)/);
-  assert.match(profileSource, /postRows\.map\(\(item\) =>/);
-  assert.match(profileSource, /memoriesRows\.map\(\(item\) =>/);
-  assert.match(profileSource, /transform:\s*\[\{ translateX: contentTranslateX \}\]/);
-  assert.match(profileSource, /const postsTextColor = pageProgress\.interpolate/);
-  assert.match(profileSource, /const memoriesTextColor = pageProgress\.interpolate/);
-  assert.match(profileSource, /<Animated\.Text style=\{\[styles\.tabText, \{ color \}\]\}>/);
-  assert.match(profileSource, /transform: \[\{ translateX: indicatorX \}\]/);
-  assert.ok(headerIndex >= 0 && headerIndex < scrollIndex, "profile header must be defined before the vertical scroll owner renders it");
-  assert.doesNotMatch(profileSource, /function ProfilePager/);
-  assert.doesNotMatch(profileSource, /<Animated\.FlatList/);
-  assert.doesNotMatch(profileSource, /pagingEnabled/);
-  assert.doesNotMatch(profileSource, /postsPane=\{\(/);
-  assert.doesNotMatch(profileSource, /memoriesPane=\{\(/);
-  assert.doesNotMatch(profileSource, /ListHeaderComponent=\{renderListHeader\}/);
-  assert.doesNotMatch(profileSource, /data=\{activeRows\}/);
-  assert.doesNotMatch(profileSource, /tabIndicatorMemories/);
+test("mobile Profile tab uses a shared collapsible header and virtualized Posts/Memories pages", () => {
+  assert.match(profileSource, /import \{ Tabs, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
+  assert.match(profileSource, /<Tabs\.Container/);
+  assert.match(profileSource, /renderHeader=\{renderProfileHeader\}/);
+  assert.match(profileSource, /renderTabBar=\{renderProfileTabBar\}/);
+  assert.match(profileSource, /<Tabs\.Tab name="posts" label="Posts">[\s\S]*data=\{postRows\}/);
+  assert.match(profileSource, /<Tabs\.Tab name="memories" label="Memories">[\s\S]*data=\{memoriesRows\}/);
+  assert.equal((profileSource.match(/<Tabs\.FlatList/g) ?? []).length, 2);
+  assert.match(profileSource, /onEndReached=\{onEndReached\}/);
+  assert.match(profileSource, /initialNumToRender=\{PROFILE_LIST_INITIAL_RENDER_COUNT\}/);
+  assert.match(profileSource, /windowSize=\{PROFILE_LIST_WINDOW_SIZE\}/);
+  assert.doesNotMatch(profileSource, /useSegmentedPager|GestureHandlerScrollView|<Animated\.FlatList|pagingEnabled/);
 });
 
-test("mobile Profile layout reaches the tab bar and keeps the memory timeline connected", () => {
+test("mobile Profile layout reaches the tab bar and keeps memory month groups ordered", () => {
   assert.match(profileSource, /screenContent:\s*\{[\s\S]*paddingBottom:\s*0/);
+  assert.match(profileSource, /new Date\(b\.visitDate \?\? b\.createdAt\)/);
+  assert.match(profileSource, /const groupedMemories = sortedMemories/);
   assert.match(profileSource, /isFirst:\s*index === 0/);
-  assert.match(profileSource, /isLast:\s*index === sortedMemories\.length - 1/);
-  assert.match(profileSource, /!\s*isFirst \? <View pointerEvents="none" style=\{\[styles\.memoryTimelineLine, styles\.memoryTimelineLineAbove\]\}/);
-  assert.match(profileSource, /!\s*isLast \? <View pointerEvents="none" style=\{\[styles\.memoryTimelineLine, styles\.memoryTimelineLineBelow\]\}/);
-  assert.match(profileSource, /memoryTimelineLineAbove:\s*\{[\s\S]*top:\s*-spacing\.md \/ 2/);
-  assert.match(profileSource, /memoryTimelineLineAbove:\s*\{[\s\S]*bottom:\s*"50%"/);
-  assert.match(profileSource, /memoryTimelineLineBelow:\s*\{[\s\S]*top:\s*"50%"/);
-  assert.match(profileSource, /memoryTimelineLineBelow:\s*\{[\s\S]*bottom:\s*-spacing\.md \/ 2/);
-  assert.match(profileSource, /memoryTimelineRow:\s*\{[\s\S]*overflow:\s*"visible"/);
+  assert.match(profileSource, /ItemSeparatorComponent=\{ProfileListGap\}/);
+  assert.match(profileSource, /profilePagerStage:\s*\{[\s\S]*flex:\s*1/);
 });

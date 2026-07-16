@@ -22,6 +22,10 @@ const placeSearchIndexes = readFileSync(
   new URL("../supabase/migrations/202607110008_explore_place_search_indexes.sql", import.meta.url),
   "utf8"
 );
+const backendPerformanceMigration = readFileSync(
+  new URL("../supabase/migrations/202607130009_backend_feed_performance.sql", import.meta.url),
+  "utf8"
+);
 const locationMenuSource = explore.slice(
   explore.indexOf("function LocationMenu"),
   explore.indexOf("function CategoryGrid")
@@ -106,7 +110,8 @@ test("Explore location picker is a full-width dropdown anchored to the pill", ()
   assert.match(locationMenuSource, /placeholder="Search city or area"/);
   assert.match(locationMenuSource, /hasQuery \|\| loading \? \(/);
   assert.match(explore, /const navigation = useNavigation\(\)/);
-  assert.match(explore, /tabBarStyle: showLocationMenu \? \{ display: "none" \} : undefined/);
+  assert.match(explore, /mainTabBarStyle\(themeColors, insets\.bottom, composing \|\| showLocationMenu\)/);
+  assert.match(explore, /navigation\.setOptions\(\{ tabBarStyle: exploreTabBarStyle \}\)/);
   assert.match(explore, /Keyboard\.dismiss\(\);\s*onSelect\(userLocation\)/);
   assert.doesNotMatch(explore, /function LocationPickerPage/);
   assert.doesNotMatch(explore, /function StreetMapBackground/);
@@ -149,13 +154,12 @@ test("Explore search prefers authorized media-pipeline images and falls back to 
   assert.match(exploreSearch, /filterEligibleExplorePhotos\(results\)/);
 });
 
-test("Explore place cards hydrate through batched authorization without dropping valid cards", () => {
-  assert.match(exploreDiscovery, /function reviewPrimaryMediaCandidates\(row: ExplorePhotoReviewRow, derivativeUrls: Map<string, string>\)/);
-  assert.match(exploreDiscovery, /media\.media_type === "video"[\s\S]+return assetDerivative \?\? null/);
-  assert.match(exploreDiscovery, /fetchPostMediaAccess\(assetIds\)/);
+test("Explore v3 authorizes place-card media in the bounded discovery RPC", () => {
+  assert.match(exploreDiscovery, /const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v3"/);
+  assert.match(exploreDiscovery, /return await getExploreDiscoveryFromRpc\(input, CANONICAL_EXPLORE_DISCOVERY_RPC\)/);
   assert.doesNotMatch(exploreDiscovery, /\.from\("media_derivatives"\)/);
-  assert.match(exploreDiscovery, /async function hydratePlaceReviewPhotos\(places: ExplorePlaceSpotlight\[\]\)/);
-  assert.match(exploreDiscovery, /hydratePlaceReviewPhotos\(page\.places\)/);
-  assert.match(exploreDiscovery, /hydratePlaceReviewPhotos\(buildPlaces\(feed\.posts, input\.location\)\)/);
-  assert.doesNotMatch(exploreDiscovery, /filterEligibleExplorePhotos\(page\.places\)/);
+  assert.match(backendPerformanceMigration, /left join public\.media_assets asset on asset\.id = photo\.media_asset_id/);
+  assert.match(backendPerformanceMigration, /asset\.status = 'ready' and asset\.visibility = 'public' and coalesce\(asset\.moderation_status, 'approved'\) = 'approved'/);
+  assert.match(backendPerformanceMigration, /derivative\.kind = 'thumbnail' and derivative\.bucket_id = 'media-public'/);
+  assert.match(backendPerformanceMigration, /case when photo\.media_asset_id is null then photo\.public_url end/);
 });

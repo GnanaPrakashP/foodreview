@@ -81,9 +81,10 @@ async function resolveRouteActor(req: NextRequest) {
   const presentedCredential = Boolean(
     req.headers.get("authorization")?.trim() || req.headers.get("cookie")?.trim()
   );
+  const readAuthenticatedUser = () => supabase.auth.getUser();
   const { data: { user }, error } = trace
-    ? await trace.measure("auth", "auth.get_user", () => supabase.auth.getUser())
-    : await supabase.auth.getUser();
+    ? await trace.measure("auth", "auth.get_user", readAuthenticatedUser)
+    : await readAuthenticatedUser();
   if (error || !user) {
     return {
       actorResolution: {

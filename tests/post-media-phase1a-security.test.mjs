@@ -199,9 +199,10 @@ test("Expo configuration rejects privileged public Supabase variable names witho
   assert.match(productionAutologin.stderr, /Development auto-login configuration is forbidden/);
   assert.doesNotMatch(productionAutologin.stderr, /not-a-real-password/);
 
-  const autoLoginSource = source("mobile/src/providers/devAutoLoginConfig.ts");
-  assert.match(autoLoginSource, /devAutoLoginEmail = __DEV__/);
-  assert.match(autoLoginSource, /devAutoLoginPassword = __DEV__/);
+  const appConfigSource = source("mobile/app.config.js");
+  assert.match(appConfigSource, /FORBIDDEN_LEGACY_AUTH_NAME = \/\^EXPO_PUBLIC_DEV_AUTOLOGIN/);
+  assert.match(appConfigSource, /Object\.keys\(env\)\.find\(\(name\) => FORBIDDEN_LEGACY_AUTH_NAME\.test\(name\)\)/);
+  assert.doesNotMatch(source("mobile/src/providers/AppProviders.tsx"), /DEV_AUTOLOGIN|autoLoginPassword|autoLoginEmail/);
 });
 
 test("Phase 1A canonical migration and backfill fail closed", () => {

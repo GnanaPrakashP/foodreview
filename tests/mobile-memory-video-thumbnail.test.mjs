@@ -4,17 +4,18 @@ import { test } from "node:test";
 
 const memoryRoomSource = readFileSync("mobile/app/memories/[id].tsx", "utf8");
 
-test("memory video thumbnails pass array times to the native Expo video bridge", () => {
+test("memory video thumbnails use Expo's dedicated thumbnail API with millisecond timing", () => {
   assert.match(
     memoryRoomSource,
-    /const VIDEO_THUMBNAIL_TIMES_SECONDS = \[VIDEO_THUMBNAIL_TIME_SECONDS\];/
+    /import \{ getThumbnailAsync, type VideoThumbnailsResult \} from "expo-video-thumbnails"/
   );
   assert.match(
     memoryRoomSource,
-    /\.generateThumbnailsAsync\(VIDEO_THUMBNAIL_TIMES_SECONDS,\s*\{ maxWidth: VIDEO_THUMBNAIL_MAX_WIDTH \}\)/
+    /const VIDEO_THUMBNAIL_TIME_MS = 100/
   );
-  assert.doesNotMatch(
+  assert.match(
     memoryRoomSource,
-    /\.generateThumbnailsAsync\(VIDEO_THUMBNAIL_TIME_SECONDS,/
+    /getThumbnailAsync\(sourceUri, \{\s*quality: 0\.82,\s*time: VIDEO_THUMBNAIL_TIME_MS\s*\}\)/
   );
+  assert.doesNotMatch(memoryRoomSource, /\.generateThumbnailsAsync\(/);
 });

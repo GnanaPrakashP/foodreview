@@ -57,7 +57,7 @@ test("mobile feed cards render the two MVP reaction options", () => {
   assert.match(postCard, /const isAuthenticated = useSessionStore\(\(state\) => state\.isAuthenticated\)/);
   assert.match(postCard, /const canSubmit = isAuthenticated && Boolean\(viewerName\) && !isPrivatePost/);
   assert.match(postCard, /if \(isPrivatePost\) return null/);
-  assert.match(reviewDetail, /<PostCard post=\{post\.data\} \/>/);
+  assert.match(reviewDetail, /<PostCard loadDetailEngagement mediaActive post=\{post\.data\} \/>/);
   assert.doesNotMatch(postFeed, /showTasteTrustFeedback/);
   assert.match(reactionTypes, /export type FoodReactionType = "mustTry" \| "notWorthIt"/);
   assert.match(reactionTypes, /\{ accessibilityName: "Helpful", label: "Helpful", type: "mustTry" \}/);

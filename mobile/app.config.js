@@ -65,7 +65,7 @@ function requiredNonPlaceholder(value, name, minimumLength = 16) {
 function validateClientConfiguration(env = process.env, extra = {}) {
   const forbiddenLegacyAuthName = Object.keys(env).find((name) => FORBIDDEN_LEGACY_AUTH_NAME.test(name));
   if (forbiddenLegacyAuthName) {
-    throw new Error(`Legacy development authentication configuration is forbidden: ${forbiddenLegacyAuthName}`);
+    throw new Error(`Development auto-login configuration is forbidden: ${forbiddenLegacyAuthName}`);
   }
   const forbiddenEnvironmentName = Object.keys(env).find((name) =>
     name === "EXPO_PUBLIC_SUPABASE_SERVICE_KEY" || FORBIDDEN_PUBLIC_SUPABASE_NAME.test(name)

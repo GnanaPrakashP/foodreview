@@ -14,10 +14,11 @@ test("home/circle page defers feed loading to the client cache path", () => {
   const helper = source("lib/circle-feed.ts");
   assert.match(helper, /createAdminClient\(\)/);
   assert.match(helper, /getAuthenticatedCircleActor\(supabase\)/);
-  assert.match(helper, /const feedReviewerNames = Array\.from\(new Set\(joinedCircles\.filter\(Boolean\)\)\)/);
+  assert.match(helper, /const trustedReviewerNames = Array\.from\(new Set\(\[myName, \.\.\.joinedCircles\]\.filter\(Boolean\)\)\)/);
+  assert.match(helper, /batch\.filter\(\(review\) => trustedReviewerSet\.has\(review\.reviewer_name\)\)/);
   assert.match(helper, /const batch = \(\(rawBatch \?\? \[\]\) as unknown\[]\)\.map/);
   assert.match(helper, /normalizeReview\(r as Parameters<typeof normalizeReview>\[0\]\)/);
-  assert.match(helper, /filterCircleTrendingReviews\(batch,/);
+  assert.match(helper, /filterCircleTrendingReviews\(\s*batch\.filter\(\(review\) => trustedReviewerSet\.has\(review\.reviewer_name\)\),/);
   assert.match(helper, /buildFeedAssemblyMaps\(readDb, allReviews/);
   assert.match(helper, /const rankedUnseenReviews = rankCircleFeedReviews\(/);
   assert.match(helper, /const rankedSeenFallbackReviews = rankCircleFeedReviews\(/);

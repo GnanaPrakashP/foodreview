@@ -10,9 +10,9 @@ test("mobile explore uses real people search and circle request wiring", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
 
   assert.match(explore, /import \{ useUserProfileSearch \}/);
-  assert.match(explore, /import \{ useRequestCircleAccessMutation \}/);
+  assert.match(explore, /import \{ useSetCircleAccessStatusMutation \}/);
   assert.match(explore, /const peopleSearch = useUserProfileSearch\(/);
-  assert.match(explore, /await requestCircleAccess\.mutateAsync\(\{ receiverName: username \}\)/);
+  assert.match(explore, /await setCircleAccessStatus\.mutateAsync\(\{\s*receiverName: username,\s*currentStatus: currentSyncStatus,\s*desiredStatus: desiredSyncStatus\s*\}\)/);
   assert.match(explore, /status === "pending" \? "Requested"/);
   assert.match(explore, /status === "joined" \? "In Circle"/);
 });
@@ -24,14 +24,14 @@ test("mobile explore typed search exposes people places and dishes sections", ()
   assert.match(explore, /<Text style=\{styles\.searchSectionLabel\}>People<\/Text>/);
   assert.match(explore, /<Text style=\{styles\.searchSectionLabel\}>Places<\/Text>/);
   assert.match(explore, /<Text style=\{styles\.searchSectionLabel\}>Dishes<\/Text>/);
-  assert.match(explore, /normalizedQuery \? \(/);
+  assert.match(explore, /\{canSearchGlobally \? \(/);
   assert.match(explore, /<SearchResults/);
 });
 
 test("mobile explore location picker mirrors web nearby behavior", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
   const hooks = source("mobile/src/hooks/useFeeds.ts");
-  const services = source("mobile/src/services/feeds.ts");
+  const discovery = source("mobile/src/services/exploreDiscovery.ts");
   const places = source("mobile/src/services/places.ts");
   const location = source("mobile/src/services/exploreLocation.ts");
   const userLocation = source("mobile/src/services/userLocation.ts");
@@ -46,7 +46,7 @@ test("mobile explore location picker mirrors web nearby behavior", () => {
   assert.match(explore, /const locationHydrated = useUserLocationStore\(\(state\) => state\.hydrated\)/);
   assert.match(explore, /const setUserLocation = useUserLocationStore\(\(state\) => state\.setLocation\)/);
   assert.match(explore, /const locationLabel = exploreLocation \? shortUserLocationLabel\(exploreLocation\.label\) : "Set location"/);
-  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated \}\s*\)/);
+  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && isActiveMainTab \}\s*\)/);
   assert.match(explore, /const showLoading = showInitialLoading/);
   assert.match(explore, /<LocationMenu/);
   assert.match(explore, /getCurrentDeviceUserLocation\(\{ preferFresh: true, requestPermission: true \}\)/);
@@ -62,13 +62,9 @@ test("mobile explore location picker mirrors web nearby behavior", () => {
   assert.match(explore, /navigation\.setOptions\(\{ tabBarStyle: exploreTabBarStyle \}\)/);
   assert.doesNotMatch(explore, /tabBarStyle: showLocationMenu \? \{ display: "none" \} : undefined/);
   assert.match(hooks, /explore: \(input: ExploreFeedInput = \{\}\) => \["feed", "explore", input\.location\?\.lat \?\? "", input\.location\?\.lng \?\? "", input\.limit \?\? ""\] as const/);
-  assert.match(services, /export type ExploreFeedInput/);
-  assert.match(services, /function validLocationBias\(location\?: ExploreFeedInput\["location"\] \| null\)/);
-  assert.match(services, /function sortRowsByLocation\(rows: ReviewRow\[\], location: LocationBias\)/);
-  assert.match(services, /const EXPLORE_REVIEW_SCAN_LIMIT = 30/);
-  assert.match(services, /const EXPLORE_MAX_REVIEW_SCAN_LIMIT = 60/);
-  assert.match(services, /const locationScanLimit = location \? Math\.max\(scanLimit, RESTAURANT_SCAN_SIZE\) : scanLimit/);
-  assert.match(services, /scanPublicReviewRows\(viewerName, \{ excludeSynthetic: true, limit: locationScanLimit, location \}\)/);
+  assert.match(discovery, /p_lat: input\.location\?\.lat \?\? null/);
+  assert.match(discovery, /p_lng: input\.location\?\.lng \?\? null/);
+  assert.match(discovery, /p_limit: input\.limit \?\? 30/);
   assert.match(places, /export async function autocompletePlaces\(input: string, sessionToken: string, location\?: LocationBias \| null\)/);
   assert.match(places, /params\.set\("lat", String\(location\.lat\)\)/);
   assert.match(location, /LEGACY_USER_LOCATION_LAT_STORAGE_KEY as LOCATION_LAT_STORAGE_KEY/);
@@ -76,74 +72,48 @@ test("mobile explore location picker mirrors web nearby behavior", () => {
   assert.match(location, /reverseGeocodeUserLocation as reverseGeocodeExploreLocation/);
 });
 
-test("mobile explore tabs use a shared-progress segmented pager with virtualized panels", () => {
+test("mobile explore tabs use collapsible virtualized panels", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
-  const segmentedPager = source("mobile/src/hooks/useSegmentedPager.ts");
 
   assert.match(explore, /const EXPLORE_TABS: Array<\{ id: ExploreTab; label: string \}>/);
-  assert.match(explore, /const EXPLORE_TAB_IDS: ExploreTab\[\] = \["places", "dishes", "people"\]/);
-  assert.match(explore, /import \{ useIsFocused \} from "@react-navigation\/native"/);
-  assert.match(explore, /import \{ useMainTabPager \} from "@\/navigation\/MainTabPagerContext"/);
-  assert.match(explore, /import \{ useSegmentedPager, type SegmentedPagerSwipeDirection \} from "@\/hooks\/useSegmentedPager"/);
-  assert.match(explore, /import \{ useMainTabSwipeGestureZone \} from "@\/navigation\/useMainTabSwipeZone"/);
+  assert.match(explore, /\{ id: "places", label: "Places" \}/);
+  assert.match(explore, /\{ id: "dishes", label: "Dishes" \}/);
+  assert.match(explore, /\{ id: "people", label: "People" \}/);
+  assert.match(explore, /import \{ useIsFocused, useNavigation \} from "@react-navigation\/native"/);
+  assert.match(explore, /import \{ Tabs, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
   assert.match(explore, /const isFocused = useIsFocused\(\)/);
-  assert.match(explore, /const mainTabPager = useMainTabPager\(\)/);
-  assert.match(explore, /const isActiveMainTab = mainTabPager \? mainTabPager\.activeTab === "explore" : isFocused/);
+  assert.match(explore, /const isActiveMainTab = isFocused/);
   assert.match(explore, /const isActiveMainTabRef = useRef\(isActiveMainTab\)/);
-  assert.match(explore, /const initialTab = useRef\(exploreTabFromParam\(params\.tab\)\)\.current/);
-  assert.match(explore, /showLoading \? EMPTY_PLACES : buildPlaces\(posts\)/);
-  assert.match(explore, /showLoading \? EMPTY_DISHES : buildDishes\(posts\)/);
-  assert.match(explore, /showLoading \? EMPTY_PEOPLE : buildPeople\(posts, viewerName, viewerDisplayName\)/);
-  assert.match(explore, /useSegmentedPager<ExploreTab>\(\{/);
-  assert.match(explore, /progress: pageProgress/);
-  assert.match(explore, /contentTranslateX/);
-  assert.match(explore, /beginGesture: beginExplorePagerGesture/);
-  assert.match(explore, /finishGesture: finishExplorePagerGesture/);
-  assert.match(explore, /updateGesture: updateExplorePagerGesture/);
-  assert.match(explore, /const explorePagerGesture = useMemo\(\(\) => Gesture\.Pan\(\)/);
-  assert.match(explore, /runOnJS\(beginExplorePagerGesture\)\(\)/);
-  assert.match(explore, /runOnJS\(updateExplorePagerGesture\)\(event\.translationX\)/);
-  assert.match(explore, /runOnJS\(finishExplorePagerGesture\)\(event\.translationX, event\.translationY, event\.velocityX \/ 1000\)/);
-  assert.match(explore, /mainTabPager\.goToAdjacentMainTab\(direction, "explore-inner-edge"\)/);
-  assert.match(explore, /const headerSwipeGesture = useMainTabSwipeGestureZone\(\{[\s\S]*left: "share"[\s\S]*right: "index"[\s\S]*source: "main-header-swipe"/);
-  assert.match(explore, /const searchSwipeGesture = useMainTabSwipeGestureZone\(\{[\s\S]*!searchFocused[\s\S]*left: "share"[\s\S]*right: "index"/);
-  assert.match(explore, /<GestureDetector gesture=\{headerSwipeGesture\}>[\s\S]*collapsable=\{false\} style=\{styles\.header\}/);
-  assert.match(explore, /<GestureDetector gesture=\{searchSwipeGesture\}>[\s\S]*collapsable=\{false\} style=\{styles\.searchWrap\}/);
-  assert.match(explore, /if \(isActiveMainTabRef\.current && exploreTabFromParam\(paramsTabRef\.current\) !== tab\) router\.setParams\(\{ tab \}\)/);
   assert.match(explore, /isActiveMainTabRef\.current = isActiveMainTab/);
   assert.match(explore, /if \(!isActiveMainTab\) return/);
-  assert.match(segmentedPager, /const DEFAULT_INTENT_RATIO = 1\.35/);
-  assert.match(segmentedPager, /const DEFAULT_SETTLE_DISTANCE = 0\.22/);
-  assert.match(segmentedPager, /Animated\.timing\(progress,[\s\S]*useNativeDriver: false/);
-  assert.doesNotMatch(explore, /pagerRef\.current\?\.scrollTo|useAnimatedRef|useAnimatedScrollHandler|scrollX|pagerTransitionTimeoutRef/);
-  assert.doesNotMatch(explore, /setActiveTab\(tab\)/);
-  assert.match(explore, /function ExploreTabs\(/);
-  assert.match(explore, /pageProgress: Animated\.Value/);
-  assert.match(explore, /const indicatorX = pageProgress\.interpolate/);
-  assert.match(explore, /<Animated\.View[\s\S]*styles\.tabIndicator/);
-  assert.match(explore, /<GestureDetector gesture=\{explorePagerGesture\}>[\s\S]*<View collapsable=\{false\} style=\{\[styles\.pagerWindow/);
-  assert.match(explore, /<Animated\.View style=\{\[styles\.pagerTrack, \{ transform: \[\{ translateX: contentTranslateX \}\]/);
-  assert.match(explore, /\{tabPanels\[tab\.id\]\}/);
-  assert.match(explore, /<GestureHandlerFlatList/);
-  assert.match(explore, /initialNumToRender=\{6\}/);
-  assert.match(explore, /initialNumToRender=\{8\}/);
-  assert.match(explore, /refreshControl=\{refreshControl\}/);
+  assert.match(explore, /<Tabs\.Container/);
+  assert.match(explore, /renderHeader=\{renderExploreHeader\}/);
+  assert.match(explore, /renderTabBar=\{renderExploreTabBar\}/);
+  assert.match(explore, /offscreenPageLimit: 2/);
+  assert.match(explore, /onTabChange=\{\(\{ tabName \}\) => handleExploreTabChange\(tabName as ExploreTab\)\}/);
+  assert.match(explore, /<Tabs\.Tab name="places" label="Places">/);
+  assert.match(explore, /<Tabs\.Tab name="dishes" label="Dishes">/);
+  assert.match(explore, /<Tabs\.Tab name="people" label="People">/);
+  assert.equal((explore.match(/<Tabs\.FlatList/g) ?? []).length, 3);
+  assert.match(explore, /onEndReached=\{showLoading \? undefined : revealMorePlaces\}/);
+  assert.match(explore, /onEndReached=\{showLoading \? undefined : revealMoreDishes\}/);
+  assert.match(explore, /onEndReached=\{showLoading \? undefined : revealMorePeople\}/);
+  assert.match(explore, /initialNumToRender=\{EXPLORE_INITIAL_CARD_LIMIT\}/);
+  assert.match(explore, /maxToRenderPerBatch=\{EXPLORE_INITIAL_CARD_LIMIT\}/);
+  assert.match(explore, /windowSize=\{5\}/);
+  assert.match(explore, /refreshControl=\{listRefreshControl\}/);
   assert.match(explore, /styles\.tabIndicator/);
-  assert.match(explore, /styles\.pagerWindow/);
-  assert.match(explore, /styles\.pagerTrack/);
   assert.match(explore, /styles\.pageList/);
+  assert.doesNotMatch(explore, /MainTabPager|useSegmentedPager|GestureDetector|custom pager/);
 });
 
 test("mobile explore place cards treat review posts as visits", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
   const hooks = source("mobile/src/hooks/useFeeds.ts");
-  const services = source("mobile/src/services/feeds.ts");
+  const discovery = source("mobile/src/services/exploreDiscovery.ts");
 
-  assert.match(explore, /useExploreFeedQuery\(\{ location: exploreLocation \}, \{ enabled: locationHydrated \}\)/);
-  assert.match(explore, /postCount: 0/);
-  assert.match(explore, /current\.postCount \+= 1/);
-  assert.match(explore, /postCount: place\.postCount/);
-  assert.match(explore, /b\.postCount - a\.postCount/);
+  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && isActiveMainTab \}\s*\)/);
+  assert.match(discovery, /postCount: integerValue\(value\.postCount\)/);
   assert.match(explore, /place\.postCount\} visit/);
   assert.match(explore, /function placeCategoryLabel\(categoryId: PlaceCategoryId\)/);
   assert.match(explore, /const placesForCategory = useMemo/);
@@ -158,10 +128,10 @@ test("mobile explore place cards treat review posts as visits", () => {
   assert.match(explore, /spotlightMeta: \{\s*\.\.\.fontStyles\.regular/);
   assert.match(explore, /visitText: \{\s*\.\.\.fontStyles\.semiBold,\s*color: c\.cream/);
   assert.doesNotMatch(explore, /place\.reviewerCount\} visit/);
-  assert.match(hooks, /explore: \(input: ExploreFeedInput = \{\}\)/);
-  assert.match(hooks, /export function useExploreFeedQuery/);
-  assert.match(services, /\/api\/mobile\/feed/);
-  assert.doesNotMatch(services, /PUBLIC_REVIEW_BATCH_SIZE|EXPLORE_REVIEW_SCAN_LIMIT|RESTAURANT_SCAN_SIZE|scanPublicReviewRows|\.range\(/);
+  assert.match(hooks, /export function useExploreDiscoveryQuery/);
+  assert.match(discovery, /const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v3"/);
+  assert.match(discovery, /await supabase\.rpc\(rpcName/);
+  assert.doesNotMatch(discovery, /getExploreFeed|\.range\(/);
 });
 
 test("mobile explore place social proof is personalized to joined circle owners", () => {
@@ -186,21 +156,22 @@ test("mobile explore place social proof is personalized to joined circle owners"
 
 test("mobile explore cards show explicit empty rating state", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
+  const discovery = source("mobile/src/services/exploreDiscovery.ts");
   const dishCardMatch = explore.match(/function DishCard\([\s\S]*?\nfunction PersonCard/);
   assert.ok(dishCardMatch);
   const dishCard = dishCardMatch[0];
 
-  assert.match(explore, /function ratingStats\(values: number\[\]\)/);
-  assert.match(explore, /ratingCount: clean\.length/);
-  assert.match(explore, /averageRating: ratings\.averageRating/);
-  assert.match(explore, /ratingCount: ratings\.ratingCount/);
+  assert.match(discovery, /function ratingStats\(values: number\[\]\)/);
+  assert.match(discovery, /ratingCount: clean\.length/);
+  assert.match(discovery, /averageRating: numberValue\(value\.averageRating\)/);
+  assert.match(discovery, /ratingCount: integerValue\(value\.ratingCount\)/);
   assert.match(explore, /function RatingScore\(\{ rating, ratingCount \}/);
   assert.match(explore, /const hasRating = rating !== null && rating > 0 && ratingCount > 0/);
   assert.match(explore, /No rating/);
   assert.match(explore, /styles\.ratingScoreEmpty/);
   assert.match(explore, /ratingCount=\{place\.ratingCount\}/);
   assert.doesNotMatch(explore, /ratingCount=\{dish\.ratingCount\}/);
-  assert.match(explore, /topRestaurantNames: Array\.from\(dish\.restaurants\.entries\(\)\)\.sort\(\(a, b\) => b\[1\] - a\[1\]\)\.slice\(0, 3\)\.map\(\(\[restaurant\]\) => restaurant\)/);
+  assert.match(discovery, /topRestaurantNames: stringArrayValue\(value\.topRestaurantNames\)\.slice\(0, 3\)/);
   assert.match(dishCard, /dish\.topRestaurantNames\.length > 0 \? <DishRestaurantRows names=\{dish\.topRestaurantNames\} \/> : null/);
   assert.doesNotMatch(dishCard, /<ChipRow labels=\{dish\.topRestaurantNames\} singleLine \/>/);
   assert.match(explore, /function DishRestaurantRows\(\{ names \}: \{ names: string\[\] \}\)/);
@@ -214,11 +185,9 @@ test("mobile explore cards show explicit empty rating state", () => {
 
 test("mobile explore cards navigate to existing native detail routes", () => {
   const explore = source("mobile/app/(tabs)/explore.tsx");
+  const discovery = source("mobile/src/services/exploreDiscovery.ts");
   const hooks = source("mobile/src/hooks/useFeeds.ts");
-  const layout = source("mobile/app/_layout.tsx");
-  const mapper = source("mobile/src/services/reviewMapper.ts");
-  const models = source("mobile/src/types/models.ts");
-  const profiles = source("mobile/src/services/profiles.ts");
+  const layout = source("mobile/src/providers/AuthGate.tsx");
   const restaurant = source("mobile/app/restaurants/[placeId].tsx");
   const services = source("mobile/src/services/feeds.ts");
   const personCardMatch = explore.match(/function PersonCard\([\s\S]*?\nfunction SearchResults/);
@@ -227,7 +196,7 @@ test("mobile explore cards navigate to existing native detail routes", () => {
 
   assert.match(explore, /router\.push\(\{\s*pathname: "\/restaurants\/\[placeId\]"/);
   assert.match(explore, /router\.push\(\{\s*pathname: "\/restaurants\/by-name\/\[restaurant\]"/);
-  assert.match(explore, /router\.push\(\{ pathname: "\/dishes\/\[dish\]"/);
+  assert.match(explore, /router\.push\(\{\s*pathname: "\/dishes\/\[dish\]"/);
   assert.match(explore, /router\.push\(\{ pathname: "\/people\/\[username\]"/);
   assert.match(explore, /function PlaceCard\(\{ onOpen, place \}/);
   assert.match(explore, /function DishCard\(\{ dish, onOpen \}/);
@@ -237,37 +206,23 @@ test("mobile explore cards navigate to existing native detail routes", () => {
   assert.match(personCard, /function handleRequestPress\(event: GestureResponderEvent\)/);
   assert.match(personCard, /event\.stopPropagation\(\)/);
   assert.match(personCard, /onPress=\{handleRequestPress\}/);
-  assert.match(explore, /function buildPeople\(posts: ReviewPost\[\], viewerName: string, viewerDisplayName: string\)/);
-  assert.match(explore, /const viewerDisplayName = useSessionStore\(\(state\) => state\.profile\?\.displayName \?\? ""\)/);
-  assert.match(explore, /showLoading \? EMPTY_PEOPLE : buildPeople\(posts, viewerName, viewerDisplayName\)/);
-  assert.match(explore, /\[posts, showLoading, viewerDisplayName, viewerName\]/);
-  assert.match(explore, /excludedIdentities\.has\(normalizedPersonIdentity\(username\)\)/);
-  assert.match(explore, /excludedIdentities\.has\(normalizedPersonIdentity\(post\.reviewerName\)\)/);
-  assert.match(explore, /excludedIdentities\.has\(normalizedPersonIdentity\(post\.authorName\)\)/);
-  assert.match(explore, /const username = post\.reviewerUsername \|\| post\.reviewerName/);
-  assert.match(explore, /people\.set\(username, current\)/);
-  assert.match(models, /reviewerUsername: string/);
-  assert.match(mapper, /reviewerUsername\?: string/);
-  assert.match(mapper, /reviewerUsername: options\.reviewerUsername \?\? row\.reviewer_name/);
-  assert.match(services, /export async function fetchReviewerIdentities/);
-  assert.match(services, /usernameCandidateForReviewerName/);
-  assert.match(services, /reviewerUsername,/);
-  assert.match(profiles, /const reviewerAliases = Array\.from\(new Set\(\[profile\.username, displayName\]\.filter\(Boolean\)\)\)/);
-  assert.match(profiles, /\.in\("reviewer_name", reviewerAliases\)/);
+  assert.match(discovery, /function parsePersonSpotlight\(value: unknown\)/);
+  assert.match(discovery, /username,\s*displayName,\s*initials:/);
+  assert.match(discovery, /accountType: accountTypeValue\(value\.accountType \?\? value\.account_type\)/);
+  assert.match(discovery, /circleStatus: circleStatusValue\(value\.circleStatus \?\? value\.circle_status\)/);
   assert.ok(existsSync(new URL("../mobile/app/restaurants/[placeId].tsx", import.meta.url)));
   assert.ok(existsSync(new URL("../mobile/app/restaurants/by-name/[restaurant].tsx", import.meta.url)));
   assert.ok(existsSync(new URL("../mobile/app/dishes/[dish].tsx", import.meta.url)));
   assert.match(layout, /"restaurants\/\[placeId\]"/);
   assert.match(layout, /"restaurants\/by-name\/\[restaurant\]"/);
   assert.match(layout, /"dishes\/\[dish\]"/);
-  assert.match(layout, /<Stack\.Screen key=\{name\} name=\{name\} options=\{SLIDE_OVER_OPTIONS\}/);
+  assert.match(layout, /if \(SLIDE_OVER_ROUTES\.has\(name\)\) return SLIDE_OVER_OPTIONS/);
+  assert.match(layout, /<Stack\.Screen key=\{name\} name=\{name\} options=\{protectedScreenOptions\(name\)\}/);
   assert.doesNotMatch(layout, /EXPLORE_DETAIL_OPTIONS/);
-  assert.match(explore, /function placeLocation\(post: ReviewPost\)/);
-  assert.match(explore, /`\$\{post\.restaurantName\.toLowerCase\(\)\}::\$\{location\.toLowerCase\(\)\}`/);
   assert.match(restaurant, /useRestaurantFeedInfiniteQuery\(\{ placeId, restaurantAddress: fallbackAddress, restaurantName: fallbackName \}\)/);
   assert.match(hooks, /input\.restaurantAddress \?\? ""/);
   assert.match(services, /restaurantAddress\?: string \| null/);
-  assert.match(services, /normalizeEntityName\(row\.area \?\? ""\) === address \|\| normalizeEntityName\(row\.restaurant_address \?\? ""\) === address/);
+  assert.match(services, /getMobileFeedPage\("restaurant", \{ cursor: cursor \?\? "", placeId, restaurantAddress, restaurantName \}\)/);
 });
 
 test("mobile restaurant and dish detail routes use filtered feed queries", () => {
@@ -490,7 +445,7 @@ test("mobile explore detail screens use the settings-style slide-over animation"
   assert.match(hook, /useFocusEffect\(/);
   assert.match(hook, /closingRef\.current = false/);
   assert.match(hook, /progress\.value = 0/);
-  assert.match(hook, /withTiming\(1, \{ duration: ENTER_MS/);
+  assert.match(hook, /progress\.value = withTiming\(1, \{ duration: reducedMotion \? 0 : ENTER_MS/);
 });
 
 test("mobile root and memory surfaces use the active theme", () => {
@@ -577,27 +532,26 @@ test("mobile table memory creation preserves occasion title and sends occasion m
   assert.match(themes, /romantic-food-pattern/);
 });
 
-test("mobile table memory header keeps date inline after location", () => {
+test("mobile table memory header prefers visit date and keeps metadata concise", () => {
   const memoryRoom = source("mobile/app/memories/[id].tsx");
   const roomHeader = memoryRoom.match(/function RoomHeader\([\s\S]*?\nfunction /)?.[0] ?? "";
 
-  assert.match(roomHeader, /const roomDateLabel = formatDisplayDate\(data\.createdAt\)/);
-  assert.match(roomHeader, /\{locationLabel \|\| "Area not set"\}[\s\S]*calendar-outline[\s\S]*\{roomDateLabel\}/);
+  assert.match(roomHeader, /const roomDateLabel = formatDisplayDate\(data\.visitDate \?\? data\.createdAt\)/);
+  assert.match(roomHeader, /calendar-outline[\s\S]*\{roomDateLabel\}/);
+  assert.doesNotMatch(roomHeader, /locationLabel \|\| "Area not set"/);
   assert.doesNotMatch(roomHeader, /join\(" · "\)/);
 });
 
 test("mobile table memory room applies dynamic occasion themes", () => {
   const memoryRoom = source("mobile/app/memories/[id].tsx");
+  const memoryComposer = source("mobile/src/features/memories/room/MemoryComposer.tsx");
 
   assert.match(memoryRoom, /effectiveRoomOccasionType/);
-  assert.match(memoryRoom, /occasionThemeToMemoryRoomTokens/);
   assert.match(memoryRoom, /roomOccasionTheme = getOccasionTheme\(roomOccasionType\)/);
+  assert.match(memoryRoom, /applyRoomTheme\(resolvedTheme, roomOccasionType\)/);
   assert.match(memoryRoom, /FoodChatWallpaper patternKey=\{roomOccasionTheme\.backgroundPattern\}/);
   assert.match(memoryRoom, /themeCopy=\{roomOccasionTheme\.copy\}/);
-  assert.match(memoryRoom, /placeholder=\{themeCopy\.composerPlaceholder\}/);
-  assert.match(memoryRoom, /updateOccasion\.mutate\(\{/);
-  assert.match(memoryRoom, /saveOccasionCorrection\(\{ phrase: room\.data\.title, type, userName: myUsername \}\)/);
-  assert.match(memoryRoom, /occasionChipLabel\(data\.occasionType\).*Change/s);
+  assert.match(memoryComposer, /placeholder=\{themeCopy\.composerPlaceholder\}/);
 });
 
 test("mobile restaurant tabs animate the indicator and content", () => {
