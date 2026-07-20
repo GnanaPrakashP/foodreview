@@ -1,4 +1,10 @@
-import { accessClassForPostVisibility, MEDIA_PRIVATE_BUCKET, MEDIA_POST_SIGNED_URL_TTL_SECONDS, type MediaAccessClass, type MediaDerivativeKind } from "@/lib/server/media-pipeline";
+import {
+  accessClassForPostVisibility,
+  MEDIA_PRIVATE_BUCKET,
+  MEDIA_POST_SIGNED_URL_TTL_SECONDS,
+  type MediaAccessClass,
+  type MediaDerivativeKind
+} from "@/lib/server/media-delivery-contract";
 import { canViewerAccessPostMedia, postMediaPolicyPair } from "@/lib/server/post-media-policy";
 import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 

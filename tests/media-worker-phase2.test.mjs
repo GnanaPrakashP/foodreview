@@ -52,6 +52,9 @@ function loadTs(relativePath, requireModule, globals = {}) {
 }
 
 function loadPipeline() {
+  const deliveryContract = loadTs("lib/server/media-delivery-contract.ts", (id) => {
+    throw new Error(`Unexpected delivery contract import: ${id}`);
+  });
   return loadTs("lib/server/media-pipeline.ts", (id) => {
     if (id === "node:crypto") return crypto;
     if (id === "node:fs/promises") return fsPromises;
@@ -60,6 +63,7 @@ function loadPipeline() {
     if (id === "node:child_process") return childProcess;
     if (id === "sharp") return sharp;
     if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
+    if (id === "@/lib/server/media-delivery-contract") return deliveryContract;
     if (id === "@/lib/observability/server") return {
       mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
     };

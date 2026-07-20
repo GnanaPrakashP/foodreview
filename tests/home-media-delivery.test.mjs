@@ -27,6 +27,7 @@ function deliveryModule() {
 
 const imageProcessing = source("lib/media-image-processing.cjs");
 const access = source("lib/server/post-media-access.ts");
+const deliveryContract = source("lib/server/media-delivery-contract.ts");
 const route = source("app/api/feed/circle/route.ts");
 const renewalRoute = source("app/api/media/renew/route.ts");
 const cover = source("mobile/src/components/posts/HomeMediaCover.tsx");
@@ -39,6 +40,12 @@ const diagnostics = source("mobile/src/performance/homeMediaDiagnostics.ts");
 const migration = source("supabase/migrations/202607180001_home_media_delivery_hardening.sql");
 const backfill = source("scripts/home-media-feed-backfill.mjs");
 const visibilityBackfill = source("scripts/post-media-visibility-backfill.mjs");
+
+test("0 Home delivery does not load native image-processing code", () => {
+  assert.match(access, /from "@\/lib\/server\/media-delivery-contract"/);
+  assert.doesNotMatch(access, /from "@\/lib\/server\/media-pipeline"/);
+  assert.doesNotMatch(deliveryContract, /from "sharp"|media-image-processing/);
+});
 
 test("1 Home images prefer an exact 720x900 progressive MozJPEG feed derivative", () => {
   assert.match(imageProcessing, /MEDIA_POST_FEED_WIDTH = 720/);

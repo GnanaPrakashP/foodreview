@@ -6,6 +6,13 @@ import { spawn } from "node:child_process";
 import sharp from "sharp";
 import { mediaWorkerLogger } from "@/lib/observability/server";
 import {
+  accessClassForPostVisibility,
+  MEDIA_PRIVATE_BUCKET,
+  MEDIA_POST_SIGNED_URL_TTL_SECONDS,
+  type MediaAccessClass,
+  type MediaDerivativeKind
+} from "@/lib/server/media-delivery-contract";
+import {
   MEDIA_ALPHA_BACKGROUND,
   MEDIA_AVATAR_CANONICAL_SIZE,
   MEDIA_AVATAR_THUMB_SIZE,
@@ -25,7 +32,6 @@ import {
 
 export const MEDIA_SOURCE_BUCKET = "media-sources";
 export const MEDIA_PUBLIC_BUCKET = "media-public";
-export const MEDIA_PRIVATE_BUCKET = "media-private";
 export const MEDIA_INTENT_TTL_MS = 10 * 60 * 1000;
 export const MEDIA_POST_TARGET_ASPECT = 4 / 5;
 export {
@@ -42,7 +48,6 @@ export {
   MEDIA_POST_THUMB_HEIGHT,
   MEDIA_POST_THUMB_WIDTH
 };
-export const MEDIA_POST_SIGNED_URL_TTL_SECONDS = 5 * 60;
 export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_IMAGE_MAX_PIXELS = 80_000_000;
 export const MEDIA_VIDEO_MAX_PIXELS = 16_000_000;
@@ -53,8 +58,13 @@ export const MEDIA_WORKER_DEFAULT_CONCURRENCY = 2;
 export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaType = "image" | "video";
 export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" | "failed" | "rejected" | "expired" | "abandoned" | "cancelled";
-export type MediaDerivativeKind = "canonical" | "feed" | "thumbnail" | "poster";
-export type MediaAccessClass = "public_post" | "circle_post" | "private_post" | "avatar_public" | "memory_private";
+export {
+  accessClassForPostVisibility,
+  MEDIA_PRIVATE_BUCKET,
+  MEDIA_POST_SIGNED_URL_TTL_SECONDS,
+  type MediaAccessClass,
+  type MediaDerivativeKind
+} from "@/lib/server/media-delivery-contract";
 
 export type NormalizedCropRect = {
   x: number;
@@ -361,13 +371,6 @@ export function normalizeMediaIntentInput(input: {
     visibility: accessClass === "avatar_public" ? "public" : "private",
     width: optionalPositiveInt(input.width)
   };
-}
-
-export function accessClassForPostVisibility(value: unknown): Extract<MediaAccessClass, "public_post" | "circle_post" | "private_post"> {
-  if (value === "public") return "public_post";
-  if (value === "circle") return "circle_post";
-  if (value === "me") return "private_post";
-  throw new Error("media_post_visibility_invalid");
 }
 
 export function accessClassForIntent(surface: MediaSurface, value: unknown): MediaAccessClass {

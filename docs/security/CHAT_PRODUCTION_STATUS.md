@@ -90,16 +90,25 @@ store-production Home default changes.
   pagination, recycled-state isolation, active-player count, startup latency,
   and multi-page PSS growth. This local PASS does not promote FlashList to the
   store-production default or claim production scroll performance.
-- Vercel Preview deployment now uses the explicit `vercel.preview.json` local
-  config and a local-build/prebuilt-upload workflow through
-  `npm run deploy:preview`. The alternate config retains the Mumbai region but
-  omits production cron registration because Preview does not execute those
-  schedules and the linked Hobby project rejects sub-daily cron definitions.
-  Prebuilding prevents the remote builder from rediscovering the root
-  production config. The production `vercel.json` schedule inventory is
-  unchanged. The Preview config, explicit target, pinned CLI, prebuilt upload,
-  and absence of `--prod` pass 2/2 focused deployment tests; an actual remote
-  deployment is still external evidence.
+- Vercel Preview deployment now stages only Git-tracked source in an isolated
+  temporary directory, replaces its root config with `vercel.preview.json`, and
+  asks Vercel to perform the Preview build through `npm run deploy:preview`.
+  The alternate config retains the Mumbai region but omits production cron
+  registration because Preview does not execute those schedules and the linked
+  Hobby project rejects sub-daily cron definitions. The production
+  `vercel.json` schedule inventory is unchanged. The staging script requires a
+  clean tracked worktree, reuses only the existing Vercel project link, pins the
+  CLI, explicitly selects Preview, never passes `--prod`, and always removes its
+  temporary source tree.
+- The superseded macOS `--prebuilt` Preview reached Vercel but its Circle feed
+  failed because a read-only media authorization import pulled Sharp into the
+  request and the uploaded native binary did not match Vercel Linux ARM64. Home
+  media delivery now imports a Sharp-free contract; the generated Circle-feed
+  route and all seven of its runtime chunks contain no Sharp runtime import.
+  Source staging also lets Vercel install the correct native dependencies for
+  processing routes. Focused media/deployment tests pass 53/53 and the local
+  Preview build passes. A new remote Preview and authenticated media smoke are
+  still required external evidence.
 
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 

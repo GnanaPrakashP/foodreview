@@ -31,7 +31,7 @@ function loadAccess(policy) {
     exports: mod.exports,
     require(id) {
       if (id === "@/lib/server/post-media-policy") return policy;
-      if (id === "@/lib/server/media-pipeline") return {
+      if (id === "@/lib/server/media-delivery-contract") return {
         MEDIA_PRIVATE_BUCKET: "media-private",
         MEDIA_POST_SIGNED_URL_TTL_SECONDS: 300,
         accessClassForPostVisibility: (visibility) => visibility === "public" ? "public_post" : visibility === "circle" ? "circle_post" : "private_post"

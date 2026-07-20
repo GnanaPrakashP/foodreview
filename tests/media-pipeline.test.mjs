@@ -17,6 +17,15 @@ function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
 }
 
+function loadDeliveryContractModule() {
+  const { outputText } = ts.transpileModule(source("lib/server/media-delivery-contract.ts"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  });
+  const mod = { exports: {} };
+  vm.runInNewContext(outputText, { Error, exports: mod.exports, module: mod });
+  return mod.exports;
+}
+
 function loadMediaPipelineModule() {
   const { outputText } = ts.transpileModule(source("lib/server/media-pipeline.ts"), {
     compilerOptions: {
@@ -46,6 +55,7 @@ function loadMediaPipelineModule() {
       if (id === "node:child_process") return childProcess;
       if (id === "sharp") return sharp;
       if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
+      if (id === "@/lib/server/media-delivery-contract") return loadDeliveryContractModule();
       if (id === "@/lib/observability/server") return {
         mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
       };
