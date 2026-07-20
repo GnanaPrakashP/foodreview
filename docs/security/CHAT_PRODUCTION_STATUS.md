@@ -90,6 +90,13 @@ store-production Home default changes.
   pagination, recycled-state isolation, active-player count, startup latency,
   and multi-page PSS growth. This local PASS does not promote FlashList to the
   store-production default or claim production scroll performance.
+- Vercel Preview deployment now uses the explicit `vercel.preview.json` local
+  config through `npm run deploy:preview`. It retains the Mumbai region but
+  omits production cron registration because Preview does not execute those
+  schedules and the linked Hobby project rejects sub-daily cron definitions.
+  The production `vercel.json` schedule inventory is unchanged. The Preview
+  config, explicit target, pinned CLI, and absence of `--prod` pass 2/2 focused
+  deployment tests; an actual remote deployment is still external evidence.
 
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 
