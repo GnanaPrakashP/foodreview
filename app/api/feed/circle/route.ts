@@ -69,7 +69,9 @@ export async function GET(req: NextRequest) {
     const authorisedMedia = await trace.measure(
       "media",
       "feed.media_authorization",
-      () => resolveHomeMediaAccess(admin, mediaAssetIds, actor.userId, trace)
+      () => resolveHomeMediaAccess(admin, mediaAssetIds, actor.userId, trace, undefined, {
+        includeCoverThumbnail: true
+      })
     );
     const mediaByAssetId = new Map((authorisedMedia as HomeMediaCoverDto[]).map((item) => [item.mediaAssetId, item]));
     const responseBody = await trace.measure("assembly", "feed.response_assembly", () => ({
@@ -125,6 +127,8 @@ function reviewPostFromReview(
     placeholder: authorisedCover?.placeholder ?? cover?.placeholder ?? null,
     playbackUrl: authorisedCover?.playbackUrl ?? (mediaType === "video" ? legacyCoverUrl : null),
     posterUrl: authorisedCover?.posterUrl ?? (mediaType === "video" ? cover?.poster_url ?? legacyCoverUrl : null),
+    thumbnailExpiresAt: authorisedCover?.thumbnailExpiresAt ?? null,
+    thumbnailUrl: authorisedCover?.thumbnailUrl ?? null,
     width: authorisedCover?.width ?? cover?.width ?? 360
   } : null;
   const mediaCount = Math.max(review.media_count ?? review.media_items?.length ?? 0, coverMedia ? 1 : 0);
@@ -148,6 +152,7 @@ function reviewPostFromReview(
     items: (review.items ?? []).map((item) => ({ name: item.name, rating: item.rating })),
     body: review.body,
     tags: review.tags ?? [],
+    updatedAt: review.updated_at,
     mediaCount,
     coverMedia,
     visibility: review.visibility === "circle" || review.visibility === "me" ? review.visibility : "public",

@@ -302,7 +302,7 @@ test("a failed latest reaction rolls back to the accurate intermediate server co
   assert.deepEqual(queue.getDisplayedResult(), reactionState("Helpful", 6, 2));
 });
 
-test("Home alone opts into 16dp gaps, hidden dividers, green joined state, and compact title", () => {
+test("Home alone opts into 10dp gaps, hidden dividers, green joined state, and compact title", () => {
   const home = source("mobile/app/(tabs)/index.tsx");
   const postFeed = source("mobile/src/components/feeds/PostFeed.tsx");
   const postCard = source("mobile/src/components/posts/PostCard.tsx");
@@ -317,7 +317,7 @@ test("Home alone opts into 16dp gaps, hidden dividers, green joined state, and c
     "mobile/app/(tabs)/profile.tsx"
   ].map(source).join("\n");
 
-  assert.match(home, /const HOME_FEED_POST_SPACING = 16/);
+  assert.match(home, /const HOME_FEED_POST_SPACING = 10/);
   assert.match(home, /hidePostDividers/);
   assert.match(home, /postSpacing=\{HOME_FEED_POST_SPACING\}/);
   assert.match(home, /useGreenJoinedRequestState/);

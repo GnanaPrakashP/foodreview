@@ -58,7 +58,7 @@ import {
   type RecycledPostCardDiagnosticStage
 } from "@/components/posts/recycledPostCardDiagnostic";
 
-const HOME_FEED_POST_SPACING = 16;
+const HOME_FEED_POST_SPACING = 10;
 // “Up to date” means no newer posts; this label means no older pages remain.
 const HOME_END_REACHED_LABEL = "You’re all caught up";
 const HOME_SCROLL_DIAGNOSTIC_MODES = [
@@ -798,7 +798,7 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       alignItems: "center",
       flexDirection: "row",
       justifyContent: "space-between",
-      paddingBottom: spacing.base,
+      paddingBottom: spacing.s,
       paddingHorizontal: spacing.lg,
       paddingTop: screenLayout.topGap
     },

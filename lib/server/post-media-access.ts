@@ -83,6 +83,8 @@ export type HomeMediaCoverDto = {
   placeholder: string | null;
   playbackUrl: null;
   posterUrl: string | null;
+  thumbnailExpiresAt: string | null;
+  thumbnailUrl: string | null;
   width: number;
 };
 
@@ -124,11 +126,13 @@ export type RenewedHomeMedia = {
   url: string;
 };
 
-function homeKindsForRequest(derivative?: HomeMediaDerivative) {
+function homeKindsForRequest(derivative?: HomeMediaDerivative, includeCoverThumbnail = false) {
   if (derivative === "poster") return ["poster"];
   if (derivative === "playback") return ["canonical"];
   if (derivative === "feed") return ["feed", "canonical"];
-  return ["feed", "canonical", "poster"];
+  return includeCoverThumbnail
+    ? ["feed", "canonical", "thumbnail", "poster"]
+    : ["feed", "canonical", "poster"];
 }
 
 function selectHomeDerivative(
@@ -153,13 +157,14 @@ export async function resolveHomeMediaAccess(
   assetIdsInput: string[],
   viewerUserId: string,
   trace?: RequestPerformanceTrace | null,
-  requestedDerivative?: HomeMediaDerivative
+  requestedDerivative?: HomeMediaDerivative,
+  options: { includeCoverThumbnail?: boolean } = {}
 ): Promise<HomeMediaCoverDto[] | RenewedHomeMedia[]> {
   const assetIds = Array.from(new Set(assetIdsInput.map((id) => id.trim()).filter(Boolean))).slice(0, 50);
   if (assetIds.length === 0 || !viewerUserId) return [];
   const query = () => admin.rpc("authorized_home_media_derivatives_v1", {
     p_asset_ids: assetIds,
-    p_derivative_kinds: homeKindsForRequest(requestedDerivative),
+    p_derivative_kinds: homeKindsForRequest(requestedDerivative, options.includeCoverThumbnail === true),
     p_viewer_user_id: viewerUserId
   });
   const { data, error } = trace
@@ -180,7 +185,10 @@ export async function resolveHomeMediaAccess(
     const group = grouped.get(assetId);
     if (!group) return [];
     const derivative = selectHomeDerivative(group.mediaType, group.kinds, requestedDerivative);
-    return derivative ? [{ assetId, derivative, mediaType: group.mediaType }] : [];
+    const thumbnail = options.includeCoverThumbnail === true && group.mediaType === "image"
+      ? group.kinds.get("thumbnail") ?? null
+      : null;
+    return derivative ? [{ assetId, derivative, mediaType: group.mediaType, thumbnail }] : [];
   });
   const canonicalFallbackCount = selected.filter(({ derivative, mediaType }) => (
     mediaType === "image" && derivative.kind === "canonical"
@@ -188,7 +196,10 @@ export async function resolveHomeMediaAccess(
   if (canonicalFallbackCount > 0) {
     console.warn("[home-media] ready image used canonical fallback", { count: canonicalFallbackCount });
   }
-  const paths = Array.from(new Set(selected.map(({ derivative }) => derivative.storage_path)));
+  const paths = Array.from(new Set(selected.flatMap(({ derivative, thumbnail }) => [
+    derivative.storage_path,
+    ...(thumbnail ? [thumbnail.storage_path] : [])
+  ])));
   const signing = () => admin.storage.from(MEDIA_PRIVATE_BUCKET).createSignedUrls(paths, MEDIA_POST_SIGNED_URL_TTL_SECONDS);
   const { data: signedRows, error: signError } = paths.length > 0
     ? trace
@@ -214,7 +225,7 @@ export async function resolveHomeMediaAccess(
     });
   }
 
-  return selected.flatMap(({ assetId, derivative, mediaType }) => {
+  return selected.flatMap(({ assetId, derivative, mediaType, thumbnail }) => {
     const url = signedByPath.get(derivative.storage_path) ?? "";
     if (!url) return [];
     return [{
@@ -228,6 +239,8 @@ export async function resolveHomeMediaAccess(
       placeholder: derivative.blurhash ?? null,
       playbackUrl: null,
       posterUrl: mediaType === "video" ? url : null,
+      thumbnailExpiresAt: thumbnail ? expiresAt : null,
+      thumbnailUrl: thumbnail ? signedByPath.get(thumbnail.storage_path) || null : null,
       width: derivative.width ?? 720
     } satisfies HomeMediaCoverDto];
   });

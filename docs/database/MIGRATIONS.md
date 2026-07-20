@@ -30,7 +30,7 @@ npx supabase@2.109.1 migration new descriptive_name
 
 Then run `npm run db:verify`. That command validates the locked history, performs two consecutive clean resets, lints SQL, runs pgTAP plus real Auth/RLS/Storage checks, exercises supported upgrade fixtures, and finishes with the read-only local drift audit.
 
-Phase 3 verified 64 canonical migrations and 82 tracked historical entries. Phase 4 added one forward-only migration; Phase 5 adds `202607130009_backend_feed_performance.sql`. The current manifest therefore contains 66 canonical migrations and 84 tracked entries. The database contract now runs 57 pgTAP assertions plus the real Phase 3 and Phase 4 Auth/RLS/Storage/security behavior matrices and the Phase 5 deterministic plan/API harnesses. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md`, `docs/production-hardening/PHASE_4_API_SECURITY.md`, and `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md`.
+Phase 3 verified 64 canonical migrations and 82 tracked historical entries. Subsequent forward-only hardening migrations bring the current manifest to 81 canonical migrations and 99 tracked entries, with two preserved historical conflicts. The database contract now runs 186 pgTAP assertions plus the real Phase 3 and Phase 4 Auth/RLS/Storage/security behavior matrices and the Phase 5 deterministic plan/API harnesses. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md`, `docs/production-hardening/PHASE_4_API_SECURITY.md`, and `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md`.
 
 ## Historical inventory
 
@@ -104,6 +104,10 @@ The mechanically merged chain reset successfully without changing old SQL. Runti
 - `202607130007_canonical_review_media_path_reconciliation.sql` teaches the older Profile ownership guard the server-derived Phase 1A `private-posts/<owner>/...` shape, allowing existing-data backfill and deletion inventory while still rejecting cross-owner paths.
 - `202607130008_mobile_api_security.sql` adds durable HMAC-keyed API rate buckets, idempotency state, install/Auth-bound push tokens, active generic-media moderation quarantine/audit, audited report decisions, service-only grants, and the additive Phase 4 schema-contract extension.
 - `202607130009_backend_feed_performance.sql` adds stable cursor indexes, bounded feed/engagement/Explore/Memory RPCs, Memory activity maintenance, and dry-run-first projection reconciliation. Memory read payloads omit private Storage paths; the authenticated API signs authorized photo IDs in one batch.
+- `202607210001_notification_inbox_seen_state.sql` adds owner-derived, server-persisted notification inbox seen state without changing per-row read state.
+- `202607210002_review_visible_content_revision.sql` adds the server-owned review revision consumed by explicit Home refresh comparison.
+- `202607210003_review_media_refresh_revision.sql` advances that revision when ordered review media membership changes.
+- `202607210004_notification_unseen_indexes.sql` keeps both canonical UUID and legacy-name unseen badge lookups on bounded partial indexes.
 
 ## Upgrade support
 

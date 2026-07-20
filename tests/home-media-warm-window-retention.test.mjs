@@ -76,10 +76,12 @@ test("vertical priority uses meaningful viewability without continuous scroll st
   assert.match(feed, /scrollOffsetRef\.current = nextOffset/);
 });
 
-test("12-16 restoration reuses readiness and one geometry-stable blur preview", () => {
+test("12-16 restoration reuses readiness and geometry-stable thumbnail plus blur previews", () => {
   assert.match(cover, /if \(sourceUri\) return/);
   assert.match(cover, /if \(prefetchedUri\)[\s\S]*Image\.getCachePathAsync\(cacheKey\)[\s\S]*if \(loadPolicy !== "visible"\)/);
-  assert.match(cover, /placeholder=\{\{ blurhash: placeholder \}\}/);
+  assert.match(cover, /placeholder=\{\{ blurhash: media\.placeholder \}\}/);
+  assert.match(cover, /recyclingKey=\{thumbnailRecyclingKey\}/);
+  assert.match(cover, /state !== "ready"/);
   assert.match(cover, /placeholderContentFit="cover"/);
   assert.match(cover, /transition=\{0\}/);
   assert.match(cover, /style=\{styles\.layer\}/);
@@ -117,10 +119,12 @@ test("19-21 outgoing and reverse pages remain rendered through native selection"
   assert.match(carousel, /pageScrollState === "idle"/);
 });
 
-test("26-31 every page owns an explicit non-black placeholder, retry or media surface", () => {
-  assert.match(carousel, /style=\{\[styles\.page, \{ backgroundColor: themeColors\.card \}\]\}/);
-  assert.match(carousel, /style=\{\[styles\.layer, styles\.pendingPage, \{ backgroundColor: themeColors\.card \}\]\}/);
-  assert.match(carousel, /<Utensils color=\{themeColors\.muted\}/);
+test("26-31 every page owns an explicit near-black fallback, preview, retry or media surface", () => {
+  assert.match(carousel, /style=\{\[styles\.page, \{ backgroundColor: "#111111" \}\]\}/);
+  assert.match(carousel, /style=\{\[styles\.layer, styles\.pendingPage, \{ backgroundColor: "#111111" \}\]\}/);
+  assert.doesNotMatch(carousel, /<Utensils/);
+  assert.doesNotMatch(cover, /<Utensils/);
+  assert.match(carousel, /metadataPending && renderMedia && active \? <ActivityIndicator/);
   assert.match(carousel, /blank_page_prevented/);
   assert.doesNotMatch(carousel, /return null/);
   assert.match(cover, /source\.state === "failed" \? <RetryOverlay/);

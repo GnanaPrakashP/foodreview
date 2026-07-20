@@ -2626,7 +2626,90 @@
       "sizeBytes": 11188,
       "sourceRoot": "supabase/migrations",
       "version": "202607180005"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "notification_inbox_has_unseen",
+        "notification_inbox_mark_seen",
+        "notification_inbox_state",
+        "notifications",
+        "profiles",
+        "uid"
+      ],
+      "description": "notification_inbox_seen_state",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210001_notification_inbox_seen_state.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "functions",
+        "notifications",
+        "profiles",
+        "rls",
+        "social"
+      ],
+      "sha256": "2af5d3a70924fc30ffb9a7cb777f426bf93f2e1c09700756766a7f55368d5b54",
+      "sizeBytes": 3750,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "reviews",
+        "touch_review_visible_content_updated_at"
+      ],
+      "description": "review_visible_content_revision",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210002_review_visible_content_revision.sql",
+      "objectCategories": [
+        "functions",
+        "social",
+        "triggers"
+      ],
+      "sha256": "6c1cd2ecb7c0095e5b7204ab59d531cb626e5a8bd3dd91ac62a814aea824989f",
+      "sizeBytes": 1075,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "review_photos",
+        "reviews",
+        "touch_review_from_media_link_change"
+      ],
+      "description": "review_media_refresh_revision",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210003_review_media_refresh_revision.sql",
+      "objectCategories": [
+        "functions",
+        "social",
+        "triggers"
+      ],
+      "sha256": "9880b7ba0560ad30ab9f9c4e9f6127b7968a1b79b79a4428c9bd026752960783",
+      "sizeBytes": 1427,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "notifications"
+      ],
+      "description": "notification_unseen_indexes",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210004_notification_unseen_indexes.sql",
+      "objectCategories": [
+        "indexes",
+        "notifications"
+      ],
+      "sha256": "2c3b901d21cca12c9f193488d381eb62e0e80cf89fc8d4f31fbff80b7b06b180",
+      "sizeBytes": 554,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210004"
     }
   ],
-  "currentCanonicalMigrations": 77
+  "currentCanonicalMigrations": 81
 }

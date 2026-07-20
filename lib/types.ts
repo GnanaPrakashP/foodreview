@@ -133,6 +133,7 @@ export interface Database {
           status: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
           requires_ready_media: boolean;
           created_at: string;
+          updated_at: string;
         };
         Insert: {
           id?: string;
@@ -155,6 +156,7 @@ export interface Database {
           status?: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
           requires_ready_media?: boolean;
           created_at?: string;
+          updated_at?: string;
         };
         Update: {
           id?: string;
@@ -177,6 +179,7 @@ export interface Database {
           status?: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
           requires_ready_media?: boolean;
           created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -249,6 +252,24 @@ export interface Database {
           deleted_at?: string | null;
         };
         Update: Partial<Notification>;
+        Relationships: [];
+      };
+      notification_inbox_state: {
+        Row: {
+          user_id: string;
+          last_seen_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          last_seen_at: string;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          last_seen_at?: string;
+          updated_at?: string;
+        };
         Relationships: [];
       };
       likes: {
@@ -504,6 +525,14 @@ export interface Database {
       is_profile_complete: {
         Args: { p_user_id: string };
         Returns: boolean;
+      };
+      notification_inbox_has_unseen: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      notification_inbox_mark_seen: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
       };
       request_account_deletion: {
         Args: Record<PropertyKey, never>;

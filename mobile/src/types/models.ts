@@ -34,6 +34,7 @@ export type ReviewMedia = {
   posterUrl: string | null;
   posterExpiresAt?: string | null;
   position: number;
+  thumbnailExpiresAt?: string | null;
   thumbnailUrl: string | null;
   playbackExpiresAt?: string | null;
   playbackUrl?: string | null;
@@ -95,6 +96,7 @@ export type ReviewPost = {
   visibility: Visibility;
   status: ReviewStatus;
   createdAt: string;
+  updatedAt?: string;
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
@@ -123,6 +125,8 @@ export type HomeFeedCoverMedia = {
   placeholder: string | null;
   playbackUrl: string | null;
   posterUrl: string | null;
+  thumbnailExpiresAt: string | null;
+  thumbnailUrl: string | null;
   width: number;
 };
 
@@ -158,6 +162,7 @@ export type HomeFeedPost = {
   restaurantName: string;
   reviewerUsername: string;
   tags: string[];
+  updatedAt: string;
   visibility: Visibility;
 };
 

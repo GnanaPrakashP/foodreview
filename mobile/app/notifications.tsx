@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +24,7 @@ import { useRespondToCircleRequestMutation } from "@/hooks/useCircle";
 import {
   useDeleteNotificationMutation,
   useMarkAllNotificationsReadMutation,
+  useMarkNotificationInboxSeenMutation,
   useMarkNotificationReadMutation,
   patchCachedNotification,
   useNotificationsQuery
@@ -45,10 +46,12 @@ const EMPTY_NOTIFICATIONS: AppNotification[] = [];
 const NOTIFICATIONS_ENTER_MS = 300;
 const NOTIFICATIONS_EXIT_MS = 120;
 const NOTIFICATIONS_PANEL_TRAVEL_MAX = 640;
+const NOTIFICATIONS_PAGE_SIZE = 12;
 const NOTIFICATIONS_INITIAL_RENDER_COUNT = 8;
 const NOTIFICATIONS_RENDER_BATCH_SIZE = 8;
 const NOTIFICATIONS_WINDOW_SIZE = 7;
 const NOTIFICATIONS_STALE_MS = 30_000;
+const NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT = 2;
 
 function effectiveDate(notification: AppNotification) {
   return notification.updatedAt || notification.createdAt;
@@ -120,6 +123,38 @@ function buildSections(notifications: AppNotification[]): NotificationSection[] 
     .filter((section) => section.data.length > 0);
 }
 
+const NotificationActorAvatar = memo(function NotificationActorAvatar({
+  avatarUrl,
+  displayName,
+  styles
+}: {
+  avatarUrl: string | null;
+  displayName: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = Boolean(avatarUrl && failedUrl !== avatarUrl);
+
+  return (
+    <View style={[styles.avatarFallback, { backgroundColor: avatarColor(displayName) }]}>
+      <Text style={styles.avatarText}>{initialsForName(displayName)}</Text>
+      {showImage && avatarUrl ? (
+        <Image
+          accessibilityIgnoresInvertColors
+          alt=""
+          cachePolicy="memory-disk"
+          contentFit="cover"
+          onError={() => setFailedUrl(avatarUrl)}
+          recyclingKey={avatarUrl}
+          source={{ uri: avatarUrl }}
+          style={styles.avatarImage}
+          transition={0}
+        />
+      ) : null}
+    </View>
+  );
+});
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -128,14 +163,24 @@ export default function NotificationsScreen() {
   const { width } = useWindowDimensions();
   const enterProgress = useRef(new Animated.Value(0)).current;
   const isClosingRef = useRef(false);
-  const autoReadAttemptedCountRef = useRef<number | null>(null);
+  const emptyPageAutoFetchCountRef = useRef(0);
+  const notificationFocusRefetchActiveRef = useRef(false);
+  const markInboxSeenRequestActiveRef = useRef(false);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
-  const notifications = useNotificationsQuery({ enabled: isReady && isAuthenticated });
-  const notificationsDataUpdatedAt = notifications.dataUpdatedAt;
-  const refetchNotifications = notifications.refetch;
+  const notifications = useNotificationsQuery({
+    enabled: isReady && isAuthenticated,
+    limit: NOTIFICATIONS_PAGE_SIZE
+  });
+  const fetchNextNotificationsPage = notifications.fetchNextPage;
+  const notificationNextCursor = notifications.data?.nextCursor ?? null;
+  const notificationsAreFetching = notifications.isFetching;
+  const notificationsAreFetchingNextPage = notifications.isFetchingNextPage;
+  const notificationsHaveError = notifications.isError;
+  const notificationsAreLoading = notifications.isLoading;
   const markRead = useMarkNotificationReadMutation();
   const markAllRead = useMarkAllNotificationsReadMutation();
+  const markInboxSeen = useMarkNotificationInboxSeenMutation();
   const deleteNotification = useDeleteNotificationMutation();
   const respondToCircle = useRespondToCircleRequestMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -144,6 +189,21 @@ export default function NotificationsScreen() {
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const sections = useMemo(() => buildSections(items), [items]);
   const refreshing = notifications.isFetching && !notifications.isLoading;
+  const hasOlderNotifications = notifications.hasNextPage === true;
+  const notificationFocusStateRef = useRef({
+    dataUpdatedAt: notifications.dataUpdatedAt,
+    hasData: notifications.data !== undefined,
+    isFetching: notifications.isFetching,
+    refetch: notifications.refetch
+  });
+  notificationFocusStateRef.current = {
+    dataUpdatedAt: notifications.dataUpdatedAt,
+    hasData: notifications.data !== undefined,
+    isFetching: notifications.isFetching,
+    refetch: notifications.refetch
+  };
+  const markInboxSeenRef = useRef(markInboxSeen.mutate);
+  markInboxSeenRef.current = markInboxSeen.mutate;
   const panelTranslateX = enterProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [Math.min(width, NOTIFICATIONS_PANEL_TRAVEL_MAX), 0]
@@ -167,19 +227,30 @@ export default function NotificationsScreen() {
   }, [enterProgress]);
 
   useEffect(() => {
-    if (!isReady || !isAuthenticated || notifications.isLoading || unreadCount <= 0) {
-      if (unreadCount === 0) autoReadAttemptedCountRef.current = null;
+    if (items.length > 0 || !hasOlderNotifications) {
+      emptyPageAutoFetchCountRef.current = 0;
       return;
     }
-    if (markAllRead.isPending || autoReadAttemptedCountRef.current === unreadCount) return;
+    if (
+      notificationsAreLoading
+      || notificationsAreFetching
+      || notificationsHaveError
+      || notificationsAreFetchingNextPage
+      || emptyPageAutoFetchCountRef.current >= NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT
+    ) return;
 
-    autoReadAttemptedCountRef.current = unreadCount;
-    markAllRead.mutate(undefined, {
-      onError: () => {
-        console.warn("[notifications] auto mark read failed");
-      }
-    });
-  }, [isAuthenticated, isReady, markAllRead, notifications.isLoading, unreadCount]);
+    emptyPageAutoFetchCountRef.current += 1;
+    void fetchNextNotificationsPage();
+  }, [
+    fetchNextNotificationsPage,
+    hasOlderNotifications,
+    items.length,
+    notificationNextCursor,
+    notificationsAreFetching,
+    notificationsAreFetchingNextPage,
+    notificationsAreLoading,
+    notificationsHaveError
+  ]);
 
   const performBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -201,15 +272,35 @@ export default function NotificationsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (Date.now() - notificationsDataUpdatedAt > NOTIFICATIONS_STALE_MS) {
-        void refetchNotifications();
+      if (isReady && isAuthenticated) {
+        const focusState = notificationFocusStateRef.current;
+        if (
+          focusState.hasData
+          && !focusState.isFetching
+          && !notificationFocusRefetchActiveRef.current
+          && Date.now() - focusState.dataUpdatedAt > NOTIFICATIONS_STALE_MS
+        ) {
+          notificationFocusRefetchActiveRef.current = true;
+          void focusState.refetch().finally(() => {
+            notificationFocusRefetchActiveRef.current = false;
+          });
+        }
+        if (!markInboxSeenRequestActiveRef.current) {
+          markInboxSeenRequestActiveRef.current = true;
+          markInboxSeenRef.current(undefined, {
+            onError: () => console.warn("[notifications] inbox seen update failed"),
+            onSettled: () => {
+              markInboxSeenRequestActiveRef.current = false;
+            }
+          });
+        }
       }
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         close();
         return true;
       });
       return () => subscription.remove();
-    }, [close, notificationsDataUpdatedAt, refetchNotifications])
+    }, [close, isAuthenticated, isReady])
   );
 
   async function openNotification(notification: AppNotification) {
@@ -284,13 +375,11 @@ export default function NotificationsScreen() {
           style={({ pressed }) => [styles.rowButton, pressed && styles.pressed]}
         >
           <View style={styles.avatarWrap}>
-            {item.actorAvatarUrl ? (
-              <Image cachePolicy="memory-disk" recyclingKey={item.actorAvatarUrl} source={{ uri: item.actorAvatarUrl }} style={styles.avatarImage} contentFit="cover" />
-            ) : (
-              <View style={[styles.avatarFallback, { backgroundColor: avatarColor(item.actorDisplayName) }]}>
-                <Text style={styles.avatarText}>{initialsForName(item.actorDisplayName)}</Text>
-              </View>
-            )}
+            <NotificationActorAvatar
+              avatarUrl={item.actorAvatarUrl}
+              displayName={item.actorDisplayName}
+              styles={styles}
+            />
             <View style={[styles.typeBadge, { backgroundColor: themeColors.orange }]}>
               <Ionicons name={iconForNotification(item)} size={12} color={themeColors.white} />
             </View>
@@ -316,7 +405,7 @@ export default function NotificationsScreen() {
           </View>
 
           {item.thumbnailUrl ? (
-            <Image cachePolicy="memory-disk" recyclingKey={item.thumbnailUrl} source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} contentFit="cover" />
+            <Image alt="" cachePolicy="memory-disk" contentFit="cover" recyclingKey={item.thumbnailUrl} source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
           ) : null}
         </Pressable>
 
@@ -402,22 +491,30 @@ export default function NotificationsScreen() {
           </View>
         ) : sections.length === 0 ? (
           <View style={styles.stateWrap}>
-            <EmptyState
-              icon="notifications-outline"
-              message="Circle requests, likes, comments, and circle posts will show here."
-              title="No notifications yet"
-            />
+            {notifications.isFetchingNextPage ? (
+              <LoadingState message="Checking older activity." title="Loading notifications" />
+            ) : (
+              <EmptyState
+                actionLabel={hasOlderNotifications ? "Load older activity" : undefined}
+                icon="notifications-outline"
+                message={hasOlderNotifications
+                  ? "Recent activity is no longer available, but older notifications may still be here."
+                  : "Circle requests, likes, comments, and circle posts will show here."}
+                onAction={hasOlderNotifications ? () => void notifications.fetchNextPage() : undefined}
+                title={hasOlderNotifications ? "No recent notifications" : "No notifications yet"}
+              />
+            )}
           </View>
         ) : (
           <SectionList
             sections={sections}
             initialNumToRender={NOTIFICATIONS_INITIAL_RENDER_COUNT}
             onEndReached={() => {
-              if (notifications.hasNextPage && !notifications.isFetchingNextPage) {
+              if (notifications.hasNextPage && !notifications.isFetching && !notifications.isFetchingNextPage) {
                 void notifications.fetchNextPage();
               }
             }}
-            onEndReachedThreshold={0.35}
+            onEndReachedThreshold={0.5}
             keyExtractor={(item) => item.id}
             maxToRenderPerBatch={NOTIFICATIONS_RENDER_BATCH_SIZE}
             renderItem={renderNotification}
@@ -521,9 +618,8 @@ function createStyles(themeColors: ThemeColors) {
       width: 44
     },
     avatarImage: {
+      ...StyleSheet.absoluteFillObject,
       borderRadius: 14,
-      height: 44,
-      width: 44
     },
     avatarText: {
       ...fontStyles.extraBold,

@@ -25,6 +25,8 @@ const hook = source("mobile/src/hooks/useHomeRefresh.ts");
 const feed = source("mobile/src/components/feeds/PostFeed.tsx");
 const skeleton = source("mobile/src/components/home/HomeFeedSkeleton.tsx");
 const noticeComponent = source("mobile/src/components/home/HomeUpToDateNotice.tsx");
+const reviewRevisionMigration = source("supabase/migrations/202607210002_review_visible_content_revision.sql");
+const reviewMediaRevisionMigration = source("supabase/migrations/202607210003_review_media_refresh_revision.sql");
 const notice = loadTs("mobile/src/home/homeExplicitRefreshNotice.ts");
 
 function noticeHarness() {
@@ -44,26 +46,46 @@ function noticeHarness() {
 
 function shouldShow(overrides = {}) {
   return notice.shouldShowHomeUpToDateNotice({
-    previousFirstPageIds: ["a", "b", "c"],
+    previousVisibleFingerprint: "same-visible-content",
     reason: "pull",
-    refreshedFirstPageIds: ["a", "b", "c"],
+    refreshedVisibleFingerprint: "same-visible-content",
     status: "success",
     ...overrides
   });
+}
+
+function visiblePost(overrides = {}) {
+  return {
+    id: "a",
+    items: [{ name: "Dosa", rating: 4 }],
+    media: [{
+      cacheRevision: 1,
+      expiresAt: "2026-07-21T10:05:00.000Z",
+      mediaAssetId: "asset-a",
+      mediaType: "image",
+      placeholder: "hash-a",
+      position: 0,
+      publicUrl: "https://signed.example/old",
+      height: 900,
+      width: 720
+    }],
+    tags: ["breakfast"],
+    ...overrides
+  };
 }
 
 test("Home keeps the exact What they’re eating heading", () => {
   assert.match(home, /What they’re <Text style=\{styles\.titleAccent\}>eating<\/Text>/);
 });
 
-test("heading-to-first-post spacing is the 16dp base spacing", () => {
-  assert.match(home, /paddingBottom: spacing\.base/);
-  assert.match(source("mobile/src/theme/index.ts"), /base: 16/);
+test("heading-to-first-post spacing is the 10dp small spacing", () => {
+  assert.match(home, /paddingBottom: spacing\.s/);
+  assert.match(source("mobile/src/theme/index.ts"), /s: 10/);
   assert.doesNotMatch(home, /ListHeaderComponentStyle|marginTop:[^\n]*16/);
 });
 
-test("Home post-to-post spacing is 16dp", () => {
-  assert.match(home, /const HOME_FEED_POST_SPACING = 16/);
+test("Home post-to-post spacing is 10dp", () => {
+  assert.match(home, /const HOME_FEED_POST_SPACING = 10/);
   assert.match(home, /postSpacing=\{HOME_FEED_POST_SPACING\}/);
 });
 
@@ -73,7 +95,7 @@ test("the spacing rule stays outside shared PostCard styling", () => {
   assert.match(feed, /ItemSeparatorComponent=\{postSpacing > 0 \? renderPostSeparator : undefined\}/);
 });
 
-test("the Home skeleton receives the same 16dp spacing", () => {
+test("the Home skeleton receives the same 10dp spacing", () => {
   assert.match(home, /HomeFeedSkeleton postSpacing=\{HOME_FEED_POST_SPACING\}/);
   assert.match(skeleton, /<View style=\{\{ height: postSpacing \}\} \/>/);
 });
@@ -109,13 +131,44 @@ test("an unchanged successful active-tab refresh shows up-to-date", () => {
   assert.equal(shouldShow({ reason: "active-tab" }), true);
 });
 
-test("new leading stable IDs suppress up-to-date", () => {
-  assert.equal(shouldShow({ refreshedFirstPageIds: ["new", "a", "b"] }), false);
+test("new leading content suppresses up-to-date", () => {
+  assert.equal(shouldShow({ refreshedVisibleFingerprint: "new-leading-post" }), false);
 });
 
-test("engagement-only or media-only object changes cannot count as new posts", () => {
-  assert.equal(shouldShow({ refreshedFirstPageIds: ["a", "b", "c"] }), true);
-  assert.doesNotMatch(source("mobile/src/home/homeExplicitRefreshNotice.ts"), /likeCount|commentCount|media|URL/);
+test("visible engagement, copy, and media changes suppress up-to-date", () => {
+  const before = notice.homeFirstPageVisibleFingerprint([visiblePost()]);
+  for (const changed of [
+    visiblePost({ body: "Updated review" }),
+    visiblePost({ likeCount: 2 }),
+    visiblePost({ media: [{ ...visiblePost().media[0], cacheRevision: 2 }] })
+  ]) {
+    assert.notEqual(notice.homeFirstPageVisibleFingerprint([changed]), before);
+  }
+});
+
+test("renewed signed URLs alone do not suppress up-to-date", () => {
+  const before = visiblePost();
+  const after = visiblePost({
+    media: [{
+      ...before.media[0],
+      expiresAt: "2026-07-21T10:10:00.000Z",
+      publicUrl: "https://signed.example/renewed"
+    }]
+  });
+  assert.equal(
+    notice.homeFirstPageVisibleFingerprint([before]),
+    notice.homeFirstPageVisibleFingerprint([after])
+  );
+});
+
+test("review metadata has a server-owned revision for cover-only refresh comparison", () => {
+  assert.match(reviewRevisionMigration, /add column if not exists updated_at timestamptz not null default now\(\)/);
+  assert.match(reviewRevisionMigration, /before update on public\.reviews/);
+  assert.match(reviewRevisionMigration, /new\.updated_at := clock_timestamp\(\)/);
+  assert.match(reviewMediaRevisionMigration, /after insert or update or delete on public\.review_photos/);
+  assert.match(reviewMediaRevisionMigration, /set updated_at = clock_timestamp\(\)/);
+  assert.match(source("app/api/feed/circle/route.ts"), /updatedAt: review\.updated_at/);
+  assert.match(source("mobile/src/home/homeExplicitRefreshNotice.ts"), /updatedAt: post\.updatedAt \?\? null/);
 });
 
 test("automatic stale-return checks never show up-to-date", () => {

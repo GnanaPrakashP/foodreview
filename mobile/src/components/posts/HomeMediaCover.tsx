@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Image, type ImageLoadEventData } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { Play, RotateCcw, Utensils, Volume2, VolumeX } from "lucide-react-native";
+import { Play, RotateCcw, Volume2, VolumeX } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { mediaDerivativeCacheKey } from "@/components/posts/mediaCacheKey";
@@ -278,7 +278,7 @@ function HomeImageCover({
     : null, [source.cacheKey, source.sourceUri]);
   return (
     <View accessibilityLabel={accessibilityLabel ?? "Post image"} accessibilityRole="image" style={styles.layer}>
-      <CoverPlaceholder placeholder={media.placeholder} showBusy={source.showBusy} state={source.state} />
+      <CoverPlaceholder media={media} showBusy={source.showBusy} state={source.state} />
       {imageSource ? (
         <Image
           alt=""
@@ -353,7 +353,7 @@ function HomeVideoCover({
 
   return (
     <View accessibilityLabel={accessibilityLabel ?? "Video"} accessibilityRole="image" style={styles.layer}>
-      <CoverPlaceholder placeholder={media.placeholder} showBusy={poster.showBusy} state={poster.state} />
+      <CoverPlaceholder media={media} showBusy={poster.showBusy} state={poster.state} />
       {posterSource ? (
         <Image
           alt=""
@@ -419,31 +419,55 @@ function ExplicitHomeVideo({ accessibilityLabel, uri }: { accessibilityLabel?: s
 }
 
 function CoverPlaceholder({
-  placeholder,
+  media,
   showBusy,
   state
 }: {
-  placeholder?: string | null;
+  media: ReviewMedia;
   showBusy: boolean;
   state: HomeMediaState;
 }) {
   const { themeColors } = useThemePreference();
-  const busy = showBusy && (state === "renewing" || state === "loading");
+  const thumbnailUrl = media.mediaType === "image" && homeMediaUrlIsUsable(
+    media.thumbnailUrl,
+    media.thumbnailExpiresAt ?? media.expiresAt
+  ) ? media.thumbnailUrl : null;
+  const thumbnailIdentity = media.mediaAssetId ?? media.publicUrl;
+  const thumbnailSource = useMemo(() => thumbnailUrl ? { uri: thumbnailUrl } : null, [thumbnailUrl]);
+  const thumbnailRecyclingKey = mediaDerivativeCacheKey(
+    thumbnailIdentity,
+    "thumbnail",
+    media.cacheRevision ?? 1
+  );
+  const showThumbnail = Boolean(thumbnailSource && state !== "ready");
+  const busy = showBusy && !showThumbnail && (state === "renewing" || state === "loading");
   return (
-    <View pointerEvents="none" style={[styles.layer, styles.placeholder, { backgroundColor: themeColors.card }]}>
-      {placeholder ? (
+    <View pointerEvents="none" style={[styles.layer, styles.placeholder]}>
+      {media.placeholder ? (
         <Image
           alt=""
           contentFit="cover"
-          placeholder={{ blurhash: placeholder }}
+          placeholder={{ blurhash: media.placeholder }}
           placeholderContentFit="cover"
           style={styles.layer}
           transition={0}
         />
       ) : null}
-      {busy
-        ? <ActivityIndicator color={themeColors.orange} />
-        : !placeholder ? <Utensils color={themeColors.muted} size={32} /> : null}
+      {showThumbnail ? (
+        <Image
+          alt=""
+          cachePolicy="memory-disk"
+          contentFit="cover"
+          decodeFormat="rgb"
+          enforceEarlyResizing
+          priority="low"
+          recyclingKey={thumbnailRecyclingKey}
+          source={thumbnailSource}
+          style={styles.layer}
+          transition={0}
+        />
+      ) : null}
+      {busy ? <ActivityIndicator color={themeColors.orange} /> : null}
     </View>
   );
 }
@@ -466,6 +490,7 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     alignItems: "center",
+    backgroundColor: "#111111",
     justifyContent: "center"
   },
   playButton: {

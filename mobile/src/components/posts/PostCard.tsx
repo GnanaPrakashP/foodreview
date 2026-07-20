@@ -18,9 +18,11 @@ import {
 import { memo, type ReactElement, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Dimensions,
   Image as NativeImage,
   type ImageSourcePropType,
   Linking,
+  Modal,
   Share,
   Pressable,
   StyleSheet,
@@ -128,6 +130,17 @@ const diagnosticFormattedTimeAgo = new Map<string, string>();
 const HOME_SVG_PLACEHOLDER_AB_ENABLED = __DEV__ &&
   process.env.EXPO_PUBLIC_HOME_SCROLL_DIAGNOSTIC === "svg-placeholders";
 const NON_RECYCLING_STATE_SCOPE = "post-card-instance";
+const POST_ACTIONS_MENU_GAP = 4;
+const POST_ACTIONS_MENU_MARGIN = 8;
+const POST_ACTIONS_MENU_WIDTH = 228;
+const POST_ACTIONS_OWNER_MENU_HEIGHT = 58;
+const POST_ACTIONS_VIEWER_MENU_HEIGHT = 174;
+
+type PostActionsMenuAnchor = {
+  left: number;
+  top: number;
+  width: number;
+};
 
 const svgPlaceholderStyles = StyleSheet.create({
   icon: {
@@ -1139,8 +1152,13 @@ function PostCardComponent({
   );
   const [requestInteracted, setRequestInteracted] = useFixedGeometryRecyclingState(false, [recyclingStateScope]);
   const [showPostActions, setShowPostActions] = useFixedGeometryRecyclingState(false, [recyclingStateScope]);
+  const [postActionsAnchor, setPostActionsAnchor] = useFixedGeometryRecyclingState<PostActionsMenuAnchor | null>(
+    null,
+    [recyclingStateScope]
+  );
   const currentPostIdRef = useRef(post.id);
   currentPostIdRef.current = post.id;
+  const postActionsTriggerRef = useRef<View>(null);
   const likeMutateRef = useRef(likeMutation.mutateAsync);
   likeMutateRef.current = likeMutation.mutateAsync;
   const bookmarkMutateRef = useRef(bookmarkMutation.mutateAsync);
@@ -1273,7 +1291,8 @@ function PostCardComponent({
     if (postActionsPostIdRef.current === post.id) return;
     postActionsPostIdRef.current = post.id;
     setShowPostActions(false);
-  }, [post.id, setShowPostActions]);
+    setPostActionsAnchor(null);
+  }, [post.id, setPostActionsAnchor, setShowPostActions]);
 
   const openProfile = useCallback(() => {
     openProfileRoute({ queryClient, router, username: targetUsername, viewerUsername: viewerName });
@@ -1354,9 +1373,39 @@ function PostCardComponent({
     else openCommentsSheet(post.id, setCommentCount, post.reviewerUsername || post.reviewerName);
   }, [closeCommentsSheet, commentsOpen, openCommentsSheet, post.id, post.reviewerName, post.reviewerUsername, setCommentCount]);
 
+  function closePostActions() {
+    setShowPostActions(false);
+    setPostActionsAnchor(null);
+  }
+
+  function togglePostActions() {
+    if (showPostActions) {
+      closePostActions();
+      return;
+    }
+
+    const postIdAtPress = post.id;
+    postActionsTriggerRef.current?.measureInWindow((x, y, triggerWidth, triggerHeight) => {
+      if (currentPostIdRef.current !== postIdAtPress) return;
+      const window = Dimensions.get("window");
+      const menuWidth = Math.min(POST_ACTIONS_MENU_WIDTH, window.width - POST_ACTIONS_MENU_MARGIN * 2);
+      const menuHeight = isOwnPost ? POST_ACTIONS_OWNER_MENU_HEIGHT : POST_ACTIONS_VIEWER_MENU_HEIGHT;
+      const belowTop = y + triggerHeight + POST_ACTIONS_MENU_GAP;
+      const top = belowTop + menuHeight <= window.height - POST_ACTIONS_MENU_MARGIN
+        ? belowTop
+        : Math.max(POST_ACTIONS_MENU_MARGIN, y - menuHeight - POST_ACTIONS_MENU_GAP);
+      const left = Math.max(
+        POST_ACTIONS_MENU_MARGIN,
+        Math.min(x + triggerWidth - menuWidth, window.width - menuWidth - POST_ACTIONS_MENU_MARGIN)
+      );
+      setPostActionsAnchor({ left, top, width: menuWidth });
+      setShowPostActions(true);
+    });
+  }
+
   function confirmDeletePost() {
     if (!isOwnPost || deletePostMutation.isPending) return;
-    setShowPostActions(false);
+    closePostActions();
     Alert.alert("Delete post?", "Delete this post permanently?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -1376,7 +1425,7 @@ function PostCardComponent({
 
   async function reportTarget(targetType: ReportTargetType, targetId: string, label: string) {
     if (reportMutation.isPending) return;
-    setShowPostActions(false);
+    closePostActions();
     const reason = await chooseReportReason(label);
     if (!reason) return;
     try {
@@ -1389,7 +1438,7 @@ function PostCardComponent({
 
   function confirmBlockAuthor() {
     if (isOwnPost || blockUserMutation.isPending) return;
-    setShowPostActions(false);
+    closePostActions();
     Alert.alert("Block @" + targetUsername + "?", "You won't see each other's posts, comments, or circle activity.", [
       { text: "Cancel", style: "cancel" },
       {
@@ -1497,9 +1546,13 @@ function PostCardComponent({
   const overflowNode = (
     <View style={styles.postActionsWrap}>
       <Pressable
+        accessibilityLabel={showPostActions ? "Close post actions" : "Open post actions"}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: postActionsBusy, expanded: showPostActions }}
         disabled={postActionsBusy}
         hitSlop={10}
-        onPress={() => setShowPostActions((open) => !open)}
+        onPress={togglePostActions}
+        ref={postActionsTriggerRef}
         style={[styles.moreButton, postActionsBusy && styles.moreButtonDisabled]}
       >
         {useSvgPlaceholders ? (
@@ -1508,54 +1561,108 @@ function PostCardComponent({
           <MoreVertical size={18} color={themeColors.cream} strokeWidth={2} />
         )}
       </Pressable>
-      {showPostActions ? (
-        <View style={styles.postActionsMenu}>
-          {isOwnPost ? (
+      {showPostActions && postActionsAnchor ? (
+        <Modal
+          animationType="fade"
+          onRequestClose={closePostActions}
+          presentationStyle="overFullScreen"
+          statusBarTranslucent
+          transparent
+          visible
+        >
+          <View style={styles.postActionsOverlay}>
             <Pressable
-              disabled={deletePostMutation.isPending}
-              onPress={confirmDeletePost}
-              style={[styles.deleteAction, deletePostMutation.isPending && styles.deleteActionDisabled]}
+              accessibilityLabel="Close post actions"
+              accessibilityRole="button"
+              onPress={closePostActions}
+              style={styles.postActionsBackdrop}
+            />
+            <View
+              accessibilityViewIsModal
+              onAccessibilityEscape={closePostActions}
+              style={[styles.postActionsMenu, postActionsAnchor]}
             >
-              <Text style={styles.deleteActionText}>
-                {deletePostMutation.isPending ? "Deleting..." : "Delete post"}
-              </Text>
-            </Pressable>
-          ) : (
-            <>
-              <Pressable
-                disabled={reportMutation.isPending}
-                onPress={() => void reportTarget("review", post.id, "post")}
-                style={[styles.menuAction, reportMutation.isPending && styles.menuActionDisabled]}
-              >
-                {useSvgPlaceholders
-                  ? <PostCardSvgPlaceholder color={themeColors.cream} size={14} />
-                  : <Flag size={14} color={themeColors.cream} strokeWidth={2.1} />}
-                <Text style={styles.menuActionText}>Report post</Text>
-              </Pressable>
-              <Pressable
-                disabled={reportMutation.isPending}
-                onPress={() => void reportTarget("profile", targetUsername, "profile")}
-                style={[styles.menuAction, reportMutation.isPending && styles.menuActionDisabled]}
-              >
-                {useSvgPlaceholders
-                  ? <PostCardSvgPlaceholder color={themeColors.cream} size={14} />
-                  : <Flag size={14} color={themeColors.cream} strokeWidth={2.1} />}
-                <Text style={styles.menuActionText}>Report profile</Text>
-              </Pressable>
-              <Pressable
-                disabled={blockUserMutation.isPending}
-                onPress={confirmBlockAuthor}
-                style={[styles.menuAction, styles.menuActionDestructive, blockUserMutation.isPending && styles.menuActionDisabled]}
-              >
-                {useSvgPlaceholders
-                  ? <PostCardSvgPlaceholder color={themeColors.danger} size={14} />
-                  : <UserX size={14} color={themeColors.danger} strokeWidth={2.1} />}
-                <Text style={[styles.menuActionText, styles.menuActionTextDestructive]}>Block @</Text>
-                <Text numberOfLines={1} style={[styles.menuActionText, styles.menuActionTextDestructive, styles.menuActionName]}>{targetUsername}</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
+              {isOwnPost ? (
+                <Pressable
+                  accessibilityLabel="Delete post"
+                  accessibilityRole="button"
+                  disabled={deletePostMutation.isPending}
+                  onPress={confirmDeletePost}
+                  style={({ pressed }) => [
+                    styles.deleteAction,
+                    pressed && styles.menuActionPressed,
+                    deletePostMutation.isPending && styles.deleteActionDisabled
+                  ]}
+                >
+                  <Text style={styles.deleteActionText}>
+                    {deletePostMutation.isPending ? "Deleting..." : "Delete post"}
+                  </Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    accessibilityLabel="Report post"
+                    accessibilityRole="button"
+                    disabled={reportMutation.isPending}
+                    onPress={() => void reportTarget("review", post.id, "post")}
+                    style={({ pressed }) => [
+                      styles.menuAction,
+                      pressed && styles.menuActionPressed,
+                      reportMutation.isPending && styles.menuActionDisabled
+                    ]}
+                  >
+                    {useSvgPlaceholders
+                      ? <PostCardSvgPlaceholder color={themeColors.cream} size={16} />
+                      : <Flag size={16} color={themeColors.cream} strokeWidth={2.1} />}
+                    <Text style={styles.menuActionText}>Report post</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Report @${targetUsername}`}
+                    accessibilityRole="button"
+                    disabled={reportMutation.isPending}
+                    onPress={() => void reportTarget("profile", targetUsername, "profile")}
+                    style={({ pressed }) => [
+                      styles.menuAction,
+                      pressed && styles.menuActionPressed,
+                      reportMutation.isPending && styles.menuActionDisabled
+                    ]}
+                  >
+                    {useSvgPlaceholders
+                      ? <PostCardSvgPlaceholder color={themeColors.cream} size={16} />
+                      : <Flag size={16} color={themeColors.cream} strokeWidth={2.1} />}
+                    <Text style={styles.menuActionText}>Report profile</Text>
+                  </Pressable>
+                  <View style={styles.menuActionDivider} />
+                  <Pressable
+                    accessibilityHint="Prevents both accounts from seeing each other's activity"
+                    accessibilityLabel={`Block @${targetUsername}`}
+                    accessibilityRole="button"
+                    disabled={blockUserMutation.isPending}
+                    onPress={confirmBlockAuthor}
+                    style={({ pressed }) => [
+                      styles.menuAction,
+                      styles.menuActionDestructive,
+                      pressed && styles.menuActionPressed,
+                      blockUserMutation.isPending && styles.menuActionDisabled
+                    ]}
+                  >
+                    <View style={styles.menuActionDestructiveIcon}>
+                      {useSvgPlaceholders
+                        ? <PostCardSvgPlaceholder color={themeColors.danger} size={16} />
+                        : <UserX size={16} color={themeColors.danger} strokeWidth={2.1} />}
+                    </View>
+                    <View style={styles.menuActionCopy}>
+                      <Text style={[styles.menuActionText, styles.menuActionTextDestructive]}>
+                        {blockUserMutation.isPending ? "Blocking..." : "Block user"}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.menuActionUsername}>@{targetUsername}</Text>
+                    </View>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       ) : null}
     </View>
   );
@@ -1610,7 +1717,7 @@ function PostCardComponent({
       <RecycledHeaderPlaceholder
         avatarBackground={avatarBackground}
         onOpenProfile={openProfile}
-        onToggleOverflow={() => setShowPostActions((open) => !open)}
+        onToggleOverflow={togglePostActions}
         onToggleRequest={toggleCircleRequest}
         styles={styles}
         themeColors={themeColors}
@@ -2647,20 +2754,28 @@ function createStyles(c: ThemeColors) {
     },
     postActionsWrap: {
       flexShrink: 0,
-      position: "relative",
       zIndex: 20
+    },
+    postActionsOverlay: {
+      flex: 1
+    },
+    postActionsBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: "rgba(0, 0, 0, 0.18)"
     },
     postActionsMenu: {
       backgroundColor: c.surface,
       borderColor: c.border,
       borderRadius: radius.md,
       borderWidth: 1,
+      elevation: 12,
       gap: 6,
       padding: 6,
       position: "absolute",
-      right: 0,
-      top: 38,
-      width: 188,
+      shadowColor: "#000000",
+      shadowOffset: { height: 6, width: 0 },
+      shadowOpacity: 0.3,
+      shadowRadius: 14,
       zIndex: 25
     },
     deleteAction: {
@@ -2685,14 +2800,34 @@ function createStyles(c: ThemeColors) {
       borderRadius: 9,
       flexDirection: "row",
       gap: 8,
-      minHeight: 38,
+      minHeight: 42,
       paddingHorizontal: 10,
       paddingVertical: 9
+    },
+    menuActionPressed: {
+      opacity: 0.68
+    },
+    menuActionDivider: {
+      backgroundColor: c.border,
+      height: StyleSheet.hairlineWidth,
+      marginHorizontal: 6
     },
     menuActionDestructive: {
       backgroundColor: c.dangerDim,
       borderColor: c.dangerBorder,
       borderWidth: 1
+    },
+    menuActionDestructiveIcon: {
+      alignItems: "center",
+      backgroundColor: c.dangerDim,
+      borderRadius: radius.pill,
+      height: 30,
+      justifyContent: "center",
+      width: 30
+    },
+    menuActionCopy: {
+      flex: 1,
+      minWidth: 0
     },
     menuActionDisabled: {
       opacity: 0.7
@@ -2706,10 +2841,12 @@ function createStyles(c: ThemeColors) {
     menuActionTextDestructive: {
       color: c.danger
     },
-    menuActionName: {
-      flex: 1,
-      marginLeft: -6,
-      minWidth: 0
+    menuActionUsername: {
+      ...fontStyles.regular,
+      color: c.mutedStrong,
+      fontSize: typography.caption,
+      lineHeight: 15,
+      marginTop: 1
     },
     requestButton: {
       alignItems: "center",

@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { forwardRef, memo, type ReactElement, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -133,6 +134,10 @@ const DIAGNOSTIC_RECYCLING_DRAW_DISTANCE_PX = 1200;
 const WARM_DEFER_DEFAULT_PROFILE: PostCardDeferredChromeProfile = "chrome-header";
 const WARM_DEFER_HYDRATION_STEP_MS = 120;
 const HOME_VERTICAL_COVER_PREFETCH_AHEAD_COUNT = 2;
+const HOME_COVER_THUMBNAIL_PREFETCH_COUNT = 10;
+const HOME_COVER_THUMBNAIL_PREFETCH_BATCH_SIZE = 2;
+const HOME_INITIAL_COVER_PREVIEW_COUNT = 2;
+const HOME_INITIAL_COVER_PREVIEW_MAX_WAIT_MS = 1_500;
 const DIAGNOSTIC_TIMESTAMP_IDLE_REFRESH_MS = 60_000;
 const VERTICAL_SCROLL_IDLE_MS = 80;
 let nextDiagnosticRecyclingCellId = 1;
@@ -514,6 +519,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
   const [coverLoadPostId, setCoverLoadPostId] = useState<string | null>(null);
   const [playingHomeMedia, setPlayingHomeMedia] = useState<{ mediaAssetId: string; postId: string } | null>(null);
   const [verticalScrolling, setVerticalScrolling] = useState(false);
+  const [initialCoverPreviewsReady, setInitialCoverPreviewsReady] = useState(!homeMediaMode);
   const listRef = useRef<FlatList<ReviewPost>>(null);
   const flashListRef = useRef<FlashListRef<ReviewPost>>(null);
   const scrollOffsetRef = useRef(0);
@@ -1262,6 +1268,10 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
     };
   }, [cacheGeneration, clearVerticalIdleTimer, updateVerticalScrolling]);
 
+  useEffect(() => {
+    setInitialCoverPreviewsReady(!homeMediaMode);
+  }, [cacheGeneration, homeMediaMode]);
+
   // Seed the media window with the first post before any viewability event
   // fires, and re-anchor it when a refresh drops the current owner.
   useEffect(() => {
@@ -1296,11 +1306,64 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
   }, [homeFocused, homeMediaMode, isFetchingMore, posts, prepareVerticalCover, refreshing, verticalMediaWindow.currentPostId]);
 
   useEffect(() => {
-    if (posts.length === 0 || firstContentRecordedRef.current) return;
+    if (!homeMediaMode) {
+      setInitialCoverPreviewsReady(true);
+      return;
+    }
+    if (posts.length === 0) return;
+    if (!homeFocused || !runtime.isForeground || !runtime.isOnline) {
+      setInitialCoverPreviewsReady(true);
+      return;
+    }
+    const urls = Array.from(new Set(
+      posts
+        .slice(Math.max(0, posts.length - HOME_COVER_THUMBNAIL_PREFETCH_COUNT))
+        .flatMap((post) => {
+          // The vertical feed prepares only media position zero. Remaining
+          // carousel media stays behind its settled/interactive loading path.
+          const cover = post.media[0];
+          return cover?.mediaType === "image" &&
+            !cover.isLegacyHomeMedia &&
+            homeMediaUrlIsUsable(cover.thumbnailUrl, cover.thumbnailExpiresAt ?? cover.expiresAt)
+            ? [cover.thumbnailUrl as string]
+            : [];
+        })
+    ));
+    if (urls.length === 0) {
+      setInitialCoverPreviewsReady(true);
+      return;
+    }
+    let cancelled = false;
+    const fallbackTimer = setTimeout(
+      () => setInitialCoverPreviewsReady(true),
+      HOME_INITIAL_COVER_PREVIEW_MAX_WAIT_MS
+    );
+    const prepare = async () => {
+      for (let index = 0; index < urls.length; index += HOME_COVER_THUMBNAIL_PREFETCH_BATCH_SIZE) {
+        if (cancelled) return;
+        await Image.prefetch(
+          urls.slice(index, index + HOME_COVER_THUMBNAIL_PREFETCH_BATCH_SIZE),
+          { cachePolicy: "disk" }
+        ).catch(() => false);
+        if (!cancelled && index < HOME_INITIAL_COVER_PREVIEW_COUNT) {
+          clearTimeout(fallbackTimer);
+          setInitialCoverPreviewsReady(true);
+        }
+      }
+    };
+    void prepare();
+    return () => {
+      cancelled = true;
+      clearTimeout(fallbackTimer);
+    };
+  }, [cacheGeneration, homeFocused, homeMediaMode, posts, runtime.isForeground, runtime.isOnline]);
+
+  useEffect(() => {
+    if (posts.length === 0 || !initialCoverPreviewsReady || firstContentRecordedRef.current) return;
     firstContentRecordedRef.current = true;
     recordPerformanceSample("feed.first_content", { durationMs: Date.now() - mountedAtRef.current });
     recordPerformanceSample("app.js_start_to_feed_content", { durationMs: Date.now() - JS_RUNTIME_STARTED_AT_MS });
-  }, [posts.length]);
+  }, [initialCoverPreviewsReady, posts.length]);
 
   // Playback is strictly owned by the settled current row. Scrolling, tab blur,
   // app backgrounding, or a new owner all tear it down without preparing a
@@ -1323,7 +1386,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
   ) : undefined;
 
   function renderState() {
-    if (isLoading) {
+    if (isLoading || (homeMediaMode && posts.length > 0 && !initialCoverPreviewsReady)) {
       if (loadingComponent) return loadingComponent;
       return (
         <View style={styles.stateWrap}>

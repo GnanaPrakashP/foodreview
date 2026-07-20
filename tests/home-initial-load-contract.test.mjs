@@ -82,6 +82,7 @@ test("initial Home media is one cover with a preserved total count", () => {
   assert.match(route, /return cover\?\.media_asset_id \? \[cover\.media_asset_id\] : \[\]/);
   assert.match(route, /resolveHomeMediaAccess/);
   assert.match(route, /mediaCount,[\s\S]*coverMedia,/);
+  assert.match(route, /updatedAt: review\.updated_at/);
   assert.doesNotMatch(route, /media:\s*\(review\.media_items|flatMap\(\(item, index\)/);
   const migration = source("supabase/migrations/202607170003_home_initial_load_contract.sql");
   assert.match(migration, /from public\.review_photos photo[\s\S]*order by photo\.position asc, photo\.id asc[\s\S]*limit 1/);
@@ -109,7 +110,8 @@ test("Home owns only feed and boolean unread reads, with the list deferred", () 
   assert.match(header, /useNotificationHasUnreadQuery/);
   assert.doesNotMatch(header, /useNotificationsQuery|listNotifications/);
   assert.match(service, /authorizedJson<\{ hasUnread: boolean \}>\("\/api\/notifications\/has-unread"/);
-  assert.match(hasUnread, /\.limit\(1\)/);
+  assert.match(hasUnread, /\.rpc\("notification_inbox_has_unseen"\)/);
+  assert.doesNotMatch(hasUnread, /\.from\("notifications"\)|\.limit\(1\)/);
   assert.doesNotMatch(hasUnread, /count:\s*"exact"|head:\s*true/);
 });
 

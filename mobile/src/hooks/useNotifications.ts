@@ -4,6 +4,7 @@ import {
   getNotificationHasUnread,
   listNotifications,
   markAllNotificationsRead,
+  markNotificationInboxSeen,
   markNotificationRead
 } from "@/services/notifications";
 import type { AppNotification } from "@/types/models";
@@ -44,12 +45,10 @@ export function patchCachedNotification(
 }
 
 function decrementCachedUnreadCounts(queryClient: QueryClient) {
-  let remainingUnreadCount: number | null = null;
   queryClient.setQueriesData<InfiniteData<NotificationListResult>>(
     { queryKey: notificationKeys.list },
     (current) => {
       if (!current) return current;
-      remainingUnreadCount = Math.max(0, (current.pages[0]?.unreadCount ?? 0) - 1);
       return {
         ...current,
         pages: current.pages.map((page) => ({
@@ -59,9 +58,6 @@ function decrementCachedUnreadCounts(queryClient: QueryClient) {
       };
     }
   );
-  if (remainingUnreadCount !== null) {
-    queryClient.setQueryData(notificationKeys.hasUnread, remainingUnreadCount > 0);
-  }
 }
 
 export function useNotificationsQuery(options: { enabled?: boolean; limit?: number } = {}) {
@@ -71,7 +67,9 @@ export function useNotificationsQuery(options: { enabled?: boolean; limit?: numb
     enabled: options.enabled ?? true,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,
-    refetchOnWindowFocus: true,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
     staleTime: 30_000,
     select: (data) => ({
       nextCursor: data.pages[data.pages.length - 1]?.nextCursor ?? null,
@@ -99,11 +97,7 @@ export function useMarkNotificationReadMutation() {
   return useMutation({
     mutationFn: markNotificationRead,
     onMutate: async (notificationId) => {
-      await Promise.all([
-        queryClient.cancelQueries({ queryKey: notificationKeys.list }),
-        queryClient.cancelQueries({ queryKey: notificationKeys.hasUnread })
-      ]);
-      const previousHasUnread = queryClient.getQueryData<boolean>(notificationKeys.hasUnread);
+      await queryClient.cancelQueries({ queryKey: notificationKeys.list });
       const previousLists = queryClient.getQueriesData<InfiniteData<NotificationListResult>>({ queryKey: notificationKeys.list });
       let wasUnread = false;
       patchCachedNotification(queryClient, notificationId, (notification) => {
@@ -113,12 +107,28 @@ export function useMarkNotificationReadMutation() {
       if (wasUnread) {
         decrementCachedUnreadCounts(queryClient);
       }
-      return { previousHasUnread, previousLists };
+      return { previousLists };
     },
     onError: (_error, _notificationId, context) => {
       if (!context) return;
-      queryClient.setQueryData(notificationKeys.hasUnread, context.previousHasUnread);
       for (const [queryKey, data] of context.previousLists) queryClient.setQueryData(queryKey, data);
+    }
+  });
+}
+
+export function useMarkNotificationInboxSeenMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: markNotificationInboxSeen,
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: notificationKeys.hasUnread });
+      const previousHasUnread = queryClient.getQueryData<boolean>(notificationKeys.hasUnread);
+      queryClient.setQueryData(notificationKeys.hasUnread, false);
+      return { previousHasUnread };
+    },
+    onError: (_error, _variables, context) => {
+      if (context) queryClient.setQueryData(notificationKeys.hasUnread, context.previousHasUnread);
     }
   });
 }
@@ -168,11 +178,7 @@ export function useDeleteNotificationMutation() {
   return useMutation({
     mutationFn: deleteNotification,
     onMutate: async (notificationId) => {
-      await Promise.all([
-        queryClient.cancelQueries({ queryKey: notificationKeys.list }),
-        queryClient.cancelQueries({ queryKey: notificationKeys.hasUnread })
-      ]);
-      const previousHasUnread = queryClient.getQueryData<boolean>(notificationKeys.hasUnread);
+      await queryClient.cancelQueries({ queryKey: notificationKeys.list });
       const previousLists = queryClient.getQueriesData<InfiniteData<NotificationListResult>>({ queryKey: notificationKeys.list });
       let wasUnread = false;
       patchCachedNotification(queryClient, notificationId, (notification) => {
@@ -182,11 +188,10 @@ export function useDeleteNotificationMutation() {
       if (wasUnread) {
         decrementCachedUnreadCounts(queryClient);
       }
-      return { previousHasUnread, previousLists };
+      return { previousLists };
     },
     onError: (_error, _notificationId, context) => {
       if (!context) return;
-      queryClient.setQueryData(notificationKeys.hasUnread, context.previousHasUnread);
       for (const [queryKey, data] of context.previousLists) queryClient.setQueryData(queryKey, data);
     }
   });

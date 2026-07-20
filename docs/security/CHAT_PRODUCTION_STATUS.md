@@ -110,6 +110,168 @@ store-production Home default changes.
   Preview build passes. A new remote Preview and authenticated media smoke are
   still required external evidence.
 
+### Home cover-thumbnail continuity follow-up (2026-07-21)
+
+Status: PASS locally; connected physical-device frame, memory and slow-network
+acceptance remains required before claiming placeholder-free production scroll.
+
+- The initial Circle response remains cover-only plus `mediaCount`. It now
+  includes one separately authorized private thumbnail only for media position
+  zero; additional carousel media remains behind the existing settled or
+  interactive endpoint and current-plus-next preparation window.
+- Cover thumbnails use the existing processed derivative and the same batched
+  authorization/signing boundary as the feed image. No source Storage path,
+  original upload or public-bucket downgrade was introduced. Signed thumbnail
+  URLs are removed from owner-persisted query state with the other bearer URLs.
+- The first two cover thumbnails are prepared to native disk cache before the
+  cold feed replaces its loading shell, with a 1.5-second fail-open ceiling.
+  The remaining first-page covers prepare in disk-only pairs. Thumbnail
+  surfaces decode only for mounted rows and unmount when the feed-sized cover
+  becomes ready; full cover preparation remains next-two and carousel media is
+  unchanged.
+- The former peach last-resort media surface is now near-black. Processed image
+  covers show their real thumbnail over the existing BlurHash until the larger
+  derivative is ready. Home media has no dish or utensils fallback: only the
+  selected carousel page can show a rotating indicator while it is actively
+  waiting for metadata or delivery; inactive pages remain near-black or show
+  their BlurHash without animation, and permanent failures keep media-local
+  Retry.
+- Verification: focused Home tests 206/206; repository tests 1,627/1,627;
+  Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and mobile
+  typechecks pass; the production Next build passes; changed-file lint and
+  `git diff --check` pass. Repository-wide `npm run lint` scanned generated
+  `.vercel/output` after the build and failed on generated bundle diagnostics;
+  no changed source file has a lint finding.
+- Security gate: PASS for this scoped implementation. It changes no auth,
+  authorization decision, RLS, Storage policy, service-role boundary,
+  notification data or private logging. Hosted deployment and physical-device
+  performance are not claimed by this local gate.
+
+### Home post-actions popover follow-up (2026-07-21)
+
+Status: PASS locally; connected physical-device visual and touch-target
+acceptance remains required.
+
+- The three-dot action menu is now a screen-level anchored modal. Tapping the
+  dimmed area outside it, using Android Back, or issuing the accessibility
+  escape action closes it. Recycled posts clear both visibility and anchor
+  state, and only the currently open post mounts a modal.
+- Ownership and mutation boundaries are unchanged: owners see only Delete;
+  other viewers see Report post, Report profile, and Block. Pending mutations
+  remain guarded, report and block traffic continues through authenticated API
+  routes, and each action closes the popover before its confirmation or reason
+  flow.
+- The destructive Block row now has a separated danger treatment, the explicit
+  `Block user` action label, and a secondary single-line `@username`, with the
+  target identity also present in its accessibility label and confirmation.
+- Verification: focused Home/action tests 40/40; repository tests 1,628/1,628;
+  Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and mobile
+  typechecks pass; changed-file lint and `git diff --check` pass.
+- Security gate: PASS for this scoped UI change. It does not alter authenticated
+  actor resolution, authorization, RLS, Storage policy, service-role access,
+  report/block API contracts, notification content, or private-data logging.
+
+### Mobile notification actor-avatar follow-up (2026-07-21)
+
+Status: PASS locally; hosted payload and connected-device visual validation
+remain required.
+
+- The authenticated, recipient-scoped notification page now batches each
+  already-selected actor's existing public profile avatar URL with its display
+  name. The existing string-valued `profileMap` contract remains unchanged for
+  the web client; mobile consumes a separate backward-compatible `avatarMap`.
+- Notification rows render initials immediately, use the actor URL as the
+  Expo Image cache/recycling identity, and retain the initials fallback when
+  the URL is missing or image delivery fails. No per-row profile or media
+  request was introduced.
+- Only bounded HTTP(S) public avatar URLs are returned. No private post/Memory
+  media, signed URL, Storage path, source upload, service-role credential,
+  notification preview, or additional recipient data is exposed.
+- Verification: focused notification/Home tests 66/66; repository tests
+  1,629/1,629; Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and
+  mobile typechecks pass; changed-file lint and `git diff --check` pass.
+- Security gate: PASS for this scoped response enrichment. Authentication,
+  recipient ownership, notification validity filtering, cursor bounds, RLS,
+  Storage policy, and existing web payload compatibility remain unchanged.
+
+### Mobile notification pagination follow-up (2026-07-21)
+
+Status: PASS locally; hosted pagination and connected-device scroll validation
+remain required.
+
+- The mobile notification inbox now explicitly requests 12 rows per page while
+  the shared API and web fallback remain at 30. The exact unread aggregate is
+  unchanged and remains independent from the page size.
+- Pagination begins half a viewport before the end, giving the next 12-row page
+  time to arrive before an ordinary phone viewport exhausts its visible rows.
+- If validity cleanup removes every row from a page, the screen automatically
+  follows at most two older cursors. This prevents the normal empty-page trap
+  without allowing an unbounded request chain. A discoverable `Load older
+  activity` action remains when additional cursor pages exist after that bound.
+- Verification: focused notification tests 15/15; repository tests
+  1,629/1,629; Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and
+  mobile typechecks pass; changed-file lint and `git diff --check` pass.
+- Security gate: PASS for this scoped client pagination change. The API remains
+  authenticated, recipient-scoped, cursor-bounded and capped at 50; no RLS,
+  Storage, service-role, private-media, notification-content or logging
+  boundary changed.
+
+### Home refresh correctness and notification seen-state follow-up (2026-07-21)
+
+Status: PASS locally and on the linked hosted database; hosted API behavior and
+connected-device interaction still require deployment validation.
+
+- An explicit pull or active-tab refresh now compares a deterministic
+  fingerprint of the first ten visible posts after optimistic engagement
+  reconciliation. Post order, copy, author/avatar identity, restaurant data,
+  dishes, reactions, counts, media identity/revision/geometry, status, and the
+  server revision participate. Merely renewing an expiring signed URL does not
+  count as visible change. `You're up to date` appears only after successful
+  explicit refresh when those visible fingerprints match.
+- `reviews.updated_at` is now a server-owned revision. Direct review updates
+  and insert/update/delete changes to ordered `review_photos` advance it, so
+  cover-only Home responses can detect metadata and carousel membership
+  changes without loading all carousel media.
+- Notification inbox visibility is now separate from per-row read state.
+  Opening Notifications records a monotonic server timestamp and clears the
+  badge, but rows remain unread until opened individually or `Mark all` is
+  used. A newer unread notification restores the badge, including across
+  devices.
+- The inbox timestamp table has RLS enabled and no direct anonymous or
+  authenticated grants. Both RPCs derive the owner from `auth.uid()`, require
+  an active profile, use an empty search path, and expose no caller-selected
+  user or username. The seen mutation is authenticated and rate-limited at the
+  API boundary; database errors are not returned to the client.
+- Notifications retain the 12-row cursor page. The screen is the sole focus
+  freshness owner: the normal first load remains one request, cached data is
+  refetched once only when older than 30 seconds, and React Query mount,
+  reconnect, and window-focus refetches are disabled for this list. Empty
+  validity-filtered pages remain bounded to two automatic cursor advances plus
+  a manual fallback.
+- Migrations: `202607210001_notification_inbox_seen_state.sql`,
+  `202607210002_review_visible_content_revision.sql`, and
+  `202607210003_review_media_refresh_revision.sql`, plus the bounded unseen
+  lookup indexes in `202607210004_notification_unseen_indexes.sql`.
+- Verification: focused Home/notification tests 152/152; repository tests
+  1,633/1,633; pgTAP 186/186 on a clean local reset; Supabase database lint has
+  no schema errors; Memory hardening 72/72; Phase 1/2 Memory security 39/39;
+  mobile API security 11/11 and the 81-route/117-operation inventory pass;
+  root/mobile typechecks, changed-file lint, `git diff --check`, and the
+  production Next build pass.
+- Hosted database apply: the linked push applied exactly migrations
+  `202607210001` through `202607210004`. A second linked dry run reports the
+  remote database is up to date; linked database lint reports no schema errors;
+  the explicit read-only hosted drift audit reports 81/81 canonical migrations,
+  99/99 tracked manifest entries, no missing/extra/divergent versions, and no
+  critical schema or policy drift. A read-only hosted smoke confirms the inbox
+  state table and review revision are available to trusted server access while
+  anonymous table and unseen-RPC access remain denied.
+- Security gate: PASS for the local implementation and hosted database step.
+  Authenticated multi-device badge smoke, 12-row pagination smoke, refresh
+  copy/media-change smoke, deployed server/API, a new mobile build, and
+  connected-device performance remain required. The database step is complete;
+  deploy the server/API before the mobile build.
+
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 
 - Inventory/budgets: 16 primary mobile reads, one primary mobile request each, maximum six application-data statements, pages capped at 50, payload budgets capped at 256 KiB, and one named cache owner per first page.

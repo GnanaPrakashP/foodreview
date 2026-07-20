@@ -49,6 +49,22 @@ test("mobile reporting is available for posts comments and profiles", () => {
   assert.match(reportsRoute, /error\.code === "23505"/);
 });
 
+test("post actions dismiss outside and identify the destructive block target", () => {
+  const postCard = source("mobile/src/components/posts/PostCard.tsx");
+
+  assert.match(postCard, /\{showPostActions && postActionsAnchor \? \(\s*<Modal/);
+  assert.match(postCard, /onRequestClose=\{closePostActions\}/);
+  assert.match(
+    postCard,
+    /accessibilityLabel="Close post actions"[\s\S]*onPress=\{closePostActions\}[\s\S]*style=\{styles\.postActionsBackdrop\}/
+  );
+  assert.match(postCard, /onAccessibilityEscape=\{closePostActions\}/);
+  assert.match(postCard, /<View style=\{styles\.menuActionDivider\} \/>/);
+  assert.match(postCard, /\{blockUserMutation\.isPending \? "Blocking\.\.\." : "Block user"\}/);
+  assert.match(postCard, /style=\{styles\.menuActionUsername\}>@\{targetUsername\}<\/Text>/);
+  assert.match(postCard, /accessibilityLabel=\{`Block @\$\{targetUsername\}`\}/);
+});
+
 test("mobile production safety files are present", () => {
   assert.ok(existsSync(new URL("../mobile/src/services/reports.ts", import.meta.url)));
   assert.ok(existsSync(new URL("../mobile/src/hooks/useReports.ts", import.meta.url)));

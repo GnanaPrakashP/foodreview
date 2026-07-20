@@ -116,6 +116,8 @@ function sanitizeCachedValue(value: unknown, now: number, homeCircle = false): u
             playbackUrl: null,
             posterExpiresAt: null,
             posterUrl: null,
+            thumbnailExpiresAt: null,
+            thumbnailUrl: null,
             publicUrl: ""
           }];
         }

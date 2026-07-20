@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useMappingHelper } from "@shopify/flash-list";
 import { Image } from "expo-image";
-import { Utensils } from "lucide-react-native";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import PagerView, {
   type PageScrollStateChangedNativeEvent,
@@ -284,7 +283,7 @@ export function HomeMediaCarousel({
 
   const node = (
     <View style={styles.carouselContainer}>
-      <View style={[styles.mediaWrapper, { backgroundColor: themeColors.surface }]}>
+      <View style={[styles.mediaWrapper, { backgroundColor: "#111111" }]}>
         {expectedCount > 1 ? (
           <PagerView
             initialPage={0}
@@ -309,7 +308,7 @@ export function HomeMediaCarousel({
                   accessible
                   collapsable={false}
                   key={getMappingKey(page.key, index)}
-                  style={[styles.page, { backgroundColor: themeColors.card }]}
+                  style={[styles.page, { backgroundColor: "#111111" }]}
                 >
                   <HomeCarouselPage
                     accessibilityLabel={accessibilityLabel}
@@ -433,7 +432,7 @@ const HomeCarouselPage = memo(function HomeCarouselPage({
   const node = !media || !renderMedia ? (
       <View
         accessibilityLabel={accessibilityLabel}
-        style={[styles.layer, styles.pendingPage, { backgroundColor: themeColors.card }]}
+        style={[styles.layer, styles.pendingPage, { backgroundColor: "#111111" }]}
       >
         {media?.placeholder ? (
           <Image
@@ -444,8 +443,8 @@ const HomeCarouselPage = memo(function HomeCarouselPage({
             style={styles.layer}
             transition={0}
           />
-        ) : <Utensils color={themeColors.muted} size={32} />}
-        {metadataPending && renderMedia ? <ActivityIndicator color={themeColors.orange} /> : null}
+        ) : null}
+        {metadataPending && renderMedia && active ? <ActivityIndicator color={themeColors.orange} /> : null}
       </View>
     ) : (
     <HomeMediaCover

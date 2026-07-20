@@ -46,6 +46,7 @@ type ActorSummary = {
 };
 
 type NotificationsApiResponse = {
+  avatarMap?: Record<string, string | null>;
   nextCursor?: string | null;
   notifications: NotificationRow[];
   profileMap?: Record<string, string>;
@@ -280,6 +281,12 @@ function mapNotification(row: NotificationRow, profileMap: Record<string, ActorS
   };
 }
 
+function actorAvatarUrl(value: string | null | undefined) {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
 export async function listNotifications(limit = 30, cursor?: string | null): Promise<NotificationsPage> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
@@ -291,7 +298,10 @@ export async function listNotifications(limit = 30, cursor?: string | null): Pro
   const profileMap: Record<string, ActorSummary> = Object.fromEntries(
     Object.entries(payload.profileMap ?? {}).map(([username, displayName]) => [
       username,
-      { avatarUrl: null, displayName }
+      {
+        avatarUrl: actorAvatarUrl(payload.avatarMap?.[username]),
+        displayName: displayName.trim() || username
+      }
     ])
   );
   const notifications = (payload.notifications ?? []).map((row) => mapNotification(row, profileMap));
@@ -313,6 +323,12 @@ export async function markAllNotificationsRead(): Promise<void> {
   await authorizedJson<{ ok: true }>("/api/notifications/read-all", {
     method: "PATCH"
   }, { action: "marking notifications read", timeoutMs: 8_000 });
+}
+
+export async function markNotificationInboxSeen(): Promise<void> {
+  await authorizedJson<{ ok: true }>("/api/notifications/seen", {
+    method: "PATCH"
+  }, { action: "marking notification inbox seen", timeoutMs: 8_000 });
 }
 
 export async function deleteNotification(notificationId: string): Promise<void> {

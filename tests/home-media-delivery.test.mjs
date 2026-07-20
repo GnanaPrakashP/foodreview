@@ -66,12 +66,27 @@ test("3 canonical 1080x1350 remains the feed fallback", () => {
   assert.match(imageProcessing, /MEDIA_POST_CANONICAL_HEIGHT = 1350/);
 });
 
-test("4 Home response fields are semantic and image URLs are not duplicated", () => {
+test("4 Home response includes one semantic cover preview without exposing canonical media", () => {
   assert.match(route, /feedUrl:/);
   assert.match(route, /posterUrl:/);
   assert.match(route, /playbackUrl:/);
-  assert.doesNotMatch(route, /canonicalUrl:|thumbnailUrl:/);
+  assert.match(route, /thumbnailUrl:/);
+  assert.match(route, /includeCoverThumbnail: true/);
+  assert.doesNotMatch(route, /canonicalUrl:/);
   assert.match(access, /playbackUrl: null/);
+  assert.match(access, /thumbnailUrl: thumbnail \? signedByPath\.get\(thumbnail\.storage_path\) \|\| null : null/);
+});
+
+test("4a only position-zero Home covers are thumbnail-prefetched in disk-only pairs", () => {
+  assert.match(route, /const cover = review\.media_items\?\.\[0\]/);
+  assert.match(feed, /const cover = post\.media\[0\]/);
+  assert.match(feed, /HOME_COVER_THUMBNAIL_PREFETCH_COUNT = 10/);
+  assert.match(feed, /HOME_COVER_THUMBNAIL_PREFETCH_BATCH_SIZE = 2/);
+  assert.match(feed, /HOME_INITIAL_COVER_PREVIEW_COUNT = 2/);
+  assert.match(feed, /HOME_INITIAL_COVER_PREVIEW_MAX_WAIT_MS = 1_500/);
+  assert.match(feed, /Image\.prefetch\([\s\S]*cachePolicy: "disk"/);
+  assert.match(feed, /homeMediaMode && posts\.length > 0 && !initialCoverPreviewsReady/);
+  assert.doesNotMatch(source("mobile/src/components/posts/HomeMediaCarousel.tsx"), /thumbnailUrl: media\.thumbnailUrl/);
 });
 
 test("5 expired URLs are not directly passed to Expo Image", () => {
@@ -131,6 +146,8 @@ test("12 persisted Home media retains identity and clears bearer URLs", () => {
   for (const field of ["feedUrl: null", "posterUrl: null", "playbackUrl: null", "expiresAt: null"]) {
     assert.match(persistence, new RegExp(field));
   }
+  assert.match(persistence, /thumbnailExpiresAt: null/);
+  assert.match(persistence, /thumbnailUrl: null/);
   assert.doesNotMatch(persistence, /homeDelivery === true[\s\S]{0,300}filter\(/);
 });
 

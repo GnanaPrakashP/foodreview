@@ -38,6 +38,7 @@ export function isNotificationSchemaError(error: SupabaseLikeError): boolean {
   const message = error?.message ?? "";
   return error?.code === "42703"
     || error?.code === "PGRST204"
+    || error?.code === "PGRST202"
     || message.includes("recipient_user_id")
     || message.includes("actor_user_id")
     || message.includes("entity_type")
@@ -45,7 +46,8 @@ export function isNotificationSchemaError(error: SupabaseLikeError): boolean {
     || message.includes("is_read")
     || message.includes("deleted_at")
     || message.includes("metadata")
-    || message.includes("message");
+    || message.includes("message")
+    || message.includes("notification_inbox_");
 }
 
 type SupabaseDb = Awaited<ReturnType<typeof createRouteSupabase>>;

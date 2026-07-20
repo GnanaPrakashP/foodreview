@@ -22,6 +22,7 @@ import { buildHomeFirstPageReplacement } from "@/home/homeRefreshCache";
 import { createHomeActiveTabRefreshFeedback } from "@/home/homeActiveTabRefreshFeedback";
 import {
   createHomeUpToDateNotice,
+  homeFirstPageVisibleFingerprint,
   shouldShowHomeUpToDateNotice
 } from "@/home/homeExplicitRefreshNotice";
 import {
@@ -49,6 +50,7 @@ type HomeRequestContext = {
 
 type HomeRefreshContext = HomeRequestContext & {
   baseFirstPageIds: string[];
+  baseVisibleFingerprint: string;
   reason: HomeRefreshReason;
 };
 
@@ -63,9 +65,9 @@ type PendingHomeFirstPage = HomeBackgroundContext & {
 
 type ExplicitRefreshComparison = Pick<
   HomeRefreshContext,
-  "baseFirstPageIds" | "reason"
+  "baseVisibleFingerprint" | "reason"
 > & {
-  refreshedFirstPageIds: string[];
+  refreshedVisibleFingerprint: string;
 };
 
 export type HomeFreshnessEvaluationInput = {
@@ -162,9 +164,9 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
         recordHomePageOneRefreshAt(queryClient, context.ownerScope);
         if (context.reason === "pull" || context.reason === "active-tab") {
           explicitRefreshComparisonRef.current = {
-            baseFirstPageIds: context.baseFirstPageIds,
+            baseVisibleFingerprint: context.baseVisibleFingerprint,
             reason: context.reason,
-            refreshedFirstPageIds: homeFirstPageIds(freshPage)
+            refreshedVisibleFingerprint: homeFirstPageVisibleFingerprint(replacement.pages[0]?.posts ?? [])
           };
         }
         clearDeferredHomeFreshness();
@@ -193,6 +195,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
         const current = queryClient.getQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages);
         return {
           baseFirstPageIds: homeFirstPageIds(current?.pages[0]),
+          baseVisibleFingerprint: homeFirstPageVisibleFingerprint(current?.pages[0]?.posts ?? []),
           engagementSnapshot: captureHomeEngagementRevisions(queryClient),
           generation: getActiveCacheGeneration(),
           ownerScope: owner.scope,
@@ -299,9 +302,9 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
         explicitRefreshComparisonRef.current = null;
         if (!comparison) return;
         if (shouldShowHomeUpToDateNotice({
-          previousFirstPageIds: comparison.baseFirstPageIds,
+          previousVisibleFingerprint: comparison.baseVisibleFingerprint,
           reason: comparison.reason,
-          refreshedFirstPageIds: comparison.refreshedFirstPageIds,
+          refreshedVisibleFingerprint: comparison.refreshedVisibleFingerprint,
           status: result.feed
         })) upToDateNoticeRef.current?.show();
       });

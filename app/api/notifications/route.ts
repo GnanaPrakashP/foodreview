@@ -11,16 +11,27 @@ type ProfileLookupDb = {
 };
 
 type ProfileRow = {
+  avatar_url: string | null;
   id: string | null;
   username: string | null;
   first_name: string | null;
   last_name: string | null;
 };
 
-async function buildNotificationProfileMap(
+type NotificationProfileSummary = {
+  avatarUrl: string | null;
+  displayName: string;
+};
+
+function notificationAvatarUrl(value: string | null) {
+  const trimmed = value?.trim() ?? "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null;
+}
+
+async function buildNotificationProfileSummaries(
   fallbackDb: ProfileLookupDb,
   notifications: Notification[]
-): Promise<Record<string, string>> {
+): Promise<Record<string, NotificationProfileSummary>> {
   const actorNames = Array.from(new Set(notifications.map((n) => n.actor_name?.trim()).filter(Boolean))) as string[];
   const actorIds = Array.from(new Set(notifications.map((n) => n.actor_user_id).filter(Boolean))) as string[];
   const aliasesById = new Map<string, string[]>();
@@ -31,7 +42,7 @@ async function buildNotificationProfileMap(
     aliasesById.set(notification.actor_user_id, aliases);
   }
 
-  const profileMap: Record<string, string> = {};
+  const profileMap: Record<string, NotificationProfileSummary> = {};
   if (actorNames.length === 0 && actorIds.length === 0) return profileMap;
 
   let profileDb: ProfileLookupDb = fallbackDb;
@@ -45,13 +56,13 @@ async function buildNotificationProfileMap(
     actorNames.length > 0
       ? profileDb
           .from("profiles")
-          .select("id, username, first_name, last_name")
+          .select("id, username, first_name, last_name, avatar_url")
           .in("username", actorNames)
       : Promise.resolve({ data: [], error: null }),
     actorIds.length > 0
       ? profileDb
           .from("profiles")
-          .select("id, username, first_name, last_name")
+          .select("id, username, first_name, last_name, avatar_url")
           .in("id", actorIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
@@ -59,10 +70,14 @@ async function buildNotificationProfileMap(
   for (const profile of ([...(byUsername.data ?? []), ...(byId.data ?? [])] as ProfileRow[])) {
     const name = profileDisplayName(profile);
     if (!name) continue;
-    if (profile.username) profileMap[profile.username] = name;
+    const summary = {
+      avatarUrl: notificationAvatarUrl(profile.avatar_url),
+      displayName: name
+    };
+    if (profile.username) profileMap[profile.username] = summary;
     if (profile.id) {
       for (const alias of aliasesById.get(profile.id) ?? []) {
-        profileMap[alias] = name;
+        profileMap[alias] = summary;
       }
     }
   }
@@ -115,13 +130,20 @@ export async function GET(req: NextRequest) {
 
   const selected = mergeNotifications(data as unknown as Notification[]).slice(0, limit);
   const validNotifications = await filterValidNotifications(supabase, selected);
-  const profileMap = await buildNotificationProfileMap(supabase, validNotifications);
+  const profileSummaries = await buildNotificationProfileSummaries(supabase, validNotifications);
+  const profileMap = Object.fromEntries(
+    Object.entries(profileSummaries).map(([username, summary]) => [username, summary.displayName])
+  );
+  const avatarMap = Object.fromEntries(
+    Object.entries(profileSummaries).map(([username, summary]) => [username, summary.avatarUrl])
+  );
   const oldest = selected[selected.length - 1];
 
   return NextResponse.json({
     nextCursor: (data ?? []).length > limit && oldest
       ? encodeStableTimestampCursor({ createdAt: oldest.created_at, id: oldest.id })
       : null,
+    avatarMap,
     notifications: validNotifications,
     profileMap,
     unreadCount: unreadCount ?? 0,
