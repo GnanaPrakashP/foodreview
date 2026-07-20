@@ -56,6 +56,8 @@ test("EAS profiles are separated by environment, scheme intent and distribution"
   assert.equal(eas.build.production.android.credentialsSource, "remote");
   assert.equal(eas.build.production.ios.credentialsSource, "remote");
   assert.equal(eas.build.production.env.EX_DEV_CLIENT_NETWORK_INSPECTOR, "false");
+  assert.equal(eas.build.preview.env.EXPO_PUBLIC_HOME_LIST_ENGINE, "flashlist");
+  assert.equal(eas.build.production.env.EXPO_PUBLIC_HOME_LIST_ENGINE, undefined);
 });
 
 test("environment-specific native identities prevent preview/production callback collision", () => {
@@ -72,6 +74,19 @@ test("environment-specific native identities prevent preview/production callback
 
 test("production environment accepts complete public configuration", () => {
   assert.doesNotThrow(() => appConfig.validateClientConfiguration(productionEnvironment, appJson.extra));
+  for (const engine of ["flatlist", "flashlist"]) {
+    assert.doesNotThrow(() => appConfig.validateClientConfiguration({
+      ...productionEnvironment,
+      EXPO_PUBLIC_HOME_LIST_ENGINE: engine
+    }, appJson.extra));
+  }
+  assert.throws(
+    () => appConfig.validateClientConfiguration({
+      ...productionEnvironment,
+      EXPO_PUBLIC_HOME_LIST_ENGINE: "virtualized-list"
+    }, appJson.extra),
+    /must be flatlist or flashlist/
+  );
 });
 
 test("production environment rejects local, placeholder, wrong-channel and auto-login configuration", () => {

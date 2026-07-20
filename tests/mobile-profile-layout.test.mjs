@@ -110,7 +110,7 @@ test("main bottom tabs use the standard Expo Router tab navigator", () => {
   assert.match(tabLayoutSource, /freezeOnBlur: true/);
   assert.match(tabLayoutSource, /lazy: true/);
   assert.match(tabLayoutSource, /tabBarStyle: mainTabBarStyle\(themeColors, insets\.bottom, composing\)/);
-  assert.match(tabLayoutSource, /<Tabs\.Screen name="index" \/>/);
+  assert.match(tabLayoutSource, /<Tabs\.Screen[\s\S]*listeners=\{\(\{ navigation \}\) => \(\{[\s\S]*name="index"/);
   assert.match(tabLayoutSource, /<Tabs\.Screen name="explore" \/>/);
   assert.match(tabLayoutSource, /<Tabs\.Screen name="share" \/>/);
   assert.match(tabLayoutSource, /<Tabs\.Screen name="hungry" options=\{\{ href: null \}\} \/>/);

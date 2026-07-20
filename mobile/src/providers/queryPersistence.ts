@@ -75,11 +75,13 @@ export function shouldPersistQuery(query: Query) {
     (key.length === 2 && key[0] === "profile" && key[1] === "current-page") ||
     (key.length === 4 && key[0] === "profile" && key[1] === "other" && key[3] === "shell") ||
     (key.length === 3 && key[0] === "profile" && key[2] === "posts") ||
-    (key.length === 2 && key[0] === "notifications" && key[1] === "unread-count")
+    (key.length === 2 && key[0] === "notifications" && key[1] === "has-unread") ||
+    (key.length === 3 && key[0] === "home" && key[1] === "page-one-refresh-at")
   );
 }
 
-const PERSISTED_FIRST_PAGE_LIMIT = 24;
+const PERSISTED_CIRCLE_FIRST_PAGE_LIMIT = 10;
+const PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 24;
 const PERSISTED_EXPLORE_SECTION_LIMIT = 60;
 const PERSISTED_MEMORY_SUMMARY_LIMIT = 50;
 const SIGNED_MEDIA_EXPIRY_SAFETY_MS = 15_000;
@@ -96,19 +98,32 @@ export function isExpiredSignedMedia(value: unknown, now = Date.now()) {
   return !Number.isFinite(expiresAt) || expiresAt <= now + SIGNED_MEDIA_EXPIRY_SAFETY_MS;
 }
 
-function sanitizeCachedValue(value: unknown, now: number): unknown {
-  if (Array.isArray(value)) return value.map((item) => sanitizeCachedValue(item, now));
+function sanitizeCachedValue(value: unknown, now: number, homeCircle = false): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeCachedValue(item, now, homeCircle));
   if (!isRecord(value)) return value;
 
   const next: UnknownRecord = {};
   for (const [key, child] of Object.entries(value)) {
     if (key === "media" && Array.isArray(child)) {
-      next[key] = child
-        .filter((item) => !isExpiredSignedMedia(item, now))
-        .map((item) => sanitizeCachedValue(item, now));
+      next[key] = child.flatMap((item) => {
+        if (homeCircle && isRecord(item) && item.homeDelivery === true && item.isLegacyHomeMedia !== true) {
+          return [{
+            ...item,
+            expiresAt: null,
+            feedExpiresAt: null,
+            feedUrl: null,
+            playbackExpiresAt: null,
+            playbackUrl: null,
+            posterExpiresAt: null,
+            posterUrl: null,
+            publicUrl: ""
+          }];
+        }
+        return isExpiredSignedMedia(item, now) ? [] : [sanitizeCachedValue(item, now, homeCircle)];
+      });
       continue;
     }
-    next[key] = sanitizeCachedValue(child, now);
+    next[key] = sanitizeCachedValue(child, now, homeCircle);
   }
   return next;
 }
@@ -126,7 +141,7 @@ function boundQueryData(queryKey: readonly unknown[], data: unknown) {
         ? [{
           ...(isRecord(firstPage) ? firstPage : {}),
           posts: isRecord(firstPage) && Array.isArray(firstPage.posts)
-            ? firstPage.posts.slice(0, PERSISTED_FIRST_PAGE_LIMIT)
+            ? firstPage.posts.slice(0, PERSISTED_CIRCLE_FIRST_PAGE_LIMIT)
             : []
         }]
         : []
@@ -143,7 +158,7 @@ function boundQueryData(queryKey: readonly unknown[], data: unknown) {
   if (queryKey[0] === "profile" && queryKey[1] === "current-page" && isRecord(data)) {
     return {
       ...data,
-      posts: Array.isArray(data.posts) ? data.posts.slice(0, PERSISTED_FIRST_PAGE_LIMIT) : []
+      posts: Array.isArray(data.posts) ? data.posts.slice(0, PERSISTED_PROFILE_FIRST_PAGE_LIMIT) : []
     };
   }
   if (queryKey[0] === "profile" && queryKey[2] === "posts" && isRecord(data) && Array.isArray(data.pages)) {
@@ -155,7 +170,7 @@ function boundQueryData(queryKey: readonly unknown[], data: unknown) {
         ? [{
           ...(isRecord(firstPage) ? firstPage : {}),
           posts: isRecord(firstPage) && Array.isArray(firstPage.posts)
-            ? firstPage.posts.slice(0, PERSISTED_FIRST_PAGE_LIMIT)
+            ? firstPage.posts.slice(0, PERSISTED_PROFILE_FIRST_PAGE_LIMIT)
             : []
         }]
         : []
@@ -177,7 +192,11 @@ export function sanitizePersistedClient(client: PersistedClient, now = Date.now(
         ...query,
         state: {
           ...query.state,
-          data: sanitizeCachedValue(boundQueryData(query.queryKey, query.state.data), now)
+          data: sanitizeCachedValue(
+            boundQueryData(query.queryKey, query.state.data),
+            now,
+            query.queryKey[0] === "feed" && query.queryKey[1] === "circle"
+          )
         }
       }))
     }

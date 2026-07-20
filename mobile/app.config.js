@@ -4,6 +4,7 @@ const FORBIDDEN_PUBLIC_SUPABASE_NAME = /^EXPO_PUBLIC_.*SUPABASE.*(?:SERVICE(?:_R
 const FORBIDDEN_CLIENT_CONFIG_NAME = /SUPABASE.*(?:SERVICE(?:_ROLE|_KEY)?|SECRET|ADMIN|PRIVATE_KEY)/i;
 const FORBIDDEN_LEGACY_AUTH_NAME = /^EXPO_PUBLIC_DEV_AUTOLOGIN(?:_|$)/i;
 const APP_ENVIRONMENTS = new Set(["local", "development", "preview", "production"]);
+const HOME_LIST_ENGINES = new Set(["flatlist", "flashlist"]);
 const PROD_IDENTITY = Object.freeze({
   androidPackage: "com.circlebites.mobile",
   displayName: "CircleBites",
@@ -79,6 +80,10 @@ function validateClientConfiguration(env = process.env, extra = {}) {
   }
   const releaseBuild = env.EAS_BUILD === "true" || env.NODE_ENV === "production" || env.EXPO_PUBLIC_APP_ENVIRONMENT === "production";
   const environment = applicationEnvironment(env);
+  const configuredHomeListEngine = env.EXPO_PUBLIC_HOME_LIST_ENGINE?.trim().toLowerCase();
+  if (configuredHomeListEngine !== undefined && !HOME_LIST_ENGINES.has(configuredHomeListEngine)) {
+    throw new Error("EXPO_PUBLIC_HOME_LIST_ENGINE must be flatlist or flashlist");
+  }
   if (releaseBuild && environment === "local") {
     throw new Error("Release and EAS builds must bind EXPO_PUBLIC_APP_ENVIRONMENT explicitly");
   }
@@ -113,7 +118,8 @@ function isLocalHttpUrl(value) {
 
   try {
     const { hostname } = new URL(value);
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "10.0.2.2";
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "10.0.2.2" ||
+      /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname);
   } catch {
     return false;
   }
@@ -162,7 +168,8 @@ module.exports = ({ config: expoConfig } = {}) => {
         NSAppTransportSecurity: {
           ...config.ios?.infoPlist?.NSAppTransportSecurity,
           NSAllowsLocalNetworking: true
-        }
+        },
+        NSLocalNetworkUsageDescription: "CircleBites connects to this Mac only while running the dedicated local-device test environment."
       }
     };
   }

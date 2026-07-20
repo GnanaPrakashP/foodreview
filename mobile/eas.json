@@ -29,6 +29,7 @@
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_APP_ENVIRONMENT": "preview",
+        "EXPO_PUBLIC_HOME_LIST_ENGINE": "flashlist",
         "EXPO_PUBLIC_RELEASE_CHANNEL": "preview"
       },
       "android": {

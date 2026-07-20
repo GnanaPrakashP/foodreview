@@ -27,18 +27,18 @@ Cold startup must not initialize location, Profile, Memory summaries/realtime, c
 React Query defaults use a two-hour garbage-collection window, bounded retry, focus/online awareness, and per-domain stale times. The persisted envelope is owner-scoped, versioned, capped at 24 hours, mutation-free, and stores only successful bounded data:
 
 - Memory room summaries, at most 50;
-- Circle first page, at most 24 posts;
+- Circle first page, at most 10 posts;
 - Explore places/dishes/people sections, at most 60 each;
 - current Profile page, at most 24 posts;
-- unread-notification count.
+- unread-notification boolean state.
 
-Only the first infinite-query page is retained. Mutation state and errors are never persisted. Expired or near-expiry signed media entries are removed during persistence and restore. Logout, account switch, invalid session, deletion, or owner mismatch clears the owner cache plus Expo Image memory/disk caches through the Phase 1C cleanup coordinator.
+Only the first infinite-query page is retained. Mutation state and errors are never persisted. Modern Home media metadata survives without signed URLs so cached bytes remain addressable; other expired signed media continues to be removed. Logout, account switch, invalid session, deletion, or owner mismatch first aborts and settles Home prefetch, then clears owner files and Expo Image memory/disk caches. Native cache clearing retries once and leaves the cleanup journal incomplete on repeated failure.
 
 ## Rendering and media ownership
 
-Feed lists render 4 items initially, 4 per batch, use a window size of 5, and key by post ID. A 65%/900 ms viewability rule selects one stable active media post. Feed cards consume thumbnail/feed URLs, placeholder, dimensions, and poster metadata; detail screens may consume canonical media. Only the visible video creates a player. Offscreen videos render posters and do not stay active in the background.
+Feed lists render 4 items initially, 4 per batch, use a window size of 5, and key by post ID. A 65%/900 ms viewability rule selects one stable active media post. Home images consume the 720×900 feed derivative, with canonical only as a server fallback. A video renders only its poster until explicit Play authorizes playback; visibility alone never creates a remote player. One Home player may exist and it is released offscreen, on tab blur, and in background. Detail screens may still consume canonical media.
 
-On Wi-Fi or Ethernet, only the next two image thumbnails are prefetched and only while the originating account generation remains active. Cellular and offline prefetch are disabled. Seen-post writes are batched rather than sent per card.
+On Wi-Fi or Ethernet, only the next two modern Home image covers are prefetched while Home is focused, foregrounded, online, not refreshing/paginating, and not on a detected metered/low-data connection. The abortable download is tied to owner scope and generation, excludes legacy URLs, writes into the owner directory, and is rendered with the same `mediaAssetId:feed` key. Cellular and offline prefetch are disabled. Seen-post writes are batched rather than sent per card.
 
 Post cards are memoized. Like, bookmark, delete, comment, Profile, and notification operations patch the exact cached entity/page with rollback or server correction. Structural changes may still invalidate a narrow domain key. Broad application cache resets are prohibited for ordinary item mutations.
 

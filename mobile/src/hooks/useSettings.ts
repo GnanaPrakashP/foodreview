@@ -14,6 +14,7 @@ import {
 import { useSessionStore } from "@/stores/sessionStore";
 import { cleanupCurrentLocalData } from "@/services/localDataIsolation";
 import { logout } from "@/services/auth";
+import { recordHomeStructuralMutation } from "@/home/homeStructuralRevision";
 import { patchOtherProfileShell, profileKeys } from "@/hooks/useProfiles";
 
 export const settingsKeys = {
@@ -82,6 +83,7 @@ export function useBlockUserMutation() {
   return useMutation({
     mutationFn: (username: string) => blockUser(username),
     onSuccess: (_result, username) => {
+      recordHomeStructuralMutation(queryClient);
       patchOtherProfileShell(queryClient, username, (current) => ({
         ...current,
         blockedByViewer: true,
@@ -102,6 +104,7 @@ export function useUnblockUserMutation() {
   return useMutation({
     mutationFn: (username: string) => unblockUser(username),
     onSuccess: (_result, username) => {
+      recordHomeStructuralMutation(queryClient);
       patchOtherProfileShell(queryClient, username, (current) => ({
         ...current,
         blockedByViewer: false

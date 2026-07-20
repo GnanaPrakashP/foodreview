@@ -6,6 +6,7 @@ import { rankCircleFeedReviews } from "@/lib/feed-ranking";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
 import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
+import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 
 type FeedDb = {
   from: (table: string) => any;
@@ -17,6 +18,7 @@ type FeedDb = {
 
 type RpcPayload = {
   accountTypeMap?: Record<string, "private" | "public">;
+  authorAvatarMap?: Record<string, HomeAuthorAvatar>;
   hasMore?: boolean;
   joinedCircles?: string[];
   mutualMembers?: string[];
@@ -29,8 +31,35 @@ type RpcPayload = {
   viewerUserId?: string;
 };
 
+export type HomeAuthorAvatar = {
+  avatarCacheRevision?: number;
+  avatarMediaAssetId: string | null;
+  avatarPlaceholder: string | null;
+  avatarThumbnailUrl: string | null;
+  profileId: string;
+};
+
+function revisionFromDerivativeUrl(value: string | null | undefined) {
+  if (!value) return 1;
+  try {
+    const match = decodeURIComponent(new URL(value).pathname).match(/\/thumbnail\.r([2-9][0-9]*)\.jpg$/);
+    const revision = match ? Number(match[1]) : 1;
+    return Number.isSafeInteger(revision) ? revision : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function normalizeAuthorAvatarMap(value: Record<string, HomeAuthorAvatar> | undefined) {
+  return Object.fromEntries(Object.entries(value ?? {}).map(([username, avatar]) => [username, {
+    ...avatar,
+    avatarCacheRevision: revisionFromDerivativeUrl(avatar.avatarThumbnailUrl)
+  }]));
+}
+
 export type CanonicalCircleFeedPage = {
   accountTypeMap: Record<string, "private" | "public">;
+  authorAvatarMap: Record<string, HomeAuthorAvatar>;
   bookmarkedPostMap: Record<string, boolean>;
   commentMap: Record<string, { count: number; top: Comment }>;
   foodReactionMap: Record<string, "MUST_TRY" | "NOT_WORTH_IT" | null>;
@@ -94,7 +123,7 @@ export async function loadCanonicalCircleFeedPage(
     p_cursor_created_at: options.cursor?.createdAt ?? null,
     p_cursor_id: options.cursor?.id ?? null,
     p_exclude_post_ids: Array.from(new Set(options.excludePostIds ?? [])).slice(0, 200),
-    p_limit: Math.min(Math.max(Math.floor(options.limit ?? 24), 1), 50),
+    p_limit: Math.min(Math.max(Math.floor(options.limit ?? CIRCLE_FEED_PAGE_SIZE), 1), CIRCLE_FEED_PAGE_SIZE),
     p_viewer_user_id: actor.userId,
   });
   const { data, error } = options.trace
@@ -124,6 +153,7 @@ export async function loadCanonicalCircleFeedPage(
   return {
     ...maps,
     accountTypeMap: payload.accountTypeMap ?? {},
+    authorAvatarMap: normalizeAuthorAvatarMap(payload.authorAvatarMap),
     hasMore: Boolean(payload.hasMore),
     joinedCircles: payload.joinedCircles ?? [],
     mutualMembers: payload.mutualMembers ?? [],

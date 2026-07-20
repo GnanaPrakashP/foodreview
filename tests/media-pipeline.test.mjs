@@ -5,10 +5,13 @@ import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import sharp from "sharp";
 import ts from "typescript";
+
+const nodeRequire = createRequire(import.meta.url);
 
 function source(relativePath) {
   return readFileSync(new URL("../" + relativePath, import.meta.url), "utf8");
@@ -42,6 +45,7 @@ function loadMediaPipelineModule() {
       if (id === "node:path") return path;
       if (id === "node:child_process") return childProcess;
       if (id === "sharp") return sharp;
+      if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
       if (id === "@/lib/observability/server") return {
         mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
       };
@@ -116,7 +120,7 @@ test("post upload intents bind explicit visibility and default uncertainty to pr
   assert.throws(() => normalizeMediaIntentInput({ ...base, intendedVisibility: "everyone" }), /media_post_visibility_invalid/);
 });
 
-test("image processing creates exact 4:5 post canonical and thumbnail derivatives", async () => {
+test("image processing creates exact 4:5 post canonical, feed, and thumbnail derivatives", async () => {
   const { MEDIA_SOURCE_BUCKET, processMediaAsset } = loadMediaPipelineModule();
   const sourceBuffer = await sharp({
     create: {
@@ -179,6 +183,7 @@ test("image processing creates exact 4:5 post canonical and thumbnail derivative
 
   const canonical = derivatives.find((row) => row.kind === "canonical");
   const thumbnail = derivatives.find((row) => row.kind === "thumbnail");
+  const feed = derivatives.find((row) => row.kind === "feed");
   assert.equal(canonical.width, 1080);
   assert.equal(canonical.height, 1350);
   assert.equal(canonical.mime_type, "image/jpeg");
@@ -188,6 +193,10 @@ test("image processing creates exact 4:5 post canonical and thumbnail derivative
   assert.match(canonical.blurhash, /^.{6}$/);
   assert.equal(thumbnail.width, 360);
   assert.equal(thumbnail.height, 450);
-  assert.equal(uploads.length, 2);
-  assert.deepEqual(uploads.map((upload) => upload.options.cacheControl), ["300", "300"]);
+  assert.equal(feed.width, 720);
+  assert.equal(feed.height, 900);
+  assert.equal(feed.mime_type, "image/jpeg");
+  assert.equal(feed.public_url, null);
+  assert.equal(uploads.length, 3);
+  assert.deepEqual(uploads.map((upload) => upload.options.cacheControl), ["300", "300", "300"]);
 });

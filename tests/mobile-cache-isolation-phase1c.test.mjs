@@ -146,6 +146,16 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
     } };
     if (id === "@/security/cacheOwnership") return ownership;
     if (id === "@/security/sensitiveResourceRegistry") return { clearRegisteredSensitiveResources: async () => 0 };
+    if (id === "@/security/mediaCacheCleanup") return {
+      clearImageCachesWithRetry: async (memory, disk) => {
+        await memory();
+        await disk();
+        return { attempts: 1, diskCleared: true, memoryCleared: true };
+      }
+    };
+    if (id === "@/services/homeMediaPrefetch") return {
+      cancelHomeMediaPrefetches: async (scope) => calls.push(`prefetch.cancel:${scope}`)
+    };
     if (id === "@/services/mediaUploadRecovery") return { clearMediaUploadRecoveryForScope: (scope) => calls.push(`uploads.clear:${scope}`) };
     if (id === "@/providers/queryPersistence") return {
       activateOwnerQueryPersistence: async (_client, scope) => calls.push(`query.activate:${scope}`),

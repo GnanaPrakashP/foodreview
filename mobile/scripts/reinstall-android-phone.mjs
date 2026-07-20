@@ -12,6 +12,7 @@ const DEFAULT_PORT = 8081;
 const DEFAULT_HOST = "127.0.0.1";
 const METRO_START_TIMEOUT_MS = 60_000;
 const API_START_TIMEOUT_MS = 60_000;
+const EXISTING_API_WAIT_TIMEOUT_MS = 10_000;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const mobileRoot = resolve(scriptDir, "..");
 const projectRoot = resolve(mobileRoot, "..");
@@ -267,8 +268,26 @@ function mobileEnv() {
   };
 }
 
+function mobileProcessEnv() {
+  const env = { ...process.env };
+  delete env.API_RATE_LIMIT_HMAC_SECRET;
+  delete env.SUPABASE_SERVICE_ROLE_KEY;
+  return env;
+}
+
 function apiBaseUrl() {
   const raw = mobileEnv().EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (!raw) return null;
+
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function supabaseBaseUrl() {
+  const raw = mobileEnv().EXPO_PUBLIC_SUPABASE_URL?.trim();
   if (!raw) return null;
 
   try {
@@ -288,7 +307,7 @@ function apiPort(url) {
 
 function apiReadinessPath(url) {
   const prefix = url.pathname.replace(/\/$/, "");
-  return `${prefix}/api/places/reverse-geocode`;
+  return `${prefix}/api/health`;
 }
 
 function delay(ms) {
@@ -406,6 +425,11 @@ async function ensureApiServer(url, shouldStart) {
 
   const existingPids = metroListenPids(apiPort(url));
   if (existingPids.length > 0) {
+    console.log(`Port ${apiPort(url)} is already in use; waiting for the existing Next API health check...`);
+    if (await waitForApi(url, EXISTING_API_WAIT_TIMEOUT_MS)) {
+      console.log(`Next API is reachable at ${url.origin}`);
+      return true;
+    }
     throw new Error(`Port ${apiPort(url)} is in use, but the Next API did not respond. Stop that process or update EXPO_PUBLIC_API_BASE_URL.`);
   }
 
@@ -466,7 +490,7 @@ function startMetro(host, port) {
   const child = spawn(command, expoArgs, {
     cwd: mobileRoot,
     detached: true,
-    env: process.env,
+    env: mobileProcessEnv(),
     stdio: ["ignore", out, err]
   });
   child.unref();
@@ -519,9 +543,15 @@ async function main() {
   const device = selectDevice(adb, options.device);
   const host = options.host || defaultHost();
   const mobileApiUrl = apiBaseUrl();
+  const mobileSupabaseUrl = supabaseBaseUrl();
+  if (process.env.CIRCLEBITES_LOCAL_DEVICE === "1") {
+    if (!mobileApiUrl || !isLoopbackApiUrl(mobileApiUrl) || !mobileSupabaseUrl || !isLoopbackApiUrl(mobileSupabaseUrl)) {
+      throw new Error("Dedicated Android local-device mode requires loopback API and Supabase URLs");
+    }
+  }
   const javaHome = javaHomePath();
   const buildEnv = {
-    ...process.env,
+    ...mobileProcessEnv(),
     JAVA_HOME: javaHome,
     PATH: `${join(javaHome, "bin")}:${process.env.PATH ?? ""}`
   };
@@ -535,6 +565,11 @@ async function main() {
     console.log(`Using API URL: ${mobileApiUrl.origin}`);
   } else {
     console.log("EXPO_PUBLIC_API_BASE_URL is not configured; API-backed mobile features may be unavailable.");
+  }
+  if (mobileSupabaseUrl) {
+    console.log(`Using Supabase URL: ${mobileSupabaseUrl.origin}`);
+  } else {
+    console.log("EXPO_PUBLIC_SUPABASE_URL is not configured; Supabase-backed mobile features may be unavailable.");
   }
   console.log(`Using JAVA_HOME: ${javaHome}`);
 
@@ -563,6 +598,12 @@ async function main() {
       run(adb, ["-s", device, "reverse", `tcp:${apiPort(mobileApiUrl)}`, `tcp:${apiPort(mobileApiUrl)}`]);
     } else if (mobileApiUrl) {
       console.log(`API URL is not loopback, so it was not auto-started or adb-reversed: ${mobileApiUrl.origin}`);
+    }
+    if (mobileSupabaseUrl && isLoopbackApiUrl(mobileSupabaseUrl)) {
+      run(adb, ["-s", device, "reverse", `tcp:${apiPort(mobileSupabaseUrl)}`, `tcp:${apiPort(mobileSupabaseUrl)}`]);
+      console.log(`adb reverse configured for local Supabase port ${apiPort(mobileSupabaseUrl)}.`);
+    } else if (process.env.CIRCLEBITES_LOCAL_DEVICE === "1") {
+      throw new Error("Dedicated Android local-device mode could not reverse the local Supabase URL");
     }
     run(adb, ["-s", device, "shell", "am", "force-stop", APP_ID]);
     run(adb, [

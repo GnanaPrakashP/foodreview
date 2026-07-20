@@ -1,5 +1,6 @@
 import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { patchCachedPostEngagementFields } from "@/hooks/useFeeds";
+import { recordLocalEngagementPatch } from "@/home/homeEngagementReconciliation";
 import {
   getTasteTrustFeedback,
   removeTasteTrustFeedback,
@@ -7,6 +8,7 @@ import {
   type TasteTrustFeedbackLabel,
   type TasteTrustFeedbackState
 } from "@/services/tasteTrust";
+import type { PostEngagementState } from "@/types/models";
 
 export const tasteTrustKeys = {
   post: (postId: string) => ["taste-trust", "post", postId] as const
@@ -16,7 +18,7 @@ export function displayPostTasteTrustState(
   queryClient: QueryClient,
   postId: string,
   state: TasteTrustFeedbackState,
-  options: { cancelReads?: boolean } = {}
+  options: { cancelReads?: boolean; pending?: boolean } = {}
 ) {
   if (options.cancelReads) {
     void queryClient.cancelQueries({ queryKey: tasteTrustKeys.post(postId) });
@@ -25,7 +27,7 @@ export function displayPostTasteTrustState(
     });
   }
   queryClient.setQueryData(tasteTrustKeys.post(postId), state);
-  patchCachedPostEngagementFields(queryClient, {
+  const patch: Partial<PostEngagementState> & { postId: string } = {
     foodReaction: state.myFeedbackLabel === "Helpful"
       ? "MUST_TRY"
       : state.myFeedbackLabel === "Disagree"
@@ -34,7 +36,9 @@ export function displayPostTasteTrustState(
     mustTryCount: state.summary.feedback_counts.Helpful,
     notWorthItCount: state.summary.feedback_counts.Disagree,
     postId
-  });
+  };
+  recordLocalEngagementPatch(queryClient, patch, { pending: options.pending === true });
+  patchCachedPostEngagementFields(queryClient, patch);
 }
 
 export function usePostTasteTrustQuery(postId: string, options: { enabled?: boolean } = {}) {

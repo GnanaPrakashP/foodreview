@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
-import { useEffect, useMemo, useRef } from "react";
-import { Animated, Pressable, StyleSheet, View } from "react-native";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { fontStyles, radius } from "@/theme";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { reactionIcons } from "./reactionIcons";
@@ -8,11 +8,14 @@ import type { FoodReactionType } from "./reactionTypes";
 
 type Props = {
   accessibilityName: string;
+  countAnimationRevision?: number;
   count: number;
+  diagnosticPlainIcon?: boolean;
   disabled?: boolean;
   label: string;
   onPress: () => void;
   reaction: FoodReactionType;
+  recyclingKey?: string;
   selected?: boolean;
 };
 
@@ -35,17 +38,22 @@ const reactionPalettes: Record<FoodReactionType, ReactionPalette> = {
   }
 };
 
+const REACTION_HIT_SLOP = { bottom: 8, left: 8, right: 8, top: 8 } as const;
+
 function voteLabel(count: number) {
   return `${count} ${count === 1 ? "vote" : "votes"}`;
 }
 
-export function ReactionButton({
+function ReactionButtonComponent({
   accessibilityName,
+  countAnimationRevision = 0,
   count,
+  diagnosticPlainIcon = false,
   disabled = false,
   label,
   onPress,
   reaction,
+  recyclingKey,
   selected = false
 }: Props) {
   const { themeColors } = useThemePreference();
@@ -55,10 +63,36 @@ export function ReactionButton({
   const countScale = useRef(new Animated.Value(1)).current;
   const countOpacity = useRef(new Animated.Value(1)).current;
   const previousCount = useRef(count);
+  const previousCountAnimationRevision = useRef(countAnimationRevision);
+  const recyclingAssignmentRef = useRef(recyclingKey);
+  const recyclingAssignmentChanged = recyclingAssignmentRef.current !== recyclingKey;
+  if (recyclingAssignmentChanged) {
+    recyclingAssignmentRef.current = recyclingKey;
+    previousCount.current = count;
+    previousCountAnimationRevision.current = countAnimationRevision;
+  }
+
+  useLayoutEffect(() => {
+    if (!recyclingAssignmentChanged) return;
+    countScale.stopAnimation();
+    countOpacity.stopAnimation();
+    countScale.setValue(1);
+    countOpacity.setValue(1);
+  }, [countOpacity, countScale, recyclingAssignmentChanged, recyclingKey]);
 
   useEffect(() => {
-    if (previousCount.current === count) return;
+    const countChanged = previousCount.current !== count;
+    const userTriggered = previousCountAnimationRevision.current !== countAnimationRevision;
     previousCount.current = count;
+    previousCountAnimationRevision.current = countAnimationRevision;
+    if (!countChanged) return;
+    countScale.stopAnimation();
+    countOpacity.stopAnimation();
+    if (!userTriggered) {
+      countScale.setValue(1);
+      countOpacity.setValue(1);
+      return;
+    }
     countScale.setValue(0.9);
     countOpacity.setValue(0.6);
     Animated.parallel([
@@ -67,75 +101,93 @@ export function ReactionButton({
         mass: 0.45,
         stiffness: 260,
         toValue: 1,
-        useNativeDriver: false
+        useNativeDriver: true
       }),
       Animated.timing(countOpacity, {
         duration: 160,
         toValue: 1,
-        useNativeDriver: false
+        useNativeDriver: true
       })
     ]).start();
-  }, [count, countOpacity, countScale]);
+  }, [count, countAnimationRevision, countOpacity, countScale]);
 
-  function handlePress() {
+  const handlePress = useCallback(() => {
     if (disabled) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     onPress();
-  }
+  }, [disabled, onPress]);
 
-  const selectedSurfaceStyle = {
+  const selectedSurfaceStyle = useMemo(() => ({
     backgroundColor: selected ? palette.fill : themeColors.surface,
     borderColor: selected ? palette.accent : themeColors.border,
     shadowOpacity: selected ? 0.18 : 0
-  };
-  const selectedLabelStyle = {
+  }), [palette, selected, themeColors.border, themeColors.surface]);
+  const selectedLabelStyle = useMemo(() => ({
     color: selected ? palette.accent : themeColors.mutedStrong
-  };
+  }), [palette.accent, selected, themeColors.mutedStrong]);
+  const shellStyle = useMemo(() => [
+    styles.shell,
+    { shadowColor: palette.glow },
+    selectedSurfaceStyle,
+    disabled && styles.disabled
+  ], [disabled, palette.glow, selectedSurfaceStyle, styles]);
+  const labelStyle = useMemo(
+    () => [styles.label, selectedLabelStyle],
+    [selectedLabelStyle, styles]
+  );
+  const countStyle = useMemo(() => [
+    styles.count,
+    selectedLabelStyle,
+    {
+      opacity: countOpacity,
+      transform: [{ scale: countScale }]
+    }
+  ], [countOpacity, countScale, selectedLabelStyle, styles]);
+  const accessibilityLabel = useMemo(
+    () => `${accessibilityName} reaction, ${voteLabel(count)}`,
+    [accessibilityName, count]
+  );
+  const accessibilityState = useMemo(() => ({ disabled, selected }), [disabled, selected]);
   const iconColor = selected ? palette.accent : themeColors.mutedStrong;
+  const showDiagnosticPlainIcon = __DEV__ && diagnosticPlainIcon;
 
   return (
     <Pressable
-      accessibilityLabel={`${accessibilityName} reaction, ${voteLabel(count)}`}
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ disabled, selected }}
+      accessibilityState={accessibilityState}
       disabled={disabled}
-      hitSlop={{ bottom: 8, left: 8, right: 8, top: 8 }}
+      hitSlop={REACTION_HIT_SLOP}
       onPress={handlePress}
-      style={[
-        styles.shell,
-        { shadowColor: palette.glow },
-        selectedSurfaceStyle,
-        disabled && styles.disabled
-      ]}
+      style={shellStyle}
     >
       <View style={styles.labelCluster}>
-        <Icon
-          color={iconColor}
-          fillColor={selected ? palette.accent : "transparent"}
-          selected={selected}
-          size={20}
-          strokeWidth={2.25}
-        />
-        <Animated.Text numberOfLines={1} style={[styles.label, selectedLabelStyle]}>
+        {showDiagnosticPlainIcon ? (
+          <View style={[styles.diagnosticPlainIcon, { backgroundColor: iconColor }]} />
+        ) : (
+          <Icon
+            color={iconColor}
+            fillColor={selected ? palette.accent : "transparent"}
+            selected={selected}
+            size={20}
+            strokeWidth={2.25}
+          />
+        )}
+        <Text numberOfLines={1} style={labelStyle}>
           {label}
-        </Animated.Text>
+        </Text>
       </View>
       <Animated.Text
         numberOfLines={1}
-        style={[
-          styles.count,
-          selectedLabelStyle,
-          {
-            opacity: countOpacity,
-            transform: [{ scale: countScale }]
-          }
-        ]}
+        style={countStyle}
       >
         {count}
       </Animated.Text>
     </Pressable>
   );
 }
+
+export const ReactionButton = memo(ReactionButtonComponent);
 
 function createStyles(c: ReturnType<typeof themeColorsFor>) {
   return StyleSheet.create({
@@ -147,6 +199,11 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
     },
     disabled: {
       opacity: 0.56
+    },
+    diagnosticPlainIcon: {
+      borderRadius: 2,
+      height: 20,
+      width: 20
     },
     label: {
       ...fontStyles.extraBold,

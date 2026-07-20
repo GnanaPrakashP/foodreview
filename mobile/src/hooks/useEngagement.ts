@@ -4,6 +4,8 @@ import {
   patchCachedPostEngagementFields,
   removeCachedPostById
 } from "@/hooks/useFeeds";
+import { recordLocalEngagementPatch } from "@/home/homeEngagementReconciliation";
+import { recordHomeStructuralMutation } from "@/home/homeStructuralRevision";
 import { patchOtherProfileShell, profileKeys } from "@/hooks/useProfiles";
 import {
   cancelCircleAccess,
@@ -53,10 +55,12 @@ function cancelPostCacheReads(queryClient: QueryClient) {
 
 export function displayPostLikeState(queryClient: QueryClient, state: LikeCacheState) {
   cancelPostCacheReads(queryClient);
+  recordLocalEngagementPatch(queryClient, state, { pending: true });
   patchCachedPostEngagementFields(queryClient, state);
 }
 
 export function commitPostLikeState(queryClient: QueryClient, state: LikeCacheState) {
+  recordLocalEngagementPatch(queryClient, state, { pending: false });
   patchCachedPostEngagementFields(queryClient, state);
   const sourcePost = findCachedPostById(queryClient, state.postId);
   queryClient.setQueryData<InfiniteData<SettingsPostList>>(likedSettingsKey, (current) => (
@@ -70,10 +74,12 @@ export function commitPostLikeState(queryClient: QueryClient, state: LikeCacheSt
 
 export function displayPostBookmarkState(queryClient: QueryClient, state: BookmarkCacheState) {
   cancelPostCacheReads(queryClient);
+  recordLocalEngagementPatch(queryClient, state, { pending: true });
   patchCachedPostEngagementFields(queryClient, state);
 }
 
 export function commitPostBookmarkState(queryClient: QueryClient, state: BookmarkCacheState) {
+  recordLocalEngagementPatch(queryClient, state, { pending: false });
   patchCachedPostEngagementFields(queryClient, state);
   const sourcePost = findCachedPostById(queryClient, state.postId);
   queryClient.setQueryData<InfiniteData<SavedSettingsList>>(savedSettingsKey, (current) => (
@@ -103,6 +109,7 @@ export function useDeletePostMutation() {
   return useMutation({
     mutationFn: (input: { postId: string }) => deletePost(input),
     onSuccess: (_result, input) => {
+      recordHomeStructuralMutation(queryClient);
       const sourcePost = findCachedPostById(queryClient, input.postId);
       removeCachedPostById(queryClient, input.postId);
       queryClient.invalidateQueries({ queryKey: profileKeys.currentPage });
@@ -118,6 +125,7 @@ export function useRequestCircleAccessMutation() {
   return useMutation({
     mutationFn: (input: RequestCircleInput) => requestCircleAccess(input),
     onSuccess: (status, input) => {
+      recordHomeStructuralMutation(queryClient);
       patchOtherProfileShell(queryClient, input.receiverName, (current) => ({
         ...current,
         circleCount: status === "joined" && current.relationship.status !== "joined"
@@ -146,6 +154,7 @@ export function useSetCircleAccessStatusMutation() {
       return requestCircleAccess(input);
     },
     onSuccess: (status, input) => {
+      recordHomeStructuralMutation(queryClient);
       patchOtherProfileShell(queryClient, input.receiverName, (current) => ({
         ...current,
         circleCount: status === "joined" && current.relationship.status !== "joined"

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
+import { classifyHomeTabPress, emitActiveHomeTabPress } from "@/navigation/homeTabPress";
 import { useComposerStore } from "@/stores/composerStore";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
@@ -76,7 +77,16 @@ export default function TabLayout() {
         };
       }}
     >
-      <Tabs.Screen name="index" />
+      <Tabs.Screen
+        listeners={({ navigation }) => ({
+          tabPress: (event) => {
+            if (classifyHomeTabPress(navigation.isFocused()) === "navigate") return;
+            event.preventDefault();
+            emitActiveHomeTabPress();
+          }
+        })}
+        name="index"
+      />
       <Tabs.Screen name="explore" />
       <Tabs.Screen name="share" />
       <Tabs.Screen name="hungry" options={{ href: null }} />

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { CIRCLE_FEED_PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE } from "@/lib/feed-config";
+import { PUBLIC_FEED_MAX_PAGE_SIZE, PUBLIC_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { parseCircleFeedCursor } from "@/lib/circle-feed";
 import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
 import { normalizeReview } from "@/lib/server/normalize-review";
@@ -63,8 +63,8 @@ function isSyntheticReview(review: { restaurant_name: string; reviewer_name: str
 
 export async function GET(req: NextRequest) {
   const limit = Math.min(
-    CIRCLE_FEED_MAX_PAGE_SIZE,
-    Math.max(1, parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE))
+    PUBLIC_FEED_MAX_PAGE_SIZE,
+    Math.max(1, parseNumber(req.nextUrl.searchParams.get("limit"), PUBLIC_FEED_PAGE_SIZE))
   );
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);

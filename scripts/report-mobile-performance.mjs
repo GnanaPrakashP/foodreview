@@ -37,7 +37,11 @@ check(/freezeOnBlur:\s*true/.test(files.tabs), "visited tabs are not retained/fr
 check(count(mobileSources, /AppState\.addEventListener/g) === 1, "AppState has competing owners");
 check(/onlineManager\.setOnline/.test(files.runtime) && /addNetworkStateListener/.test(files.runtime), "network state is not connected to React Query");
 check(/shouldPersistQuery/.test(files.persistence) && /ownerScope/.test(files.persistence), "selected cache owner policy is missing");
-check(/PERSISTED_FIRST_PAGE_LIMIT\s*=\s*24/.test(files.persistence), "persisted feed page is not bounded");
+check(
+  /PERSISTED_CIRCLE_FIRST_PAGE_LIMIT\s*=\s*10/.test(files.persistence)
+    && /PERSISTED_PROFILE_FIRST_PAGE_LIMIT\s*=\s*24/.test(files.persistence),
+  "persisted feed pages are not bounded by their active contracts"
+);
 check(/isExpiredSignedMedia/.test(files.persistence) && /mutations:\s*\[\]/.test(files.persistence), "persisted cache sanitizer is incomplete");
 check(/initialNumToRender=\{FEED_INITIAL_RENDER_COUNT\}/.test(files.postFeed), "feed initial render budget is not applied");
 check(/windowSize=\{FEED_WINDOW_SIZE\}/.test(files.postFeed), "feed virtualization window is not applied");

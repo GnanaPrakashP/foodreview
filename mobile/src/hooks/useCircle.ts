@@ -10,6 +10,7 @@ import {
   respondToCircleRequest
 } from "@/services/circle";
 import { patchOtherProfileShell, profileKeys } from "@/hooks/useProfiles";
+import { recordHomeStructuralMutation } from "@/home/homeStructuralRevision";
 
 export const circleKeys = {
   accessStatuses: (usernames: string[]) => ["circle", "access-statuses", usernames] as const,
@@ -47,11 +48,12 @@ function useInvalidateCircleQueries() {
   const queryClient = useQueryClient();
 
   return (username?: string) => {
+    recordHomeStructuralMutation(queryClient);
     queryClient.invalidateQueries({ queryKey: ["circle"] });
     queryClient.invalidateQueries({ queryKey: ["profile"] });
     queryClient.invalidateQueries({ queryKey: ["feed"] });
     queryClient.invalidateQueries({ queryKey: notificationKeys.list });
-    queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
+    queryClient.invalidateQueries({ queryKey: notificationKeys.hasUnread });
     if (username) {
       queryClient.invalidateQueries({ queryKey: profileKeys.otherShell(username) });
       queryClient.invalidateQueries({ queryKey: profileKeys.posts(username) });
@@ -83,6 +85,7 @@ export function useRespondToCircleRequestMutation() {
   return useMutation({
     mutationFn: respondToCircleRequest,
     onSuccess: (_result, variables) => {
+      recordHomeStructuralMutation(queryClient);
       patchOtherProfileShell(queryClient, variables.senderName, (current) => ({
         ...current,
         relationship: {
@@ -106,6 +109,7 @@ export function useRemoveCircleMemberMutation() {
   return useMutation({
     mutationFn: removeMyCircleMember,
     onSuccess: (_result, username) => {
+      recordHomeStructuralMutation(queryClient);
       queryClient.invalidateQueries({ queryKey: circleKeys.mine });
       queryClient.invalidateQueries({ queryKey: ["profile", "current-page"] });
       queryClient.invalidateQueries({ queryKey: ["feed"] });

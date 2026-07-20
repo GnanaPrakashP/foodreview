@@ -1,0 +1,80 @@
+{
+  "datasetId": "home_media_test_v1",
+  "licensePolicy": "All fixtures are transformations of repository-owned generated food artwork. No external source, hotlink, or third-party download is used.",
+  "fixtures": [
+    {
+      "id": "portrait_bright",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/biryani.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "portrait",
+      "characteristics": ["bright", "fine detail", "transparent cutout source"]
+    },
+    {
+      "id": "landscape_bright",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/burger.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "landscape",
+      "characteristics": ["bright", "edge detail"]
+    },
+    {
+      "id": "square_texture",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/paneer.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "square",
+      "characteristics": ["fine texture", "warm tones"]
+    },
+    {
+      "id": "high_resolution",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/pizza.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "landscape",
+      "characteristics": ["high resolution", "fine detail"]
+    },
+    {
+      "id": "dark_low_light",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/mandi.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "portrait",
+      "characteristics": ["dark", "low light"]
+    },
+    {
+      "id": "low_contrast",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/milkshake.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "square",
+      "characteristics": ["low contrast", "soft detail"]
+    },
+    {
+      "id": "edge_detail",
+      "type": "image",
+      "source": "mobile/assets/categories/dishes/desserts.png",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "landscape",
+      "characteristics": ["objects near edges", "fine detail"]
+    },
+    {
+      "id": "portrait_video",
+      "type": "video",
+      "source": "generated from portrait_bright by seed-home-media-test-dataset.mjs",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "portrait",
+      "durationSeconds": 4,
+      "characteristics": ["H.264", "AAC", "safe short loop"]
+    },
+    {
+      "id": "landscape_video",
+      "type": "video",
+      "source": "generated from landscape_bright by seed-home-media-test-dataset.mjs",
+      "license": "repository-owned generated test artwork",
+      "originalAspectRatio": "landscape",
+      "durationSeconds": 4,
+      "characteristics": ["H.264", "AAC", "safe short loop"]
+    }
+  ]
+}

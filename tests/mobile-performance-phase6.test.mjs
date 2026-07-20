@@ -53,9 +53,16 @@ function loadFeedHelpers() {
     if (id === "@tanstack/react-query") return {
       keepPreviousData: null,
       useInfiniteQuery: () => ({}),
-      useQuery: () => ({})
+      useQuery: () => ({}),
+      useQueryClient: () => ({})
     };
     if (id === "@/services/feeds" || id === "@/services/exploreDiscovery") return {};
+    if (id === "@/home/homeRefreshMetadata") return { recordHomePageOneRefreshAt: () => true };
+    if (id === "@/security/cacheOwnership") return {
+      getActiveCacheGeneration: () => 0,
+      getActiveCacheOwner: () => null,
+      isCacheGenerationActive: () => false
+    };
     throw new Error(`Unexpected import: ${id}`);
   });
 }
@@ -119,7 +126,7 @@ test("persisted first pages are bounded and expired signed media is stripped", (
   const sanitized = JSON.parse(JSON.stringify(persistence.sanitizePersistedClient(client, now)));
   assert.equal(sanitized.clientState.mutations.length, 0);
   assert.equal(sanitized.clientState.queries[0].state.data.pages.length, 1);
-  assert.equal(sanitized.clientState.queries[0].state.data.pages[0].posts.length, 24);
+  assert.equal(sanitized.clientState.queries[0].state.data.pages[0].posts.length, 10);
   assert.equal(sanitized.clientState.queries[0].state.data.pages[0].posts[0].media.length, 1);
   assert.equal(sanitized.clientState.queries[0].state.data.pages[0].posts[0].media[0].publicUrl, "signed-valid");
   assert.equal(JSON.stringify(sanitized).includes("private temporary error"), false);
@@ -181,7 +188,7 @@ test("feed media uses thumbnails and creates a player only for a stable visible 
   const card = source("mobile/src/components/posts/PostCard.tsx");
   assert.match(feed, /itemVisiblePercentThreshold:\s*65/);
   assert.match(feed, /minimumViewTime:\s*900/);
-  assert.match(feed, /item\.id === activeMediaPostId/);
+  assert.match(feed, /resolvedHomeMediaPriority === "current"/);
   assert.match(card, /mediaActive && mediaAccessIsUsable\(primaryMedia\.expiresAt\)/);
   assert.match(card, /primaryMedia\.posterUrl \|\| primaryMedia\.thumbnailUrl/);
   assert.match(card, /loadDetailEngagement \? primaryMedia\.publicUrl : primaryMedia\.thumbnailUrl/);
@@ -191,16 +198,19 @@ test("feed media uses thumbnails and creates a player only for a stable visible 
 
 test("feed lists use bounded virtualization and controlled thumbnail prefetch", () => {
   const feed = source("mobile/src/components/feeds/PostFeed.tsx");
+  const prefetch = source("mobile/src/services/homeMediaPrefetch.ts");
   for (const expected of [
     /FEED_INITIAL_RENDER_COUNT = 4/,
     /FEED_RENDER_BATCH_SIZE = 4/,
     /FEED_WINDOW_SIZE = 5/,
-    /FEED_THUMBNAIL_PREFETCH_DEPTH = 2/,
-    /updateCellsBatchingPeriod=\{50\}/,
+    /homeVerticalMediaPriorityFor\(postId, input\.verticalMediaWindow\)/,
+    /HOME_VERTICAL_COVER_PREFETCH_AHEAD_COUNT = 2/,
+    /updateCellsBatchingPeriod=\{diagnosticPremountEnabled \? 0 : FEED_CELL_BATCHING_PERIOD_MS\}/,
     /keyExtractor=\{\(post\) => post\.id\}/
   ]) assert.match(feed, expected);
   assert.match(feed, /networkType === "WIFI" \|\| runtime\.networkType === "ETHERNET"/);
-  assert.match(feed, /isCacheGenerationActive\(ownerGeneration\)/);
+  assert.match(prefetch, /isCacheGenerationActive\(job\.generation\)/);
+  assert.match(prefetch, /getActiveCacheOwner\(\)\?\.scope !== job\.ownerScope/);
   assert.doesNotMatch(feed, /primaryMedia\.publicUrl[\s\S]{0,100}Image\.prefetch/);
 });
 

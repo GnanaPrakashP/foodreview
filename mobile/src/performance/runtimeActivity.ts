@@ -7,6 +7,8 @@ import { recordMobileFlow } from "@/observability/mobileTelemetry";
 export type RuntimeActivitySnapshot = {
   appState: AppStateStatus;
   isForeground: boolean;
+  isConnectionExpensive: boolean | null;
+  isLowDataModeEnabled: boolean | null;
   isOnline: boolean;
   networkType: Network.NetworkStateType | "UNKNOWN";
 };
@@ -20,6 +22,8 @@ const listeners = new Set<RuntimeActivityListener>();
 let snapshot: RuntimeActivitySnapshot = {
   appState: AppState.currentState ?? "active",
   isForeground: (AppState.currentState ?? "active") === "active",
+  isConnectionExpensive: null,
+  isLowDataModeEnabled: null,
   isOnline: true,
   networkType: "UNKNOWN"
 };
@@ -33,6 +37,8 @@ function publish(next: RuntimeActivitySnapshot) {
   if (
     next.appState === snapshot.appState &&
     next.isForeground === snapshot.isForeground &&
+    next.isConnectionExpensive === snapshot.isConnectionExpensive &&
+    next.isLowDataModeEnabled === snapshot.isLowDataModeEnabled &&
     next.isOnline === snapshot.isOnline &&
     next.networkType === snapshot.networkType
   ) return;
@@ -68,12 +74,17 @@ export function RuntimeActivityCoordinator({ children }: PropsWithChildren) {
   useEffect(() => {
     const applyNetworkState = (state: Network.NetworkState) => {
       const isOnline = onlineFromNetworkState(state);
+      const connection = (globalThis.navigator as unknown as {
+        connection?: { metered?: boolean; saveData?: boolean };
+      } | undefined)?.connection;
       if (isOnline !== snapshot.isOnline) {
         recordMobileFlow("runtime.connectivity_change", 0, "success", { online: isOnline });
       }
       onlineManager.setOnline(isOnline);
       publish({
         ...snapshot,
+        isConnectionExpensive: typeof connection?.metered === "boolean" ? connection.metered : null,
+        isLowDataModeEnabled: typeof connection?.saveData === "boolean" ? connection.saveData : null,
         isOnline,
         networkType: state.type ?? "UNKNOWN"
       });

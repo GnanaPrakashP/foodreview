@@ -22,15 +22,24 @@ export type ReviewMedia = {
   accessClass: "public_post" | "circle_post" | "private_post" | "legacy_public";
   aspectRatio: number | null;
   expiresAt: string | null;
+  feedExpiresAt?: string | null;
+  feedUrl?: string | null;
   height: number | null;
+  homeDelivery?: boolean;
+  isLegacyHomeMedia?: boolean;
   publicUrl: string;
   mediaType: "image" | "video";
   mediaAssetId?: string | null;
   placeholder: string | null;
   posterUrl: string | null;
+  posterExpiresAt?: string | null;
   position: number;
   thumbnailUrl: string | null;
+  playbackExpiresAt?: string | null;
+  playbackUrl?: string | null;
   width: number | null;
+  cacheRevision?: number;
+  homeDerivativeKind?: "feed" | "canonical" | "poster" | "legacy";
 };
 
 export type Profile = {
@@ -65,6 +74,11 @@ export type ReviewPost = {
   reviewerUsername: string;
   authorName: string;
   authorInitials: string;
+  authorProfileId?: string | null;
+  avatarMediaAssetId?: string | null;
+  avatarCacheRevision?: number;
+  avatarPlaceholder?: string | null;
+  avatarThumbnailUrl?: string | null;
   restaurantId: string | null;
   restaurantName: string;
   area: string | null;
@@ -77,6 +91,7 @@ export type ReviewPost = {
   body: string | null;
   tags: string[];
   media: ReviewMedia[];
+  mediaCount?: number;
   visibility: Visibility;
   status: ReviewStatus;
   createdAt: string;
@@ -92,6 +107,82 @@ export type ReviewPost = {
   foodReaction?: "MUST_TRY" | "NOT_WORTH_IT" | null;
   mustTryCount?: number;
   notWorthItCount?: number;
+};
+
+// Network contract used only by the Home/Circle page. Shared feed cards still
+// consume ReviewPost after services/feeds maps this deliberately small DTO.
+export type HomeFeedCoverMedia = {
+  cacheRevision: number;
+  deliveryDerivative: "feed" | "canonical" | "poster" | "legacy";
+  expiresAt: string | null;
+  feedUrl: string | null;
+  height: number;
+  isLegacy: boolean;
+  mediaAssetId: string;
+  mediaType: "image" | "video";
+  placeholder: string | null;
+  playbackUrl: string | null;
+  posterUrl: string | null;
+  width: number;
+};
+
+export type HomeFeedPost = {
+  area: string | null;
+  authorInitials: string;
+  authorName: string;
+  authorProfileId: string | null;
+  avatarMediaAssetId: string | null;
+  avatarCacheRevision: number;
+  avatarPlaceholder: string | null;
+  avatarThumbnailUrl: string | null;
+  body: string | null;
+  bookmarkedByMe: boolean;
+  circleRequestAccountType: AccountType | null;
+  circleRequestStatus: "idle" | "pending" | "joined";
+  commentCount: number;
+  coverMedia: HomeFeedCoverMedia | null;
+  createdAt: string;
+  foodReaction: "MUST_TRY" | "NOT_WORTH_IT" | null;
+  id: string;
+  isPublicDiscovery: boolean;
+  items: Array<Pick<FoodItem, "name" | "rating">>;
+  likedByMe: boolean;
+  likeCount: number;
+  mediaCount: number;
+  mustTryCount: number;
+  notWorthItCount: number;
+  restaurantAddress: string | null;
+  restaurantId: string | null;
+  restaurantLat: number | null;
+  restaurantLng: number | null;
+  restaurantName: string;
+  reviewerUsername: string;
+  tags: string[];
+  visibility: Visibility;
+};
+
+export type HomeCarouselMediaItem = {
+  cacheRevision: number;
+  deliveryDerivative: "feed" | "canonical" | "poster";
+  expiresAt: string;
+  feedUrl: string | null;
+  height: number;
+  mediaAssetId: string;
+  mediaType: "image" | "video";
+  placeholder: string | null;
+  position: number;
+  posterUrl: string | null;
+  width: number;
+};
+
+export type HomeCarouselMediaPage = {
+  items: HomeCarouselMediaItem[];
+};
+
+export type HomeFeedPage = {
+  nextCursor: string | null;
+  posts: HomeFeedPost[];
+  viewerName?: string;
 };
 
 export type FeedPage = {

@@ -130,7 +130,8 @@ export interface Database {
           deleted_at: string | null;
           hidden_at: string | null;
           reported_at: string | null;
-          status: "active" | "deleted" | "hidden" | "reported" | "removed";
+          status: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
+          requires_ready_media: boolean;
           created_at: string;
         };
         Insert: {
@@ -151,7 +152,8 @@ export interface Database {
           deleted_at?: string | null;
           hidden_at?: string | null;
           reported_at?: string | null;
-          status?: "active" | "deleted" | "hidden" | "reported" | "removed";
+          status?: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
+          requires_ready_media?: boolean;
           created_at?: string;
         };
         Update: {
@@ -172,7 +174,8 @@ export interface Database {
           deleted_at?: string | null;
           hidden_at?: string | null;
           reported_at?: string | null;
-          status?: "active" | "deleted" | "hidden" | "reported" | "removed";
+          status?: "draft" | "active" | "deleted" | "hidden" | "reported" | "removed";
+          requires_ready_media?: boolean;
           created_at?: string;
         };
         Relationships: [];
@@ -525,6 +528,7 @@ export interface Database {
 }
 
 export type Review = Database["public"]["Tables"]["reviews"]["Row"] & {
+  media_count?: number;
   media_items?: ReviewMedia[];
 };
 

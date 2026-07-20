@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "cursorStandard": "opaque-base64url(created_at,id)",
   "screens": [
-    { "id": "circle", "entry": "mobile/src/services/feeds.ts#getCircleFeedPage", "queryKey": "feedKeys.circle", "endpoint": "/api/feed/circle", "networkRequests": 1, "databaseStatements": 6, "pageSize": 24, "payloadBytes": 196608, "pagination": "cursor", "cacheOwner": "circle-infinite-query" },
+    { "id": "circle", "entry": "mobile/src/services/feeds.ts#getCircleFeedPage", "queryKey": "feedKeys.circle", "endpoint": "/api/feed/circle", "networkRequests": 1, "databaseStatements": 6, "pageSize": 10, "payloadBytes": 65536, "pagination": "cursor", "cacheOwner": "circle-infinite-query" },
     { "id": "public-feed", "entry": "mobile/src/services/feeds.ts#getPublicFeedPage", "queryKey": "feedKeys.public", "endpoint": "/api/mobile/feed?scope=public", "networkRequests": 1, "databaseStatements": 5, "pageSize": 24, "payloadBytes": 196608, "pagination": "cursor", "cacheOwner": "public-infinite-query" },
     { "id": "explore", "entry": "mobile/src/services/exploreDiscovery.ts#getExploreDiscovery", "queryKey": "exploreKeys.discovery", "endpoint": "rpc:explore_discovery_canonical_v3", "networkRequests": 1, "databaseStatements": 1, "pageSize": 24, "payloadBytes": 262144, "pagination": "bounded-sections", "cacheOwner": "explore-query" },
     { "id": "restaurant-feed", "entry": "mobile/src/services/feeds.ts#getRestaurantPostsPage", "queryKey": "feedKeys.restaurant", "endpoint": "/api/mobile/feed?scope=restaurant", "networkRequests": 1, "databaseStatements": 5, "pageSize": 24, "payloadBytes": 196608, "pagination": "cursor", "cacheOwner": "restaurant-infinite-query" },

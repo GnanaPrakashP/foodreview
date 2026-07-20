@@ -89,6 +89,7 @@ function validIntent(overrides = {}) {
     original_mime_type: "image/jpeg",
     owner_id: "uid-alice",
     owner_name: "Alice",
+    privacy_state: "stable",
     status: "ready",
     surface: "post",
     ...overrides,

@@ -1,10 +1,11 @@
 import { supabase } from "@/api/supabase";
 import { authorizedJson } from "@/api/client";
-import type { FeedPage, ReviewPost } from "@/types/models";
+import type { FeedPage, HomeFeedPage, HomeFeedPost, ReviewPost } from "@/types/models";
 import { normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
 import { fetchPostMediaAccess } from "@/services/postMediaAccess";
 
+const HOME_PAGE_SIZE = 10;
 const PAGE_SIZE = 24;
 
 type EngagementMaps = {
@@ -282,29 +283,94 @@ export async function markCircleFeedPostsSeen(postIds: string[]): Promise<void> 
   }
 }
 
-export async function getCircleFeed(cursor?: string | null): Promise<FeedPage> {
-  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+export function mapHomeFeedPost(post: HomeFeedPost): ReviewPost {
+  const cover = post.coverMedia;
+  return {
+    id: post.id,
+    reviewerName: post.reviewerUsername,
+    reviewerUsername: post.reviewerUsername,
+    authorName: post.authorName,
+    authorInitials: post.authorInitials,
+    authorProfileId: post.authorProfileId,
+    avatarMediaAssetId: post.avatarMediaAssetId,
+    avatarCacheRevision: post.avatarCacheRevision,
+    avatarPlaceholder: post.avatarPlaceholder,
+    avatarThumbnailUrl: post.avatarThumbnailUrl,
+    restaurantId: post.restaurantId,
+    restaurantName: post.restaurantName,
+    area: post.area,
+    restaurantAddress: post.restaurantAddress,
+    restaurantLat: post.restaurantLat,
+    restaurantLng: post.restaurantLng,
+    restaurantPrimaryType: null,
+    restaurantTypes: [],
+    items: post.items,
+    body: post.body,
+    tags: post.tags,
+    media: cover ? [{
+      accessClass: post.visibility === "public" ? "public_post" : post.visibility === "circle" ? "circle_post" : "private_post",
+      aspectRatio: cover.width / cover.height,
+      cacheRevision: cover.cacheRevision,
+      expiresAt: cover.expiresAt,
+      feedExpiresAt: cover.mediaType === "image" ? cover.expiresAt : null,
+      feedUrl: cover.feedUrl,
+      height: cover.height,
+      homeDelivery: true,
+      homeDerivativeKind: cover.deliveryDerivative,
+      isLegacyHomeMedia: cover.isLegacy,
+      publicUrl: cover.feedUrl ?? cover.posterUrl ?? cover.playbackUrl ?? "",
+      mediaType: cover.mediaType,
+      mediaAssetId: cover.mediaAssetId,
+      placeholder: cover.placeholder,
+      playbackExpiresAt: cover.mediaType === "video" ? cover.expiresAt : null,
+      playbackUrl: cover.playbackUrl,
+      posterExpiresAt: cover.mediaType === "video" ? cover.expiresAt : null,
+      posterUrl: cover.posterUrl,
+      position: 0,
+      thumbnailUrl: null,
+      width: cover.width
+    }] : [],
+    mediaCount: post.mediaCount,
+    visibility: post.visibility,
+    status: "active",
+    createdAt: post.createdAt,
+    likeCount: post.likeCount,
+    commentCount: post.commentCount,
+    likedByMe: post.likedByMe,
+    bookmarkedByMe: post.bookmarkedByMe,
+    circleRequestAccountType: post.circleRequestAccountType,
+    circleRequestStatus: post.circleRequestStatus,
+    isPublicDiscovery: post.isPublicDiscovery,
+    foodReaction: post.foodReaction,
+    mustTryCount: post.mustTryCount,
+    notWorthItCount: post.notWorthItCount
+  };
+}
+
+type CircleFeedRequestOptions = {
+  refresh?: boolean;
+  signal?: AbortSignal;
+};
+
+export async function getCircleFeed(
+  cursor?: string | null,
+  options: CircleFeedRequestOptions = {}
+): Promise<FeedPage> {
+  const params = new URLSearchParams({ limit: String(HOME_PAGE_SIZE) });
   if (cursor) params.set("cursor", cursor);
-  const page = await authorizedJson<FeedPage & {
-    myName?: string;
-    nextCursorString?: string | null;
-    nextCursor?: string | { createdAt: string; id: string } | null;
-  }>(`/api/feed/circle?${params.toString()}`, { method: "GET" }, {
+  if (options.refresh) params.set("refresh", "1");
+  const page = await authorizedJson<HomeFeedPage>(`/api/feed/circle?${params.toString()}`, {
+    method: "GET",
+    signal: options.signal
+  }, {
     action: "loading your circle feed",
     timeoutMs: 12_000
   });
 
-  const nextCursor = page.nextCursorString ??
-    (typeof page.nextCursor === "string"
-      ? page.nextCursor
-      : page.nextCursor
-        ? JSON.stringify(page.nextCursor)
-        : null);
-
   return {
-    nextCursor,
-    posts: page.posts ?? [],
-    viewerName: page.viewerName ?? page.myName ?? ""
+    nextCursor: page.nextCursor,
+    posts: (page.posts ?? []).map(mapHomeFeedPost),
+    viewerName: page.viewerName ?? ""
   };
 }
 

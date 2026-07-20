@@ -111,7 +111,9 @@ test("avatar replacement updates profile through trusted finalization and record
   assert.match(finalizeRoute, /isOwnedReviewMediaPath\(previousPath, userId\)/);
   assert.match(finalizeRoute, /admin\.storage\.from\(REVIEW_MEDIA_BUCKET\)\.remove\(\[previousPath\]\)/);
   assert.match(finalizeRoute, /account_media_cleanup_jobs/);
-  assert.match(profileService, /uploadReviewMedia\(\{\s+category: "avatar"/);
+  assert.match(profileService, /uploadAvatarMediaAsset\(\{/);
+  assert.match(mobileMediaPipeline, /surface: "avatar"/);
+  assert.match(mobileMediaPipeline, /\/api\/media\/avatar\/activate/);
   assert.doesNotMatch(profileService, /storage\.from\("review-photos"\)\.upload/);
 });
 

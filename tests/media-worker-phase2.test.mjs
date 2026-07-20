@@ -5,10 +5,13 @@ import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import sharp from "sharp";
 import ts from "typescript";
+
+const nodeRequire = createRequire(import.meta.url);
 
 function source(relativePath) {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
@@ -56,6 +59,7 @@ function loadPipeline() {
     if (id === "node:path") return path;
     if (id === "node:child_process") return childProcess;
     if (id === "sharp") return sharp;
+    if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
     if (id === "@/lib/observability/server") return {
       mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
     };
@@ -255,8 +259,8 @@ test("partial derivative failure retries safely and a repeat execution converges
   });
   assert.equal(completed.succeeded, 1);
   assert.equal(second.calls.completion, 1);
-  assert.equal(second.calls.upserts.size, 2);
-  assert.deepEqual(Array.from(second.calls.upserts.values()).map((row) => row.kind).sort(), ["canonical", "thumbnail"]);
+  assert.equal(second.calls.upserts.size, 3);
+  assert.deepEqual(Array.from(second.calls.upserts.values()).map((row) => row.kind).sort(), ["canonical", "feed", "thumbnail"]);
 });
 
 test("two worker batches racing receive only one claimed execution", async () => {
@@ -288,6 +292,7 @@ test("all image crash checkpoints recover, including crash after authoritative c
     "after_source_validation",
     "after_canonical_creation",
     "after_thumbnail_creation",
+    "after_feed_creation",
     "after_first_derivative_upload",
     "after_all_derivative_uploads",
     "after_derivative_metadata",

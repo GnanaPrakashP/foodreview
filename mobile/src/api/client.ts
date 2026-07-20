@@ -44,7 +44,15 @@ export async function authorizedJson<T>(
   options: { action?: string; timeoutMs?: number } = {}
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const externalSignal = init.signal;
+  let didTimeout = false;
+  const forwardExternalAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const startedAt = Date.now();
   const requestId = createRequestId();
   const endpoint = path.split("?")[0]
@@ -87,6 +95,7 @@ export async function authorizedJson<T>(
     return payload;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      if (externalSignal?.aborted && !didTimeout) throw error;
       const timeoutError = new Error("Request timed out. Please try again.");
       captureMobileError("api.timeout", timeoutError, { correlation_id: requestId, endpoint });
       recordMobileFlow("api.request", Date.now() - startedAt, "failure", { endpoint, status: 0 });
@@ -99,5 +108,6 @@ export async function authorizedJson<T>(
     throw error;
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", forwardExternalAbort);
   }
 }

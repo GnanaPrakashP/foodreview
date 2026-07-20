@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 import { parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PostEngagementState } from "@/lib/server/post-engagement-state";
 import type { Review } from "@/lib/types";
-import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
+import { resolveHomeMediaAccess, type HomeMediaCoverDto } from "@/lib/server/post-media-access";
 import { loadCanonicalCircleFeedPage, type CanonicalCircleFeedPage } from "@/lib/server/canonical-circle-feed";
 import { beginRequestPerformanceTrace, tracedJson } from "@/lib/server/request-performance";
 
@@ -33,7 +34,10 @@ export async function GET(req: NextRequest) {
   const trace = beginRequestPerformanceTrace(req, "api.feed.circle");
   const { actor } = await getRouteActor(req);
   if (!actor) return tracedJson(trace, { error: "Unauthorized" }, { status: 401 });
-  const limit = parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE);
+  const limit = Math.min(
+    Math.max(Math.floor(parseNumber(req.nextUrl.searchParams.get("limit"), CIRCLE_FEED_PAGE_SIZE)), 1),
+    CIRCLE_FEED_PAGE_SIZE
+  );
   const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);
@@ -55,26 +59,34 @@ export async function GET(req: NextRequest) {
     if (!page.myName) {
       return tracedJson(trace, { error: "Unauthorized" }, { status: 401 });
     }
-    const mediaAssetIds = page.reviews.flatMap((review) => (review.media_items ?? []).map((item) => item.media_asset_id).filter((id): id is string => Boolean(id)));
+    const mediaAssetIds = page.reviews.flatMap((review) => {
+      const cover = review.media_items?.[0];
+      return cover?.media_asset_id ? [cover.media_asset_id] : [];
+    });
     const engagementByPostId = buildPageEngagementStates(page);
     const accountTypeByReviewer = new Map(Object.entries(page.accountTypeMap));
     const requestStatusByReviewer = new Map(Object.entries(page.requestStatusMap));
     const authorisedMedia = await trace.measure(
       "media",
       "feed.media_authorization",
-      () => resolvePostMediaAccess(admin, mediaAssetIds, page.myName, trace)
+      () => resolveHomeMediaAccess(admin, mediaAssetIds, actor.userId, trace)
     );
-    const mediaByAssetId = new Map(authorisedMedia.map((item) => [item.id, item]));
+    const mediaByAssetId = new Map((authorisedMedia as HomeMediaCoverDto[]).map((item) => [item.mediaAssetId, item]));
     const responseBody = await trace.measure("assembly", "feed.response_assembly", () => ({
-      ...page,
-      nextCursorString: serializeCircleFeedCursor(page.nextCursor),
-      posts: page.reviews.map((review) => {
-        const engagement = engagementByPostId.get(review.id);
-        return {
-          ...reviewPostFromReview(review, page, engagement, requestStatusByReviewer, accountTypeByReviewer, mediaByAssetId),
-          engagement,
-        };
+      nextCursor: serializeCircleFeedCursor(page.nextCursor),
+      posts: page.reviews.map((review) => reviewPostFromReview(
+        review,
+        page,
+        engagementByPostId.get(review.id),
+        requestStatusByReviewer,
+        accountTypeByReviewer,
+        mediaByAssetId
+      )).filter((post) => {
+        if (post.coverMedia && post.mediaCount > 0) return true;
+        console.warn("[feed/circle] excluded published post with invalid media", { postId: post.id });
+        return false;
       }),
+      viewerName: page.myName
     }));
     return tracedJson(trace, responseBody);
   } catch (error) {
@@ -89,56 +101,62 @@ function reviewPostFromReview(
   engagement: PostEngagementState | undefined,
   requestStatusByReviewer: Map<string, CirclePostRequestStatus>,
   accountTypeByReviewer: Map<string, "public" | "private">,
-  mediaByAssetId: Map<string, PostMediaDto>
+  mediaByAssetId: Map<string, HomeMediaCoverDto>
 ) {
   const displayName = page.profileMap[review.reviewer_name] ?? review.reviewer_name;
-  const context = review.reviewer_name === page.myName
-    ? "your post"
-    : page.joinedCircles.includes(review.reviewer_name)
-      ? "from your circle"
-      : "suggested by CircleBites";
+  const authorAvatar = page.authorAvatarMap[review.reviewer_name] ?? null;
+  const isPublicDiscovery = review.reviewer_name !== page.myName && !page.joinedCircles.includes(review.reviewer_name);
+  const cover = review.media_items?.[0];
+  const authorisedCover = cover?.media_asset_id ? mediaByAssetId.get(cover.media_asset_id) : null;
+  const legacyCoverUrl = !cover?.media_asset_id ? cover?.public_url ?? null : null;
+  const mediaType = authorisedCover?.mediaType ?? (cover?.media_type === "video" ? "video" : "image");
+  const legacyVersion = legacyCoverUrl
+    ? createHash("sha256").update(legacyCoverUrl).digest("hex").slice(0, 16)
+    : null;
+  const coverMedia = authorisedCover || legacyCoverUrl ? {
+    cacheRevision: authorisedCover?.cacheRevision ?? 1,
+    deliveryDerivative: authorisedCover?.deliveryDerivative ?? "legacy",
+    feedUrl: authorisedCover?.feedUrl ?? (mediaType === "image" ? legacyCoverUrl : null),
+    expiresAt: authorisedCover?.expiresAt ?? null,
+    height: authorisedCover?.height ?? cover?.height ?? 450,
+    isLegacy: !authorisedCover,
+    mediaAssetId: authorisedCover?.mediaAssetId ?? cover?.media_asset_id ?? `legacy:${review.id}:${cover?.position ?? 0}:${legacyVersion}`,
+    mediaType,
+    placeholder: authorisedCover?.placeholder ?? cover?.placeholder ?? null,
+    playbackUrl: authorisedCover?.playbackUrl ?? (mediaType === "video" ? legacyCoverUrl : null),
+    posterUrl: authorisedCover?.posterUrl ?? (mediaType === "video" ? cover?.poster_url ?? legacyCoverUrl : null),
+    width: authorisedCover?.width ?? cover?.width ?? 360
+  } : null;
+  const mediaCount = Math.max(review.media_count ?? review.media_items?.length ?? 0, coverMedia ? 1 : 0);
   const summary = page.tasteTrustSummaryMap[review.id];
   return {
     id: review.id,
-    reviewerName: review.reviewer_name,
     reviewerUsername: review.reviewer_name,
     authorName: displayName,
     authorInitials: initialsForName(displayName),
+    authorProfileId: authorAvatar?.profileId ?? null,
+    avatarMediaAssetId: authorAvatar?.avatarMediaAssetId ?? null,
+    avatarCacheRevision: authorAvatar?.avatarCacheRevision ?? 1,
+    avatarThumbnailUrl: authorAvatar?.avatarThumbnailUrl ?? null,
+    avatarPlaceholder: authorAvatar?.avatarPlaceholder ?? null,
     restaurantId: review.restaurant_id,
     restaurantName: review.restaurant_name,
     area: review.area,
     restaurantAddress: review.restaurant_address,
     restaurantLat: review.restaurant_lat,
     restaurantLng: review.restaurant_lng,
-    items: review.items ?? [],
+    items: (review.items ?? []).map((item) => ({ name: item.name, rating: item.rating })),
     body: review.body,
     tags: review.tags ?? [],
-    media: (review.media_items ?? []).flatMap((item, index) => {
-      const authorised = item.media_asset_id ? mediaByAssetId.get(item.media_asset_id) : null;
-      if (item.media_asset_id && !authorised) return [];
-      return [{
-        accessClass: authorised?.accessClass ?? "legacy_public",
-        aspectRatio: authorised?.aspectRatio ?? null,
-        expiresAt: authorised?.expiresAt ?? null,
-        mediaAssetId: item.media_asset_id ?? null,
-        mediaType: authorised?.mediaType ?? (item.media_type === "video" ? "video" : "image"),
-        placeholder: authorised?.placeholder ?? null,
-        posterUrl: authorised?.posterUrl ?? null,
-        position: authorised?.position ?? item.position ?? index,
-        publicUrl: authorised?.displayUrl ?? item.public_url,
-        thumbnailUrl: authorised?.thumbnailUrl ?? null,
-      }];
-    }),
+    mediaCount,
+    coverMedia,
     visibility: review.visibility === "circle" || review.visibility === "me" ? review.visibility : "public",
-    status: review.status ?? "active",
     createdAt: review.created_at,
     likeCount: engagement?.likeCount ?? page.likeCountMap[review.id] ?? 0,
     commentCount: engagement?.commentCount ?? page.commentMap[review.id]?.count ?? 0,
     likedByMe: engagement?.likedByMe ?? page.likedByMeMap[review.id] ?? false,
     bookmarkedByMe: engagement?.bookmarkedByMe ?? page.bookmarkedPostMap[review.id] ?? false,
-    feedContextLabel: context,
-    feedSectionLabel: context === "suggested by CircleBites" ? "Suggested for you" : "Circles you're in",
-    isPublicDiscovery: context === "suggested by CircleBites",
+    isPublicDiscovery,
     circleRequestAccountType: accountTypeByReviewer.get(review.reviewer_name) ?? null,
     circleRequestStatus: requestStatusByReviewer.get(review.reviewer_name) ?? "idle",
     foodReaction: engagement?.foodReaction ?? null,

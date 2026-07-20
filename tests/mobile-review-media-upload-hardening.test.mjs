@@ -60,7 +60,7 @@ test("mobile post flow uploads through media assets sequentially", () => {
   assert.match(mediaPipeline, /\/api\/media\/finalize-upload/);
   assert.match(mediaPipeline, /\/api\/media\/status\?ids=/);
   assert.match(mediaPipeline, /function defaultCropRect/);
-  assert.match(mediaPipeline, /targetAspect: mediaKind === "image" \|\| mediaKind === "video" \? 4 \/ 5 : null/);
+  assert.match(mediaPipeline, /targetAspect: surface === "avatar" \? 1 : mediaKind === "image" \|\| mediaKind === "video" \? 4 \/ 5 : null/);
   assert.match(mediaPipeline, /waitForReadyMedia/);
   assert.match(mediaPipeline, /intent\.accessClass !== expectedAccessClass/);
   assert.match(mediaPipeline, /XMLHttpRequest/);

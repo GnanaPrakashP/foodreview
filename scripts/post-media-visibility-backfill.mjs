@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const apply = process.argv.includes("--apply");
+const imagesOnly = process.argv.includes("--images-only");
 const afterArg = process.argv.find((arg) => arg.startsWith("--after="))?.slice("--after=".length) ?? "";
 const limitArg = Number(process.argv.find((arg) => arg.startsWith("--limit="))?.slice("--limit=".length) ?? 500);
 const limit = Math.max(1, Math.min(Number.isFinite(limitArg) ? limitArg : 500, 5000));
@@ -14,6 +15,7 @@ if (!url || !serviceKey) {
 const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
 const report = {
   mode: apply ? "apply" : "dry-run",
+  imagesOnly,
   scanned: 0,
   byVisibility: { public: 0, circle: 0, me: 0, unknown: 0 },
   byBucket: {},
@@ -23,6 +25,7 @@ const report = {
   migrated: 0,
   ambiguous: 0,
   failed: 0,
+  skippedVideos: 0,
   nextAfter: afterArg || null
 };
 
@@ -283,6 +286,10 @@ for (const row of rows ?? []) {
   countBucket(row.media_asset_id ? "media-pipeline" : sourceBucketFor(row.storage_path));
   if (!review || !row.storage_path) {
     report.ambiguous += 1;
+    continue;
+  }
+  if (imagesOnly && row.media_type === "video") {
+    report.skippedVideos += 1;
     continue;
   }
   if (row.media_asset_id) report.generic += 1;

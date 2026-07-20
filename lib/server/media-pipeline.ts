@@ -1,24 +1,47 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import sharp from "sharp";
 import { mediaWorkerLogger } from "@/lib/observability/server";
+import {
+  MEDIA_ALPHA_BACKGROUND,
+  MEDIA_AVATAR_CANONICAL_SIZE,
+  MEDIA_AVATAR_THUMB_SIZE,
+  MEDIA_IMAGE_PROCESSING_VERSION,
+  MEDIA_MEMORY_MAX_EDGE,
+  MEDIA_MEMORY_THUMB_EDGE,
+  MEDIA_POST_CANONICAL_HEIGHT,
+  MEDIA_POST_CANONICAL_WIDTH,
+  MEDIA_POST_FEED_HEIGHT,
+  MEDIA_POST_FEED_WIDTH,
+  MEDIA_POST_THUMB_HEIGHT,
+  MEDIA_POST_THUMB_WIDTH,
+  cropPixelsForRect as sharedCropPixelsForRect,
+  normalizeAlphaForJpeg,
+  renderMediaImageDerivatives
+} from "@/lib/media-image-processing.cjs";
 
 export const MEDIA_SOURCE_BUCKET = "media-sources";
 export const MEDIA_PUBLIC_BUCKET = "media-public";
 export const MEDIA_PRIVATE_BUCKET = "media-private";
 export const MEDIA_INTENT_TTL_MS = 10 * 60 * 1000;
 export const MEDIA_POST_TARGET_ASPECT = 4 / 5;
-export const MEDIA_POST_CANONICAL_WIDTH = 1080;
-export const MEDIA_POST_CANONICAL_HEIGHT = 1350;
-export const MEDIA_POST_THUMB_WIDTH = 360;
-export const MEDIA_POST_THUMB_HEIGHT = 450;
-export const MEDIA_AVATAR_CANONICAL_SIZE = 512;
-export const MEDIA_AVATAR_THUMB_SIZE = 128;
-export const MEDIA_MEMORY_MAX_EDGE = 1600;
-export const MEDIA_MEMORY_THUMB_EDGE = 360;
+export {
+  MEDIA_ALPHA_BACKGROUND,
+  MEDIA_AVATAR_CANONICAL_SIZE,
+  MEDIA_AVATAR_THUMB_SIZE,
+  MEDIA_IMAGE_PROCESSING_VERSION,
+  MEDIA_MEMORY_MAX_EDGE,
+  MEDIA_MEMORY_THUMB_EDGE,
+  MEDIA_POST_CANONICAL_HEIGHT,
+  MEDIA_POST_CANONICAL_WIDTH,
+  MEDIA_POST_FEED_HEIGHT,
+  MEDIA_POST_FEED_WIDTH,
+  MEDIA_POST_THUMB_HEIGHT,
+  MEDIA_POST_THUMB_WIDTH
+};
 export const MEDIA_POST_SIGNED_URL_TTL_SECONDS = 5 * 60;
 export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_IMAGE_MAX_PIXELS = 80_000_000;
@@ -30,7 +53,7 @@ export const MEDIA_WORKER_DEFAULT_CONCURRENCY = 2;
 export type MediaSurface = "post" | "avatar" | "memory";
 export type MediaType = "image" | "video";
 export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" | "failed" | "rejected" | "expired" | "abandoned" | "cancelled";
-export type MediaDerivativeKind = "canonical" | "thumbnail" | "poster";
+export type MediaDerivativeKind = "canonical" | "feed" | "thumbnail" | "poster";
 export type MediaAccessClass = "public_post" | "circle_post" | "private_post" | "avatar_public" | "memory_private";
 
 export type NormalizedCropRect = {
@@ -94,6 +117,9 @@ export type MediaDerivativeRow = {
   public_url: string | null;
   storage_path: string;
   width: number | null;
+  content_revision?: number;
+  content_sha256?: string | null;
+  processing_version?: string | null;
 };
 
 type AdminClient = {
@@ -529,40 +555,7 @@ export function validateDetectedMedia({
 }
 
 export function cropPixelsForRect(cropRect: NormalizedCropRect | Record<string, unknown>, width: number, height: number) {
-  const crop = normalizeCropRecord(cropRect);
-  if (width <= 0 || height <= 0) throw new Error("media_image_dimensions_too_large");
-
-  let left = Math.max(0, Math.min(width - 1, Math.round(crop.x * width)));
-  let top = Math.max(0, Math.min(height - 1, Math.round(crop.y * height)));
-  let cropWidth = Math.max(1, Math.min(width - left, Math.round(crop.width * width)));
-  let cropHeight = Math.max(1, Math.min(height - top, Math.round(crop.height * height)));
-
-  if (crop.targetAspect && crop.targetAspect > 0) {
-    const currentAspect = cropWidth / cropHeight;
-    if (currentAspect > crop.targetAspect) {
-      const nextWidth = Math.max(1, Math.round(cropHeight * crop.targetAspect));
-      left += Math.floor((cropWidth - nextWidth) / 2);
-      cropWidth = nextWidth;
-    } else if (currentAspect < crop.targetAspect) {
-      const nextHeight = Math.max(1, Math.round(cropWidth / crop.targetAspect));
-      top += Math.floor((cropHeight - nextHeight) / 2);
-      cropHeight = nextHeight;
-    }
-  }
-
-  if (left + cropWidth > width) cropWidth = width - left;
-  if (top + cropHeight > height) cropHeight = height - top;
-  return { height: Math.max(1, cropHeight), left, top, width: Math.max(1, cropWidth) };
-}
-
-function normalizeCropRecord(value: NormalizedCropRect | Record<string, unknown>): NormalizedCropRect {
-  return {
-    height: Math.max(0.000001, Number(value.height ?? 1)),
-    targetAspect: value.targetAspect === null || value.targetAspect === undefined ? null : Number(value.targetAspect),
-    width: Math.max(0.000001, Number(value.width ?? 1)),
-    x: Math.max(0, Number(value.x ?? 0)),
-    y: Math.max(0, Number(value.y ?? 0))
-  };
+  return sharedCropPixelsForRect(cropRect, width, height);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string) {
@@ -636,21 +629,23 @@ async function processImageAsset(
   } catch {
     throw new Error("media_image_decode_failed");
   }
-  const sourceWidth = metadata.width ?? 0;
-  const sourceHeight = metadata.height ?? 0;
+  const sourceWidth = metadata.autoOrient?.width ?? metadata.width ?? 0;
+  const sourceHeight = metadata.autoOrient?.height ?? metadata.height ?? 0;
   if (sourceWidth <= 0 || sourceHeight <= 0 || sourceWidth * sourceHeight > MEDIA_IMAGE_MAX_PIXELS) {
     throw new Error("media_image_dimensions_too_large");
   }
 
   const crop = cropPixelsForRect(asset.crop_rect, sourceWidth, sourceHeight);
-  const cropped = base.clone().extract(crop).flatten({ background: "#ffffff" });
-  const canonical = await renderCanonicalImage(asset, cropped.clone());
+  const normalized = normalizeAlphaForJpeg(base, metadata);
+  const cropped = normalized.image.clone().extract(crop);
+  const { canonical, feed, thumbnail } = await renderMediaImageDerivatives(asset.surface, cropped);
   await lease?.checkpoint("after_canonical_creation");
-  const thumbnail = await renderThumbnailImage(asset, cropped.clone());
   await lease?.checkpoint("after_thumbnail_creation");
+  if (feed) await lease?.checkpoint("after_feed_creation");
   const blurhash = await blurhashForImage(canonical.buffer);
   const canonicalPath = buildMediaDerivativePath(asset, "canonical", "jpg");
   const thumbPath = buildMediaDerivativePath(asset, "thumbnail", "jpg");
+  const feedPath = feed ? buildMediaDerivativePath(asset, "feed", "jpg") : null;
   const bucketId = derivativeBucketForSurface(asset.surface);
 
   await lease?.assertCurrent();
@@ -658,10 +653,13 @@ async function processImageAsset(
   await uploadDerivative(admin, bucketId, canonicalPath, canonical.buffer, "image/jpeg", asset.surface, config.uploadTimeoutMs);
   await lease?.checkpoint("after_first_derivative_upload");
   await uploadDerivative(admin, bucketId, thumbPath, thumbnail.buffer, "image/jpeg", asset.surface, config.uploadTimeoutMs);
+  if (feed && feedPath) {
+    await uploadDerivative(admin, bucketId, feedPath, feed.buffer, "image/jpeg", asset.surface, config.uploadTimeoutMs);
+  }
   await lease?.checkpoint("after_all_derivative_uploads");
   if (lease) {
     recordMediaWorkerEvent("derivative_upload_completed", {
-      derivativeCount: 2,
+      derivativeCount: feed ? 3 : 2,
       durationMs: Date.now() - uploadStarted,
       jobId: lease.job.id,
       mediaType: asset.media_type,
@@ -671,16 +669,20 @@ async function processImageAsset(
 
   const canonicalUrl = publicUrlFor(admin, bucketId, canonicalPath);
   const thumbUrl = publicUrlFor(admin, bucketId, thumbPath);
+  const feedUrl = feed && feedPath ? publicUrlFor(admin, bucketId, feedPath) : null;
   await upsertDerivative(admin, {
     asset_id: asset.id,
     blurhash,
     bucket_id: bucketId,
+    content_revision: 1,
+    content_sha256: createHash("sha256").update(canonical.buffer).digest("hex"),
     duration_ms: null,
     file_size_bytes: canonical.buffer.byteLength,
     height: canonical.height,
     kind: "canonical",
     mime_type: "image/jpeg",
     public_url: canonicalUrl,
+    processing_version: MEDIA_IMAGE_PROCESSING_VERSION,
     storage_path: canonicalPath,
     width: canonical.width
   });
@@ -688,48 +690,41 @@ async function processImageAsset(
     asset_id: asset.id,
     blurhash,
     bucket_id: bucketId,
+    content_revision: 1,
+    content_sha256: createHash("sha256").update(thumbnail.buffer).digest("hex"),
     duration_ms: null,
     file_size_bytes: thumbnail.buffer.byteLength,
     height: thumbnail.height,
     kind: "thumbnail",
     mime_type: "image/jpeg",
     public_url: thumbUrl,
+    processing_version: MEDIA_IMAGE_PROCESSING_VERSION,
     storage_path: thumbPath,
     width: thumbnail.width
   });
+  if (feed && feedPath) {
+    await upsertDerivative(admin, {
+      asset_id: asset.id,
+      blurhash,
+      bucket_id: bucketId,
+      content_revision: 1,
+      content_sha256: createHash("sha256").update(feed.buffer).digest("hex"),
+      duration_ms: null,
+      file_size_bytes: feed.buffer.byteLength,
+      height: feed.height,
+      kind: "feed",
+      mime_type: "image/jpeg",
+      public_url: feedUrl,
+      processing_version: MEDIA_IMAGE_PROCESSING_VERSION,
+      storage_path: feedPath,
+      width: feed.width
+    });
+  }
   await lease?.checkpoint("after_derivative_metadata");
   return {
     durationMs: null,
     height: canonical.height,
     width: canonical.width
-  };
-}
-
-async function renderCanonicalImage(asset: MediaAssetRow, image: sharp.Sharp) {
-  const pipeline = asset.surface === "post"
-    ? image.resize(MEDIA_POST_CANONICAL_WIDTH, MEDIA_POST_CANONICAL_HEIGHT, { fit: "fill" })
-    : asset.surface === "avatar"
-      ? image.resize(MEDIA_AVATAR_CANONICAL_SIZE, MEDIA_AVATAR_CANONICAL_SIZE, { fit: "fill" })
-      : image.resize({ fit: "inside", height: MEDIA_MEMORY_MAX_EDGE, width: MEDIA_MEMORY_MAX_EDGE, withoutEnlargement: true });
-  const result = await pipeline.jpeg({ mozjpeg: true, quality: 85 }).toBuffer({ resolveWithObject: true });
-  return {
-    buffer: result.data,
-    height: result.info.height,
-    width: result.info.width
-  };
-}
-
-async function renderThumbnailImage(asset: MediaAssetRow, image: sharp.Sharp) {
-  const pipeline = asset.surface === "post"
-    ? image.resize(MEDIA_POST_THUMB_WIDTH, MEDIA_POST_THUMB_HEIGHT, { fit: "fill" })
-    : asset.surface === "avatar"
-      ? image.resize(MEDIA_AVATAR_THUMB_SIZE, MEDIA_AVATAR_THUMB_SIZE, { fit: "fill" })
-      : image.resize({ fit: "inside", height: MEDIA_MEMORY_THUMB_EDGE, width: MEDIA_MEMORY_THUMB_EDGE, withoutEnlargement: true });
-  const result = await pipeline.jpeg({ mozjpeg: true, quality: 82 }).toBuffer({ resolveWithObject: true });
-  return {
-    buffer: result.data,
-    height: result.info.height,
-    width: result.info.width
   };
 }
 

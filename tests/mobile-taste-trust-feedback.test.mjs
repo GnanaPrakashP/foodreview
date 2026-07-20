@@ -22,7 +22,6 @@ const reactionTypes = source("mobile/src/components/reactions/reactionTypes.ts")
 const reviewDetail = source("mobile/app/reviews/[id].tsx");
 const postFeed = source("mobile/src/components/feeds/PostFeed.tsx");
 const feedHook = source("mobile/src/hooks/useFeeds.ts");
-const feedService = source("mobile/src/services/feeds.ts");
 const circleFeedRoute = source("app/api/feed/circle/route.ts");
 const latestPostEngagement = source("mobile/src/state/latestPostEngagement.ts");
 
@@ -52,12 +51,13 @@ test("mobile Taste Trust feedback goes through the existing server endpoint", ()
 });
 
 test("mobile feed cards render the two MVP reaction options", () => {
-  assert.match(postCard, /function TasteTrustFeedback/);
+  assert.match(postCard, /function TasteTrustFeedbackComponent/);
   assert.doesNotMatch(postCard, /showTasteTrustFeedback/);
-  assert.match(postCard, /<TasteTrustFeedback\s+feedbackState=\{feedbackQuery\.data\}\s+isAuthenticated=\{isAuthenticated\}\s+onVisualStateChange=\{setVisualTasteTrustState\}\s+post=\{post\}\s+viewerName=\{viewerName\}\s+\/>/);
+  assert.match(postCard, /const feedbackKey = diagnosticRecycling[\s\S]*\? "recycled-feedback"[\s\S]*: diagnosticPlan\?\.stableSvgIdentity \? "stable-feedback" : post\.id/);
+  assert.match(postCard, /<TasteTrustFeedback[\s\S]*feedbackState=\{feedbackQuery\.data\}[\s\S]*isAuthenticated=\{isAuthenticated\}[\s\S]*key=\{feedbackKey\}[\s\S]*onVisualStateChange=\{handleVisualTasteTrustState\}[\s\S]*post=\{post\}[\s\S]*viewerName=\{viewerName\}/);
   assert.match(postCard, /const isAuthenticated = useSessionStore\(\(state\) => state\.isAuthenticated\)/);
   assert.match(postCard, /const canSubmit = isAuthenticated && Boolean\(viewerName\) && !isPrivatePost/);
-  assert.match(postCard, /if \(isPrivatePost\) return null/);
+  assert.match(postCard, /const node = isPrivatePost \? null : \(/);
   assert.match(reviewDetail, /<PostCard loadDetailEngagement mediaActive post=\{post\.data\} \/>/);
   assert.doesNotMatch(postFeed, /showTasteTrustFeedback/);
   assert.match(reactionTypes, /export type FoodReactionType = "mustTry" \| "notWorthIt"/);
@@ -67,7 +67,7 @@ test("mobile feed cards render the two MVP reaction options", () => {
   assert.match(postCard, /reactionFeedbackLabelByType: Record<FoodReactionType, TasteTrustFeedbackLabel>/);
   assert.match(latestPostEngagement, /export function optimisticReactionIntentState/);
   assert.match(postCard, /const selectedReaction = reactionTypeForFeedbackLabel\(selectedLabel\)/);
-  assert.match(postCard, /const reactionCounts = foodReactionCountsFor\(summary\)/);
+  assert.match(postCard, /const reactionCounts = useMemo\(\(\) => foodReactionCountsFor\(summary\), \[summary\]\)/);
   assert.match(postCard, /function foodReactionTotalFor\(summary: PostTasteTrustSummary\)/);
   assert.match(postCard, /visualTasteTrustState\?\.summary \?\? feedbackQuery\.data\?\.summary \?\? fallbackTasteTrustState\.summary/);
   assert.match(postCard, /const targetUsername = post\.reviewerUsername \|\| post\.reviewerName/);
@@ -78,45 +78,45 @@ test("mobile feed cards render the two MVP reaction options", () => {
   assert.match(postCard, /function optimisticCircleRequestStatus\(post: ReviewPost\): "pending" \| "joined"/);
   assert.match(postCard, /return post\.circleRequestAccountType === "public" \? "joined" : "pending"/);
   assert.match(postCard, /function circleRequestLabel\(status: CircleRequestVisualStatus\)/);
-  assert.match(postCard, /const \[requestInteracted, setRequestInteracted\] = useState\(false\)/);
+  assert.match(postCard, /const \[requestInteracted, setRequestInteracted\] = useFixedGeometryRecyclingState\(false, \[recyclingStateScope\]\)/);
   assert.match(postCard, /requestStatus !== "joined" \|\| requestInteracted/);
   assert.match(postCard, /const requestInFlightRef = useRef\(false\)/);
   assert.match(postCard, /desiredRequestStatusRef\.current = nextStatus/);
   assert.match(postCard, /if \(desiredRequestStatusRef\.current !== syncedRequestStatusRef\.current\)/);
   assert.match(postCard, /useSetCircleAccessStatusMutation/);
   assert.doesNotMatch(postCard, /disabled=\{requestStatus !== "idle" \|\| requestCircleMutation\.isPending\}/);
-  assert.match(postCard, /<Text style=\{styles\.sharedContext\}>shared a spot<\/Text>/);
+  assert.match(postCard, /<Text style=\{styles\.sharedContext\}>\{textMode === "single-line" \? " · shared a spot" : "\\nshared a spot"\}<\/Text>/);
   assert.doesNotMatch(postCard, /post\.feedContextLabel \?\? "shared a spot"/);
   assert.match(postCard, /<Text style=\{styles\.actionText\}>\{foodReactionTotal\}<\/Text>/);
   assert.doesNotMatch(postCard, /<Text style=\{styles\.actionText\}>\{post\.items\.length\}<\/Text>/);
-  assert.match(postCard, /<ReactionBar\s+counts=\{reactionCounts\}\s+onReact=\{reactToFood\}\s+selectedReaction=\{selectedReaction\}\s+\/>/);
+  assert.match(postCard, /<ReactionBar\s+counts=\{reactionCounts\}\s+countAnimationRevision=\{countAnimationRevisionRef\.current\}\s+diagnosticPlainIcons=\{diagnosticPlainIcons\}\s+onReact=\{reactToFood\}\s+recyclingKey=\{diagnosticRecycling \? post\.id : undefined\}\s+selectedReaction=\{selectedReaction\}\s+\/>/);
   assert.doesNotMatch(postCard, /You cannot react to your own post\./);
   assert.match(postCard, /Log in to react to this post\./);
   assert.doesNotMatch(postCard, /Do you agree\?/);
   assert.doesNotMatch(postCard, /Requesting/);
 });
 
-test("mobile circle feed labels use current copy and compact section spacing", () => {
-  assert.match(circleFeedRoute, /"Suggested for you"/);
-  assert.match(circleFeedRoute, /"Circles you're in"/);
-  assert.doesNotMatch(circleFeedRoute, /"New from your circle"/);
+test("mobile Circle payload omits unused section-label copy and keeps compact spacing", () => {
+  assert.doesNotMatch(circleFeedRoute, /feedContextLabel|feedSectionLabel|"Suggested for you"|"Circles you're in"/);
   assert.match(postFeed, /paddingTop: spacing\.xs/);
 });
 
 test("mobile post cards only route explicit tap targets", () => {
   const profileNavigation = readFileSync("mobile/src/navigation/profileNavigation.ts", "utf8");
   assert.match(postCard, /Share,[\s\S]*Pressable,[\s\S]*StyleSheet,[\s\S]*Text,[\s\S]*View[\s\S]*from "react-native"/);
-  assert.match(postCard, /function openProfile\(\)/);
+  assert.match(postCard, /const openProfile = useCallback\(\(\) =>/);
   assert.match(postCard, /openProfileRoute\(\{ queryClient, router, username: targetUsername, viewerUsername: viewerName \}\)/);
   assert.match(profileNavigation, /pathname: "\/people\/\[username\]"/);
-  assert.match(postCard, /function openRestaurant\(\)/);
+  assert.match(postCard, /const openRestaurant = useCallback\(\(\) =>/);
   assert.match(postCard, /pathname: "\/restaurants\/\[placeId\]"/);
   assert.match(postCard, /pathname: "\/restaurants\/by-name\/\[restaurant\]"/);
-  assert.match(postCard, /function openMaps\(\)/);
+  assert.match(postCard, /const openMaps = useCallback\(\(\) =>/);
   assert.match(postCard, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
   assert.match(postCard, /onPress=\{openProfile\}/);
-  assert.match(postCard, /onPress=\{openRestaurant\}/);
-  assert.match(postCard, /onPress=\{openMaps\}/);
+  assert.match(postCard, /onOpenRestaurant=\{openRestaurant\}/);
+  assert.match(postCard, /onPress=\{onOpenRestaurant\}/);
+  assert.match(postCard, /onOpenMaps=\{openMaps\}/);
+  assert.match(postCard, /onPress=\{onOpenMaps\}/);
   assert.doesNotMatch(postCard, /function openPost\(\)/);
   assert.doesNotMatch(postCard, /onPress=\{openPost\}/);
   assert.doesNotMatch(postCard, /router\.push\(\{\s*pathname: "\/reviews\/\[id\]"/);
@@ -125,7 +125,7 @@ test("mobile post cards only route explicit tap targets", () => {
   assert.match(postCard, /receiverName: targetUsername/);
 });
 
-test("mobile reaction row uses premium animated two-pill buttons", () => {
+test("mobile reaction row keeps premium two-pill buttons with user-only native count animation", () => {
   assert.match(reactionIcons, /import Svg, \{ G, Path \} from "react-native-svg"/);
   assert.match(reactionIcons, /export function HelpfulReactionIcon/);
   assert.match(reactionIcons, /export function NotWorthItReactionIcon/);
@@ -138,14 +138,17 @@ test("mobile reaction row uses premium animated two-pill buttons", () => {
   assert.doesNotMatch(reactionButton, /pressScale|toValue: 0\.94|toValue: 1\.08/);
   assert.match(reactionButton, /shadowOpacity: selected \? 0\.18 : 0/);
   assert.match(reactionButton, /Animated\.spring\(countScale/);
+  assert.match(reactionButton, /if \(!userTriggered\)/);
+  assert.equal((reactionButton.match(/useNativeDriver: true/g) ?? []).length, 2);
+  assert.doesNotMatch(reactionButton, /useNativeDriver: false/);
   assert.match(reactionButton, /mustTry: \{\s+accent: "#F05A28"/);
   assert.match(reactionButton, /notWorthIt: \{\s+accent: "#B45353"/);
   assert.match(reactionButton, /minHeight: 44/);
   assert.match(reactionButton, /accessibilityRole="button"/);
-  assert.match(reactionButton, /accessibilityState=\{\{ disabled, selected \}\}/);
+  assert.match(reactionButton, /accessibilityState=\{accessibilityState\}/);
   assert.match(reactionButton, /\$\{accessibilityName\} reaction, \$\{voteLabel\(count\)\}/);
   assert.match(reactionBar, /foodReactionDefinitions\.map/);
-  assert.match(reactionBar, /onPress=\{\(\) => onReact\(reaction\.type\)\}/);
+  assert.match(reactionBar, /const handlePress = useCallback\(\(\) => onReact\(reaction\.type\)/);
   assert.match(reactionBar, /gap: 12/);
   assert.doesNotMatch(postCard, /Do you agree\?/);
 });
@@ -176,7 +179,8 @@ test("mobile Taste Trust hooks patch Circle cache without refreshing feed surfac
   assert.match(mobileTasteTrustHook, /notWorthItCount: state\.summary\.feedback_counts\.Disagree/);
   assert.doesNotMatch(mobileTasteTrustHook, /likedByMe: state\.engagement\.likedByMe/);
   assert.match(postCard, /new LatestIntentQueue<TasteTrustFeedbackLabel \| null, TasteTrustFeedbackState>/);
-  assert.match(postCard, /const \[visualTasteTrustState, setVisualTasteTrustState\] = useState<TasteTrustFeedbackState \| undefined>\(\)/);
+  assert.match(postCard, /const \[scopedVisualTasteTrustState, setScopedVisualTasteTrustState\] = useFixedGeometryRecyclingState</);
+  assert.match(postCard, /if \(tasteTrustVisualStateEqual\(displayedState, nextState\)\) return current/);
   assert.match(postCard, /reactionQueue\.setDesiredIntent\(label\)/);
   assert.match(latestPostEngagement, /Intermediate responses become the next request's/);
   assert.doesNotMatch(mobileTasteTrustHook, /function optimisticState/);

@@ -38,11 +38,11 @@ The Query envelope is UUID-owner-scoped, schema/buster-versioned, mutation-free,
 
 | Surface | Persisted bound |
 | --- | ---: |
-| Circle | First page, 24 posts |
+| Circle | First page, 10 posts |
 | Explore | 60 places, 60 dishes, 60 people |
 | Current Profile | 24 posts |
 | Memory room summaries | 50 rooms |
-| Notification unread count | Scalar |
+| Notification unread state | Boolean |
 
 Infinite-query tail pages, mutations, errors, and other queries are omitted. Expired or within-15-second-safety-window signed media entries are stripped. A malformed dehydrated state now safely becomes an empty query/mutation state. Wrong-owner/corrupt envelopes are deleted. Phase 1C cleanup additionally clears Expo Image disk/memory caches.
 
@@ -159,7 +159,7 @@ Run this matrix on disposable production-like staging after deploying the Phase 
 | Flow | Android mid-range | iOS supported device | Required conditions |
 | --- | --- | --- | --- |
 | Cold/warm launch | Pending | Pending | Five samples each; valid owner cache |
-| Circle cached page/return | Pending | Pending | 24 mixed posts, long captions |
+| Circle cached page/return | Pending | Pending | 10 mixed posts, long captions |
 | Explore first visit/return | Pending | Pending | Location allow/deny; offline cache |
 | Profile first visit/return | Pending | Pending | Several post pages; 50 Memory rooms |
 | Long/mixed feed scroll | Pending | Pending | Multiple images/videos; player count ≤1 |

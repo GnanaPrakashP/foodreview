@@ -141,21 +141,21 @@ async function authScenario(actor, random) {
 }
 
 async function circleScenario(actor) {
-  const first = await apiRequest("circle-feed", actor, "/api/feed/circle?limit=24");
+  const first = await apiRequest("circle-feed", actor, "/api/feed/circle?limit=10");
   const blockedNames = new Set(actor.blockedUsernames);
-  if ((first.payload?.posts ?? []).some((post) => blockedNames.has(post.reviewerName ?? post.reviewer_name))) {
+  if ((first.payload?.posts ?? []).some((post) => blockedNames.has(post.reviewerUsername))) {
     metrics.violation("circle_blocked_actor_visible");
   }
-  const cursor = first.payload?.nextCursorString;
+  const cursor = first.payload?.nextCursor;
   if (cursor) {
-    const second = await apiRequest("circle-feed-page2", actor, `/api/feed/circle?limit=24&cursor=${encodeURIComponent(cursor)}`);
+    const second = await apiRequest("circle-feed-page2", actor, `/api/feed/circle?limit=10&cursor=${encodeURIComponent(cursor)}`);
     const firstIds = new Set((first.payload?.posts ?? []).map((post) => post.id));
     if ((second.payload?.posts ?? []).some((post) => firstIds.has(post.id))) metrics.violation("circle_cursor_duplicate");
-    if ((second.payload?.posts ?? []).some((post) => blockedNames.has(post.reviewerName ?? post.reviewer_name))) {
+    if ((second.payload?.posts ?? []).some((post) => blockedNames.has(post.reviewerUsername))) {
       metrics.violation("circle_blocked_actor_visible");
     }
   }
-  await apiRequest("circle-feed-refresh", actor, "/api/feed/circle?limit=24&refresh=1", { headers: { "Cache-Control": "no-cache" } });
+  await apiRequest("circle-feed-refresh", actor, "/api/feed/circle?limit=10&refresh=1", { headers: { "Cache-Control": "no-cache" } });
 }
 
 async function exploreScenario(actor) {

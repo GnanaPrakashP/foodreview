@@ -218,7 +218,9 @@ for (const job of jobs.rows) {
 }
 const candidateRefs = [];
 for (const asset of assets.rows) {
-  const expected = asset.media_type === "image" ? ["canonical", "thumbnail"] : ["canonical", "poster"];
+  const expected = asset.media_type === "image"
+    ? asset.surface === "post" ? ["canonical", "feed", "thumbnail"] : ["canonical", "thumbnail"]
+    : ["canonical", "poster"];
   const kinds = derivativeKinds.get(asset.id) ?? new Set();
   if (asset.status === "ready" && expected.some((kind) => !kinds.has(kind))) {
     counts.partialDerivatives += 1;

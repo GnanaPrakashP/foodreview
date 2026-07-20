@@ -321,9 +321,10 @@ export async function deleteNotification(notificationId: string): Promise<void> 
   }, { action: "deleting notification", timeoutMs: 8_000 });
 }
 
-export async function getUnreadNotificationCount(): Promise<number> {
-  const payload = await authorizedJson<{ unreadCount: number }>("/api/notifications/unread-count", {
-    method: "GET"
-  }, { action: "loading unread notifications", timeoutMs: 8_000 });
-  return payload.unreadCount ?? 0;
+export async function getNotificationHasUnread(options: { signal?: AbortSignal } = {}): Promise<boolean> {
+  const payload = await authorizedJson<{ hasUnread: boolean }>("/api/notifications/has-unread", {
+    method: "GET",
+    signal: options.signal
+  }, { action: "checking unread notifications", timeoutMs: 8_000 });
+  return payload.hasUnread === true;
 }

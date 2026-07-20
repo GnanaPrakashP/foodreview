@@ -33,7 +33,7 @@ export type MediaCropRect = {
 };
 
 type MediaUploadIntent = {
-  accessClass: "public_post" | "circle_post" | "private_post";
+  accessClass: "public_post" | "circle_post" | "private_post" | "avatar_public" | "memory_private";
   assetId: string;
   expiresAt: string;
   maxAllowedSize: number;
@@ -47,7 +47,7 @@ type MediaUploadIntent = {
 type MediaStatusDerivative = {
   file_size_bytes: number;
   height: number | null;
-  kind: "canonical" | "thumbnail" | "poster";
+  kind: "canonical" | "feed" | "thumbnail" | "poster";
   mime_type: string;
   width: number | null;
 };
@@ -87,6 +87,15 @@ export type UploadPostMediaAssetInput = {
   mimeType?: string | null;
   onUploadProgress?: (progress: number) => void;
   intendedVisibility: Visibility;
+  uri: string;
+  width?: number | null;
+};
+
+export type UploadAvatarMediaAssetInput = {
+  fileSize?: number | null;
+  height?: number | null;
+  mimeType?: string | null;
+  onUploadProgress?: (progress: number) => void;
   uri: string;
   width?: number | null;
 };
@@ -211,20 +220,21 @@ async function createMediaUploadIntent(input: {
   height?: number | null;
   mediaKind: MediaKind;
   mimeType: string;
+  surface?: MediaSurface;
   intendedVisibility: Visibility;
   width?: number | null;
 }) {
   const startedAt = Date.now();
   try {
     const intent = await authorizedMobileJson<MediaUploadIntent>("/api/media/upload-intent", {
-      cropRect: input.cropRect ?? defaultCropRect(input.mediaKind),
+      cropRect: input.cropRect ?? defaultCropRect(input.mediaKind, input.surface),
       durationMs: input.durationMs,
       fileName: input.fileName,
       fileSizeBytes: input.fileSizeBytes,
       height: input.height,
       mediaType: input.mediaKind,
       mimeType: input.mimeType,
-      surface: "post",
+      surface: input.surface ?? "post",
       intendedVisibility: input.intendedVisibility,
       width: input.width
     });
@@ -250,10 +260,10 @@ async function finalizeMediaUpload(input: { assetId: string; uploadPath: string 
   }
 }
 
-function defaultCropRect(mediaKind: MediaKind): MediaCropRect {
+function defaultCropRect(mediaKind: MediaKind, surface: MediaSurface = "post"): MediaCropRect {
   return {
     height: 1,
-    targetAspect: mediaKind === "image" || mediaKind === "video" ? 4 / 5 : null,
+    targetAspect: surface === "avatar" ? 1 : mediaKind === "image" || mediaKind === "video" ? 4 / 5 : null,
     width: 1,
     x: 0,
     y: 0
@@ -335,6 +345,38 @@ async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: 
     recordMobileFlow("media.processing_wait", Date.now() - startedAt, "failure", { media_kind: record.mediaKind });
     captureMobileError("media.processing_wait_failed", error, { media_kind: record.mediaKind });
     throw error;
+  } finally {
+    activePollControllers.delete(controller);
+  }
+}
+
+async function waitForReadyAvatar(assetId: string, onProgress?: (progress: number) => void) {
+  const generation = getActiveCacheGeneration();
+  const ownerScope = getActiveCacheOwner()?.scope;
+  const controller = new AbortController();
+  activePollControllers.add(controller);
+  try {
+    for (let attempt = 0; attempt < MEDIA_STATUS_MAX_POLLS; attempt += 1) {
+      if (!ownerScope || getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) {
+        throw new Error("Media upload account changed.");
+      }
+      const assets = await fetchMediaStatuses([assetId], controller.signal);
+      const asset = assets.find((item) => item.assetId === assetId);
+      if (asset?.status === "ready") {
+        const thumbnail = asset.derivatives.find((derivative) => derivative.kind === "thumbnail");
+        if (!thumbnail || thumbnail.width !== 128 || thumbnail.height !== 128) {
+          throw new Error("Processed profile photo is missing.");
+        }
+        return thumbnail;
+      }
+      if (asset && terminalMediaStatus(asset)) {
+        throw new Error(asset.failureReason || "Profile photo could not be processed. Please select it again.");
+      }
+      onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
+      const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
+      await sleep(Math.round(delay));
+    }
+    throw new Error("Profile photo is still processing. Try again shortly.");
   } finally {
     activePollControllers.delete(controller);
   }
@@ -620,4 +662,52 @@ export async function uploadPostMediaAsset(input: UploadPostMediaAssetInput): Pr
     recoveryId: record.localUploadId,
     width: canonical.width
   };
+}
+
+export async function uploadAvatarMediaAsset(input: UploadAvatarMediaAssetInput) {
+  input.onUploadProgress?.(0.03);
+  const sourceUri = await stageAccountFile(input.uri, "avatar-upload-source");
+  const downscaled = await downscaleImageForUpload(sourceUri);
+  const preparedUri = downscaled?.uri ?? sourceUri;
+  const mimeType = downscaled ? "image/jpeg" : defaultMimeType("image", input.mimeType);
+  const body = await fileBodyFromUri(preparedUri);
+  input.onUploadProgress?.(0.1);
+  const intent = await createMediaUploadIntent({
+    cropRect: defaultCropRect("image", "avatar"),
+    fileName: `avatar.${extensionFor(mimeType, "image")}`,
+    fileSizeBytes: body.byteLength,
+    height: downscaled?.height ?? input.height ?? null,
+    intendedVisibility: "public",
+    mediaKind: "image",
+    mimeType,
+    surface: "avatar",
+    width: downscaled?.width ?? input.width ?? null
+  });
+  if (
+    intent.accessClass !== "avatar_public" || intent.surface !== "avatar" ||
+    intent.mediaType !== "image" || intent.mimeType !== mimeType ||
+    intent.maxAllowedSize < body.byteLength
+  ) {
+    throw new Error("Profile photo upload intent does not match the selected file.");
+  }
+  input.onUploadProgress?.(0.18);
+  await uploadFileBody({
+    body,
+    bucket: intent.uploadBucket,
+    contentType: intent.mimeType,
+    onProgress: (progress) => input.onUploadProgress?.(0.18 + progress * 0.72),
+    path: intent.uploadPath
+  });
+  input.onUploadProgress?.(0.9);
+  await finalizeMediaUpload({ assetId: intent.assetId, uploadPath: intent.uploadPath });
+  await waitForReadyAvatar(intent.assetId, input.onUploadProgress);
+  const activated = await authorizedMobileJson<{ assetId: string; avatarUrl: string }>(
+    "/api/media/avatar/activate",
+    { assetId: intent.assetId }
+  );
+  if (activated.assetId !== intent.assetId || !activated.avatarUrl) {
+    throw new Error("Profile photo could not be activated.");
+  }
+  input.onUploadProgress?.(1);
+  return activated;
 }

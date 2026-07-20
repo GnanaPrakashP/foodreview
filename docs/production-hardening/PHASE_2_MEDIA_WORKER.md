@@ -177,6 +177,7 @@ Server-derived paths are:
 private post image:
   media-private/private-posts/<owner-uuid>/<asset-uuid>/canonical.jpg
   media-private/private-posts/<owner-uuid>/<asset-uuid>/thumbnail.jpg
+  media-private/private-posts/<owner-uuid>/<asset-uuid>/feed.jpg
 
 private post video:
   media-private/private-posts/<owner-uuid>/<asset-uuid>/canonical.mp4

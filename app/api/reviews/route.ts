@@ -211,6 +211,8 @@ export async function POST(req: NextRequest) {
       restaurant_lng: typeof restaurantLng === "number" ? restaurantLng : null,
       restaurant_primary_type: restaurantPrimaryTypeValue,
       restaurant_types: restaurantTypesValue,
+      requires_ready_media: true,
+      status: "draft",
     })
     .select("id")
     .single();
@@ -281,6 +283,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const { data: publishedReview, error: publishError } = await writeDb
+    .from("reviews")
+    .update({ status: "active" })
+    .eq("id", data.id)
+    .eq("status", "draft")
+    .select("id")
+    .maybeSingle();
+  if (publishError || !publishedReview) {
+    await writeDb.from("reviews").delete().eq("id", data.id);
+    const consumedAssetIds = validatedMedia.media
+      .map((item) => item.mediaAssetId)
+      .filter((id): id is string => Boolean(id));
+    if (consumedAssetIds.length > 0) {
+      await writeDb
+        .from("media_assets")
+        .update({ consumed_at: null, updated_at: new Date().toISOString() })
+        .in("id", consumedAssetIds)
+        .eq("owner_id", actor.userId);
+    }
+    await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
+    return NextResponse.json({ error: "Published posts require ready media" }, { status: 409 });
+  }
+
   invalidateSocialCachesForNames([actor.actorName]);
   try {
     await refreshUserReputationFoundation(writeDb, actor.userId);
@@ -330,13 +355,14 @@ async function loadFinalizedReviewMedia(
     original_mime_type: string;
     owner_id: string;
     owner_name: string;
+    privacy_state: string;
     status: string;
     surface: string;
   };
   const { data: assetRows, error: assetError } = uniqueAssetIds.length > 0
     ? await admin
       .from("media_assets")
-      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status, moderation_status, access_class, consumed_at")
+      .select("id, owner_id, owner_name, surface, media_type, original_mime_type, duration_ms, status, privacy_state, moderation_status, access_class, consumed_at")
       .in("id", uniqueAssetIds)
       .returns<ReadyMediaAsset[]>()
     : { data: [], error: null };
@@ -366,6 +392,7 @@ async function loadFinalizedReviewMedia(
         asset.owner_name !== actor.actorName ||
         asset.surface !== "post" ||
         asset.status !== "ready" ||
+        asset.privacy_state !== "stable" ||
         asset.moderation_status !== "approved" ||
         asset.consumed_at !== null ||
         asset.access_class !== accessClassForPostVisibility(visibility) ||

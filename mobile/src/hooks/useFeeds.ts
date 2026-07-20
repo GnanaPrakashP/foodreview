@@ -1,4 +1,4 @@
-import { keepPreviousData, type QueryClient, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, type QueryClient, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getCircleFeed,
   getDishFeed,
@@ -11,11 +11,17 @@ import {
   type RestaurantFeedInput
 } from "@/services/feeds";
 import { getExploreDiscovery } from "@/services/exploreDiscovery";
+import { recordHomePageOneRefreshAt } from "@/home/homeRefreshMetadata";
+import {
+  getActiveCacheGeneration,
+  getActiveCacheOwner,
+  isCacheGenerationActive
+} from "@/security/cacheOwnership";
 import type { PostEngagementState, ReviewPost } from "@/types/models";
 
-// Post delivery URLs expire after five minutes. Active consumers refresh the
-// whole bounded page in one request before expiry; signed URLs are never
-// persisted by the query persister.
+// Non-Home post delivery URLs expire after five minutes. Those active
+// consumers refresh a bounded page before expiry; Home uses stable derivative
+// cache identities and changes only by explicit refresh, pagination, or patch.
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
 const ACTIVE_MEDIA_REFRESH_OPTIONS = {
   refetchInterval: POST_MEDIA_REFRESH_MS,
@@ -63,20 +69,42 @@ export const feedKeys = {
 export function useCircleFeedQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: feedKeys.circle,
-    queryFn: () => getCircleFeed(),
+    queryFn: ({ signal }) => getCircleFeed(null, { signal }),
     enabled: options.enabled ?? true,
-    ...ACTIVE_MEDIA_REFRESH_OPTIONS
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity
   });
 }
 
 export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) {
+  const queryClient = useQueryClient();
   return useInfiniteQuery({
     queryKey: feedKeys.circlePages,
-    queryFn: ({ pageParam }) => getCircleFeed(pageParam),
+    queryFn: async ({ pageParam, signal }) => {
+      const owner = pageParam === null ? getActiveCacheOwner() : null;
+      const generation = owner ? getActiveCacheGeneration() : null;
+      const page = await getCircleFeed(pageParam, { signal });
+      if (
+        owner &&
+        !signal.aborted &&
+        generation !== null &&
+        isCacheGenerationActive(generation) &&
+        getActiveCacheOwner()?.scope === owner.scope
+      ) {
+        recordHomePageOneRefreshAt(queryClient, owner.scope);
+      }
+      return page;
+    },
     enabled: options.enabled ?? true,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: null as string | null,
-    ...ACTIVE_MEDIA_REFRESH_OPTIONS
+    maxPages: 5,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity
   });
 }
 

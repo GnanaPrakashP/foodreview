@@ -65,7 +65,8 @@ test("feed post comments open as a bottom sheet instead of navigating to a post 
   assert.match(postCard, /const commentsOpen = useCommentsSheetStore\(\(state\) => state\.postId === post\.id\)/);
   assert.match(postCard, /const openCommentsSheet = useCommentsSheetStore\(\(state\) => state\.openCommentsSheet\)/);
   assert.match(postCard, /const closeCommentsSheet = useCommentsSheetStore\(\(state\) => state\.closeCommentsSheet\)/);
-  assert.match(postCard, /accessibilityState=\{\{ expanded: commentsOpen \}\}/);
+  assert.match(postCard, /const commentAccessibilityState = useMemo\(\(\) => \(\{ expanded: commentsOpen \}\), \[commentsOpen\]\)/);
+  assert.match(postCard, /accessibilityState=\{commentAccessibilityState\}/);
   assert.match(postCard, /openCommentsSheet\(post\.id, setCommentCount, post\.reviewerUsername \|\| post\.reviewerName\)/);
   assert.match(commentsSheet, /export function PostCommentsSheetHost\(\)/);
   assert.match(commentsSheet, /const postId = useCommentsSheetStore\(\(state\) => state\.postId\)/);

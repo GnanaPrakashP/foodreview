@@ -104,7 +104,7 @@ function loadRoute({ db, viewerName = "" }) {
       if (id === "next/server") return { NextRequest: class {}, NextResponse: mockNextResponse };
       if (id === "@/lib/types") return {};
       if (id === "@/lib/supabase/admin") return { createAdminClient: () => db };
-      if (id === "@/lib/feed-config") return { CIRCLE_FEED_PAGE_SIZE: PAGE_SIZE, CIRCLE_FEED_MAX_PAGE_SIZE: PAGE_SIZE * 2 };
+      if (id === "@/lib/feed-config") return { PUBLIC_FEED_PAGE_SIZE: PAGE_SIZE, PUBLIC_FEED_MAX_PAGE_SIZE: PAGE_SIZE * 2 };
       if (id === "@/lib/circle-feed") {
         return {
           parseCircleFeedCursor: (raw) => {

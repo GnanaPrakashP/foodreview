@@ -5,6 +5,7 @@ import test from "node:test";
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const list = read("app/api/notifications/route.ts");
 const unread = read("app/api/notifications/unread-count/route.ts");
+const hasUnread = read("app/api/notifications/has-unread/route.ts");
 const readOne = read("app/api/notifications/[notificationId]/read/route.ts");
 const readAll = read("app/api/notifications/read-all/route.ts");
 const remove = read("app/api/notifications/[notificationId]/route.ts");
@@ -39,6 +40,14 @@ test("unread endpoint uses an exact head aggregate and transfers no rows", () =>
   assert.match(unread, /\.eq\("is_read", false\)/);
   assert.match(unread, /\.eq\("read", false\)/);
   assert.doesNotMatch(unread, /filterValidNotifications/);
+});
+
+test("Home unread state uses an indexed existence lookup instead of an exact count", () => {
+  assert.match(hasUnread, /getNotificationRouteContext/);
+  assert.match(hasUnread, /\.select\("id"\)/);
+  assert.match(hasUnread, /\.limit\(1\)/);
+  assert.match(hasUnread, /hasUnread:/);
+  assert.doesNotMatch(hasUnread, /count:\s*"exact"|head:\s*true|filterValidNotifications/);
 });
 
 test("missing notification schema fails visibly instead of scanning a legacy fallback", () => {

@@ -7,7 +7,7 @@ import {
   mapProfile,
   type ProfileRow
 } from "@/services/reviewMapper";
-import { uploadReviewMedia } from "@/services/reviewMedia";
+import { uploadAvatarMediaAsset } from "@/services/mediaPipeline";
 import { isProfileComplete, isValidProfileUsername } from "@/utils/profileCompleteness";
 
 const PROFILE_SELECT = [
@@ -195,11 +195,9 @@ export async function updateCurrentUserAvatar(input: AvatarUploadInput): Promise
   const user = userData.user;
   if (!user) throw new Error("Log in before updating your photo");
 
-  await uploadReviewMedia({
-    category: "avatar",
+  await uploadAvatarMediaAsset({
     fileSize: input.fileSize,
     height: input.height,
-    mediaKind: "image",
     mimeType: input.mimeType,
     uri: input.uri,
     width: input.width

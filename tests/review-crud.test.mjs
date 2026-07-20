@@ -43,6 +43,7 @@ function spyDb(...responses) {
   let idx = 0;
   const calls = [];
   let authNameForIntents = "Alice";
+  const createdReviewId = responses[0]?.data?.id ?? "11111111-1111-4111-8111-111111111111";
   return {
     get _calls() { return calls; },
     _setAuthName(name) { authNameForIntents = name || "Alice"; },
@@ -71,6 +72,12 @@ function spyDb(...responses) {
         }
         if (table === "review_media_upload_intents") {
           return Promise.resolve({ data: [], error: null });
+        }
+        const publishesDraft = table === "reviews" && entry.ops.some(
+          ([operation, value]) => operation === "update" && value?.status === "active"
+        );
+        if (publishesDraft) {
+          return Promise.resolve({ data: { id: createdReviewId }, error: null });
         }
         return Promise.resolve(responses[idx++] ?? { data: null, error: null });
       };
@@ -103,6 +110,7 @@ function validIntentFor(authName) {
     original_mime_type: "image/jpeg",
     owner_id: userId,
     owner_name: authName,
+    privacy_state: "stable",
     status: "ready",
     surface: "post",
   };

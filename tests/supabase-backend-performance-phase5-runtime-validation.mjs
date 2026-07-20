@@ -48,16 +48,22 @@ for (const [label, acceptedIndexes] of plans) {
 assert.match(output, /PHASE5_CURSOR_OVERLAP=0/);
 assert.match(output, /PHASE5_CURSOR_PAGE_TWO=24/);
 const circleRows = Number(output.match(/PHASE5_CIRCLE_ROWS=(\d+)/)?.[1]);
-assert.equal(circleRows, 24, `Circle returned ${circleRows} rows instead of one bounded page`);
+assert.equal(circleRows, 10, `Circle returned ${circleRows} rows instead of one bounded page`);
 const circlePayloadBytes = Number(output.match(/PHASE5_CIRCLE_PAYLOAD_BYTES=(\d+)/)?.[1]);
 assert.ok(circlePayloadBytes > 0 && circlePayloadBytes <= 196608,
   `Circle payload ${circlePayloadBytes} exceeds budget`);
 const payloadBytes = Number(output.match(/PHASE5_PAYLOAD_BYTES=(\d+)/)?.[1]);
 assert.ok(payloadBytes > 0 && payloadBytes <= 196608, `public payload ${payloadBytes} exceeds budget`);
+const homeMediaRows = Number(output.match(/PHASE5_HOME_MEDIA_ROWS=(\d+)/)?.[1]);
+assert.equal(homeMediaRows, 10, `Home media authorization returned ${homeMediaRows} assets`);
+const homeMediaPayloadBytes = Number(output.match(/PHASE5_HOME_MEDIA_PAYLOAD_BYTES=(\d+)/)?.[1]);
+assert.ok(homeMediaPayloadBytes > 0 && homeMediaPayloadBytes <= 65536,
+  `Home media authorization payload ${homeMediaPayloadBytes} exceeds budget`);
 
 console.log(JSON.stringify({
   fixture: { comments: 2000, memoryMessages: 5000, notifications: 5000, reviews: 10000 },
   circle: { payloadBytes: circlePayloadBytes, rows: circleRows },
+  homeMedia: { assets: homeMediaRows, authorizationPayloadBytes: homeMediaPayloadBytes },
   payloadBytes,
   plans: timings,
   stableCursor: { overlap: 0, pageTwoRows: 24 },

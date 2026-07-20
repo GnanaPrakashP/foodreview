@@ -43,6 +43,54 @@ on conflict (id) do nothing;
 create temporary table phase5_posts as
 select id, created_at from public.reviews where reviewer_name = 'phase5_author' order by created_at desc, id desc limit 250;
 
+create temporary table phase5_home_media as
+select
+  post.id as review_id,
+  post.visibility,
+  (
+    substr(md5('phase5-home-asset-' || row_number() over (order by post.created_at desc, post.id desc)), 1, 8) || '-' ||
+    substr(md5('phase5-home-asset-' || row_number() over (order by post.created_at desc, post.id desc)), 9, 4) || '-4' ||
+    substr(md5('phase5-home-asset-' || row_number() over (order by post.created_at desc, post.id desc)), 14, 3) || '-8' ||
+    substr(md5('phase5-home-asset-' || row_number() over (order by post.created_at desc, post.id desc)), 18, 3) || '-' ||
+    substr(md5('phase5-home-asset-' || row_number() over (order by post.created_at desc, post.id desc)), 21, 12)
+  )::uuid as asset_id
+from public.reviews post
+where post.reviewer_name = 'phase5_author'
+order by post.created_at desc, post.id desc
+limit 10;
+
+insert into public.media_assets (
+  id, owner_id, owner_name, surface, media_type, original_mime_type, original_extension,
+  original_file_size_bytes, original_width, original_height, crop_rect, source_bucket_id,
+  source_storage_path, status, access_class, privacy_state, visibility, expires_at, processed_at
+)
+select
+  media.asset_id, '00000000-0000-4000-8000-000000005102', 'phase5_author', 'post', 'image',
+  'image/jpeg', 'jpg', 250000, 1080, 1350,
+  '{"x":0,"y":0,"width":1,"height":1,"targetAspect":0.8}'::jsonb,
+  'media-sources',
+  'sources/post/00000000-0000-4000-8000-000000005102/' || media.asset_id || '/original.jpg',
+  'ready', case media.visibility when 'public' then 'public_post' when 'circle' then 'circle_post' else 'private_post' end,
+  'stable', 'private', now() + interval '1 day', now()
+from phase5_home_media media
+on conflict (id) do nothing;
+
+insert into public.review_photos (review_id, storage_path, public_url, media_type, width, height, size_bytes, position, media_asset_id)
+select review_id, 'private-posts/00000000-0000-4000-8000-000000005102/' || asset_id || '/canonical.jpg',
+  null, 'image', 1080, 1350, 250000, 0, asset_id
+from phase5_home_media
+on conflict (media_asset_id) where media_asset_id is not null do nothing;
+
+insert into public.media_derivatives (
+  asset_id, kind, bucket_id, storage_path, public_url, mime_type, width, height, duration_ms, file_size_bytes, blurhash
+)
+select asset_id, derivative.kind, 'media-private',
+  'private-posts/00000000-0000-4000-8000-000000005102/' || asset_id || '/' || derivative.kind || '.jpg',
+  null, 'image/jpeg', derivative.width, derivative.height, null, derivative.bytes, 'L6PZfSi_.AyE_3t7t7R**0o#DgR4'
+from phase5_home_media
+cross join (values ('feed', 720, 900, 90000), ('canonical', 1080, 1350, 185000)) derivative(kind, width, height, bytes)
+on conflict (asset_id, kind) do nothing;
+
 insert into public.likes (post_id, user_name)
 select id, 'phase5_viewer' from phase5_posts limit 100
 on conflict do nothing;
@@ -121,14 +169,25 @@ where r.deleted_at is null and r.hidden_at is null and r.reported_at is null and
     where (block.blocker_name = 'phase5_viewer' and block.blocked_name = r.reviewer_name)
        or (block.blocked_name = 'phase5_viewer' and block.blocker_name = r.reviewer_name)
   )
-order by r.created_at desc, r.id desc limit 24;
+order by r.created_at desc, r.id desc limit 11;
 \echo PHASE5_PLAN_CIRCLE_END
 select 'PHASE5_CIRCLE_ROWS=' || jsonb_array_length(public.circle_feed_page_v2(
-  '00000000-0000-4000-8000-000000005101', null, null, 24, '{}'::uuid[]
+  '00000000-0000-4000-8000-000000005101', null, null, 10, '{}'::uuid[]
 )->'reviews');
 select 'PHASE5_CIRCLE_PAYLOAD_BYTES=' || pg_column_size(public.circle_feed_page_v2(
-  '00000000-0000-4000-8000-000000005101', null, null, 24, '{}'::uuid[]
+  '00000000-0000-4000-8000-000000005101', null, null, 10, '{}'::uuid[]
 ));
+select 'PHASE5_HOME_MEDIA_ROWS=' || count(distinct asset_id) from private.authorized_home_media_derivatives_v1(
+  '00000000-0000-4000-8000-000000005101',
+  (select array_agg(asset_id) from phase5_home_media),
+  array['feed', 'canonical', 'poster']::text[]
+);
+select 'PHASE5_HOME_MEDIA_PAYLOAD_BYTES=' || pg_column_size(jsonb_agg(to_jsonb(media)))
+from private.authorized_home_media_derivatives_v1(
+  '00000000-0000-4000-8000-000000005101',
+  (select array_agg(asset_id) from phase5_home_media),
+  array['feed', 'canonical', 'poster']::text[]
+) media;
 
 \echo PHASE5_PLAN_PUBLIC_BEGIN
 explain (analyze, buffers, format json)

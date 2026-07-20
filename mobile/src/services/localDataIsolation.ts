@@ -11,6 +11,8 @@ import {
   type CacheOwner
 } from "@/security/cacheOwnership";
 import { clearRegisteredSensitiveResources } from "@/security/sensitiveResourceRegistry";
+import { clearImageCachesWithRetry } from "@/security/mediaCacheCleanup";
+import { cancelHomeMediaPrefetches } from "@/services/homeMediaPrefetch";
 import {
   activateOwnerQueryPersistence,
   clearLegacyGlobalQueryCache,
@@ -207,6 +209,7 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
       // not prevent the remaining on-device data from being erased or strand
       // the cleanup journal forever.
       await supabase.removeAllChannels().catch(() => []);
+      await cancelHomeMediaPrefetches(next.ownerScope);
       const failedResourceCleanups = await clearRegisteredSensitiveResources();
       if (failedResourceCleanups > 0) throw new Error("sensitive_resource_cleanup_failed");
       clearMemoryCaptureSession();
@@ -229,8 +232,10 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
       setAccountFileOwnerScope(null);
       await Promise.all([
         clearAccountFiles(next.ownerScope),
-        Image.clearMemoryCache().catch(() => false),
-        Image.clearDiskCache().catch(() => false)
+        clearImageCachesWithRetry(
+          () => Image.clearMemoryCache(),
+          () => Image.clearDiskCache()
+        )
       ]);
     });
     setUserLocationOwnerScope(null);

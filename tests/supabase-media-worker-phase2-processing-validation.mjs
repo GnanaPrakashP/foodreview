@@ -219,8 +219,8 @@ try {
   const derivatives = assertNoError(await admin.from("media_derivatives")
     .select("asset_id,kind,bucket_id,storage_path,public_url,mime_type,width,height,duration_ms")
     .in("asset_id", [fixtures[0].id, fixtures[1].id]), "derivatives");
-  assert.equal(derivatives.length, 4);
-  assert.deepEqual(derivatives.filter((row) => row.asset_id === fixtures[0].id).map((row) => row.kind).sort(), ["canonical", "thumbnail"]);
+  assert.equal(derivatives.length, 5);
+  assert.deepEqual(derivatives.filter((row) => row.asset_id === fixtures[0].id).map((row) => row.kind).sort(), ["canonical", "feed", "thumbnail"]);
   assert.deepEqual(derivatives.filter((row) => row.asset_id === fixtures[1].id).map((row) => row.kind).sort(), ["canonical", "poster"]);
   assert.ok(derivatives.every((row) => row.bucket_id === "media-private" && row.public_url === null));
   for (const derivative of derivatives) {

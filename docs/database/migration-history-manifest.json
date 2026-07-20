@@ -2456,7 +2456,177 @@
       "sizeBytes": 18304,
       "sourceRoot": "supabase/migrations",
       "version": "202607170002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "circle_feed_page_v2",
+        "circle_memberships",
+        "circle_requests",
+        "post_views",
+        "profiles",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "home_initial_load_contract",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607170003_home_initial_load_contract.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "45117585904eece247ce6fb5299a6670160b4b3f3951daa54c2b15793a0332eb",
+      "sizeBytes": 6867,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607170003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "authorized_home_media_derivatives_v1",
+        "blocked_users",
+        "circle_memberships",
+        "complete_media_processing_job",
+        "media_assets",
+        "media_derivatives",
+        "media_processing_events",
+        "media_processing_jobs",
+        "profiles",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "home_media_delivery_hardening",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607180001_home_media_delivery_hardening.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "390b7a030388cc967892fdc374cbd7e1fbc09ecb2aff0be336d0d8c0e4b442d4",
+      "sizeBytes": 8907,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607180001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "circle_memberships",
+        "circle_requests",
+        "home_media_integrity_report_v1",
+        "media_assets",
+        "media_derivatives",
+        "post_views",
+        "profiles",
+        "review_is_unsuppressed",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "complete_home_media_experience",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607180002_complete_home_media_experience.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "71c2ffc98344a7662d05ef4152a96b296ec78223d932ccacf90adcbc076a4835",
+      "sizeBytes": 21261,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607180002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "reviews",
+        "role"
+      ],
+      "description": "enforce_home_media_opt_out",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607180003_enforce_home_media_opt_out.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "social",
+        "triggers"
+      ],
+      "sha256": "4ba92ab8089912d6d5c013a676d36b6b81decf5ed14e78074b386e80d8477451",
+      "sizeBytes": 1212,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607180003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "activate_processed_avatar_asset_v1",
+        "media_assets",
+        "media_derivatives",
+        "profiles",
+        "role"
+      ],
+      "description": "activate_processed_avatar_asset",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607180004_activate_processed_avatar_asset.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "functions",
+        "media-pipeline",
+        "profiles"
+      ],
+      "sha256": "ffed433e6d9c82b221e4e7194c47b9c7eceff63a97ff15b19f3be917b2b41f09",
+      "sizeBytes": 2803,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607180004"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "authorized_home_media_derivatives_v1",
+        "blocked_users",
+        "circle_memberships",
+        "commit_alpha_media_derivative_repair_v1",
+        "media_assets",
+        "media_derivatives",
+        "profiles",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "alpha_media_derivative_repair",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607180005_alpha_media_derivative_repair.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "e9ced4eb4c6fc1df55c3cde814f85591557e3a4f2ca9fc81318d3fc50617d6d3",
+      "sizeBytes": 11188,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607180005"
     }
   ],
-  "currentCanonicalMigrations": 71
+  "currentCanonicalMigrations": 77
 }

@@ -29,7 +29,7 @@ function loadCircleFeedModule() {
         if (id === "@/lib/circle-db") return { getCircleRelationshipsForName: async () => ({ joinedCircles: new Set(), mutualMembers: new Set() }) };
         if (id === "@/lib/feed-ranking") return { rankCircleFeedReviews: (reviews) => reviews };
         if (id === "@/lib/visibility") return { filterCircleTrendingReviews: (reviews) => reviews };
-        if (id === "@/lib/feed-config") return { CIRCLE_FEED_PAGE_SIZE: 20, CIRCLE_FEED_MAX_PAGE_SIZE: 40 };
+        if (id === "@/lib/feed-config") return { CIRCLE_FEED_PAGE_SIZE: 10, CIRCLE_FEED_MAX_PAGE_SIZE: 10 };
         if (id === "@/lib/private-cache") return { getPrivateCached: async ({ load }) => (await load()).value, invalidatePrivateCacheByTags() {} };
         if (id === "@/lib/server/feed-assembly") {
           return { buildFeedAssemblyMaps: async () => ({ likeCountMap: {}, commentMap: {}, likedByMeMap: {}, bookmarkedPostMap: {}, profileMap: {}, tasteTrustSummaryMap: {} }) };

@@ -16,6 +16,7 @@ import {
 } from "@/services/profiles";
 import type { AccountType, OtherProfileShellData, Profile, ProfilePageData } from "@/types/models";
 import { useSessionStore } from "@/stores/sessionStore";
+import { recordHomeStructuralMutation } from "@/home/homeStructuralRevision";
 
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
 const EXPIRING_MEDIA_QUERY_OPTIONS = {
@@ -143,6 +144,7 @@ export function useUpdateAccountTypeMutation() {
       }
     },
     onSuccess: (profile) => {
+      recordHomeStructuralMutation(queryClient);
       setProfile(actorFromProfile(profile));
       patchCurrentProfileCaches(queryClient, profile);
     }

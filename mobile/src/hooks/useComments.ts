@@ -1,6 +1,7 @@
 import { type InfiniteData, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { addPostComment, deletePostComment, getPostComments, type CommentsPage } from "@/services/comments";
 import { findCachedPostById, patchCachedPostEngagementFields } from "@/hooks/useFeeds";
+import { recordLocalEngagementPatch } from "@/home/homeEngagementReconciliation";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { PostComment } from "@/types/models";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
@@ -71,17 +72,32 @@ export function useAddPostCommentMutation(postId: string) {
       });
       const cachedPost = findCachedPostById(queryClient, postId);
       if (cachedPost) {
-        patchCachedPostEngagementFields(queryClient, {
+        const patch = {
           commentCount: cachedPost.commentCount + 1,
           postId
-        });
+        };
+        recordLocalEngagementPatch(queryClient, patch, { pending: true });
+        patchCachedPostEngagementFields(queryClient, patch);
       }
-      return { optimisticId, previousComments, previousPostCaches };
+      return {
+        optimisticId,
+        previousCommentCount: cachedPost?.commentCount,
+        previousComments,
+        previousPostCaches
+      };
     },
     onError: (_error, _content, context) => {
       if (!context) return;
       queryClient.setQueryData(commentKeys.post(postId), context.previousComments);
       for (const [queryKey, data] of context.previousPostCaches) queryClient.setQueryData(queryKey, data);
+      if (context.previousCommentCount !== undefined) {
+        const patch = {
+          commentCount: context.previousCommentCount,
+          postId
+        };
+        recordLocalEngagementPatch(queryClient, patch, { pending: false });
+        patchCachedPostEngagementFields(queryClient, patch);
+      }
     },
     onSuccess: (comment, _content, context) => {
       queryClient.setQueryData<InfiniteData<CommentsPage>>(commentKeys.post(postId), (current) => {
@@ -99,10 +115,20 @@ export function useAddPostCommentMutation(postId: string) {
         return { ...current, pages };
       });
       if (comment.engagement) {
-        patchCachedPostEngagementFields(queryClient, {
+        const patch = {
           commentCount: comment.engagement.commentCount,
           postId: comment.engagement.postId
-        });
+        };
+        recordLocalEngagementPatch(queryClient, patch, { pending: false });
+        patchCachedPostEngagementFields(queryClient, patch);
+      } else {
+        const currentPost = findCachedPostById(queryClient, postId);
+        if (currentPost) {
+          recordLocalEngagementPatch(queryClient, {
+            commentCount: currentPost.commentCount,
+            postId
+          }, { pending: false });
+        }
       }
     }
   });
@@ -134,10 +160,12 @@ export function useDeletePostCommentMutation(postId: string) {
     },
     onSuccess: (result) => {
       if (result.engagement) {
-        patchCachedPostEngagementFields(queryClient, {
+        const patch = {
           commentCount: result.engagement.commentCount,
           postId: result.engagement.postId
-        });
+        };
+        recordLocalEngagementPatch(queryClient, patch, { pending: false });
+        patchCachedPostEngagementFields(queryClient, patch);
       }
     }
   });

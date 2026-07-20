@@ -20,6 +20,13 @@ react {
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
 
+    // Opt-in performance builds: `-PcircleBitesBundleDebugJs=true` embeds the
+    // optimized release JS bundle (no Metro, __DEV__ off) into the debug
+    // variant so scroll/perf feel can be judged without release signing.
+    if ((findProperty('circleBitesBundleDebugJs') ?: 'false').toBoolean()) {
+        debuggableVariants = []
+    }
+
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'
     // root = file("../../")

@@ -82,9 +82,9 @@ test("warm other-profile posts use bounded virtualization and stable unique keys
   const card = source("mobile/src/components/posts/PostCard.tsx");
   assert.match(screen, /scrollEnabled/);
   assert.match(screen, /const seen = new Set<string>\(\)/);
-  assert.match(feed, /initialNumToRender=\{FEED_INITIAL_RENDER_COUNT\}/);
+  assert.match(feed, /initialNumToRender=\{diagnosticPremountEnabled[\s\S]*DIAGNOSTIC_PREMOUNT_INITIAL_PAGE_COUNT[\s\S]*FEED_INITIAL_RENDER_COUNT\}/);
   assert.match(feed, /FEED_INITIAL_RENDER_COUNT = 4/);
-  assert.match(feed, /maxToRenderPerBatch=\{FEED_RENDER_BATCH_SIZE\}/);
+  assert.match(feed, /maxToRenderPerBatch=\{diagnosticPremountEnabled[\s\S]*DIAGNOSTIC_PREMOUNT_INITIAL_PAGE_COUNT[\s\S]*FEED_RENDER_BATCH_SIZE\}/);
   assert.match(feed, /keyExtractor=\{\(post\) => post\.id\}/);
   assert.match(feed, /const renderPost = useCallback/);
   assert.match(card, /export const PostCard = memo\(PostCardComponent\)/);
@@ -121,7 +121,7 @@ test("other-profile persistence is first-page bounded and account-owner scoped",
   const isolation = source("mobile/src/services/localDataIsolation.ts");
   assert.match(persistence, /key\.length === 4 && key\[0\] === "profile" && key\[1\] === "other" && key\[3\] === "shell"/);
   assert.match(persistence, /key\.length === 3 && key\[0\] === "profile" && key\[2\] === "posts"/);
-  assert.match(persistence, /queryKey\[0\] === "profile" && queryKey\[2\] === "posts"[\s\S]*PERSISTED_FIRST_PAGE_LIMIT/);
+  assert.match(persistence, /queryKey\[0\] === "profile" && queryKey\[2\] === "posts"[\s\S]*PERSISTED_PROFILE_FIRST_PAGE_LIMIT/);
   assert.match(persistence, /ownerScope:\s*scope/);
   assert.match(isolation, /clearOwnerPersistedQueryCache/);
   assert.match(isolation, /clearRegisteredSensitiveResources/);

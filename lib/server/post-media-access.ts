@@ -4,6 +4,7 @@ import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 
 type AdminClient = {
   from: (table: string) => any;
+  rpc: (name: string, args?: Record<string, unknown>) => any;
   storage: { from: (bucket: string) => any };
 };
 
@@ -62,6 +63,214 @@ export type PostMediaDto = {
   width: number | null;
 };
 
+export type HomeMediaDerivative = "feed" | "poster" | "playback";
+export type HomeMediaDeliveryKind = "feed" | "canonical" | "poster";
+
+export type HomeMediaCoverDto = {
+  cacheRevision: number;
+  deliveryDerivative: HomeMediaDeliveryKind;
+  expiresAt: string;
+  feedUrl: string | null;
+  height: number;
+  mediaAssetId: string;
+  mediaType: "image" | "video";
+  placeholder: string | null;
+  playbackUrl: null;
+  posterUrl: string | null;
+  width: number;
+};
+
+export type HomeCarouselMediaItemDto = {
+  cacheRevision: number;
+  deliveryDerivative: HomeMediaDeliveryKind;
+  expiresAt: string;
+  feedUrl: string | null;
+  height: number;
+  mediaAssetId: string;
+  mediaType: "image" | "video";
+  placeholder: string | null;
+  position: number;
+  posterUrl: string | null;
+  width: number;
+};
+
+type HomeAuthorizedDerivativeRow = {
+  access_class: MediaAccessClass;
+  asset_id: string;
+  blurhash: string | null;
+  bucket_id: string;
+  duration_ms: number | null;
+  height: number | null;
+  kind: MediaDerivativeKind;
+  media_type: "image" | "video";
+  mime_type: string;
+  media_position: number;
+  storage_path: string;
+  width: number | null;
+  content_revision: number | null;
+};
+
+export type RenewedHomeMedia = {
+  cacheRevision: number;
+  derivative: HomeMediaDerivative;
+  expiresAt: string;
+  mediaAssetId: string;
+  url: string;
+};
+
+function homeKindsForRequest(derivative?: HomeMediaDerivative) {
+  if (derivative === "poster") return ["poster"];
+  if (derivative === "playback") return ["canonical"];
+  if (derivative === "feed") return ["feed", "canonical"];
+  return ["feed", "canonical", "poster"];
+}
+
+function selectHomeDerivative(
+  mediaType: "image" | "video",
+  kinds: Map<MediaDerivativeKind, HomeAuthorizedDerivativeRow>,
+  requested?: HomeMediaDerivative
+) {
+  if (requested === "playback") return mediaType === "video" ? kinds.get("canonical") ?? null : null;
+  if (requested === "poster") return mediaType === "video" ? kinds.get("poster") ?? null : null;
+  if (requested === "feed") return mediaType === "image" ? kinds.get("feed") ?? kinds.get("canonical") ?? null : kinds.get("poster") ?? null;
+  return mediaType === "image" ? kinds.get("feed") ?? kinds.get("canonical") ?? null : kinds.get("poster") ?? null;
+}
+
+/**
+ * Home uses one database authorization statement for the whole page (or one
+ * asset renewal), then one batched signing operation. The SQL function owns
+ * every visibility and relationship check; storage paths never come from the
+ * client or from the feed projection.
+ */
+export async function resolveHomeMediaAccess(
+  admin: AdminClient,
+  assetIdsInput: string[],
+  viewerUserId: string,
+  trace?: RequestPerformanceTrace | null,
+  requestedDerivative?: HomeMediaDerivative
+): Promise<HomeMediaCoverDto[] | RenewedHomeMedia[]> {
+  const assetIds = Array.from(new Set(assetIdsInput.map((id) => id.trim()).filter(Boolean))).slice(0, 50);
+  if (assetIds.length === 0 || !viewerUserId) return [];
+  const query = () => admin.rpc("authorized_home_media_derivatives_v1", {
+    p_asset_ids: assetIds,
+    p_derivative_kinds: homeKindsForRequest(requestedDerivative),
+    p_viewer_user_id: viewerUserId
+  });
+  const { data, error } = trace
+    ? await trace.database("media.authorized_home_derivatives", query)
+    : await query();
+  if (error) throw new Error("home_media_authorization_failed");
+
+  const rows = (data ?? []) as HomeAuthorizedDerivativeRow[];
+  const grouped = new Map<string, { mediaType: "image" | "video"; kinds: Map<MediaDerivativeKind, HomeAuthorizedDerivativeRow> }>();
+  for (const row of rows) {
+    if (row.bucket_id !== MEDIA_PRIVATE_BUCKET) continue;
+    const group = grouped.get(row.asset_id) ?? { mediaType: row.media_type, kinds: new Map() };
+    group.kinds.set(row.kind, row);
+    grouped.set(row.asset_id, group);
+  }
+
+  const selected = assetIds.flatMap((assetId) => {
+    const group = grouped.get(assetId);
+    if (!group) return [];
+    const derivative = selectHomeDerivative(group.mediaType, group.kinds, requestedDerivative);
+    return derivative ? [{ assetId, derivative, mediaType: group.mediaType }] : [];
+  });
+  const canonicalFallbackCount = selected.filter(({ derivative, mediaType }) => (
+    mediaType === "image" && derivative.kind === "canonical"
+  )).length;
+  if (canonicalFallbackCount > 0) {
+    console.warn("[home-media] ready image used canonical fallback", { count: canonicalFallbackCount });
+  }
+  const paths = Array.from(new Set(selected.map(({ derivative }) => derivative.storage_path)));
+  const signing = () => admin.storage.from(MEDIA_PRIVATE_BUCKET).createSignedUrls(paths, MEDIA_POST_SIGNED_URL_TTL_SECONDS);
+  const { data: signedRows, error: signError } = paths.length > 0
+    ? trace
+      ? await trace.measure("storage", "media.sign_home_urls", signing)
+      : await signing()
+    : { data: [], error: null };
+  if (signError) throw new Error("home_media_signing_failed");
+  const signedByPath = new Map<string, string>((signedRows ?? []).map(
+    (row: { path?: string | null; signedUrl?: string | null }): [string, string] => [row.path ?? "", row.signedUrl ?? ""]
+  ));
+  const expiresAt = new Date(Date.now() + MEDIA_POST_SIGNED_URL_TTL_SECONDS * 1000).toISOString();
+
+  if (requestedDerivative) {
+    return selected.flatMap(({ assetId, derivative }) => {
+      const url = signedByPath.get(derivative.storage_path) ?? "";
+      return url ? [{
+        cacheRevision: Math.max(1, derivative.content_revision ?? 1),
+        derivative: requestedDerivative,
+        expiresAt,
+        mediaAssetId: assetId,
+        url
+      }] : [];
+    });
+  }
+
+  return selected.flatMap(({ assetId, derivative, mediaType }) => {
+    const url = signedByPath.get(derivative.storage_path) ?? "";
+    if (!url) return [];
+    return [{
+      cacheRevision: Math.max(1, derivative.content_revision ?? 1),
+      deliveryDerivative: derivative.kind === "poster" ? "poster" : derivative.kind === "canonical" ? "canonical" : "feed",
+      expiresAt,
+      feedUrl: mediaType === "image" ? url : null,
+      height: derivative.height ?? 900,
+      mediaAssetId: assetId,
+      mediaType,
+      placeholder: derivative.blurhash ?? null,
+      playbackUrl: null,
+      posterUrl: mediaType === "video" ? url : null,
+      width: derivative.width ?? 720
+    } satisfies HomeMediaCoverDto];
+  });
+}
+
+export async function resolveHomeCarouselMediaAccess(
+  admin: AdminClient,
+  postId: string,
+  viewerUserId: string,
+  trace?: RequestPerformanceTrace | null
+): Promise<HomeCarouselMediaItemDto[]> {
+  const linksQuery = () => admin
+    .from("review_photos")
+    .select("id, media_asset_id, position")
+    .eq("review_id", postId)
+    .not("media_asset_id", "is", null)
+    .order("position", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(10);
+  const { data, error } = trace
+    ? await trace.database("media.home_carousel_links", linksQuery)
+    : await linksQuery();
+  if (error) throw new Error("home_carousel_lookup_failed");
+
+  const links = (data ?? []) as Array<{ id: string; media_asset_id: string | null; position: number | null }>;
+  const assetIds = links.flatMap((link) => link.media_asset_id ? [link.media_asset_id] : []);
+  const authorised = await resolveHomeMediaAccess(admin, assetIds, viewerUserId, trace) as HomeMediaCoverDto[];
+  const byAssetId = new Map(authorised.map((item) => [item.mediaAssetId, item]));
+
+  return links.flatMap((link) => {
+    if (!link.media_asset_id) return [];
+    const item = byAssetId.get(link.media_asset_id);
+    if (!item) return [];
+    return [{
+      cacheRevision: item.cacheRevision,
+      deliveryDerivative: item.deliveryDerivative,
+      expiresAt: item.expiresAt,
+      feedUrl: item.feedUrl,
+      height: item.height,
+      mediaAssetId: item.mediaAssetId,
+      mediaType: item.mediaType,
+      placeholder: item.placeholder,
+      position: link.position ?? 0,
+      posterUrl: item.posterUrl,
+      width: item.width
+    } satisfies HomeCarouselMediaItemDto];
+  });
+}
+
 function accessClassMatchesReview(asset: AssetRow, review: ReviewAccessRow) {
   try {
     return asset.access_class === accessClassForPostVisibility(review.visibility);
@@ -74,7 +283,8 @@ export async function resolvePostMediaAccess(
   admin: AdminClient,
   assetIdsInput: string[],
   viewerName: string,
-  trace?: RequestPerformanceTrace | null
+  trace?: RequestPerformanceTrace | null,
+  options: { deliveryMode?: "cover" | "full" } = {}
 ): Promise<PostMediaDto[]> {
   const assetIds = Array.from(new Set(assetIdsInput.map((id) => id.trim()).filter(Boolean))).slice(0, 50);
   if (assetIds.length === 0) return [];
@@ -167,7 +377,25 @@ export async function resolvePostMediaAccess(
   if (derivativeError) throw new Error("post_media_derivative_lookup_failed");
 
   const derivativeRows = (derivatives ?? []) as DerivativeRow[];
-  const paths = Array.from(new Set(derivativeRows.map((row) => row.storage_path).filter(Boolean)));
+  const derivativeByAsset = new Map<string, Map<MediaDerivativeKind, DerivativeRow>>();
+  for (const row of derivativeRows) {
+    const kinds = derivativeByAsset.get(row.asset_id) ?? new Map<MediaDerivativeKind, DerivativeRow>();
+    kinds.set(row.kind, row);
+    derivativeByAsset.set(row.asset_id, kinds);
+  }
+  const paths = Array.from(new Set(allowed.flatMap(({ asset }) => {
+    const kinds = derivativeByAsset.get(asset.id);
+    if (options.deliveryMode !== "cover") {
+      return Array.from(kinds?.values() ?? []).map((row) => row.storage_path);
+    }
+    const canonical = kinds?.get("canonical");
+    if (asset.media_type === "video") {
+      return [canonical?.storage_path, kinds?.get("poster")?.storage_path]
+        .filter((path): path is string => Boolean(path));
+    }
+    return [kinds?.get("thumbnail")?.storage_path ?? canonical?.storage_path]
+      .filter((path): path is string => Boolean(path));
+  }).filter(Boolean)));
   const signing = () => admin.storage.from(MEDIA_PRIVATE_BUCKET).createSignedUrls(paths, MEDIA_POST_SIGNED_URL_TTL_SECONDS);
   const { data: signedRows, error: signError } = paths.length > 0
     ? trace
@@ -176,36 +404,38 @@ export async function resolvePostMediaAccess(
     : { data: [], error: null };
   if (signError) throw new Error("post_media_signing_failed");
   const signedByPath = new Map<string, string>((signedRows ?? []).map((row: { path?: string | null; signedUrl?: string | null }): [string, string] => [row.path ?? "", row.signedUrl ?? ""]));
-  const derivativeByAsset = new Map<string, Map<MediaDerivativeKind, DerivativeRow>>();
-  for (const row of derivativeRows) {
-    const kinds = derivativeByAsset.get(row.asset_id) ?? new Map<MediaDerivativeKind, DerivativeRow>();
-    kinds.set(row.kind, row);
-    derivativeByAsset.set(row.asset_id, kinds);
-  }
   const expiresAt = new Date(Date.now() + MEDIA_POST_SIGNED_URL_TTL_SECONDS * 1000).toISOString();
 
   return allowed.flatMap(({ asset, link }) => {
     const kinds = derivativeByAsset.get(asset.id);
     const canonical = kinds?.get("canonical");
     if (!canonical) return [];
-    const displayUrl = signedByPath.get(canonical.storage_path) ?? "";
-    if (!displayUrl) return [];
     const thumbnail = kinds?.get("thumbnail");
     const poster = kinds?.get("poster");
+    const imageDelivery = options.deliveryMode === "cover" && asset.media_type === "image"
+      ? thumbnail ?? canonical
+      : canonical;
+    const dimensionDerivative = options.deliveryMode === "cover" && asset.media_type === "video"
+      ? poster ?? canonical
+      : imageDelivery;
+    const displayUrl = signedByPath.get(imageDelivery.storage_path) ?? "";
+    if (!displayUrl) return [];
     return [{
       accessClass: asset.access_class,
-      aspectRatio: canonical.width && canonical.height ? canonical.width / canonical.height : null,
+      aspectRatio: dimensionDerivative.width && dimensionDerivative.height ? dimensionDerivative.width / dimensionDerivative.height : null,
       displayUrl,
       durationMs: canonical.duration_ms,
       expiresAt,
-      height: canonical.height,
+      height: dimensionDerivative.height,
       id: asset.id,
       mediaType: asset.media_type,
-      placeholder: canonical.blurhash ?? poster?.blurhash ?? null,
+      placeholder: options.deliveryMode === "cover"
+        ? dimensionDerivative.blurhash ?? null
+        : canonical.blurhash ?? poster?.blurhash ?? null,
       posterUrl: poster ? signedByPath.get(poster.storage_path) || null : null,
       position: link.position ?? 0,
       thumbnailUrl: thumbnail ? signedByPath.get(thumbnail.storage_path) || null : null,
-      width: canonical.width
+      width: dimensionDerivative.width
     } satisfies PostMediaDto];
   });
 }

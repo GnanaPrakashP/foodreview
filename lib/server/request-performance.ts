@@ -64,6 +64,7 @@ export class RequestPerformanceTrace {
     if (!this.enabled || this.finished) return;
     this.finished = true;
     const databaseSteps = this.steps.filter((step) => step.kind === "database");
+    const storageSteps = this.steps.filter((step) => step.kind === "storage");
     const durationFor = (kind: PerformanceStepKind) => Number(this.steps
       .filter((step) => step.kind === kind)
       .reduce((total, step) => total + step.durationMs, 0)
@@ -84,6 +85,7 @@ export class RequestPerformanceTrace {
       serialization_duration_ms: input.serializationDurationMs,
       status: input.status,
       storage_duration_ms: durationFor("storage"),
+      storage_call_count: storageSteps.length,
     });
   }
 }

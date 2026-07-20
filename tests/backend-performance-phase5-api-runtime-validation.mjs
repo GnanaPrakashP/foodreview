@@ -10,12 +10,14 @@ const PORT = Number(process.env.PHASE5_RUNTIME_NEXT_PORT ?? 3055);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const SAMPLE_COUNT = Math.min(Math.max(Number(process.env.PHASE5_API_SAMPLES ?? 20), 5), 50);
 const AUTH_OPTIONS = { auth: { autoRefreshToken: false, persistSession: false } };
-const PAYLOAD_BUDGETS = new Map(
-  JSON.parse(readFileSync(new URL("../config/backend-performance-budgets.json", import.meta.url), "utf8"))
-    .screens.map((screen) => [screen.id, screen.payloadBytes])
-);
+const PERFORMANCE_BUDGETS = JSON.parse(
+  readFileSync(new URL("../config/backend-performance-budgets.json", import.meta.url), "utf8")
+).screens;
+const PAYLOAD_BUDGETS = new Map(PERFORMANCE_BUDGETS.map((screen) => [screen.id, screen.payloadBytes]));
+const DATABASE_STATEMENT_BUDGETS = new Map(PERFORMANCE_BUDGETS.map((screen) => [screen.id, screen.databaseStatements]));
 let nextProcess;
 let loggedServerErrors = 0;
+let serverOutput = "";
 
 function localStatus() {
   const result = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
@@ -32,6 +34,7 @@ function startNext(env) {
     env: {
       ...process.env,
       API_RATE_LIMIT_HMAC_SECRET: "phase5-local-rate-limit-secret-material-0123456789",
+      API_PERFORMANCE_TRACE_ENABLED: "true",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       NEXT_PUBLIC_SUPABASE_URL: env.url,
       SUPABASE_SERVICE_ROLE_KEY: env.serviceKey,
@@ -41,6 +44,7 @@ function startNext(env) {
   for (const stream of [nextProcess.stdout, nextProcess.stderr]) {
     stream.on("data", (chunk) => {
       const output = String(chunk);
+      serverOutput = `${serverOutput}${output}`.slice(-2_000_000);
       if (/\b(error|failed|fatal)\b/i.test(output) && loggedServerErrors < 10) {
         loggedServerErrors += 1;
         process.stderr.write(output.replace(/[A-Za-z0-9_-]{40,}/g, "[redacted]"));
@@ -55,6 +59,7 @@ function buildNext(env) {
     env: {
       ...process.env,
       API_RATE_LIMIT_HMAC_SECRET: "phase5-local-rate-limit-secret-material-0123456789",
+      API_PERFORMANCE_TRACE_ENABLED: "true",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       NEXT_PUBLIC_SUPABASE_URL: env.url,
       SUPABASE_SERVICE_ROLE_KEY: env.serviceKey,
@@ -146,7 +151,9 @@ async function seed(admin, suffix) {
   if (circleError) throw circleError;
 
   const placeId = `phase5-api-place-${suffix}`;
-  const now = Date.now();
+  // Keep the fixture at the front of a possibly non-empty developer database
+  // without resetting or deleting local data.
+  const now = Date.now() + 7 * 24 * 60 * 60_000;
   const reviews = Array.from({ length: 60 }, (_, index) => ({
     area: "Performance Area",
     body: "bounded local API timing fixture",
@@ -164,6 +171,73 @@ async function seed(admin, suffix) {
   }));
   const { error: reviewError } = await admin.from("reviews").insert(reviews);
   if (reviewError) throw reviewError;
+  const mediaAssets = reviews.slice(0, 10).map((review) => ({
+    access_class: review.visibility === "public" ? "public_post" : "circle_post",
+    crop_rect: { height: 1, targetAspect: 0.8, width: 1, x: 0, y: 0 },
+    expires_at: new Date(now + 86_400_000).toISOString(),
+    id: randomUUID(),
+    media_type: "image",
+    original_extension: "jpg",
+    original_file_size_bytes: 250_000,
+    original_height: 1350,
+    original_mime_type: "image/jpeg",
+    original_width: 1080,
+    owner_id: authorId,
+    owner_name: authorName,
+    privacy_state: "stable",
+    processed_at: new Date(now).toISOString(),
+    review_id: review.id,
+    source_bucket_id: "media-sources",
+    status: "ready",
+    surface: "post",
+    visibility: "private"
+  })).map((asset) => ({
+    ...asset,
+    source_storage_path: `sources/post/${authorId}/${asset.id}/original.jpg`
+  }));
+  const { error: assetError } = await admin.from("media_assets").insert(mediaAssets.map((asset) => {
+    const databaseRow = { ...asset };
+    Reflect.deleteProperty(databaseRow, "review_id");
+    return databaseRow;
+  }));
+  if (assetError) throw assetError;
+  const { error: photoError } = await admin.from("review_photos").insert(mediaAssets.map((asset) => ({
+    height: 1350,
+    media_asset_id: asset.id,
+    media_type: "image",
+    position: 0,
+    public_url: null,
+    review_id: asset.review_id,
+    size_bytes: 250_000,
+    storage_path: `private-posts/${authorId}/${asset.id}/canonical.jpg`,
+    width: 1080
+  })));
+  if (photoError) throw photoError;
+  const { error: derivativeError } = await admin.from("media_derivatives").insert(mediaAssets.flatMap((asset) => ([
+    {
+      asset_id: asset.id, blurhash: "L6PZfSi_.AyE_3t7t7R**0o#DgR4", bucket_id: "media-private",
+      file_size_bytes: 90_000, height: 900, kind: "feed", mime_type: "image/jpeg", public_url: null,
+      storage_path: `private-posts/${authorId}/${asset.id}/feed.jpg`, width: 720
+    },
+    {
+      asset_id: asset.id, blurhash: "L6PZfSi_.AyE_3t7t7R**0o#DgR4", bucket_id: "media-private",
+      file_size_bytes: 185_000, height: 1350, kind: "canonical", mime_type: "image/jpeg", public_url: null,
+      storage_path: `private-posts/${authorId}/${asset.id}/canonical.jpg`, width: 1080
+    }
+  ])));
+  if (derivativeError) throw derivativeError;
+  const mediaStoragePaths = mediaAssets.flatMap((asset) => ([
+    `private-posts/${authorId}/${asset.id}/feed.jpg`,
+    `private-posts/${authorId}/${asset.id}/canonical.jpg`
+  ]));
+  for (const storagePath of mediaStoragePaths) {
+    const { error: uploadError } = await admin.storage.from("media-private").upload(
+      storagePath,
+      new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      { contentType: "image/jpeg", upsert: true }
+    );
+    if (uploadError) throw uploadError;
+  }
   const { error: mentionError } = await admin.from("review_dish_mentions").insert(reviews.map((review) => ({
     display_name: "Phase 5 API Dish", item_position: 0, match_status: "unresolved",
     normalized_name: "phase 5 api dish", place_id: placeId, raw_name: "Phase 5 API Dish",
@@ -219,6 +293,7 @@ async function seed(admin, suffix) {
 
   return {
     authorId, authorName, placeId, postId, roomId, viewerEmail, viewerId, viewerName, password,
+    mediaAssetIds: mediaAssets.map((asset) => asset.id), mediaStoragePaths,
     reviewIds: reviews.map((review) => review.id),
   };
 }
@@ -229,6 +304,10 @@ async function cleanup(admin, fixture) {
   await admin.from("shared_memory_rooms").delete().eq("id", fixture.roomId);
   await admin.from("notifications").delete().eq("recipient_user_id", fixture.viewerId);
   await admin.from("comments").delete().eq("post_id", fixture.postId);
+  await admin.storage.from("media-private").remove(fixture.mediaStoragePaths);
+  await admin.from("media_derivatives").delete().in("asset_id", fixture.mediaAssetIds);
+  await admin.from("review_photos").delete().in("media_asset_id", fixture.mediaAssetIds);
+  await admin.from("media_assets").delete().in("id", fixture.mediaAssetIds);
   await admin.from("reviews").delete().in("id", fixture.reviewIds);
   await admin.from("circle_requests").delete()
     .or(`and(sender_name.eq.${fixture.viewerName},receiver_name.eq.${fixture.authorName}),and(sender_name.eq.${fixture.authorName},receiver_name.eq.${fixture.viewerName})`);
@@ -348,8 +427,13 @@ try {
   assert.equal(paginatedPostIds.length, fixture.reviewIds.length);
   assert.equal(new Set(paginatedPostIds).size, fixture.reviewIds.length);
 
+  const mediaCircle = await json("/api/feed/circle?limit=10");
+  const mediaCovers = mediaCircle.posts.map((post) => post.coverMedia).filter(Boolean);
+  assert.equal(mediaCovers.length, 10);
+  assert.ok(mediaCovers.every((media) => media.mediaType === "image" && media.feedUrl && !media.posterUrl && !media.playbackUrl));
+
   const flows = [
-    await measure("circle", http("/api/feed/circle?limit=24")),
+    await measure("circle", http("/api/feed/circle?limit=10")),
     await measure("public-feed", http("/api/mobile/feed?scope=public&limit=24")),
     await measure("explore", rpc("explore_discovery_canonical_v3", { p_lat: 12.9716, p_lng: 77.5946, p_limit: 24 })),
     await measure("restaurant-feed", http(`/api/mobile/feed?scope=restaurant&placeId=${encodeURIComponent(fixture.placeId)}&limit=24`)),
@@ -365,11 +449,39 @@ try {
     await measure("memory-chat", http(`/api/mobile/memories/read?action=chat&roomId=${fixture.roomId}&limit=30`)),
   ];
 
+  const traceRecords = serverOutput.split(/\r?\n/).flatMap((line) => {
+    const start = line.indexOf('{"timestamp"');
+    if (start < 0) return [];
+    try { return [JSON.parse(line.slice(start))]; } catch { return []; }
+  }).filter((record) => record.event === "api_performance_trace" && record.endpoint === "api.feed.circle");
+  assert.ok(traceRecords.length >= SAMPLE_COUNT, "Circle performance traces are missing");
+  const tracedDatabaseStatements = Math.max(...traceRecords.map((record) => Number(record.database_call_count ?? 0)));
+  const mediaAuthorizationStatements = Math.max(...traceRecords.map((record) =>
+    (record.database_calls ?? []).filter((call) => call.name === "media.authorized_home_derivatives").length
+  ));
+  const storageSigningOperations = Math.max(...traceRecords.map((record) => Number(record.storage_call_count ?? 0)));
+  assert.ok(
+    tracedDatabaseStatements <= DATABASE_STATEMENT_BUDGETS.get("circle"),
+    `Circle traced ${tracedDatabaseStatements} application database statements`
+  );
+  assert.equal(mediaAuthorizationStatements, 1);
+  assert.equal(storageSigningOperations, 1);
+  const circleFlow = flows.find((flow) => flow.name === "circle");
+
   console.log(JSON.stringify({
     architecture: {
       duplicatePrimaryRequestsPerScreen: 0,
       otherProfilePrimaryRequests: 2,
       primaryRequestsPerOwner: 1
+    },
+    mediaCircle: {
+      coverAssets: mediaCovers.length,
+      databaseStatementsTraced: tracedDatabaseStatements,
+      mediaAuthorizationStatements,
+      maxPayloadBytes: circleFlow.maxPayloadBytes,
+      p50Ms: circleFlow.p50Ms,
+      p95Ms: circleFlow.p95Ms,
+      storageSigningOperations
     },
     otherProfileContract: {
       blockDirectionsValidated: 2,

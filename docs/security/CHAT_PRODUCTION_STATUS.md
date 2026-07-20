@@ -58,6 +58,39 @@ Focused evidence: 60/60 authentication/native/cache/API tests; mobile and root t
 - Runtime evidence: Android 15 emulator release/profile, five samples, cold draw median 9,153 ms and warm resume median 1,463 ms. No useful-content/tab-content marks, representative player count, or valid feed-scroll frames were available because hosted `mobile_public_feed_page_v1` is missing. The partial result is not a production latency claim.
 - Remaining: physical devices, hosted staging, long-session memory/media, PH-603 process-safe drafts, PH-902 module splitting, Phase 7 telemetry, Phase 8 signed/store validation, and Phase 9 capacity testing.
 
+### Home FlashList optimized-preview candidate (2026-07-20)
+
+Status: PASS locally; physical-device acceptance remains required before the
+store-production Home default changes.
+
+- Home list-engine selection is now independent from development diagnostics.
+  `EXPO_PUBLIC_HOME_LIST_ENGINE=flashlist` is allowed in optimized builds, the
+  internal EAS preview profile selects it, and invalid engine values fail mobile
+  configuration. Store production still defaults to FlatList pending the
+  documented device matrix.
+- Recycling trace logs, staged PostCard substitutions, subtree instrumentation,
+  and the `RECYCLE` overlay remain `__DEV__`-only. A non-diagnostic FlashList
+  build is forced to the complete real PostCard plan.
+- The settled vertical cover runway now matches the existing next-two
+  Wi-Fi/Ethernet budget. Scheduler concurrency remains one active and two
+  pending jobs; decoded media surfaces retain their separate bounded window.
+- Verification: focused Home/native-release tests 428/428; repository tests
+  1,623/1,623; Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and
+  mobile typechecks pass; lint passes with 83 existing warnings and zero errors;
+  `git diff --check` passes.
+- An Android production-mode Expo export using the preview identity and
+  FlashList selector completed successfully. Its Hermes artifact contained
+  FlashList while the development recycling markers, overlay label, diagnostic
+  environment name, and legacy `recycling-list` selector were absent.
+- Security gate: PASS for this scoped change. It changes no authentication,
+  authorization, RLS, Storage policy, service-role boundary, signed-media
+  delivery, notification content, or private-data logging. The export used only
+  existing local client configuration; no secret value was printed or added.
+- Still unverified: physical Android/iOS slow/reverse scrolling, fast flings,
+  pagination, recycled-state isolation, active-player count, startup latency,
+  and multi-page PSS growth. This local PASS does not promote FlashList to the
+  store-production default or claim production scroll performance.
+
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 
 - Inventory/budgets: 16 primary mobile reads, one primary mobile request each, maximum six application-data statements, pages capped at 50, payload budgets capped at 256 KiB, and one named cache owner per first page.

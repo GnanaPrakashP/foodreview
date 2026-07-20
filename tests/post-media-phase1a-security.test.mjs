@@ -44,6 +44,7 @@ function loadAccess(policy) {
 
 function accessDb({ blocked = false, member = true, privacyState = "stable", visibility = "circle", status = "active" } = {}) {
   const ttlCalls = [];
+  const pathCalls = [];
   const rows = {
     media_assets: [{ id: "asset-1", owner_name: "owner", surface: "post", media_type: "image", status: "ready", access_class: visibility === "public" ? "public_post" : visibility === "circle" ? "circle_post" : "private_post", privacy_state: privacyState }],
     review_photos: [{ media_asset_id: "asset-1", review_id: "review-1", media_type: "image", position: 0 }],
@@ -51,9 +52,13 @@ function accessDb({ blocked = false, member = true, privacyState = "stable", vis
     circle_memberships: member ? [{ user_name: "owner", member_name: "member" }] : [],
     blocked_users: blocked ? [{ blocker_name: "owner", blocked_name: "member" }] : [],
     profiles: [{ username: "owner" }],
-    media_derivatives: [{ asset_id: "asset-1", blurhash: "hash", bucket_id: "media-private", duration_ms: null, height: 1350, kind: "canonical", mime_type: "image/jpeg", storage_path: "private-posts/owner/asset-1/canonical.jpg", width: 1080 }]
+    media_derivatives: [
+      { asset_id: "asset-1", blurhash: "hash", bucket_id: "media-private", duration_ms: null, height: 1350, kind: "canonical", mime_type: "image/jpeg", storage_path: "private-posts/owner/asset-1/canonical.jpg", width: 1080 },
+      { asset_id: "asset-1", blurhash: "thumb-hash", bucket_id: "media-private", duration_ms: null, height: 450, kind: "thumbnail", mime_type: "image/jpeg", storage_path: "private-posts/owner/asset-1/thumbnail.jpg", width: 360 }
+    ]
   };
   return {
+    pathCalls,
     ttlCalls,
     from(table) {
       const chain = {
@@ -67,6 +72,7 @@ function accessDb({ blocked = false, member = true, privacyState = "stable", vis
         return {
           async createSignedUrls(paths, ttl) {
             ttlCalls.push(ttl);
+            pathCalls.push([...paths]);
             return { data: paths.map((path) => ({ path, signedUrl: `https://signed.test/${encodeURIComponent(path)}` })), error: null };
           }
         };
@@ -108,6 +114,19 @@ test("post media policy enforces owner, public, circle, private, block, and supp
   }), false);
   assert.equal(canViewerAccessPostMedia({ review: review("public", { deleted_at: new Date().toISOString() }), viewerName: "owner" }), false);
   assert.equal(canViewerAccessPostMedia({ review: review("public", { status: "removed" }), viewerName: "" }), false);
+});
+
+test("cover delivery signs only the optimized first-card derivative", async () => {
+  const policy = loadPolicy();
+  const { resolvePostMediaAccess } = loadAccess(policy);
+  const db = accessDb();
+  const media = await resolvePostMediaAccess(db, ["asset-1"], "member", null, { deliveryMode: "cover" });
+
+  assert.equal(media.length, 1);
+  assert.deepEqual(db.pathCalls[0], ["private-posts/owner/asset-1/thumbnail.jpg"]);
+  assert.equal(media[0].width, 360);
+  assert.equal(media[0].height, 450);
+  assert.equal(media[0].displayUrl, media[0].thumbnailUrl);
 });
 
 test("all six visibility transitions change new-URL authorization immediately", () => {

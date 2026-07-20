@@ -122,7 +122,7 @@ export function PushNotificationBootstrap() {
         subscription = Notifications.addNotificationResponseReceivedListener(openNotificationTarget);
         receivedSubscription = Notifications.addNotificationReceivedListener(() => {
           if (!alive || !isCacheGenerationActive(ownerGeneration)) return;
-          void queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
+          queryClient.setQueryData(notificationKeys.hasUnread, true);
           void queryClient.invalidateQueries({ queryKey: notificationKeys.list });
         });
       })

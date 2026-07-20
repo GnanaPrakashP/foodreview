@@ -8,7 +8,7 @@ These are budgets, not production latency or capacity results. Phase 9 must meas
 
 | Screen/read owner | Mobile requests | App DB statements | Row/page bound | Payload bound | Pagination/cache owner |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Circle | 1 | 6 | 24 | 192 KiB | stable cursor / Circle infinite query |
+| Circle | 1 | 6 | 10 | 64 KiB | stable cursor / Circle infinite query |
 | Public feed | 1 | 5 | 24 | 192 KiB | bounded first page / public query |
 | Explore | 1 | 1 | 24 per section | 256 KiB | bounded sections / Explore query |
 | Restaurant feed | 1 | 5 | 24 | 192 KiB | bounded first page / restaurant query |
@@ -35,6 +35,7 @@ The Memory numbers count canonical actor profile resolution, the RPC, and the op
 - Nested arrays are bounded by the parent page and product constraints. Feed cards never include full comments or raw reaction rows.
 - Private post and Memory media responses contain delivery URLs and safe media metadata, never raw Storage object paths.
 - Count fields come from aggregates or bounded counter/projection contracts, not downloaded rows.
+- Home/Circle returns only its ten card DTOs and one cover-media delivery record per post; its RPC reads an eleventh ordered row only to decide `hasMore`.
 
 ## Evidence commands
 
