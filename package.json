@@ -11,7 +11,8 @@
     }
   },
   "scripts": {
-    "deploy:preview": "npx vercel@56.4.0 deploy --yes --target=preview --local-config vercel.preview.json",
+    "predeploy:preview": "npx vercel@56.4.0 build --yes --target=preview --local-config vercel.preview.json",
+    "deploy:preview": "npx vercel@56.4.0 deploy --prebuilt --yes --target=preview --local-config vercel.preview.json",
     "dev": "next dev",
     "dev:turbo": "next dev --turbopack",
     "dev:e2e": "next dev",

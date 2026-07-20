@@ -14,9 +14,14 @@ test("Vercel Preview deployment excludes production cron registration", () => {
 });
 
 test("the deployment command explicitly selects Preview and its local config", () => {
+  const buildCommand = packageJson.scripts["predeploy:preview"];
   const command = packageJson.scripts["deploy:preview"];
+  assert.match(buildCommand, /vercel@56\.4\.0 build/);
+  assert.match(buildCommand, /--target=preview/);
+  assert.match(buildCommand, /--local-config vercel\.preview\.json/);
   assert.match(command, /vercel@56\.4\.0 deploy/);
+  assert.match(command, /--prebuilt/);
   assert.match(command, /--target=preview/);
   assert.match(command, /--local-config vercel\.preview\.json/);
-  assert.doesNotMatch(command, /--prod(?:uction)?\b/);
+  assert.doesNotMatch(`${buildCommand} ${command}`, /--prod(?:uction)?\b/);
 });
