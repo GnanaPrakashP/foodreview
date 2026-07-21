@@ -2,9 +2,13 @@ import type { RequestActor } from "@/lib/server/route-supabase";
 import type { Comment, Review } from "@/lib/types";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
-import { rankCircleFeedReviews } from "@/lib/feed-ranking";
 import type { PostTasteTrustSummary } from "@/lib/taste-trust";
 import type { CircleFeedCursor } from "@/lib/circle-feed";
+import {
+  homeFeedLocationKey,
+  normalizeHomeFeedLocation,
+  type HomeFeedLocation
+} from "@/lib/home-feed-location";
 import type { RequestPerformanceTrace } from "@/lib/server/request-performance";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 
@@ -26,7 +30,6 @@ type RpcPayload = {
   profileMap?: Record<string, string>;
   requestStatusMap?: Record<string, "idle" | "joined" | "pending">;
   reviews?: unknown[];
-  seenPostIds?: string[];
   viewerName?: string;
   viewerUserId?: string;
 };
@@ -114,20 +117,31 @@ export async function loadCanonicalCircleFeedPage(
   options: {
     cursor?: CircleFeedCursor | null;
     excludePostIds?: string[];
+    location?: HomeFeedLocation | null;
     limit?: number;
     bypassCache?: boolean;
     trace?: RequestPerformanceTrace | null;
   }
 ): Promise<CanonicalCircleFeedPage> {
-  const circlePageQuery = () => db.rpc("circle_feed_page_v2", {
+  const location = normalizeHomeFeedLocation(options.location);
+  const locationKey = homeFeedLocationKey(location);
+  if (options.cursor?.locationKey && options.cursor.locationKey !== locationKey) {
+    throw new Error("Circle feed cursor location does not match the request");
+  }
+  const circlePageQuery = () => db.rpc("circle_feed_page_v3", {
     p_cursor_created_at: options.cursor?.createdAt ?? null,
+    p_cursor_distance_meters: options.cursor?.distanceMeters ?? null,
     p_cursor_id: options.cursor?.id ?? null,
+    p_cursor_seen: options.cursor?.seen ?? null,
     p_exclude_post_ids: Array.from(new Set(options.excludePostIds ?? [])).slice(0, 200),
     p_limit: Math.min(Math.max(Math.floor(options.limit ?? CIRCLE_FEED_PAGE_SIZE), 1), CIRCLE_FEED_PAGE_SIZE),
+    p_seen_cutoff: options.cursor?.seenCutoff ?? null,
+    p_viewer_lat: location?.lat ?? null,
+    p_viewer_lng: location?.lng ?? null,
     p_viewer_user_id: actor.userId,
   });
   const { data, error } = options.trace
-    ? await options.trace.database("feed.circle_feed_page_v2", circlePageQuery)
+    ? await options.trace.database("feed.circle_feed_page_v3", circlePageQuery)
     : await circlePageQuery();
   if (error) throw new Error(`Circle feed deployment contract unavailable: ${error.message}`);
 
@@ -135,8 +149,8 @@ export async function loadCanonicalCircleFeedPage(
   if (!payload.viewerName || payload.viewerUserId !== actor.userId) {
     throw new Error("Circle feed actor contract rejected the request");
   }
-  const chronologicalReviews = (payload.reviews ?? []).map((row) => normalizeReview(row as Parameters<typeof normalizeReview>[0]));
-  const assembly = () => buildFeedAssemblyMaps(db, chronologicalReviews, {
+  const reviews = (payload.reviews ?? []).map((row) => normalizeReview(row as Parameters<typeof normalizeReview>[0]));
+  const assembly = () => buildFeedAssemblyMaps(db, reviews, {
       includeTasteTrust: true,
       trace: options.trace,
       viewerName: actor.actorName,
@@ -145,10 +159,9 @@ export async function loadCanonicalCircleFeedPage(
   const maps = options.trace
     ? await options.trace.measure("assembly", "feed.enrichment", assembly)
     : await assembly();
-  const seenIds = new Set(payload.seenPostIds ?? []);
-  const unseen = rankCircleFeedReviews(chronologicalReviews.filter((review) => !seenIds.has(review.id)), maps);
-  const seen = rankCircleFeedReviews(chronologicalReviews.filter((review) => seenIds.has(review.id)), maps);
-  const reviews = [...unseen, ...seen];
+  const nextCursor = payload.nextCursor
+    ? { ...payload.nextCursor, locationKey }
+    : null;
 
   return {
     ...maps,
@@ -158,8 +171,8 @@ export async function loadCanonicalCircleFeedPage(
     joinedCircles: payload.joinedCircles ?? [],
     mutualMembers: payload.mutualMembers ?? [],
     myName: payload.viewerName,
-    nextCursor: payload.nextCursor ?? null,
-    rankMap: buildRankMap(chronologicalReviews),
+    nextCursor,
+    rankMap: buildRankMap(reviews),
     requestStatusMap: payload.requestStatusMap ?? {},
     reviews,
     viewerUserId: actor.userId,

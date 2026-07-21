@@ -19,11 +19,12 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { recordHomeStructuralMutation } from "@/home/homeStructuralRevision";
 
 const POST_MEDIA_REFRESH_MS = 4 * 60_000;
-const EXPIRING_MEDIA_QUERY_OPTIONS = {
+const EXPIRING_POST_MEDIA_QUERY_OPTIONS = {
   refetchInterval: POST_MEDIA_REFRESH_MS,
   refetchOnWindowFocus: true,
   staleTime: 2 * 60_000
 } as const;
+export const PROFILE_HEADER_STALE_TIME_MS = 5 * 60_000;
 
 export const profileKeys = {
   current: ["profile", "current"] as const,
@@ -32,6 +33,15 @@ export const profileKeys = {
   otherShell: (username: string) => ["profile", "other", username.trim().toLowerCase(), "shell"] as const,
   posts: (username: string) => ["profile", username.trim().toLowerCase(), "posts"] as const
 };
+
+export function currentProfilePageQueryOptions() {
+  return {
+    queryKey: profileKeys.currentPage,
+    queryFn: getCurrentProfilePage,
+    refetchOnWindowFocus: false,
+    staleTime: PROFILE_HEADER_STALE_TIME_MS
+  } as const;
+}
 
 export function useUsernameAvailabilityQuery(username: string, enabled: boolean) {
   return useQuery({
@@ -68,10 +78,8 @@ export function useCurrentUserProfileQuery(options: { enabled?: boolean } = {}) 
 
 export function useCurrentProfilePageQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: profileKeys.currentPage,
-    queryFn: getCurrentProfilePage,
-    enabled: options.enabled ?? true,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...currentProfilePageQueryOptions(),
+    enabled: options.enabled ?? true
   });
 }
 
@@ -105,7 +113,7 @@ export function useProfilePostsInfiniteQuery(username: string, options: { enable
     enabled: Boolean(username) && (options.enabled ?? true),
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,
-    ...EXPIRING_MEDIA_QUERY_OPTIONS
+    ...EXPIRING_POST_MEDIA_QUERY_OPTIONS
   });
 }
 

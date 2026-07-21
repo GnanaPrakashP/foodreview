@@ -46,6 +46,12 @@ function withoutStoredMediaLocation(photo: JsonRecord) {
   return safePhoto;
 }
 
+function withoutTimelineCursor(room: JsonRecord) {
+  const safeRoom = { ...room };
+  delete safeRoom.timeline_date;
+  return safeRoom;
+}
+
 async function signPhotoPayload(payload: JsonRecord, roomId: string) {
   const photos = photosFromPayload(payload);
   const photoIds = Array.from(new Set(
@@ -111,19 +117,21 @@ export async function GET(req: NextRequest) {
 
   try {
     if (action === "rooms") {
-      const { data, error } = await supabase.rpc("shared_memory_room_summaries_v2", {
-        p_before_activity_at: cursor?.createdAt ?? null,
+      const { data, error } = await supabase.rpc("shared_memory_room_summaries_v3", {
+        p_before_timeline_date: cursor?.createdAt.slice(0, 10) ?? null,
         p_before_room_id: cursor?.id ?? null,
-        p_limit: limit,
+        p_limit: limit + 1,
       });
       if (error) throw error;
-      const rooms = Array.isArray(data) ? data as JsonRecord[] : [];
-      const last = rooms.length === limit ? rooms.at(-1) : null;
-      const createdAt = typeof last?.latest_activity_at === "string" ? last.latest_activity_at : null;
+      const roomsWithCursorSentinel = Array.isArray(data) ? data as JsonRecord[] : [];
+      const hasMore = roomsWithCursorSentinel.length > limit;
+      const selectedRooms = roomsWithCursorSentinel.slice(0, limit);
+      const last = hasMore ? selectedRooms.at(-1) : null;
+      const createdAt = typeof last?.timeline_date === "string" ? last.timeline_date : null;
       const id = typeof last?.id === "string" ? last.id : null;
       return privateJson({
         nextCursor: createdAt && id ? encodeStableTimestampCursor({ createdAt, id }) : null,
-        rooms,
+        rooms: selectedRooms.map(withoutTimelineCursor),
       });
     }
 

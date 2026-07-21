@@ -4,6 +4,7 @@ import type { FeedPage, HomeFeedPage, HomeFeedPost, ReviewPost } from "@/types/m
 import { normalizeDishDisplayName } from "@/services/dishNormalizer";
 import { displayNameForProfile, mapReviewPost, type ProfileRow, type ReviewRow } from "@/services/reviewMapper";
 import { fetchPostMediaAccess } from "@/services/postMediaAccess";
+import { normalizeHomeFeedLocation, type HomeFeedLocation } from "@/home/homeFeedLocation";
 
 const HOME_PAGE_SIZE = 10;
 const PAGE_SIZE = 24;
@@ -350,6 +351,7 @@ export function mapHomeFeedPost(post: HomeFeedPost): ReviewPost {
 }
 
 type CircleFeedRequestOptions = {
+  location?: HomeFeedLocation | null;
   refresh?: boolean;
   signal?: AbortSignal;
 };
@@ -359,7 +361,12 @@ export async function getCircleFeed(
   options: CircleFeedRequestOptions = {}
 ): Promise<FeedPage> {
   const params = new URLSearchParams({ limit: String(HOME_PAGE_SIZE) });
+  const location = normalizeHomeFeedLocation(options.location);
   if (cursor) params.set("cursor", cursor);
+  if (location) {
+    params.set("lat", String(location.lat));
+    params.set("lng", String(location.lng));
+  }
   if (options.refresh) params.set("refresh", "1");
   const page = await authorizedJson<HomeFeedPage>(`/api/feed/circle?${params.toString()}`, {
     method: "GET",

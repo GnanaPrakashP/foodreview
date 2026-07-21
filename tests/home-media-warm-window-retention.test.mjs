@@ -83,6 +83,9 @@ test("12-16 restoration reuses readiness and geometry-stable thumbnail plus blur
   assert.match(cover, /recyclingKey=\{thumbnailRecyclingKey\}/);
   assert.match(cover, /state !== "ready"/);
   assert.match(cover, /placeholderContentFit="cover"/);
+  assert.match(cover, /HOME_MEDIA_BLURHASH_SCRIM_COLOR/);
+  assert.match(cover, /const hasPreview = Boolean\(media\.placeholder \|\| thumbnailSource\)/);
+  assert.match(cover, /showBusy && !hasPreview/);
   assert.match(cover, /transition=\{0\}/);
   assert.match(cover, /style=\{styles\.layer\}/);
   assert.match(cover, /displayedBeforeLoadRef\.current[\s\S]*cached_readiness_reuse/);
@@ -120,11 +123,13 @@ test("19-21 outgoing and reverse pages remain rendered through native selection"
 });
 
 test("26-31 every page owns an explicit near-black fallback, preview, retry or media surface", () => {
-  assert.match(carousel, /style=\{\[styles\.page, \{ backgroundColor: "#111111" \}\]\}/);
-  assert.match(carousel, /style=\{\[styles\.layer, styles\.pendingPage, \{ backgroundColor: "#111111" \}\]\}/);
+  assert.match(carousel, /style=\{\[styles\.page, \{ backgroundColor: HOME_MEDIA_FALLBACK_COLOR \}\]\}/);
+  assert.match(carousel, /style=\{\[styles\.layer, styles\.pendingPage, \{ backgroundColor: HOME_MEDIA_FALLBACK_COLOR \}\]\}/);
+  assert.match(carousel, /placeholder=\{\{ blurhash: media\.placeholder \}\}[\s\S]*styles\.previewScrim/);
   assert.doesNotMatch(carousel, /<Utensils/);
   assert.doesNotMatch(cover, /<Utensils/);
-  assert.match(carousel, /metadataPending && renderMedia && active \? <ActivityIndicator/);
+  assert.match(carousel, /const showBusy = metadataPending && renderMedia && active && !hasPreview/);
+  assert.match(carousel, /showBusy \? <ActivityIndicator/);
   assert.match(carousel, /blank_page_prevented/);
   assert.doesNotMatch(carousel, /return null/);
   assert.match(cover, /source\.state === "failed" \? <RetryOverlay/);

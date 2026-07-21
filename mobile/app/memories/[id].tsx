@@ -17,7 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbnails";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -123,6 +123,7 @@ import {
   useMemoryMessagePagesQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime,
+  memoryRoomSummariesFromPages,
   memoryKeys,
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
@@ -134,13 +135,13 @@ import {
 } from "@/services/mediaPicker";
 import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { MEMORY_CHAT_PRELOAD_LIMIT, type AddMemoryMediaAsset } from "@/services/memories";
+import { MEMORY_CHAT_PRELOAD_LIMIT, type AddMemoryMediaAsset, type MemoryRoomsPage } from "@/services/memories";
 import { MEMORY_AUDIO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
 import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
-import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryStop, MemoryStopType } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
 type MemberCircleStatus = CircleAccessStatus | "loading";
@@ -3737,9 +3738,9 @@ export default function MemoryDetailScreen() {
   const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
-  const summaryUnreadChatCount = queryClient
-    .getQueryData<MemoryRoomSummary[]>(memoryKeys.list)
-    ?.find((memory) => memory.id === data.id)?.unreadCount;
+  const summaryUnreadChatCount = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).find((memory) => memory.id === data.id)?.unreadCount;
   const unreadChatCount = summaryUnreadChatCount ?? unreadChatMessageCount(data, myUsername);
 
   return (

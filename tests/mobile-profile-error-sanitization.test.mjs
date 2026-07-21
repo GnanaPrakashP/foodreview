@@ -24,10 +24,12 @@ test("mobile Profile tab uses a shared collapsible header and virtualized Posts/
   assert.match(profileSource, /renderTabBar=\{renderProfileTabBar\}/);
   assert.match(profileSource, /<Tabs\.Tab name="posts" label="Posts">[\s\S]*data=\{postRows\}/);
   assert.match(profileSource, /<Tabs\.Tab name="memories" label="Memories">[\s\S]*data=\{memoriesRows\}/);
-  assert.equal((profileSource.match(/<Tabs\.FlatList/g) ?? []).length, 2);
+  assert.equal((profileSource.match(/<Tabs\.FlatList/g) ?? []).length, 1);
+  assert.equal((profileSource.match(/<Tabs\.FlashList/g) ?? []).length, 1);
   assert.match(profileSource, /onEndReached=\{onEndReached\}/);
   assert.match(profileSource, /initialNumToRender=\{PROFILE_LIST_INITIAL_RENDER_COUNT\}/);
   assert.match(profileSource, /windowSize=\{PROFILE_LIST_WINDOW_SIZE\}/);
+  assert.match(profileSource, /drawDistance=\{900\}/);
   assert.doesNotMatch(profileSource, /useSegmentedPager|GestureHandlerScrollView|<Animated\.FlatList|pagingEnabled/);
 });
 

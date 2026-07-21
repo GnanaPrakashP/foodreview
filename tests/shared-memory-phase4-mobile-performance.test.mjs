@@ -122,10 +122,11 @@ test("phase 5 adds SQLite offline store and offline-first memory hooks", () => {
   assert.match(memoryOfflineStore, /create table if not exists memory_messages/);
   assert.match(memoryOfflineStore, /create table if not exists memory_photos/);
   assert.match(memoryService, /listMemoryRoomsOfflineFirst/);
+  assert.match(memoryService, /listMemoryRoomsPageOfflineFirst/);
   assert.match(memoryService, /getMemoryRoomOfflineFirst/);
   assert.match(memoryService, /getMemoryMessagesPageOfflineFirst/);
   assert.match(memoryService, /getMemoryMediaPageOfflineFirst/);
-  assert.match(memoryHooks, /listMemoryRoomsOfflineFirst/);
+  assert.match(memoryHooks, /listMemoryRoomsPageOfflineFirst/);
   assert.match(memoryHooks, /getMemoryRoomOfflineFirst/);
   assert.match(memoryHooks, /getMemoryMessagesPageOfflineFirst/);
   assert.match(memoryHooks, /getMemoryMediaPageOfflineFirst/);

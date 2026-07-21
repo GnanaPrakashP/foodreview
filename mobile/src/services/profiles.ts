@@ -27,7 +27,7 @@ const PROFILE_SELECT = [
   "created_at"
 ].join(", ");
 
-export const PROFILE_POST_PAGE_SIZE = 24;
+export const PROFILE_POST_PAGE_SIZE = 10;
 
 export type ProfileSetupInput = {
   firstName: string;

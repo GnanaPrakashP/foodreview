@@ -18,7 +18,7 @@ import {
   View
 } from "react-native";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
+import { EmptyState, ErrorState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useRespondToCircleRequestMutation } from "@/hooks/useCircle";
 import {
@@ -52,6 +52,7 @@ const NOTIFICATIONS_RENDER_BATCH_SIZE = 8;
 const NOTIFICATIONS_WINDOW_SIZE = 7;
 const NOTIFICATIONS_STALE_MS = 30_000;
 const NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT = 2;
+const NOTIFICATION_SKELETON_ROW_COUNT = 6;
 
 function effectiveDate(notification: AppNotification) {
   return notification.updatedAt || notification.createdAt;
@@ -95,7 +96,7 @@ function avatarColor(name: string) {
 function iconForNotification(notification: AppNotification): keyof typeof Ionicons.glyphMap {
   const type = notification.type;
   if (type === "POST_LIKED" || type === "like") return "heart";
-  if (type === "POST_COMMENTED" || type === "comment" || type === "THREAD_REPLY" || type === "also_commented") {
+  if (type === "POST_COMMENTED" || type === "comment") {
     return "chatbubble";
   }
   if (type === "CIRCLE_REQUEST_RECEIVED" || type === "circle_request") return "person-add";
@@ -154,6 +155,66 @@ const NotificationActorAvatar = memo(function NotificationActorAvatar({
     </View>
   );
 });
+
+function NotificationSkeletonRows({ styles }: { styles: ReturnType<typeof createStyles> }) {
+  const pulseOpacity = useRef(new Animated.Value(0.42)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          duration: 640,
+          easing: Easing.inOut(Easing.quad),
+          toValue: 0.9,
+          useNativeDriver: true
+        }),
+        Animated.timing(pulseOpacity, {
+          duration: 640,
+          easing: Easing.inOut(Easing.quad),
+          toValue: 0.42,
+          useNativeDriver: true
+        })
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [pulseOpacity]);
+
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={styles.skeletonWrap}
+    >
+      <Animated.View style={[styles.skeletonContent, { opacity: pulseOpacity }]}>
+        <View style={styles.skeletonSectionLabel} />
+        {Array.from({ length: NOTIFICATION_SKELETON_ROW_COUNT }, (_, row) => (
+          <View key={row} style={styles.skeletonRow}>
+            <View style={styles.skeletonAvatar} />
+            <View style={styles.skeletonMessageColumn}>
+              <View
+                style={[
+                  styles.skeletonLine,
+                  row % 3 === 0 ? styles.skeletonMessageMedium : styles.skeletonMessageWide
+                ]}
+              />
+              <View
+                style={[
+                  styles.skeletonLine,
+                  row % 2 === 0 ? styles.skeletonPreviewWide : styles.skeletonPreviewShort
+                ]}
+              />
+              <View style={[styles.skeletonLine, styles.skeletonTime]} />
+            </View>
+            {row % 3 === 0 ? <View style={styles.skeletonThumbnail} /> : null}
+          </View>
+        ))}
+      </Animated.View>
+    </View>
+  );
+}
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -465,9 +526,7 @@ export default function NotificationsScreen() {
         </View>
 
         {!isReady ? (
-          <View style={styles.stateWrap}>
-            <LoadingState message="Checking your session." title="Loading notifications" />
-          </View>
+          <NotificationSkeletonRows styles={styles} />
         ) : !isAuthenticated ? (
           <View style={styles.stateWrap}>
             <EmptyState
@@ -477,9 +536,7 @@ export default function NotificationsScreen() {
             />
           </View>
         ) : notifications.isLoading && items.length === 0 ? (
-          <View style={styles.stateWrap}>
-            <LoadingState message="Fetching likes, comments, and circle activity." title="Loading notifications" />
-          </View>
+          <NotificationSkeletonRows styles={styles} />
         ) : notifications.isError && items.length === 0 ? (
           <View style={styles.stateWrap}>
             <ErrorState
@@ -489,21 +546,19 @@ export default function NotificationsScreen() {
               title="Notifications unavailable"
             />
           </View>
+        ) : sections.length === 0 && notifications.isFetchingNextPage ? (
+          <NotificationSkeletonRows styles={styles} />
         ) : sections.length === 0 ? (
           <View style={styles.stateWrap}>
-            {notifications.isFetchingNextPage ? (
-              <LoadingState message="Checking older activity." title="Loading notifications" />
-            ) : (
-              <EmptyState
-                actionLabel={hasOlderNotifications ? "Load older activity" : undefined}
-                icon="notifications-outline"
-                message={hasOlderNotifications
-                  ? "Recent activity is no longer available, but older notifications may still be here."
-                  : "Circle requests, likes, comments, and circle posts will show here."}
-                onAction={hasOlderNotifications ? () => void notifications.fetchNextPage() : undefined}
-                title={hasOlderNotifications ? "No recent notifications" : "No notifications yet"}
-              />
-            )}
+            <EmptyState
+              actionLabel={hasOlderNotifications ? "Load older activity" : undefined}
+              icon="notifications-outline"
+              message={hasOlderNotifications
+                ? "Recent activity is no longer available, but older notifications may still be here."
+                : "Circle requests, likes, comments, and circle posts will show here."}
+              onAction={hasOlderNotifications ? () => void notifications.fetchNextPage() : undefined}
+              title={hasOlderNotifications ? "No recent notifications" : "No notifications yet"}
+            />
           </View>
         ) : (
           <SectionList
@@ -580,6 +635,68 @@ function createStyles(themeColors: ThemeColors) {
     listContent: {
       gap: spacing.sm,
       paddingBottom: spacing.xl
+    },
+    skeletonWrap: {
+      flex: 1
+    },
+    skeletonContent: {
+      gap: spacing.sm
+    },
+    skeletonSectionLabel: {
+      backgroundColor: themeColors.surface,
+      borderRadius: radius.pill,
+      height: 9,
+      marginBottom: spacing.xs,
+      width: 54
+    },
+    skeletonRow: {
+      alignItems: "center",
+      backgroundColor: themeColors.card,
+      borderColor: themeColors.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: spacing.md,
+      minHeight: 74,
+      padding: spacing.md
+    },
+    skeletonAvatar: {
+      backgroundColor: themeColors.surface,
+      borderRadius: 14,
+      height: 44,
+      width: 44
+    },
+    skeletonMessageColumn: {
+      flex: 1,
+      gap: 7,
+      minWidth: 0
+    },
+    skeletonLine: {
+      backgroundColor: themeColors.surface,
+      borderRadius: radius.pill,
+      height: 10
+    },
+    skeletonMessageMedium: {
+      width: "70%"
+    },
+    skeletonMessageWide: {
+      width: "88%"
+    },
+    skeletonPreviewWide: {
+      width: "76%"
+    },
+    skeletonPreviewShort: {
+      width: "52%"
+    },
+    skeletonTime: {
+      height: 8,
+      width: 36
+    },
+    skeletonThumbnail: {
+      backgroundColor: themeColors.surface,
+      borderRadius: radius.sm,
+      height: 46,
+      width: 46
     },
     sectionHeader: {
       ...fontStyles.extraBold,

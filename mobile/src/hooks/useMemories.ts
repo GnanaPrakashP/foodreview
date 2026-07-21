@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { supabase } from "@/api/supabase";
 import {
   addMemoryDish,
@@ -17,7 +17,7 @@ import {
   getMemoryMessagesPageOfflineFirst,
   getMemoryRoomOfflineFirst,
   leaveMemoryRoom,
-  listMemoryRoomsOfflineFirst,
+  listMemoryRoomsPageOfflineFirst,
   markMemoryRoomRead,
   setMemoryDishRating,
   updateMemoryRoomOccasion,
@@ -31,6 +31,7 @@ import {
   type CreateMemoryStopInput,
   type MemoryMediaPage,
   type MemoryMessagesPage,
+  type MemoryRoomsPage,
   type SetMemoryDishRatingInput,
   type UpdateMemoryRoomOccasionInput,
   type UpdateMemoryStopInput
@@ -63,6 +64,50 @@ const recentMediaMessageExpiries = new Map<string, number>();
 registerSensitiveResourceCleanup(() => recentMediaMessageExpiries.clear());
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
 const OPTIMISTIC_TEXT_MESSAGE_PREFIX = "optimistic-message:";
+
+export function memoryRoomSummariesFromPages(data: InfiniteData<MemoryRoomsPage> | undefined) {
+  const seen = new Set<string>();
+  const pages = Array.isArray(data)
+    ? [{ rooms: data as MemoryRoomSummary[] }]
+    : data?.pages ?? [];
+  return pages.flatMap((page) => page.rooms.filter((room) => {
+    if (seen.has(room.id)) return false;
+    seen.add(room.id);
+    return true;
+  })) ?? [];
+}
+
+function applyMemorySummaryPages(
+  current: InfiniteData<MemoryRoomsPage> | undefined,
+  update: (summaries: MemoryRoomSummary[]) => MemoryRoomSummary[] | undefined
+) {
+  if (!current) return current;
+  if (Array.isArray(current)) {
+    const rooms = update(current as MemoryRoomSummary[]) ?? current as MemoryRoomSummary[];
+    return { pageParams: [null], pages: [{ nextCursor: null, rooms }] };
+  }
+  const nextSummaries = update(memoryRoomSummariesFromPages(current));
+  if (!nextSummaries) return current;
+  let offset = 0;
+  return {
+    ...current,
+    pages: current.pages.map((page) => {
+      const roomCount = page.rooms.length;
+      const rooms = nextSummaries.slice(offset, offset + roomCount);
+      offset += roomCount;
+      return { ...page, rooms };
+    })
+  };
+}
+
+function setMemorySummaryPages(
+  queryClient: QueryClient,
+  update: (summaries: MemoryRoomSummary[]) => MemoryRoomSummary[] | undefined
+) {
+  queryClient.setQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list, (current) => (
+    applyMemorySummaryPages(current, update)
+  ));
+}
 type DeleteMemoryItemsInput = { messageIds?: string[]; photoIds?: string[] };
 type AddMemoryMessageInput = { body: string; clientId?: string; replacesMessageId?: string; replyToMessageId?: string | null };
 type MemoryDeleteSets = {
@@ -443,8 +488,7 @@ function applyRealtimeMessageToSummaries(
 ) {
   const { author_name: authorName, body, created_at: createdAt, room_id: rowRoomId } = row;
   if (!current || !rowRoomId || !createdAt || typeof body !== "string") return current;
-  return current
-    .map((memory) => {
+  return current.map((memory) => {
       if (memory.id !== rowRoomId) return memory;
       const alreadyReflected = timeFromIso(memory.latestActivityAt) >= timeFromIso(createdAt) &&
         memory.latestMessage === body;
@@ -459,8 +503,7 @@ function applyRealtimeMessageToSummaries(
         messageCount: alreadyReflected || fromViewer ? memory.messageCount : memory.messageCount + 1,
         unreadCount: alreadyReflected || fromViewer ? memory.unreadCount : memory.unreadCount + 1
       };
-    })
-    .sort((a, b) => timeFromIso(b.latestActivityAt) - timeFromIso(a.latestActivityAt));
+    });
 }
 
 function applyRealtimeMessageUpdateToSummaries(
@@ -937,18 +980,27 @@ export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
     let cancelled = false;
     void readOfflineMemorySummaries().then((cached) => {
       if (cancelled || !cached || queryClient.getQueryData(memoryKeys.list)) return;
-      queryClient.setQueryData(memoryKeys.list, cached);
+      queryClient.setQueryData<InfiniteData<MemoryRoomsPage>>(
+        memoryKeys.list,
+        {
+          pageParams: [null],
+          pages: [{ nextCursor: null, rooms: cached.slice(0, 12) }]
+        },
+        { updatedAt: 0 }
+      );
     });
     return () => {
       cancelled = true;
     };
   }, [enabled, queryClient]);
 
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: memoryKeys.list,
-    queryFn: listMemoryRoomsOfflineFirst,
+    queryFn: ({ pageParam }) => listMemoryRoomsPageOfflineFirst(pageParam),
     enabled,
-    refetchOnWindowFocus: true,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    refetchOnWindowFocus: false,
     staleTime: 45_000
   });
 }
@@ -977,7 +1029,7 @@ export function useMemoryRoomsRealtime(enabled = true) {
         scheduleRefresh();
         return;
       }
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+      setMemorySummaryPages(queryClient, (current) => {
         if (payload.eventType === "INSERT") return applyRealtimeMessageToSummaries(current, row, profile?.username);
         if (payload.eventType === "UPDATE") return applyRealtimeMessageUpdateToSummaries(current, row);
         if (row.id) return applyRealtimeMessageDeleteToSummaries(current, row, profile?.username);
@@ -992,11 +1044,11 @@ export function useMemoryRoomsRealtime(enabled = true) {
         return;
       }
       if (payload.eventType === "INSERT") {
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
         ));
       } else if (payload.eventType === "DELETE" && row.id) {
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimePhotoDeleteToSummaries(current, row, profile?.username)
         ));
       }
@@ -1157,7 +1209,7 @@ export function useMemoryRoomRealtime(roomId: string) {
           const message = memoryMessageFromRealtimeRow(row, current);
           return message ? applyRealtimeMessageInsert(current, message) : current;
         });
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageToSummaries(current, row, profile?.username)
         ));
         persistOfflineRoom();
@@ -1183,7 +1235,7 @@ export function useMemoryRoomRealtime(roomId: string) {
             (current) => updateMessageInPages(current, mappedMessage as MemoryMessage)
           );
         }
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageUpdateToSummaries(current, row)
         ));
         persistOfflineRoom();
@@ -1207,7 +1259,7 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
           deleteMessagePhotosFromMediaPages(current, row.id as string)
         ));
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
         ));
         void deleteOfflineMemoryMessage(row.id as string);
@@ -1242,7 +1294,7 @@ export function useMemoryRoomRealtime(roomId: string) {
           ));
         }
         if (payload.eventType === "INSERT") {
-          queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+          setMemorySummaryPages(queryClient, (current) => (
             applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
           ));
         }
@@ -1267,7 +1319,7 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
           deletePhotoFromMediaPages(current, row.id as string)
         ));
-        queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+        setMemorySummaryPages(queryClient, (current) => (
           applyRealtimePhotoDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
         ));
         void deleteOfflineMemoryPhoto(row.id as string);
@@ -1349,12 +1401,12 @@ export function useUpdateMemoryRoomOccasionMutation(roomId: string) {
       ]);
 
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
-      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
         current ? { ...current, ...input } : current
       ));
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+      setMemorySummaryPages(queryClient, (current) => (
         current?.map((memory) => (memory.id === roomId ? { ...memory, ...input } : memory))
       ));
 
@@ -1387,13 +1439,13 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
       ]);
 
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
-      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
         current ? { ...current, lastReadAt: now } : current
       ));
 
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+      setMemorySummaryPages(queryClient, (current) => {
         if (!current) return current;
         return current.map((memory) => (
           memory.id === roomId && memory.unreadCount > 0 ? { ...memory, unreadCount: 0 } : memory
@@ -1478,7 +1530,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
       void queryClient.cancelQueries({ queryKey: detailKey });
       void queryClient.cancelQueries({ queryKey: memoryKeys.list });
 
-      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
         if (!current) return current;
@@ -1492,18 +1544,16 @@ export function useAddMemoryMessageMutation(roomId: string) {
         };
       });
 
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+      setMemorySummaryPages(queryClient, (current) => {
         if (!current) return current;
-        return current
-          .map((memory) => memory.id === roomId
+        return current.map((memory) => memory.id === roomId
             ? {
               ...memory,
               latestActivityAt: now,
               latestMessage: trimmed,
               messageCount: memory.messageCount + 1
             }
-            : memory)
-          .sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
+            : memory);
       });
 
       return { optimisticMessage, previousList, previousRoom };
@@ -1600,7 +1650,7 @@ export function useDeleteMemoryItemsMutation(roomId: string) {
         queryKey: memoryKeys.chat(roomId)
       });
       const previousMediaPages = queryClient.getQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId));
-      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
       const counts = deletedItemCounts(previousRoom, deleteSets);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
@@ -1613,7 +1663,7 @@ export function useDeleteMemoryItemsMutation(roomId: string) {
       queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
         applyOptimisticMediaPagesDelete(current, deleteSets)
       ));
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => (
+      setMemorySummaryPages(queryClient, (current) => (
         applyOptimisticSummaryDelete(current, roomId, counts)
       ));
 
@@ -1632,7 +1682,12 @@ export function useDeleteMemoryItemsMutation(roomId: string) {
         const pendingCounts = pendingDeleteSets ? deletedItemCounts(context.previousRoom, pendingDeleteSets) : null;
         queryClient.setQueryData(
           memoryKeys.list,
-          pendingCounts ? applyOptimisticSummaryDelete(context.previousList, roomId, pendingCounts) : context.previousList
+          pendingCounts
+            ? applyMemorySummaryPages(
+              context.previousList,
+              (summaries) => applyOptimisticSummaryDelete(summaries, roomId, pendingCounts)
+            )
+            : context.previousList
         );
       }
       if (context?.previousMediaPages) {
@@ -1823,7 +1878,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         queryClient.cancelQueries({ queryKey: memoryKeys.list })
       ]);
 
-      const previousList = queryClient.getQueryData<MemoryRoomSummary[]>(memoryKeys.list);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
         if (!current) return current;
@@ -1834,10 +1889,9 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         };
       });
 
-      queryClient.setQueryData<MemoryRoomSummary[]>(memoryKeys.list, (current) => {
+      setMemorySummaryPages(queryClient, (current) => {
         if (!current) return current;
-        return current
-          .map((memory) => memory.id === roomId
+        return current.map((memory) => memory.id === roomId
             ? {
               ...memory,
               latestActivityAt: now,
@@ -1845,8 +1899,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
               messageCount: memory.messageCount + 1,
               photoCount: memory.photoCount + optimisticPhotos.length
             }
-            : memory)
-          .sort((a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime());
+            : memory);
       });
 
       return {

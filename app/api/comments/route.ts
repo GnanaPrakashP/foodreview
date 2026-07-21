@@ -46,19 +46,11 @@ function scheduleCommentSideEffects(input: {
     if (!review) return;
 
     try {
-      const { data: priorComments } = await writeDb
-        .from("comments")
-        .select("user_name")
-        .eq("post_id", input.postId)
-        .order("created_at", { ascending: false })
-        .limit(100);
-
       await createPostCommentNotifications(
         writeDb,
         review,
         input.actorName,
         input.comment,
-        ((priorComments ?? []) as { user_name: string }[]).map((row) => row.user_name),
         input.actorDisplayName
       );
     } catch (notificationError) {

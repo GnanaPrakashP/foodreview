@@ -32,7 +32,7 @@ test("Circle route traces the canonical RPC, enrichment, media authorization, an
   assert.match(route, /tracedJson\(trace/);
   assert.match(route, /feed\.media_authorization/);
   assert.match(route, /feed\.response_assembly/);
-  assert.match(canonical, /feed\.circle_feed_page_v2/);
+  assert.match(canonical, /feed\.circle_feed_page_v3/);
   assert.match(canonical, /feed\.enrichment/);
   assert.match(assembly, /feed\.mobile_post_engagement_v1/);
   assert.match(profileDisplay, /feed\.profile_display/);

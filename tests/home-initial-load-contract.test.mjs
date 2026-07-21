@@ -135,10 +135,10 @@ test("Home tab return and reconnect do not refetch or restart the four-minute ti
   assert.match(source("mobile/app/(tabs)/_layout.tsx"), /freezeOnBlur:\s*true/);
 });
 
-test("persistence keeps only ten Home posts and boolean unread state without changing Profile", () => {
+test("persistence keeps only ten Home and Profile posts plus boolean unread state", () => {
   const persistence = source("mobile/src/providers/queryPersistence.ts");
   assert.match(persistence, /PERSISTED_CIRCLE_FIRST_PAGE_LIMIT = 10/);
-  assert.match(persistence, /PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 24/);
+  assert.match(persistence, /PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 10/);
   assert.match(persistence, /key\[1\] === "has-unread"/);
   assert.doesNotMatch(persistence, /key\[1\] === "unread-count"/);
 });

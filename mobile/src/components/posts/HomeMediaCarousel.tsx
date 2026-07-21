@@ -20,6 +20,10 @@ import {
   type HomeCarouselRetentionMode
 } from "@/components/posts/homeCarouselLayout";
 import { mediaDerivativeCacheKey } from "@/components/posts/mediaCacheKey";
+import {
+  HOME_MEDIA_BLURHASH_SCRIM_COLOR,
+  HOME_MEDIA_FALLBACK_COLOR
+} from "@/components/posts/homeMediaVisualState";
 import { useFixedGeometryRecyclingState } from "@/components/posts/useFixedGeometryRecyclingState";
 import { useHomeCarouselMedia } from "@/hooks/useHomeCarouselMedia";
 import { useThemePreference } from "@/hooks/useThemePreference";
@@ -48,6 +52,7 @@ type Props = {
   onRequestPlayback: (mediaAssetId: string) => void;
   playbackMediaAssetId: string | null;
   postId: string;
+  recyclingEnabled: boolean;
   retentionMode: HomeCarouselRetentionMode;
   verticalScrolling: boolean;
 };
@@ -94,6 +99,7 @@ export function HomeMediaCarousel({
   onRequestPlayback,
   playbackMediaAssetId,
   postId,
+  recyclingEnabled,
   retentionMode,
   verticalScrolling
 }: Props) {
@@ -109,7 +115,7 @@ export function HomeMediaCarousel({
   const currentIndexRef = useRef(0);
   const lastPageSelectedAtRef = useRef(Date.now());
   const resolvedSequenceRef = useRef<string | null>(null);
-  const recyclingStateScope = diagnosticRecycling
+  const recyclingStateScope = recyclingEnabled
     ? `${postId}:${cover.mediaAssetId ?? "cover"}`
     : "home-carousel-instance";
   const [currentIndex, setCurrentIndex] = useFixedGeometryRecyclingState(0, [recyclingStateScope]);
@@ -283,7 +289,7 @@ export function HomeMediaCarousel({
 
   const node = (
     <View style={styles.carouselContainer}>
-      <View style={[styles.mediaWrapper, { backgroundColor: "#111111" }]}>
+      <View style={[styles.mediaWrapper, { backgroundColor: HOME_MEDIA_FALLBACK_COLOR }]}>
         {expectedCount > 1 ? (
           <PagerView
             initialPage={0}
@@ -308,13 +314,13 @@ export function HomeMediaCarousel({
                   accessible
                   collapsable={false}
                   key={getMappingKey(page.key, index)}
-                  style={[styles.page, { backgroundColor: "#111111" }]}
+                  style={[styles.page, { backgroundColor: HOME_MEDIA_FALLBACK_COLOR }]}
                 >
                   <HomeCarouselPage
                     accessibilityLabel={accessibilityLabel}
                     active={(active || carouselInteracting) && !verticalScrolling && currentIndex === index}
                     diagnosticRecycling={diagnosticRecycling}
-                    recyclingEnabled={Boolean(diagnosticRecycling)}
+                    recyclingEnabled={recyclingEnabled}
                     media={media}
                     metadataPending={!details.data}
                     onRequestPlayback={requestPlayback}
@@ -338,7 +344,7 @@ export function HomeMediaCarousel({
             accessibilityLabel={`${cover.mediaType === "video" ? "Video" : "Image"} 1 of 1`}
             active={active && !verticalScrolling}
             diagnosticRecycling={diagnosticRecycling}
-            recyclingEnabled={Boolean(diagnosticRecycling)}
+            recyclingEnabled={recyclingEnabled}
             media={cover}
             metadataPending={false}
             loadPolicy={coverLoadActive ? "visible" : "background"}
@@ -424,6 +430,8 @@ const HomeCarouselPage = memo(function HomeCarouselPage({
   }, []);
   const { themeColors } = useThemePreference();
   const hasMediaSurface = Boolean(media && renderMedia);
+  const hasPreview = Boolean(media?.placeholder);
+  const showBusy = metadataPending && renderMedia && active && !hasPreview;
   useEffect(() => {
     adjustHomeMediaProfileGauge(hasMediaSurface ? "mounted_carousel_media" : "placeholder_pages", 1);
     if (!hasMediaSurface) recordHomeMediaProfile("blank_page_prevented");
@@ -432,19 +440,22 @@ const HomeCarouselPage = memo(function HomeCarouselPage({
   const node = !media || !renderMedia ? (
       <View
         accessibilityLabel={accessibilityLabel}
-        style={[styles.layer, styles.pendingPage, { backgroundColor: "#111111" }]}
+        style={[styles.layer, styles.pendingPage, { backgroundColor: HOME_MEDIA_FALLBACK_COLOR }]}
       >
         {media?.placeholder ? (
-          <Image
-            alt=""
-            contentFit="cover"
-            placeholder={{ blurhash: media.placeholder }}
-            placeholderContentFit="cover"
-            style={styles.layer}
-            transition={0}
-          />
+          <>
+            <Image
+              alt=""
+              contentFit="cover"
+              placeholder={{ blurhash: media.placeholder }}
+              placeholderContentFit="cover"
+              style={styles.layer}
+              transition={0}
+            />
+            <View style={[styles.layer, styles.previewScrim]} />
+          </>
         ) : null}
-        {metadataPending && renderMedia && active ? <ActivityIndicator color={themeColors.orange} /> : null}
+        {showBusy ? <ActivityIndicator color={themeColors.orange} /> : null}
       </View>
     ) : (
     <HomeMediaCover
@@ -506,6 +517,9 @@ const styles = StyleSheet.create({
   pendingPage: {
     alignItems: "center",
     justifyContent: "center"
+  },
+  previewScrim: {
+    backgroundColor: HOME_MEDIA_BLURHASH_SCRIM_COLOR
   },
   dotsStrip: {
     alignItems: "center",

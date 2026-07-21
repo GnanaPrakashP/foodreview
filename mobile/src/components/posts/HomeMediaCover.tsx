@@ -5,6 +5,10 @@ import { Play, RotateCcw, Volume2, VolumeX } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { mediaDerivativeCacheKey } from "@/components/posts/mediaCacheKey";
+import {
+  HOME_MEDIA_BLURHASH_SCRIM_COLOR,
+  HOME_MEDIA_FALLBACK_COLOR
+} from "@/components/posts/homeMediaVisualState";
 import { useFixedGeometryRecyclingState } from "@/components/posts/useFixedGeometryRecyclingState";
 import { useHomeVideoSoundPreference } from "@/hooks/useHomeVideoSoundPreference";
 import { useThemePreference } from "@/hooks/useThemePreference";
@@ -440,18 +444,22 @@ function CoverPlaceholder({
     media.cacheRevision ?? 1
   );
   const showThumbnail = Boolean(thumbnailSource && state !== "ready");
-  const busy = showBusy && !showThumbnail && (state === "renewing" || state === "loading");
+  const hasPreview = Boolean(media.placeholder || thumbnailSource);
+  const busy = showBusy && !hasPreview && (state === "renewing" || state === "loading");
   return (
     <View pointerEvents="none" style={[styles.layer, styles.placeholder]}>
       {media.placeholder ? (
-        <Image
-          alt=""
-          contentFit="cover"
-          placeholder={{ blurhash: media.placeholder }}
-          placeholderContentFit="cover"
-          style={styles.layer}
-          transition={0}
-        />
+        <>
+          <Image
+            alt=""
+            contentFit="cover"
+            placeholder={{ blurhash: media.placeholder }}
+            placeholderContentFit="cover"
+            style={styles.layer}
+            transition={0}
+          />
+          <View style={[styles.layer, styles.previewScrim]} />
+        </>
       ) : null}
       {showThumbnail ? (
         <Image
@@ -490,8 +498,11 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     alignItems: "center",
-    backgroundColor: "#111111",
+    backgroundColor: HOME_MEDIA_FALLBACK_COLOR,
     justifyContent: "center"
+  },
+  previewScrim: {
+    backgroundColor: HOME_MEDIA_BLURHASH_SCRIM_COLOR
   },
   playButton: {
     alignItems: "center",

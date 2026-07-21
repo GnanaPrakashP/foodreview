@@ -20,7 +20,7 @@ These are budgets, not production latency or capacity results. Phase 9 must meas
 | Post detail | 1 | 5 | 1 post | 64 KiB | none / detail query |
 | Comments | 1 | 4 | 30 | 128 KiB | stable cursor / comments infinite query |
 | Notifications | 1 | 3 | 30 | 128 KiB | stable cursor / notifications infinite query |
-| Memory room list | 1 | 2 | 50 | 128 KiB | bounded window / room-list query |
+| Memory room list | 1 | 2 | 12 | 128 KiB | stable timeline cursor / room-list infinite query |
 | Memory bootstrap | 1 | 3 | 50 messages | 256 KiB | bounded bootstrap / room-detail query |
 | Memory chat | 1 | 3 | 50 messages | 256 KiB | stable cursor / chat infinite query |
 | Memory media | 1 | 3 | 30 media | 256 KiB | stable cursor / media infinite query |

@@ -143,7 +143,7 @@ test("pagination completion cannot claim the deferred intent twice", () => {
 test("the deferred feed request reuses the refresh=1 ten-post service", () => {
   const service = source("mobile/src/services/feeds.ts");
   assert.match(hookSource, /includeFeed: true/);
-  assert.match(hookSource, /fetchFeed: \(signal\) => getCircleFeed\(null, \{ refresh: true, signal \}\)/);
+  assert.match(hookSource, /fetchFeed: \(signal\) => getCircleFeed\(null, \{ location: locationRef\.current, refresh: true, signal \}\)/);
   assert.match(service, /const HOME_PAGE_SIZE = 10/);
   assert.match(service, /if \(options\.refresh\) params\.set\("refresh", "1"\)/);
 });

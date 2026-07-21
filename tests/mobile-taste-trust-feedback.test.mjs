@@ -105,7 +105,7 @@ test("mobile post cards only route explicit tap targets", () => {
   const profileNavigation = readFileSync("mobile/src/navigation/profileNavigation.ts", "utf8");
   assert.match(postCard, /Share,[\s\S]*Pressable,[\s\S]*StyleSheet,[\s\S]*Text,[\s\S]*View[\s\S]*from "react-native"/);
   assert.match(postCard, /const openProfile = useCallback\(\(\) =>/);
-  assert.match(postCard, /openProfileRoute\(\{ queryClient, router, username: targetUsername, viewerUsername: viewerName \}\)/);
+  assert.match(postCard, /openProfileRoute\(\{[\s\S]*preview: profileNavigationPreview,[\s\S]*username: targetUsername,[\s\S]*viewerUsername: viewerName[\s\S]*\}\)/);
   assert.match(profileNavigation, /pathname: "\/people\/\[username\]"/);
   assert.match(postCard, /const openRestaurant = useCallback\(\(\) =>/);
   assert.match(postCard, /pathname: "\/restaurants\/\[placeId\]"/);

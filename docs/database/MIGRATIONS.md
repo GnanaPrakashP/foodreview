@@ -108,6 +108,9 @@ The mechanically merged chain reset successfully without changing old SQL. Runti
 - `202607210002_review_visible_content_revision.sql` adds the server-owned review revision consumed by explicit Home refresh comparison.
 - `202607210003_review_media_refresh_revision.sql` advances that revision when ordered review media membership changes.
 - `202607210004_notification_unseen_indexes.sql` keeps both canonical UUID and legacy-name unseen badge lookups on bounded partial indexes.
+- `202607210005_home_location_ranked_feed.sql` gives Home stable unseen-first, nearest-first keyset pagination using the account-scoped app location and an immutable first-seen cutoff.
+- `202607210006_retire_thread_reply_notifications.sql` retires discussion-thread inbox and push events, removes historical rows from unread state, and keeps the unread existence function owner-scoped and index-bounded.
+- `202607210007_profile_memory_timeline_pagination.sql` adds a member-scoped 12-room Profile Memory timeline contract with stable `(visit date, room id)` pagination and a matching cursor index.
 
 ## Upgrade support
 

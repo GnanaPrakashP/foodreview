@@ -215,7 +215,6 @@ export type NotificationType =
   | "MUTUAL_CIRCLE_CREATED"
   | "POST_LIKED"
   | "POST_COMMENTED"
-  | "THREAD_REPLY"
   | "CIRCLE_POST_CREATED"
   | "TABLE_MEMORY_INVITE"
   | "COMMON_RESTAURANT_SCORE_UPDATED"
@@ -226,8 +225,7 @@ export type NotificationType =
   | "circle_added"
   | "circle_post"
   | "like"
-  | "comment"
-  | "also_commented";
+  | "comment";
 
 export type AppNotification = {
   id: string;
@@ -286,8 +284,6 @@ export type ProfilePageData = {
   displayName: string;
   stats: ProfileStats;
   circleCount: number;
-  posts: ReviewPost[];
-  nextPostsCursor: string | null;
 };
 
 export type OtherProfileShellData = {

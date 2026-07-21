@@ -51,6 +51,7 @@ const REVIEW_SELECT = [
 ].join(", ");
 
 const CIRCLE_FEED_CACHE_TTL_MS = 5 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 function avgRating(review: Review): number {
   if (!review.items.length) return 0;
@@ -83,7 +84,11 @@ function feedCacheTagForName(name: string) {
 
 export type CircleFeedCursor = {
   createdAt: string;
+  distanceMeters?: number | null;
   id: string;
+  locationKey?: string;
+  seen?: boolean;
+  seenCutoff?: string;
 };
 
 function feedCacheKey(
@@ -113,10 +118,37 @@ export function parseCircleFeedCursor(raw: string | null | undefined): CircleFee
     if (
       typeof parsed.createdAt === "string" &&
       parsed.createdAt.trim() &&
+      Number.isFinite(new Date(parsed.createdAt).getTime()) &&
       typeof parsed.id === "string" &&
-      parsed.id.trim()
+      UUID_PATTERN.test(parsed.id)
     ) {
-      return { createdAt: parsed.createdAt, id: parsed.id };
+      const hasRankedFields = parsed.seen !== undefined || parsed.distanceMeters !== undefined ||
+        parsed.seenCutoff !== undefined || parsed.locationKey !== undefined;
+      if (!hasRankedFields) return { createdAt: parsed.createdAt, id: parsed.id };
+      const seenCutoffMs = typeof parsed.seenCutoff === "string"
+        ? new Date(parsed.seenCutoff).getTime()
+        : Number.NaN;
+      const distanceValid = parsed.distanceMeters === null || (
+        typeof parsed.distanceMeters === "number" &&
+        Number.isSafeInteger(parsed.distanceMeters) &&
+        parsed.distanceMeters >= 0
+      );
+      if (
+        typeof parsed.seen !== "boolean" ||
+        !distanceValid ||
+        !Number.isFinite(seenCutoffMs) ||
+        typeof parsed.locationKey !== "string" ||
+        !parsed.locationKey.trim() ||
+        parsed.locationKey.length > 64
+      ) return null;
+      return {
+        createdAt: parsed.createdAt,
+        distanceMeters: parsed.distanceMeters,
+        id: parsed.id,
+        locationKey: parsed.locationKey,
+        seen: parsed.seen,
+        seenCutoff: new Date(seenCutoffMs).toISOString()
+      };
     }
   } catch {
     return null;

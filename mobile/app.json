@@ -28,7 +28,7 @@
         "NSCameraUsageDescription": "CircleBites uses the camera when you choose to capture food photos or short videos.",
         "NSMicrophoneUsageDescription": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
         "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library only when you choose media for a post or Memory.",
-        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location only when you choose nearby restaurant discovery."
+        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location to show nearby posts and restaurant discovery."
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -113,7 +113,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "CircleBites uses your location only when you choose nearby restaurant discovery.",
+          "locationWhenInUsePermission": "CircleBites uses your location to show nearby posts and restaurant discovery.",
           "locationAlwaysAndWhenInUsePermission": false,
           "locationAlwaysPermission": false,
           "isIosBackgroundLocationEnabled": false,

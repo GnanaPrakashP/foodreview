@@ -76,6 +76,40 @@ test("circle feed cursor serialization round-trips without offset state", () => 
   );
   assert.equal(parseCircleFeedCursor("not-json"), null);
   assert.equal(parseCircleFeedCursor(JSON.stringify({ createdAt: cursor.createdAt })), null);
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ createdAt: "invalid", id: cursor.id })), null);
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ createdAt: cursor.createdAt, id: "not-a-uuid" })), null);
+});
+
+test("ranked circle cursor preserves location, seen snapshot, and nullable distance", () => {
+  const rankedCursor = {
+    createdAt: "2026-07-21T08:30:00.000Z",
+    distanceMeters: null,
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    locationKey: "12.9716,77.5946",
+    seen: false,
+    seenCutoff: "2026-07-21T08:31:00.000Z"
+  };
+
+  assert.equal(
+    JSON.stringify(parseCircleFeedCursor(serializeCircleFeedCursor(rankedCursor))),
+    JSON.stringify(rankedCursor)
+  );
+});
+
+test("partial or malformed ranked circle cursors are rejected", () => {
+  const base = {
+    createdAt: "2026-07-21T08:30:00.000Z",
+    distanceMeters: 1200,
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    locationKey: "12.9716,77.5946",
+    seen: false,
+    seenCutoff: "2026-07-21T08:31:00.000Z"
+  };
+
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ ...base, locationKey: undefined })), null);
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ ...base, distanceMeters: -1 })), null);
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ ...base, seen: "false" })), null);
+  assert.equal(parseCircleFeedCursor(JSON.stringify({ ...base, seenCutoff: "invalid" })), null);
 });
 
 test("circle feed implementation uses keyset pagination instead of offset ranges", () => {

@@ -47,7 +47,7 @@ test("circle feed automation uses server APIs, cursor pagination, and canonical 
   assert.match(circleFeedRouteSource, /nextCursor: serializeCircleFeedCursor/);
   assert.match(circleFeedRouteSource, /circleRequestAccountType: accountTypeByReviewer\.get\(review\.reviewer_name\) \?\? null/);
   assert.match(circleFeedRouteSource, /circleRequestStatus: requestStatusByReviewer\.get\(review\.reviewer_name\) \?\? "idle"/);
-  assert.match(canonicalCircleFeedSource, /db\.rpc\("circle_feed_page_v2"/);
+  assert.match(canonicalCircleFeedSource, /db\.rpc\("circle_feed_page_v3"/);
   assert.match(canonicalCircleFeedSource, /p_viewer_user_id: actor\.userId/);
   assert.doesNotMatch(circleFeedRouteSource, /recommendation_feedback|circle_requests|auth\.getUser/);
 
@@ -102,6 +102,7 @@ test("notification inbox automation uses an isolated boolean unread dot", () => 
   assert.match(notificationServiceSource, /`\/api\/notifications\?\$\{params\.toString\(\)\}`/);
   assert.match(notificationServiceSource, /avatarUrl: actorAvatarUrl\(payload\.avatarMap\?\.\[username\]\)/);
   assert.match(notificationServiceSource, /displayName: displayName\.trim\(\) \|\| username/);
+  assert.doesNotMatch(notificationServiceSource, /THREAD_REPLY|also_commented|discussion you joined/);
   assert.match(notificationServiceSource, /\/api\/notifications\/has-unread/);
   assert.match(notificationServiceSource, /\/api\/notifications\/seen/);
   assert.doesNotMatch(notificationServiceSource, /\.from\("notifications"\)/);
@@ -121,6 +122,12 @@ test("notification inbox automation uses an isolated boolean unread dot", () => 
 
   assert.match(notificationScreenSource, /SectionList/);
   assert.match(notificationScreenSource, /RefreshControl/);
+  assert.match(notificationScreenSource, /function NotificationSkeletonRows/);
+  assert.match(notificationScreenSource, /const NOTIFICATION_SKELETON_ROW_COUNT = 6/);
+  assert.match(notificationScreenSource, /new Animated\.Value\(0\.42\)/);
+  assert.match(notificationScreenSource, /Animated\.loop\(/);
+  assert.match(notificationScreenSource, /notifications\.isLoading && items\.length === 0[\s\S]*?<NotificationSkeletonRows styles=\{styles\} \/>/);
+  assert.doesNotMatch(notificationScreenSource, /<LoadingState/);
   assert.match(notificationScreenSource, /const NOTIFICATIONS_PAGE_SIZE = 12/);
   assert.match(notificationScreenSource, /limit: NOTIFICATIONS_PAGE_SIZE/);
   assert.match(notificationScreenSource, /const NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT = 2/);
@@ -162,6 +169,7 @@ test("push notification automation covers token registration, durable fanout, pr
   assert.match(pushDeliverySource, /const EXPO_PUSH_URL = "https:\/\/exp\.host\/--\/api\/v2\/push\/send"/);
   assert.match(pushDeliverySource, /const PUSH_BATCH_SIZE = 100/);
   assert.match(pushDeliverySource, /const RECEIPT_BATCH_SIZE = 1000/);
+  assert.match(pushDeliverySource, /recipientName: notification\.recipient_name/);
   assert.match(pushDeliverySource, /\.from\("push_tokens"\)/);
   assert.match(pushDeliverySource, /claim_push_delivery_jobs/);
   assert.match(pushDeliverySource, /claim_push_receipt_jobs/);
@@ -173,6 +181,7 @@ test("push notification automation covers token registration, durable fanout, pr
   assert.match(pushBootstrapSource, /safeProtectedPath\(candidate\)/);
   assert.match(pushBootstrapSource, /openProtectedPath\(`\/memories\/\$\{encodeURIComponent\(roomId\)\}`\)/);
   assert.match(pushBootstrapSource, /openProtectedPath\(`\/reviews\/\$\{encodeURIComponent\(postId\)\}`\)/);
+  assert.match(pushBootstrapSource, /notificationType === "CIRCLE_REQUEST_RECEIVED"[\s\S]*openProtectedPath\("\/notifications"\)/);
   assert.match(pushBootstrapSource, /openProtectedPath\(`\/people\/\$\{encodeURIComponent\(actorName\)\}`\)/);
   assert.match(pushBootstrapSource, /openProtectedPath\("\/notifications"\)/);
   assert.match(pushBootstrapSource, /setQueryData\(notificationKeys\.hasUnread, true\)/);

@@ -43,8 +43,19 @@ check(
   "persisted feed pages are not bounded by their active contracts"
 );
 check(/isExpiredSignedMedia/.test(files.persistence) && /mutations:\s*\[\]/.test(files.persistence), "persisted cache sanitizer is incomplete");
-check(/initialNumToRender=\{FEED_INITIAL_RENDER_COUNT\}/.test(files.postFeed), "feed initial render budget is not applied");
-check(/windowSize=\{FEED_WINDOW_SIZE\}/.test(files.postFeed), "feed virtualization window is not applied");
+check(
+  /initialNumToRender=\{diagnosticPremountEnabled[\s\S]*?: FEED_INITIAL_RENDER_COUNT\}/.test(files.postFeed),
+  "feed initial render budget is not applied"
+);
+check(
+  /windowSize=\{diagnosticPremountEnabled[\s\S]*?: FEED_WINDOW_SIZE\}/.test(files.postFeed),
+  "feed virtualization window is not applied"
+);
+check(
+  /DIAGNOSTIC_RECYCLING_DRAW_DISTANCE_PX\s*=\s*1200/.test(files.postFeed)
+    && /<FlashList[\s\S]*?drawDistance=\{DIAGNOSTIC_RECYCLING_DRAW_DISTANCE_PX\}/.test(files.postFeed),
+  "FlashList render-ahead budget is not applied"
+);
 check(/itemVisiblePercentThreshold:\s*65/.test(files.postFeed), "feed viewability gate is missing");
 check(/mediaActive && mediaAccessIsUsable/.test(files.postCard), "video player is not viewport gated");
 check(/posterUrl \|\| primaryMedia\.thumbnailUrl/.test(files.postCard), "offscreen video poster is missing");

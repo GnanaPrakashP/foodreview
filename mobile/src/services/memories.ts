@@ -48,7 +48,7 @@ import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryS
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
 export const MEMORY_CHAT_PAGE_SIZE = 50;
 export const MEMORY_MEDIA_PAGE_SIZE = 30;
-const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 50;
+export const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 12;
 const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
 
 const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
@@ -194,9 +194,15 @@ type MemoryRoomSummaryRow = {
   restaurant_name: string;
   source_post_id: string | null;
   theme_key?: string | null;
+  timeline_date?: string | null;
   title: string | null;
   unread_count: number | string;
   visit_date: string | null;
+};
+
+export type MemoryRoomsPage = {
+  nextCursor: string | null;
+  rooms: MemoryRoomSummary[];
 };
 
 type MemoryChatPageProfileRow = {
@@ -373,14 +379,26 @@ async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) 
   });
 }
 
-export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
-  const payload = await authorizedJson<{ rooms?: MemoryRoomSummaryRow[] }>(
-    `/api/mobile/memories/read?action=rooms&limit=${MEMORY_ROOM_SUMMARY_PAGE_SIZE}`,
+export async function listMemoryRoomsPage(cursor?: string | null): Promise<MemoryRoomsPage> {
+  const params = new URLSearchParams({
+    action: "rooms",
+    limit: String(MEMORY_ROOM_SUMMARY_PAGE_SIZE)
+  });
+  if (cursor) params.set("cursor", cursor);
+  const payload = await authorizedJson<{ nextCursor?: string | null; rooms?: MemoryRoomSummaryRow[] }>(
+    `/api/mobile/memories/read?${params.toString()}`,
     { method: "GET" },
     { action: "loading memories", timeoutMs: 12_000 }
   );
   const rows = Array.isArray(payload.rooms) ? payload.rooms : [];
-  return rows.map(mapMemorySummaryRow);
+  return {
+    nextCursor: typeof payload.nextCursor === "string" ? payload.nextCursor : null,
+    rooms: rows.map(mapMemorySummaryRow)
+  };
+}
+
+export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
+  return (await listMemoryRoomsPage()).rooms;
 }
 
 async function validateParticipants(usernames: string[]) {
@@ -1002,6 +1020,24 @@ export async function listMemoryRoomsOfflineFirst(): Promise<MemoryRoomSummary[]
   } catch (error) {
     const cached = await readOfflineMemorySummaries();
     if (cached) return cached;
+    throw error;
+  }
+}
+
+export async function listMemoryRoomsPageOfflineFirst(cursor?: string | null): Promise<MemoryRoomsPage> {
+  try {
+    const page = await listMemoryRoomsPage(cursor);
+    if (!cursor) void saveOfflineMemorySummaries(page.rooms);
+    return page;
+  } catch (error) {
+    if (cursor) throw error;
+    const cached = await readOfflineMemorySummaries();
+    if (cached) {
+      return {
+        nextCursor: null,
+        rooms: cached.slice(0, MEMORY_ROOM_SUMMARY_PAGE_SIZE)
+      };
+    }
     throw error;
   }
 }

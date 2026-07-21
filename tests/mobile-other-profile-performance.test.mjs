@@ -67,13 +67,29 @@ test("the viewer-aware shell is one service RPC with protected relationship and 
 
 test("profile header and posts have independent loading and failure ownership", () => {
   const screen = source("mobile/app/people/[username].tsx");
-  assert.match(screen, /shell\.data \? \(\s*<PostFeed/);
+  assert.match(screen, /hasProfileIdentity \? \(\s*<PostFeed/);
   assert.match(screen, /ListHeaderComponent=\{profileHeader\}/);
   assert.match(screen, /isLoading=\{!isBlocked && posts\.isLoading && pagedPosts\.length === 0\}/);
   assert.match(screen, /isError=\{!isBlocked && posts\.isError && pagedPosts\.length === 0\}/);
   assert.doesNotMatch(screen, /<Screen[^>]*\sscroll(?:>|\s)/);
   assert.match(screen, /cachePolicy="memory-disk"/);
-  assert.match(screen, /recyclingKey=\{shell\.data\.profile\.avatarUrl\}/);
+  assert.match(screen, /recyclingKey=\{displayedAvatarRecyclingKey\}/);
+  assert.match(screen, /<ProfileStatsSkeleton styles=\{styles\} \/>/);
+  assert.match(screen, /shell\.data && showRelationshipAction/);
+});
+
+test("post-card navigation hands known author identity to the profile without seeding fake shell data", () => {
+  const card = source("mobile/src/components/posts/PostCard.tsx");
+  const navigation = source("mobile/src/navigation/profileNavigation.ts");
+  const screen = source("mobile/app/people/[username].tsx");
+
+  assert.match(card, /const profileNavigationPreview = useMemo/);
+  assert.match(card, /preview: profileNavigationPreview/);
+  assert.match(card, /avatarThumbnailUrl: post\.avatarThumbnailUrl/);
+  assert.match(navigation, /const profilePreviews = new Map/);
+  assert.match(screen, /getProfileNavigationPreview\(username\)/);
+  assert.match(screen, /displayedName = shell\.data\?\.displayName \?\? navigationPreview\?\.displayName/);
+  assert.doesNotMatch(navigation, /setQueryData/);
 });
 
 test("warm other-profile posts use bounded virtualization and stable unique keys", () => {
@@ -88,6 +104,27 @@ test("warm other-profile posts use bounded virtualization and stable unique keys
   assert.match(feed, /keyExtractor=\{\(post\) => post\.id\}/);
   assert.match(feed, /const renderPost = useCallback/);
   assert.match(card, /export const PostCard = memo\(PostCardComponent\)/);
+});
+
+test("own and other Profile posts share Home's cover-first FlashList media pipeline", () => {
+  const ownProfile = source("mobile/app/(tabs)/profile.tsx");
+  const otherProfile = source("mobile/app/people/[username].tsx");
+  const feed = source("mobile/src/components/feeds/PostFeed.tsx");
+  const feedRoute = source("app/api/mobile/feed/route.ts");
+  const profileService = source("mobile/src/services/profiles.ts");
+  const persistence = source("mobile/src/providers/queryPersistence.ts");
+
+  assert.match(profileService, /PROFILE_POST_PAGE_SIZE = 10/);
+  assert.match(persistence, /PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 10/);
+  assert.match(ownProfile, /<PostFeed\s+collapsibleTabView[\s\S]*homeMediaMode[\s\S]*recyclingList/);
+  assert.match(otherProfile, /<PostFeed[\s\S]*homeMediaMode[\s\S]*recyclingList/);
+  assert.match(feed, /<CollapsibleTabs\.FlashList/);
+  assert.match(feedRoute, /useCompactProfileMedia = scope === "profile"/);
+  assert.match(feedRoute, /\(review\.media_items \?\? \[\]\)\.slice\(0, 1\)/);
+  assert.match(feedRoute, /resolveHomeMediaAccess[\s\S]*includeCoverThumbnail: true/);
+  assert.match(feedRoute, /compactProfileMediaForReview/);
+  assert.match(feedRoute, /homeDelivery: true/);
+  assert.match(feedRoute, /mediaCount: useCompactProfileMedia/);
 });
 
 test("rapid profile taps guard only the same username and release on mount", () => {
@@ -105,11 +142,37 @@ test("rapid profile taps guard only the same username and release on mount", () 
   const queryClient = { getQueryData: () => undefined };
   const router = { push: (route) => pushes.push(route) };
 
-  assert.equal(navigation.openProfileRoute({ queryClient, router, username: "alice", viewerUsername: "viewer" }), true);
+  assert.equal(navigation.openProfileRoute({
+    preview: {
+      avatarCacheRevision: 3,
+      avatarMediaAssetId: "avatar-alice",
+      avatarPlaceholder: "blurhash",
+      avatarThumbnailUrl: "https://example.test/alice.jpg",
+      displayName: "Alice Example",
+      initials: "AE"
+    },
+    queryClient,
+    router,
+    username: "Alice",
+    viewerUsername: "viewer"
+  }), true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(navigation.getProfileNavigationPreview("alice"))),
+    {
+      avatarCacheRevision: 3,
+      avatarMediaAssetId: "avatar-alice",
+      avatarPlaceholder: "blurhash",
+      avatarThumbnailUrl: "https://example.test/alice.jpg",
+      displayName: "Alice Example",
+      initials: "AE",
+      username: "alice"
+    }
+  );
   assert.equal(navigation.openProfileRoute({ queryClient, router, username: "alice", viewerUsername: "viewer" }), false);
   assert.equal(navigation.openProfileRoute({ queryClient, router, username: "bob", viewerUsername: "viewer" }), true);
   assert.equal(pushes.length, 2);
   navigation.recordProfileShellVisible("alice");
+  assert.equal(navigation.getProfileNavigationPreview("alice"), null);
   assert.equal(navigation.openProfileRoute({ queryClient, router, username: "alice", viewerUsername: "viewer" }), true);
   assert.equal(pushes.length, 3);
   assert.equal(haptics, 3);
@@ -143,7 +206,11 @@ test("social, block, post deletion and account transitions invalidate the new ow
 test("own-profile posts and memories start from the complete session identity", () => {
   const ownProfile = source("mobile/app/(tabs)/profile.tsx");
   assert.match(ownProfile, /sessionProfile\?\.profileComplete === false \? "" : sessionProfile\?\.username/);
-  assert.match(ownProfile, /useMemoryRoomsQuery\(\{ enabled:[^\n]*Boolean\(sessionUsername\)/);
   assert.match(ownProfile, /profileUsername=\{sessionUsername\}/);
-  assert.doesNotMatch(ownProfile, /useMemoryRoomsQuery\(\{ enabled:[^\n]*Boolean\(page\.data\)/);
+  assert.match(ownProfile, /const profileMemoriesFocused = isActiveMainTab && activeTab === "memories"/);
+  assert.match(
+    ownProfile,
+    /useMemoryRoomsQuery\(\{[\s\S]*?enabled:\s*profileMemoriesFocused[^\n]*Boolean\(profileUsername\)/
+  );
+  assert.doesNotMatch(ownProfile, /useMemoryRoomsQuery\(\{[\s\S]*?Boolean\(page\.data\)/);
 });

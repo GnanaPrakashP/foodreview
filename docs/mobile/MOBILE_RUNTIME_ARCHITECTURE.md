@@ -26,10 +26,10 @@ Cold startup must not initialize location, Profile, Memory summaries/realtime, c
 
 React Query defaults use a two-hour garbage-collection window, bounded retry, focus/online awareness, and per-domain stale times. The persisted envelope is owner-scoped, versioned, capped at 24 hours, mutation-free, and stores only successful bounded data:
 
-- Memory room summaries, at most 50;
+- Memory room summaries, first page of 12;
 - Circle first page, at most 10 posts;
 - Explore places/dishes/people sections, at most 60 each;
-- current Profile page, at most 24 posts;
+- Profile post first page, at most 10 posts;
 - unread-notification boolean state.
 
 Only the first infinite-query page is retained. Mutation state and errors are never persisted. Modern Home media metadata survives without signed URLs so cached bytes remain addressable; other expired signed media continues to be removed. Logout, account switch, invalid session, deletion, or owner mismatch first aborts and settles Home prefetch, then clears owner files and Expo Image memory/disk caches. Native cache clearing retries once and leaves the cleanup journal incomplete on repeated failure.
@@ -46,7 +46,7 @@ Post cards are memoized. Like, bookmark, delete, comment, Profile, and notificat
 
 Circle, public, restaurant, dish, Profile, liked, saved, comments, notifications, Memory messages, and Memory media consume stable cursor pages. Page merge helpers preserve server order and remove duplicate IDs. Active list footers own the single load-more request.
 
-Memory room summaries have one focused Profile owner and one summary subscription. Active-room message/photo deltas patch the relevant cache once. Realtime callbacks capture the account generation and ignore old-account events. Delta events do not immediately trigger a full room reload; a delayed reconciliation is reserved for unrecognized/non-delta events and foreground recovery.
+Memory room summaries use 12-room stable timeline pages. The visible Profile Memories tab owns the query and summary subscription; Posts does not start this secondary work. Active-room message/photo deltas patch the relevant paged cache once without changing visit-date order. Realtime callbacks capture the account generation and ignore old-account events. Delta events do not immediately trigger a full room reload; a delayed reconciliation is reserved for unrecognized/non-delta events and foreground recovery.
 
 ## Performance evidence
 

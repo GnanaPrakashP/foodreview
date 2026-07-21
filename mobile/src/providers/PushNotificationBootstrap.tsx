@@ -102,6 +102,12 @@ export function PushNotificationBootstrap() {
         return;
       }
 
+      const notificationType = stringData(response, "notificationType");
+      if (notificationType === "CIRCLE_REQUEST_RECEIVED" || notificationType === "circle_request") {
+        openProtectedPath("/notifications");
+        return;
+      }
+
       const entityType = stringData(response, "entityType");
       const actorName = stringData(response, "actorName");
       if ((entityType === "USER" || entityType === "CIRCLE_REQUEST") && actorName) {

@@ -206,9 +206,9 @@ test("profile statistics are server-derived and profile posts use stable keyset 
   assert.match(migration, /count\(distinct coalesce\(nullif\(visible_reviews\.restaurant_id/);
   assert.match(migration, /jsonb_array_elements\(coalesce\(review\.items, '\[\]'::jsonb\)\)/);
   assert.match(migration, /grant execute on function public\.profile_post_stats\(text\) to anon, authenticated, service_role/);
-  assert.match(profileService, /const PROFILE_POST_PAGE_SIZE = 24/);
+  assert.match(profileService, /const PROFILE_POST_PAGE_SIZE = 10/);
   assert.match(profileShellRoute, /\.rpc\("profile_post_stats"/);
-  assert.match(profileShellRoute, /posts:\s*\[\]/);
+  assert.doesNotMatch(profileShellRoute, /posts:\s*\[\]|nextPostsCursor/);
   assert.match(profileService, /scope:\s*"profile"/);
   assert.match(profileService, /\/api\/mobile\/feed\?\$\{params\.toString\(\)\}/);
   assert.match(profileService, /if \(cursor\) params\.set\("cursor", cursor\)/);
@@ -216,16 +216,14 @@ test("profile statistics are server-derived and profile posts use stable keyset 
   assert.match(profileHooks, /getNextPageParam: \(lastPage\) => lastPage\.nextCursor/);
   assert.match(profileScreen, /fetchNextPage/);
   assert.match(profileScreen, /hasNextPage/);
-  assert.match(profileScreen, /pageQuery\.refetch\(\)/);
-  assert.match(profileScreen, /memoriesRefetch\(\)/);
-  assert.match(profileScreen, /profileUsername \? posts\.refetch\(\) : Promise\.resolve\(\)/);
+  assert.match(profileScreen, /const refreshPosts = useCallback[\s\S]*posts\.refetch\(\)/);
+  assert.match(profileScreen, /const refreshMemories = useCallback[\s\S]*memoriesRefetch\(\)/);
   assert.match(createPostHook, /queryClient\.invalidateQueries\(\{ queryKey: \["profile"\] \}\)/);
   assert.match(profileScreen, /<Tabs\.Container/);
   assert.match(profileScreen, /renderHeader=\{renderProfileHeader\}/);
-  assert.match(profileScreen, /<Tabs\.FlatList[\s\S]*data=\{postRows\}/);
-  assert.match(profileScreen, /<Tabs\.FlatList[\s\S]*data=\{memoriesRows\}/);
+  assert.match(profileScreen, /<PostFeed\s+collapsibleTabView[\s\S]*homeMediaMode[\s\S]*recyclingList/);
+  assert.match(profileScreen, /<Tabs\.FlashList[\s\S]*data=\{memoriesRows\}/);
   assert.match(profileScreen, /onEndReached=\{onEndReached\}/);
-  assert.match(profileScreen, /onEndReachedThreshold=\{0\.7\}/);
   assert.match(profileScreen, /RefreshControl/);
   assert.match(profileScreen, /initialNumToRender=\{PROFILE_LIST_INITIAL_RENDER_COUNT\}/);
   assert.match(profileScreen, /windowSize=\{PROFILE_LIST_WINDOW_SIZE\}/);
@@ -239,7 +237,7 @@ test("profile post pagination covers empty, full first page, next-page, and larg
     created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, 500 - index)).toISOString(),
     id: `${String(500 - index).padStart(4, "0")}`
   }));
-  function page(inputRows, cursor = null, limit = 24) {
+  function page(inputRows, cursor = null, limit = 10) {
     const filtered = cursor
       ? inputRows.filter((row) => row.created_at < cursor.created_at || (row.created_at === cursor.created_at && row.id < cursor.id))
       : inputRows;
@@ -252,13 +250,13 @@ test("profile post pagination covers empty, full first page, next-page, and larg
   }
 
   assert.equal(page([]).visible.length, 0, "empty profiles should return an empty page");
-  assert.equal(page(rows.slice(0, 24)).nextCursor, null, "exactly 24 posts should not advertise another page");
-  assert.deepEqual(page(rows.slice(0, 25)).nextCursor, rows[23], "25 posts should cursor after the 24th row");
+  assert.equal(page(rows.slice(0, 10)).nextCursor, null, "exactly 10 posts should not advertise another page");
+  assert.deepEqual(page(rows.slice(0, 11)).nextCursor, rows[9], "11 posts should cursor after the 10th row");
 
   const seen = new Set();
   let cursor = null;
   let loaded = 0;
-  for (let i = 0; i < 30; i += 1) {
+  for (let i = 0; i < 60; i += 1) {
     const result = page(rows, cursor);
     for (const row of result.visible) {
       assert.equal(seen.has(row.id), false, `duplicate post ${row.id}`);

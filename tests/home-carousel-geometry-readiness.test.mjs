@@ -138,7 +138,8 @@ test("18 readiness: metadata starts only for the meaningfully visible render-win
 test("19 readiness: a pending second page remains swipeable with feedback", () => {
   assert.match(carousel, /\{expectedCount > 1 \? \([\s\S]*<PagerView/);
   assert.match(carousel, /<PagerView[\s\S]*scrollEnabled/);
-  assert.match(carousel, /metadataPending && renderMedia && active \? <ActivityIndicator/);
+  assert.match(carousel, /const showBusy = metadataPending && renderMedia && active && !hasPreview/);
+  assert.match(carousel, /showBusy \? <ActivityIndicator/);
 });
 
 test("20 readiness: metadata does not replace the pager primitive", () => {

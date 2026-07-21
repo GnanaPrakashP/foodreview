@@ -18,6 +18,10 @@ const phase5Migration = readFileSync(
   "supabase/migrations/202607130009_backend_feed_performance.sql",
   "utf8"
 );
+const profileTimelineMigration = readFileSync(
+  "supabase/migrations/202607210007_profile_memory_timeline_pagination.sql",
+  "utf8"
+);
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const memoryReadRoute = readFileSync("app/api/mobile/memories/read/route.ts", "utf8");
 const supabaseReadme = readFileSync("docs/database/MIGRATIONS.md", "utf8");
@@ -57,13 +61,22 @@ test("phase 3 room summary RPC is bounded, member scoped, and search_path safe",
   assert.match(finalAuditMigration, /not public\.shared_memory_room_has_blocked_relationship\(room\.id, v_user_name\)/);
 });
 
-test("mobile memory list requires one bounded v2 summary contract without legacy fallback", () => {
-  assert.match(memoryReadRoute, /\.rpc\("shared_memory_room_summaries_v2"/);
-  assert.match(memoryReadRoute, /p_before_activity_at: cursor\?\.createdAt \?\? null/);
+test("mobile memory list uses one bounded timeline summary contract with a cursor sentinel", () => {
+  assert.match(memoryReadRoute, /\.rpc\("shared_memory_room_summaries_v3"/);
+  assert.match(memoryReadRoute, /p_before_timeline_date: cursor\?\.createdAt\.slice\(0, 10\) \?\? null/);
   assert.match(memoryReadRoute, /p_before_room_id: cursor\?\.id \?\? null/);
-  assert.match(memoryService, /MEMORY_ROOM_SUMMARY_PAGE_SIZE/);
+  assert.match(memoryReadRoute, /p_limit: limit \+ 1/);
+  assert.match(memoryReadRoute, /roomsWithCursorSentinel\.length > limit/);
+  assert.match(memoryService, /MEMORY_ROOM_SUMMARY_PAGE_SIZE = 12/);
   assert.match(memoryService, /mapMemorySummaryRow/);
-  assert.match(memoryService, /\/api\/mobile\/memories\/read\?action=rooms/);
+  assert.match(memoryService, /action: "rooms"/);
+  assert.match(memoryService, /if \(cursor\) params\.set\("cursor", cursor\)/);
+  assert.match(profileTimelineMigration, /shared_memory_rooms_timeline_cursor_idx/);
+  assert.match(profileTimelineMigration, /coalesce\(visit_date, \(created_at at time zone 'UTC'\)::date\)/);
+  assert.match(profileTimelineMigration, /security definer\s+set search_path = ''/i);
+  assert.match(profileTimelineMigration, /shared_memory_room_has_blocked_relationship/);
+  assert.match(profileTimelineMigration, /revoke all on function public\.shared_memory_room_summaries_v3[\s\S]*from public, anon/);
+  assert.match(profileTimelineMigration, /grant execute on function public\.shared_memory_room_summaries_v3[\s\S]*to authenticated, service_role/);
 
   const listMemoryRoomsBody = memoryService.match(/export async function listMemoryRooms\(\)[\s\S]*?\n}/)?.[0] ?? "";
   assert.doesNotMatch(listMemoryRoomsBody, /from\("shared_memory_messages"\)[\s\S]*\.in\("room_id", roomIds\)/);

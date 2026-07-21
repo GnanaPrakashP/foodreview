@@ -1,4 +1,4 @@
-import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
+import { type InfiniteData, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { feedKeys, findCachedPostById, mergeUniqueFeedPosts } from "@/hooks/useFeeds";
 import {
@@ -35,6 +35,11 @@ import {
   type HomeRefreshReason
 } from "@/home/homeRefreshTransaction";
 import { readHomeStructuralRevision } from "@/home/homeStructuralRevision";
+import {
+  homeFeedLocationKey,
+  normalizeHomeFeedLocation,
+  type HomeFeedLocation
+} from "@/home/homeFeedLocation";
 import { notificationKeys } from "@/hooks/useNotifications";
 import { getActiveCacheGeneration, getActiveCacheOwner, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { getCircleFeed } from "@/services/feeds";
@@ -44,6 +49,7 @@ import type { FeedPage } from "@/types/models";
 type HomeRequestContext = {
   engagementSnapshot: HomeEngagementRevisionSnapshot;
   generation: number;
+  locationKey: string;
   ownerScope: string;
   structuralRevision: number;
 };
@@ -84,13 +90,22 @@ export type HomeDeferredFreshnessEvaluationInput = HomeFreshnessEvaluationInput 
 };
 
 type UseHomeRefreshOptions = {
+  location?: HomeFeedLocation | null;
   ownerIdentity: string | null;
   resetPaginationClaims: () => void;
   scrollToTop: () => void;
 };
 
-export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToTop }: UseHomeRefreshOptions) {
+export function useHomeRefresh({ location, ownerIdentity, resetPaginationClaims, scrollToTop }: UseHomeRefreshOptions) {
   const queryClient = useQueryClient();
+  const normalizedLocation = normalizeHomeFeedLocation(location);
+  const locationKey = homeFeedLocationKey(normalizedLocation);
+  const homeFeedQueryKeyRef = useRef<QueryKey>(feedKeys.circlePagesForLocation(normalizedLocation));
+  const locationKeyRef = useRef(locationKey);
+  const locationRef = useRef<HomeFeedLocation | null>(normalizedLocation);
+  homeFeedQueryKeyRef.current = feedKeys.circlePagesForLocation(normalizedLocation);
+  locationKeyRef.current = locationKey;
+  locationRef.current = normalizedLocation;
   const resetPaginationClaimsRef = useRef(resetPaginationClaims);
   const scrollToTopRef = useRef(scrollToTop);
   resetPaginationClaimsRef.current = resetPaginationClaims;
@@ -141,16 +156,20 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
     deferredFreshnessStateRef.current?.clear();
   }, []);
 
+  const isHomeContextActive = useCallback((context: HomeRequestContext) => (
+    isContextActive(context) && context.locationKey === locationKeyRef.current
+  ), []);
+
   if (!transactionRef.current) {
     transactionRef.current = createHomeRefreshTransaction<HomeRefreshContext, FeedPage, boolean>({
       cancelConflicts: async () => {
         await Promise.all([
-          queryClient.cancelQueries({ exact: true, queryKey: feedKeys.circlePages }),
+          queryClient.cancelQueries({ exact: true, queryKey: homeFeedQueryKeyRef.current }),
           queryClient.cancelQueries({ exact: true, queryKey: notificationKeys.hasUnread })
         ]);
       },
       commitFeed: (freshPage, context) => {
-        if (!isContextActive(context)) return false;
+        if (!isHomeContextActive(context)) return false;
         if (readHomeStructuralRevision(queryClient) !== context.structuralRevision) return false;
         const replacement = buildHomeFirstPageReplacement(freshPage, (post) => (
           reconcileHomeRefreshPost(
@@ -160,7 +179,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
             context.engagementSnapshot
           )
         ));
-        queryClient.setQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages, replacement);
+        queryClient.setQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current, replacement);
         recordHomePageOneRefreshAt(queryClient, context.ownerScope);
         if (context.reason === "pull" || context.reason === "active-tab") {
           explicitRefreshComparisonRef.current = {
@@ -175,11 +194,11 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
         return true;
       },
       commitNotifications: (hasUnread, context) => {
-        if (!isContextActive(context)) return false;
+        if (!isHomeContextActive(context)) return false;
         queryClient.setQueryData(notificationKeys.hasUnread, hasUnread);
         return true;
       },
-      fetchFeed: (signal) => getCircleFeed(null, { refresh: true, signal }),
+      fetchFeed: (signal) => getCircleFeed(null, { location: locationRef.current, refresh: true, signal }),
       fetchNotifications: (signal) => getNotificationHasUnread({ signal }),
       isContextActive,
       onActiveChange: (active) => {
@@ -192,12 +211,13 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
       prepare: (reason) => {
         const owner = getActiveCacheOwner();
         if (!owner) return null;
-        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages);
+        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current);
         return {
           baseFirstPageIds: homeFirstPageIds(current?.pages[0]),
           baseVisibleFingerprint: homeFirstPageVisibleFingerprint(current?.pages[0]?.posts ?? []),
           engagementSnapshot: captureHomeEngagementRevisions(queryClient),
           generation: getActiveCacheGeneration(),
+          locationKey: locationKeyRef.current,
           ownerScope: owner.scope,
           reason,
           structuralRevision: readHomeStructuralRevision(queryClient)
@@ -209,7 +229,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
   if (!backgroundCheckRef.current) {
     backgroundCheckRef.current = createHomeBackgroundCheck<HomeBackgroundContext, FeedPage, boolean>({
       commitFeed: (freshPage, context) => {
-        if (!isContextActive(context)) return false;
+        if (!isHomeContextActive(context)) return false;
         // A successful network page one is fresh even when it is staged or
         // proves there are no new leading IDs.
         recordHomePageOneRefreshAt(queryClient, context.ownerScope);
@@ -218,7 +238,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
           clearPendingHomePage();
           return true;
         }
-        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages);
+        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current);
         const currentFirstPageIds = homeFirstPageIds(current?.pages[0]);
         if (!sameHomePostIds(currentFirstPageIds, context.baseFirstPageIds)) {
           clearPendingHomePage();
@@ -240,21 +260,22 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
         return true;
       },
       commitNotifications: (hasUnread, context) => {
-        if (!isContextActive(context)) return false;
+        if (!isHomeContextActive(context)) return false;
         queryClient.setQueryData(notificationKeys.hasUnread, hasUnread);
         return true;
       },
-      fetchFeed: (signal) => getCircleFeed(null, { refresh: true, signal }),
+      fetchFeed: (signal) => getCircleFeed(null, { location: locationRef.current, refresh: true, signal }),
       fetchNotifications: (signal) => getNotificationHasUnread({ signal }),
       isContextActive,
       prepare: () => {
         const owner = getActiveCacheOwner();
-        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages);
+        const current = queryClient.getQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current);
         if (!owner || !current?.pages[0]) return null;
         return {
           baseFirstPageIds: homeFirstPageIds(current.pages[0]),
           engagementSnapshot: captureHomeEngagementRevisions(queryClient),
           generation: getActiveCacheGeneration(),
+          locationKey: locationKeyRef.current,
           ownerScope: owner.scope,
           structuralRevision: readHomeStructuralRevision(queryClient)
         };
@@ -264,12 +285,14 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
 
   useEffect(() => {
     backgroundCheckRef.current?.cancelActive();
+    transactionRef.current?.cancelActive();
     activeTabRefreshFeedbackRef.current?.reset();
     upToDateNoticeRef.current?.clear();
     explicitRefreshComparisonRef.current = null;
     clearDeferredHomeFreshness();
     clearPendingHomePage();
-  }, [clearDeferredHomeFreshness, clearPendingHomePage, ownerIdentity]);
+    resetPaginationClaimsRef.current();
+  }, [clearDeferredHomeFreshness, clearPendingHomePage, locationKey, ownerIdentity]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -338,7 +361,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
       return Promise.resolve(null);
     }
 
-    const queryState = queryClient.getQueryState(feedKeys.circlePages);
+    const queryState = queryClient.getQueryState(homeFeedQueryKeyRef.current);
     const isFeedRequestPending = input.isFeedRequestPending || (
       !input.isPaginationActive && queryState?.fetchStatus === "fetching"
     );
@@ -366,7 +389,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
   const evaluateHomeFreshness = useCallback((input: HomeFreshnessEvaluationInput) => {
     const owner = getActiveCacheOwner();
     if (!owner) return Promise.resolve(null);
-    const queryState = queryClient.getQueryState(feedKeys.circlePages);
+    const queryState = queryClient.getQueryState(homeFeedQueryKeyRef.current);
     const refreshedAt = readHomePageOneRefreshAt(queryClient, owner.scope);
     const action = resolveHomeFreshnessAction({
       ...input,
@@ -406,17 +429,17 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
   const applyPendingHomePage = useCallback(async () => {
     if (applyingPendingRef.current) return false;
     const pending = pendingRef.current;
-    if (!pending || !isContextActive(pending)) return false;
+    if (!pending || !isHomeContextActive(pending)) return false;
     applyingPendingRef.current = true;
 
     try {
-      await queryClient.cancelQueries({ exact: true, queryKey: feedKeys.circlePages });
-      if (pendingRef.current !== pending || !isContextActive(pending)) return false;
+      await queryClient.cancelQueries({ exact: true, queryKey: homeFeedQueryKeyRef.current });
+      if (pendingRef.current !== pending || !isHomeContextActive(pending)) return false;
       if (readHomeStructuralRevision(queryClient) !== pending.structuralRevision) {
         clearPendingHomePage();
         return false;
       }
-      const current = queryClient.getQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages);
+      const current = queryClient.getQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current);
       if (!sameHomePostIds(homeFirstPageIds(current?.pages[0]), pending.baseFirstPageIds)) {
         clearPendingHomePage();
         return false;
@@ -429,7 +452,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
           pending.engagementSnapshot
         )
       ));
-      queryClient.setQueryData<InfiniteData<FeedPage>>(feedKeys.circlePages, replacement);
+      queryClient.setQueryData<InfiniteData<FeedPage>>(homeFeedQueryKeyRef.current, replacement);
       resetPaginationClaimsRef.current();
       clearPendingHomePage();
       scrollToTopRef.current();
@@ -439,7 +462,7 @@ export function useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToT
     } finally {
       applyingPendingRef.current = false;
     }
-  }, [clearPendingHomePage, queryClient]);
+  }, [clearPendingHomePage, isHomeContextActive, queryClient]);
 
   const invalidatePendingHomePageIfChanged = useCallback((currentFirstPage: FeedPage | undefined) => {
     const deferred = deferredFreshnessStateRef.current?.read();

@@ -33,6 +33,13 @@ function loadReputation() {
 }
 
 const R = loadReputation();
+const reputationServerSource = readFileSync(new URL("../lib/server/reputation.ts", import.meta.url), "utf8");
+
+test("earning badges does not create inbox or push notifications", () => {
+  assert.doesNotMatch(reputationServerSource, /ACHIEVEMENT_UNLOCKED/);
+  assert.doesNotMatch(reputationServerSource, /notifyNewBadges/);
+  assert.doesNotMatch(reputationServerSource, /createNotificationForNames/);
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

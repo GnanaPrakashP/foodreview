@@ -3,7 +3,7 @@ import { House, Plus, Search, User, type LucideIcon } from "lucide-react-native"
 import { useMemo } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useMemoryRoomsQuery } from "@/hooks/useMemories";
+import { memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
 import { classifyHomeTabPress, emitActiveHomeTabPress } from "@/navigation/homeTabPress";
@@ -24,9 +24,13 @@ export default function TabLayout() {
   // turning the tab bar into a cold-start network owner. Profile owns the
   // first room-list request after its first visit.
   const memoryRooms = useMemoryRoomsQuery({ enabled: false });
-  const hasUnreadMemories = useMemo(
-    () => (memoryRooms.data ?? []).some((memory) => memory.unreadCount > 0),
+  const memoryRoomSummaries = useMemo(
+    () => memoryRoomSummariesFromPages(memoryRooms.data),
     [memoryRooms.data]
+  );
+  const hasUnreadMemories = useMemo(
+    () => memoryRoomSummaries.some((memory) => memory.unreadCount > 0),
+    [memoryRoomSummaries]
   );
   return (
     <Tabs

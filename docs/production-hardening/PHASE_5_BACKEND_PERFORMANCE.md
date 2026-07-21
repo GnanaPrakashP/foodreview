@@ -51,7 +51,7 @@ Notifications use the same cursor rule, default 30/max 50, a recipient-scoped st
 
 ### Memory
 
-Room list uses `shared_memory_room_summaries_v2`: it pages rooms first and computes members/media/messages/dishes/unread/latest activity inside one membership-aware RPC, with no per-room network/database loop. Room activity is maintained by fixed triggers on messages/photos/dishes/stops and indexed by `(updated_at,id)`.
+Profile room list uses `shared_memory_room_summaries_v3`: it returns 12-room pages ordered by the displayed visit timeline and a stable `(timeline_date,id)` cursor. It computes members/media/messages/dishes/unread/latest activity inside one membership-aware RPC, with no per-room network/database loop. Room activity remains available as metadata but no longer reorders the visit timeline.
 
 `/api/mobile/memories/read` owns room list, bounded room bootstrap, chat pages, and media pages. The client makes one authenticated request per read. Chat uses a 50-message maximum stable cursor and returns page attachments, reply snippets, and profile names together. Media uses a 30-item default/50 maximum stable cursor.
 
@@ -96,7 +96,7 @@ Added/replaced functions:
 - `mobile_post_engagement_v1`
 - `mobile_public_feed_page_v1`
 - `circle_feed_page_v2`
-- `shared_memory_room_summaries_v2`
+- `shared_memory_room_summaries_v3`
 - `shared_memory_chat_page` (path-free Phase 5 payload)
 - `shared_memory_room_bootstrap_v1`
 - `shared_memory_media_page_v1`

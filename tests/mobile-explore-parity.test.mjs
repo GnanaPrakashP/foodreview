@@ -46,7 +46,7 @@ test("mobile explore location picker mirrors web nearby behavior", () => {
   assert.match(explore, /const locationHydrated = useUserLocationStore\(\(state\) => state\.hydrated\)/);
   assert.match(explore, /const setUserLocation = useUserLocationStore\(\(state\) => state\.setLocation\)/);
   assert.match(explore, /const locationLabel = exploreLocation \? shortUserLocationLabel\(exploreLocation\.label\) : "Set location"/);
-  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && isActiveMainTab \}\s*\)/);
+  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && startupLocationResolved && isActiveMainTab \}\s*\)/);
   assert.match(explore, /const showLoading = showInitialLoading/);
   assert.match(explore, /<LocationMenu/);
   assert.match(explore, /getCurrentDeviceUserLocation\(\{ preferFresh: true, requestPermission: true \}\)/);
@@ -112,7 +112,7 @@ test("mobile explore place cards treat review posts as visits", () => {
   const hooks = source("mobile/src/hooks/useFeeds.ts");
   const discovery = source("mobile/src/services/exploreDiscovery.ts");
 
-  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && isActiveMainTab \}\s*\)/);
+  assert.match(explore, /useExploreDiscoveryQuery\(\s*\{ limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation \},\s*\{ enabled: locationHydrated && startupLocationResolved && isActiveMainTab \}\s*\)/);
   assert.match(discovery, /postCount: integerValue\(value\.postCount\)/);
   assert.match(explore, /place\.postCount\} visit/);
   assert.match(explore, /function placeCategoryLabel\(categoryId: PlaceCategoryId\)/);

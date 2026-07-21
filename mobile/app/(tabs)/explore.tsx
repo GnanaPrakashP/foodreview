@@ -194,6 +194,7 @@ export default function ExploreScreen() {
   const shouldRestoreSearchFocusRef = useRef(false);
   const exploreLocation = useUserLocationStore((state) => state.location);
   const locationHydrated = useUserLocationStore((state) => state.hydrated);
+  const startupLocationResolved = useUserLocationStore((state) => state.startupResolved);
   const setUserLocation = useUserLocationStore((state) => state.setLocation);
   const [showLocationMenu, setShowLocationMenu] = useState(false);
   const [locationMenuTop, setLocationMenuTop] = useState(0);
@@ -210,15 +211,15 @@ export default function ExploreScreen() {
   const [personRequestStatuses, setPersonRequestStatuses] = useState<Record<string, PersonRequestStatus>>({});
   const discovery = useExploreDiscoveryQuery(
     { limit: EXPLORE_FEED_SCAN_LIMIT, location: exploreLocation },
-    { enabled: locationHydrated && isActiveMainTab }
+    { enabled: locationHydrated && startupLocationResolved && isActiveMainTab }
   );
   const refetchExploreDiscovery = discovery.refetch;
-  const showInitialLoading = !locationHydrated || (discovery.isLoading && !discovery.data);
+  const showInitialLoading = !locationHydrated || !startupLocationResolved || (discovery.isLoading && !discovery.data);
   const showLoading = showInitialLoading;
   useTabPerformance(
     "explore",
     isActiveMainTab,
-    locationHydrated && Boolean(discovery.data || (!discovery.isLoading && !discovery.isError)),
+    locationHydrated && startupLocationResolved && Boolean(discovery.data || (!discovery.isLoading && !discovery.isError)),
     !discovery.isFetching
   );
   const normalizedQuery = query.trim().toLowerCase();

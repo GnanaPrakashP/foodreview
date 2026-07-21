@@ -305,34 +305,30 @@ test("createPostLikeNotification skips private and inaccessible circle reviews",
   assert.equal(await createPostLikeNotification(spyDb(), review("Alice", "circle"), "Bob"), null);
 });
 
-test("createPostCommentNotifications sends owner and thread notifications without self-duplicates", async () => {
+test("createPostCommentNotifications notifies only the post owner", async () => {
   const { createPostCommentNotifications } = loadNotifications();
   const db = spyDb(
     { data: [], error: null },
-    { data: { id: "owner-notif" }, error: null },
-    { data: [], error: null },
-    { data: { id: "thread-notif" }, error: null }
+    { data: { id: "owner-notif" }, error: null }
   );
 
   await createPostCommentNotifications(
     db,
     review("Alice", "public"),
     "Bob",
-    { id: "comment-1", content: `${"x".repeat(90)} trailing content` },
-    ["Alice", "Bob", "Carol", "Carol", ""]
+    { id: "comment-1", content: `${"x".repeat(90)} trailing content` }
   );
 
   const inserts = db._calls
     .filter((call) => call.table === "notifications" && hasOp(call, "insert"))
     .map((call) => opArgs(call, "insert")[0]);
 
-  assert.equal(inserts.length, 2);
+  assert.equal(inserts.length, 1);
   assert.equal(inserts[0].recipient_name, "Alice");
   assert.equal(inserts[0].type, "POST_COMMENTED");
   assert.equal(inserts[0].metadata.commentId, "comment-1");
   assert.equal(inserts[0].content.length, 80);
-  assert.equal(inserts[1].recipient_name, "Carol");
-  assert.equal(inserts[1].type, "THREAD_REPLY");
+  assert.doesNotMatch(readFileSync(new URL("../lib/notifications.ts", import.meta.url), "utf8"), /THREAD_REPLY|also_commented/);
 });
 
 test("notificationProfileName falls back to full name when username is empty", () => {
@@ -381,7 +377,6 @@ test("createPostCommentNotifications: message uses actorDisplayName when provide
     review("Bob", "public"),
     "alice",
     { id: "cmt-1", content: "Looks great" },
-    [], // no prior commenters → only the POST_COMMENTED notification fires
     "Alice Ate"
   );
 

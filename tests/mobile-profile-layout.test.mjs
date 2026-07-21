@@ -6,11 +6,13 @@ const postFeedSource = readFileSync("mobile/src/components/feeds/PostFeed.tsx", 
 const appJson = JSON.parse(readFileSync("mobile/app.json", "utf8"));
 const rootLayoutSource = readFileSync("mobile/app/_layout.tsx", "utf8");
 const appProvidersSource = readFileSync("mobile/src/providers/AppProviders.tsx", "utf8");
+const profilePrefetchSource = readFileSync("mobile/src/providers/ProfileHeaderPrefetchBootstrap.tsx", "utf8");
 const appScreenSource = readFileSync("mobile/src/components/ui/AppScreen.tsx", "utf8");
 const likedSource = readFileSync("mobile/app/profile/settings/liked.tsx", "utf8");
 const profileSubScreenSource = readFileSync("mobile/src/components/profile/ProfileSubScreen.tsx", "utf8");
 const exploreTabSource = readFileSync("mobile/app/(tabs)/explore.tsx", "utf8");
 const profileTabSource = readFileSync("mobile/app/(tabs)/profile.tsx", "utf8");
+const profileHooksSource = readFileSync("mobile/src/hooks/useProfiles.ts", "utf8");
 const savedSource = readFileSync("mobile/app/profile/settings/saved.tsx", "utf8");
 const settingsSource = readFileSync("mobile/app/profile/settings.tsx", "utf8");
 const tabLayoutSource = readFileSync("mobile/app/(tabs)/_layout.tsx", "utf8");
@@ -75,19 +77,24 @@ test("Profile uses a shared collapsible header with virtualized Posts and Memori
   assert.match(profileTabSource, /useProfilePostsInfiniteQuery\(profileUsername, \{ enabled: isActiveMainTab && Boolean\(profileUsername\) \}\)/);
   assert.match(profileTabSource, /const renderProfileHeader = useCallback/);
   assert.match(profileTabSource, /<ProfileHero page=\{page\} onSettingsPress=\{onSettingsPress\} \/>/);
-  assert.match(profileTabSource, /<ProfileHeroSkeleton onSettingsPress=\{onSettingsPress\} settingsEnabled=\{isReady && isAuthenticated\} \/>/);
+  assert.match(profileTabSource, /<ProfileHeaderSkeleton \/>/);
   assert.match(profileTabSource, /<Tabs\.Container/);
   assert.match(profileTabSource, /renderHeader=\{renderProfileHeader\}/);
   assert.match(profileTabSource, /renderTabBar=\{renderProfileTabBar\}/);
   assert.match(profileTabSource, /offscreenPageLimit: 1/);
   assert.match(profileTabSource, /<Tabs\.Tab name="posts" label="Posts">/);
   assert.match(profileTabSource, /<Tabs\.Tab name="memories" label="Memories">/);
-  assert.equal((profileTabSource.match(/<Tabs\.FlatList/g) ?? []).length, 2);
-  assert.match(profileTabSource, /data=\{postRows\}/);
+  assert.match(profileTabSource, /<PostFeed\s+collapsibleTabView/);
+  assert.match(profileTabSource, /homeMediaMode/);
+  assert.match(profileTabSource, /recyclingList/);
+  assert.match(profileTabSource, /posts=\{pagedPosts\}/);
+  assert.equal((profileTabSource.match(/<Tabs\.FlatList/g) ?? []).length, 1);
+  assert.match(profileTabSource, /<Tabs\.FlashList/);
   assert.match(profileTabSource, /data=\{memoriesRows\}/);
   assert.match(profileTabSource, /onEndReached=\{onEndReached\}/);
-  assert.match(profileTabSource, /onViewableItemsChanged=\{onPostViewableItemsChangedRef\.current\}/);
+  assert.match(profileTabSource, /onEndReached=\{hasNextMemoriesPage && !memoriesFetchingNextPage \? onMemoriesEndReached : undefined\}/);
   assert.match(profileTabSource, /refreshControl=\{listRefreshControl\}/);
+  assert.match(profileTabSource, /refreshControl=\{memoriesRefreshControl\}/);
   assert.match(profileTabSource, /initialNumToRender=\{PROFILE_LIST_INITIAL_RENDER_COUNT\}/);
   assert.match(profileTabSource, /maxToRenderPerBatch=\{PROFILE_LIST_RENDER_BATCH_SIZE\}/);
   assert.match(profileTabSource, /windowSize=\{PROFILE_LIST_WINDOW_SIZE\}/);
@@ -96,7 +103,7 @@ test("Profile uses a shared collapsible header with virtualized Posts and Memori
 
 test("Profile create actions use the stable tab route", () => {
   assert.match(profileTabSource, /const openCreate = useCallback\(\(\) => \{\s*router\.push\("\/share"\);\s*\}, \[router\]\)/);
-  assert.match(profileTabSource, /onAction=\{\(\) => openCreate\(\)\}/);
+  assert.match(profileTabSource, /onEmptyAction=\{openCreate\}/);
   assert.match(profileTabSource, /onAction=\{\(\) => router\.push\("\/share"\)\}/);
 });
 
@@ -118,23 +125,48 @@ test("main bottom tabs use the standard Expo Router tab navigator", () => {
   assert.doesNotMatch(tabLayoutSource, /MainTabPager|PanResponder|Animated\.ScrollView|usePathname|useRouter/);
 });
 
-test("offscreen Profile and Explore queries are focus-gated", () => {
+test("offscreen Profile content queries stay focus-gated while only its header is warmed after Home", () => {
   assert.match(profileTabSource, /useCurrentProfilePageQuery\(\{ enabled: isFocused && isReady && isAuthenticated \}\)/);
-  assert.match(profileTabSource, /useMemoryRoomsQuery\(\{ enabled: isFocused && isReady && isAuthenticated && Boolean\(sessionUsername\) \}\)/);
+  assert.match(profileTabSource, /const profileMemoriesFocused = isActiveMainTab && activeTab === "memories"/);
+  assert.match(profileTabSource, /useMemoryRoomsQuery\(\{\s*enabled: profileMemoriesFocused && isReady && isAuthenticated && Boolean\(profileUsername\)/);
+  assert.match(profileTabSource, /useMemoryRoomsRealtime\(profileMemoriesFocused/);
   assert.match(profileTabSource, /useProfilePostsInfiniteQuery\(profileUsername, \{ enabled: isActiveMainTab && Boolean\(profileUsername\) \}\)/);
+  assert.match(appProvidersSource, /<ProfileHeaderPrefetchBootstrap \/>/);
+  assert.match(profilePrefetchSource, /feedKeys\.circlePagesForLocation\(location\)/);
+  assert.match(profilePrefetchSource, /queryClient\.getQueryState\(notificationKeys\.hasUnread\)/);
+  assert.match(profilePrefetchSource, /requestSettled\(homeState\)[\s\S]*requestSettled\(notificationState\)/);
+  assert.match(profilePrefetchSource, /InteractionManager\.runAfterInteractions/);
+  assert.match(profilePrefetchSource, /queryClient\.prefetchQuery\(currentProfilePageQueryOptions\(\)\)/);
+  assert.doesNotMatch(profilePrefetchSource, /useProfilePostsInfiniteQuery|useMemoryRoomsQuery/);
   assert.match(exploreTabSource, /const isActiveMainTab = isFocused/);
-  assert.match(exploreTabSource, /\{ enabled: locationHydrated && isActiveMainTab \}/);
+  assert.match(exploreTabSource, /\{ enabled: locationHydrated && startupLocationResolved && isActiveMainTab \}/);
   assert.doesNotMatch([tabLayoutSource, exploreTabSource, profileTabSource].join("\n"), /requestMainTab|goToMainTab|goToIndex/);
 });
 
-test("Profile Posts and Memories stay mounted while profile data is loading", () => {
-  assert.match(profileTabSource, /if \(!isReady \|\| \(isAuthenticated && pageQuery\.isLoading\)\) return \[\{ type: "profile-loading" \}\]/);
-  assert.match(profileTabSource, /if \(!isReady \|\| \(isAuthenticated && pageQuery\.isLoading\)\) return \[\{ type: "memories-loading" \}\]/);
-  assert.match(profileTabSource, /case "profile-loading":[\s\S]*<ProfileSkeletonList \/>/);
+test("Profile cold shell and independent content reads use matching non-spinner skeletons", () => {
+  assert.match(profileTabSource, /const isProfileColdLoading = !isReady \|\| \(isAuthenticated && !page && pageQuery\.isLoading\)/);
+  assert.match(profileTabSource, /if \(isProfileColdLoading\) return \[\{ type: "profile-loading" \}\]/);
+  assert.match(profileTabSource, /if \(isProfileColdLoading\) return \[\{ type: "memories-loading" \}\]/);
+  assert.match(profileTabSource, /case "profile-loading":[\s\S]*<ProfilePostSkeleton \/>/);
+  assert.match(profileTabSource, /case "memories-loading":[\s\S]*<ProfileMemoriesSkeleton \/>/);
+  assert.match(profileTabSource, /if \(isProfileColdLoading\) return <ProfileTabBarSkeleton \/>/);
+  assert.match(profileTabSource, /scrollEnabled: !isProfileColdLoading/);
+  assert.doesNotMatch(profileTabSource, /title="Loading feed"|title="Loading memories"/);
   assert.match(profileTabSource, /const profileTabs = \(\s*<Tabs\.Container/);
-  assert.match(profileTabSource, /<Tabs\.FlatList\s*data=\{postRows\}/);
-  assert.match(profileTabSource, /<Tabs\.FlatList\s*data=\{memoriesRows\}/);
+  assert.match(profileTabSource, /<PostFeed[\s\S]*loadingComponent=\{<ProfilePostSkeleton \/>\}/);
+  assert.match(profileTabSource, /<Tabs\.FlashList[\s\S]*data=\{memoriesRows\}/);
   assert.doesNotMatch(profileTabSource, /pageQuery\.isLoading[\s\S]{0,160}return null/);
+});
+
+test("Profile header cache no longer inherits expiring post-media refresh behavior", () => {
+  const currentPageQuery = profileHooksSource.slice(
+    profileHooksSource.indexOf("export function currentProfilePageQueryOptions"),
+    profileHooksSource.indexOf("export function useOtherProfileShellQuery")
+  );
+  assert.match(currentPageQuery, /staleTime: PROFILE_HEADER_STALE_TIME_MS/);
+  assert.match(currentPageQuery, /refetchOnWindowFocus: false/);
+  assert.doesNotMatch(currentPageQuery, /refetchInterval|EXPIRING_POST_MEDIA_QUERY_OPTIONS/);
+  assert.match(profileHooksSource, /useProfilePostsInfiniteQuery[\s\S]*EXPIRING_POST_MEDIA_QUERY_OPTIONS/);
 });
 
 test("Android status bar is configured to avoid app content overlap", () => {

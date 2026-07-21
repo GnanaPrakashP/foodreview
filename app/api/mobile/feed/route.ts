@@ -1,10 +1,16 @@
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { mobileApiJson, mobileOptions } from "@/lib/server/api-security";
 import { normalizeReview } from "@/lib/server/normalize-review";
 import { buildFeedAssemblyMaps } from "@/lib/server/feed-assembly";
-import { resolvePostMediaAccess, type PostMediaDto } from "@/lib/server/post-media-access";
+import {
+  resolveHomeMediaAccess,
+  resolvePostMediaAccess,
+  type HomeMediaCoverDto,
+  type PostMediaDto
+} from "@/lib/server/post-media-access";
 import { parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
 import type { Review } from "@/lib/types";
 import { canActorReadPost } from "@/lib/server/review-access";
@@ -59,6 +65,57 @@ function mediaForReview(review: Review, mediaByAssetId: Map<string, PostMediaDto
   });
 }
 
+function compactProfileMediaForReview(
+  review: Review,
+  mediaByAssetId: Map<string, HomeMediaCoverDto>
+) {
+  const cover = review.media_items?.[0];
+  if (!cover) return [];
+  const authorised = cover.media_asset_id ? mediaByAssetId.get(cover.media_asset_id) : null;
+  const legacyUrl = !cover.media_asset_id ? cover.public_url : null;
+  if (!authorised && !legacyUrl) return [];
+
+  const mediaType = authorised?.mediaType ?? (cover.media_type === "video" ? "video" : "image");
+  const legacyVersion = legacyUrl
+    ? createHash("sha256").update(legacyUrl).digest("hex").slice(0, 16)
+    : null;
+  const expiresAt = authorised?.expiresAt ?? null;
+  const feedUrl = authorised?.feedUrl ?? (mediaType === "image" ? legacyUrl : null);
+  const posterUrl = authorised?.posterUrl ?? (mediaType === "video" ? cover.poster_url ?? legacyUrl : null);
+  const playbackUrl = authorised?.playbackUrl ?? (mediaType === "video" ? legacyUrl : null);
+  const height = authorised?.height ?? cover.height ?? 450;
+  const width = authorised?.width ?? cover.width ?? 360;
+
+  return [{
+    accessClass: review.visibility === "circle"
+      ? "circle_post"
+      : review.visibility === "me"
+        ? "private_post"
+        : "public_post",
+    aspectRatio: width / height,
+    cacheRevision: authorised?.cacheRevision ?? 1,
+    expiresAt,
+    feedExpiresAt: mediaType === "image" ? expiresAt : null,
+    feedUrl,
+    height,
+    homeDelivery: true,
+    homeDerivativeKind: authorised?.deliveryDerivative ?? "legacy",
+    isLegacyHomeMedia: !authorised,
+    mediaAssetId: authorised?.mediaAssetId ?? `legacy:${review.id}:${cover.position ?? 0}:${legacyVersion}`,
+    mediaType,
+    placeholder: authorised?.placeholder ?? cover.placeholder ?? null,
+    playbackExpiresAt: mediaType === "video" ? expiresAt : null,
+    playbackUrl,
+    posterExpiresAt: mediaType === "video" ? expiresAt : null,
+    posterUrl,
+    position: 0,
+    publicUrl: feedUrl ?? posterUrl ?? playbackUrl ?? "",
+    thumbnailExpiresAt: authorised?.thumbnailExpiresAt ?? null,
+    thumbnailUrl: authorised?.thumbnailUrl ?? cover.thumbnail_url ?? null,
+    width
+  }];
+}
+
 export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get("scope") ?? "public";
   if (!new Set(["public", "restaurant", "dish", "detail", "profile"]).has(scope)) {
@@ -102,9 +159,19 @@ export async function GET(req: NextRequest) {
     viewerName: actor?.actorName ?? null,
     viewerUserId: actor?.userId ?? null,
   });
-  const mediaAssetIds = reviews.flatMap((review) => (review.media_items ?? []).flatMap((item) => item.media_asset_id ? [item.media_asset_id] : []));
-  const authorisedMedia = await resolvePostMediaAccess(db, mediaAssetIds, actor?.actorName ?? "");
-  const mediaByAssetId = new Map(authorisedMedia.map((item) => [item.id, item]));
+  const useCompactProfileMedia = scope === "profile" && Boolean(actor?.userId);
+  const mediaAssetIds = reviews.flatMap((review) => {
+    const items = useCompactProfileMedia ? (review.media_items ?? []).slice(0, 1) : review.media_items ?? [];
+    return items.flatMap((item) => item.media_asset_id ? [item.media_asset_id] : []);
+  });
+  const profileMediaByAssetId = useCompactProfileMedia
+    ? new Map((await resolveHomeMediaAccess(db, mediaAssetIds, actor?.userId ?? "", undefined, undefined, {
+      includeCoverThumbnail: true
+    }) as HomeMediaCoverDto[]).map((item) => [item.mediaAssetId, item]))
+    : new Map<string, HomeMediaCoverDto>();
+  const mediaByAssetId = useCompactProfileMedia
+    ? new Map<string, PostMediaDto>()
+    : new Map((await resolvePostMediaAccess(db, mediaAssetIds, actor?.actorName ?? "")).map((item) => [item.id, item]));
 
   const posts = reviews.map((review) => {
     const authorName = maps.profileMap[review.reviewer_name] ?? review.reviewer_name;
@@ -126,7 +193,12 @@ export async function GET(req: NextRequest) {
       items: review.items ?? [],
       body: review.body,
       tags: review.tags ?? [],
-      media: mediaForReview(review, mediaByAssetId),
+      media: useCompactProfileMedia
+        ? compactProfileMediaForReview(review, profileMediaByAssetId)
+        : mediaForReview(review, mediaByAssetId),
+      mediaCount: useCompactProfileMedia
+        ? Math.max(review.media_count ?? review.media_items?.length ?? 0, review.media_items?.[0] ? 1 : 0)
+        : undefined,
       visibility: review.visibility === "circle" || review.visibility === "me" ? review.visibility : "public",
       status: review.status ?? "active",
       createdAt: review.created_at,
@@ -138,7 +210,7 @@ export async function GET(req: NextRequest) {
       mustTryCount: summary?.feedback_counts.Helpful ?? 0,
       notWorthItCount: summary?.feedback_counts.Disagree ?? 0,
     };
-  });
+  }).filter((post) => !useCompactProfileMedia || post.media.length === 1);
 
   return mobileApiJson(req, METHODS, {
     hasMore: Boolean(payload.hasMore),

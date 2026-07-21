@@ -31,6 +31,8 @@ const deliveryContract = source("lib/server/media-delivery-contract.ts");
 const route = source("app/api/feed/circle/route.ts");
 const renewalRoute = source("app/api/media/renew/route.ts");
 const cover = source("mobile/src/components/posts/HomeMediaCover.tsx");
+const carousel = source("mobile/src/components/posts/HomeMediaCarousel.tsx");
+const visualState = source("mobile/src/components/posts/homeMediaVisualState.ts");
 const postCard = source("mobile/src/components/posts/PostCard.tsx");
 const feed = source("mobile/src/components/feeds/PostFeed.tsx");
 const prefetch = source("mobile/src/services/homeMediaPrefetch.ts");
@@ -87,6 +89,18 @@ test("4a only position-zero Home covers are thumbnail-prefetched in disk-only pa
   assert.match(feed, /Image\.prefetch\([\s\S]*cachePolicy: "disk"/);
   assert.match(feed, /homeMediaMode && posts\.length > 0 && !initialCoverPreviewsReady/);
   assert.doesNotMatch(source("mobile/src/components/posts/HomeMediaCarousel.tsx"), /thumbnailUrl: media\.thumbnailUrl/);
+});
+
+test("4b Home media transitions keep BlurHash neutral and reserve the spinner for no-preview loading", () => {
+  assert.match(visualState, /HOME_MEDIA_FALLBACK_COLOR = "#111111"/);
+  assert.match(visualState, /HOME_MEDIA_BLURHASH_SCRIM_COLOR = "rgba\(0,0,0,0\.82\)"/);
+  assert.match(cover, /const hasPreview = Boolean\(media\.placeholder \|\| thumbnailSource\)/);
+  assert.match(cover, /const busy = showBusy && !hasPreview && \(state === "renewing" \|\| state === "loading"\)/);
+  assert.match(cover, /placeholder=\{\{ blurhash: media\.placeholder \}\}[\s\S]*styles\.previewScrim[\s\S]*showThumbnail/);
+  assert.match(carousel, /placeholder=\{\{ blurhash: media\.placeholder \}\}[\s\S]*styles\.previewScrim/);
+  assert.match(carousel, /const showBusy = metadataPending && renderMedia && active && !hasPreview/);
+  assert.match(carousel, /showBusy \? <ActivityIndicator/);
+  assert.doesNotMatch(`${cover}\n${carousel}`, /backgroundColor: "#F5F2EC"/);
 });
 
 test("5 expired URLs are not directly passed to Expo Image", () => {

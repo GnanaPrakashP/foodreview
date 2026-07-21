@@ -78,7 +78,13 @@ function HomePostSkeletonCard({
   );
 }
 
-export function HomeFeedSkeleton({ postSpacing }: { postSpacing: number }) {
+export function HomeFeedSkeleton({
+  accessibilityLabel = "Loading Circle posts",
+  postSpacing
+}: {
+  accessibilityLabel?: string;
+  postSpacing: number;
+}) {
   const { height } = useWindowDimensions();
   const { themeColors } = useThemePreference();
   const reducedMotion = useReducedMotionPreference();
@@ -120,7 +126,7 @@ export function HomeFeedSkeleton({ postSpacing }: { postSpacing: number }) {
   return (
     <View
       accessible
-      accessibilityLabel="Loading Circle posts"
+      accessibilityLabel={accessibilityLabel}
       accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
       accessibilityState={{ busy: true }}

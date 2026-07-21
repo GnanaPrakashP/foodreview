@@ -31,6 +31,7 @@ import { HOME_TOP_THRESHOLD_PX, resolveActiveHomeTabPressAction } from "@/home/h
 import { markCircleFeedPostsSeen } from "@/services/feeds";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useUserLocationStore } from "@/stores/userLocationStore";
 import { fontStyles, screenLayout, spacing } from "@/theme";
 import { useTabPerformance } from "@/performance/useTabPerformance";
 import { claimHomeNextCursor, shouldLoadNextHomePage } from "@/pagination/homePagination";
@@ -468,7 +469,12 @@ function ProductionCircleScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const ownerIdentity = useSessionStore((state) => state.session?.user.id ?? null);
-  const feed = useCircleFeedInfiniteQuery({ enabled: isFocused && isReady && isAuthenticated });
+  const homeLocation = useUserLocationStore((state) => state.location);
+  const startupLocationResolved = useUserLocationStore((state) => state.startupResolved);
+  const feed = useCircleFeedInfiniteQuery({
+    enabled: isFocused && isReady && isAuthenticated && startupLocationResolved,
+    location: homeLocation
+  });
   const seenPostIdsRef = useRef(new Set<string>());
   const pendingSeenPostIdsRef = useRef(new Set<string>());
   const seenFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -489,7 +495,12 @@ function ProductionCircleScreen() {
     isUpToDateNoticeVisible,
     reevaluateDeferredHomeFreshness,
     refreshHome
-  } = useHomeRefresh({ ownerIdentity, resetPaginationClaims, scrollToTop: scrollHomeToTop });
+  } = useHomeRefresh({
+    location: homeLocation,
+    ownerIdentity,
+    resetPaginationClaims,
+    scrollToTop: scrollHomeToTop
+  });
   const posts = useMemo(() => mergeUniqueFeedPosts(feed.data?.pages), [feed.data?.pages]);
   const firstHomePage = feed.data?.pages[0];
   useEffect(() => {
@@ -506,7 +517,7 @@ function ProductionCircleScreen() {
   });
   const contentReady = isReady && (!isAuthenticated || posts.length > 0 || (!feed.isLoading && !feed.isError));
   useTabPerformance("circle", isFocused, contentReady, !feed.isFetching);
-  const canRefresh = isReady && isAuthenticated;
+  const canRefresh = isReady && isAuthenticated && startupLocationResolved;
   const fetchNextPage = feed.fetchNextPage;
   const hasNextPage = feed.hasNextPage;
   const isFetchingNextPage = feed.isFetchingNextPage;

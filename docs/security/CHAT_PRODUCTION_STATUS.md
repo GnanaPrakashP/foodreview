@@ -272,6 +272,38 @@ connected-device interaction still require deployment validation.
   connected-device performance remain required. The database step is complete;
   deploy the server/API before the mobile build.
 
+### Home neutral media-transition follow-up (2026-07-21)
+
+Status: PASS locally; connected-device transition retest remains required.
+
+- The Home fallback remains fixed near-black `#111111`. Source-colored
+  BlurHash previews now retain their low-cost spatial hint behind a fixed
+  82%-black scrim, preventing bright food-image hashes from presenting as a
+  peach loading surface before the thumbnail is painted.
+- Cover and carousel progress indicators are now explicitly limited to an
+  active media surface with neither a usable thumbnail nor BlurHash preview.
+  A thumbnail URL or BlurHash suppresses the spinner; a genuinely unresolved
+  selected carousel page retains near-black plus the rotating indicator.
+- Thumbnail preparation remains disk-only, first-page bounded and batched.
+  The vertical decoded-media window, FlashList retention, scheduler concurrency,
+  carousel current-plus-next preparation, geometry and video ownership are
+  unchanged, so the visual correction does not broaden memory residency or
+  network concurrency.
+- Before this correction, the connected physical Android FlashList/Preview
+  smoke reported scrolling, reverse scrolling, pagination, carousel gestures,
+  refresh, post actions and notification interactions as acceptable; the
+  remaining observation was the warm BlurHash transition. That physical result
+  is useful smoke evidence, not measured frame/PSS or iOS acceptance. The new
+  neutral transition still requires the same-device cold-cache and fast-fling
+  retest.
+- Verification: focused Home tests 135/135; repository tests 1,634/1,634;
+  Memory hardening 72/72; Phase 1/2 Memory security 39/39; root and mobile
+  typechecks pass; changed-file lint, the production Next build and
+  `git diff --check` pass.
+- Security gate: PASS for this scoped client presentation change. It changes no
+  authentication, authorization, RLS, Storage path, signed-media delivery,
+  persistence, prefetch ownership, service-role boundary or private logging.
+
 ## Production Hardening Phase 5 — Backend, Database, and Feed Performance (2026-07-13)
 
 - Inventory/budgets: 16 primary mobile reads, one primary mobile request each, maximum six application-data statements, pages capped at 50, payload budgets capped at 256 KiB, and one named cache owner per first page.

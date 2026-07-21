@@ -267,7 +267,7 @@ test("an owner-generation change prevents a stale background commit", async () =
 
 test("the initial infinite-query page records a successful page-one timestamp", () => {
   const hook = source("mobile/src/hooks/useFeeds.ts");
-  assert.match(hook, /pageParam === null[\s\S]*await getCircleFeed\(pageParam, \{ signal \}\)[\s\S]*recordHomePageOneRefreshAt\(queryClient, owner\.scope\)/);
+  assert.match(hook, /pageParam === null[\s\S]*await getCircleFeed\(pageParam, \{ location, signal \}\)[\s\S]*recordHomePageOneRefreshAt\(queryClient, owner\.scope\)/);
 });
 
 test("pagination cannot record the page-one timestamp", () => {
@@ -357,7 +357,7 @@ test("applying pending results replaces the infinite query with exactly one page
 test("pending apply cancels pagination, resets cursor claims, and scrolls the real list", () => {
   const hook = source("mobile/src/hooks/useHomeRefresh.ts");
   const apply = hook.slice(hook.indexOf("const applyPendingHomePage"), hook.indexOf("const invalidatePendingHomePageIfChanged"));
-  assert.match(apply, /cancelQueries\(\{ exact: true, queryKey: feedKeys\.circlePages \}\)/);
+  assert.match(apply, /cancelQueries\(\{ exact: true, queryKey: homeFeedQueryKeyRef\.current \}\)/);
   assert.match(apply, /resetPaginationClaimsRef\.current\(\)/);
   assert.match(apply, /scrollToTopRef\.current\(\)/);
 });

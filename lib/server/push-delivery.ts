@@ -9,6 +9,7 @@ const PUSH_BATCH_SIZE = 100;
 const RECEIPT_BATCH_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RECEIPT_DELAY_SECONDS = 15 * 60;
+const RETIRED_PUSH_NOTIFICATION_TYPES = new Set(["THREAD_REPLY", "also_commented"]);
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 type FetchImplementation = typeof fetch;
@@ -173,6 +174,7 @@ function notificationPayload(notification: NotificationRow, token: string) {
     entityType: notification.entity_type || "SYSTEM",
     notificationId: notification.id,
     notificationType: notification.type,
+    recipientName: notification.recipient_name,
     recipientUserId: notification.recipient_user_id || "",
     type: notification.entity_type === "TABLE_MEMORY" ? "table-memory" : "social-notification"
   };
@@ -211,13 +213,18 @@ export async function processPushSendBatch(options: {
   let retried = 0;
   let deadLettered = 0;
   for (const job of jobs) {
+    if (RETIRED_PUSH_NOTIFICATION_TYPES.has(job.notification_type)) {
+      await failSend(admin, job, "notification_type_retired", false);
+      permanentFailed += 1;
+      continue;
+    }
     const [{ data: token }, { data: notification }] = await Promise.all([
       admin.from("push_tokens").select("id, user_id, expo_push_token, disabled_at").eq("id", job.push_token_id).maybeSingle<PushToken>(),
       job.notification_id
         ? admin.from("notifications").select("id, recipient_user_id, recipient_name, actor_name, type, title, message, entity_type, entity_id, post_id").eq("id", job.notification_id).maybeSingle<NotificationRow>()
         : Promise.resolve({ data: null })
     ]);
-    if (!token || token.user_id !== job.user_id || token.disabled_at || !notification) {
+    if (!token || token.user_id !== job.user_id || token.disabled_at || !notification || RETIRED_PUSH_NOTIFICATION_TYPES.has(notification.type)) {
       await failSend(admin, job, token?.disabled_at ? "token_disabled" : "delivery_target_missing", false);
       permanentFailed += 1;
       continue;

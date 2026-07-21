@@ -29,22 +29,24 @@ async function refreshDeviceLocationIfAllowed() {
 }
 
 export function UserLocationBootstrap() {
-  const hydrate = useUserLocationStore((state) => state.hydrate);
+  const resolveStartupLocation = useUserLocationStore((state) => state.resolveStartupLocation);
 
   useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+    void resolveStartupLocation();
+  }, [resolveStartupLocation]);
 
   return null;
 }
 
 /**
- * Remote/device location work is owned by the active Explore screen. The
- * global bootstrap hydrates the small account-scoped local preference only.
+ * Explore keeps an already-approved device location fresh while it is active.
+ * The startup prompt and account-scoped global location are owned by the
+ * bootstrap above.
  */
 export function useExploreLocationActivation(active: boolean) {
   const runtime = useRuntimeActivity();
   const hydrated = useUserLocationStore((state) => state.hydrated);
+  const startupResolved = useUserLocationStore((state) => state.startupResolved);
   const syncRemoteLocation = useUserLocationStore((state) => state.syncRemoteLocation);
   const isSessionReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
@@ -52,7 +54,7 @@ export function useExploreLocationActivation(active: boolean) {
   const wasForegroundRef = useRef(runtime.isForeground);
 
   useEffect(() => {
-    if (!active || !hydrated || !isSessionReady || !runtime.isForeground) return;
+    if (!active || !hydrated || !startupResolved || !isSessionReady || !runtime.isForeground) return;
     if (!isAuthenticated) {
       didSyncRemoteForSessionRef.current = false;
       void refreshDeviceLocationIfAllowed();
@@ -65,7 +67,7 @@ export function useExploreLocationActivation(active: boolean) {
       }
       await refreshDeviceLocationIfAllowed();
     })();
-  }, [active, hydrated, isAuthenticated, isSessionReady, runtime.isForeground, syncRemoteLocation]);
+  }, [active, hydrated, isAuthenticated, isSessionReady, runtime.isForeground, startupResolved, syncRemoteLocation]);
 
   useEffect(() => {
     const becameForeground = runtime.isForeground && !wasForegroundRef.current;

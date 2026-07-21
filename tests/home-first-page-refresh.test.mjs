@@ -83,7 +83,7 @@ test("pull-to-refresh requests exactly ten feed posts", () => {
   const service = source("mobile/src/services/feeds.ts");
   assert.match(service, /const HOME_PAGE_SIZE = 10/);
   assert.match(service, /new URLSearchParams\(\{ limit: String\(HOME_PAGE_SIZE\) \}\)/);
-  assert.match(source("mobile/src/hooks/useHomeRefresh.ts"), /getCircleFeed\(null, \{ refresh: true, signal \}\)/);
+  assert.match(source("mobile/src/hooks/useHomeRefresh.ts"), /getCircleFeed\(null, \{ location: locationRef\.current, refresh: true, signal \}\)/);
 });
 
 test("pull-to-refresh includes refresh=1", () => {
@@ -282,8 +282,8 @@ test("a stale pagination response cannot append after refresh", () => {
   const hook = source("mobile/src/hooks/useHomeRefresh.ts");
   const feeds = source("mobile/src/hooks/useFeeds.ts");
   const client = source("mobile/src/api/client.ts");
-  assert.match(hook, /cancelQueries\(\{ exact: true, queryKey: feedKeys\.circlePages \}\)/);
-  assert.match(feeds, /queryFn: async \(\{ pageParam, signal \}\) => \{[\s\S]*await getCircleFeed\(pageParam, \{ signal \}\)/);
+  assert.match(hook, /cancelQueries\(\{ exact: true, queryKey: homeFeedQueryKeyRef\.current \}\)/);
+  assert.match(feeds, /queryFn: async \(\{ pageParam, signal \}\) => \{[\s\S]*await getCircleFeed\(pageParam, \{ location, signal \}\)/);
   assert.match(client, /externalSignal\?\.addEventListener\("abort", forwardExternalAbort/);
 });
 

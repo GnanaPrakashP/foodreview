@@ -6,6 +6,8 @@ const source = (relativePath) => readFileSync(new URL(`../${relativePath}`, impo
 
 const home = source("mobile/app/(tabs)/index.tsx");
 const feed = source("mobile/src/components/feeds/PostFeed.tsx");
+const postCard = source("mobile/src/components/posts/PostCard.tsx");
+const carousel = source("mobile/src/components/posts/HomeMediaCarousel.tsx");
 const mobilePackage = JSON.parse(source("mobile/package.json"));
 
 function block(text, start, end) {
@@ -53,6 +55,14 @@ test("recycling media ownership updates only subscribed post rows", () => {
   assert.match(feed, /recyclingMediaStateStore\.subscribe\(post\.id, listener\)/);
   assert.match(feed, /recyclingMediaStateStore\.getSnapshot\(post\.id\)/);
   assert.match(feed, /homeCoverWarmMounted: true/);
+});
+
+test("production FlashList cells reset post-owned and media-owned state on reassignment", () => {
+  assert.match(feed, /recyclingEnabled=\{Boolean\(recyclingMediaStateStore\)\}/);
+  assert.match(postCard, /const recyclingStateScope = recyclingEnabled \|\| diagnosticRecycling \? post\.id/);
+  assert.match(postCard, /recyclingEnabled=\{recyclingEnabled\}/);
+  assert.match(carousel, /const recyclingStateScope = recyclingEnabled[\s\S]*\? `\$\{postId\}:\$\{cover\.mediaAssetId \?\? "cover"\}`/);
+  assert.doesNotMatch(carousel, /recyclingEnabled=\{Boolean\(diagnosticRecycling\)\}/);
 });
 
 test("the recycling branch renders the same complete production row and feed controls", () => {

@@ -115,6 +115,7 @@ type PostCardProps = {
   onReleaseHomePlayback?: () => void;
   onRequestHomePlayback?: (mediaAssetId: string) => void;
   post: ReviewPost;
+  recyclingEnabled?: boolean;
   relativeTimestampLabel?: string;
   useGreenJoinedRequestState?: boolean;
   verticalScrolling?: boolean;
@@ -1073,6 +1074,7 @@ function PostCardComponent({
   onReleaseHomePlayback = NOOP,
   onRequestHomePlayback,
   post,
+  recyclingEnabled = false,
   relativeTimestampLabel,
   useGreenJoinedRequestState = false,
   verticalScrolling = false
@@ -1138,7 +1140,7 @@ function PostCardComponent({
       ? precomputedDiagnosticTimeAgo(post.createdAt)
       : timeAgo(post.createdAt)
   );
-  const recyclingStateScope = diagnosticRecycling ? post.id : NON_RECYCLING_STATE_SCOPE;
+  const recyclingStateScope = recyclingEnabled || diagnosticRecycling ? post.id : NON_RECYCLING_STATE_SCOPE;
   // FlashList keeps the component instance and assigns it a different post.
   // Reset post-owned state during that render, before Fabric commits the new
   // item, instead of showing the previous post and correcting it in effects.
@@ -1193,6 +1195,22 @@ function PostCardComponent({
     visualTasteTrustState?.summary ?? feedbackQuery.data?.summary ?? fallbackTasteTrustState.summary
   );
   const targetUsername = post.reviewerUsername || post.reviewerName;
+  const profileNavigationPreview = useMemo(() => ({
+    avatarCacheRevision: post.avatarCacheRevision ?? 1,
+    avatarMediaAssetId: post.avatarMediaAssetId ?? null,
+    avatarPlaceholder: post.avatarPlaceholder ?? null,
+    avatarThumbnailUrl: post.avatarThumbnailUrl ?? null,
+    displayName: post.authorName || post.reviewerName,
+    initials: post.authorInitials || "?"
+  }), [
+    post.authorInitials,
+    post.authorName,
+    post.avatarCacheRevision,
+    post.avatarMediaAssetId,
+    post.avatarPlaceholder,
+    post.avatarThumbnailUrl,
+    post.reviewerName
+  ]);
   const isOwnPost = Boolean(viewerName) && targetUsername.toLowerCase() === viewerName.toLowerCase();
   const showRequestButton = !isOwnPost && post.isPublicDiscovery && (requestStatus !== "joined" || requestInteracted);
   const postActionsBusy = deletePostMutation.isPending || reportMutation.isPending || blockUserMutation.isPending;
@@ -1295,8 +1313,14 @@ function PostCardComponent({
   }, [post.id, setPostActionsAnchor, setShowPostActions]);
 
   const openProfile = useCallback(() => {
-    openProfileRoute({ queryClient, router, username: targetUsername, viewerUsername: viewerName });
-  }, [queryClient, router, targetUsername, viewerName]);
+    openProfileRoute({
+      preview: profileNavigationPreview,
+      queryClient,
+      router,
+      username: targetUsername,
+      viewerUsername: viewerName
+    });
+  }, [profileNavigationPreview, queryClient, router, targetUsername, viewerName]);
 
   const openRestaurant = useCallback(() => {
     if (post.restaurantId) {
@@ -1520,7 +1544,7 @@ function PostCardComponent({
         avatarThumbnailUrl={post.avatarThumbnailUrl}
         backgroundColor={avatarBackground}
         initials={post.authorInitials || "?"}
-        recyclingEnabled={Boolean(diagnosticRecycling)}
+        recyclingEnabled={recyclingEnabled}
       />
     </Pressable>
   );
@@ -1684,6 +1708,7 @@ function PostCardComponent({
           authorName={post.authorName}
           createdAtLabel={createdAtLabel}
           diagnosticRecycling={diagnosticRecycling}
+          recyclingEnabled={recyclingEnabled}
           onOpenProfile={openProfile}
           postId={post.id}
           styles={styles}
@@ -1773,6 +1798,7 @@ function PostCardComponent({
       onRequestPlayback={onRequestHomePlayback ?? NOOP}
       playbackMediaAssetId={homePlaybackMediaAssetId}
       postId={post.id}
+      recyclingEnabled={recyclingEnabled}
       retentionMode={homeCarouselRetentionMode}
       verticalScrolling={verticalScrolling}
     />
@@ -1887,6 +1913,7 @@ function PostCardComponent({
     <TasteTrustFeedback
       diagnosticPlainIcons={useSvgPlaceholders}
       diagnosticRecycling={diagnosticRecycling}
+      recyclingEnabled={recyclingEnabled}
       diagnosticStableIdentity={diagnosticPlan?.stableSvgIdentity}
       feedbackState={feedbackQuery.data}
       isAuthenticated={isAuthenticated}
@@ -1938,6 +1965,7 @@ const PostCardHeaderMetadata = memo(function PostCardHeaderMetadata({
   diagnosticRecycling,
   onOpenProfile,
   postId,
+  recyclingEnabled = false,
   textMode,
   styles
 }: {
@@ -1946,10 +1974,11 @@ const PostCardHeaderMetadata = memo(function PostCardHeaderMetadata({
   diagnosticRecycling?: RecycledPostCardDiagnosticContext;
   onOpenProfile: () => void;
   postId: string;
+  recyclingEnabled?: boolean;
   textMode: "placeholder" | "real" | "single-line";
   styles: PostCardStyles;
 }) {
-  const recyclingStateScope = diagnosticRecycling ? postId : NON_RECYCLING_STATE_SCOPE;
+  const recyclingStateScope = recyclingEnabled || diagnosticRecycling ? postId : NON_RECYCLING_STATE_SCOPE;
   const [authorPressed, setAuthorPressed] = useFixedGeometryRecyclingState(false, [recyclingStateScope]);
   const authorAccessibilityLabel = useMemo(() => `Open ${authorName}'s profile`, [authorName]);
   const beginAuthorPress = useCallback(() => setAuthorPressed(true), [setAuthorPressed]);
@@ -2301,6 +2330,7 @@ type TasteTrustFeedbackProps = {
   isAuthenticated: boolean;
   onVisualStateChange: (state: TasteTrustFeedbackState) => void;
   post: ReviewPost;
+  recyclingEnabled?: boolean;
   viewerName: string;
 };
 
@@ -2312,6 +2342,7 @@ function TasteTrustFeedbackComponent({
   isAuthenticated,
   onVisualStateChange,
   post,
+  recyclingEnabled = false,
   viewerName
 }: TasteTrustFeedbackProps) {
   const queryClient = useQueryClient();
@@ -2328,7 +2359,7 @@ function TasteTrustFeedbackComponent({
   onVisualStateChangeRef.current = onVisualStateChange;
   const currentPostIdRef = useRef(post.id);
   currentPostIdRef.current = post.id;
-  const recyclingStateScope = diagnosticRecycling ? post.id : NON_RECYCLING_STATE_SCOPE;
+  const recyclingStateScope = recyclingEnabled || diagnosticRecycling ? post.id : NON_RECYCLING_STATE_SCOPE;
   const [statusText, setStatusText] = useRecyclingState("", [recyclingStateScope]);
   const fallbackFeedbackState = useMemo(
     () => tasteTrustStateFromValues(post.foodReaction, post.mustTryCount, post.notWorthItCount),

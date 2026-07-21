@@ -65,6 +65,23 @@ test("post actions dismiss outside and identify the destructive block target", (
   assert.match(postCard, /accessibilityLabel=\{`Block @\$\{targetUsername\}`\}/);
 });
 
+test("other-profile actions match the post popover and dismiss outside", () => {
+  const profile = source("mobile/app/people/[username].tsx");
+
+  assert.match(profile, /\{showProfileActions && profileActionsAnchor \? \(\s*<Modal/);
+  assert.match(profile, /onRequestClose=\{closeProfileActions\}/);
+  assert.match(
+    profile,
+    /accessibilityLabel="Close profile actions"[\s\S]*onPress=\{closeProfileActions\}[\s\S]*style=\{styles\.profileActionsBackdrop\}/
+  );
+  assert.match(profile, /onAccessibilityEscape=\{closeProfileActions\}/);
+  assert.match(profile, /<View style=\{styles\.menuActionDivider\} \/>/);
+  assert.match(profile, /"Unblock user"/);
+  assert.match(profile, /"Block user"/);
+  assert.match(profile, /style=\{styles\.menuActionUsername\}>@\{username\}<\/Text>/);
+  assert.doesNotMatch(profile, /Alert\.alert\("@" \+ username/);
+});
+
 test("mobile production safety files are present", () => {
   assert.ok(existsSync(new URL("../mobile/src/services/reports.ts", import.meta.url)));
   assert.ok(existsSync(new URL("../mobile/src/hooks/useReports.ts", import.meta.url)));

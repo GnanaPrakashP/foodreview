@@ -2709,7 +2709,92 @@
       "sizeBytes": 554,
       "sourceRoot": "supabase/migrations",
       "version": "202607210004"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "blocked_users",
+        "circle_memberships",
+        "circle_requests",
+        "media_assets",
+        "media_derivatives",
+        "post_views",
+        "profiles",
+        "review_photos",
+        "reviews",
+        "role"
+      ],
+      "description": "home_location_ranked_feed",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210005_home_location_ranked_feed.sql",
+      "objectCategories": [
+        "auth",
+        "functions",
+        "media-pipeline",
+        "profiles",
+        "social",
+        "triggers"
+      ],
+      "sha256": "692afce5ed321debecfe2bd4cd9ec7a043a8163284ba36e0b92f7e8a82f0f621",
+      "sizeBytes": 14612,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210005"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "notification_inbox_has_unseen",
+        "notification_inbox_state",
+        "notifications",
+        "profiles",
+        "push_delivery_jobs",
+        "uid"
+      ],
+      "description": "retire_thread_reply_notifications",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210006_retire_thread_reply_notifications.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "functions",
+        "notifications",
+        "profiles",
+        "social"
+      ],
+      "sha256": "7d7b7072f167a8b79ab2a89d3cb9a8805f4ebf04ed723b021491d012af8bf0b6",
+      "sizeBytes": 2407,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210006"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "current_profile_name",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_room_summaries_v3",
+        "shared_memory_rooms",
+        "shared_memory_stops"
+      ],
+      "description": "profile_memory_timeline_pagination",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607210007_profile_memory_timeline_pagination.sql",
+      "objectCategories": [
+        "functions",
+        "indexes",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "46ad56dc3a6426c152ada0b8c70edc801d3e5bd7caeb6028b4fbf2018ec188f2",
+      "sizeBytes": 4130,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607210007"
     }
   ],
-  "currentCanonicalMigrations": 81
+  "currentCanonicalMigrations": 84
 }

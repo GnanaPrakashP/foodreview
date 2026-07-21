@@ -26,7 +26,6 @@ export type NotificationType =
   | "MUTUAL_CIRCLE_CREATED"
   | "POST_LIKED"
   | "POST_COMMENTED"
-  | "THREAD_REPLY"
   | "CIRCLE_POST_CREATED"
   | "TABLE_MEMORY_INVITE"
   | "COMMON_RESTAURANT_SCORE_UPDATED"
@@ -82,7 +81,6 @@ function isNotificationSchemaError(error: SupabaseLikeError): boolean {
 function legacyType(type: NotificationType): string {
   if (type === "POST_LIKED") return "like";
   if (type === "POST_COMMENTED") return "comment";
-  if (type === "THREAD_REPLY") return "also_commented";
   if (type === "CIRCLE_REQUEST_RECEIVED") return "circle_request";
   if (type === "CIRCLE_REQUEST_ACCEPTED") return "circle_accepted";
   if (type === "ADDED_TO_CIRCLE" || type === "MUTUAL_CIRCLE_CREATED") return "circle_added";
@@ -212,8 +210,6 @@ function socialPushCopy(input: CreateNotificationInput): { body: string; title: 
       return { title: "New like", body: `${actor} liked your post` };
     case "POST_COMMENTED":
       return { title: "New comment", body: `${actor} commented on your post` };
-    case "THREAD_REPLY":
-      return { title: "New reply", body: `${actor} replied in a discussion you joined` };
     case "CIRCLE_REQUEST_RECEIVED":
       return { title: "Circle request", body: `${actor} requested to join your circle` };
     case "CIRCLE_REQUEST_ACCEPTED":
@@ -576,7 +572,6 @@ export async function createPostCommentNotifications(
   review: Review,
   actorName: string,
   comment: { id: string; content: string },
-  priorCommenters: string[],
   actorDisplayName?: string
 ) {
   if (review.visibility === "me") return;
@@ -603,35 +598,7 @@ export async function createPostCommentNotifications(
     },
   };
   const ownerNotification = await createNotificationForNames(db, ownerInput);
-
-  const recipients = Array.from(new Set(priorCommenters)).filter((name) => name && name !== actorName && name !== review.reviewer_name);
-  const threadNotifications = await Promise.all(recipients.map(async (recipientName) => {
-    const threadInput: CreateNotificationInput = {
-      recipientName,
-      actorName,
-      actorDisplayName: displayName,
-      type: "THREAD_REPLY",
-      title: "New reply",
-      message: `${displayName} replied in a discussion you joined`,
-      entityType: "POST",
-      entityId: review.id,
-      postId: review.id,
-      restaurantName: review.restaurant_name,
-      content: preview,
-      metadata: {
-        commentId: comment.id,
-        restaurantName: review.restaurant_name,
-        thumbnailUrl: review.photo_urls?.[0] ?? review.photo_url ?? null,
-      },
-    };
-    const notification = await createNotificationForNames(db, threadInput);
-    return { input: threadInput, notification };
-  }));
-
-  await Promise.all([
-    { input: ownerInput, notification: ownerNotification },
-    ...threadNotifications,
-  ].map(({ input, notification }) => notification ? sendPushForNotification(db, input, notification) : Promise.resolve()));
+  if (ownerNotification) await sendPushForNotification(db, ownerInput, ownerNotification);
 }
 
 export async function createCirclePostNotifications(db: NotificationDb, review: Review) {

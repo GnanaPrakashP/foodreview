@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import { Tabs as CollapsibleTabs } from "react-native-collapsible-tab-view";
 import { forwardRef, memo, type ReactElement, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
@@ -44,6 +45,7 @@ import {
 import type { HomeVerticalMediaPriority } from "@/home/homeMediaPriority";
 
 type PostFeedProps = {
+  collapsibleTabView?: boolean;
   diagnosticPremountInitialPage?: boolean;
   diagnosticRecyclingList?: boolean;
   diagnosticRecyclingPostCardStage?: RecycledPostCardDiagnosticStage;
@@ -449,6 +451,7 @@ const PostFeedRow = memo(function PostFeedRow({
         onReleaseHomePlayback={releasePlayback}
         onRequestHomePlayback={requestPlayback}
         post={post}
+        recyclingEnabled={Boolean(recyclingMediaStateStore)}
         relativeTimestampLabel={relativeTimestampLabel}
         useGreenJoinedRequestState={useGreenJoinedRequestState}
         verticalScrolling={resolvedVerticalScrolling}
@@ -464,6 +467,7 @@ const PostFeedRow = memo(function PostFeedRow({
 });
 
 export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostFeed({
+  collapsibleTabView = false,
   diagnosticPremountInitialPage = false,
   diagnosticRecyclingList = false,
   diagnosticRecyclingPostCardStage = "full",
@@ -1538,6 +1542,40 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
 
   if (scrollEnabled) {
     if (recyclingListEnabled) {
+      if (collapsibleTabView) {
+        return (
+          <CollapsibleTabs.FlashList
+            contentContainerStyle={[styles.virtualizedContent, contentContainerStyle]}
+            data={state ? [] : diagnosticInitialPagePosts}
+            drawDistance={DIAGNOSTIC_RECYCLING_DRAW_DISTANCE_PX}
+            getItemType={postCardRecyclingType}
+            ItemSeparatorComponent={postSpacing > 0 ? renderPostSeparator : undefined}
+            keyExtractor={(post) => post.id}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={state}
+            ListFooterComponent={state ? null : renderFooter}
+            ListHeaderComponent={ListHeaderComponent}
+            maintainVisibleContentPosition={{ disabled: true }}
+            onEndReached={hasMore && !isFetchingMore ? onEndReached : undefined}
+            onEndReachedThreshold={0.65}
+            onLoad={recyclingListDiagnosticsEnabled ? handleDiagnosticRecyclingListLoad : undefined}
+            onMomentumScrollBegin={handleMomentumScrollBegin}
+            onMomentumScrollEnd={handleMomentumScrollEnd}
+            onScroll={handleScroll}
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEndDrag}
+            overScrollMode="never"
+            refreshControl={refreshControl}
+            ref={flashListRef}
+            renderItem={renderRecycledPost}
+            scrollEnabled
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={false}
+            style={StyleSheet.flatten([styles.virtualizedList, listStyle])}
+            viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairsRef.current}
+          />
+        );
+      }
       return (
         <FlashList
           contentContainerStyle={[styles.virtualizedContent, contentContainerStyle]}

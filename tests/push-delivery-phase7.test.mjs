@@ -101,9 +101,37 @@ function response(payload, status = 200) {
 test("successful Expo tickets are persisted for later receipt polling", async () => {
   const { processPushSendBatch } = loadPushDelivery();
   const state = adminFor([job("one")]);
-  const result = await processPushSendBatch({ admin: state.admin, fetchImpl: async () => response({ data: [{ id: "ticket-one", status: "ok" }] }), workerId: "test" });
+  let payload;
+  const result = await processPushSendBatch({
+    admin: state.admin,
+    fetchImpl: async (_url, init) => {
+      payload = JSON.parse(String(init?.body));
+      return response({ data: [{ id: "ticket-one", status: "ok" }] });
+    },
+    workerId: "test"
+  });
   assert.deepEqual({ ...result }, { claimed: 1, deadLettered: 0, permanentFailed: 0, receiptPending: 1, retried: 0 });
   assert.deepEqual(state.calls.tickets, ["ticket-one"]);
+  assert.equal(payload[0].data.recipientName, "fixture");
+});
+
+test("retired discussion notifications never reach Expo", async () => {
+  const { processPushSendBatch } = loadPushDelivery();
+  const retiredJob = { ...job("retired"), notification_type: "THREAD_REPLY" };
+  const state = adminFor([retiredJob], "permanent_failure");
+  let providerCalled = false;
+  const result = await processPushSendBatch({
+    admin: state.admin,
+    fetchImpl: async () => {
+      providerCalled = true;
+      return response({ data: [] });
+    },
+    workerId: "test"
+  });
+
+  assert.equal(providerCalled, false);
+  assert.equal(result.permanentFailed, 1);
+  assert.deepEqual(state.calls.failures, ["notification_type_retired"]);
 });
 
 test("successful Expo receipts durably complete delivery", async () => {

@@ -213,7 +213,6 @@ function notificationDisplayMessage(row: NotificationRow, actor: string) {
 
   if (type === "POST_LIKED" || type === "like") return `${actor} liked your post`;
   if (type === "POST_COMMENTED" || type === "comment") return `${actor} commented on your post`;
-  if (type === "THREAD_REPLY" || type === "also_commented") return `${actor} replied in a discussion you joined`;
   if (type === "CIRCLE_REQUEST_RECEIVED" || type === "circle_request") return `${actor} requested to join your circle`;
   if (type === "CIRCLE_REQUEST_ACCEPTED" || type === "circle_accepted") return `${actor} accepted your circle request`;
   if (type === "ADDED_TO_CIRCLE" || type === "MUTUAL_CIRCLE_CREATED" || type === "circle_added") return `${actor} joined your circle`;

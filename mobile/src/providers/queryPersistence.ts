@@ -81,9 +81,9 @@ export function shouldPersistQuery(query: Query) {
 }
 
 const PERSISTED_CIRCLE_FIRST_PAGE_LIMIT = 10;
-const PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 24;
+const PERSISTED_PROFILE_FIRST_PAGE_LIMIT = 10;
 const PERSISTED_EXPLORE_SECTION_LIMIT = 60;
-const PERSISTED_MEMORY_SUMMARY_LIMIT = 50;
+const PERSISTED_MEMORY_SUMMARY_LIMIT = 12;
 const SIGNED_MEDIA_EXPIRY_SAFETY_MS = 15_000;
 
 type UnknownRecord = Record<string, unknown>;
@@ -131,8 +131,22 @@ function sanitizeCachedValue(value: unknown, now: number, homeCircle = false): u
 }
 
 function boundQueryData(queryKey: readonly unknown[], data: unknown) {
-  if (queryKey.length === 1 && queryKey[0] === "memories" && Array.isArray(data)) {
-    return data.slice(0, PERSISTED_MEMORY_SUMMARY_LIMIT);
+  if (queryKey.length === 1 && queryKey[0] === "memories") {
+    const firstPage = isRecord(data) && Array.isArray(data.pages) ? data.pages[0] : null;
+    const rooms = Array.isArray(data)
+      ? data.slice(0, PERSISTED_MEMORY_SUMMARY_LIMIT)
+      : isRecord(firstPage) && Array.isArray(firstPage.rooms)
+        ? firstPage.rooms.slice(0, PERSISTED_MEMORY_SUMMARY_LIMIT)
+        : [];
+    return {
+      ...(isRecord(data) ? data : {}),
+      pageParams: [null],
+      pages: [{
+        ...(isRecord(firstPage) ? firstPage : {}),
+        nextCursor: isRecord(firstPage) && typeof firstPage.nextCursor === "string" ? firstPage.nextCursor : null,
+        rooms
+      }]
+    };
   }
   if (queryKey[0] === "feed" && queryKey[1] === "circle" && isRecord(data) && Array.isArray(data.pages)) {
     const firstPage = data.pages[0];
@@ -155,12 +169,6 @@ function boundQueryData(queryKey: readonly unknown[], data: unknown) {
       dishes: Array.isArray(data.dishes) ? data.dishes.slice(0, PERSISTED_EXPLORE_SECTION_LIMIT) : [],
       people: Array.isArray(data.people) ? data.people.slice(0, PERSISTED_EXPLORE_SECTION_LIMIT) : [],
       places: Array.isArray(data.places) ? data.places.slice(0, PERSISTED_EXPLORE_SECTION_LIMIT) : []
-    };
-  }
-  if (queryKey[0] === "profile" && queryKey[1] === "current-page" && isRecord(data)) {
-    return {
-      ...data,
-      posts: Array.isArray(data.posts) ? data.posts.slice(0, PERSISTED_PROFILE_FIRST_PAGE_LIMIT) : []
     };
   }
   if (queryKey[0] === "profile" && queryKey[2] === "posts" && isRecord(data) && Array.isArray(data.pages)) {

@@ -58,6 +58,9 @@ export async function filterValidNotifications(
   supabase: SupabaseDb,
   notifications: Notification[]
 ): Promise<Notification[]> {
+  const retiredThreadNotifs = notifications.filter(
+    (n) => n.type === "THREAD_REPLY" || n.type === "also_commented"
+  );
   const circleNotifs = notifications.filter(
     (n) => n.type === "CIRCLE_REQUEST_RECEIVED" || n.type === "circle_request"
   );
@@ -68,7 +71,7 @@ export async function filterValidNotifications(
     (n) => n.type === "POST_COMMENTED" || n.type === "comment"
   );
   const otherNotifs = notifications.filter(
-    (n) => !circleNotifs.includes(n) && !likeNotifs.includes(n) && !commentNotifs.includes(n)
+    (n) => !retiredThreadNotifs.includes(n) && !circleNotifs.includes(n) && !likeNotifs.includes(n) && !commentNotifs.includes(n)
   );
 
   const [validCircleIds, validCommentIds] = await Promise.all([
@@ -85,6 +88,7 @@ export async function filterValidNotifications(
   const validCommentSet = new Set(validCommentIds);
 
   const invalidIds = [
+    ...retiredThreadNotifs,
     ...circleNotifs.filter((n) => !validCircleSet.has(n.id)),
     ...likeNotifs.filter((n) => !validLikeSet.has(n.id)),
     ...commentNotifs.filter((n) => !validCommentSet.has(n.id)),

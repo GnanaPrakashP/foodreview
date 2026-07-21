@@ -3,24 +3,25 @@ import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ViewToken } from "react-native";
+import { ActivityIndicator, Animated, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { SignedOutFeedState } from "@/components/feeds/PostFeed";
-import { PostCard } from "@/components/posts/PostCard";
+import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
+import { ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
+import { EmptyState, ErrorState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
-import { useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
+import { memoryRoomSummariesFromPages, useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
+import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { ProfileSettingsPanel } from "../profile/settings";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
-import type { MemoryRoomSummary, ProfilePageData, ReviewPost } from "@/types/models";
+import type { MemoryRoomSummary, ProfilePageData } from "@/types/models";
 import { useTabPerformance } from "@/performance/useTabPerformance";
 
 type ProfileTab = "posts" | "memories";
@@ -30,18 +31,15 @@ const PROFILE_TAB_BAR_HEIGHT = 40;
 const PROFILE_LIST_INITIAL_RENDER_COUNT = 4;
 const PROFILE_LIST_RENDER_BATCH_SIZE = 4;
 const PROFILE_LIST_WINDOW_SIZE = 5;
+const PROFILE_MEMORY_SKELETON_ROW_COUNT = 3;
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 type ProfilePalette = ReturnType<typeof profilePalette>;
 type ProfileListRow =
-  | { type: "post"; post: ReviewPost }
   | { type: "profile-loading" }
   | { type: "profile-error" }
   | { type: "profile-setup" }
   | { type: "signed-out" }
-  | { type: "posts-loading" }
-  | { type: "posts-error" }
-  | { type: "posts-empty" }
   | { type: "memory-month"; id: string; isFirst: boolean; month: string }
   | { type: "memory"; memory: MemoryRoomSummary }
   | { type: "memories-loading" }
@@ -112,7 +110,6 @@ export default function ProfileScreen() {
     isReady && (!isAuthenticated || Boolean(page.data) || (!page.isLoading && !page.isError)),
     !page.isFetching
   );
-  const memories = useMemoryRoomsQuery({ enabled: isFocused && isReady && isAuthenticated && Boolean(sessionUsername) });
   const canRefresh = isReady && isAuthenticated;
   const [settingsVisible, setSettingsVisible] = useState(false);
   const openingSettingsRef = useRef(false);
@@ -140,7 +137,6 @@ export default function ProfileScreen() {
             canRefresh={canRefresh}
             isAuthenticated={isAuthenticated}
             isReady={isReady}
-            memories={memories}
             onSettingsPress={openSettings}
             page={page.data ?? null}
             pageQuery={page}
@@ -157,7 +153,6 @@ function ProfileContent({
   canRefresh,
   isAuthenticated,
   isReady,
-  memories,
   onSettingsPress,
   page,
   pageQuery,
@@ -166,7 +161,6 @@ function ProfileContent({
   canRefresh: boolean;
   isAuthenticated: boolean;
   isReady: boolean;
-  memories: ReturnType<typeof useMemoryRoomsQuery>;
   onSettingsPress: () => void;
   page: ProfilePageData | null;
   pageQuery: ReturnType<typeof useCurrentProfilePageQuery>;
@@ -180,14 +174,10 @@ function ProfileContent({
   const initialTab = useRef(profileTabFromParam(params.tab)).current;
   const tabsRef = useRef<CollapsibleRef>(undefined);
   const activeTabRef = useRef<ProfileTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<ProfileTab>(initialTab);
   const [showTrustSheet, setShowTrustSheet] = useState(false);
-  const [activeMediaPostId, setActiveMediaPostId] = useState<string | null>(null);
   const endReachedInFlightRef = useRef(false);
-  const postViewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 65, minimumViewTime: 900 });
-  const onPostViewableItemsChangedRef = useRef(({ viewableItems }: { viewableItems: ViewToken<ProfileListRow>[] }) => {
-    const activePostId = viewableItems.find((token) => token.isViewable && token.item?.type === "post")?.item;
-    setActiveMediaPostId(activePostId?.type === "post" ? activePostId.post.id : null);
-  });
+  const memoriesEndReachedInFlightRef = useRef(false);
 
   const openCreate = useCallback(() => {
     router.push("/share");
@@ -195,6 +185,7 @@ function ProfileContent({
 
   const handleProfileTabChange = useCallback((tab: ProfileTab) => {
     activeTabRef.current = tab;
+    setActiveTab(tab);
   }, []);
 
   useEffect(() => {
@@ -202,56 +193,74 @@ function ProfileContent({
     const nextTab = profileTabFromParam(params.tab);
     if (nextTab === activeTabRef.current) return;
     activeTabRef.current = nextTab;
+    setActiveTab(nextTab);
     tabsRef.current?.jumpToTab(nextTab);
   }, [isActiveMainTab, params.tab]);
 
-  const { data: memoriesData, error: memoriesError, isError: memoriesIsError, isLoading: memoriesIsLoading, refetch: memoriesRefetch } = memories;
-  useMemoryRoomsRealtime(isActiveMainTab && isReady && isAuthenticated && Boolean(memoriesData));
+  const profileMemoriesFocused = isActiveMainTab && activeTab === "memories";
+  const memories = useMemoryRoomsQuery({
+    enabled: profileMemoriesFocused && isReady && isAuthenticated && Boolean(profileUsername)
+  });
+  const memoriesData = useMemo(() => memoryRoomSummariesFromPages(memories.data), [memories.data]);
+  const {
+    error: memoriesError,
+    fetchNextPage: fetchNextMemoriesPage,
+    hasNextPage: hasNextMemoriesPage,
+    isError: memoriesIsError,
+    isFetchNextPageError: memoriesNextPageError,
+    isFetchingNextPage: memoriesFetchingNextPage,
+    isLoading: memoriesIsLoading,
+    refetch: memoriesRefetch
+  } = memories;
+  useMemoryRoomsRealtime(profileMemoriesFocused && isReady && isAuthenticated && memoriesData.length > 0);
   const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: isActiveMainTab && Boolean(profileUsername) });
   const pagedPosts = useMemo(
-    () => posts.data?.pages.flatMap((postPage) => postPage.posts) ?? page?.posts ?? [],
-    [page?.posts, posts.data?.pages]
+    () => posts.data?.pages.flatMap((postPage) => postPage.posts) ?? [],
+    [posts.data?.pages]
   );
+  const isProfileColdLoading = !isReady || (isAuthenticated && !page && pageQuery.isLoading);
+  const profilePostsFocused = isActiveMainTab && activeTab === "posts";
 
   useEffect(() => {
     if (!posts.isFetchingNextPage) endReachedInFlightRef.current = false;
   }, [posts.isFetchingNextPage]);
+
+  useEffect(() => {
+    if (!memoriesFetchingNextPage) memoriesEndReachedInFlightRef.current = false;
+  }, [memoriesFetchingNextPage]);
 
   const memoryRows = useMemo(() => buildMemoryRows(memoriesData ?? []), [memoriesData]);
   const hasUnreadMemories = useMemo(
     () => (memoriesData ?? []).some((memory) => memory.unreadCount > 0),
     [memoriesData]
   );
-  // The Profile shell mounts immediately; data states render as rows so tabs,
-  // refresh, and gestures stay available while profile data loads.
+  // Keep the shell geometry mounted during cold loading. The tab labels and
+  // pager gestures become interactive only after the Profile header resolves.
   const postRows = useMemo<ProfileListRow[]>(() => {
-    if (!isReady || (isAuthenticated && pageQuery.isLoading)) return [{ type: "profile-loading" }];
+    if (isProfileColdLoading) return [{ type: "profile-loading" }];
     if (!isAuthenticated) return [{ type: "signed-out" }];
     if (pageQuery.isError) return [{ type: "profile-error" }];
     if (!page) return [{ type: "profile-setup" }];
-    if (posts.isLoading && pagedPosts.length === 0) return [{ type: "posts-loading" }];
-    if (posts.isError && pagedPosts.length === 0) return [{ type: "posts-error" }];
-    if (pagedPosts.length === 0) return [{ type: "posts-empty" }];
-    return pagedPosts.map((post) => ({ type: "post", post }));
-  }, [isAuthenticated, isReady, page, pagedPosts, pageQuery.isError, pageQuery.isLoading, posts.isError, posts.isLoading]);
+    return [];
+  }, [isAuthenticated, isProfileColdLoading, page, pageQuery.isError]);
   const memoriesRows = useMemo<ProfileListRow[]>(() => {
-    if (!isReady || (isAuthenticated && pageQuery.isLoading)) return [{ type: "memories-loading" }];
+    if (isProfileColdLoading) return [{ type: "memories-loading" }];
     if (!isAuthenticated) return [{ type: "signed-out" }];
     if (pageQuery.isError) return [{ type: "profile-error" }];
     if (!page) return [{ type: "profile-setup" }];
-    if (memoriesIsLoading) return [{ type: "memories-loading" }];
-    if (memoriesIsError) return [{ type: "memories-error" }];
+    if (memoriesIsError && memoriesData.length === 0) return [{ type: "memories-error" }];
+    if (!memories.data || (memoriesIsLoading && memoriesData.length === 0)) return [{ type: "memories-loading" }];
     if (memoryRows.length === 0) return [{ type: "memories-empty" }];
     return memoryRows;
-  }, [isAuthenticated, isReady, memoriesIsError, memoriesIsLoading, memoryRows, page, pageQuery.isError, pageQuery.isLoading]);
+  }, [isAuthenticated, isProfileColdLoading, memories.data, memoriesData.length, memoriesIsError, memoriesIsLoading, memoryRows, page, pageQuery.isError]);
 
-  const onRefresh = useCallback(async () => {
-    await Promise.all([
-      pageQuery.refetch(),
-      memoriesRefetch(),
-      profileUsername ? posts.refetch() : Promise.resolve()
-    ]);
-  }, [memoriesRefetch, pageQuery, posts, profileUsername]);
+  const refreshPosts = useCallback(async () => {
+    if (profileUsername) await posts.refetch();
+  }, [posts, profileUsername]);
+
+  const refreshMemories = useCallback(async () => {
+    await memoriesRefetch();
+  }, [memoriesRefetch]);
 
   const onEndReached = useCallback(() => {
     if (!posts.hasNextPage || posts.isFetchingNextPage || endReachedInFlightRef.current) return;
@@ -261,12 +270,18 @@ function ProfileContent({
     });
   }, [posts]);
 
+  const onMemoriesEndReached = useCallback(() => {
+    if (!hasNextMemoriesPage || memoriesFetchingNextPage || memoriesEndReachedInFlightRef.current) return;
+    memoriesEndReachedInFlightRef.current = true;
+    void fetchNextMemoriesPage().finally(() => {
+      memoriesEndReachedInFlightRef.current = false;
+    });
+  }, [fetchNextMemoriesPage, hasNextMemoriesPage, memoriesFetchingNextPage]);
+
   const renderListRow = useCallback((item: ProfileListRow) => {
     switch (item.type) {
-      case "post":
-        return <PostCard mediaActive={isActiveMainTab && activeMediaPostId === item.post.id} post={item.post} />;
       case "profile-loading":
-        return <View style={styles.listInset}><ProfileSkeletonList /></View>;
+        return <ProfilePostSkeleton />;
       case "profile-error":
         return (
           <View style={styles.listInset}>
@@ -284,35 +299,6 @@ function ProfileContent({
         return <View style={styles.listInset}><ProfileSetupCard /></View>;
       case "signed-out":
         return <View style={styles.listInset}><SignedOutFeedState message="Sign in to view your profile, stats, and posts." /></View>;
-      case "posts-loading":
-        return <View style={styles.listInset}><ListState><LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" /></ListState></View>;
-      case "posts-error":
-        return (
-          <View style={styles.listInset}>
-            <ListState>
-              <ErrorState
-                actionLabel="Try again"
-                message={profileErrorMessage(posts.error, "Could not load posts.")}
-                onAction={() => posts.refetch()}
-                title="Feed unavailable"
-              />
-            </ListState>
-          </View>
-        );
-      case "posts-empty":
-        return (
-          <View style={styles.listInset}>
-            <ListState>
-              <EmptyState
-                actionLabel="Share review"
-                icon="restaurant-outline"
-                message="Share your first food review to start building your profile."
-                onAction={() => openCreate()}
-                title="No posts yet"
-              />
-            </ListState>
-          </View>
-        );
       case "memory-month":
         return (
           <View style={[styles.listInset, item.isFirst && styles.firstMemoryMonthInset]}>
@@ -326,7 +312,7 @@ function ProfileContent({
           </View>
         );
       case "memories-loading":
-        return <View style={styles.listInset}><ListState><LoadingState message="Fetching your memories." title="Loading memories" /></ListState></View>;
+        return <View style={styles.listInset}><ProfileMemoriesSkeleton /></View>;
       case "memories-error":
         return (
           <View style={styles.listInset}>
@@ -357,44 +343,31 @@ function ProfileContent({
       default:
         return null;
     }
-  }, [activeMediaPostId, isActiveMainTab, memoriesError, memoriesRefetch, openCreate, pageQuery, posts, router, styles]);
+  }, [memoriesError, memoriesRefetch, pageQuery, router, styles]);
 
-  const footer = pagedPosts.length > 0 ? (
-    <View>
-      {posts.isFetchingNextPage ? (
-        <View style={[styles.listInset, styles.loadMoreWrap]}>
-          <LoadingState message="Loading more posts." title="Loading posts" />
-        </View>
-      ) : null}
-      {posts.isError && pagedPosts.length > 0 ? (
-        <View style={[styles.listInset, styles.inlineRetry]}>
-          <Text style={styles.inlineRetryText}>Could not load more posts.</Text>
-          <AppButton onPress={() => { void posts.refetch(); }} tone="secondary">Retry</AppButton>
-        </View>
-      ) : null}
-    </View>
-  ) : null;
-
-  const makeRefreshControl = useCallback(() => canRefresh ? (
+  const makeRefreshControl = useCallback((onRefresh: () => void, refreshing: boolean) => canRefresh ? (
     <RefreshControl
       colors={[PROFILE_COLORS.accent]}
-      onRefresh={() => { void onRefresh(); }}
+      onRefresh={onRefresh}
       progressBackgroundColor={PROFILE_COLORS.card}
       progressViewOffset={0}
-      refreshing={pageQuery.isRefetching || memories.isRefetching || posts.isRefetching}
+      refreshing={refreshing}
       tintColor={PROFILE_COLORS.accent}
     />
   ) : undefined, [
     PROFILE_COLORS.accent,
     PROFILE_COLORS.card,
-    canRefresh,
-    memories.isRefetching,
-    onRefresh,
-    pageQuery.isRefetching,
-    posts.isRefetching
+    canRefresh
   ]);
-  const refreshControl = makeRefreshControl();
-  const listRefreshControl = Platform.OS === "android" ? undefined : refreshControl;
+  const fallbackRefreshControl = makeRefreshControl(
+    () => { void pageQuery.refetch(); },
+    pageQuery.isRefetching
+  );
+  const listRefreshControl = Platform.OS === "android" ? undefined : fallbackRefreshControl;
+  const memoriesRefreshControl = makeRefreshControl(
+    () => { void refreshMemories(); },
+    memories.isRefetching && !memoriesFetchingNextPage
+  );
 
   const renderProfileHeader = useCallback(() => (
     <View collapsable={false} style={styles.profileHeader}>
@@ -408,39 +381,38 @@ function ProfileContent({
           />
         </>
       ) : (
-        <>
-          <ProfileHeroSkeleton onSettingsPress={onSettingsPress} settingsEnabled={isReady && isAuthenticated} />
-          <ProfileStatsSkeleton />
-        </>
+        <ProfileHeaderSkeleton />
       )}
     </View>
   ), [
-    isAuthenticated,
-    isReady,
     onSettingsPress,
     page,
     router,
     styles
   ]);
 
-  const renderProfileTabBar = useCallback((tabBarProps: TabBarProps<string>) => (
-    <UnderlineTabBar
-      tabBarProps={tabBarProps}
-      activeColor={PROFILE_COLORS.accent}
-      inactiveColor={PROFILE_COLORS.muted}
-      indicatorStyle={styles.tabIndicator}
-      getBadgeVisible={(name) => name === "memories" && hasUnreadMemories}
-      getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
-      instantPress
-      labelStyle={styles.tabText}
-      style={styles.tabs}
-      contentContainerStyle={styles.tabRow}
-      tabStyle={styles.tabButton}
-    />
-  ), [
+  const renderProfileTabBar = useCallback((tabBarProps: TabBarProps<string>) => {
+    if (isProfileColdLoading) return <ProfileTabBarSkeleton />;
+    return (
+      <UnderlineTabBar
+        tabBarProps={tabBarProps}
+        activeColor={PROFILE_COLORS.accent}
+        inactiveColor={PROFILE_COLORS.muted}
+        indicatorStyle={styles.tabIndicator}
+        getBadgeVisible={(name) => name === "memories" && hasUnreadMemories}
+        getLabelText={(name) => name === "memories" ? "Memories" : "Posts"}
+        instantPress
+        labelStyle={styles.tabText}
+        style={styles.tabs}
+        contentContainerStyle={styles.tabRow}
+        tabStyle={styles.tabButton}
+      />
+    );
+  }, [
     PROFILE_COLORS.accent,
     PROFILE_COLORS.muted,
     hasUnreadMemories,
+    isProfileColdLoading,
     styles
   ]);
 
@@ -456,51 +428,82 @@ function ProfileContent({
       tabBarHeight={PROFILE_TAB_BAR_HEIGHT}
       onTabChange={({ tabName }) => handleProfileTabChange(tabName as ProfileTab)}
       pagerProps={{
-        offscreenPageLimit: 1
+        offscreenPageLimit: 1,
+        scrollEnabled: !isProfileColdLoading
       }}
     >
       <Tabs.Tab name="posts" label="Posts">
-        <Tabs.FlatList
-          data={postRows}
-          keyExtractor={profileListKey}
-          renderItem={({ item }) => renderListRow(item)}
-          ListFooterComponent={footer}
-          contentContainerStyle={styles.profileListContent}
-          initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
-          keyboardShouldPersistTaps="handled"
-          maxToRenderPerBatch={PROFILE_LIST_RENDER_BATCH_SIZE}
-          nestedScrollEnabled
-          onEndReached={onEndReached}
-          onEndReachedThreshold={0.7}
-          onViewableItemsChanged={onPostViewableItemsChangedRef.current}
-          overScrollMode="never"
-          refreshControl={listRefreshControl}
-          removeClippedSubviews={false}
-          showsVerticalScrollIndicator={false}
-          style={styles.profileList}
-          updateCellsBatchingPeriod={50}
-          viewabilityConfig={postViewabilityConfigRef.current}
-          windowSize={PROFILE_LIST_WINDOW_SIZE}
-        />
+        {isAuthenticated && page && !pageQuery.isError ? (
+          <PostFeed
+            collapsibleTabView
+            contentContainerStyle={styles.profileListContent}
+            emptyActionLabel="Share review"
+            emptyMessage="Share your first food review to start building your profile."
+            emptyTitle="No posts yet"
+            endReachedLabel="You're all caught up."
+            errorMessage={profileErrorMessage(posts.error, "Could not load posts.")}
+            hasMore={Boolean(posts.hasNextPage)}
+            homeFocused={profilePostsFocused}
+            homeMediaMode
+            isError={posts.isError && pagedPosts.length === 0}
+            isFetchingMore={posts.isFetchingNextPage}
+            isLoading={posts.isLoading && pagedPosts.length === 0}
+            listStyle={styles.profileList}
+            loadingComponent={<ProfilePostSkeleton />}
+            mediaPlaybackEnabled={profilePostsFocused}
+            onEmptyAction={openCreate}
+            onEndReached={onEndReached}
+            onRefresh={canRefresh ? () => { void refreshPosts(); } : undefined}
+            onRetry={() => { void posts.refetch(); }}
+            posts={pagedPosts}
+            recyclingList
+            refreshing={posts.isRefetching && !posts.isFetchingNextPage}
+            scrollEnabled
+          />
+        ) : (
+          <Tabs.FlatList
+            data={postRows}
+            keyExtractor={profileListKey}
+            renderItem={({ item }) => renderListRow(item)}
+            contentContainerStyle={styles.profileListContent}
+            initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
+            keyboardShouldPersistTaps="handled"
+            maxToRenderPerBatch={PROFILE_LIST_RENDER_BATCH_SIZE}
+            nestedScrollEnabled
+            overScrollMode="never"
+            refreshControl={listRefreshControl}
+            removeClippedSubviews={false}
+            showsVerticalScrollIndicator={false}
+            style={styles.profileList}
+            updateCellsBatchingPeriod={50}
+            windowSize={PROFILE_LIST_WINDOW_SIZE}
+          />
+        )}
       </Tabs.Tab>
       <Tabs.Tab name="memories" label="Memories">
-        <Tabs.FlatList
+        <Tabs.FlashList
           data={memoriesRows}
+          drawDistance={900}
+          getItemType={(item) => item.type}
           keyExtractor={profileListKey}
           renderItem={({ item }) => renderListRow(item)}
           ItemSeparatorComponent={ProfileListGap}
+          ListFooterComponent={(
+            <ProfileMemoriesFooter
+              isError={memoriesNextPageError}
+              isFetchingMore={memoriesFetchingNextPage}
+              onRetry={onMemoriesEndReached}
+            />
+          )}
           contentContainerStyle={styles.profileListContent}
-          initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
           keyboardShouldPersistTaps="handled"
-          maxToRenderPerBatch={PROFILE_LIST_RENDER_BATCH_SIZE}
-          nestedScrollEnabled
+          maintainVisibleContentPosition={{ disabled: true }}
+          onEndReached={hasNextMemoriesPage && !memoriesFetchingNextPage ? onMemoriesEndReached : undefined}
+          onEndReachedThreshold={0.35}
           overScrollMode="never"
-          refreshControl={listRefreshControl}
-          removeClippedSubviews={false}
+          refreshControl={memoriesRefreshControl}
           showsVerticalScrollIndicator={false}
           style={styles.profileList}
-          updateCellsBatchingPeriod={50}
-          windowSize={PROFILE_LIST_WINDOW_SIZE}
         />
       </Tabs.Tab>
     </Tabs.Container>
@@ -537,6 +540,7 @@ function ProfileHero({
         <View style={styles.avatar}>
           {profile.avatarUrl ? (
             <Image
+              alt={`${page.displayName} profile photo`}
               cachePolicy="memory-disk"
               contentFit="cover"
               enforceEarlyResizing
@@ -602,66 +606,136 @@ function ProfileStats({
   );
 }
 
-function ProfileHeroSkeleton({
-  onSettingsPress,
-  settingsEnabled
+function ProfileSkeletonPulse({
+  accessibilityLabel,
+  children
 }: {
-  onSettingsPress: () => void;
-  settingsEnabled: boolean;
+  accessibilityLabel: string;
+  children: ReactNode;
 }) {
-  const { PROFILE_COLORS, styles } = useProfileTheme();
+  const reducedMotion = useReducedMotionPreference();
+  const pulseOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    pulseOpacity.stopAnimation();
+    if (reducedMotion) {
+      pulseOpacity.setValue(1);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          duration: 850,
+          toValue: 0.58,
+          useNativeDriver: true
+        }),
+        Animated.timing(pulseOpacity, {
+          duration: 850,
+          toValue: 1,
+          useNativeDriver: true
+        })
+      ])
+    );
+    animation.start();
+    return () => {
+      animation.stop();
+      pulseOpacity.stopAnimation();
+    };
+  }, [pulseOpacity, reducedMotion]);
 
   return (
-    <View pointerEvents="box-none" style={styles.hero}>
-      <Pressable
-        accessibilityLabel="Open settings"
-        accessibilityRole="button"
-        disabled={!settingsEnabled}
-        onPress={onSettingsPress}
-        style={[styles.settingsButton, !settingsEnabled && styles.disabledControl]}
-      >
-        <Settings size={21} color={PROFILE_COLORS.text} strokeWidth={2.1} />
-      </Pressable>
+    <View
+      accessible
+      accessibilityLabel={accessibilityLabel}
+      accessibilityLiveRegion="polite"
+      accessibilityRole="progressbar"
+      accessibilityState={{ busy: true }}
+      pointerEvents="none"
+    >
+      <Animated.View style={{ opacity: pulseOpacity }}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
 
-      <View pointerEvents="none" style={styles.heroIdentityRow}>
-        <View style={[styles.avatar, styles.skeletonAvatar]} />
-        <View style={styles.identity}>
-          <View style={[styles.skeletonLine, styles.skeletonName]} />
-          <View style={[styles.skeletonLine, styles.skeletonHandle]} />
-          <View style={[styles.skeletonLine, styles.skeletonJoined]} />
+function ProfileHeaderSkeleton() {
+  const { styles } = useProfileTheme();
+  return (
+    <ProfileSkeletonPulse accessibilityLabel="Loading profile header">
+      <View style={styles.hero}>
+        <View style={[styles.settingsButton, styles.skeletonSettingsButton]} />
+        <View style={styles.heroIdentityRow}>
+          <View style={[styles.avatar, styles.skeletonAvatar]} />
+          <View style={styles.identity}>
+            <View style={[styles.skeletonLine, styles.skeletonName]} />
+            <View style={[styles.skeletonLine, styles.skeletonHandle]} />
+            <View style={[styles.skeletonLine, styles.skeletonJoined]} />
+          </View>
         </View>
+        <View style={[styles.skeletonLine, styles.skeletonBio]} />
       </View>
-      <View pointerEvents="none" style={[styles.skeletonLine, styles.skeletonBio]} />
+      <View style={styles.statsRow}>
+        {["trust", "places", "dishes", "circle"].map((item, index) => (
+          <View key={item} style={[styles.statItem, index > 0 && styles.statItemDivider]}>
+            <View style={[styles.skeletonLine, styles.skeletonStatValue]} />
+            <View style={[styles.skeletonLine, styles.skeletonStatLabel]} />
+          </View>
+        ))}
+      </View>
+    </ProfileSkeletonPulse>
+  );
+}
+
+function ProfileTabBarSkeleton() {
+  const { styles } = useProfileTheme();
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={styles.tabs}
+    >
+      <View style={[styles.tabRow, styles.skeletonTabRow]}>
+        {["posts", "memories"].map((tab) => (
+          <View key={tab} style={styles.skeletonTabItem}>
+            <View style={[styles.skeletonLine, styles.skeletonTabLabel]} />
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
-function ProfileStatsSkeleton() {
+function ProfileMemoriesSkeleton() {
   const { styles } = useProfileTheme();
   return (
-    <View pointerEvents="none" style={styles.statsRow}>
-      {["trust", "places", "dishes", "circle"].map((item, index) => (
-        <View key={item} style={[styles.statItem, index > 0 && styles.statItemDivider]}>
-          <View style={[styles.skeletonLine, styles.skeletonStatValue]} />
-          <View style={[styles.skeletonLine, styles.skeletonStatLabel]} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function ProfileSkeletonList() {
-  const { styles } = useProfileTheme();
-  return (
-    <View pointerEvents="none" style={styles.skeletonList}>
-      {[0, 1, 2].map((item) => (
-        <View key={item} style={styles.skeletonCard}>
-          <View style={[styles.skeletonLine, styles.skeletonCardTitle]} />
-          <View style={[styles.skeletonLine, styles.skeletonCardMeta]} />
-          <View style={[styles.skeletonLine, styles.skeletonCardBody]} />
-        </View>
-      ))}
-    </View>
+    <ProfileSkeletonPulse accessibilityLabel="Loading memories">
+      <View style={styles.skeletonMemoryList}>
+        <View style={[styles.skeletonLine, styles.skeletonMemoryMonth]} />
+        {Array.from({ length: PROFILE_MEMORY_SKELETON_ROW_COUNT }, (_, row) => (
+          <View key={row} style={styles.memoryCard}>
+            <View style={styles.memoryContentRow}>
+              <View style={styles.skeletonMemoryDate}>
+                <View style={[styles.skeletonLine, styles.skeletonMemoryDay]} />
+                <View style={[styles.skeletonLine, styles.skeletonMemoryDateMonth]} />
+              </View>
+              <View style={styles.memoryDivider} />
+              <View style={styles.memoryBody}>
+                <View style={[styles.skeletonLine, styles.skeletonMemoryTitle]} />
+                <View style={[styles.skeletonLine, styles.skeletonMemoryPlace]} />
+                <View style={styles.skeletonMemoryStats}>
+                  {[0, 1, 2, 3].map((stat) => (
+                    <View key={stat} style={[styles.skeletonLine, styles.skeletonMemoryStat]} />
+                  ))}
+                </View>
+              </View>
+            </View>
+          </View>
+        ))}
+      </View>
+    </ProfileSkeletonPulse>
   );
 }
 
@@ -781,9 +855,38 @@ function ProfileListGap() {
   return <View style={{ height: spacing.md }} />;
 }
 
+function ProfileMemoriesFooter({
+  isError,
+  isFetchingMore,
+  onRetry
+}: {
+  isError: boolean;
+  isFetchingMore: boolean;
+  onRetry: () => void;
+}) {
+  const { PROFILE_COLORS, styles } = useProfileTheme();
+  if (isFetchingMore) {
+    return (
+      <View style={styles.loadMoreWrap}>
+        <ActivityIndicator color={PROFILE_COLORS.accent} />
+      </View>
+    );
+  }
+  if (!isError) return null;
+  return (
+    <View style={[styles.inlineRetry, styles.listInset]}>
+      <Text style={styles.inlineRetryText}>Could not load more memories.</Text>
+      <AppButton onPress={onRetry} tone="secondary">Retry</AppButton>
+    </View>
+  );
+}
+
 function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
   const sortedMemories = [...memories]
-    .sort((a, b) => new Date(b.visitDate ?? b.createdAt).getTime() - new Date(a.visitDate ?? a.createdAt).getTime());
+    .sort((a, b) => (
+      new Date(b.visitDate ?? b.createdAt).getTime() - new Date(a.visitDate ?? a.createdAt).getTime() ||
+      b.id.localeCompare(a.id)
+    ));
   const groupedMemories = sortedMemories
     .reduce<Array<{ memories: MemoryRoomSummary[]; month: string }>>((groups, memory) => {
       const month = timelineMonthLabel(memory.visitDate ?? memory.createdAt);
@@ -803,7 +906,6 @@ function buildMemoryRows(memories: MemoryRoomSummary[]): ProfileListRow[] {
 }
 
 function profileListKey(item: ProfileListRow) {
-  if (item.type === "post") return `post-${item.post.id}`;
   if (item.type === "memory") return `memory-${item.memory.id}`;
   if (item.type === "memory-month") return item.id;
   return item.type;
@@ -1057,9 +1159,6 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     backgroundColor: PROFILE_COLORS.bg,
     position: "relative"
   },
-  disabledControl: {
-    opacity: 0.42
-  },
   skeletonLine: {
     backgroundColor: PROFILE_COLORS.surface,
     borderRadius: radius.pill,
@@ -1067,6 +1166,10 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   skeletonAvatar: {
     backgroundColor: PROFILE_COLORS.surface
+  },
+  skeletonSettingsButton: {
+    backgroundColor: PROFILE_COLORS.surface,
+    borderRadius: radius.pill
   },
   skeletonName: {
     height: 22,
@@ -1196,32 +1299,6 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   skeletonStatLabel: {
     height: 10,
     width: 48
-  },
-  skeletonList: {
-    gap: spacing.md,
-    paddingTop: spacing.sm
-  },
-  skeletonCard: {
-    backgroundColor: PROFILE_COLORS.card,
-    borderColor: PROFILE_COLORS.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    gap: spacing.sm,
-    minHeight: 128,
-    padding: spacing.md
-  },
-  skeletonCardTitle: {
-    height: 18,
-    width: "58%"
-  },
-  skeletonCardMeta: {
-    height: 12,
-    width: "42%"
-  },
-  skeletonCardBody: {
-    height: 52,
-    marginTop: spacing.xs,
-    width: "100%"
   },
   trustModalRoot: {
     backgroundColor: "rgba(0, 0, 0, 0.62)",
@@ -1464,6 +1541,19 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     bottom: -2,
     height: 2
   },
+  skeletonTabRow: {
+    alignItems: "center",
+    height: "100%"
+  },
+  skeletonTabItem: {
+    alignItems: "center",
+    flex: 1,
+    justifyContent: "center"
+  },
+  skeletonTabLabel: {
+    height: 10,
+    width: 54
+  },
   memoryMonthHeading: {
     ...fontStyles.extraBold,
     color: PROFILE_COLORS.text,
@@ -1484,6 +1574,44 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   memoryCardUnread: {
     borderColor: PROFILE_COLORS.accentBorder
+  },
+  skeletonMemoryList: {
+    gap: spacing.md,
+    paddingTop: 14
+  },
+  skeletonMemoryMonth: {
+    height: 16,
+    width: 118
+  },
+  skeletonMemoryDate: {
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+    width: 38
+  },
+  skeletonMemoryDay: {
+    height: 17,
+    width: 24
+  },
+  skeletonMemoryDateMonth: {
+    height: 9,
+    width: 28
+  },
+  skeletonMemoryTitle: {
+    height: 16,
+    width: "68%"
+  },
+  skeletonMemoryPlace: {
+    height: 11,
+    width: "82%"
+  },
+  skeletonMemoryStats: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  skeletonMemoryStat: {
+    height: 12,
+    width: 30
   },
   memoryContentRow: {
     alignItems: "stretch",

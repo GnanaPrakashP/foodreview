@@ -138,7 +138,8 @@ test("reduced-motion preference disables the pulse and placeholders stay hidden 
   const reducedMotion = source("mobile/src/hooks/useReducedMotionPreference.ts");
   assert.match(skeleton, /if \(reducedMotion\) \{[\s\S]*pulseOpacity\.setValue\(1\);[\s\S]*return;/);
   assert.match(reducedMotion, /AccessibilityInfo\.isReduceMotionEnabled\(\)/);
-  assert.match(skeleton, /accessibilityLabel="Loading Circle posts"/);
+  assert.match(skeleton, /accessibilityLabel = "Loading Circle posts"/);
+  assert.match(skeleton, /accessibilityLabel=\{accessibilityLabel\}/);
   assert.match(skeleton, /accessibilityState=\{\{ busy: true \}\}/);
   assert.match(skeleton, /importantForAccessibility="no-hide-descendants"/);
 });

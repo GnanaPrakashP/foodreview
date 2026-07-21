@@ -58,6 +58,9 @@ function loadFeedHelpers() {
     };
     if (id === "@/services/feeds" || id === "@/services/exploreDiscovery") return {};
     if (id === "@/home/homeRefreshMetadata") return { recordHomePageOneRefreshAt: () => true };
+    if (id === "@/home/homeFeedLocation") return {
+      normalizeHomeFeedLocation: (location) => location ?? null
+    };
     if (id === "@/security/cacheOwnership") return {
       getActiveCacheGeneration: () => 0,
       getActiveCacheOwner: () => null,

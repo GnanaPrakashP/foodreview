@@ -1,10 +1,11 @@
 begin;
-select plan(22);
+select plan(24);
 
 select has_function('public', 'mobile_post_engagement_v1', array['uuid[]', 'uuid'], 'bounded engagement RPC exists');
 select has_function('public', 'mobile_public_feed_page_v1', array['text', 'uuid', 'timestamp with time zone', 'uuid', 'integer', 'text', 'text', 'text', 'uuid', 'text', 'uuid', 'text'], 'bounded public/profile/detail feed RPC exists');
 select has_function('public', 'circle_feed_page_v2', array['uuid', 'timestamp with time zone', 'uuid', 'integer', 'uuid[]'], 'bounded Circle feed RPC exists');
 select has_function('public', 'shared_memory_room_summaries_v2', array['integer', 'timestamp with time zone', 'uuid'], 'bounded Memory summary RPC exists');
+select has_function('public', 'shared_memory_room_summaries_v3', array['integer', 'date', 'uuid'], 'Profile Memory timeline summary RPC exists');
 select has_function('public', 'shared_memory_room_bootstrap_v1', array['uuid', 'integer'], 'bounded Memory bootstrap RPC exists');
 select has_function('public', 'shared_memory_media_page_v1', array['uuid', 'timestamp with time zone', 'uuid', 'integer'], 'bounded Memory media RPC exists');
 select has_function('public', 'explore_discovery_canonical_v3', array['double precision', 'double precision', 'integer'], 'canonical Explore v3 RPC exists');
@@ -39,6 +40,7 @@ select has_index('public', 'reviews', 'reviews_public_cursor_idx', 'public feed 
 select has_index('public', 'comments', 'comments_post_cursor_idx', 'comment cursor index exists');
 select has_index('public', 'notifications', 'notifications_recipient_user_cursor_idx', 'notification recipient cursor index exists');
 select has_index('public', 'shared_memory_messages', 'shared_memory_messages_room_created_id_desc_idx', 'Memory chat cursor index exists');
+select has_index('public', 'shared_memory_rooms', 'shared_memory_rooms_timeline_cursor_idx', 'Profile Memory timeline cursor index exists');
 
 select * from finish();
 rollback;

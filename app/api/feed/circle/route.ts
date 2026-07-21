@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
 import { parseCircleFeedCursor, serializeCircleFeedCursor } from "@/lib/circle-feed";
+import { homeFeedLocationKey, parseHomeFeedLocation } from "@/lib/home-feed-location";
 import { CIRCLE_FEED_PAGE_SIZE } from "@/lib/feed-config";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -41,10 +42,17 @@ export async function GET(req: NextRequest) {
   const refreshMode = req.nextUrl.searchParams.get("refresh") === "1";
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = parseCircleFeedCursor(rawCursor);
+  const parsedLocation = parseHomeFeedLocation(req.nextUrl.searchParams);
   const excludePostIds = parseCsvIds(req.nextUrl.searchParams.get("excludeSeen"));
 
+  if (parsedLocation.error) {
+    return tracedJson(trace, { error: parsedLocation.error }, { status: 400 });
+  }
   if (rawCursor && !cursor) {
     return tracedJson(trace, { error: "Invalid cursor" }, { status: 400 });
+  }
+  if (cursor?.locationKey && cursor.locationKey !== homeFeedLocationKey(parsedLocation.location)) {
+    return tracedJson(trace, { error: "Cursor does not match the current location" }, { status: 400 });
   }
 
   try {
@@ -53,6 +61,7 @@ export async function GET(req: NextRequest) {
       cursor,
       limit,
       excludePostIds,
+      location: parsedLocation.location,
       bypassCache: refreshMode && !cursor,
       trace,
     });

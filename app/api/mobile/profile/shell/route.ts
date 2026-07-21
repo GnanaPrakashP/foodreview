@@ -45,8 +45,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     circleCount: circleResult.count ?? 0,
     displayName: actor.displayName,
-    nextPostsCursor: null,
-    posts: [],
     profile,
     stats: {
       totalVisits: Number(stats?.total_visits ?? 0),

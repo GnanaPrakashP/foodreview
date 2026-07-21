@@ -49,8 +49,8 @@ test("Profile shell does not own the first posts page", async () => {
   ]);
   assert.match(service, /getCurrentProfilePage[\s\S]{0,300}\/api\/mobile\/profile\/shell/);
   assert.match(service, /getProfilePostsPage[\s\S]{0,800}scope:\s*"profile"/);
-  assert.match(route, /posts:\s*\[\]/);
-  assert.match(route, /nextPostsCursor:\s*null/);
+  assert.doesNotMatch(route, /posts:\s*\[\]/);
+  assert.doesNotMatch(route, /nextPostsCursor/);
 });
 
 test("comments and notifications own cursor pages and aggregate counts", async () => {
@@ -72,7 +72,7 @@ test("Memory uses one bounded contract per active read path", async () => {
     read("app/api/mobile/memories/read/route.ts")
   ]);
   assert.match(source, /\/api\/mobile\/memories\/read/);
-  for (const name of ["shared_memory_room_summaries_v2", "shared_memory_room_bootstrap_v1", "shared_memory_chat_page", "shared_memory_media_page_v1"]) {
+  for (const name of ["shared_memory_room_summaries_v3", "shared_memory_room_bootstrap_v1", "shared_memory_chat_page", "shared_memory_media_page_v1"]) {
     assert.match(route, new RegExp(name));
   }
   assert.doesNotMatch(source, /for\s*\([^)]*room[^)]*\)\s*\{[\s\S]{0,400}supabase\./);

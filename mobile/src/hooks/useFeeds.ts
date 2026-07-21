@@ -12,6 +12,7 @@ import {
 } from "@/services/feeds";
 import { getExploreDiscovery } from "@/services/exploreDiscovery";
 import { recordHomePageOneRefreshAt } from "@/home/homeRefreshMetadata";
+import { normalizeHomeFeedLocation, type HomeFeedLocation } from "@/home/homeFeedLocation";
 import {
   getActiveCacheGeneration,
   getActiveCacheOwner,
@@ -29,9 +30,17 @@ const ACTIVE_MEDIA_REFRESH_OPTIONS = {
   staleTime: 45_000
 } as const;
 
+const CIRCLE_FEED_PAGES_KEY = ["feed", "circle", "pages"] as const;
+
 export const feedKeys = {
   circle: ["feed", "circle"] as const,
-  circlePages: ["feed", "circle", "pages"] as const,
+  circlePages: CIRCLE_FEED_PAGES_KEY,
+  circlePagesForLocation: (input: HomeFeedLocation | null | undefined) => {
+    const location = normalizeHomeFeedLocation(input);
+    return location
+      ? [...CIRCLE_FEED_PAGES_KEY, location.lat, location.lng] as const
+      : CIRCLE_FEED_PAGES_KEY;
+  },
   publicPages: ["feed", "public", "pages"] as const,
   dish: (input: DishFeedInput) => [
     "feed",
@@ -78,14 +87,18 @@ export function useCircleFeedQuery(options: { enabled?: boolean } = {}) {
   });
 }
 
-export function useCircleFeedInfiniteQuery(options: { enabled?: boolean } = {}) {
+export function useCircleFeedInfiniteQuery(options: {
+  enabled?: boolean;
+  location?: HomeFeedLocation | null;
+} = {}) {
   const queryClient = useQueryClient();
+  const location = normalizeHomeFeedLocation(options.location);
   return useInfiniteQuery({
-    queryKey: feedKeys.circlePages,
+    queryKey: feedKeys.circlePagesForLocation(location),
     queryFn: async ({ pageParam, signal }) => {
       const owner = pageParam === null ? getActiveCacheOwner() : null;
       const generation = owner ? getActiveCacheGeneration() : null;
-      const page = await getCircleFeed(pageParam, { signal });
+      const page = await getCircleFeed(pageParam, { location, signal });
       if (
         owner &&
         !signal.aborted &&

@@ -1,11 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams } from "expo-router";
-import { CalendarDays } from "lucide-react-native";
+import { CalendarDays, Flag, UserCheck, UserX } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
+import { ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
@@ -19,11 +21,11 @@ import { useReportContentMutation } from "@/hooks/useReports";
 import { useBlockUserMutation, useUnblockUserMutation } from "@/hooks/useSettings";
 import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
-import { recordProfileShellVisible } from "@/navigation/profileNavigation";
+import { getProfileNavigationPreview, recordProfileShellVisible } from "@/navigation/profileNavigation";
 import { recordPerformanceSample } from "@/performance/mobilePerformance";
 import type { CircleAccessStatus } from "@/services/circle";
 import { useSessionStore } from "@/stores/sessionStore";
-import { colors, fontStyles, radius, screenLayout, spacing } from "@/theme";
+import { colors, fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
 import { chooseReportReason } from "@/utils/reporting";
 
@@ -31,6 +33,12 @@ type ThemeColors = ReturnType<typeof themeColorsFor>;
 type PersonStyles = ReturnType<typeof createStyles>;
 type ProfileRelationshipStatus = CircleAccessStatus | "loading";
 type ProfileRelationshipAction = "accept" | "cancel" | "leave" | "reject" | "request" | null;
+type ProfileActionsMenuAnchor = { left: number; top: number; width: number };
+
+const PROFILE_ACTIONS_MENU_GAP = 4;
+const PROFILE_ACTIONS_MENU_HEIGHT = 116;
+const PROFILE_ACTIONS_MENU_MARGIN = 8;
+const PROFILE_ACTIONS_MENU_WIDTH = 228;
 
 function initialsForName(displayName: string, username: string) {
   return displayName
@@ -55,10 +63,12 @@ function joinedLabel(value: string) {
 
 export default function PersonProfileScreen() {
   const { themeColors } = useThemePreference();
+  const isFocused = useIsFocused();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const { slideStyle, close } = useSlideOverScreen({ fallbackHref: "/explore" });
   const params = useLocalSearchParams<{ username?: string }>();
   const username = typeof params.username === "string" ? params.username.trim().toLowerCase() : "";
+  const navigationPreview = useMemo(() => getProfileNavigationPreview(username), [username]);
   const shell = useOtherProfileShellQuery(username);
   const posts = useProfilePostsInfiniteQuery(username);
   const refetchShell = shell.refetch;
@@ -69,17 +79,20 @@ export default function PersonProfileScreen() {
   const [incomingRequestOverride, setIncomingRequestOverride] = useState<boolean | null>(null);
   const [circleCountOverride, setCircleCountOverride] = useState<number | null>(null);
   const [relationshipAction, setRelationshipAction] = useState<ProfileRelationshipAction>(null);
+  const [profileActionsAnchor, setProfileActionsAnchor] = useState<ProfileActionsMenuAnchor | null>(null);
+  const [showProfileActions, setShowProfileActions] = useState(false);
   const blockUser = useBlockUserMutation();
   const unblockUser = useUnblockUserMutation();
   const reportContent = useReportContentMutation();
   const endReachedInFlightRef = useRef(false);
   const mountedAtRef = useRef(Date.now());
   const firstPostsRecordedRef = useRef(false);
+  const profileActionsTriggerRef = useRef<View>(null);
   const renderedPostCountRef = useRef(0);
 
   const isSelf = !username || username === currentUsername;
   const isBlocked = shell.data?.blockedByViewer === true;
-  const showRelationshipAction = Boolean(username) && !isSelf && !shell.data?.interactionBlocked;
+  const showRelationshipAction = Boolean(shell.data && username) && !isSelf && !shell.data?.interactionBlocked;
   const requestCircle = useRequestCircleAccessMutation();
   const cancelCircleRequest = useCancelCircleRequestMutation();
   const leaveCircle = useLeaveCircleMutation();
@@ -102,6 +115,19 @@ export default function PersonProfileScreen() {
       ? "In Circle"
       : "Request";
   const joinedAt = shell.data ? joinedLabel(shell.data.profile.createdAt) : "";
+  const displayedName = shell.data?.displayName ?? navigationPreview?.displayName ?? username;
+  const displayedUsername = shell.data?.profile.username ?? navigationPreview?.username ?? username;
+  const displayedAvatarUrl = shell.data?.profile.avatarUrl ?? navigationPreview?.avatarThumbnailUrl ?? null;
+  const displayedAvatarPlaceholder = shell.data ? null : navigationPreview?.avatarPlaceholder ?? null;
+  const displayedAvatarRecyclingKey = shell.data?.profile.avatarUrl ?? (
+    navigationPreview?.avatarMediaAssetId
+      ? `profile-avatar-${navigationPreview.avatarMediaAssetId}-${navigationPreview.avatarCacheRevision}`
+      : navigationPreview?.avatarThumbnailUrl ?? displayedUsername
+  );
+  const displayedInitials = shell.data
+    ? initialsForName(shell.data.displayName, shell.data.profile.username)
+    : navigationPreview?.initials ?? initialsForName(displayedName, displayedUsername);
+  const hasProfileIdentity = Boolean(shell.data || navigationPreview);
   const pagedPosts = useMemo(() => {
     const seen = new Set<string>();
     return (posts.data?.pages ?? []).flatMap((postPage) => postPage.posts).filter((post) => {
@@ -116,6 +142,8 @@ export default function PersonProfileScreen() {
     setIncomingRequestOverride(null);
     setCircleCountOverride(null);
     setRelationshipAction(null);
+    setShowProfileActions(false);
+    setProfileActionsAnchor(null);
     mountedAtRef.current = Date.now();
     firstPostsRecordedRef.current = false;
   }, [username]);
@@ -274,6 +302,7 @@ export default function PersonProfileScreen() {
 
   async function reportProfile() {
     if (!username || reportContent.isPending) return;
+    closeProfileActions();
     const reason = await chooseReportReason("profile");
     if (!reason) return;
     try {
@@ -285,6 +314,7 @@ export default function PersonProfileScreen() {
   }
 
   async function confirmUnblockProfile() {
+    closeProfileActions();
     const confirmed = await confirmAction({ title: "Unblock @" + username + "?", confirmLabel: "Unblock" });
     if (!confirmed) return;
     try {
@@ -295,6 +325,7 @@ export default function PersonProfileScreen() {
   }
 
   async function confirmBlockProfile() {
+    closeProfileActions();
     const confirmed = await confirmAction({
       title: "Block @" + username + "?",
       message: "They will not be able to see your posts, and you will not see theirs.",
@@ -310,21 +341,30 @@ export default function PersonProfileScreen() {
     }
   }
 
+  function closeProfileActions() {
+    setShowProfileActions(false);
+    setProfileActionsAnchor(null);
+  }
+
   function openActions() {
-    if (isBlocked) {
-      Alert.alert("@" + username, undefined, [
-        { text: "Report profile", style: "destructive", onPress: () => void reportProfile() },
-        { text: "Unblock", onPress: () => void confirmUnblockProfile() },
-        { text: "Cancel", style: "cancel" }
-      ]);
+    if (showProfileActions) {
+      closeProfileActions();
       return;
     }
-
-    Alert.alert("@" + username, undefined, [
-      { text: "Report profile", style: "destructive", onPress: () => void reportProfile() },
-      { text: "Block", style: "destructive", onPress: () => void confirmBlockProfile() },
-      { text: "Cancel", style: "cancel" }
-    ]);
+    profileActionsTriggerRef.current?.measureInWindow((x, y, triggerWidth, triggerHeight) => {
+      const window = Dimensions.get("window");
+      const menuWidth = Math.min(PROFILE_ACTIONS_MENU_WIDTH, window.width - PROFILE_ACTIONS_MENU_MARGIN * 2);
+      const belowTop = y + triggerHeight + PROFILE_ACTIONS_MENU_GAP;
+      const top = belowTop + PROFILE_ACTIONS_MENU_HEIGHT <= window.height - PROFILE_ACTIONS_MENU_MARGIN
+        ? belowTop
+        : Math.max(PROFILE_ACTIONS_MENU_MARGIN, y - PROFILE_ACTIONS_MENU_HEIGHT - PROFILE_ACTIONS_MENU_GAP);
+      const left = Math.max(
+        PROFILE_ACTIONS_MENU_MARGIN,
+        Math.min(x + triggerWidth - menuWidth, window.width - menuWidth - PROFILE_ACTIONS_MENU_MARGIN)
+      );
+      setProfileActionsAnchor({ left, top, width: menuWidth });
+      setShowProfileActions(true);
+    });
   }
 
   const onRefresh = useCallback(async () => {
@@ -343,68 +383,166 @@ export default function PersonProfileScreen() {
     void refetchPosts();
   }, [refetchPosts]);
 
+  const profileActionsBusy = blockUser.isPending || unblockUser.isPending || reportContent.isPending;
   const topBar = (
-    <View style={styles.topBar}>
-      <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={close} style={styles.backButton}>
-        <Ionicons name="arrow-back" size={21} color={themeColors.cream} />
-      </Pressable>
-      <Text numberOfLines={1} style={styles.headerTitle}>Profile</Text>
-      {isSelf ? (
-        <View style={styles.headerSpacer} />
-      ) : (
-        <Pressable
-          accessibilityLabel="More options"
-          accessibilityRole="button"
-          disabled={blockUser.isPending || unblockUser.isPending || reportContent.isPending}
-          hitSlop={8}
-          onPress={openActions}
-          style={styles.backButton}
-        >
-          <Ionicons name="ellipsis-horizontal" size={21} color={themeColors.cream} />
+    <>
+      <View style={styles.topBar}>
+        <Pressable accessibilityLabel="Go back" accessibilityRole="button" hitSlop={8} onPress={close} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={21} color={themeColors.cream} />
         </Pressable>
-      )}
-    </View>
+        <Text numberOfLines={1} style={styles.headerTitle}>Profile</Text>
+        {isSelf || !shell.data ? (
+          <View style={styles.headerSpacer} />
+        ) : (
+          <Pressable
+            accessibilityLabel={showProfileActions ? "Close profile actions" : "Open profile actions"}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: profileActionsBusy, expanded: showProfileActions }}
+            disabled={profileActionsBusy}
+            hitSlop={8}
+            onPress={openActions}
+            ref={profileActionsTriggerRef}
+            style={[styles.backButton, profileActionsBusy && styles.profileActionsTriggerDisabled]}
+          >
+            <Ionicons name="ellipsis-vertical" size={21} color={themeColors.cream} />
+          </Pressable>
+        )}
+      </View>
+      {showProfileActions && profileActionsAnchor ? (
+        <Modal
+          animationType="fade"
+          onRequestClose={closeProfileActions}
+          presentationStyle="overFullScreen"
+          statusBarTranslucent
+          transparent
+          visible
+        >
+          <View style={styles.profileActionsOverlay}>
+            <Pressable
+              accessibilityLabel="Close profile actions"
+              accessibilityRole="button"
+              onPress={closeProfileActions}
+              style={styles.profileActionsBackdrop}
+            />
+            <View
+              accessibilityViewIsModal
+              onAccessibilityEscape={closeProfileActions}
+              style={[styles.profileActionsMenu, profileActionsAnchor]}
+            >
+              <Pressable
+                accessibilityLabel="Report profile"
+                accessibilityRole="button"
+                disabled={reportContent.isPending}
+                onPress={() => void reportProfile()}
+                style={({ pressed }) => [
+                  styles.menuAction,
+                  pressed && styles.menuActionPressed,
+                  reportContent.isPending && styles.menuActionDisabled
+                ]}
+              >
+                <Flag size={16} color={themeColors.cream} strokeWidth={2.1} />
+                <Text style={styles.menuActionText}>Report profile</Text>
+              </Pressable>
+              <View style={styles.menuActionDivider} />
+              <Pressable
+                accessibilityHint={isBlocked
+                  ? "Allows both accounts to see each other's public activity again"
+                  : "Prevents both accounts from seeing each other's activity"}
+                accessibilityLabel={`${isBlocked ? "Unblock" : "Block"} @${username}`}
+                accessibilityRole="button"
+                disabled={blockUser.isPending || unblockUser.isPending}
+                onPress={isBlocked ? confirmUnblockProfile : confirmBlockProfile}
+                style={({ pressed }) => [
+                  styles.menuAction,
+                  isBlocked ? styles.menuActionRestorative : styles.menuActionDestructive,
+                  pressed && styles.menuActionPressed,
+                  (blockUser.isPending || unblockUser.isPending) && styles.menuActionDisabled
+                ]}
+              >
+                <View style={isBlocked ? styles.menuActionRestorativeIcon : styles.menuActionDestructiveIcon}>
+                  {isBlocked
+                    ? <UserCheck size={16} color={themeColors.green} strokeWidth={2.1} />
+                    : <UserX size={16} color={themeColors.danger} strokeWidth={2.1} />}
+                </View>
+                <View style={styles.menuActionCopy}>
+                  <Text style={[
+                    styles.menuActionText,
+                    isBlocked ? styles.menuActionTextRestorative : styles.menuActionTextDestructive
+                  ]}>
+                    {isBlocked
+                      ? (unblockUser.isPending ? "Unblocking..." : "Unblock user")
+                      : (blockUser.isPending ? "Blocking..." : "Block user")}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.menuActionUsername}>@{username}</Text>
+                </View>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+    </>
   );
 
-  const profileHeader = shell.data ? (
+  const profileHeader = hasProfileIdentity ? (
     <View style={styles.stack}>
-      {topBar}
-      <View style={styles.hero}>
-        <View style={styles.avatar}>
-          {shell.data.profile.avatarUrl ? (
-            <Image
-              cachePolicy="memory-disk"
-              contentFit="cover"
-              enforceEarlyResizing
-              recyclingKey={shell.data.profile.avatarUrl}
-              source={{ uri: shell.data.profile.avatarUrl }}
-              style={styles.avatarImage}
-            />
-          ) : (
-            <Text style={styles.avatarText}>{initialsForName(shell.data.displayName, shell.data.profile.username)}</Text>
-          )}
-        </View>
-        <View style={styles.identity}>
-          <Text numberOfLines={1} style={styles.name}>{shell.data.displayName}</Text>
-          <Text numberOfLines={1} style={styles.handle}>@{shell.data.profile.username}</Text>
-          {joinedAt ? (
-            <View style={styles.joinedRow}>
-              <CalendarDays size={13} color={themeColors.muted} strokeWidth={2} />
-              <Text style={styles.joinedText}>{joinedAt}</Text>
+      <View style={styles.profileHeaderLead}>
+        {topBar}
+        <View style={styles.hero}>
+          <View style={styles.heroIdentityRow}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{displayedInitials}</Text>
+              {displayedAvatarUrl ? (
+                <Image
+                  alt=""
+                  cachePolicy="memory-disk"
+                  contentFit="cover"
+                  enforceEarlyResizing
+                  placeholder={displayedAvatarPlaceholder ? { blurhash: displayedAvatarPlaceholder } : undefined}
+                  recyclingKey={displayedAvatarRecyclingKey}
+                  source={{ uri: displayedAvatarUrl }}
+                  style={styles.avatarImage}
+                  transition={0}
+                />
+              ) : null}
             </View>
+            <View style={styles.identity}>
+              <Text numberOfLines={1} style={styles.name}>{displayedName}</Text>
+              <Text numberOfLines={1} style={styles.handle}>@{displayedUsername}</Text>
+              {shell.data && joinedAt ? (
+                <View style={styles.joinedRow}>
+                  <CalendarDays size={13} color={themeColors.muted} strokeWidth={2} />
+                  <Text style={styles.joinedText}>{joinedAt}</Text>
+                </View>
+              ) : !shell.isError ? <View style={[styles.skeletonLine, styles.skeletonJoined]} /> : null}
+            </View>
+          </View>
+          {shell.data?.profile.bio ? (
+            <Text style={styles.bio}>{shell.data.profile.bio}</Text>
+          ) : !shell.data && !shell.isError ? (
+            <View style={[styles.skeletonLine, styles.skeletonBio]} />
           ) : null}
-          {shell.data.profile.bio ? <Text style={styles.bio}>{shell.data.profile.bio}</Text> : null}
         </View>
       </View>
 
-      <View style={styles.statsRow}>
-        <ProfileStat styles={styles} label="Trust" value={formatTrustScore(shell.data.profile.trustScore)} />
-        <ProfileStat styles={styles} label="Places" value={String(shell.data.stats.uniquePlaces)} />
-        <ProfileStat styles={styles} label="Dishes" value={String(shell.data.stats.uniqueDishes)} />
-        <ProfileStat styles={styles} label="Circle" value={String(relationshipCircleCount ?? shell.data.circleCount)} />
-      </View>
+      {shell.data ? (
+        <View style={styles.statsRow}>
+          <ProfileStat styles={styles} label="Trust" value={formatTrustScore(shell.data.profile.trustScore)} />
+          <ProfileStat styles={styles} label="Places" value={String(shell.data.stats.uniquePlaces)} />
+          <ProfileStat styles={styles} label="Dishes" value={String(shell.data.stats.uniqueDishes)} />
+          <ProfileStat styles={styles} label="Circle" value={String(relationshipCircleCount ?? shell.data.circleCount)} />
+        </View>
+      ) : shell.isError ? (
+        <View accessibilityLiveRegion="polite" style={styles.shellErrorCard}>
+          <Text style={styles.shellErrorText}>Profile details couldn't load.</Text>
+          <Pressable accessibilityRole="button" onPress={() => void refetchShell()}>
+            <Text style={styles.shellRetryText}>Try again</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <ProfileStatsSkeleton styles={styles} />
+      )}
 
-      {showRelationshipAction ? (
+      {shell.data && showRelationshipAction ? (
         <Pressable
           accessibilityLabel={`${relationshipLabel} ${shell.data.displayName}`}
           accessibilityRole="button"
@@ -423,7 +561,7 @@ export default function PersonProfileScreen() {
         </Pressable>
       ) : null}
 
-      {showRelationshipAction && hasIncomingRequest && relationshipStatus !== "joined" ? (
+      {shell.data && showRelationshipAction && hasIncomingRequest && relationshipStatus !== "joined" ? (
         <View style={styles.incomingCard}>
           <Text style={styles.incomingText}>
             {shell.data.displayName} requested to join your circle.
@@ -458,7 +596,7 @@ export default function PersonProfileScreen() {
         </View>
       ) : null}
 
-      {isBlocked ? (
+      {shell.data && isBlocked ? (
         <View style={styles.blockedCard}>
           <Text style={styles.blockedTitle}>You blocked @{shell.data.profile.username}</Text>
           <Text style={styles.blockedBody}>
@@ -472,7 +610,7 @@ export default function PersonProfileScreen() {
   return (
     <Reanimated.View style={[styles.screenRoot, slideStyle]}>
       <Screen padded={false} scroll={false}>
-        {!username || shell.isLoading || shell.isError ? (
+        {!username || (!hasProfileIdentity && (shell.isLoading || shell.isError)) ? (
           <View style={styles.stack}>
             {topBar}
             {!username ? (
@@ -488,22 +626,27 @@ export default function PersonProfileScreen() {
             />
             ) : null}
           </View>
-        ) : shell.data ? (
+        ) : hasProfileIdentity ? (
           <PostFeed
-            emptyMessage={`${shell.data.displayName} has not shared posts visible to you yet.`}
+            emptyMessage={`${displayedName} has not shared posts visible to you yet.`}
             emptyTitle="No posts yet"
             endReachedLabel="You're all caught up."
             errorMessage={posts.error instanceof Error ? posts.error.message : "Could not load posts."}
             hasMore={Boolean(posts.hasNextPage)}
+            homeFocused={isFocused}
+            homeMediaMode
             isError={!isBlocked && posts.isError && pagedPosts.length === 0}
             isFetchingMore={posts.isFetchingNextPage}
             isLoading={!isBlocked && posts.isLoading && pagedPosts.length === 0}
             ListHeaderComponent={profileHeader}
+            loadingComponent={<ProfilePostSkeleton />}
+            mediaPlaybackEnabled={isFocused}
             onEndReached={onEndReached}
             onPostMount={onPostMount}
             onRefresh={onRefresh}
             onRetry={onRetryPosts}
             posts={isBlocked ? [] : pagedPosts}
+            recyclingList
             refreshing={shell.isRefetching || posts.isRefetching}
             scrollEnabled
             suppressEmptyState={isBlocked}
@@ -519,6 +662,26 @@ function ProfileStat({ label, styles, value }: { label: string; styles: PersonSt
     <View style={styles.statItem}>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function ProfileStatsSkeleton({ styles }: { styles: PersonStyles }) {
+  return (
+    <View
+      accessibilityLabel="Loading profile details"
+      accessibilityLiveRegion="polite"
+      accessibilityRole="progressbar"
+      accessibilityState={{ busy: true }}
+      pointerEvents="none"
+      style={styles.statsRow}
+    >
+      {["trust", "places", "dishes", "circle"].map((stat) => (
+        <View key={stat} style={styles.statItem}>
+          <View style={[styles.skeletonLine, styles.skeletonStatValue]} />
+          <View style={[styles.skeletonLine, styles.skeletonStatLabel]} />
+        </View>
+      ))}
     </View>
   );
 }
@@ -541,12 +704,109 @@ function createStyles(c: ThemeColors) {
       flexDirection: "row",
       minHeight: 40
     },
+    profileHeaderLead: {
+      gap: spacing.sm
+    },
     backButton: {
       alignItems: "center",
       height: 36,
       justifyContent: "center",
       marginLeft: -8,
       width: 36
+    },
+    profileActionsTriggerDisabled: {
+      opacity: 0.7
+    },
+    profileActionsOverlay: {
+      flex: 1
+    },
+    profileActionsBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: "rgba(0, 0, 0, 0.18)"
+    },
+    profileActionsMenu: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      elevation: 12,
+      gap: 6,
+      padding: 6,
+      position: "absolute",
+      shadowColor: "#000000",
+      shadowOffset: { height: 6, width: 0 },
+      shadowOpacity: 0.3,
+      shadowRadius: 14,
+      zIndex: 25
+    },
+    menuAction: {
+      alignItems: "center",
+      borderRadius: 9,
+      flexDirection: "row",
+      gap: 8,
+      minHeight: 42,
+      paddingHorizontal: 10,
+      paddingVertical: 9
+    },
+    menuActionPressed: {
+      opacity: 0.68
+    },
+    menuActionDivider: {
+      backgroundColor: c.border,
+      height: StyleSheet.hairlineWidth,
+      marginHorizontal: 6
+    },
+    menuActionDestructive: {
+      backgroundColor: c.dangerDim,
+      borderColor: c.dangerBorder,
+      borderWidth: 1
+    },
+    menuActionRestorative: {
+      backgroundColor: c.greenDim,
+      borderColor: c.greenBorder,
+      borderWidth: 1
+    },
+    menuActionDestructiveIcon: {
+      alignItems: "center",
+      backgroundColor: c.dangerDim,
+      borderRadius: radius.pill,
+      height: 30,
+      justifyContent: "center",
+      width: 30
+    },
+    menuActionRestorativeIcon: {
+      alignItems: "center",
+      backgroundColor: c.greenDim,
+      borderRadius: radius.pill,
+      height: 30,
+      justifyContent: "center",
+      width: 30
+    },
+    menuActionCopy: {
+      flex: 1,
+      minWidth: 0
+    },
+    menuActionDisabled: {
+      opacity: 0.7
+    },
+    menuActionText: {
+      ...fontStyles.extraBold,
+      color: c.cream,
+      fontSize: typography.caption,
+      lineHeight: 16
+    },
+    menuActionTextDestructive: {
+      color: c.danger
+    },
+    menuActionTextRestorative: {
+      color: c.green
+    },
+    menuActionUsername: {
+      ...fontStyles.regular,
+      color: c.mutedStrong,
+      fontSize: typography.caption,
+      lineHeight: 15,
+      marginTop: 1
     },
     headerTitle: {
       ...fontStyles.extraBold,
@@ -560,6 +820,9 @@ function createStyles(c: ThemeColors) {
       width: 28
     },
     hero: {
+      backgroundColor: c.bg
+    },
+    heroIdentityRow: {
       alignItems: "center",
       flexDirection: "row",
       gap: spacing.md
@@ -574,8 +837,7 @@ function createStyles(c: ThemeColors) {
       width: 74
     },
     avatarImage: {
-      height: "100%",
-      width: "100%"
+      ...StyleSheet.absoluteFillObject
     },
     avatarText: {
       ...fontStyles.extraBold,
@@ -682,10 +944,26 @@ function createStyles(c: ThemeColors) {
     bio: {
       ...fontStyles.medium,
       color: c.cream,
-      fontSize: 14,
+      fontSize: typography.body,
       lineHeight: 20,
-      marginTop: spacing.sm,
+      marginLeft: 4,
+      marginTop: spacing.md
+    },
+    skeletonLine: {
+      backgroundColor: c.surface,
+      borderRadius: radius.pill,
       opacity: 0.82
+    },
+    skeletonJoined: {
+      height: 12,
+      marginTop: 9,
+      width: "42%"
+    },
+    skeletonBio: {
+      height: 15,
+      marginLeft: 4,
+      marginTop: spacing.md,
+      width: "76%"
     },
     statsRow: {
       borderBottomColor: hairline,
@@ -713,6 +991,40 @@ function createStyles(c: ThemeColors) {
       color: c.muted,
       fontSize: 11,
       lineHeight: 14
+    },
+    skeletonStatValue: {
+      height: 22,
+      width: 30
+    },
+    skeletonStatLabel: {
+      height: 11,
+      width: 42
+    },
+    shellErrorCard: {
+      alignItems: "center",
+      borderBottomColor: hairline,
+      borderBottomWidth: 1,
+      borderTopColor: hairline,
+      borderTopWidth: 1,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      minHeight: 58,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm
+    },
+    shellErrorText: {
+      ...fontStyles.semiBold,
+      color: c.muted,
+      flex: 1,
+      fontSize: 12,
+      lineHeight: 17
+    },
+    shellRetryText: {
+      ...fontStyles.extraBold,
+      color: c.orange,
+      fontSize: 12,
+      lineHeight: 17,
+      marginLeft: spacing.md
     },
     blockedCard: {
       backgroundColor: c.card,
