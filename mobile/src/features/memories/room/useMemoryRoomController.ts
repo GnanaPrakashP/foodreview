@@ -23,6 +23,12 @@ export const MEMORY_ROOM_TAB_TIMING = {
   easing: ReanimatedEasing.out(ReanimatedEasing.cubic)
 };
 
+// A heavy pane mounts only after the first header transition to that pane has
+// completed. Warmed panes still switch immediately and stay synchronized with
+// the header. This keeps first-mount native layout work off the collapse/open
+// animation without paying the memory cost of eagerly mounting every pane.
+export const MEMORY_ROOM_FIRST_PANE_MOUNT_DELAY_MS = MEMORY_ROOM_TAB_TIMING.duration;
+
 export function memoryRoomModeFromTabParam(tab?: string | string[] | null): MemoryRoomTabMode | null {
   const value = Array.isArray(tab) ? tab[0] : tab;
   if (value === "table" || value === "overview") return "overview";
@@ -40,6 +46,10 @@ export function useMemoryRoomController(tabParam?: string | string[] | null) {
   const initialRoomTabIndex = useRef(memoryRoomTabIndexForMode(initialMode)).current;
   const pagerPosition = useSharedValue(initialRoomTabIndex);
   const [mode, setMode] = useState<MemoryRoomMode>(initialMode);
+  const [paneTabMode, setPaneTabMode] = useState<MemoryRoomTabMode>(initialMode);
+  const paneTabModeRef = useRef<MemoryRoomTabMode>(initialMode);
+  const mountedPaneModesRef = useRef(new Set<MemoryRoomTabMode>([initialMode]));
+  const paneMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the latest REQUESTED mode, which may still be mid-transition and not
   // yet committed to `mode` (see startTransition below). Rapid taps dedupe
   // against this pending target rather than the committed state.
@@ -59,14 +69,39 @@ export function useMemoryRoomController(tabParam?: string | string[] | null) {
     // block the animation frames — the measured ~150-200ms main-thread stall was
     // that render running synchronously on the tap.
     startTransition(() => setMode(nextMode));
+
+    if (paneMountTimerRef.current) {
+      clearTimeout(paneMountTimerRef.current);
+      paneMountTimerRef.current = null;
+    }
+    if (paneTabModeRef.current === nextTabMode) return;
+
+    const commitPaneMode = () => {
+      paneTabModeRef.current = nextTabMode;
+      mountedPaneModesRef.current.add(nextTabMode);
+      startTransition(() => setPaneTabMode(nextTabMode));
+    };
+
+    if (mountedPaneModesRef.current.has(nextTabMode)) {
+      commitPaneMode();
+      return;
+    }
+
+    paneMountTimerRef.current = setTimeout(() => {
+      paneMountTimerRef.current = null;
+      commitPaneMode();
+    }, MEMORY_ROOM_FIRST_PANE_MOUNT_DELAY_MS);
   }, [pagerPosition]);
+
+  useEffect(() => () => {
+    if (paneMountTimerRef.current) clearTimeout(paneMountTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const nextMode = memoryRoomModeFromTabParam(tabParam);
     if (nextMode) requestRoomMode(nextMode);
   }, [requestRoomMode, tabParam]);
 
-  const paneTabMode: MemoryRoomTabMode = mode === "people" ? "overview" : mode;
   const activePaneTabIndex = memoryRoomTabIndexForMode(paneTabMode);
 
   return {

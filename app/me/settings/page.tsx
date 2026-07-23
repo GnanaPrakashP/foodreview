@@ -98,8 +98,8 @@ export default function SettingsPage() {
   }
 
   const confirmCopy = pendingType === "public"
-    ? { title: "Make account public?", body: "Anyone will be able to see your profile and posts, not just your circle." }
-    : { title: "Make account private?", body: "Only people in your circle will be able to see your posts." };
+    ? { title: "Make account public?", body: "People who request to join your circle will be added immediately. Your post audiences do not change." }
+    : { title: "Make account private?", body: "People must wait for your approval before joining your circle. Your post audiences do not change." };
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", paddingBottom: 100 }}>

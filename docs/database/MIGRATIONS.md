@@ -30,7 +30,7 @@ npx supabase@2.109.1 migration new descriptive_name
 
 Then run `npm run db:verify`. That command validates the locked history, performs two consecutive clean resets, lints SQL, runs pgTAP plus real Auth/RLS/Storage checks, exercises supported upgrade fixtures, and finishes with the read-only local drift audit.
 
-Phase 3 verified 64 canonical migrations and 82 tracked historical entries. Subsequent forward-only hardening migrations bring the current manifest to 81 canonical migrations and 99 tracked entries, with two preserved historical conflicts. The database contract now runs 186 pgTAP assertions plus the real Phase 3 and Phase 4 Auth/RLS/Storage/security behavior matrices and the Phase 5 deterministic plan/API harnesses. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md`, `docs/production-hardening/PHASE_4_API_SECURITY.md`, and `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md`.
+Phase 3 verified 64 canonical migrations and 82 tracked historical entries. Subsequent forward-only hardening migrations bring the current manifest to 85 canonical migrations and 103 tracked entries, with two preserved historical conflicts. The database contract now runs 186 pgTAP assertions plus the real Phase 3 and Phase 4 Auth/RLS/Storage/security behavior matrices and the Phase 5 deterministic plan/API harnesses. See `docs/production-hardening/PHASE_3_CANONICAL_MIGRATIONS.md`, `docs/production-hardening/PHASE_4_API_SECURITY.md`, and `docs/production-hardening/PHASE_5_BACKEND_PERFORMANCE.md`.
 
 ## Historical inventory
 
@@ -111,6 +111,7 @@ The mechanically merged chain reset successfully without changing old SQL. Runti
 - `202607210005_home_location_ranked_feed.sql` gives Home stable unseen-first, nearest-first keyset pagination using the account-scoped app location and an immutable first-seen cutoff.
 - `202607210006_retire_thread_reply_notifications.sql` retires discussion-thread inbox and push events, removes historical rows from unread state, and keeps the unread existence function owner-scoped and index-bounded.
 - `202607210007_profile_memory_timeline_pagination.sql` adds a member-scoped 12-room Profile Memory timeline contract with stable `(visit date, room id)` pagination and a matching cursor index.
+- `202607220001_table_memory_invitation_lifecycle.sql` directly adds only users in the inviter's Circle, persists pending invitations for everyone else, and provides a receiver-scoped atomic Join/Decline RPC while revoking direct authenticated invite writes.
 
 ## Upgrade support
 

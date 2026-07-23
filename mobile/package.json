@@ -14,7 +14,7 @@
     "lint": "cd .. && eslint mobile/app mobile/src --ignore-pattern 'mobile/src/vendor/**'",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/patch-collapsible-tab-view-sync.mjs && node scripts/patch-keyboard-controller-constants.mjs"
+    "postinstall": "node scripts/patch-collapsible-tab-view-sync.mjs && node scripts/patch-keyboard-controller-constants.mjs && node scripts/patch-react-native-active-touch-cleanup.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",

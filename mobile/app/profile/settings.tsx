@@ -141,11 +141,11 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
     if (!profile.data || profile.data.accountType === nextType || updateAccountType.isPending) return;
     const copy = nextType === "public"
       ? {
-          body: "Anyone will be able to see your profile and posts, not just your circle.",
+          body: "People who request to join your circle will be added immediately. Your post audiences do not change.",
           title: "Make account public?"
         }
       : {
-          body: "Only people in your circle will be able to see your posts.",
+          body: "People must wait for your approval before joining your circle. Your post audiences do not change.",
           title: "Make account private?"
         };
 
@@ -280,10 +280,10 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
                 <Text style={styles.rowLabel}>Account Type</Text>
                 <Text style={styles.rowSubLabel}>
                   {accountType === "private"
-                    ? "Only your circle sees your posts"
+                    ? "Approve requests before they join"
                     : accountType === "public"
-                      ? "Anyone can see your posts"
-                      : "Loading account privacy"}
+                      ? "Requests join your circle immediately"
+                      : "Loading circle access"}
                 </Text>
               </View>
               <AccountTypeSegmentedControl

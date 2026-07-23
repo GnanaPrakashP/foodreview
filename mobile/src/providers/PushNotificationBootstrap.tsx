@@ -90,9 +90,29 @@ export function PushNotificationBootstrap() {
         if (safePath) router.push(safePath as Href);
       };
 
+      const openRequestInbox = () => {
+        const safePath = safeProtectedPath("/notifications");
+        if (safePath) {
+          router.push({ pathname: "/notifications", params: { tab: "requests" } });
+        }
+      };
+
+      const notificationType = stringData(response, "notificationType");
+      if (notificationType === "TABLE_MEMORY_INVITE") {
+        openRequestInbox();
+        return;
+      }
+
       const roomId = roomIdFromNotificationResponse(response);
       if (roomId) {
         openProtectedPath(`/memories/${encodeURIComponent(roomId)}`);
+        return;
+      }
+
+      const entityType = stringData(response, "entityType");
+      const entityId = stringData(response, "entityId");
+      if (entityType === "TABLE_MEMORY" && entityId) {
+        openProtectedPath(`/memories/${encodeURIComponent(entityId)}`);
         return;
       }
 
@@ -102,13 +122,11 @@ export function PushNotificationBootstrap() {
         return;
       }
 
-      const notificationType = stringData(response, "notificationType");
       if (notificationType === "CIRCLE_REQUEST_RECEIVED" || notificationType === "circle_request") {
-        openProtectedPath("/notifications");
+        openRequestInbox();
         return;
       }
 
-      const entityType = stringData(response, "entityType");
       const actorName = stringData(response, "actorName");
       if ((entityType === "USER" || entityType === "CIRCLE_REQUEST") && actorName) {
         openProtectedPath(`/people/${encodeURIComponent(actorName)}`);

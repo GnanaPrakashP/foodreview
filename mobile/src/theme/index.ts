@@ -82,7 +82,8 @@ export const spacing = {
 
 export const screenLayout = {
   topGap: spacing.md,
-  headerContentGap: spacing.md
+  headerContentGap: spacing.md,
+  mainTabOpticalInset: 2
 } as const;
 
 export const radius = {

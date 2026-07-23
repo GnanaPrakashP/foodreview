@@ -10,7 +10,6 @@ import { profileDisplayName } from "@/lib/profile-names";
 import type { AccountType, Review } from "@/lib/types";
 import { DEFAULT_ACCOUNT_TYPE } from "@/lib/circle";
 import { cachedCircleStatus } from "@/lib/browser-circle-status";
-import { getStoredActorName } from "@/lib/browser-actor";
 
 interface Member {
   username: string;
@@ -26,7 +25,6 @@ export default function FriendCirclePage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [accountType, setAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
   const [circleCount, setCircleCount] = useState(0);
-  const [locked, setLocked] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -35,17 +33,6 @@ export default function FriendCirclePage() {
       setAccountType(data.accountType ?? DEFAULT_ACCOUNT_TYPE);
       const memberNames: string[] = data.displayMembers ?? data.members ?? [];
       setCircleCount(memberNames.length);
-
-      const viewerName = getStoredActorName();
-      if (viewerName !== name && data.accountType === "private") {
-        const viewerData = viewerName ? await cachedCircleStatus(viewerName) : {};
-        const canView = (viewerData.members ?? []).includes(name);
-        if (!canView) {
-          setLocked(true);
-          setMounted(true);
-          return;
-        }
-      }
 
       if (memberNames.length === 0) { setMounted(true); return; }
 
@@ -115,21 +102,7 @@ export default function FriendCirclePage() {
       )}
 
       {/* Empty state */}
-      {mounted && locked && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px", gap: "14px" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Users size={24} strokeWidth={1.8} color="var(--orange)" />
-          </div>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--cream)", margin: 0 }}>
-            This is a private account
-          </p>
-          <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
-            You can't view their Circle yet.
-          </p>
-        </div>
-      )}
-
-      {mounted && !locked && members.length === 0 && (
+      {mounted && members.length === 0 && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "80px 24px", gap: "14px" }}>
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--orange-dim)", border: "1.5px solid rgba(240,96,48,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Users size={24} strokeWidth={1.8} color="var(--orange)" />
@@ -138,13 +111,13 @@ export default function FriendCirclePage() {
             {firstName}&apos;s circle is empty
           </p>
           <p style={{ fontSize: "13px", color: "var(--muted)", fontFamily: "'DM Sans', sans-serif", margin: 0, maxWidth: "240px", lineHeight: 1.5 }}>
-            {accountType === "public" ? "No one has joined their circle yet" : "They haven't added anyone yet"}
+            {accountType === "public" ? "No one has joined their circle yet" : "No requests have been accepted yet"}
           </p>
         </div>
       )}
 
       {/* Members list */}
-      {mounted && !locked && members.length > 0 && (
+      {mounted && members.length > 0 && (
         <div style={{ padding: "0 20px" }}>
           <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px", overflow: "hidden" }}>
             {members.map(({ username: memberUsername, displayName: memberDisplayName, placeCount }, i) => (

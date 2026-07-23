@@ -42,7 +42,7 @@ import {
   saveOfflineMemorySummaries
 } from "@/services/memoryOfflineStore";
 import { assertValidMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { getCurrentUserProfile, getProfileByUsername } from "@/services/profiles";
+import { getCurrentUserProfile } from "@/services/profiles";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
 
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
@@ -92,6 +92,21 @@ export type AddMemoryParticipantResult = {
   blocked?: string[];
   invited: string[];
   notFound: string[];
+};
+
+export type CreateMemoryRoomResult = AddMemoryParticipantResult & {
+  id: string;
+};
+
+export type RespondToMemoryInviteInput = {
+  action: "join" | "decline";
+  inviteId: string;
+};
+
+export type RespondToMemoryInviteResult = {
+  ok: true;
+  roomId: string;
+  status: "accepted" | "declined";
 };
 
 export type AddMemoryPhotoInput = {
@@ -399,19 +414,6 @@ export async function listMemoryRoomsPage(cursor?: string | null): Promise<Memor
 
 export async function listMemoryRooms(): Promise<MemoryRoomSummary[]> {
   return (await listMemoryRoomsPage()).rooms;
-}
-
-async function validateParticipants(usernames: string[]) {
-  const unique = Array.from(new Set(usernames.map(normalizeUsername).filter(Boolean)));
-  const found: string[] = [];
-
-  for (const username of unique) {
-    const profile = await getProfileByUsername(username);
-    if (!profile) throw new Error(`No user found for @${username}`);
-    found.push(profile.username);
-  }
-
-  return found;
 }
 
 function isMissingMemoryPhotoColumn(error: { message?: string; code?: string } | null | undefined) {
@@ -830,9 +832,8 @@ async function fetchMemoryMediaRowsPage({
   };
 }
 
-export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ id: string }> {
-  await myUsername();
-  const participants = await validateParticipants(input.participantUsernames);
+export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<CreateMemoryRoomResult> {
+  const participants = Array.from(new Set(input.participantUsernames.map(normalizeUsername).filter(Boolean)));
 
   let restaurantName = input.restaurantName.trim();
   let area = input.area?.trim() || null;
@@ -859,25 +860,26 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<{ 
   const occasionConfidence = Math.max(0, Math.min(Number(input.occasionConfidence ?? 0), 1));
   const themeKey = input.themeKey?.trim() || getOccasionTheme(occasionType).id;
 
-  const { data: room, error: roomError } = await supabase
-    .rpc("create_shared_memory_room", {
-      p_area: area,
-      p_occasion_confidence: occasionConfidence,
-      p_occasion_confirmed_by_user: input.occasionConfirmedByUser === true,
-      p_occasion_type: occasionType,
-      p_participant_usernames: participants,
-      p_restaurant_id: restaurantId,
-      p_restaurant_name: restaurantName,
-      p_source_post_id: sourcePostId,
-      p_theme_key: themeKey,
-      p_title: input.occasion?.trim() || null,
-      p_visit_date: input.visitDate?.trim() || null
-    })
-    .select("id")
-    .single<{ id: string }>();
-
-  if (roomError) throw memoryTablesError(roomError);
-  return { id: room.id };
+  return authorizedJson<CreateMemoryRoomResult>(
+    "/api/mobile/memories",
+    {
+      body: JSON.stringify({
+        area,
+        occasion: input.occasion?.trim() || null,
+        occasionConfidence,
+        occasionConfirmedByUser: input.occasionConfirmedByUser === true,
+        occasionType,
+        participantUsernames: participants,
+        restaurantId,
+        restaurantName,
+        sourcePostId,
+        themeKey,
+        visitDate: input.visitDate?.trim() || null
+      }),
+      method: "POST"
+    },
+    { action: "creating a Table Memory", timeoutMs: 15_000 }
+  );
 }
 
 export async function updateMemoryRoomOccasion(roomId: string, input: UpdateMemoryRoomOccasionInput): Promise<UpdateMemoryRoomOccasionInput> {
@@ -1132,9 +1134,23 @@ export async function addMemoryParticipant(roomId: string, rawUsername: string) 
   return {
     added: payload?.added ?? [],
     alreadyMembers: payload?.alreadyMembers ?? [],
+    blocked: payload?.blocked ?? [],
     invited: payload?.invited ?? [],
     notFound: payload?.notFound ?? []
   };
+}
+
+export async function respondToMemoryInvite(input: RespondToMemoryInviteInput) {
+  const inviteId = input.inviteId.trim();
+  if (!inviteId) throw new Error("Invitation is required");
+  return authorizedJson<RespondToMemoryInviteResult>(
+    `/api/mobile/memories/invites/${encodeURIComponent(inviteId)}/respond`,
+    {
+      body: JSON.stringify({ action: input.action }),
+      method: "POST"
+    },
+    { action: `${input.action === "join" ? "joining" : "declining"} a Table Memory`, timeoutMs: 12_000 }
+  );
 }
 
 export async function leaveMemoryRoom(roomId: string) {

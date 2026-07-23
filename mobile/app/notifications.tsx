@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +12,6 @@ import {
   Easing,
   Pressable,
   RefreshControl,
-  SectionList,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -20,7 +20,9 @@ import {
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { EmptyState, ErrorState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
 import { useRespondToCircleRequestMutation } from "@/hooks/useCircle";
+import { useRespondToMemoryInviteMutation } from "@/hooks/useMemories";
 import {
   useDeleteNotificationMutation,
   useMarkAllNotificationsReadMutation,
@@ -39,6 +41,8 @@ type NotificationSection = {
   title: "Today" | "Yesterday" | "This Week" | "Older";
 };
 
+type NotificationTab = "all" | "requests";
+
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 const avatarColors = ["#C04020", "#7C3AED", "#0F766E", "#A96F04", "#BE185D", "#2563EB"];
@@ -53,6 +57,7 @@ const NOTIFICATIONS_WINDOW_SIZE = 7;
 const NOTIFICATIONS_STALE_MS = 30_000;
 const NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT = 2;
 const NOTIFICATION_SKELETON_ROW_COUNT = 6;
+const NOTIFICATIONS_TAB_BAR_HEIGHT = 40;
 
 function effectiveDate(notification: AppNotification) {
   return notification.updatedAt || notification.createdAt;
@@ -104,11 +109,49 @@ function iconForNotification(notification: AppNotification): keyof typeof Ionico
     return "people";
   }
   if (type === "CIRCLE_POST_CREATED" || type === "circle_post") return "restaurant";
+  if (type === "TABLE_MEMORY_INVITE" || type === "TABLE_MEMORY_ADDED") return "people-circle";
   return "notifications";
 }
 
 function isIncomingCircleRequest(notification: AppNotification) {
   return notification.type === "CIRCLE_REQUEST_RECEIVED" || notification.type === "circle_request";
+}
+
+function isIncomingMemoryInvite(notification: AppNotification) {
+  return notification.type === "TABLE_MEMORY_INVITE";
+}
+
+function isRequestNotification(notification: AppNotification) {
+  return isIncomingCircleRequest(notification) || isIncomingMemoryInvite(notification);
+}
+
+function isPendingRequest(notification: AppNotification) {
+  return (
+    isIncomingCircleRequest(notification) && notification.circleRequestStatus === "pending"
+  ) || (
+    isIncomingMemoryInvite(notification) && notification.memoryInviteStatus === "pending"
+  );
+}
+
+function requestResolution(notification: AppNotification) {
+  if (isIncomingCircleRequest(notification)) {
+    if (notification.circleRequestStatus === "accepted") return { label: "Accepted", positive: true };
+    if (notification.circleRequestStatus === "rejected") return { label: "Rejected", positive: false };
+  }
+  if (isIncomingMemoryInvite(notification)) {
+    if (notification.memoryInviteStatus === "accepted") return { label: "Joined", positive: true };
+    if (notification.memoryInviteStatus === "declined") return { label: "Declined", positive: false };
+  }
+  return null;
+}
+
+function requestedNotificationTab(tab?: string | string[] | null): NotificationTab | null {
+  const value = Array.isArray(tab) ? tab[0] : tab;
+  return value === "all" || value === "requests" ? value : null;
+}
+
+function notificationTabFromParam(tab?: string | string[] | null): NotificationTab {
+  return requestedNotificationTab(tab) ?? "all";
 }
 
 function buildSections(notifications: AppNotification[]): NotificationSection[] {
@@ -218,20 +261,32 @@ function NotificationSkeletonRows({ styles }: { styles: ReturnType<typeof create
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
   const queryClient = useQueryClient();
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const { width } = useWindowDimensions();
+  const tabPagerWidth = Math.max(0, width - spacing.lg * 2);
   const enterProgress = useRef(new Animated.Value(0)).current;
   const isClosingRef = useRef(false);
   const emptyPageAutoFetchCountRef = useRef(0);
+  const requestEmptyPageAutoFetchCountRef = useRef(0);
   const notificationFocusRefetchActiveRef = useRef(false);
   const markInboxSeenRequestActiveRef = useRef(false);
+  const initialTab = useRef(notificationTabFromParam(params.tab)).current;
+  const tabsRef = useRef<CollapsibleRef>(undefined);
+  const activeTabRef = useRef<NotificationTab>(initialTab);
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const notifications = useNotificationsQuery({
     enabled: isReady && isAuthenticated,
-    limit: NOTIFICATIONS_PAGE_SIZE
+    limit: NOTIFICATIONS_PAGE_SIZE,
+    view: "all"
+  });
+  const requestNotifications = useNotificationsQuery({
+    enabled: isReady && isAuthenticated,
+    limit: NOTIFICATIONS_PAGE_SIZE,
+    view: "requests"
   });
   const fetchNextNotificationsPage = notifications.fetchNextPage;
   const notificationNextCursor = notifications.data?.nextCursor ?? null;
@@ -239,29 +294,44 @@ export default function NotificationsScreen() {
   const notificationsAreFetchingNextPage = notifications.isFetchingNextPage;
   const notificationsHaveError = notifications.isError;
   const notificationsAreLoading = notifications.isLoading;
+  const fetchNextRequestNotificationsPage = requestNotifications.fetchNextPage;
+  const requestNotificationNextCursor = requestNotifications.data?.nextCursor ?? null;
+  const requestNotificationsAreFetching = requestNotifications.isFetching;
+  const requestNotificationsAreFetchingNextPage = requestNotifications.isFetchingNextPage;
+  const requestNotificationsHaveError = requestNotifications.isError;
+  const requestNotificationsAreLoading = requestNotifications.isLoading;
   const markRead = useMarkNotificationReadMutation();
   const markAllRead = useMarkAllNotificationsReadMutation();
   const markInboxSeen = useMarkNotificationInboxSeenMutation();
   const deleteNotification = useDeleteNotificationMutation();
   const respondToCircle = useRespondToCircleRequestMutation();
+  const respondToMemoryInvite = useRespondToMemoryInviteMutation();
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const items = notifications.data?.notifications ?? EMPTY_NOTIFICATIONS;
+  const requestItems = useMemo(
+    () => (requestNotifications.data?.notifications ?? EMPTY_NOTIFICATIONS).filter(isRequestNotification),
+    [requestNotifications.data?.notifications]
+  );
+  const hasPendingRequests = useMemo(() => requestItems.some(isPendingRequest), [requestItems]);
   const unreadCount = notifications.data?.unreadCount ?? 0;
   const sections = useMemo(() => buildSections(items), [items]);
+  const requestSections = useMemo(() => buildSections(requestItems), [requestItems]);
   const refreshing = notifications.isFetching && !notifications.isLoading;
+  const requestsRefreshing = requestNotifications.isFetching && !requestNotifications.isLoading;
   const hasOlderNotifications = notifications.hasNextPage === true;
+  const hasOlderRequestNotifications = requestNotifications.hasNextPage === true;
   const notificationFocusStateRef = useRef({
-    dataUpdatedAt: notifications.dataUpdatedAt,
-    hasData: notifications.data !== undefined,
-    isFetching: notifications.isFetching,
-    refetch: notifications.refetch
+    dataUpdatedAt: Math.min(notifications.dataUpdatedAt, requestNotifications.dataUpdatedAt),
+    hasData: notifications.data !== undefined && requestNotifications.data !== undefined,
+    isFetching: notifications.isFetching || requestNotifications.isFetching,
+    refetch: () => Promise.all([notifications.refetch(), requestNotifications.refetch()])
   });
   notificationFocusStateRef.current = {
-    dataUpdatedAt: notifications.dataUpdatedAt,
-    hasData: notifications.data !== undefined,
-    isFetching: notifications.isFetching,
-    refetch: notifications.refetch
+    dataUpdatedAt: Math.min(notifications.dataUpdatedAt, requestNotifications.dataUpdatedAt),
+    hasData: notifications.data !== undefined && requestNotifications.data !== undefined,
+    isFetching: notifications.isFetching || requestNotifications.isFetching,
+    refetch: () => Promise.all([notifications.refetch(), requestNotifications.refetch()])
   };
   const markInboxSeenRef = useRef(markInboxSeen.mutate);
   markInboxSeenRef.current = markInboxSeen.mutate;
@@ -288,6 +358,13 @@ export default function NotificationsScreen() {
   }, [enterProgress]);
 
   useEffect(() => {
+    const nextTab = requestedNotificationTab(params.tab);
+    if (!nextTab || nextTab === activeTabRef.current) return;
+    activeTabRef.current = nextTab;
+    tabsRef.current?.jumpToTab(nextTab);
+  }, [params.tab]);
+
+  useEffect(() => {
     if (items.length > 0 || !hasOlderNotifications) {
       emptyPageAutoFetchCountRef.current = 0;
       return;
@@ -312,6 +389,37 @@ export default function NotificationsScreen() {
     notificationsAreLoading,
     notificationsHaveError
   ]);
+
+  useEffect(() => {
+    if (requestItems.length > 0 || !hasOlderRequestNotifications) {
+      requestEmptyPageAutoFetchCountRef.current = 0;
+      return;
+    }
+    if (
+      requestNotificationsAreLoading
+      || requestNotificationsAreFetching
+      || requestNotificationsHaveError
+      || requestNotificationsAreFetchingNextPage
+      || requestEmptyPageAutoFetchCountRef.current >= NOTIFICATIONS_EMPTY_PAGE_AUTOFETCH_LIMIT
+    ) return;
+
+    requestEmptyPageAutoFetchCountRef.current += 1;
+    void fetchNextRequestNotificationsPage();
+  }, [
+    fetchNextRequestNotificationsPage,
+    hasOlderRequestNotifications,
+    requestItems.length,
+    requestNotificationNextCursor,
+    requestNotificationsAreFetching,
+    requestNotificationsAreFetchingNextPage,
+    requestNotificationsAreLoading,
+    requestNotificationsHaveError
+  ]);
+
+  const handleTabChange = useCallback((tab: NotificationTab) => {
+    activeTabRef.current = tab;
+    router.setParams({ tab });
+  }, [router]);
 
   const performBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -375,6 +483,10 @@ export default function NotificationsScreen() {
     }
     if (notification.destination.type === "person") {
       router.push(`/people/${encodeURIComponent(notification.destination.username)}`);
+      return;
+    }
+    if (notification.destination.type === "memory") {
+      router.push({ pathname: "/memories/[id]", params: { id: notification.destination.roomId } });
     }
   }
 
@@ -405,6 +517,34 @@ export default function NotificationsScreen() {
     }
   }
 
+  async function respondToMemory(notification: AppNotification, action: "join" | "decline") {
+    if (busyId) return;
+    const inviteId = typeof notification.metadata.inviteId === "string" ? notification.metadata.inviteId.trim() : "";
+    if (!inviteId) {
+      Alert.alert("Invitation unavailable", "This invitation is missing its response details. Ask a room member to invite you again.");
+      return;
+    }
+
+    setBusyId(notification.id);
+    try {
+      const result = await respondToMemoryInvite.mutateAsync({ action, inviteId });
+      await markRead.mutateAsync(notification.id).catch(() => {});
+      patchCachedNotification(queryClient, notification.id, (current) => ({
+        ...current,
+        destination: action === "join" ? { type: "memory", roomId: result.roomId } : { type: "notification" },
+        isRead: true,
+        memoryInviteStatus: result.status
+      }));
+      if (action === "join") {
+        router.push({ pathname: "/memories/[id]", params: { id: result.roomId } });
+      }
+    } catch (error) {
+      Alert.alert("Could not update invitation", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function confirmDelete(notification: AppNotification) {
     Alert.alert("Remove notification?", "This only removes it from your inbox.", [
       { text: "Cancel", style: "cancel" },
@@ -425,7 +565,9 @@ export default function NotificationsScreen() {
   function renderNotification({ item }: { item: AppNotification }) {
     const unread = !item.isRead;
     const actionableCircleRequest = isIncomingCircleRequest(item) && item.circleRequestStatus === "pending";
-    const busy = busyId === item.id || respondToCircle.isPending;
+    const actionableMemoryInvite = isIncomingMemoryInvite(item) && item.memoryInviteStatus === "pending";
+    const resolution = requestResolution(item);
+    const busy = busyId === item.id || respondToCircle.isPending || respondToMemoryInvite.isPending;
 
     return (
       <View style={[styles.rowShell, unread && styles.rowShellUnread]}>
@@ -459,6 +601,11 @@ export default function NotificationsScreen() {
                 {item.restaurantName}
               </Text>
             ) : null}
+            {resolution ? (
+              <Text style={[styles.requestStatus, resolution.positive ? styles.requestStatusPositive : styles.requestStatusMuted]}>
+                {resolution.label}
+              </Text>
+            ) : null}
             <View style={styles.metaRow}>
               <Text style={styles.timeText}>{timeAgo(effectiveDate(item))}</Text>
               {unread ? <View style={styles.unreadDot} /> : null}
@@ -490,9 +637,162 @@ export default function NotificationsScreen() {
             </Pressable>
           </View>
         ) : null}
+        {actionableMemoryInvite ? (
+          <View style={styles.actionRow}>
+            <Pressable
+              disabled={busy}
+              onPress={() => void respondToMemory(item, "join")}
+              style={({ pressed }) => [styles.acceptButton, busy && styles.disabledAction, pressed && styles.pressed]}
+            >
+              {busy ? <ActivityIndicator color={themeColors.white} size="small" /> : <Ionicons name="enter-outline" size={16} color={themeColors.white} />}
+              <Text style={styles.acceptText}>Join</Text>
+            </Pressable>
+            <Pressable
+              disabled={busy}
+              onPress={() => void respondToMemory(item, "decline")}
+              style={({ pressed }) => [styles.rejectButton, busy && styles.disabledAction, pressed && styles.pressed]}
+            >
+              <Ionicons name="close" size={16} color={themeColors.muted} />
+              <Text style={styles.rejectText}>Decline</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     );
   }
+
+  function emptyContentFor(tab: NotificationTab) {
+    if (!isReady) return <NotificationSkeletonRows styles={styles} />;
+    if (!isAuthenticated) {
+      return (
+        <View style={styles.stateWrap}>
+          <EmptyState
+            icon="notifications-outline"
+            message="Sign in to see likes, comments, Circle requests, and Table Memory invitations."
+            title="Notifications are private"
+          />
+        </View>
+      );
+    }
+
+    if (tab === "all") {
+      if (notifications.isLoading && items.length === 0) return <NotificationSkeletonRows styles={styles} />;
+      if (notifications.isError && items.length === 0) {
+        return (
+          <View style={styles.stateWrap}>
+            <ErrorState
+              actionLabel="Try again"
+              message="We couldn't load your activity inbox."
+              onAction={() => notifications.refetch()}
+              title="Notifications unavailable"
+            />
+          </View>
+        );
+      }
+      if (sections.length === 0 && notifications.isFetchingNextPage) {
+        return <NotificationSkeletonRows styles={styles} />;
+      }
+      return (
+        <View style={styles.stateWrap}>
+          <EmptyState
+            actionLabel={hasOlderNotifications ? "Load older activity" : undefined}
+            icon="notifications-outline"
+            message={hasOlderNotifications
+              ? "Recent activity is no longer available, but older notifications may still be here."
+              : "Circle requests, Table Memory invitations, likes, and comments will show here."}
+            onAction={hasOlderNotifications ? () => void notifications.fetchNextPage() : undefined}
+            title={hasOlderNotifications ? "No recent notifications" : "No notifications yet"}
+          />
+        </View>
+      );
+    }
+
+    if (requestNotifications.isLoading && requestItems.length === 0) {
+      return <NotificationSkeletonRows styles={styles} />;
+    }
+    if (requestNotifications.isError && requestItems.length === 0) {
+      return (
+        <View style={styles.stateWrap}>
+          <ErrorState
+            actionLabel="Try again"
+            message="We couldn't load your pending requests."
+            onAction={() => requestNotifications.refetch()}
+            title="Requests unavailable"
+          />
+        </View>
+      );
+    }
+    if (requestSections.length === 0 && requestNotifications.isFetchingNextPage) {
+      return <NotificationSkeletonRows styles={styles} />;
+    }
+    return (
+      <View style={styles.stateWrap}>
+        <EmptyState
+          actionLabel={hasOlderRequestNotifications ? "Load older requests" : undefined}
+          icon="mail-open-outline"
+          message={hasOlderRequestNotifications
+            ? "Older requests may still be available."
+            : "Incoming Circle requests and Table Memory invitations will appear here."}
+          onAction={hasOlderRequestNotifications ? () => void requestNotifications.fetchNextPage() : undefined}
+          title="No requests yet"
+        />
+      </View>
+    );
+  }
+
+  function notificationListFor(tab: NotificationTab) {
+    const query = tab === "all" ? notifications : requestNotifications;
+    const tabSections = tab === "all" ? sections : requestSections;
+    const isRefreshing = tab === "all" ? refreshing : requestsRefreshing;
+    return (
+      <Tabs.SectionList
+        sections={tabSections}
+        initialNumToRender={NOTIFICATIONS_INITIAL_RENDER_COUNT}
+        onEndReached={() => {
+          if (query.hasNextPage && !query.isFetching && !query.isFetchingNextPage) {
+            void query.fetchNextPage();
+          }
+        }}
+        onEndReachedThreshold={0.5}
+        keyExtractor={(item) => item.id}
+        maxToRenderPerBatch={NOTIFICATIONS_RENDER_BATCH_SIZE}
+        renderItem={renderNotification}
+        renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
+        ListEmptyComponent={emptyContentFor(tab)}
+        refreshControl={(
+          <RefreshControl
+            colors={[themeColors.orange]}
+            onRefresh={() => query.refetch()}
+            progressBackgroundColor={themeColors.card}
+            refreshing={isRefreshing}
+            tintColor={themeColors.orange}
+          />
+        )}
+        contentContainerStyle={[styles.listContent, tabSections.length === 0 && styles.listContentEmpty]}
+        showsVerticalScrollIndicator={false}
+        stickySectionHeadersEnabled={false}
+        updateCellsBatchingPeriod={50}
+        windowSize={NOTIFICATIONS_WINDOW_SIZE}
+        removeClippedSubviews={false}
+      />
+    );
+  }
+
+  const renderTabBar = useCallback((tabBarProps: TabBarProps<string>) => (
+    <UnderlineTabBar
+      tabBarProps={tabBarProps}
+      activeColor={themeColors.orange}
+      inactiveColor={themeColors.muted}
+      getBadgeVisible={(name) => name === "requests" && hasPendingRequests}
+      getLabelText={(name) => name === "requests" ? "Requests" : "All"}
+      indicatorStyle={styles.tabIndicator}
+      instantPress
+      labelStyle={styles.tabText}
+      style={styles.tabs}
+      contentContainerStyle={styles.tabRow}
+      tabStyle={styles.tabButton}
+    />
+  ), [hasPendingRequests, styles, themeColors.muted, themeColors.orange]);
 
   return (
     <Animated.View style={[
@@ -524,73 +824,29 @@ export default function NotificationsScreen() {
             </Pressable>
           ) : null}
         </View>
-
-        {!isReady ? (
-          <NotificationSkeletonRows styles={styles} />
-        ) : !isAuthenticated ? (
-          <View style={styles.stateWrap}>
-            <EmptyState
-              icon="notifications-outline"
-              message="Sign in to see likes, comments, and circle requests."
-              title="Notifications are private"
-            />
-          </View>
-        ) : notifications.isLoading && items.length === 0 ? (
-          <NotificationSkeletonRows styles={styles} />
-        ) : notifications.isError && items.length === 0 ? (
-          <View style={styles.stateWrap}>
-            <ErrorState
-              actionLabel="Try again"
-              message="We couldn't load your activity inbox."
-              onAction={() => notifications.refetch()}
-              title="Notifications unavailable"
-            />
-          </View>
-        ) : sections.length === 0 && notifications.isFetchingNextPage ? (
-          <NotificationSkeletonRows styles={styles} />
-        ) : sections.length === 0 ? (
-          <View style={styles.stateWrap}>
-            <EmptyState
-              actionLabel={hasOlderNotifications ? "Load older activity" : undefined}
-              icon="notifications-outline"
-              message={hasOlderNotifications
-                ? "Recent activity is no longer available, but older notifications may still be here."
-                : "Circle requests, likes, comments, and circle posts will show here."}
-              onAction={hasOlderNotifications ? () => void notifications.fetchNextPage() : undefined}
-              title={hasOlderNotifications ? "No recent notifications" : "No notifications yet"}
-            />
-          </View>
-        ) : (
-          <SectionList
-            sections={sections}
-            initialNumToRender={NOTIFICATIONS_INITIAL_RENDER_COUNT}
-            onEndReached={() => {
-              if (notifications.hasNextPage && !notifications.isFetching && !notifications.isFetchingNextPage) {
-                void notifications.fetchNextPage();
-              }
-            }}
-            onEndReachedThreshold={0.5}
-            keyExtractor={(item) => item.id}
-            maxToRenderPerBatch={NOTIFICATIONS_RENDER_BATCH_SIZE}
-            renderItem={renderNotification}
-            renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
-            refreshControl={(
-              <RefreshControl
-                colors={[themeColors.orange]}
-                onRefresh={() => notifications.refetch()}
-                progressBackgroundColor={themeColors.card}
-                refreshing={refreshing}
-                tintColor={themeColors.orange}
-              />
-            )}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            stickySectionHeadersEnabled={false}
-            updateCellsBatchingPeriod={50}
-            windowSize={NOTIFICATIONS_WINDOW_SIZE}
-            removeClippedSubviews={false}
-          />
-        )}
+        <View style={styles.tabsStage}>
+          <Tabs.Container
+            ref={tabsRef}
+            initialTabName={initialTab}
+            containerStyle={styles.tabsContainer}
+            headerContainerStyle={styles.tabsHeaderContainer}
+            headerHeight={0}
+            minHeaderHeight={0}
+            onTabChange={({ tabName }) => handleTabChange(tabName as NotificationTab)}
+            pagerProps={{ offscreenPageLimit: 1 }}
+            renderTabBar={renderTabBar}
+            revealHeaderOnScroll={false}
+            tabBarHeight={NOTIFICATIONS_TAB_BAR_HEIGHT}
+            width={tabPagerWidth}
+          >
+            <Tabs.Tab name="all" label="All">
+              {notificationListFor("all")}
+            </Tabs.Tab>
+            <Tabs.Tab name="requests" label="Requests">
+              {notificationListFor("requests")}
+            </Tabs.Tab>
+          </Tabs.Container>
+        </View>
       </Screen>
     </Animated.View>
   );
@@ -616,6 +872,48 @@ function createStyles(themeColors: ThemeColors) {
       flex: 1,
       minWidth: 0
     },
+    tabsStage: {
+      flex: 1
+    },
+    tabsContainer: {
+      backgroundColor: themeColors.bg
+    },
+    tabsHeaderContainer: {
+      backgroundColor: themeColors.bg,
+      elevation: 0,
+      shadowOpacity: 0
+    },
+    tabs: {
+      backgroundColor: themeColors.bg,
+      height: NOTIFICATIONS_TAB_BAR_HEIGHT,
+      paddingBottom: spacing.xs,
+      paddingTop: spacing.xs
+    },
+    tabRow: {
+      borderBottomColor: themeColors.border,
+      borderBottomWidth: 2,
+      flexDirection: "row",
+      position: "relative"
+    },
+    tabButton: {
+      alignItems: "center",
+      flex: 1,
+      justifyContent: "flex-end",
+      paddingBottom: 4,
+      paddingTop: 10
+    },
+    tabText: {
+      ...fontStyles.bold,
+      fontSize: typography.caption,
+      includeFontPadding: false,
+      lineHeight: 15
+    },
+    tabIndicator: {
+      backgroundColor: themeColors.orange,
+      borderRadius: radius.pill,
+      bottom: -2,
+      height: 2
+    },
     markAllButton: {
       alignItems: "center",
       backgroundColor: themeColors.card,
@@ -635,6 +933,9 @@ function createStyles(themeColors: ThemeColors) {
     listContent: {
       gap: spacing.sm,
       paddingBottom: spacing.xl
+    },
+    listContentEmpty: {
+      flexGrow: 1
     },
     skeletonWrap: {
       flex: 1
@@ -774,6 +1075,17 @@ function createStyles(themeColors: ThemeColors) {
       color: themeColors.muted,
       fontSize: typography.caption,
       lineHeight: 17
+    },
+    requestStatus: {
+      ...fontStyles.bold,
+      fontSize: typography.caption,
+      lineHeight: 17
+    },
+    requestStatusPositive: {
+      color: themeColors.green
+    },
+    requestStatusMuted: {
+      color: themeColors.muted
     },
     metaRow: {
       alignItems: "center",

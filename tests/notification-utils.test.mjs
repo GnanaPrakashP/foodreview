@@ -188,6 +188,7 @@ test("notification utils: filterValidNotifications keeps backed entities and sof
     notif("circle-old", "CIRCLE_REQUEST_RECEIVED", { updated_at: "2026-01-01T00:00:00.000Z" }),
     notif("circle-new", "CIRCLE_REQUEST_RECEIVED", { updated_at: "2026-01-08T00:00:00.000Z" }),
     notif("circle-stale", "CIRCLE_REQUEST_RECEIVED", { actor_name: "Mallory", updated_at: "2026-01-07T00:00:00.000Z" }),
+    notif("circle-resolved", "CIRCLE_REQUEST_RECEIVED", { actor_name: "Trent", metadata: { status: "accepted" }, updated_at: "2026-01-06T12:00:00.000Z" }),
     notif("like-valid", "POST_LIKED", { actor_name: "Carol", post_id: "post-1", updated_at: "2026-01-06T00:00:00.000Z" }),
     notif("like-stale", "POST_LIKED", { actor_name: "Dave", post_id: "post-2", updated_at: "2026-01-05T00:00:00.000Z" }),
     notif("comment-valid", "POST_COMMENTED", { metadata: { commentId: "comment-1" }, updated_at: "2026-01-04T00:00:00.000Z" }),
@@ -200,7 +201,7 @@ test("notification utils: filterValidNotifications keeps backed entities and sof
   // cross-user reads), so both like-valid and like-stale pass through.
   assert.deepEqual(
     Array.from(result, (n) => n.id),
-    ["system", "circle-new", "like-valid", "like-stale", "comment-valid"]
+    ["system", "circle-new", "circle-resolved", "like-valid", "like-stale", "comment-valid"]
   );
 
   const cleanup = db._calls.find((call) => call.table === "notifications");

@@ -220,6 +220,7 @@ function notificationDisplayMessage(row: NotificationRow, actor: string) {
     return `${actor} posted about ${row.restaurant_name ?? "a restaurant"}`;
   }
   if (type === "TABLE_MEMORY_INVITE" && storedMessage) return storedMessage;
+  if (type === "TABLE_MEMORY_ADDED" && storedMessage) return storedMessage;
   if (storedMessage) return storedMessage;
   return "You have a new notification";
 }
@@ -227,6 +228,13 @@ function notificationDisplayMessage(row: NotificationRow, actor: string) {
 function notificationDestination(row: NotificationRow, metadata: Record<string, unknown>): AppNotification["destination"] {
   const postId = row.post_id ?? (row.entity_type === "POST" ? row.entity_id : null);
   if (postId) return { type: "post", postId };
+
+  if (row.entity_type === "TABLE_MEMORY" && row.entity_id) {
+    const status = typeof metadata.status === "string" ? metadata.status : "";
+    if (row.type !== "TABLE_MEMORY_INVITE" || status === "accepted") {
+      return { type: "memory", roomId: row.entity_id };
+    }
+  }
 
   if (row.entity_type === "USER" && row.actor_name) return { type: "person", username: row.actor_name };
   if (row.entity_type === "CIRCLE_REQUEST" && row.actor_name) return { type: "person", username: row.actor_name };
@@ -241,6 +249,13 @@ function circleRequestStatus(row: NotificationRow, metadata: Record<string, unkn
   if (status === "accepted" || status === "rejected") return status;
   if (row.type === "CIRCLE_REQUEST_RECEIVED" || row.type === "circle_request") return "pending";
   return "none";
+}
+
+function memoryInviteStatus(row: NotificationRow, metadata: Record<string, unknown>): AppNotification["memoryInviteStatus"] {
+  if (row.type !== "TABLE_MEMORY_INVITE") return "none";
+  const status = typeof metadata.status === "string" ? metadata.status : "";
+  if (status === "accepted" || status === "declined") return status;
+  return "pending";
 }
 
 function mapNotification(row: NotificationRow, profileMap: Record<string, ActorSummary>): AppNotification {
@@ -276,7 +291,8 @@ function mapNotification(row: NotificationRow, profileMap: Record<string, ActorS
     thumbnailUrl,
     displayMessage: notificationDisplayMessage(row, actorDisplayName),
     destination: notificationDestination(row, metadata),
-    circleRequestStatus: circleRequestStatus(row, metadata)
+    circleRequestStatus: circleRequestStatus(row, metadata),
+    memoryInviteStatus: memoryInviteStatus(row, metadata)
   };
 }
 
@@ -286,9 +302,16 @@ function actorAvatarUrl(value: string | null | undefined) {
     : null;
 }
 
-export async function listNotifications(limit = 30, cursor?: string | null): Promise<NotificationsPage> {
+export type NotificationListView = "all" | "requests";
+
+export async function listNotifications(
+  limit = 30,
+  cursor?: string | null,
+  view: NotificationListView = "all"
+): Promise<NotificationsPage> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
+  if (view === "requests") params.set("view", view);
   const payload = await authorizedJson<NotificationsApiResponse>(
     `/api/notifications?${params.toString()}`,
     { method: "GET" },

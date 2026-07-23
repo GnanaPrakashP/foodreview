@@ -19,6 +19,7 @@ import {
   leaveMemoryRoom,
   listMemoryRoomsPageOfflineFirst,
   markMemoryRoomRead,
+  respondToMemoryInvite,
   setMemoryDishRating,
   updateMemoryRoomOccasion,
   updateMemoryStop,
@@ -32,10 +33,12 @@ import {
   type MemoryMediaPage,
   type MemoryMessagesPage,
   type MemoryRoomsPage,
+  type RespondToMemoryInviteInput,
   type SetMemoryDishRatingInput,
   type UpdateMemoryRoomOccasionInput,
   type UpdateMemoryStopInput
 } from "@/services/memories";
+import { notificationKeys } from "@/hooks/useNotifications";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import {
   deleteOfflineMemoryMessage,
@@ -1472,6 +1475,19 @@ export function useAddMemoryParticipantMutation(roomId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    }
+  });
+}
+
+export function useRespondToMemoryInviteMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RespondToMemoryInviteInput) => respondToMemoryInvite(input),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(result.roomId) });
+      queryClient.invalidateQueries({ queryKey: notificationKeys.list });
+      queryClient.invalidateQueries({ queryKey: notificationKeys.hasUnread });
     }
   });
 }

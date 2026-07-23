@@ -1,17 +1,21 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { postBiteGuideFrame } from "@/constants/postCaptureLayout";
 import { requestPostComposerReset, setPendingPostCapture, setPendingPostCaptures } from "@/services/postCaptureSession";
+import { useComposerStore } from "@/stores/composerStore";
 
 const MAX_POST_MEDIA = 4;
 
 export default function ShareCameraRoute() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ remaining?: string }>();
+  const params = useLocalSearchParams<{ origin?: string; remaining?: string }>();
+  const finishFlow = useComposerStore((state) => state.finishFlow);
+  const handedCaptureToComposerRef = useRef(false);
+  const openedFromProfilePosts = params.origin === "profile-posts";
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   // How many media slots the post still has; caps the gallery multi-select.
   const remainingSlots = Math.min(
@@ -25,6 +29,17 @@ export default function ShareCameraRoute() {
     [insets.top, windowHeight, windowWidth]
   );
 
+  useEffect(() => () => {
+    // Android hardware Back pops the camera route without invoking onClose.
+    // Clear the origin only when no capture is being handed to the composer.
+    if (openedFromProfilePosts && !handedCaptureToComposerRef.current) finishFlow();
+  }, [finishFlow, openedFromProfilePosts]);
+
+  function returnAfterCapture() {
+    if (openedFromProfilePosts) router.dismissTo("/share");
+    else router.back();
+  }
+
   return (
     <CameraScreen
       autoCropPhotoToGuide
@@ -33,10 +48,16 @@ export default function ShareCameraRoute() {
         // Hand the capture to the share tab first, then pop a couple frames
         // later: dismissing while the tab underneath is still committing its
         // review UI crashes Fabric view mounting on Android (addViewAt).
+        handedCaptureToComposerRef.current = true;
         setPendingPostCapture(asset);
-        setTimeout(() => router.back(), 48);
+        setTimeout(returnAfterCapture, 48);
       }}
       onClose={() => {
+        if (openedFromProfilePosts) {
+          finishFlow();
+          router.back();
+          return;
+        }
         // X abandons the whole post (clears any photos already on review).
         requestPostComposerReset();
         router.back();
@@ -44,8 +65,9 @@ export default function ShareCameraRoute() {
       onGalleryAssets={(assets) => {
         // Straight to review: framing is non-destructive and editable there,
         // so no crop ceremony up front. Items start on the default center 4:5.
+        handedCaptureToComposerRef.current = true;
         setPendingPostCaptures(assets);
-        setTimeout(() => router.back(), 48);
+        setTimeout(returnAfterCapture, 48);
       }}
       photoGuideFrame={guideFrame}
     />

@@ -22,6 +22,12 @@ type PublicFeedPayload = {
   viewerName?: string;
 };
 
+type ProfileAuthorIdentity = {
+  avatarMediaAssetId: string | null;
+  avatarThumbnailUrl: string | null;
+  profileId: string;
+};
+
 const METHODS = ["GET"];
 
 export function OPTIONS(req: NextRequest) {
@@ -42,6 +48,37 @@ function uuidOrNull(value: string | null) {
 
 function initialsForName(name: string) {
   return name.split(/[\s_]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
+}
+
+function avatarCacheRevision(value: string | null | undefined) {
+  if (!value) return 1;
+  try {
+    const match = decodeURIComponent(new URL(value).pathname).match(/\/thumbnail\.r([2-9][0-9]*)\.jpg$/);
+    const revision = match ? Number(match[1]) : 1;
+    return Number.isSafeInteger(revision) ? revision : 1;
+  } catch {
+    return 1;
+  }
+}
+
+async function loadProfileAuthorIdentities(
+  db: ReturnType<typeof createAdminClient>,
+  reviews: Review[]
+): Promise<Record<string, ProfileAuthorIdentity>> {
+  const usernames = Array.from(new Set(reviews.map((review) => review.reviewer_name).filter(Boolean)));
+  if (usernames.length === 0) return {};
+
+  const { data, error } = await db
+    .from("profiles")
+    .select("id, username, avatar_url, avatar_media_asset_id")
+    .in("username", usernames);
+  if (error) throw new Error(`Profile avatar lookup unavailable: ${error.message}`);
+
+  return Object.fromEntries((data ?? []).map((profile) => [profile.username, {
+    avatarMediaAssetId: profile.avatar_media_asset_id ?? null,
+    avatarThumbnailUrl: profile.avatar_url ?? null,
+    profileId: profile.id
+  }]));
 }
 
 function mediaForReview(review: Review, mediaByAssetId: Map<string, PostMediaDto>) {
@@ -154,12 +191,18 @@ export async function GET(req: NextRequest) {
 
   const payload = (data ?? {}) as PublicFeedPayload;
   const reviews = (payload.reviews ?? []).map((row) => normalizeReview(row as Parameters<typeof normalizeReview>[0]));
-  const maps = await buildFeedAssemblyMaps(db, reviews, {
-    includeTasteTrust: true,
-    viewerName: actor?.actorName ?? null,
-    viewerUserId: actor?.userId ?? null,
-  });
   const useCompactProfileMedia = scope === "profile" && Boolean(actor?.userId);
+  const profileAuthorIdentitiesPromise: Promise<Record<string, ProfileAuthorIdentity>> = useCompactProfileMedia
+    ? loadProfileAuthorIdentities(db, reviews)
+    : Promise.resolve({});
+  const [maps, profileAuthorIdentities] = await Promise.all([
+    buildFeedAssemblyMaps(db, reviews, {
+      includeTasteTrust: true,
+      viewerName: actor?.actorName ?? null,
+      viewerUserId: actor?.userId ?? null,
+    }),
+    profileAuthorIdentitiesPromise
+  ]);
   const mediaAssetIds = reviews.flatMap((review) => {
     const items = useCompactProfileMedia ? (review.media_items ?? []).slice(0, 1) : review.media_items ?? [];
     return items.flatMap((item) => item.media_asset_id ? [item.media_asset_id] : []);
@@ -175,6 +218,7 @@ export async function GET(req: NextRequest) {
 
   const posts = reviews.map((review) => {
     const authorName = maps.profileMap[review.reviewer_name] ?? review.reviewer_name;
+    const authorIdentity = profileAuthorIdentities[review.reviewer_name] ?? null;
     const summary = maps.tasteTrustSummaryMap[review.id];
     return {
       id: review.id,
@@ -182,6 +226,13 @@ export async function GET(req: NextRequest) {
       reviewerUsername: review.reviewer_name,
       authorName,
       authorInitials: initialsForName(authorName),
+      authorProfileId: authorIdentity?.profileId ?? null,
+      avatarMediaAssetId: authorIdentity?.avatarMediaAssetId ?? (
+        authorIdentity?.avatarThumbnailUrl ? `profile:${authorIdentity.profileId}` : null
+      ),
+      avatarCacheRevision: avatarCacheRevision(authorIdentity?.avatarThumbnailUrl),
+      avatarPlaceholder: null,
+      avatarThumbnailUrl: authorIdentity?.avatarThumbnailUrl ?? null,
       restaurantId: review.restaurant_id,
       restaurantName: review.restaurant_name,
       area: review.area,

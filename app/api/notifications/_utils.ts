@@ -64,6 +64,13 @@ export async function filterValidNotifications(
   const circleNotifs = notifications.filter(
     (n) => n.type === "CIRCLE_REQUEST_RECEIVED" || n.type === "circle_request"
   );
+  const resolvedCircleNotifs = circleNotifs.filter((notification) => {
+    const metadata = notification.metadata && typeof notification.metadata === "object" && !Array.isArray(notification.metadata)
+      ? notification.metadata as Record<string, Json | undefined>
+      : {};
+    return metadata.status === "accepted" || metadata.status === "rejected";
+  });
+  const pendingCircleNotifs = circleNotifs.filter((notification) => !resolvedCircleNotifs.includes(notification));
   const likeNotifs = notifications.filter(
     (n) => (n.type === "POST_LIKED" || n.type === "like") && n.post_id && n.actor_name
   );
@@ -75,7 +82,7 @@ export async function filterValidNotifications(
   );
 
   const [validCircleIds, validCommentIds] = await Promise.all([
-    validateCircleRequestNotifs(supabase, circleNotifs),
+    validateCircleRequestNotifs(supabase, pendingCircleNotifs),
     validateCommentNotifs(supabase, commentNotifs),
   ]);
   // Like notifications are not validated against the likes table — RLS prevents the
@@ -89,7 +96,7 @@ export async function filterValidNotifications(
 
   const invalidIds = [
     ...retiredThreadNotifs,
-    ...circleNotifs.filter((n) => !validCircleSet.has(n.id)),
+    ...pendingCircleNotifs.filter((n) => !validCircleSet.has(n.id)),
     ...likeNotifs.filter((n) => !validLikeSet.has(n.id)),
     ...commentNotifs.filter((n) => !validCommentSet.has(n.id)),
   ].map((n) => n.id);
@@ -105,7 +112,8 @@ export async function filterValidNotifications(
 
   return [
     ...otherNotifs,
-    ...circleNotifs.filter((n) => validCircleSet.has(n.id)),
+    ...resolvedCircleNotifs,
+    ...pendingCircleNotifs.filter((n) => validCircleSet.has(n.id)),
     ...likeNotifs.filter((n) => validLikeSet.has(n.id)),
     ...commentNotifs.filter((n) => validCommentSet.has(n.id)),
   ].sort((a, b) => effectiveDate(b) - effectiveDate(a));

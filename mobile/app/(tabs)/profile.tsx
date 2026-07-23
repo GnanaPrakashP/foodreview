@@ -7,7 +7,7 @@ import { ActivityIndicator, Animated, Modal, Platform, Pressable, RefreshControl
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
-import { ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
+import { PROFILE_POST_SPACING, ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
@@ -19,9 +19,11 @@ import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurre
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { ProfileSettingsPanel } from "../profile/settings";
+import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData } from "@/types/models";
+import { fallbackAvatarColor } from "@/utils/fallbackAvatar";
 import { useTabPerformance } from "@/performance/useTabPerformance";
 
 type ProfileTab = "posts" | "memories";
@@ -76,9 +78,13 @@ function useProfileTheme() {
   }, [themeColors]);
 }
 
-function profileTabFromParam(tab?: string | string[] | null): ProfileTab {
+function requestedProfileTab(tab?: string | string[] | null): ProfileTab | null {
   const value = Array.isArray(tab) ? tab[0] : tab;
-  return value === "memories" ? "memories" : "posts";
+  return value === "memories" || value === "posts" ? value : null;
+}
+
+function profileTabFromParam(tab?: string | string[] | null): ProfileTab {
+  return requestedProfileTab(tab) ?? "posts";
 }
 
 function formatTrustScore(score: number | string | null | undefined) {
@@ -179,18 +185,32 @@ function ProfileContent({
   const endReachedInFlightRef = useRef(false);
   const memoriesEndReachedInFlightRef = useRef(false);
 
-  const openCreate = useCallback(() => {
+  const beginCreateFlow = useComposerStore((state) => state.beginFlow);
+  const requestCreateLaunch = useComposerStore((state) => state.requestLaunch);
+
+  const openPostCreate = useCallback(() => {
+    beginCreateFlow("profile-posts");
+    router.push({
+      pathname: "/share/camera",
+      params: { origin: "profile-posts" }
+    });
+  }, [beginCreateFlow, router]);
+
+  const openMemoryCreate = useCallback(() => {
+    requestCreateLaunch("memory", "profile-memories");
     router.push("/share");
-  }, [router]);
+  }, [requestCreateLaunch, router]);
 
   const handleProfileTabChange = useCallback((tab: ProfileTab) => {
     activeTabRef.current = tab;
     setActiveTab(tab);
-  }, []);
+    router.setParams({ tab });
+  }, [router]);
 
   useEffect(() => {
     if (!isActiveMainTab) return;
-    const nextTab = profileTabFromParam(params.tab);
+    const nextTab = requestedProfileTab(params.tab);
+    if (!nextTab) return;
     if (nextTab === activeTabRef.current) return;
     activeTabRef.current = nextTab;
     setActiveTab(nextTab);
@@ -328,22 +348,20 @@ function ProfileContent({
         );
       case "memories-empty":
         return (
-          <View style={styles.listInset}>
-            <ListState>
-              <EmptyState
-                actionLabel="Create memory"
-                icon="images-outline"
-                message="Create a private memory for a meal with friends."
-                onAction={() => router.push("/share")}
-                title="No memories yet"
-              />
-            </ListState>
+          <View style={[styles.listInset, styles.profileEmptyState]}>
+            <EmptyState
+              actionLabel="Create memory"
+              icon="images-outline"
+              message="Create a private memory for a meal with friends."
+              onAction={openMemoryCreate}
+              title="No memories yet"
+            />
           </View>
         );
       default:
         return null;
     }
-  }, [memoriesError, memoriesRefetch, pageQuery, router, styles]);
+  }, [memoriesError, memoriesRefetch, openMemoryCreate, pageQuery, styles]);
 
   const makeRefreshControl = useCallback((onRefresh: () => void, refreshing: boolean) => canRefresh ? (
     <RefreshControl
@@ -438,11 +456,13 @@ function ProfileContent({
             collapsibleTabView
             contentContainerStyle={styles.profileListContent}
             emptyActionLabel="Share review"
-            emptyMessage="Share your first food review to start building your profile."
+            emptyMessage="Share your first dining experience."
+            emptyStateStyle={styles.profileEmptyState}
             emptyTitle="No posts yet"
             endReachedLabel="You're all caught up."
             errorMessage={profileErrorMessage(posts.error, "Could not load posts.")}
             hasMore={Boolean(posts.hasNextPage)}
+            hidePostDividers
             homeFocused={profilePostsFocused}
             homeMediaMode
             isError={posts.isError && pagedPosts.length === 0}
@@ -451,10 +471,11 @@ function ProfileContent({
             listStyle={styles.profileList}
             loadingComponent={<ProfilePostSkeleton />}
             mediaPlaybackEnabled={profilePostsFocused}
-            onEmptyAction={openCreate}
+            onEmptyAction={openPostCreate}
             onEndReached={onEndReached}
             onRefresh={canRefresh ? () => { void refreshPosts(); } : undefined}
             onRetry={() => { void posts.refetch(); }}
+            postSpacing={PROFILE_POST_SPACING}
             posts={pagedPosts}
             recyclingList
             refreshing={posts.isRefetching && !posts.isFetchingNextPage}
@@ -528,6 +549,7 @@ function ProfileHero({
   const { PROFILE_COLORS, styles } = useProfileTheme();
   const profile = page.profile;
   const initials = initialsForName(page.displayName, profile.username);
+  const avatarColor = fallbackAvatarColor(profile.username);
   const joinedAt = joinedLabel(profile.createdAt);
 
   return (
@@ -537,7 +559,7 @@ function ProfileHero({
       </Pressable>
 
       <View pointerEvents="none" style={styles.heroIdentityRow}>
-        <View style={styles.avatar}>
+        <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
           {profile.avatarUrl ? (
             <Image
               alt={`${page.displayName} profile photo`}
@@ -1131,11 +1153,14 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     backgroundColor: PROFILE_COLORS.bg,
     paddingBottom: spacing.xl
   },
+  profileEmptyState: {
+    paddingTop: spacing.base
+  },
   profileHeader: {
     backgroundColor: PROFILE_COLORS.bg,
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingTop: screenLayout.topGap
+    paddingTop: screenLayout.topGap + screenLayout.mainTabOpticalInset
   },
   listState: {
     paddingTop: spacing.sm
@@ -1209,7 +1234,6 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   avatar: {
     alignItems: "center",
-    backgroundColor: PROFILE_COLORS.accent,
     borderRadius: radius.pill,
     height: 72,
     justifyContent: "center",

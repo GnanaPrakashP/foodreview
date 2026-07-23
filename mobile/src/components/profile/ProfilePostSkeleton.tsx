@@ -1,11 +1,13 @@
 import { HomeFeedSkeleton } from "@/components/home/HomeFeedSkeleton";
 
-/** Uses the production PostCard-shaped skeleton without Home's inter-card gap. */
+export const PROFILE_POST_SPACING = 10;
+
+/** Uses the production Home-shaped skeleton and matching inter-card rhythm. */
 export function ProfilePostSkeleton() {
   return (
     <HomeFeedSkeleton
       accessibilityLabel="Loading profile posts"
-      postSpacing={0}
+      postSpacing={PROFILE_POST_SPACING}
     />
   );
 }

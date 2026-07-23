@@ -514,8 +514,12 @@ test("mobile table memory creation preserves occasion title and sends occasion m
   assert.match(share, /themeKey: getOccasionTheme\(DEFAULT_MEMORY_OCCASION_TYPE\)\.id/);
   assert.doesNotMatch(share, /Save the place you visited with friends\./);
   assert.doesNotMatch(share, /Save this table memory with friends\./);
-  assert.match(share, /styles\.memoryFriendAddedText/);
-  assert.match(share, /Private to invited friends\./);
+  assert.doesNotMatch(share, /styles\.memoryFriendAddedText/);
+  assert.doesNotMatch(share, /Circle friends join now; everyone else receives an invite\./);
+  assert.match(share, /memoryFriendChip:\s*\{[\s\S]*?backgroundColor: c\.memoryDim[\s\S]*?borderColor: c\.memoryBorder/);
+  assert.match(share, /visible=\{shareMode === "friends" && createMemoryRoom\.isError\}/);
+  assert.match(share, /style=\{styles\.memoryCreateErrorBackdrop\}/);
+  assert.match(share, /<Text style=\{styles\.memoryCreateErrorTitle\}>Could not create Table Memory<\/Text>/);
   assert.doesNotMatch(share, /memoryPrivacyNote/);
   assert.doesNotMatch(share, /styles\.privacyBadge/);
   assert.doesNotMatch(share, /Private memory/);
@@ -524,8 +528,8 @@ test("mobile table memory creation preserves occasion title and sends occasion m
 
   assert.match(memoryService, /occasion\?: string/);
   assert.match(memoryService, /occasionType\?: OccasionType/);
-  assert.match(memoryService, /p_title: input\.occasion\?\.trim\(\) \|\| null/);
-  assert.match(memoryService, /p_occasion_type: occasionType/);
+  assert.match(memoryService, /occasion: input\.occasion\?\.trim\(\) \|\| null/);
+  assert.match(memoryService, /occasionType,/);
   assert.match(memoryService, /update_shared_memory_room_occasion/);
   assert.match(patterns, /DATE_NIGHT_PHRASES/);
   assert.match(patterns, /data team/);
@@ -555,6 +559,17 @@ test("mobile table memory room applies dynamic occasion themes", () => {
   assert.match(memoryRoom, /FoodChatWallpaper patternKey=\{roomOccasionTheme\.backgroundPattern\}/);
   assert.match(memoryRoom, /themeCopy=\{roomOccasionTheme\.copy\}/);
   assert.match(memoryComposer, /placeholder=\{themeCopy\.composerPlaceholder\}/);
+});
+
+test("mobile table memory empty itinerary stays fixed and explains how stops work", () => {
+  const memoryRoom = source("mobile/app/memories/[id].tsx");
+  const itineraryPanel = memoryRoom.match(/function ItineraryPanel\([\s\S]*?\nfunction StopDishRow/)?.[0] ?? "";
+
+  assert.match(itineraryPanel, /if \(isEmpty\) \{[\s\S]*?<View[\s\S]*styles\.itineraryEmptyContent/);
+  assert.doesNotMatch(itineraryPanel.match(/if \(isEmpty\) \{[\s\S]*?\n  \}/)?.[0] ?? "", /<ScrollView/);
+  assert.match(itineraryPanel, /Tap \+ and choose Place to add each location from this occasion, in the order you visited\./);
+  assert.doesNotMatch(itineraryPanel, /the occasion took you/);
+  assert.match(memoryRoom, /const buttonBottom = Math\.max\(FLOATING_ADD_EDGE_OFFSET, bottomInset \+ 6\)/);
 });
 
 test("mobile restaurant tabs animate the indicator and content", () => {

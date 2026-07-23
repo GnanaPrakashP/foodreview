@@ -28,6 +28,7 @@ export type NotificationType =
   | "POST_COMMENTED"
   | "CIRCLE_POST_CREATED"
   | "TABLE_MEMORY_INVITE"
+  | "TABLE_MEMORY_ADDED"
   | "COMMON_RESTAURANT_SCORE_UPDATED"
   | "ACHIEVEMENT_UNLOCKED"
   | "SYSTEM_ANNOUNCEMENT";
@@ -144,6 +145,9 @@ export function notificationUrl(notification: Pick<Notification, "entity_type" |
     const restaurant = typeof metadata.restaurantName === "string" ? metadata.restaurantName : notification.restaurant_name;
     if (restaurant) return `/trending/${encodeURIComponent(restaurant)}`;
   }
+  if (notification.entity_type === "TABLE_MEMORY" && notification.entity_id) {
+    return `/memory-room/${encodeURIComponent(notification.entity_id)}`;
+  }
   return "/notifications";
 }
 
@@ -177,7 +181,7 @@ async function isNotificationCategoryEnabled(db: NotificationDb, recipientName: 
 }
 
 function pushPreferenceColumnForType(type: string): keyof PushSettingsRow | null {
-  if (type === "TABLE_MEMORY_INVITE") return "memory_activity";
+  if (type === "TABLE_MEMORY_INVITE" || type === "TABLE_MEMORY_ADDED") return "memory_activity";
   return notificationCategoryForType(type);
 }
 
@@ -221,6 +225,8 @@ function socialPushCopy(input: CreateNotificationInput): { body: string; title: 
       return { title: "New circle post", body: `${actor} shared a new food post` };
     case "TABLE_MEMORY_INVITE":
       return { title: "Table Memory", body: "You have a new memory room invite." };
+    case "TABLE_MEMORY_ADDED":
+      return { title: "Table Memory", body: "You were added to a Table Memory." };
     default:
       return null;
   }

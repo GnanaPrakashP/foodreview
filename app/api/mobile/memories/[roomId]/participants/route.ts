@@ -170,6 +170,29 @@ export async function POST(
     result.alreadyMembers = allowedCandidateNames.filter((username) => existingMembers.has(username));
     const targetNames = allowedCandidateNames.filter((username) => !existingMembers.has(username));
 
+    if (result.alreadyMembers.length > 0) {
+      const now = new Date().toISOString();
+      const [staleInvites, staleNotifications] = await Promise.all([
+        admin
+          .from("shared_memory_invites")
+          .update({ status: "cancelled", updated_at: now })
+          .eq("room_id", roomId)
+          .eq("status", "pending")
+          .in("receiver_name", result.alreadyMembers),
+        admin
+          .from("notifications")
+          .update({ deleted_at: now, updated_at: now })
+          .eq("entity_type", "TABLE_MEMORY")
+          .eq("entity_id", roomId)
+          .eq("type", "TABLE_MEMORY_INVITE")
+          .is("deleted_at", null)
+          .in("recipient_name", result.alreadyMembers)
+      ]);
+      if (staleInvites.error || staleNotifications.error) {
+        return NextResponse.json({ error: "Unable to reconcile existing participants" }, { status: 500 });
+      }
+    }
+
     if (targetNames.length === 0) return NextResponse.json(result);
 
     const { data: circleRows, error: circleError } = await admin
@@ -194,6 +217,40 @@ export async function POST(
 
       if (addError) return NextResponse.json({ error: "Unable to add participants" }, { status: 500 });
       result.added = addNames;
+
+      const now = new Date().toISOString();
+      const [staleInvites, staleNotifications] = await Promise.all([
+        admin
+          .from("shared_memory_invites")
+          .update({ status: "cancelled", updated_at: now })
+          .eq("room_id", roomId)
+          .eq("status", "pending")
+          .in("receiver_name", addNames),
+        admin
+          .from("notifications")
+          .update({ deleted_at: now, updated_at: now })
+          .eq("entity_type", "TABLE_MEMORY")
+          .eq("entity_id", roomId)
+          .eq("type", "TABLE_MEMORY_INVITE")
+          .is("deleted_at", null)
+          .in("recipient_name", addNames)
+      ]);
+      if (staleInvites.error || staleNotifications.error) {
+        return NextResponse.json({ error: "Unable to reconcile participant invitations" }, { status: 500 });
+      }
+
+      await Promise.all(addNames.map((recipientName) => createNotificationForNames(admin, {
+        recipientName,
+        actorName: inviter,
+        type: "TABLE_MEMORY_ADDED",
+        title: "Table Memory",
+        message: "You were added to a Table Memory.",
+        entityType: "TABLE_MEMORY",
+        entityId: roomId,
+        metadata: { status: "added" },
+        dedupe: true,
+        push: true
+      })));
     }
 
     let inviteRows: InviteRow[] = [];
@@ -221,6 +278,18 @@ export async function POST(
       inviteRows = inviteInsert.data ?? inviteNames.map((receiverName) => ({ id: "", receiver_name: receiverName }));
       result.invited = inviteRows.map((invite) => invite.receiver_name);
 
+      const { error: staleNotificationError } = await admin
+        .from("notifications")
+        .update({ deleted_at: now, updated_at: now })
+        .eq("entity_type", "TABLE_MEMORY")
+        .eq("entity_id", roomId)
+        .eq("type", "TABLE_MEMORY_INVITE")
+        .is("deleted_at", null)
+        .in("recipient_name", result.invited);
+      if (staleNotificationError) {
+        return NextResponse.json({ error: "Unable to refresh participant invitations" }, { status: 500 });
+      }
+
       await Promise.all(inviteRows.map((invite) => createNotificationForNames(admin, {
         recipientName: invite.receiver_name,
         actorName: inviter,
@@ -233,7 +302,7 @@ export async function POST(
           inviteId: invite.id || null,
           status: "pending"
         },
-        dedupe: true,
+        dedupe: false,
         push: true
       })));
     }

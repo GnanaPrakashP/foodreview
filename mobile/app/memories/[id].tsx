@@ -63,6 +63,7 @@ import Reanimated, {
   runOnJS,
   type ScrollEvent,
   type SharedValue,
+  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -102,7 +103,6 @@ import type { AnimatedList as ChatMainAnimatedList } from "@/vendor/reactNativeC
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
 import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
-import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
@@ -294,6 +294,10 @@ const COMPOSER_TOP_GAP = 8;
 // Matches COMPOSER_TOP_GAP so the message box sits with an equal gap above (to the
 // composer's opaque top edge) and below (to the keyboard) when the keyboard is open.
 const COMPOSER_KEYBOARD_OPEN_GAP = 8;
+// Yoga reports layout in density-independent pixels. A real multiline/reply/edit
+// height change is many pixels; one pixel or less is measurement noise and must
+// not create a settle-time React render or list-clearance reconciliation.
+const COMPOSER_HEIGHT_COMMIT_THRESHOLD = 1;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
@@ -342,20 +346,27 @@ const ROOM_HEADER_HORIZONTAL_PADDING = 18;
 const ROOM_HEADER_CONTENT_INSET = 8;
 const ROOM_HEADER_CONTROL_SIZE = 34;
 const ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP = 2;
-const ROOM_HEADER_EXPANDED_IDENTITY_MAX_HEIGHT = 96;
 const ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE = 3;
+const CHAT_HEADER_CLEARANCE = 112;
+const ROOM_HEADER_EXPANDED_HEIGHT = 183;
+const ROOM_HEADER_COMPACT_HEIGHT = 96;
+const ROOM_HEADER_COLLAPSE_DISTANCE = ROOM_HEADER_EXPANDED_HEIGHT - ROOM_HEADER_COMPACT_HEIGHT;
 const ROOM_HEADER_EXPANDED_TITLE_LEFT = ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET + ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE;
-const ROOM_HEADER_EXPANDED_TITLE_RIGHT = ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET;
-const ROOM_HEADER_EXPANDED_TITLE_TOP = spacing.sm + ROOM_HEADER_CONTROL_SIZE + ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP;
 const ROOM_HEADER_COMPACT_TITLE_LEFT = 56;
 const ROOM_HEADER_COMPACT_TITLE_RIGHT = 58;
+const ROOM_HEADER_TITLE_TRANSLATE_X = ROOM_HEADER_COMPACT_TITLE_LEFT - ROOM_HEADER_EXPANDED_TITLE_LEFT;
+const ROOM_HEADER_EXPANDED_TITLE_TOP = spacing.sm + ROOM_HEADER_CONTROL_SIZE + ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP;
 const ROOM_HEADER_COMPACT_TITLE_TOP = 12;
-const CHAT_HEADER_CLEARANCE = 112;
-// The overview header is taller than the compact one: it also shows the expanded
-// identity block (title + date + members) above the tabs, so the itinerary needs
-// to clear roughly that extra height.
-const TABLE_HEADER_CLEARANCE = CHAT_HEADER_CLEARANCE + 56;
+const ROOM_HEADER_TITLE_TRANSLATE_Y = ROOM_HEADER_COMPACT_TITLE_TOP - ROOM_HEADER_EXPANDED_TITLE_TOP;
+const ROOM_HEADER_DETAILS_TOP = ROOM_HEADER_EXPANDED_TITLE_TOP + 27 + ROOM_HEADER_SECTION_GAP;
+const ROOM_HEADER_DETAILS_HEIGHT = 52;
+const ROOM_HEADER_TABS_TOP = ROOM_HEADER_DETAILS_TOP + ROOM_HEADER_DETAILS_HEIGHT;
+// Keep the Table content aligned to the fixed expanded header. A constant inset
+// avoids feeding animated header measurements back into the room screen.
+const TABLE_HEADER_CLEARANCE = ROOM_HEADER_EXPANDED_HEIGHT;
 const CHAT_COMPOSER_CLEARANCE = 88;
+const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
+
 const MEDIA_GALLERY_GAP = 2;
 const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
 const COMPACT_ROOM_HEADER_HEIGHT = 106;
@@ -813,7 +824,6 @@ function MemoryChatMainSurface({
   onDeleteTarget,
   onDeleteSelected,
   onEditMessage,
-  onInputFocus,
   onInputToolbarLayout,
   onLoadOlderMessages,
   onNearBottomChange,
@@ -830,7 +840,7 @@ function MemoryChatMainSurface({
   reactions,
   replyingToMessage,
   resolvedTheme,
-  listKeyboardStyle,
+  surfaceKeyboardStyle,
   toolbarInsetStyle,
   typingVisible
 }: {
@@ -857,7 +867,6 @@ function MemoryChatMainSurface({
   onDeleteTarget: (target: MemoryActionTarget) => void;
   onDeleteSelected: () => void;
   onEditMessage: (message: MemoryMessage) => void;
-  onInputFocus: () => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
@@ -874,7 +883,7 @@ function MemoryChatMainSurface({
   reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
-  listKeyboardStyle: StyleProp<ViewStyle>;
+  surfaceKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
   typingVisible: boolean;
 }) {
@@ -1178,7 +1187,6 @@ function MemoryChatMainSurface({
     styles.chatMainListContent,
     { paddingTop: bottomClearance }
   ], [bottomClearance]);
-
   const sendToolbarMessage = useCallback((
     outgoingMessages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[]
   ) => {
@@ -1209,7 +1217,6 @@ function MemoryChatMainSurface({
       onCancelEdit={onCancelEdit}
       onCancelVoice={() => { void cancelVoiceRecording(); }}
       onClearReply={onCancelReply}
-      onInputFocus={onInputFocus}
       onInputToolbarLayout={onInputToolbarLayout}
       onSend={sendToolbarMessage}
       onSendAudio={() => { void finishAndSendVoiceRecording(); }}
@@ -1491,11 +1498,15 @@ function MemoryChatMainSurface({
   }, [buildMenuActions, selectionMode]);
 
   return (
-    <View pointerEvents={active ? "auto" : "none"} style={styles.chatMainSurface}>
-      <Reanimated.View style={[styles.chatMainMessagesLayer, listKeyboardStyle]}>
+    <Reanimated.View
+      pointerEvents={active ? "auto" : "none"}
+      style={[styles.chatMainSurface, surfaceKeyboardStyle]}
+    >
+      <View style={styles.chatMainMessagesLayer}>
         <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
           disableKeyboardProvider
+          provideSafeAreaContext={false}
           isDayAnimationEnabled
           isScrollToBottomEnabled
           isTyping={typingVisible || voiceSending}
@@ -1606,9 +1617,10 @@ function MemoryChatMainSurface({
           }}
           user={currentUser}
         />
-      </Reanimated.View>
+      </View>
+      <View pointerEvents="none" style={styles.chatKeyboardBridge} />
       {composerToolbar}
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -1986,7 +1998,6 @@ type MemoryChatMainToolbarProps = {
   onCancelEdit: () => void;
   onCancelVoice: () => void;
   onClearReply?: () => void;
-  onInputFocus: () => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onSend?: (
     messages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[],
@@ -2012,7 +2023,6 @@ function MemoryChatMainInputToolbar({
   onCancelEdit,
   onCancelVoice,
   onClearReply,
-  onInputFocus,
   onInputToolbarLayout,
   onSend,
   onSendAudio,
@@ -2154,7 +2164,6 @@ function MemoryChatMainInputToolbar({
                 maxLength={MEMORY_TEXT_MAX_LENGTH}
                 multiline
                 onChangeText={handleChangeText}
-                onFocus={onInputFocus}
                 placeholder="Type a message"
                 placeholderTextColor={ROOM_COLORS.muted}
                 ref={inputRef}
@@ -2536,6 +2545,29 @@ function getComposerClosedBottomPadding(bottomInset: number) {
   return Math.max(bottomInset + COMPOSER_CLOSED_SAFE_GAP, fallbackGap);
 }
 
+function getChatKeyboardShift(
+  keyboardOffset: number,
+  keyboardProgress: number,
+  closedComposerBottomPadding: number
+) {
+  "worklet";
+  // Geometry:
+  // - closed: keyboardOffset=0, progress=0, so shift=0 and the existing
+  //   safe-area/navigation padding is preserved;
+  // - open: keyboardOffset=-keyboardHeight, progress=1, so the closed gap is
+  //   reduced exactly once to COMPOSER_KEYBOARD_OPEN_GAP.
+  // Blending that gap reduction with the native progress removes the old clamp
+  // dead zone while keeping the keyboard frame as the only motion authority.
+  const closedComposerBottomGap = closedComposerBottomPadding;
+  const openComposerBottomGap = COMPOSER_KEYBOARD_OPEN_GAP;
+  const animatedGapReduction = (closedComposerBottomGap - openComposerBottomGap) * keyboardProgress;
+  return keyboardOffset + animatedGapReduction;
+}
+
+function hasMeaningfulComposerHeightChange(nextHeight: number, committedHeight: number) {
+  return Math.abs(nextHeight - committedHeight) > COMPOSER_HEIGHT_COMMIT_THRESHOLD;
+}
+
 type KeyboardMotionValues = {
   offset: SharedValue<number>;
   progress: SharedValue<number>;
@@ -2575,6 +2607,11 @@ export default function MemoryDetailScreen() {
   const roomId = params.id ?? "";
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  // Keep the chat composer's closed-state baseline stable while the IME covers
+  // the gesture area. Edge-to-edge Android can report bottom=0 mid-transition;
+  // accepting that live inset would add a React layout correction on top of
+  // the UI-thread keyboard transform.
+  const [frozenComposerBottomInset] = useState(() => insets.bottom);
   const { resolvedTheme } = useThemePreference();
   applyRoomTheme(resolvedTheme, "unknown");
   const room = useMemoryRoomQuery(roomId);
@@ -2602,7 +2639,10 @@ export default function MemoryDetailScreen() {
   const nearBottomRef = useRef(false);
   const composerHeightRef = useRef(0);
   const pendingComposerHeightRef = useRef<number | null>(null);
-  const composerHeightFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconcileChatAfterKeyboardSettleRef = useRef<() => void>(() => {});
+  const reconcileChatAfterKeyboardSettle = useCallback(() => {
+    reconcileChatAfterKeyboardSettleRef.current();
+  }, []);
   // Active chat uses the vendored inverted AnimatedFlatList (newest at offset 0).
   // Keep bottom-follow wired to that live list, not the inactive ChatTimeline.
   const scrollChatToBottom = useCallback((animated: boolean) => {
@@ -2645,9 +2685,6 @@ export default function MemoryDetailScreen() {
   const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
   const [stopComposerVisible, setStopComposerVisible] = useState(false);
   const [dishTargetStopId, setDishTargetStopId] = useState<string | null>(null);
-  // Measured overview-header height so the itinerary clears the (taller) expanded
-  // header instead of tucking under it. Falls back to the static estimate.
-  const [tableHeaderHeight, setTableHeaderHeight] = useState(TABLE_HEADER_CLEARANCE);
   const [attachmentInitialView, setAttachmentInitialView] = useState<AttachmentSheetView>("actions");
   const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
   const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
@@ -2734,7 +2771,6 @@ export default function MemoryDetailScreen() {
   }, [attachmentOptionsVisible, dishKeyboardProgress]);
 
   useEffect(() => () => {
-    if (composerHeightFlushTimeoutRef.current) clearTimeout(composerHeightFlushTimeoutRef.current);
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
     if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
   }, []);
@@ -2901,33 +2937,29 @@ export default function MemoryDetailScreen() {
     markLatestRoomRead();
   }, [markRead, mode, room.data, roomId]);
 
-  // Keyboard handling: the composer is an absolute sibling of the message
-  // list, so only the draft container rides the OS keyboard; the screen itself
-  // does not relayout. The shift is derived from the DRIVEN keyboard height
-  // (pre-calculated open animation, gated per-frame close) rather than the raw
-  // per-frame events — raw-following was proven on-device to hop/judder at the
-  // top of the open because display frames drop until the IME animation
-  // completes. See useDrivenKeyboardHeight for the forensics. The safe-area
-  // gap is a flat subtraction from that single value (not blended by a second
-  // progress signal — two signals settling on different frames wiggles).
+  // Keyboard handling: one common surface carries the composer, message list,
+  // and panel-coloured bridge using the root provider's native keyboard frame.
+  // The children have no keyboard transform or settle-time padding handoff, so
+  // their relative coordinates cannot diverge during the IME transition. The
+  // closed safe-area/navigation gap is blended down to the open keyboard gap
+  // over the native progress.
   const keyboardMotion = useKeyboardMotion();
-  const { height: drivenKeyboardHeight } = useDrivenKeyboardHeight();
   const isChatMode = mode === "chat";
-  const closedComposerBottomPadding = getComposerClosedBottomPadding(insets.bottom);
+  const closedComposerBottomPadding = getComposerClosedBottomPadding(frozenComposerBottomInset);
   const chatKeyboardShift = useDerivedValue(() => {
     if (!isChatMode) return 0;
-    const closedSafeAreaGap = Math.max(0, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
-    return -Math.max(0, drivenKeyboardHeight.value - closedSafeAreaGap);
+    return getChatKeyboardShift(
+      keyboardMotion.offset.value,
+      keyboardMotion.progress.value,
+      closedComposerBottomPadding
+    );
   }, [closedComposerBottomPadding, isChatMode]);
-  const chatListKeyboardStyle = useAnimatedStyle(() => ({
+  const chatMainSurfaceKeyboardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: chatKeyboardShift.value }]
   }), []);
-  const composerKeyboardStyle = useAnimatedStyle(() => {
-    return {
-      paddingBottom: closedComposerBottomPadding,
-      transform: [{ translateY: chatKeyboardShift.value }]
-    };
-  }, [closedComposerBottomPadding]);
+  const composerBottomInsetStyle = useMemo<ViewStyle>(() => ({
+    paddingBottom: closedComposerBottomPadding
+  }), [closedComposerBottomPadding]);
 
   function repinChatToBottom() {
     if (!nearBottomRef.current) return;
@@ -2940,41 +2972,22 @@ export default function MemoryDetailScreen() {
     return progress > 0.001 && progress < 0.999;
   }
 
-  function commitComposerHeight(nextHeight: number) {
-    if (Math.abs(nextHeight - composerHeightRef.current) < 1) return;
+  function commitComposerHeight(nextHeight: number, repin = true) {
+    if (!hasMeaningfulComposerHeightChange(nextHeight, composerHeightRef.current)) return false;
     composerHeightRef.current = nextHeight;
     setChatBottomClearance(nextHeight);
-    repinChatToBottom();
-  }
-
-  function schedulePendingComposerHeightFlush() {
-    if (composerHeightFlushTimeoutRef.current) clearTimeout(composerHeightFlushTimeoutRef.current);
-    composerHeightFlushTimeoutRef.current = setTimeout(() => {
-      composerHeightFlushTimeoutRef.current = null;
-      flushPendingComposerHeight();
-    }, 260);
-  }
-
-  function flushPendingComposerHeight() {
-    const pendingHeight = pendingComposerHeightRef.current;
-    if (pendingHeight == null) return;
-    if (isChatKeyboardTransitioning()) {
-      schedulePendingComposerHeightFlush();
-      return;
-    }
-    pendingComposerHeightRef.current = null;
-    commitComposerHeight(pendingHeight);
+    if (repin) repinChatToBottom();
+    return true;
   }
 
   function handleComposerLayout(event: LayoutChangeEvent) {
-    const nextHeight = Math.round(event.nativeEvent.layout.height);
-    if (Math.abs(nextHeight - composerHeightRef.current) < 1) {
+    const nextHeight = event.nativeEvent.layout.height;
+    if (!hasMeaningfulComposerHeightChange(nextHeight, composerHeightRef.current)) {
       pendingComposerHeightRef.current = null;
       return;
     }
     if (isChatKeyboardTransitioning()) {
       pendingComposerHeightRef.current = nextHeight;
-      schedulePendingComposerHeightFlush();
       return;
     }
     pendingComposerHeightRef.current = null;
@@ -2986,9 +2999,34 @@ export default function MemoryDetailScreen() {
     if (isNearBottom) markLatestRoomRead();
   }
 
-  function handleComposerFocus() {
+  reconcileChatAfterKeyboardSettleRef.current = () => {
+    if (!isChatMode) return;
+    const pendingHeight = pendingComposerHeightRef.current;
+    pendingComposerHeightRef.current = null;
+    if (pendingHeight == null) return;
+    if (!hasMeaningfulComposerHeightChange(pendingHeight, composerHeightRef.current)) return;
+    if (!commitComposerHeight(pendingHeight, false)) return;
+    // Reconcile only when real composer content changed during the transition.
+    // An ordinary keyboard open/close performs no scroll or React layout work.
     repinChatToBottom();
-  }
+  };
+
+  useAnimatedReaction(
+    () => keyboardMotion.progress.value,
+    (currentProgress, previousProgress) => {
+      const currentBoundary = currentProgress <= 0.001 ? 0 : currentProgress >= 0.999 ? 1 : -1;
+      const previousBoundary = previousProgress == null
+        ? currentBoundary
+        : previousProgress <= 0.001
+          ? 0
+          : previousProgress >= 0.999
+            ? 1
+            : -1;
+      if (currentBoundary < 0 || currentBoundary === previousBoundary) return;
+      runOnJS(reconcileChatAfterKeyboardSettle)();
+    },
+    [keyboardMotion.progress, reconcileChatAfterKeyboardSettle]
+  );
 
   function showPeopleToast(message: string) {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
@@ -3692,7 +3730,6 @@ export default function MemoryDetailScreen() {
   const stableSend = useStableHandler(submitMessage);
   const stableSendAudio = useStableHandler(sendAudioMessage);
   const stableToggleReaction = useStableHandler(toggleMessageReaction);
-  const stableInputFocus = useStableHandler(handleComposerFocus);
   const stableInputToolbarLayout = useStableHandler(handleComposerLayout);
   const stableNearBottomChange = useStableHandler(handleChatNearBottomChange);
 
@@ -3755,9 +3792,6 @@ export default function MemoryDetailScreen() {
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
         onChangeMode={requestRoomMode}
-        onHeightChange={(height) => {
-          if (headerMode === "overview" && height > 0) setTableHeaderHeight(height);
-        }}
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
@@ -3785,12 +3819,12 @@ export default function MemoryDetailScreen() {
                     removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
-                    topInset={tableHeaderHeight}
+                    topInset={TABLE_HEADER_CLEARANCE}
                   />
                 </RoomPane>
                 <RoomPane active={paneTabMode === "chat"}>
                   <MemoryChatMainSurfacePane
-                    active={mode === "chat"}
+                    active={paneTabMode === "chat"}
                     bottomClearance={chatBottomClearance}
                     canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
@@ -3802,7 +3836,6 @@ export default function MemoryDetailScreen() {
                     inputRef={messageInputRef}
                     listRef={chatMainListRef}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
-                    listKeyboardStyle={chatListKeyboardStyle}
                     message={message}
                     myUsername={myUsername}
                     selectedItemKeys={selectedItemKeys}
@@ -3814,7 +3847,6 @@ export default function MemoryDetailScreen() {
                     onDeleteSelected={stableDeleteSelected}
                     onDeleteTarget={stableDeleteTarget}
                     onEditMessage={stableEditMessage}
-                    onInputFocus={stableInputFocus}
                     onInputToolbarLayout={stableInputToolbarLayout}
                     onLoadOlderMessages={loadOlderMessages}
                     onNearBottomChange={stableNearBottomChange}
@@ -3831,7 +3863,8 @@ export default function MemoryDetailScreen() {
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
                     scrollToBottom={scrollChatToBottom}
-                    toolbarInsetStyle={composerKeyboardStyle}
+                    surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
+                    toolbarInsetStyle={composerBottomInsetStyle}
                     typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
@@ -3980,13 +4013,10 @@ export default function MemoryDetailScreen() {
 }
 
 function RoomKeyboardContainer({ chatMode, children }: { chatMode: boolean; children: ReactNode }) {
-  if (chatMode) {
-    return <View style={styles.keyboard}>{children}</View>;
-  }
-
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={!chatMode && Platform.OS === "ios" ? "padding" : undefined}
+      enabled={!chatMode}
       keyboardVerticalOffset={0}
       style={styles.keyboard}
     >
@@ -4004,7 +4034,6 @@ function RoomHeader({
   onAddPeople,
   onBack,
   onChangeMode,
-  onHeightChange,
   onOpenActions,
   onViewPeople,
   pagerPosition,
@@ -4019,7 +4048,6 @@ function RoomHeader({
   onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
-  onHeightChange?: (height: number) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
   pagerPosition: SharedValue<number>;
@@ -4032,8 +4060,6 @@ function RoomHeader({
   const isCompactHeader = mode !== "overview";
   const compactTitle = isMembersArea ? "Members" : roomTitle;
   const visualTabMode: RoomTabMode = isMembersArea ? "overview" : mode;
-  const activeTabIndex = ROOM_TABS.findIndex((tab) => tab.mode === visualTabMode);
-  const hasActiveTab = activeTabIndex >= 0;
   // Collapse + tab indicator follow the controlled room tab position. Table
   // (index 0) stays expanded; every other tab is compact.
   const collapseProgress = useDerivedValue(() => Math.min(Math.max(pagerPosition.value, 0), 1));
@@ -4043,42 +4069,33 @@ function RoomHeader({
     opacity: 1 - keyboardProgress.value,
     transform: [{ translateY: -24 * keyboardProgress.value }]
   }));
-  const [tabBarWidth, setTabBarWidth] = useState(0);
-  const tabTrackWidth = Math.max(0, tabBarWidth - 4);
-  const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
-  const tabIndicatorStyle = useAnimatedStyle(() => ({
+  // One continuous header collapses: the lower surface edge and tab bar travel
+  // upward together, the same title moves into the compact top row, and details
+  // roll out through a fixed clip. Every animated value is a transform.
+  const expansionSurfaceStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -ROOM_HEADER_COLLAPSE_DISTANCE * collapseProgress.value }]
+  }));
+  const titleMotionStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateX: 2 + tabWidth * Math.min(Math.max(pagerPosition.value, 0), ROOM_TABS.length - 1) }
+      { translateX: ROOM_HEADER_TITLE_TRANSLATE_X * collapseProgress.value },
+      { translateY: ROOM_HEADER_TITLE_TRANSLATE_Y * collapseProgress.value }
     ]
   }));
-  const titleStyle = useAnimatedStyle(() => ({
-    fontSize: interpolate(collapseProgress.value, [0, 1], [20, 19]),
-    left: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_LEFT, ROOM_HEADER_COMPACT_TITLE_LEFT]),
-    lineHeight: interpolate(collapseProgress.value, [0, 1], [27, 25]),
-    right: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_RIGHT, ROOM_HEADER_COMPACT_TITLE_RIGHT]),
-    top: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_TITLE_TOP, ROOM_HEADER_COMPACT_TITLE_TOP])
+  const detailsMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -ROOM_HEADER_DETAILS_HEIGHT * collapseProgress.value }]
   }));
-  const expandedIdentityStyle = useAnimatedStyle(() => ({
-    marginTop: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP, 0]),
-    maxHeight: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_EXPANDED_IDENTITY_MAX_HEIGHT, 0]),
-    opacity: interpolate(collapseProgress.value, [0, 0.45, 1], [1, 0.12, 0]),
-    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -10]) }]
+  const tabsMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -ROOM_HEADER_COLLAPSE_DISTANCE * collapseProgress.value }]
   }));
-  const addFriendSlotStyle = useAnimatedStyle(() => ({
-    marginRight: interpolate(collapseProgress.value, [0, 1], [spacing.sm, 0]),
-    opacity: interpolate(collapseProgress.value, [0, 0.7, 1], [1, 0.15, 0]),
-    transform: [{ translateX: interpolate(collapseProgress.value, [0, 1], [0, 24]) }],
-    width: interpolate(collapseProgress.value, [0, 1], [ROOM_HEADER_CONTROL_SIZE, 0])
+  const addFriendMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -ROOM_HEADER_CONTROL_SIZE * 1.5 * collapseProgress.value }]
   }));
-  const tabBarStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: interpolate(collapseProgress.value, [0, 1], [0, -4]) }]
-  }));
-  const orderedParticipants = [...data.participants].sort((first, second) => {
+  const orderedParticipants = useMemo(() => [...data.participants].sort((first, second) => {
     const firstIsMe = first.username.toLowerCase() === myUsername.toLowerCase();
     const secondIsMe = second.username.toLowerCase() === myUsername.toLowerCase();
     if (firstIsMe === secondIsMe) return 0;
     return firstIsMe ? -1 : 1;
-  });
+  }), [data.participants, myUsername]);
   const visibleAvatars = orderedParticipants.slice(0, 4);
   const hiddenAvatarCount = Math.max(0, orderedParticipants.length - visibleAvatars.length);
   const friendNames = orderedParticipants.map((participant) => friendSummaryName(participant, myUsername));
@@ -4091,21 +4108,15 @@ function RoomHeader({
       aria-hidden={transitioning ? true : undefined}
       accessibilityElementsHidden={transitioning}
       importantForAccessibility={transitioning ? "no-hide-descendants" : "auto"}
-      onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
-      pointerEvents={transitioning ? "none" : "auto"}
+      pointerEvents={transitioning ? "none" : "box-none"}
       style={[styles.header, headerHideStyle]}
     >
-      <View pointerEvents="none" style={styles.sharedRoomTitleLayer}>
-        <Reanimated.Text
-          adjustsFontSizeToFit
-          maxFontSizeMultiplier={1}
-          minimumFontScale={0.78}
-          numberOfLines={1}
-          style={[styles.sharedRoomTitle, titleStyle]}
-        >
-          {compactTitle}
-        </Reanimated.Text>
-      </View>
+      <View pointerEvents="none" style={styles.headerCompactSurface} />
+      <Reanimated.View
+        pointerEvents="none"
+        style={[styles.headerExpansionSurface, expansionSurfaceStyle]}
+      />
+
       <View style={styles.headerTop}>
         <Pressable
           accessibilityLabel={transitioning ? undefined : "Go back"}
@@ -4116,12 +4127,12 @@ function RoomHeader({
         >
           <Ionicons name="arrow-back" size={20} color={ROOM_COLORS.onSurface} />
         </Pressable>
-        <View pointerEvents="none" style={styles.compactRoomTitleWrap} />
-        {isMembersArea ? null : (
-          <View style={styles.headerActions}>
+        <View pointerEvents="none" style={styles.headerTopTitleSpacer} />
+        <View style={styles.headerActions}>
+          {isMembersArea ? null : (
             <Reanimated.View
               pointerEvents={isCompactHeader ? "none" : "auto"}
-              style={[styles.headerAddFriendSlot, addFriendSlotStyle]}
+              style={[styles.headerAddFriendSlot, addFriendMotionStyle]}
             >
               <Pressable
                 accessibilityLabel={transitioning ? undefined : "Add friends"}
@@ -4133,37 +4144,37 @@ function RoomHeader({
                 <Ionicons name="person-add-outline" size={20} color={ROOM_COLORS.onSurface} />
               </Pressable>
             </Reanimated.View>
-            <Pressable
-              accessibilityLabel={transitioning ? undefined : "Room actions"}
-              accessibilityRole={transitioning ? undefined : "button"}
-              hitSlop={8}
-              onPress={onOpenActions}
-              style={styles.headerIconButton}
-            >
-              <Ionicons name="ellipsis-vertical" size={20} color={ROOM_COLORS.onSurface} />
-            </Pressable>
-          </View>
-        )}
+          )}
+          <Pressable
+            accessibilityLabel={transitioning ? undefined : "Room actions"}
+            accessibilityRole={transitioning ? undefined : "button"}
+            hitSlop={8}
+            onPress={onOpenActions}
+            style={styles.headerIconButton}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={ROOM_COLORS.onSurface} />
+          </Pressable>
+        </View>
       </View>
 
-      <Reanimated.View
-        accessibilityElementsHidden={isCompactHeader}
-        importantForAccessibility={isCompactHeader ? "no-hide-descendants" : "auto"}
-        pointerEvents={isCompactHeader ? "none" : "auto"}
-        style={[styles.roomIdentityAnimated, expandedIdentityStyle]}
+      <Reanimated.Text
+        adjustsFontSizeToFit
+        maxFontSizeMultiplier={1}
+        minimumFontScale={0.78}
+        numberOfLines={1}
+        pointerEvents="none"
+        style={[styles.movingRoomTitle, titleMotionStyle]}
       >
-        <View style={styles.roomIdentity}>
-          <Text
-            accessibilityElementsHidden
-            adjustsFontSizeToFit
-            importantForAccessibility="no-hide-descendants"
-            maxFontSizeMultiplier={1}
-            minimumFontScale={0.78}
-            numberOfLines={1}
-            style={[styles.expandedRoomTitle, styles.expandedRoomTitlePlaceholder]}
-          >
-            {roomTitle}
-          </Text>
+        {compactTitle}
+      </Reanimated.Text>
+
+      <View
+        accessibilityElementsHidden={isCompactHeader || transitioning}
+        importantForAccessibility={isCompactHeader || transitioning ? "no-hide-descendants" : "auto"}
+        pointerEvents={isCompactHeader || transitioning ? "none" : "box-none"}
+        style={styles.headerDetailsClip}
+      >
+        <Reanimated.View style={[styles.headerDetails, detailsMotionStyle]}>
           <View style={styles.roomMetaRow}>
             <View style={styles.roomMetaGroup}>
               <View style={styles.roomMetaIconSlot}>
@@ -4199,40 +4210,69 @@ function RoomHeader({
             </View>
             <Text numberOfLines={1} style={styles.roomFriendsText}>{friendsLabel}</Text>
           </Pressable>
-        </View>
-      </Reanimated.View>
+        </Reanimated.View>
+      </View>
 
-      <Reanimated.View
-        pointerEvents={isMembersArea ? "none" : "auto"}
-        style={[styles.modeTabsAnimated, tabBarStyle]}
-      >
-        <View
-          onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
-          style={styles.modeTabs}
-        >
-          {tabWidth > 0 && hasActiveTab ? (
-            <Reanimated.View
-              pointerEvents="none"
-              style={[
-                styles.modeTabIndicator,
-                { width: tabWidth },
-                tabIndicatorStyle
-              ]}
-            />
-          ) : null}
-          {ROOM_TABS.map((tab) => (
-            <ModeButton
-              active={visualTabMode === tab.mode}
-              icon={tab.icon}
-              key={tab.mode}
-              label={tab.label}
-              onPress={() => onChangeMode(tab.mode)}
-              unreadCount={tab.mode === "chat" ? unreadChatCount : 0}
-            />
-          ))}
-        </View>
+      <Reanimated.View style={[styles.headerTabsPosition, tabsMotionStyle]}>
+        <RoomModeTabs
+          mode={visualTabMode}
+          onChangeMode={onChangeMode}
+          pagerPosition={pagerPosition}
+          unreadChatCount={unreadChatCount}
+        />
       </Reanimated.View>
     </Reanimated.View>
+  );
+}
+
+function RoomModeTabs({
+  mode,
+  onChangeMode,
+  pagerPosition,
+  unreadChatCount
+}: {
+  mode: RoomTabMode;
+  onChangeMode: (mode: RoomMode) => void;
+  pagerPosition: SharedValue<number>;
+  unreadChatCount: number;
+}) {
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const tabTrackWidth = Math.max(0, tabBarWidth - 4);
+  const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
+  const tabIndicatorStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: 2 + tabWidth * Math.min(Math.max(pagerPosition.value, 0), ROOM_TABS.length - 1) }
+    ]
+  }));
+
+  return (
+    <View style={styles.modeTabsAnimated}>
+      <View
+        onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+        style={styles.modeTabs}
+      >
+        {tabWidth > 0 ? (
+          <Reanimated.View
+            pointerEvents="none"
+            style={[
+              styles.modeTabIndicator,
+              { width: tabWidth },
+              tabIndicatorStyle
+            ]}
+          />
+        ) : null}
+        {ROOM_TABS.map((tab) => (
+          <ModeButton
+            active={mode === tab.mode}
+            icon={tab.icon}
+            key={tab.mode}
+            label={tab.label}
+            onPress={() => onChangeMode(tab.mode)}
+            unreadCount={tab.mode === "chat" ? unreadChatCount : 0}
+          />
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -7231,10 +7271,8 @@ function ItineraryPanel({
   themeCopy: OccasionTheme["copy"];
   topInset?: number;
 }) {
-  const { height: screenHeight } = useWindowDimensions();
   const topPadding = topInset != null ? topInset + spacing.sm : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
-  const emptyPanelMinHeight = Math.max(260, screenHeight - topPadding - bottomPadding);
   const dishesByStop = dishes.reduce<Record<string, MemoryDish[]>>((groups, dish) => {
     if (!dish.stopId) return groups;
     groups[dish.stopId] = [...(groups[dish.stopId] ?? []), dish];
@@ -7243,85 +7281,95 @@ function ItineraryPanel({
   const unassignedDishes = dishes.filter((dish) => !dish.stopId);
   const isEmpty = stops.length === 0 && unassignedDishes.length === 0;
 
+  if (isEmpty) {
+    return (
+      <View
+        style={[
+          styles.itineraryEmptyContent,
+          { paddingBottom: bottomPadding, paddingTop: topPadding }
+        ]}
+      >
+        <View style={styles.itineraryEmptyPanel}>
+          <View style={styles.emptyIcon}>
+            <Ionicons name="map-outline" size={26} color={ROOM_COLORS.cool} />
+          </View>
+          <Text style={styles.emptyTitle}>Plan your stops</Text>
+          <Text style={styles.emptyText}>
+            Tap + and choose Place to add each location from this occasion, in the order you visited.
+          </Text>
+        </View>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
       showsVerticalScrollIndicator={false}
     >
-      {isEmpty ? (
-        <View style={[styles.itineraryEmptyPanel, { minHeight: emptyPanelMinHeight }]}>
-          <View style={styles.emptyIcon}>
-            <Ionicons name="map-outline" size={26} color={ROOM_COLORS.cool} />
-          </View>
-          <Text style={styles.emptyTitle}>Plan your stops</Text>
-          <Text style={styles.emptyText}>Tap the + button and choose Place to add each spot the occasion took you — dinner, drinks, a movie.</Text>
-        </View>
-      ) : (
-        <>
-          <Text style={styles.itineraryHeading}>Itinerary</Text>
-          {stops.map((stop, index) => {
-            const meta = MEMORY_STOP_META[stop.stopType];
-            const stopDishes = dishesByStop[stop.id] ?? [];
-            const removing = removingStopId === stop.id;
-            return (
-              <View key={stop.id} style={[styles.stopCard, removing && styles.stopCardRemoving]}>
-                <View style={styles.stopHeaderRow}>
-                  <View style={styles.stopEmojiWrap}>
-                    <Text style={styles.stopEmoji}>{meta.emoji}</Text>
-                  </View>
-                  <View style={styles.stopHeaderText}>
-                    <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
-                    <Text style={styles.stopTypeLabel}>{`Stop ${index + 1} · ${meta.label}`}</Text>
-                  </View>
-                  <Pressable
-                    accessibilityLabel={`Remove ${stop.name}`}
-                    accessibilityRole="button"
-                    disabled={removing}
-                    hitSlop={8}
-                    onPress={() => onRemoveStop(stop.id)}
-                    style={styles.stopRemoveButton}
-                  >
-                    <Ionicons name="close" size={16} color={ROOM_COLORS.muted} />
-                  </Pressable>
-                </View>
-                {stop.note ? <Text style={styles.stopNote}>{stop.note}</Text> : null}
-                {stopDishes.length > 0 ? (
-                  <View style={styles.stopDishList}>
-                    {stopDishes.map((dish) => (
-                      <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
-                    ))}
-                  </View>
-                ) : null}
-                {meta.canHaveDishes ? (
-                  <Pressable accessibilityRole="button" onPress={() => onAddDishToStop(stop.id)} style={styles.stopAddDishButton}>
-                    <Ionicons name="add" size={15} color={ROOM_COLORS.cool} />
-                    <Text style={styles.stopAddDishText}>Add dish</Text>
-                  </Pressable>
-                ) : null}
+      <Text style={styles.itineraryHeading}>Itinerary</Text>
+      {stops.map((stop, index) => {
+        const meta = MEMORY_STOP_META[stop.stopType];
+        const stopDishes = dishesByStop[stop.id] ?? [];
+        const removing = removingStopId === stop.id;
+        return (
+          <View key={stop.id} style={[styles.stopCard, removing && styles.stopCardRemoving]}>
+            <View style={styles.stopHeaderRow}>
+              <View style={styles.stopEmojiWrap}>
+                <Text style={styles.stopEmoji}>{meta.emoji}</Text>
               </View>
-            );
-          })}
-
-          {unassignedDishes.length > 0 ? (
-            <View style={styles.stopCard}>
-              <View style={styles.stopHeaderRow}>
-                <View style={styles.stopEmojiWrap}>
-                  <Text style={styles.stopEmoji}>🍽️</Text>
-                </View>
-                <View style={styles.stopHeaderText}>
-                  <Text style={styles.stopName}>Other dishes</Text>
-                  <Text style={styles.stopTypeLabel}>Not tied to a stop</Text>
-                </View>
+              <View style={styles.stopHeaderText}>
+                <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
+                <Text style={styles.stopTypeLabel}>{`Stop ${index + 1} · ${meta.label}`}</Text>
               </View>
+              <Pressable
+                accessibilityLabel={`Remove ${stop.name}`}
+                accessibilityRole="button"
+                disabled={removing}
+                hitSlop={8}
+                onPress={() => onRemoveStop(stop.id)}
+                style={styles.stopRemoveButton}
+              >
+                <Ionicons name="close" size={16} color={ROOM_COLORS.muted} />
+              </Pressable>
+            </View>
+            {stop.note ? <Text style={styles.stopNote}>{stop.note}</Text> : null}
+            {stopDishes.length > 0 ? (
               <View style={styles.stopDishList}>
-                {unassignedDishes.map((dish) => (
+                {stopDishes.map((dish) => (
                   <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
                 ))}
               </View>
+            ) : null}
+            {meta.canHaveDishes ? (
+              <Pressable accessibilityRole="button" onPress={() => onAddDishToStop(stop.id)} style={styles.stopAddDishButton}>
+                <Ionicons name="add" size={15} color={ROOM_COLORS.cool} />
+                <Text style={styles.stopAddDishText}>Add dish</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        );
+      })}
+
+      {unassignedDishes.length > 0 ? (
+        <View style={styles.stopCard}>
+          <View style={styles.stopHeaderRow}>
+            <View style={styles.stopEmojiWrap}>
+              <Text style={styles.stopEmoji}>🍽️</Text>
             </View>
-          ) : null}
-        </>
-      )}
+            <View style={styles.stopHeaderText}>
+              <Text style={styles.stopName}>Other dishes</Text>
+              <Text style={styles.stopTypeLabel}>Not tied to a stop</Text>
+            </View>
+          </View>
+          <View style={styles.stopDishList}>
+            {unassignedDishes.map((dish) => (
+              <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
+            ))}
+          </View>
+        </View>
+      ) : null}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </ScrollView>
@@ -7902,14 +7950,17 @@ function PeoplePanel({
             </View>
           ) : null}
           {selectedParticipants.length > 0 ? (
-            <View style={styles.selectedPeopleChips}>
-              {selectedParticipants.map((person) => (
-                <Pressable key={person.username} onPress={() => onRemoveSelectedParticipant(person.username)} style={styles.selectedPeopleChip}>
-                  <Text numberOfLines={1} style={styles.selectedPeopleChipText}>@{person.username}</Text>
-                  <Ionicons name="close" size={12} color={ROOM_COLORS.muted} />
-                </Pressable>
-              ))}
-            </View>
+            <>
+              <View style={styles.selectedPeopleChips}>
+                {selectedParticipants.map((person) => (
+                  <Pressable key={person.username} onPress={() => onRemoveSelectedParticipant(person.username)} style={styles.selectedPeopleChip}>
+                    <Text numberOfLines={1} style={styles.selectedPeopleChipText}>@{person.username}</Text>
+                    <Ionicons name="close" size={12} color={ROOM_COLORS.muted} />
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.peopleSuggestionMuted}>Circle friends join now; everyone else receives an invite.</Text>
+            </>
           ) : null}
         </View>
 
@@ -8597,10 +8648,17 @@ function SingleMediaPreview({
     imageWidth: media.imageWidth,
     screenWidth
   });
+  // A chat image is already clipped by its outer media frame/card. Let the
+  // fixed-size container and image host pass that clip through so Android does
+  // not build two additional clipped layers while their common Chat ancestor
+  // follows the keyboard. Video/audio retain their existing inner clipping.
+  const imageClipPassthrough = memoryMediaKind(media) === "image"
+    ? styles.singleImageClipPassthrough
+    : undefined;
 
   return (
-    <View style={[styles.singleMediaContainer, previewSize]}>
-      <MediaPreview media={media} style={styles.singleMediaFill} />
+    <View style={[styles.singleMediaContainer, imageClipPassthrough, previewSize]}>
+      <MediaPreview media={media} style={[styles.singleMediaFill, imageClipPassthrough]} />
       {timestamp ? (
         <MediaTimestampOverlay
           placement={timestampPlacement}
@@ -8743,6 +8801,15 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   chatMainMessagesLayer: {
     flex: 1
+  },
+  chatKeyboardBridge: {
+    backgroundColor: ROOM_COLORS.panel,
+    height: CHAT_KEYBOARD_BRIDGE_HEIGHT,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: "100%",
+    zIndex: 10
   },
   chatMainMessages: {
     backgroundColor: "transparent",
@@ -9394,6 +9461,29 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   header: {
     alignSelf: "center",
+    height: ROOM_HEADER_EXPANDED_HEIGHT,
+    left: 0,
+    maxWidth: ROOM_MAX_WIDTH,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: "100%",
+    zIndex: 20
+  },
+  headerCompactSurface: {
+    backgroundColor: ROOM_COLORS.header,
+    borderLeftColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
+    borderLeftWidth: Platform.OS === "web" ? 1 : 0,
+    borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
+    borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    height: ROOM_HEADER_COMPACT_HEIGHT,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: "100%"
+  },
+  headerExpansionSurface: {
     backgroundColor: ROOM_COLORS.header,
     borderBottomColor: ROOM_COLORS.border,
     borderBottomWidth: 1,
@@ -9401,27 +9491,28 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderLeftWidth: Platform.OS === "web" ? 1 : 0,
     borderRightColor: Platform.OS === "web" ? ROOM_COLORS.border : "transparent",
     borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    height: ROOM_HEADER_COLLAPSE_DISTANCE,
     left: 0,
-    maxWidth: ROOM_MAX_WIDTH,
-    paddingBottom: 10,
-    paddingHorizontal: ROOM_HEADER_HORIZONTAL_PADDING,
-    paddingTop: spacing.sm,
     position: "absolute",
     right: 0,
     shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 6, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 14,
-    top: 0,
-    width: "100%",
-    zIndex: 20
+    top: ROOM_HEADER_COMPACT_HEIGHT,
+    width: "100%"
   },
   headerTop: {
     alignItems: "center",
     flexDirection: "row",
+    height: ROOM_HEADER_CONTROL_SIZE,
     justifyContent: "space-between",
+    left: ROOM_HEADER_HORIZONTAL_PADDING,
     minHeight: ROOM_HEADER_CONTROL_SIZE,
-    zIndex: 2
+    position: "absolute",
+    right: ROOM_HEADER_HORIZONTAL_PADDING,
+    top: spacing.sm,
+    zIndex: 4
   },
   headerActions: {
     alignItems: "center",
@@ -9440,32 +9531,32 @@ function createStyles(ROOM_COLORS: RoomColors) {
     marginLeft: -8
   },
   headerAddFriendSlot: {
-    overflow: "hidden"
+    height: ROOM_HEADER_CONTROL_SIZE,
+    marginRight: spacing.sm,
+    overflow: "hidden",
+    width: ROOM_HEADER_CONTROL_SIZE
+  },
+  headerTopTitleSpacer: {
+    flex: 1,
+    marginHorizontal: spacing.sm,
+    minWidth: 0
   },
   compactRoomTitleWrap: {
     flex: 1,
     marginHorizontal: spacing.sm,
     minWidth: 0
   },
-  sharedRoomTitleLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 3
-  },
-  sharedRoomTitle: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onSurface,
-    position: "absolute"
-  },
-  expandedRoomTitle: {
+  movingRoomTitle: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.onSurface,
     fontSize: 20,
+    left: ROOM_HEADER_EXPANDED_TITLE_LEFT,
     lineHeight: 27,
-    paddingLeft: ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE,
-    minWidth: 0
-  },
-  expandedRoomTitlePlaceholder: {
-    opacity: 0
+    minWidth: 0,
+    position: "absolute",
+    right: ROOM_HEADER_COMPACT_TITLE_RIGHT + ROOM_HEADER_TITLE_TRANSLATE_X,
+    top: ROOM_HEADER_EXPANDED_TITLE_TOP,
+    zIndex: 3
   },
   compactRoomTitle: {
     ...fontStyles.extraBold,
@@ -9479,12 +9570,24 @@ function createStyles(ROOM_COLORS: RoomColors) {
     fontSize: 19,
     lineHeight: 25
   },
-  roomIdentityAnimated: {
-    overflow: "hidden"
+  headerDetailsClip: {
+    height: ROOM_HEADER_DETAILS_HEIGHT,
+    left: ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET,
+    overflow: "hidden",
+    position: "absolute",
+    right: ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET,
+    top: ROOM_HEADER_DETAILS_TOP,
+    zIndex: 3
   },
-  roomIdentity: {
-    gap: ROOM_HEADER_SECTION_GAP,
-    paddingHorizontal: ROOM_HEADER_CONTENT_INSET
+  headerDetails: {
+    gap: ROOM_HEADER_SECTION_GAP
+  },
+  headerTabsPosition: {
+    left: ROOM_HEADER_HORIZONTAL_PADDING,
+    position: "absolute",
+    right: ROOM_HEADER_HORIZONTAL_PADDING,
+    top: ROOM_HEADER_TABS_TOP,
+    zIndex: 3
   },
   roomMetaRow: {
     alignItems: "center",
@@ -10468,6 +10571,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
     height: "100%",
     width: "100%"
   },
+  singleImageClipPassthrough: {
+    borderRadius: 0,
+    overflow: "visible"
+  },
   mediaCaptionContainer: {
     paddingBottom: 8,
     paddingHorizontal: 12,
@@ -11280,6 +11387,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     paddingTop: TABLE_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
   },
+  itineraryEmptyContent: {
+    flex: 1,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg
+  },
   itineraryHeading: {
     ...fontStyles.extraBold,
     color: ROOM_COLORS.muted,
@@ -12073,6 +12185,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   itineraryEmptyPanel: {
     alignItems: "center",
+    flex: 1,
     justifyContent: "center",
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xl

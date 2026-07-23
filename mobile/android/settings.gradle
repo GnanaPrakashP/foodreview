@@ -37,3 +37,15 @@ expoAutolinking.useExpoVersionCatalog()
 
 include ':app'
 includeBuild(expoAutolinking.reactNativeGradlePlugin)
+
+// React Native 0.81.5 predates the upstream Fabric active-touch cleanup.
+// Build the framework from the postinstall-patched source until the app moves
+// to a React Native release that contains facebook/react-native#52995.
+includeBuild('../node_modules/react-native') {
+  dependencySubstitution {
+    substitute module('com.facebook.react:react-android') using project(':packages:react-native:ReactAndroid')
+    substitute module('com.facebook.react:react-native') using project(':packages:react-native:ReactAndroid')
+    substitute module('com.facebook.react:hermes-android') using project(':packages:react-native:ReactAndroid:hermes-engine')
+    substitute module('com.facebook.react:hermes-engine') using project(':packages:react-native:ReactAndroid:hermes-engine')
+  }
+}

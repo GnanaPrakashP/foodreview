@@ -64,7 +64,9 @@ export default function ProfileCircleScreen() {
       ) : members.length === 0 ? (
         <EmptyState
           icon="people-outline"
-          message={circle.data?.accountType === "public" ? "No one has joined your circle yet." : "Add friends to build your circle."}
+          message={circle.data?.accountType === "public"
+            ? "No one has joined your circle yet."
+            : "No requests have been accepted into your circle yet."}
           title="Your circle is empty"
         />
       ) : (

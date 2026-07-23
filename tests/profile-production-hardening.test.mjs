@@ -207,7 +207,9 @@ test("profile statistics are server-derived and profile posts use stable keyset 
   assert.match(migration, /jsonb_array_elements\(coalesce\(review\.items, '\[\]'::jsonb\)\)/);
   assert.match(migration, /grant execute on function public\.profile_post_stats\(text\) to anon, authenticated, service_role/);
   assert.match(profileService, /const PROFILE_POST_PAGE_SIZE = 10/);
-  assert.match(profileShellRoute, /\.rpc\("profile_post_stats"/);
+  assert.match(profileShellRoute, /\.rpc\("mobile_other_profile_shell_v1"/);
+  assert.match(profileShellRoute, /p_viewer_user_id: actor\.userId/);
+  assert.match(profileShellRoute, /p_target_name: actor\.actorName/);
   assert.doesNotMatch(profileShellRoute, /posts:\s*\[\]|nextPostsCursor/);
   assert.match(profileService, /scope:\s*"profile"/);
   assert.match(profileService, /\/api\/mobile\/feed\?\$\{params\.toString\(\)\}/);

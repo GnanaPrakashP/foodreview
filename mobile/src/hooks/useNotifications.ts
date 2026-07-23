@@ -7,6 +7,7 @@ import {
   markNotificationInboxSeen,
   markNotificationRead
 } from "@/services/notifications";
+import type { NotificationListView } from "@/services/notifications";
 import type { AppNotification } from "@/types/models";
 
 type NotificationListResult = Awaited<ReturnType<typeof listNotifications>>;
@@ -60,10 +61,15 @@ function decrementCachedUnreadCounts(queryClient: QueryClient) {
   );
 }
 
-export function useNotificationsQuery(options: { enabled?: boolean; limit?: number } = {}) {
+export function useNotificationsQuery(options: {
+  enabled?: boolean;
+  limit?: number;
+  view?: NotificationListView;
+} = {}) {
+  const view = options.view ?? "all";
   return useInfiniteQuery({
-    queryKey: [...notificationKeys.list, options.limit ?? 30] as const,
-    queryFn: ({ pageParam }) => listNotifications(options.limit, pageParam),
+    queryKey: [...notificationKeys.list, view, options.limit ?? 30] as const,
+    queryFn: ({ pageParam }) => listNotifications(options.limit, pageParam, view),
     enabled: options.enabled ?? true,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,

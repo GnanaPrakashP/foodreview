@@ -1689,7 +1689,8 @@ function createStyles(c: ThemeColors) {
       color: c.cream,
       flex: 1,
       fontSize: Platform.OS === "web" ? typography.webTitle : typography.heading,
-      lineHeight: Platform.OS === "web" ? 32 : 29
+      lineHeight: Platform.OS === "web" ? 32 : 29,
+      top: Platform.OS === "web" ? undefined : -StyleSheet.hairlineWidth
     },
     locationButton: {
       alignItems: "center",

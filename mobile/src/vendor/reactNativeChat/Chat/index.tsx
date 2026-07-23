@@ -360,26 +360,28 @@ function ChatWrapper<TMessage extends IMessage = IMessage> (props: ChatProps<TMe
   const {
     keyboardProviderProps,
     disableKeyboardProvider = false,
+    provideSafeAreaContext = true,
     ...rest
   } = props
 
   const chat = <Chat<TMessage> {...rest} />
+  const keyboardContextContent = disableKeyboardProvider
+    ? chat
+    : (
+      <KeyboardProvider
+        statusBarTranslucent
+        navigationBarTranslucent
+        {...keyboardProviderProps}
+      >
+        {chat}
+      </KeyboardProvider>
+    )
 
   return (
     <GestureHandlerRootView style={styles.fill}>
-      <SafeAreaProvider>
-        {disableKeyboardProvider
-          ? chat
-          : (
-            <KeyboardProvider
-              statusBarTranslucent
-              navigationBarTranslucent
-              {...keyboardProviderProps}
-            >
-              {chat}
-            </KeyboardProvider>
-          )}
-      </SafeAreaProvider>
+      {provideSafeAreaContext
+        ? <SafeAreaProvider>{keyboardContextContent}</SafeAreaProvider>
+        : keyboardContextContent}
     </GestureHandlerRootView>
   )
 }

@@ -64,6 +64,7 @@ import {
 import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, spacing, typography } from "@/theme";
+import { fallbackAvatarColor } from "@/utils/fallbackAvatar";
 import { chooseReportReason } from "@/utils/reporting";
 import type { ReviewPost } from "@/types/models";
 import type { ReportTargetType } from "@/services/reports";
@@ -125,7 +126,6 @@ type ThemeColors = ReturnType<typeof themeColorsFor>;
 type PostCardStyles = ReturnType<typeof createStyles>;
 type CircleRequestVisualStatus = "idle" | "pending" | "joined";
 
-const avatarColors = ["#C04020", "#A86AF2", "#5CC894", "#D4821A", "#BE185D", "#0F766E"];
 const NOOP = () => {};
 const diagnosticFormattedTimeAgo = new Map<string, string>();
 const HOME_SVG_PLACEHOLDER_AB_ENABLED = __DEV__ &&
@@ -263,7 +263,7 @@ export function PostCardDiagnosticShell({
         <View style={[styles.recommendationHeader, styles.diagnosticRecommendationHeader]}>
           {headerStep >= 1 ? (
             <>
-              <View style={[styles.avatar, { backgroundColor: avatarColors[0] }]}>
+              <View style={[styles.avatar, { backgroundColor: fallbackAvatarColor("circlebites") }]}>
                 {headerStep >= 2 ? <Text style={styles.avatarText}>CB</Text> : null}
               </View>
               <View style={styles.contentColumn}>
@@ -766,9 +766,7 @@ function circleRequestLabel(status: CircleRequestVisualStatus) {
 }
 
 export function avatarColor(name: string) {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) & 0xffff;
-  return avatarColors[hash % avatarColors.length];
+  return fallbackAvatarColor(name);
 }
 
 export function timeAgo(dateStr: string) {
@@ -1132,8 +1130,8 @@ function PostCardComponent({
     [post.area, post.restaurantAddress]
   );
   const avatarBackground = useMemo(
-    () => avatarColor(post.authorName || post.reviewerName),
-    [post.authorName, post.reviewerName]
+    () => fallbackAvatarColor(post.reviewerUsername || post.reviewerName),
+    [post.reviewerName, post.reviewerUsername]
   );
   const createdAtLabel = relativeTimestampLabel ?? (
     diagnosticPlan?.precomputeHeaderTime || diagnosticPlan?.textMode === "single-line"
@@ -1313,6 +1311,12 @@ function PostCardComponent({
   }, [post.id, setPostActionsAnchor, setShowPostActions]);
 
   const openProfile = useCallback(() => {
+    const normalizedTarget = targetUsername.trim().toLowerCase();
+    const normalizedPath = pathname.replace(/\/+$/, "").toLowerCase();
+    const alreadyOnTargetProfile = isOwnPost
+      ? normalizedPath === "/profile"
+      : normalizedPath === `/people/${normalizedTarget}`;
+    if (alreadyOnTargetProfile) return;
     openProfileRoute({
       preview: profileNavigationPreview,
       queryClient,
@@ -1320,7 +1324,7 @@ function PostCardComponent({
       username: targetUsername,
       viewerUsername: viewerName
     });
-  }, [profileNavigationPreview, queryClient, router, targetUsername, viewerName]);
+  }, [isOwnPost, pathname, profileNavigationPreview, queryClient, router, targetUsername, viewerName]);
 
   const openRestaurant = useCallback(() => {
     if (post.restaurantId) {

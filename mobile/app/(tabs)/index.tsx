@@ -814,8 +814,10 @@ function createStyles(c: ReturnType<typeof themeColorsFor>) {
       paddingTop: screenLayout.topGap
     },
     headerText: {
+      alignSelf: "flex-start",
       flex: 1,
-      minWidth: 0
+      minWidth: 0,
+      paddingTop: screenLayout.mainTabOpticalInset
     },
     newPostsOverlay: {
       alignItems: "center",

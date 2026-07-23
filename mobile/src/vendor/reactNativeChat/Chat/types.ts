@@ -166,6 +166,13 @@ export interface ChatProps<TMessage extends IMessage> extends Partial<Omit<Messa
    * Default is `false`.
    */
   disableKeyboardProvider?: boolean
+  /**
+   * Provide a nested safe-area context for standalone consumers.
+   * Disable this when the application root already mounts a `SafeAreaProvider`
+   * so keyboard-driven transforms do not move another native inset observer.
+   * Default is `true`.
+   */
+  provideSafeAreaContext?: boolean
   /** Props for KeyboardAvoidingView. Use `keyboardVerticalOffset` to account for headers or iOS predictive text bar (~44pt). */
   keyboardAvoidingViewProps?: KeyboardAvoidingViewProps
   /** Enable animated day label that appears on scroll; default is true */

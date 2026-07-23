@@ -6,6 +6,22 @@ import ts from "typescript";
 
 const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
+test("Android Fabric sweeps native-scroll touches before deleting Profile views", () => {
+  const mobilePackage = source("mobile/package.json");
+  const patch = source("mobile/scripts/patch-react-native-active-touch-cleanup.mjs");
+  const androidSettings = source("mobile/android/settings.gradle");
+
+  assert.match(mobilePackage, /patch-react-native-active-touch-cleanup\.mjs/);
+  assert.match(patch, /if \(targetTag != -1\)/);
+  assert.match(patch, /sweepActiveTouchForTag\(surfaceId, targetTag, reactContext\)/);
+  assert.match(patch, /surface\.reactHost\?\.currentReactContext/);
+  assert.match(patch, /getCurrentReactContext\(\)/);
+  assert.match(patch, /ReactModalHostView\.kt/);
+  assert.match(patch, /react-native", "local\.properties/);
+  assert.match(androidSettings, /includeBuild\('\.\.\/node_modules\/react-native'\)/);
+  assert.match(androidSettings, /substitute module\('com\.facebook\.react:react-android'\) using project\(':packages:react-native:ReactAndroid'\)/);
+});
+
 function loadTs(path, requireModule) {
   const { outputText } = ts.transpileModule(source(path), {
     compilerOptions: {
@@ -90,6 +106,24 @@ test("post-card navigation hands known author identity to the profile without se
   assert.match(screen, /getProfileNavigationPreview\(username\)/);
   assert.match(screen, /displayedName = shell\.data\?\.displayName \?\? navigationPreview\?\.displayName/);
   assert.doesNotMatch(navigation, /setQueryData/);
+});
+
+test("fallback avatar color follows the same canonical identity in profile headers and post cards", () => {
+  const ownProfile = source("mobile/app/(tabs)/profile.tsx");
+  const otherProfile = source("mobile/app/people/[username].tsx");
+  const postCard = source("mobile/src/components/posts/PostCard.tsx");
+  const fallbackAvatar = source("mobile/src/utils/fallbackAvatar.ts");
+  const ownAvatarStyle = ownProfile.match(/\n  avatar: \{[\s\S]*?\n  \},/)?.[0] ?? "";
+  const otherAvatarStyle = otherProfile.match(/\n    avatar: \{[\s\S]*?\n    \},/)?.[0] ?? "";
+
+  assert.match(fallbackAvatar, /identity\.trim\(\)\.toLowerCase\(\)/);
+  assert.match(postCard, /fallbackAvatarColor\(post\.reviewerUsername \|\| post\.reviewerName\)/);
+  assert.match(otherProfile, /fallbackAvatarColor\(displayedUsername\)/);
+  assert.match(otherProfile, /styles\.avatar, \{ backgroundColor: displayedAvatarColor \}/);
+  assert.match(ownProfile, /fallbackAvatarColor\(profile\.username\)/);
+  assert.match(ownProfile, /styles\.avatar, \{ backgroundColor: avatarColor \}/);
+  assert.doesNotMatch(otherAvatarStyle, /backgroundColor/);
+  assert.doesNotMatch(ownAvatarStyle, /backgroundColor/);
 });
 
 test("warm other-profile posts use bounded virtualization and stable unique keys", () => {

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const memoryRoomScreen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
+const memoryRoomController = readFileSync("mobile/src/features/memories/room/useMemoryRoomController.ts", "utf8");
+const vendoredChat = readFileSync("mobile/src/vendor/reactNativeChat/Chat/index.tsx", "utf8");
+const vendoredChatTypes = readFileSync("mobile/src/vendor/reactNativeChat/Chat/types.ts", "utf8");
 const memoryPreviewScreen = readFileSync("mobile/src/components/memories/camera/MediaPreviewScreen.tsx", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const memoryHooks = readFileSync("mobile/src/hooks/useMemories.ts", "utf8");
@@ -63,6 +66,217 @@ test("phase 4 room panes lazy-mount inactive heavy tabs", () => {
   assert.match(roomPaneBody, /if \(lazy && !hasMounted\) return null/);
 });
 
+test("room tab transitions keep the header layout-stable and defer only cold pane mounts", () => {
+  const roomHeaderBody = memoryRoomScreen.match(/function RoomHeader\([\s\S]*?\nfunction RoomModeTabs/)?.[0] ?? "";
+  const keyboardContainerBody = memoryRoomScreen.match(/function RoomKeyboardContainer\([\s\S]*?\nfunction RoomHeader/)?.[0] ?? "";
+
+  assert.match(memoryRoomScreen, /const ROOM_HEADER_EXPANDED_HEIGHT = 183/);
+  assert.match(roomHeaderBody, /styles\.headerExpansionSurface/);
+  assert.match(roomHeaderBody, /styles\.movingRoomTitle/);
+  assert.match(roomHeaderBody, /styles\.headerDetailsClip/);
+  assert.match(roomHeaderBody, /styles\.headerTabsPosition/);
+  assert.equal((roomHeaderBody.match(/<RoomModeTabs/g) ?? []).length, 1);
+  assert.match(roomHeaderBody, /translateY: -ROOM_HEADER_COLLAPSE_DISTANCE \* collapseProgress\.value/);
+  assert.match(roomHeaderBody, /translateX: ROOM_HEADER_TITLE_TRANSLATE_X \* collapseProgress\.value/);
+  assert.doesNotMatch(roomHeaderBody, /opacity: interpolate\(collapseProgress\.value/);
+  assert.doesNotMatch(roomHeaderBody, /(fontSize|left|lineHeight|maxHeight|marginRight|marginTop|right|top|width): interpolate/);
+  assert.doesNotMatch(roomHeaderBody, /onHeightChange|onLayout=\{\(event\) => onHeightChange/);
+
+  assert.match(keyboardContainerBody, /return \(\s*<KeyboardAvoidingView/);
+  assert.doesNotMatch(keyboardContainerBody, /if \(chatMode\)/);
+  assert.match(keyboardContainerBody, /behavior=\{!chatMode && Platform\.OS === "ios" \? "padding" : undefined\}/);
+  assert.match(keyboardContainerBody, /enabled=\{!chatMode\}/);
+
+  assert.match(memoryRoomController, /MEMORY_ROOM_FIRST_PANE_MOUNT_DELAY_MS = MEMORY_ROOM_TAB_TIMING\.duration/);
+  assert.match(memoryRoomController, /mountedPaneModesRef\.current\.has\(nextTabMode\)/);
+  assert.match(memoryRoomController, /setTimeout\([\s\S]*MEMORY_ROOM_FIRST_PANE_MOUNT_DELAY_MS/);
+  assert.match(memoryRoomScreen, /active=\{paneTabMode === "chat"\}/);
+});
+
+test("memory chat reuses root keyboard and safe-area providers", () => {
+  const chatMainBody = memoryRoomScreen.match(/<ChatMain<MemoryChatMainMessage>[\s\S]*?\/>/)?.[0] ?? "";
+  const chatWrapperBody = vendoredChat.match(/function ChatWrapper[\s\S]*?\n\}/)?.[0] ?? "";
+
+  assert.match(appProviders, /<SafeAreaProvider initialMetrics=\{initialWindowMetrics\}>/);
+  assert.match(chatMainBody, /disableKeyboardProvider/);
+  assert.match(chatMainBody, /provideSafeAreaContext=\{false\}/);
+  assert.match(vendoredChatTypes, /provideSafeAreaContext\?: boolean/);
+  assert.match(chatWrapperBody, /provideSafeAreaContext = true/);
+  assert.match(chatWrapperBody, /provideSafeAreaContext\s*\?\s*<SafeAreaProvider>/);
+});
+
+test("memory chat keyboard motion is owned by one animated parent surface", () => {
+  const keyboardBody = memoryRoomScreen.match(/\/\/ Keyboard handling:[\s\S]*?function showPeopleToast/)?.[0] ?? "";
+  const chatSurfaceBody = memoryRoomScreen.match(
+    /function MemoryChatMainSurface\([\s\S]*?\n\}\n\n\/\/ Timestamp placement rule/
+  )?.[0] ?? "";
+
+  assert.match(memoryRoomScreen, /const \[frozenComposerBottomInset\] = useState\(\(\) => insets\.bottom\)/);
+  assert.match(keyboardBody, /getComposerClosedBottomPadding\(frozenComposerBottomInset\)/);
+  assert.match(memoryRoomScreen, /function getChatKeyboardShift\(/);
+  assert.match(memoryRoomScreen, /const closedComposerBottomGap = closedComposerBottomPadding/);
+  assert.match(memoryRoomScreen, /const openComposerBottomGap = COMPOSER_KEYBOARD_OPEN_GAP/);
+  assert.match(memoryRoomScreen, /const animatedGapReduction = \(closedComposerBottomGap - openComposerBottomGap\) \* keyboardProgress/);
+  assert.match(memoryRoomScreen, /return keyboardOffset \+ animatedGapReduction/);
+  assert.match(keyboardBody, /getChatKeyboardShift\([\s\S]*keyboardMotion\.offset\.value,[\s\S]*keyboardMotion\.progress\.value/);
+  assert.match(keyboardBody, /const chatMainSurfaceKeyboardStyle = useAnimatedStyle\(\(\) => \(\{\s*transform: \[\{ translateY: chatKeyboardShift\.value \}\]\s*\}\), \[\]\)/);
+  assert.equal((keyboardBody.match(/chatKeyboardShift\.value/g) ?? []).length, 1);
+  assert.match(chatSurfaceBody, /<Reanimated\.View[\s\S]*style=\{\[styles\.chatMainSurface, surfaceKeyboardStyle\]\}/);
+  assert.match(chatSurfaceBody, /<View style=\{styles\.chatMainMessagesLayer\}>/);
+  assert.match(chatSurfaceBody, /<View pointerEvents="none" style=\{styles\.chatKeyboardBridge\} \/>/);
+  assert.doesNotMatch(chatSurfaceBody, /styles\.chatMainMessagesLayer,\s*listKeyboardStyle/);
+  assert.doesNotMatch(chatSurfaceBody, /styles\.chatKeyboardBridge,\s*keyboardBridgeStyle/);
+  assert.doesNotMatch(keyboardBody, /chatListKeyboardStyle|chatKeyboardBridgeStyle|composerKeyboardStyle/);
+  assert.match(keyboardBody, /const composerBottomInsetStyle = useMemo<ViewStyle>\(\(\) => \(\{\s*paddingBottom: closedComposerBottomPadding\s*\}\)/);
+  assert.match(memoryRoomScreen, /chatKeyboardBridge:[\s\S]*top: "100%"/);
+  assert.doesNotMatch(memoryRoomScreen, /KeyboardControllerAvoidingView|KeyboardStickyView|translate-with-padding/);
+  assert.doesNotMatch(keyboardBody, /Math\.min\(0,/);
+  assert.doesNotMatch(keyboardBody, /useDrivenKeyboardHeight|prepareForOpen|withTiming/);
+  assert.doesNotMatch(memoryRoomScreen, /onInputFocus|handleComposerFocus|prepareChatKeyboardOpen/);
+  assert.match(keyboardBody, /useAnimatedReaction\([\s\S]*keyboardMotion\.progress\.value/);
+  assert.match(keyboardBody, /currentBoundary < 0 \|\| currentBoundary === previousBoundary/);
+  assert.match(memoryRoomScreen, /const COMPOSER_HEIGHT_COMMIT_THRESHOLD = 1/);
+  assert.match(keyboardBody, /const nextHeight = event\.nativeEvent\.layout\.height/);
+  assert.doesNotMatch(keyboardBody, /Math\.round\(event\.nativeEvent\.layout\.height\)/);
+  assert.match(keyboardBody, /if \(!hasMeaningfulComposerHeightChange\(pendingHeight, composerHeightRef\.current\)\) return/);
+  assert.match(keyboardBody, /if \(!commitComposerHeight\(pendingHeight, false\)\) return/);
+  assert.match(keyboardBody, /runOnJS\(reconcileChatAfterKeyboardSettle\)/);
+  assert.match(memoryRoomScreen, /chatKeyboardBridge:[\s\S]*backgroundColor: ROOM_COLORS\.panel/);
+  assert.doesNotMatch(memoryRoomScreen, /composerHeightFlushTimeoutRef|schedulePendingComposerHeightFlush/);
+});
+
+test("stage 2B deterministic frame trace keeps every child fixed inside the translated parent", () => {
+  const round = (value) => Number(value.toFixed(3));
+  const parentHeight = 720;
+  const frames = [0, 0.2, 0.4, 0.6, 0.8, 1, 1].map((progress, index, all) => ({
+    phase: index === all.length - 1 ? "end" : "progress",
+    progress,
+    rawKeyboardHeight: 300 * progress
+  }));
+  const trace = (closedComposerBottomGap) => frames.map((frame) => {
+    const openComposerBottomGap = 8;
+    const keyboardOffset = -frame.rawKeyboardHeight;
+    const parentShift = keyboardOffset +
+      (closedComposerBottomGap - openComposerBottomGap) * frame.progress;
+    const composerBottom = parentHeight + parentShift;
+    const viewportBottom = parentHeight + parentShift;
+    const bridgeTop = parentHeight + parentShift;
+
+    return {
+      bridgePositionRelativeToParent: round(bridgeTop - parentShift),
+      childKeyboardStyleUpdates: 0,
+      composerBottomMinusViewportBottom: round(composerBottom - viewportBottom),
+      layoutChanges: 0,
+      parentShift: round(parentShift),
+      phase: frame.phase,
+      progress: frame.progress
+    };
+  });
+
+  const gestureNavigation = trace(30);
+  const threeButtonNavigation = trace(54);
+
+  assert.deepEqual(gestureNavigation.map((frame) => frame.parentShift), [
+    0, -55.6, -111.2, -166.8, -222.4, -278, -278
+  ]);
+  assert.deepEqual(threeButtonNavigation.map((frame) => frame.parentShift), [
+    0, -50.8, -101.6, -152.4, -203.2, -254, -254
+  ]);
+  for (const frame of [...gestureNavigation, ...threeButtonNavigation]) {
+    assert.equal(frame.composerBottomMinusViewportBottom, 0);
+    assert.equal(frame.bridgePositionRelativeToParent, parentHeight);
+    assert.equal(frame.childKeyboardStyleUpdates, 0);
+    assert.equal(frame.layoutChanges, 0);
+  }
+  assert.deepEqual(gestureNavigation.at(-1), {
+    ...gestureNavigation.at(-2),
+    phase: "end"
+  });
+  assert.deepEqual(threeButtonNavigation.at(-1), {
+    ...threeButtonNavigation.at(-2),
+    phase: "end"
+  });
+});
+
+test("stage 1.5 empty-composer focus trace starts on frame one and performs no settle commit", () => {
+  const frames = [0, 0.02, 0.08, 0.25, 0.5, 0.75, 1].map((progress) => ({
+    progress,
+    rawKeyboardHeight: 300 * progress
+  }));
+  const roundTrace = (values) => values.map((value) => Number(value.toFixed(2)));
+  const keyboardTrace = (closedComposerBottomGap) => {
+    const openComposerBottomGap = 8;
+    const before = frames.map(({ rawKeyboardHeight }) => (
+      Math.min(0, -rawKeyboardHeight + closedComposerBottomGap - openComposerBottomGap)
+    ));
+    const after = frames.map(({ progress, rawKeyboardHeight }) => (
+      -rawKeyboardHeight + (closedComposerBottomGap - openComposerBottomGap) * progress
+    ));
+    const finalKeyboardTopToComposerBottomGap = (
+      -frames.at(-1).rawKeyboardHeight + closedComposerBottomGap - after.at(-1)
+    );
+    return {
+      after: roundTrace(after),
+      before: roundTrace(before),
+      finalKeyboardTopToComposerBottomGap
+    };
+  };
+
+  const gestureNavigation = keyboardTrace(30);
+  const threeButtonNavigation = keyboardTrace(54);
+  assert.deepEqual(gestureNavigation, {
+    before: [0, 0, -2, -53, -128, -203, -278],
+    after: [0, -5.56, -22.24, -69.5, -139, -208.5, -278],
+    finalKeyboardTopToComposerBottomGap: 8
+  });
+  assert.deepEqual(threeButtonNavigation, {
+    before: [0, 0, 0, -29, -104, -179, -254],
+    after: [0, -5.08, -20.32, -63.5, -127, -190.5, -254],
+    finalKeyboardTopToComposerBottomGap: 8
+  });
+
+  const mountHeight = 88.49;
+  const focusLayoutHeight = 88.51;
+  const beforeSettle = {
+    committedComposerHeight: Math.round(focusLayoutHeight),
+    composerHeightCommits: 1,
+    composerOnLayoutCount: 2,
+    jsBoundaryCalls: 1,
+    listClearanceChanges: 1,
+    pendingComposerHeight: Math.round(focusLayoutHeight),
+    scrollReconciliations: 1
+  };
+  const hasMeaningfulAfterChange = Math.abs(focusLayoutHeight - mountHeight) > 1;
+  const afterSettle = {
+    committedComposerHeight: mountHeight,
+    composerHeightCommits: hasMeaningfulAfterChange ? 1 : 0,
+    composerOnLayoutCount: 2,
+    jsBoundaryCalls: 1,
+    listClearanceChanges: hasMeaningfulAfterChange ? 1 : 0,
+    pendingComposerHeight: hasMeaningfulAfterChange ? focusLayoutHeight : null,
+    scrollReconciliations: hasMeaningfulAfterChange ? 1 : 0
+  };
+
+  assert.deepEqual(beforeSettle, {
+    committedComposerHeight: 89,
+    composerHeightCommits: 1,
+    composerOnLayoutCount: 2,
+    jsBoundaryCalls: 1,
+    listClearanceChanges: 1,
+    pendingComposerHeight: 89,
+    scrollReconciliations: 1
+  });
+  assert.deepEqual(afterSettle, {
+    committedComposerHeight: 88.49,
+    composerHeightCommits: 0,
+    composerOnLayoutCount: 2,
+    jsBoundaryCalls: 1,
+    listClearanceChanges: 0,
+    pendingComposerHeight: null,
+    scrollReconciliations: 0
+  });
+});
+
 test("phase 6 defers chat until visit, retains it, and renders timestamps on the first frame", () => {
   const timeBody = memoryRoomScreen.match(/function ChatMainBodyWithTime\([\s\S]*?\nfunction estimateChatTimestampWidth/)?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
@@ -79,6 +293,65 @@ test("phase 4 media images use disk cache and stable recycling keys", () => {
   assert.match(memoryRoomScreen, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
   assert.match(memoryRoomScreen, /const VIDEO_THUMBNAIL_CACHE_LIMIT = 80/);
   assert.match(memoryRoomScreen, /cacheKey=\{memoryMediaCacheKey\(media\)\}/);
+});
+
+test("single-image chat media keeps one effective rounded clip and stable image identity", () => {
+  const renderMessageMediaBody = memoryRoomScreen.match(
+    /const renderMessageMedia = useCallback\([\s\S]*?\n  const renderMessageAudio/
+  )?.[0] ?? "";
+  const singleMediaPreviewBody = memoryRoomScreen.match(
+    /function SingleMediaPreview\([\s\S]*?\nfunction MediaTimestampOverlay/
+  )?.[0] ?? "";
+  const mediaPreviewBody = memoryRoomScreen.match(
+    /function MediaPreview\([\s\S]*?\nfunction createStyles/
+  )?.[0] ?? "";
+  const imageNode = mediaPreviewBody.match(/<Image[\s\S]*?\/>/)?.[0] ?? "";
+  const chatMainMediaFrameStyle = memoryRoomScreen.match(
+    /chatMainMediaFrame:\s*\{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+  const singleMediaContainerStyle = memoryRoomScreen.match(
+    /singleMediaContainer:\s*\{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+  const mediaImageWrapStyle = memoryRoomScreen.match(
+    /mediaImageWrap:\s*\{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+  const clipPassthroughStyle = memoryRoomScreen.match(
+    /singleImageClipPassthrough:\s*\{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+
+  // The active Chat image keeps its existing 13 dp visible radius on the
+  // outer pressable; inner image-only hosts explicitly pass that clip through.
+  assert.match(renderMessageMediaBody, /style=\{styles\.chatMainMediaFrame\}/);
+  assert.match(chatMainMediaFrameStyle, /borderRadius: 13/);
+  assert.match(chatMainMediaFrameStyle, /overflow: "hidden"/);
+  assert.match(singleMediaPreviewBody, /memoryMediaKind\(media\) === "image"/);
+  assert.match(singleMediaPreviewBody, /styles\.singleImageClipPassthrough/);
+  assert.match(clipPassthroughStyle, /borderRadius: 0/);
+  assert.match(clipPassthroughStyle, /overflow: "visible"/);
+  assert.match(singleMediaContainerStyle, /overflow: "hidden"/);
+  assert.match(mediaImageWrapStyle, /overflow: "hidden"/);
+
+  // Gallery and video keep their existing clip styles; only a single chat
+  // image receives the later imageClipPassthrough override.
+  assert.match(singleMediaPreviewBody, /<MediaPreview media=\{media\} style=\{\[styles\.singleMediaFill, imageClipPassthrough\]\}/);
+  assert.doesNotMatch(mediaPreviewBody, /contentFit="cover"/);
+  assert.match(mediaPreviewBody, /<View style=\{\[styles\.videoPreview, style as StyleProp<ViewStyle>\]\}>/);
+
+  // Keyboard progress reaches only the Reanimated parent. The image receives a
+  // primitive URI, stable recycling key, static leaf style, and no transition,
+  // key, keyboard, or progress prop capable of recreating its native layer.
+  assert.match(imageNode, /source=\{media\.publicUrl\}/);
+  assert.match(imageNode, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
+  assert.match(imageNode, /style=\{styles\.mediaImage\}/);
+  assert.doesNotMatch(imageNode, /source=\{\{/);
+  assert.doesNotMatch(imageNode, /\bkey=/);
+  assert.doesNotMatch(imageNode, /\btransition=/);
+  assert.doesNotMatch(imageNode, /keyboard|progress/i);
+  assert.doesNotMatch(
+    singleMediaPreviewBody,
+    /\b(?:keyboardHeight|keyboardProgress|surfaceKeyboardStyle)=\{/
+  );
+  assert.match(renderMessageMediaBody, /\}, \[onOpenMedia, screenWidth\]\)/);
 });
 
 test("phase 4 media gallery warms the first media assets on activation", () => {

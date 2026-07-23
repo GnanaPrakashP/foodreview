@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import Reanimated from "react-native-reanimated";
 import { PostFeed } from "@/components/feeds/PostFeed";
-import { ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
+import { PROFILE_POST_SPACING, ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import {
@@ -27,6 +27,7 @@ import type { CircleAccessStatus } from "@/services/circle";
 import { useSessionStore } from "@/stores/sessionStore";
 import { colors, fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
+import { fallbackAvatarColor } from "@/utils/fallbackAvatar";
 import { chooseReportReason } from "@/utils/reporting";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
@@ -127,6 +128,7 @@ export default function PersonProfileScreen() {
   const displayedInitials = shell.data
     ? initialsForName(shell.data.displayName, shell.data.profile.username)
     : navigationPreview?.initials ?? initialsForName(displayedName, displayedUsername);
+  const displayedAvatarColor = fallbackAvatarColor(displayedUsername);
   const hasProfileIdentity = Boolean(shell.data || navigationPreview);
   const pagedPosts = useMemo(() => {
     const seen = new Set<string>();
@@ -489,7 +491,7 @@ export default function PersonProfileScreen() {
         {topBar}
         <View style={styles.hero}>
           <View style={styles.heroIdentityRow}>
-            <View style={styles.avatar}>
+            <View style={[styles.avatar, { backgroundColor: displayedAvatarColor }]}>
               <Text style={styles.avatarText}>{displayedInitials}</Text>
               {displayedAvatarUrl ? (
                 <Image
@@ -633,6 +635,7 @@ export default function PersonProfileScreen() {
             endReachedLabel="You're all caught up."
             errorMessage={posts.error instanceof Error ? posts.error.message : "Could not load posts."}
             hasMore={Boolean(posts.hasNextPage)}
+            hidePostDividers
             homeFocused={isFocused}
             homeMediaMode
             isError={!isBlocked && posts.isError && pagedPosts.length === 0}
@@ -645,6 +648,7 @@ export default function PersonProfileScreen() {
             onPostMount={onPostMount}
             onRefresh={onRefresh}
             onRetry={onRetryPosts}
+            postSpacing={PROFILE_POST_SPACING}
             posts={isBlocked ? [] : pagedPosts}
             recyclingList
             refreshing={shell.isRefetching || posts.isRefetching}
@@ -829,7 +833,6 @@ function createStyles(c: ThemeColors) {
     },
     avatar: {
       alignItems: "center",
-      backgroundColor: c.orange,
       borderRadius: radius.pill,
       height: 74,
       justifyContent: "center",

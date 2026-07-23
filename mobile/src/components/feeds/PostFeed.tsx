@@ -60,6 +60,7 @@ type PostFeedProps = {
   endReachedLabel?: string;
   emptyActionLabel?: string;
   emptyMessage: string;
+  emptyStateStyle?: StyleProp<ViewStyle>;
   emptyTitle: string;
   errorMessage?: string;
   errorTitle?: string;
@@ -481,6 +482,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
   endReachedLabel,
   emptyActionLabel,
   emptyMessage,
+  emptyStateStyle,
   emptyTitle,
   errorMessage,
   errorTitle,
@@ -1414,7 +1416,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
 
     if (posts.length === 0 && !suppressEmptyState) {
       return (
-        <View style={styles.stateWrap}>
+        <View style={[styles.stateWrap, emptyStateStyle]}>
           <EmptyState
             actionLabel={emptyActionLabel}
             icon="restaurant-outline"

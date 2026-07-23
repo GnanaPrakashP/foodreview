@@ -74,7 +74,8 @@ test("mobile post flow uploads through media assets sequentially", () => {
   assert.match(shareCamera, /photoGuideFrame=\{guideFrame\}/);
   assert.match(shareCamera, /setPendingPostCaptures\(assets\)/);
   assert.match(shareCamera, /setPendingPostCapture\(asset\)/);
-  assert.match(shareCamera, /setTimeout\(\(\) => router\.back\(\), 48\)/);
+  assert.match(shareCamera, /function returnAfterCapture\(\)[\s\S]*openedFromProfilePosts[\s\S]*router\.dismissTo\("\/share"\)[\s\S]*else router\.back\(\)/);
+  assert.match(shareCamera, /setTimeout\(returnAfterCapture, 48\)/);
   assert.match(mediaPicker, /export async function pickPostImageFromGallery\(\)[\s\S]*allowsEditing: false/);
   assert.match(postCaptureSession, /subscribeToPostCaptures/);
   assert.match(postCaptureSession, /consumePendingPostCaptures/);

@@ -23,6 +23,12 @@ type NotificationProfileSummary = {
   displayName: string;
 };
 
+const REQUEST_NOTIFICATION_TYPES = [
+  "CIRCLE_REQUEST_RECEIVED",
+  "circle_request",
+  "TABLE_MEMORY_INVITE",
+] as const;
+
 function notificationAvatarUrl(value: string | null) {
   const trimmed = value?.trim() ?? "";
   return /^https?:\/\//i.test(trimmed) ? trimmed : null;
@@ -94,6 +100,10 @@ export async function GET(req: NextRequest) {
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = decodeStableTimestampCursor(rawCursor);
   if (rawCursor && !cursor) return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+  const viewParam = req.nextUrl.searchParams.get("view") ?? "all";
+  if (viewParam !== "all" && viewParam !== "requests") {
+    return NextResponse.json({ error: "Invalid notification view" }, { status: 400 });
+  }
 
   const recipientFilter = viewer.name
     ? `recipient_user_id.eq.${viewer.id},recipient_name.eq.${viewer.name}`
@@ -105,6 +115,9 @@ export async function GET(req: NextRequest) {
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
+  if (viewParam === "requests") {
+    pageQuery = pageQuery.in("type", [...REQUEST_NOTIFICATION_TYPES]);
+  }
   if (cursor) {
     pageQuery = pageQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
   }

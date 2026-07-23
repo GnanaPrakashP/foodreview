@@ -217,6 +217,7 @@ export type NotificationType =
   | "POST_COMMENTED"
   | "CIRCLE_POST_CREATED"
   | "TABLE_MEMORY_INVITE"
+  | "TABLE_MEMORY_ADDED"
   | "COMMON_RESTAURANT_SCORE_UPDATED"
   | "ACHIEVEMENT_UNLOCKED"
   | "SYSTEM_ANNOUNCEMENT"
@@ -251,10 +252,12 @@ export type AppNotification = {
   thumbnailUrl: string | null;
   displayMessage: string;
   destination:
+    | { type: "memory"; roomId: string }
     | { type: "notification" }
     | { type: "person"; username: string }
     | { type: "post"; postId: string };
   circleRequestStatus: "pending" | "accepted" | "rejected" | "none";
+  memoryInviteStatus: "pending" | "accepted" | "declined" | "none";
 };
 
 export type NotificationsPage = {

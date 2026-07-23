@@ -302,7 +302,7 @@ test("a failed latest reaction rolls back to the accurate intermediate server co
   assert.deepEqual(queue.getDisplayedResult(), reactionState("Helpful", 6, 2));
 });
 
-test("Home alone opts into 10dp gaps, hidden dividers, green joined state, and compact title", () => {
+test("Home and Profile use 10dp gaps while Home alone owns joined-state styling and compact title", () => {
   const home = source("mobile/app/(tabs)/index.tsx");
   const postFeed = source("mobile/src/components/feeds/PostFeed.tsx");
   const postCard = source("mobile/src/components/posts/PostCard.tsx");
@@ -312,8 +312,10 @@ test("Home alone opts into 10dp gaps, hidden dividers, green joined state, and c
     "mobile/app/dishes/[dish].tsx",
     "mobile/app/profile/settings/liked.tsx",
     "mobile/app/profile/settings/saved.tsx",
+    "mobile/app/reviews/[id].tsx"
+  ].map(source).join("\n");
+  const profileConsumers = [
     "mobile/app/people/[username].tsx",
-    "mobile/app/reviews/[id].tsx",
     "mobile/app/(tabs)/profile.tsx"
   ].map(source).join("\n");
 
@@ -334,4 +336,7 @@ test("Home alone opts into 10dp gaps, hidden dividers, green joined state, and c
   assert.match(postCard, /borderColor: c\.greenBorder/);
   assert.match(postCard, /color: c\.green/);
   assert.doesNotMatch(otherConsumers, /hidePostDividers|postSpacing=|useGreenJoinedRequestState/);
+  assert.match(profileConsumers, /hidePostDividers/);
+  assert.match(profileConsumers, /postSpacing=\{PROFILE_POST_SPACING\}/);
+  assert.doesNotMatch(profileConsumers, /useGreenJoinedRequestState/);
 });

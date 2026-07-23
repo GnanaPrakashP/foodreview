@@ -6,7 +6,7 @@ import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowLeft, Bookmark, Camera, ChevronRight, Crop, Globe, Heart, Lock, MapPin, MessageCircle, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
+import { ActivityIndicator, BackHandler, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { CropRectEditor } from "@/components/posts/CropRectEditor";
@@ -81,6 +81,13 @@ type ReviewTag = {
 type ShareMode = "choice" | "solo" | "friends";
 type SoloStep = "review" | "details" | "preview";
 
+function initialShareMode(): ShareMode {
+  const { flowOrigin, launchTarget } = useComposerStore.getState();
+  if (flowOrigin === "profile-posts") return "solo";
+  if (launchTarget === "memory") return "friends";
+  return "choice";
+}
+
 const MAX_POST_MEDIA = 4;
 // Matches the camera's recording cap and the API's duration limit.
 const MAX_POST_VIDEO_MS = 30_000;
@@ -143,7 +150,7 @@ export default function ShareScreen() {
   const actor = useSessionStore((state) => state.profile);
   const createPost = useCreatePostMutation();
   const createMemoryRoom = useCreateMemoryRoomMutation();
-  const [shareMode, setShareMode] = useState<ShareMode>("choice");
+  const [shareMode, setShareMode] = useState<ShareMode>(initialShareMode);
   const [soloStep, setSoloStep] = useState<SoloStep>("review");
   const [mediaItems, setMediaItems] = useState<PickedMedia[]>([]);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
@@ -232,6 +239,10 @@ export default function ShareScreen() {
   const previewTags = selectedTags;
   const previewLocation = compactPlaceLocation(restaurantPlace);
   const setComposing = useComposerStore((state) => state.setComposing);
+  const launchTarget = useComposerStore((state) => state.launchTarget);
+  const beginFlow = useComposerStore((state) => state.beginFlow);
+  const clearLaunchTarget = useComposerStore((state) => state.clearLaunchTarget);
+  const finishFlow = useComposerStore((state) => state.finishFlow);
   // The tab bar is hidden for the entire Post-a-Bite flow — any solo step,
   // with or without media (error and empty states included) — until the
   // post is made or the flow is abandoned.
@@ -284,22 +295,42 @@ export default function ShareScreen() {
     return () => clearTimeout(timeout);
   }, [caption, dishes, isAuthenticated, mediaItems, restaurantName, restaurantPlace, selectedTags, shareMode, soloStep, visibility]);
 
-  function cancelShareMode() {
+  const cancelShareMode = useCallback(() => {
+    // Create is a frozen tab while Profile is active. Read at event time so
+    // Back/X cannot use the origin from a render that happened before focus.
+    const returnOrigin = useComposerStore.getState().flowOrigin;
     try { clearActivePostDraft(); } catch {}
     setShareMode("choice");
     setSoloStep("review");
     setMediaItems([]);
     setImageError("");
     setUploadProgress(null);
-  }
+    finishFlow();
+    if (returnOrigin === "profile-posts") {
+      router.replace({ pathname: "/profile", params: { tab: "posts" } });
+    } else if (returnOrigin === "profile-memories") {
+      router.replace({ pathname: "/profile", params: { tab: "memories" } });
+    }
+  }, [finishFlow, router]);
 
-  function openSolo() {
+  const openSolo = useCallback(() => {
     setSoloStep("review");
     setImageError("");
     setSuccess("");
     setUploadProgress(null);
     router.push("/share/camera");
-  }
+  }, [router]);
+
+  const openCreateSolo = useCallback(() => {
+    beginFlow("create");
+    openSolo();
+  }, [beginFlow, openSolo]);
+
+  const openCreateMemory = useCallback(() => {
+    beginFlow("create");
+    setSuccess("");
+    setShareMode("friends");
+  }, [beginFlow]);
 
   // remaining tells the camera how many gallery items may still be picked.
   function openCameraForMore() {
@@ -399,6 +430,17 @@ export default function ShareScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (isReady && isAuthenticated && launchTarget === "memory") {
+        clearLaunchTarget();
+        setSuccess("");
+        setShareMode("friends");
+        return;
+      }
+      if (isReady && isAuthenticated && launchTarget === "post") {
+        clearLaunchTarget();
+        openSolo();
+        return;
+      }
       const captured = consumePendingPostCaptures();
       if (captured.length > 0) {
         receiveCapturedPostMedia(captured);
@@ -416,7 +458,7 @@ export default function ShareScreen() {
         retakePendingRef.current = false;
         setMediaItems([]);
       }
-    }, [receiveCapturedPostMedia])
+    }, [cancelShareMode, clearLaunchTarget, isAuthenticated, isReady, launchTarget, openSolo, receiveCapturedPostMedia])
   );
 
   // Keep the large preview's selection in range as media is added or removed.
@@ -455,7 +497,7 @@ export default function ShareScreen() {
     void submit();
   }
 
-  function handleSoloBackAction() {
+  const handleSoloBackAction = useCallback(() => {
     if (soloStep === "preview") {
       setSoloStep("details");
       return;
@@ -465,7 +507,19 @@ export default function ShareScreen() {
       return;
     }
     cancelShareMode();
-  }
+  }, [cancelShareMode, soloStep]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (shareMode === "choice") return false;
+        if (shareMode === "solo") handleSoloBackAction();
+        else cancelShareMode();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [cancelShareMode, handleSoloBackAction, shareMode])
+  );
 
   function updateDish(key: string, nextDish: Partial<FoodItem>) {
     setDishes((current) => current.map((dish) => (
@@ -571,6 +625,7 @@ export default function ShareScreen() {
       setCustomTag("");
       setSelectedTags([]);
       setVisibility("public");
+      finishFlow();
       // Posting ends the flow: back to the Create screen (tab bar returns),
       // where the success banner is shown.
       setShareMode("choice");
@@ -585,6 +640,7 @@ export default function ShareScreen() {
 
   async function submitMemoryRoom() {
     setSuccess("");
+    Keyboard.dismiss();
     try {
       const result = await createMemoryRoom.mutateAsync({
         participantUsernames: splitUsernames(memoryParticipants),
@@ -598,9 +654,10 @@ export default function ShareScreen() {
       setMemoryOccasionTitle("");
       setMemoryParticipants("");
       setMemoryParticipantInput("");
+      finishFlow();
       router.push({ pathname: "/memories/[id]", params: { id: result.id } });
     } catch {
-      // Mutation error is rendered below.
+      // Mutation state drives the centered, non-technical error modal.
     }
   }
 
@@ -819,7 +876,7 @@ export default function ShareScreen() {
                 CtaIcon={Camera}
                 description="Share your dining experience and help others decide what's worth trying."
                 onMeasureHeight={measureChoiceCard}
-                onPress={openSolo}
+                onPress={openCreateSolo}
                 tags={["Photo", "Dish", "How was it?"]}
                 title="Dining Experience"
               />
@@ -831,7 +888,7 @@ export default function ShareScreen() {
                 CtaIcon={UserPlus}
                 description="A private room with friends for every stop, dish, and memory from the occasion."
                 onMeasureHeight={measureChoiceCard}
-                onPress={() => setShareMode("friends")}
+                onPress={openCreateMemory}
                 tags={["Private", "Friends", "Dishes"]}
                 title="Table Memory"
               />
@@ -1149,32 +1206,43 @@ export default function ShareScreen() {
                         </View>
                       ) : null}
                       {memoryParticipantNames.length > 0 ? (
-                        <>
-                          <View style={styles.memoryFriendChips}>
-                            {memoryParticipantNames.map((friend) => (
-                              <Pressable key={friend} onPress={() => removeMemoryParticipant(friend)} style={styles.memoryFriendChip}>
-                                <Text style={styles.memoryFriendChipText}>@{friend}</Text>
-                                <X size={12} color={c.muted} strokeWidth={2.4} />
-                              </Pressable>
-                            ))}
-                          </View>
-                          <Text style={styles.memoryFriendAddedText}>
-                            Private to invited friends.
-                          </Text>
-                        </>
+                        <View style={styles.memoryFriendChips}>
+                          {memoryParticipantNames.map((friend) => (
+                            <Pressable key={friend} onPress={() => removeMemoryParticipant(friend)} style={styles.memoryFriendChip}>
+                              <Text style={styles.memoryFriendChipText}>@{friend}</Text>
+                              <X size={12} color={c.memory} strokeWidth={2.4} />
+                            </Pressable>
+                          ))}
+                        </View>
                       ) : null}
                     </View>
                   </View>
-
-                  {createMemoryRoom.isError ? (
-                    <ErrorState message={createMemoryRoom.error.message} title="Could not create table memory" />
-                  ) : null}
                 </View>
               )}
             </>
           )}
         </View>
       </ScrollView>
+      <Modal
+        animationType="fade"
+        onRequestClose={createMemoryRoom.reset}
+        statusBarTranslucent
+        transparent
+        visible={shareMode === "friends" && createMemoryRoom.isError}
+      >
+        <View style={styles.memoryCreateErrorBackdrop}>
+          <View accessibilityLiveRegion="assertive" accessibilityViewIsModal style={styles.memoryCreateErrorCard}>
+            <View style={styles.memoryCreateErrorIcon}>
+              <X size={22} color={c.dangerSoft} strokeWidth={2.6} />
+            </View>
+            <Text style={styles.memoryCreateErrorTitle}>Could not create Table Memory</Text>
+            <Text style={styles.memoryCreateErrorMessage}>Please check your connection and try again.</Text>
+            <Pressable accessibilityRole="button" onPress={createMemoryRoom.reset} style={styles.memoryCreateErrorButton}>
+              <Text style={styles.memoryCreateErrorButtonText}>Got it</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -1743,7 +1811,7 @@ function createStyles(c: ThemeColors) {
   headerText: {
     flex: 1,
     minWidth: 0,
-    paddingTop: 2
+    paddingTop: screenLayout.mainTabOpticalInset
   },
   headerSubmitButton: {
     alignItems: "center",
@@ -2601,12 +2669,6 @@ function createStyles(c: ThemeColors) {
   memoryFriendSection: {
     gap: spacing.sm
   },
-  memoryFriendAddedText: {
-    ...fontStyles.semiBold,
-    color: c.muted,
-    fontSize: 12,
-    lineHeight: 16
-  },
   occasionPicker: {
     gap: spacing.sm,
     paddingTop: 0
@@ -2684,8 +2746,8 @@ function createStyles(c: ThemeColors) {
   },
   memoryFriendChip: {
     alignItems: "center",
-    backgroundColor: c.surface,
-    borderColor: c.border,
+    backgroundColor: c.memoryDim,
+    borderColor: c.memoryBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: "row",
@@ -2695,9 +2757,67 @@ function createStyles(c: ThemeColors) {
   },
   memoryFriendChipText: {
     ...fontStyles.extraBold,
-    color: c.cream,
+    color: c.memory,
     fontSize: 12,
     lineHeight: 14
+  },
+  memoryCreateErrorBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 6, 5, 0.76)",
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl
+  },
+  memoryCreateErrorCard: {
+    alignItems: "center",
+    backgroundColor: c.card,
+    borderColor: c.dangerBorder,
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: spacing.md,
+    maxWidth: 360,
+    padding: spacing.xl,
+    width: "100%"
+  },
+  memoryCreateErrorIcon: {
+    alignItems: "center",
+    backgroundColor: c.dangerDim,
+    borderColor: c.dangerBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 52,
+    justifyContent: "center",
+    width: 52
+  },
+  memoryCreateErrorTitle: {
+    ...fontStyles.extraBold,
+    color: c.cream,
+    fontSize: typography.section,
+    lineHeight: 23,
+    textAlign: "center"
+  },
+  memoryCreateErrorMessage: {
+    ...fontStyles.regular,
+    color: c.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center"
+  },
+  memoryCreateErrorButton: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: c.orange,
+    borderRadius: radius.pill,
+    justifyContent: "center",
+    marginTop: spacing.xs,
+    minHeight: 42,
+    paddingHorizontal: spacing.lg
+  },
+  memoryCreateErrorButtonText: {
+    ...fontStyles.bold,
+    color: c.white,
+    fontSize: 14,
+    lineHeight: 18
   },
   dishStack: {
     gap: 10

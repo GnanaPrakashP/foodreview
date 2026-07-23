@@ -12,6 +12,9 @@ const likedSource = readFileSync("mobile/app/profile/settings/liked.tsx", "utf8"
 const profileSubScreenSource = readFileSync("mobile/src/components/profile/ProfileSubScreen.tsx", "utf8");
 const exploreTabSource = readFileSync("mobile/app/(tabs)/explore.tsx", "utf8");
 const profileTabSource = readFileSync("mobile/app/(tabs)/profile.tsx", "utf8");
+const shareTabSource = readFileSync("mobile/app/(tabs)/share.tsx", "utf8");
+const homeTabSource = readFileSync("mobile/app/(tabs)/index.tsx", "utf8");
+const composerStoreSource = readFileSync("mobile/src/stores/composerStore.ts", "utf8");
 const profileHooksSource = readFileSync("mobile/src/hooks/useProfiles.ts", "utf8");
 const savedSource = readFileSync("mobile/app/profile/settings/saved.tsx", "utf8");
 const settingsSource = readFileSync("mobile/app/profile/settings.tsx", "utf8");
@@ -19,7 +22,7 @@ const tabLayoutSource = readFileSync("mobile/app/(tabs)/_layout.tsx", "utf8");
 const themeSource = readFileSync("mobile/src/theme/index.ts", "utf8");
 const normalTopGapSources = new Map([
   ["mobile/app/(tabs)/explore.tsx", exploreTabSource],
-  ["mobile/app/(tabs)/index.tsx", readFileSync("mobile/app/(tabs)/index.tsx", "utf8")],
+  ["mobile/app/(tabs)/index.tsx", homeTabSource],
   ["mobile/app/(tabs)/profile.tsx", profileTabSource],
   ["mobile/app/(tabs)/share.tsx", readFileSync("mobile/app/(tabs)/share.tsx", "utf8")],
   ["mobile/app/dishes/[dish].tsx", readFileSync("mobile/app/dishes/[dish].tsx", "utf8")],
@@ -70,6 +73,15 @@ test("normal mobile route top gutters use the shared screen layout token", () =>
   }
 });
 
+test("main tab hero content shares one optical top anchor", () => {
+  assert.match(themeSource, /mainTabOpticalInset:\s*2/);
+  assert.match(homeTabSource, /headerText:\s*\{[\s\S]*alignSelf:\s*"flex-start"[\s\S]*paddingTop:\s*screenLayout\.mainTabOpticalInset/);
+  assert.match(shareTabSource, /headerText:\s*\{[\s\S]*paddingTop:\s*screenLayout\.mainTabOpticalInset/);
+  assert.match(profileTabSource, /profileHeader:\s*\{[\s\S]*paddingTop:\s*screenLayout\.topGap \+ screenLayout\.mainTabOpticalInset/);
+  assert.match(exploreTabSource, /header:\s*\{[\s\S]*paddingTop:\s*screenLayout\.topGap/);
+  assert.match(exploreTabSource, /top:\s*Platform\.OS === "web" \? undefined : -StyleSheet\.hairlineWidth/);
+});
+
 test("Profile uses a shared collapsible header with virtualized Posts and Memories", () => {
   assert.match(profileTabSource, /import \{ Tabs, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
   assert.match(profileTabSource, /const page = useCurrentProfilePageQuery\(\{ enabled: isFocused && isReady && isAuthenticated \}\)/);
@@ -101,10 +113,23 @@ test("Profile uses a shared collapsible header with virtualized Posts and Memori
   assert.doesNotMatch(profileTabSource, /MainTabPager|useSegmentedPager|GestureDetector|PanResponder|Animated\.FlatList/);
 });
 
-test("Profile create actions use the stable tab route", () => {
-  assert.match(profileTabSource, /const openCreate = useCallback\(\(\) => \{\s*router\.push\("\/share"\);\s*\}, \[router\]\)/);
-  assert.match(profileTabSource, /onEmptyAction=\{openCreate\}/);
-  assert.match(profileTabSource, /onAction=\{\(\) => router\.push\("\/share"\)\}/);
+test("Profile empty actions launch their specific Create flows", () => {
+  assert.match(composerStoreSource, /export type CreateLaunchTarget = "memory" \| "post"/);
+  assert.match(composerStoreSource, /requestLaunch: \(target: CreateLaunchTarget, origin: CreateFlowOrigin\) => void/);
+  assert.match(profileTabSource, /const openPostCreate = useCallback[\s\S]*beginCreateFlow\("profile-posts"\)[\s\S]*pathname: "\/share\/camera"[\s\S]*origin: "profile-posts"/);
+  assert.match(profileTabSource, /const openMemoryCreate = useCallback[\s\S]*requestCreateLaunch\("memory", "profile-memories"\)[\s\S]*router\.push\("\/share"\)/);
+  assert.match(profileTabSource, /onEmptyAction=\{openPostCreate\}/);
+  assert.match(profileTabSource, /onAction=\{openMemoryCreate\}/);
+  assert.match(shareTabSource, /launchTarget === "memory"[\s\S]*clearLaunchTarget\(\)[\s\S]*setShareMode\("friends"\)/);
+});
+
+test("Profile empty states use the updated copy and a small header gap", () => {
+  assert.match(profileTabSource, /emptyMessage="Share your first dining experience\."/);
+  assert.match(profileTabSource, /emptyStateStyle=\{styles\.profileEmptyState\}/);
+  assert.match(profileTabSource, /style=\{\[styles\.listInset, styles\.profileEmptyState\]\}/);
+  assert.match(profileTabSource, /profileEmptyState:\s*\{\s*paddingTop: spacing\.base/);
+  assert.match(postFeedSource, /emptyStateStyle\?: StyleProp<ViewStyle>/);
+  assert.match(postFeedSource, /<View style=\{\[styles\.stateWrap, emptyStateStyle\]\}>/);
 });
 
 test("main bottom tabs use the standard Expo Router tab navigator", () => {
