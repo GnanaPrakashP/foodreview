@@ -18,7 +18,7 @@ test("mobile Profile tab does not render raw backend/Auth errors", () => {
 });
 
 test("mobile Profile tab uses a shared collapsible header and virtualized Posts/Memories pages", () => {
-  assert.match(profileSource, /import \{ Tabs, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
+  assert.match(profileSource, /import \{ Tabs, useCollapsibleStyle, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
   assert.match(profileSource, /<Tabs\.Container/);
   assert.match(profileSource, /renderHeader=\{renderProfileHeader\}/);
   assert.match(profileSource, /renderTabBar=\{renderProfileTabBar\}/);

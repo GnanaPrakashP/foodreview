@@ -2,9 +2,9 @@ import { Image } from "expo-image";
 import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Animated, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { ActivityIndicator, Animated, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type RefreshControlProps } from "react-native";
+import { Tabs, useCollapsibleStyle, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PostFeed, SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { PROFILE_POST_SPACING, ProfilePostSkeleton } from "@/components/profile/ProfilePostSkeleton";
@@ -100,6 +100,35 @@ function profileErrorMessage(error: unknown, fallback: string) {
     return fallback;
   }
   return message;
+}
+
+function ProfileEmptyTabScroll({
+  children,
+  refreshControl
+}: {
+  children: ReactNode;
+  refreshControl?: ReactElement<RefreshControlProps>;
+}) {
+  const { styles } = useProfileTheme();
+  const { contentContainerStyle } = useCollapsibleStyle();
+
+  return (
+    <Tabs.ScrollView
+      contentContainerStyle={[
+        styles.profileEmptyTabContent,
+        // Android's collapsible scrollable adds the profile header and tab bar
+        // as top padding. Mirror that exact spacer below the empty state so its
+        // center is the midpoint of the visible tab-to-navbar viewport.
+        { paddingBottom: contentContainerStyle.paddingTop }
+      ]}
+      keyboardShouldPersistTaps="handled"
+      overScrollMode="never"
+      refreshControl={refreshControl}
+      showsVerticalScrollIndicator={false}
+    >
+      {children}
+    </Tabs.ScrollView>
+  );
 }
 
 export default function ProfileScreen() {
@@ -273,6 +302,15 @@ function ProfileContent({
     if (memoryRows.length === 0) return [{ type: "memories-empty" }];
     return memoryRows;
   }, [isAuthenticated, isProfileColdLoading, memories.data, memoriesData.length, memoriesIsError, memoriesIsLoading, memoryRows, page, pageQuery.isError]);
+  const postsShowEmptyState = Boolean(
+    isAuthenticated &&
+    page &&
+    !pageQuery.isError &&
+    !posts.isLoading &&
+    !posts.isError &&
+    pagedPosts.length === 0
+  );
+  const memoriesShowEmptyState = memoriesRows.length === 1 && memoriesRows[0]?.type === "memories-empty";
 
   const refreshPosts = useCallback(async () => {
     if (profileUsername) await posts.refetch();
@@ -386,6 +424,10 @@ function ProfileContent({
     () => { void refreshMemories(); },
     memories.isRefetching && !memoriesFetchingNextPage
   );
+  const postsRefreshControl = makeRefreshControl(
+    () => { void refreshPosts(); },
+    posts.isRefetching && !posts.isFetchingNextPage
+  );
 
   const renderProfileHeader = useCallback(() => (
     <View collapsable={false} style={styles.profileHeader}>
@@ -452,35 +494,49 @@ function ProfileContent({
     >
       <Tabs.Tab name="posts" label="Posts">
         {isAuthenticated && page && !pageQuery.isError ? (
-          <PostFeed
-            collapsibleTabView
-            contentContainerStyle={styles.profileListContent}
-            emptyActionLabel="Share review"
-            emptyMessage="Share your first dining experience."
-            emptyStateStyle={styles.profileEmptyState}
-            emptyTitle="No posts yet"
-            endReachedLabel="You're all caught up."
-            errorMessage={profileErrorMessage(posts.error, "Could not load posts.")}
-            hasMore={Boolean(posts.hasNextPage)}
-            hidePostDividers
-            homeFocused={profilePostsFocused}
-            homeMediaMode
-            isError={posts.isError && pagedPosts.length === 0}
-            isFetchingMore={posts.isFetchingNextPage}
-            isLoading={posts.isLoading && pagedPosts.length === 0}
-            listStyle={styles.profileList}
-            loadingComponent={<ProfilePostSkeleton />}
-            mediaPlaybackEnabled={profilePostsFocused}
-            onEmptyAction={openPostCreate}
-            onEndReached={onEndReached}
-            onRefresh={canRefresh ? () => { void refreshPosts(); } : undefined}
-            onRetry={() => { void posts.refetch(); }}
-            postSpacing={PROFILE_POST_SPACING}
-            posts={pagedPosts}
-            recyclingList
-            refreshing={posts.isRefetching && !posts.isFetchingNextPage}
-            scrollEnabled
-          />
+          postsShowEmptyState ? (
+            <ProfileEmptyTabScroll refreshControl={postsRefreshControl}>
+              <View style={styles.listInset}>
+                <EmptyState
+                  actionLabel="Share review"
+                  icon="restaurant-outline"
+                  message="Share your first dining experience."
+                  onAction={openPostCreate}
+                  title="No posts yet"
+                />
+              </View>
+            </ProfileEmptyTabScroll>
+          ) : (
+            <PostFeed
+              collapsibleTabView
+              contentContainerStyle={styles.profileListContent}
+              emptyActionLabel="Share review"
+              emptyMessage="Share your first dining experience."
+              emptyStateStyle={styles.profileEmptyState}
+              emptyTitle="No posts yet"
+              endReachedLabel="You're all caught up."
+              errorMessage={profileErrorMessage(posts.error, "Could not load posts.")}
+              hasMore={Boolean(posts.hasNextPage)}
+              hidePostDividers
+              homeFocused={profilePostsFocused}
+              homeMediaMode
+              isError={posts.isError && pagedPosts.length === 0}
+              isFetchingMore={posts.isFetchingNextPage}
+              isLoading={posts.isLoading && pagedPosts.length === 0}
+              listStyle={styles.profileList}
+              loadingComponent={<ProfilePostSkeleton />}
+              mediaPlaybackEnabled={profilePostsFocused}
+              onEmptyAction={openPostCreate}
+              onEndReached={onEndReached}
+              onRefresh={canRefresh ? () => { void refreshPosts(); } : undefined}
+              onRetry={() => { void posts.refetch(); }}
+              postSpacing={PROFILE_POST_SPACING}
+              posts={pagedPosts}
+              recyclingList
+              refreshing={posts.isRefetching && !posts.isFetchingNextPage}
+              scrollEnabled
+            />
+          )
         ) : (
           <Tabs.FlatList
             data={postRows}
@@ -502,30 +558,36 @@ function ProfileContent({
         )}
       </Tabs.Tab>
       <Tabs.Tab name="memories" label="Memories">
-        <Tabs.FlashList
-          data={memoriesRows}
-          drawDistance={900}
-          getItemType={(item) => item.type}
-          keyExtractor={profileListKey}
-          renderItem={({ item }) => renderListRow(item)}
-          ItemSeparatorComponent={ProfileListGap}
-          ListFooterComponent={(
-            <ProfileMemoriesFooter
-              isError={memoriesNextPageError}
-              isFetchingMore={memoriesFetchingNextPage}
-              onRetry={onMemoriesEndReached}
-            />
-          )}
-          contentContainerStyle={styles.profileListContent}
-          keyboardShouldPersistTaps="handled"
-          maintainVisibleContentPosition={{ disabled: true }}
-          onEndReached={hasNextMemoriesPage && !memoriesFetchingNextPage ? onMemoriesEndReached : undefined}
-          onEndReachedThreshold={0.35}
-          overScrollMode="never"
-          refreshControl={memoriesRefreshControl}
-          showsVerticalScrollIndicator={false}
-          style={styles.profileList}
-        />
+        {memoriesShowEmptyState ? (
+          <ProfileEmptyTabScroll refreshControl={memoriesRefreshControl}>
+            {renderListRow(memoriesRows[0])}
+          </ProfileEmptyTabScroll>
+        ) : (
+          <Tabs.FlashList
+            data={memoriesRows}
+            drawDistance={900}
+            getItemType={(item) => item.type}
+            keyExtractor={profileListKey}
+            renderItem={({ item }) => renderListRow(item)}
+            ItemSeparatorComponent={ProfileListGap}
+            ListFooterComponent={(
+              <ProfileMemoriesFooter
+                isError={memoriesNextPageError}
+                isFetchingMore={memoriesFetchingNextPage}
+                onRetry={onMemoriesEndReached}
+              />
+            )}
+            contentContainerStyle={styles.profileListContent}
+            keyboardShouldPersistTaps="handled"
+            maintainVisibleContentPosition={{ disabled: true }}
+            onEndReached={hasNextMemoriesPage && !memoriesFetchingNextPage ? onMemoriesEndReached : undefined}
+            onEndReachedThreshold={0.35}
+            overScrollMode="never"
+            refreshControl={memoriesRefreshControl}
+            showsVerticalScrollIndicator={false}
+            style={styles.profileList}
+          />
+        )}
       </Tabs.Tab>
     </Tabs.Container>
   );
@@ -1153,8 +1215,12 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
     backgroundColor: PROFILE_COLORS.bg,
     paddingBottom: spacing.xl
   },
+  profileEmptyTabContent: {
+    flexGrow: 1,
+    justifyContent: "center"
+  },
   profileEmptyState: {
-    paddingTop: spacing.base
+    paddingTop: 0
   },
   profileHeader: {
     backgroundColor: PROFILE_COLORS.bg,

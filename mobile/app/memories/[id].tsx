@@ -83,6 +83,7 @@ import {
   FOOD_WALLPAPER_TILE_SIZE,
 } from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import { NativeKeyboardInsetView } from "@/components/chat/NativeKeyboardInsetView";
 import Svg, { Circle, Defs, G, Path, Pattern, Rect } from "react-native-svg";
 import {
   MEMORY_ROOM_TABS as ROOM_TABS,
@@ -106,6 +107,7 @@ import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
+import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import {
   useAddMemoryMessageMutation,
@@ -301,6 +303,17 @@ const COMPOSER_HEIGHT_COMMIT_THRESHOLD = 1;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
+// On Android the chat surface is glued to the keyboard by a native
+// WindowInsetsAnimation-driven container (NativeKeyboardInsetView), which moves
+// per-frame on the native side and bypasses the Fabric commit stall. iOS keeps
+// the JS driven-height (park) transform. Flip to false to fall back to the JS
+// transform on Android too.
+const USE_NATIVE_KEYBOARD_INSET = Platform.OS === "android";
+// Emit per-frame native inset logs (adb logcat -s KeyboardInsetView) to verify
+// the callback cadence on device. Toggling this is a JS prop change (Metro
+// reload), so it can be turned off without a native rebuild. Leave false in
+// normal use; on only for on-device verification.
+const NATIVE_KEYBOARD_INSET_DEBUG = false;
 const COMPOSER_STANDARD_BOTTOM_GAP = spacing.md;
 const COMPOSER_EDGE_TO_EDGE_BOTTOM_GAP = spacing.lg;
 const MEDIA_GRID_GAP = 4;
@@ -840,6 +853,7 @@ function MemoryChatMainSurface({
   reactions,
   replyingToMessage,
   resolvedTheme,
+  closedComposerBottomPadding,
   surfaceKeyboardStyle,
   toolbarInsetStyle,
   typingVisible
@@ -883,6 +897,7 @@ function MemoryChatMainSurface({
   reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
+  closedComposerBottomPadding: number;
   surfaceKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
   typingVisible: boolean;
@@ -1497,11 +1512,8 @@ function MemoryChatMainSurface({
     );
   }, [buildMenuActions, selectionMode]);
 
-  return (
-    <Reanimated.View
-      pointerEvents={active ? "auto" : "none"}
-      style={[styles.chatMainSurface, surfaceKeyboardStyle]}
-    >
+  const surfaceInner = (
+    <>
       <View style={styles.chatMainMessagesLayer}>
         <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
@@ -1620,6 +1632,41 @@ function MemoryChatMainSurface({
       </View>
       <View pointerEvents="none" style={styles.chatKeyboardBridge} />
       {composerToolbar}
+    </>
+  );
+
+  // Android: a native WindowInsetsAnimation-driven container moves the whole
+  // surface (list + composer + bridge) per-frame on the native side, gluing it
+  // to the keyboard without a Fabric commit per frame. iOS: the JS driven-height
+  // (park) transform. Both keep the composer + list as one rigid unit.
+  if (USE_NATIVE_KEYBOARD_INSET) {
+    // The native view is ONLY a flex container that translates itself; all
+    // layout (including the absolutely-positioned composer + bridge) happens in
+    // a plain RN View child. A custom ExpoView is not a reliable containing
+    // block for `position:absolute` children, so nesting a normal View restores
+    // standard RN layout while the native view still owns the keyboard motion.
+    return (
+      <NativeKeyboardInsetView
+        active={active}
+        closedGap={closedComposerBottomPadding}
+        openGap={COMPOSER_KEYBOARD_OPEN_GAP}
+        debug={NATIVE_KEYBOARD_INSET_DEBUG}
+        pointerEvents={active ? "auto" : "none"}
+        style={styles.chatKeyboardInsetContainer}
+      >
+        <View style={styles.chatMainSurface}>
+          {surfaceInner}
+        </View>
+      </NativeKeyboardInsetView>
+    );
+  }
+
+  return (
+    <Reanimated.View
+      pointerEvents={active ? "auto" : "none"}
+      style={[styles.chatMainSurface, surfaceKeyboardStyle]}
+    >
+      {surfaceInner}
     </Reanimated.View>
   );
 }
@@ -2050,7 +2097,10 @@ function MemoryChatMainInputToolbar({
   const replyAuthorId = String(replyMessage?.user?._id ?? "");
   const replyAuthor = replyAuthorId && replyAuthorId === myUsername ? "You" : replyMessage?.user?.name || "Unknown";
   const replyBody = replyMessage?.text || (replyMessage?.image ? "Photo" : replyMessage?.audio ? "Audio" : "Message");
-  const measuredDraft = draft.length > 0 ? `${draft}\n​` : "​";
+  // Sizes the message box to the draft. A trailing zero-width space (no newline)
+  // makes a real trailing newline in the draft count as a line WITHOUT inflating
+  // every single-line draft to two lines.
+  const measuredDraft = `${draft}​`;
 
   useEffect(() => {
     const externalText = text ?? "";
@@ -2546,22 +2596,24 @@ function getComposerClosedBottomPadding(bottomInset: number) {
 }
 
 function getChatKeyboardShift(
-  keyboardOffset: number,
-  keyboardProgress: number,
+  drivenKeyboardHeight: number,
   closedComposerBottomPadding: number
 ) {
   "worklet";
-  // Geometry:
-  // - closed: keyboardOffset=0, progress=0, so shift=0 and the existing
-  //   safe-area/navigation padding is preserved;
-  // - open: keyboardOffset=-keyboardHeight, progress=1, so the closed gap is
-  //   reduced exactly once to COMPOSER_KEYBOARD_OPEN_GAP.
-  // Blending that gap reduction with the native progress removes the old clamp
-  // dead zone while keeping the keyboard frame as the only motion authority.
-  const closedComposerBottomGap = closedComposerBottomPadding;
-  const openComposerBottomGap = COMPOSER_KEYBOARD_OPEN_GAP;
-  const animatedGapReduction = (closedComposerBottomGap - openComposerBottomGap) * keyboardProgress;
-  return keyboardOffset + animatedGapReduction;
+  // Geometry (ONE monotonic signal, no second progress channel):
+  // - closed: drivenKeyboardHeight=0, so shift=0 and the composer keeps its
+  //   full safe-area/navigation resting padding;
+  // - open: shift=-(drivenKeyboardHeight - closedSafeAreaGap), lifting the
+  //   composer to rest COMPOSER_KEYBOARD_OPEN_GAP above the keyboard top.
+  // The driven height PARKS on open — one pre-calculated move announced by the
+  // IME's onStart, landing ~1 frame before the keyboard — and follows per-frame
+  // only on close. The surface therefore never chases the ~4 app frames this
+  // device freezes at slide start (raw-follow's proven hop/judder). The
+  // safe-area part of the resting gap is a FLAT subtraction from that single
+  // value: blending it against a separate progress signal wiggles at the settle
+  // point because the two signals can land on different frames.
+  const closedSafeAreaGap = Math.max(0, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP);
+  return -Math.max(0, drivenKeyboardHeight - closedSafeAreaGap);
 }
 
 function hasMeaningfulComposerHeightChange(nextHeight: number, committedHeight: number) {
@@ -2938,19 +2990,27 @@ export default function MemoryDetailScreen() {
   }, [markRead, mode, room.data, roomId]);
 
   // Keyboard handling: one common surface carries the composer, message list,
-  // and panel-coloured bridge using the root provider's native keyboard frame.
-  // The children have no keyboard transform or settle-time padding handoff, so
-  // their relative coordinates cannot diverge during the IME transition. The
-  // closed safe-area/navigation gap is blended down to the open keyboard gap
-  // over the native progress.
+  // and panel-coloured bridge, translated by a SINGLE transform so the composer
+  // and content can never diverge from each other during the IME transition.
+  // That transform is driven by the PARKED keyboard height (pre-calculated open,
+  // gated per-frame close) — not the raw per-frame keyboard frame — because
+  // raw-following was proven on-device to hop/judder at the top of the open
+  // (the display freezes ~4 app frames until the IME animation completes). See
+  // useDrivenKeyboardHeight for the full forensics. The closed safe-area gap is
+  // a flat subtraction from that one value; the panel-coloured bridge masks the
+  // strip the keyboard is still sliding into while the parked surface waits.
+  //
+  // keyboardMotion (raw provider progress) is kept ONLY for non-visual
+  // bookkeeping — deferring composer-height layout commits out of the slide
+  // window and reconciling them once the real keyboard settles.
   const keyboardMotion = useKeyboardMotion();
+  const { height: drivenKeyboardHeight } = useDrivenKeyboardHeight();
   const isChatMode = mode === "chat";
   const closedComposerBottomPadding = getComposerClosedBottomPadding(frozenComposerBottomInset);
   const chatKeyboardShift = useDerivedValue(() => {
     if (!isChatMode) return 0;
     return getChatKeyboardShift(
-      keyboardMotion.offset.value,
-      keyboardMotion.progress.value,
+      drivenKeyboardHeight.value,
       closedComposerBottomPadding
     );
   }, [closedComposerBottomPadding, isChatMode]);
@@ -3862,6 +3922,7 @@ export default function MemoryDetailScreen() {
                     reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
                     resolvedTheme={resolvedTheme}
+                    closedComposerBottomPadding={closedComposerBottomPadding}
                     scrollToBottom={scrollChatToBottom}
                     surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
                     toolbarInsetStyle={composerBottomInsetStyle}
@@ -8793,6 +8854,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
   roomStageChat: {
     backgroundColor: ROOM_COLORS.bg,
     overflow: "hidden"
+  },
+  chatKeyboardInsetContainer: {
+    flex: 1
   },
   chatMainSurface: {
     backgroundColor: "transparent",

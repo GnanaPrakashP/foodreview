@@ -8,6 +8,7 @@ import {
   BackHandler,
   FlatList,
   Keyboard,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -30,6 +31,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { avatarColor, timeAgo } from "@/components/posts/PostCard";
 import { useAddPostCommentMutation, useDeletePostCommentMutation, usePostCommentsQuery } from "@/hooks/useComments";
 import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
+import { NativeKeyboardInsetView } from "@/components/chat/NativeKeyboardInsetView";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { useCommentsSheetStore } from "@/stores/commentsSheetStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -41,6 +43,12 @@ type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 const COMMENT_LIMIT = 500;
 const COMMENT_LIMIT_WARNING_AT = COMMENT_LIMIT - 50;
+// On Android the composer is glued to the keyboard by the native
+// WindowInsetsAnimation-driven container (same as the memory-room chat), which
+// tracks per-frame on the native side and bypasses the Fabric commit stall.
+// iOS keeps the JS driven-height (park) transform. Flip to false to fall back to
+// the JS transform on Android too.
+const USE_NATIVE_KEYBOARD_INSET = Platform.OS === "android";
 const QUICK_COMMENT_EMOJIS = ["😋", "🔥", "❤️", "👏", "😮", "🤤", "😂"];
 const COMMENTS_INITIAL_RENDER_COUNT = 12;
 const COMMENTS_RENDER_BATCH_SIZE = 8;
@@ -337,6 +345,74 @@ function PostCommentsSheet({
     );
   }
 
+  // Shared composer children (emoji quick row + input row). Rendered inside the
+  // native inset container on Android and the JS park Animated.View on iOS.
+  const composerBody = (
+    <>
+      {viewerName ? (
+        <View style={styles.drawerEmojiRow}>
+          {QUICK_COMMENT_EMOJIS.map((emoji) => (
+            <Pressable
+              accessibilityLabel={`Add ${emoji} to comment`}
+              accessibilityRole="button"
+              hitSlop={6}
+              key={emoji}
+              onPress={() => setCommentText((text) => `${text}${emoji}`.slice(0, COMMENT_LIMIT))}
+              style={styles.drawerEmojiButton}
+            >
+              <Text style={styles.drawerEmojiText}>{emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      <View style={styles.drawerComposer}>
+        <View style={[styles.drawerComposerAvatar, { backgroundColor: avatarColor(composerName) }]}>
+          <Text style={styles.drawerComposerAvatarText}>{initialsForName(composerName)}</Text>
+        </View>
+        <View style={[styles.drawerInputWrap, !viewerName && styles.drawerInputWrapDisabled]}>
+          <TextInput
+            editable={Boolean(viewerName) && !addComment.isPending}
+            maxLength={COMMENT_LIMIT}
+            multiline
+            onChangeText={setCommentText}
+            placeholder={viewerName ? "Add a comment..." : "Log in to comment"}
+            placeholderTextColor={themeColors.muted}
+            style={styles.drawerInput}
+            textAlignVertical="center"
+            value={commentText}
+          />
+          {showCharacterCount ? (
+            <Text
+              style={[
+                styles.drawerCharacterCount,
+                commentText.length >= COMMENT_LIMIT && styles.drawerCharacterCountLimit
+              ]}
+            >
+              {commentText.length}/{COMMENT_LIMIT}
+            </Text>
+          ) : null}
+        </View>
+        <Pressable
+          accessibilityLabel="Send comment"
+          disabled={!canSendComment}
+          hitSlop={8}
+          onPress={submitComment}
+          style={[styles.drawerSendButton, !canSendComment && styles.drawerSendButtonDisabled]}
+        >
+          {addComment.isPending ? (
+            <ActivityIndicator color={themeColors.white} size="small" />
+          ) : (
+            <Send
+              size={16}
+              color={canSendComment ? themeColors.white : themeColors.muted}
+              strokeWidth={2.3}
+            />
+          )}
+        </Pressable>
+      </View>
+    </>
+  );
+
   return (
     <View style={styles.commentsOverlay}>
       <Animated.View style={[styles.commentsModalBackdrop, backdropStyle]}>
@@ -407,71 +483,27 @@ function PostCommentsSheet({
             windowSize={COMMENTS_WINDOW_SIZE}
           />
 
-          <Animated.View
-            style={[styles.drawerComposerBlock, { paddingBottom: composerBottomPadding }, composerShiftStyle]}
-          >
-            {viewerName ? (
-              <View style={styles.drawerEmojiRow}>
-                {QUICK_COMMENT_EMOJIS.map((emoji) => (
-                  <Pressable
-                    accessibilityLabel={`Add ${emoji} to comment`}
-                    accessibilityRole="button"
-                    hitSlop={6}
-                    key={emoji}
-                    onPress={() => setCommentText((text) => `${text}${emoji}`.slice(0, COMMENT_LIMIT))}
-                    style={styles.drawerEmojiButton}
-                  >
-                    <Text style={styles.drawerEmojiText}>{emoji}</Text>
-                  </Pressable>
-                ))}
+          {USE_NATIVE_KEYBOARD_INSET ? (
+            // Android: native inset container glues the composer to the keyboard
+            // per-frame on the native side (no Fabric commit). The inner plain
+            // View does the layout; the native view only translates.
+            <NativeKeyboardInsetView
+              active
+              closedGap={composerBottomPadding}
+              openGap={spacing.md}
+              style={styles.drawerComposerInset}
+            >
+              <View style={[styles.drawerComposerBlock, { paddingBottom: composerBottomPadding }]}>
+                {composerBody}
               </View>
-            ) : null}
-            <View style={styles.drawerComposer}>
-              <View style={[styles.drawerComposerAvatar, { backgroundColor: avatarColor(composerName) }]}>
-                <Text style={styles.drawerComposerAvatarText}>{initialsForName(composerName)}</Text>
-              </View>
-              <View style={[styles.drawerInputWrap, !viewerName && styles.drawerInputWrapDisabled]}>
-                <TextInput
-                  editable={Boolean(viewerName) && !addComment.isPending}
-                  maxLength={COMMENT_LIMIT}
-                  multiline
-                  onChangeText={setCommentText}
-                  placeholder={viewerName ? "Add a comment..." : "Log in to comment"}
-                  placeholderTextColor={themeColors.muted}
-                  style={styles.drawerInput}
-                  textAlignVertical="center"
-                  value={commentText}
-                />
-                {showCharacterCount ? (
-                  <Text
-                    style={[
-                      styles.drawerCharacterCount,
-                      commentText.length >= COMMENT_LIMIT && styles.drawerCharacterCountLimit
-                    ]}
-                  >
-                    {commentText.length}/{COMMENT_LIMIT}
-                  </Text>
-                ) : null}
-              </View>
-              <Pressable
-                accessibilityLabel="Send comment"
-                disabled={!canSendComment}
-                hitSlop={8}
-                onPress={submitComment}
-                style={[styles.drawerSendButton, !canSendComment && styles.drawerSendButtonDisabled]}
-              >
-                {addComment.isPending ? (
-                  <ActivityIndicator color={themeColors.white} size="small" />
-                ) : (
-                  <Send
-                    size={16}
-                    color={canSendComment ? themeColors.white : themeColors.muted}
-                    strokeWidth={2.3}
-                  />
-                )}
-              </Pressable>
-            </View>
-          </Animated.View>
+            </NativeKeyboardInsetView>
+          ) : (
+            <Animated.View
+              style={[styles.drawerComposerBlock, { paddingBottom: composerBottomPadding }, composerShiftStyle]}
+            >
+              {composerBody}
+            </Animated.View>
+          )}
         </Animated.View>
       </View>
     </View>
@@ -735,6 +767,11 @@ function createStyles(c: ThemeColors) {
       fontSize: 14,
       lineHeight: 20,
       marginTop: 3
+    },
+    drawerComposerInset: {
+      // The native inset container is a natural-height, full-width column child
+      // at the sheet bottom; it only translates. Its child block does the rest.
+      width: "100%"
     },
     drawerComposerBlock: {
       // Opaque: the block translates up over the comment list while the

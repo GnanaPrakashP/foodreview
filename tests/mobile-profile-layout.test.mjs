@@ -83,7 +83,7 @@ test("main tab hero content shares one optical top anchor", () => {
 });
 
 test("Profile uses a shared collapsible header with virtualized Posts and Memories", () => {
-  assert.match(profileTabSource, /import \{ Tabs, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
+  assert.match(profileTabSource, /import \{ Tabs, useCollapsibleStyle, type CollapsibleRef, type TabBarProps \} from "react-native-collapsible-tab-view"/);
   assert.match(profileTabSource, /const page = useCurrentProfilePageQuery\(\{ enabled: isFocused && isReady && isAuthenticated \}\)/);
   assert.match(profileTabSource, /const isActiveMainTab = isFocused/);
   assert.match(profileTabSource, /useProfilePostsInfiniteQuery\(profileUsername, \{ enabled: isActiveMainTab && Boolean\(profileUsername\) \}\)/);
@@ -123,11 +123,18 @@ test("Profile empty actions launch their specific Create flows", () => {
   assert.match(shareTabSource, /launchTarget === "memory"[\s\S]*clearLaunchTarget\(\)[\s\S]*setShareMode\("friends"\)/);
 });
 
-test("Profile empty states use the updated copy and a small header gap", () => {
+test("Profile empty states are centered between the tab heading and bottom navigation", () => {
   assert.match(profileTabSource, /emptyMessage="Share your first dining experience\."/);
   assert.match(profileTabSource, /emptyStateStyle=\{styles\.profileEmptyState\}/);
   assert.match(profileTabSource, /style=\{\[styles\.listInset, styles\.profileEmptyState\]\}/);
-  assert.match(profileTabSource, /profileEmptyState:\s*\{\s*paddingTop: spacing\.base/);
+  assert.match(profileTabSource, /const postsShowEmptyState = Boolean\(/);
+  assert.match(profileTabSource, /const memoriesShowEmptyState = memoriesRows\.length === 1 && memoriesRows\[0\]\?\.type === "memories-empty"/);
+  assert.match(profileTabSource, /function ProfileEmptyTabScroll\([\s\S]*useCollapsibleStyle\(\)/);
+  assert.match(profileTabSource, /paddingBottom: contentContainerStyle\.paddingTop/);
+  assert.match(profileTabSource, /postsShowEmptyState \? \([\s\S]*<ProfileEmptyTabScroll refreshControl=\{postsRefreshControl\}>/);
+  assert.match(profileTabSource, /memoriesShowEmptyState \? \([\s\S]*<ProfileEmptyTabScroll refreshControl=\{memoriesRefreshControl\}>/);
+  assert.match(profileTabSource, /profileEmptyTabContent:\s*\{[\s\S]*flexGrow: 1,[\s\S]*justifyContent: "center"/);
+  assert.match(profileTabSource, /profileEmptyState:\s*\{\s*paddingTop: 0/);
   assert.match(postFeedSource, /emptyStateStyle\?: StyleProp<ViewStyle>/);
   assert.match(postFeedSource, /<View style=\{\[styles\.stateWrap, emptyStateStyle\]\}>/);
 });
