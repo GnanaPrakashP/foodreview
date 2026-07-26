@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
     const parsed = await readBoundedJson<Record<string, unknown>>(req, 4096);
     if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
-    const rawIds = parsed.value.assetIds;
+    const rawIds = parsed.value?.assetIds;
     if (!Array.isArray(rawIds) || rawIds.length < 1 || rawIds.length > 10) {
       return mobileApiError(req, METHODS, "invalid_input", "Invalid media selection", 400);
     }
