@@ -6,7 +6,7 @@ import {
   useAudioPlayer,
   useAudioPlayerStatus,
   useAudioRecorder,
-  useAudioRecorderState,
+  type RecorderState,
   type RecordingOptions
 } from "expo-audio";
 import { BlurView } from "expo-blur";
@@ -33,10 +33,12 @@ import {
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
   type TextLayoutEventData,
   Modal,
   Platform,
   Pressable,
+  processColor,
   ScrollView,
   type StyleProp,
   StyleSheet,
@@ -49,7 +51,7 @@ import {
   type ViewToken,
   type ViewStyle
 } from "react-native";
-import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   AndroidSoftInputModes,
@@ -63,9 +65,9 @@ import Reanimated, {
   runOnJS,
   type ScrollEvent,
   type SharedValue,
-  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
+  useEvent,
   useSharedValue,
   withTiming
 } from "react-native-reanimated";
@@ -79,15 +81,19 @@ import {
   type OccasionTheme
 } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
-import {
-  FOOD_WALLPAPER_TILE_SIZE,
-} from "@/components/memories/foodWallpaperPattern";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import {
+  AnimatedNativeChatInput,
+  type NativeChatInputHandle,
+  type NativeChatInputHeightEvent,
+  type NativeChatInputProps,
+  type NativeChatInputTextEvent
+} from "@/components/chat/NativeChatInput";
 import { NativeKeyboardInsetView } from "@/components/chat/NativeKeyboardInsetView";
-import Svg, { Circle, Defs, G, Path, Pattern, Rect } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import {
   MEMORY_ROOM_TABS as ROOM_TABS,
-  MEMORY_ROOM_TAB_TIMING,
+  memoryRoomModeFromTabParam,
   useMemoryRoomController,
   type MemoryRoomMode as RoomMode,
   type MemoryRoomTabMode as RoomTabMode
@@ -108,15 +114,13 @@ import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
+import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
-  useAddMemoryDishMutation,
   useAddMemoryPhotoMutation,
-  useCreateMemoryStopMutation,
   useDeleteMemoryItemsMutation,
-  useDeleteMemoryStopMutation,
   useDismissFailedMemoryMessage,
   useEditMemoryMessageMutation,
   useLeaveMemoryRoomMutation,
@@ -130,20 +134,14 @@ import {
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
-import {
-  pickMemoryMediaFromCamera,
-  pickMemoryMediaFromGallery,
-  type MemoryMediaPickerResult
-} from "@/services/mediaPicker";
-import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { MEMORY_CHAT_PRELOAD_LIMIT, type AddMemoryMediaAsset, type MemoryRoomsPage } from "@/services/memories";
+import type { AddMemoryMediaAsset, MemoryRoomsPage } from "@/services/memories";
 import { MEMORY_AUDIO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import type { UserSearchResult } from "@/services/profiles";
 import { useSessionStore } from "@/stores/sessionStore";
-import { avatarAccents, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
-import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryStop, MemoryStopType } from "@/types/models";
+import { avatarAccents, fontFamilies, fontStyles, memoryRoomTokens, radius, spacing, type MemoryRoomTokens } from "@/theme";
+import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
 import { formatDisplayDate, formatDisplayTime } from "@/utils/datetime";
 
 type MemberCircleStatus = CircleAccessStatus | "loading";
@@ -190,15 +188,6 @@ type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
   | { type: "photo"; value: MemoryPhoto };
 type MemoryReactionState = Record<string, Record<string, Array<string | number>>>;
-type MemoryCaptureAsset = {
-  duration?: number | null;
-  fileSize?: number | null;
-  height?: number | null;
-  mimeType?: string | null;
-  type?: string | null;
-  uri: string;
-  width?: number | null;
-};
 type MemoryChatMainMessage = ChatMainMessage & {
   kind: "dish" | "media" | "message" | "unread";
   memoryDish?: MemoryDish;
@@ -207,21 +196,11 @@ type MemoryChatMainMessage = ChatMainMessage & {
   extraAttachments?: MemoryPhoto[];
   showSenderDetails?: boolean;
 };
-const FOOD_WALLPAPER_TILE_SOURCE = require("../../assets/memories/food-wallpaper-tile.png");
+// Pre-tinted (theme line #D7CAB9 @ 0.22 baked into pixels) so the chat wallpaper
+// renders as a plain repeating image — no per-frame tintColor shader, no fade.
+// Regenerate with scripts/generateFoodWallpaperTile.mjs after changing either.
+const FOOD_WALLPAPER_TILE_SOURCE = require("../../assets/memories/food-wallpaper-tile-baked.png");
 const ROOM_MAX_WIDTH = 640;
-// Stop types shown on the itinerary. `canHaveDishes` gates the per-stop
-// "Add dish" affordance — a movie or bowling stop just holds a note/photos.
-const MEMORY_STOP_META: Record<MemoryStopType, { emoji: string; label: string; canHaveDishes: boolean }> = {
-  restaurant: { emoji: "🍽️", label: "Restaurant", canHaveDishes: true },
-  cafe: { emoji: "☕", label: "Café", canHaveDishes: true },
-  bar: { emoji: "🍸", label: "Bar", canHaveDishes: true },
-  bowling: { emoji: "🎳", label: "Bowling", canHaveDishes: false },
-  movie: { emoji: "🎬", label: "Movie", canHaveDishes: false },
-  activity: { emoji: "🎯", label: "Activity", canHaveDishes: false },
-  other: { emoji: "📍", label: "Other", canHaveDishes: true }
-};
-
-const MEMORY_STOP_ORDER: MemoryStopType[] = ["restaurant", "cafe", "bar", "bowling", "movie", "activity", "other"];
 // Room palette mapped onto the shared memory tokens (see src/theme/tokens.ts).
 // Key names are kept stable so styles read clearly; values follow the current
 // app appearance with purple as the single memory-room primary accent.
@@ -296,10 +275,6 @@ const COMPOSER_TOP_GAP = 8;
 // Matches COMPOSER_TOP_GAP so the message box sits with an equal gap above (to the
 // composer's opaque top edge) and below (to the keyboard) when the keyboard is open.
 const COMPOSER_KEYBOARD_OPEN_GAP = 8;
-// Yoga reports layout in density-independent pixels. A real multiline/reply/edit
-// height change is many pixels; one pixel or less is measurement noise and must
-// not create a settle-time React render or list-clearance reconciliation.
-const COMPOSER_HEIGHT_COMMIT_THRESHOLD = 1;
 const COMPOSER_CLOSED_SAFE_GAP = 6;
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
@@ -324,7 +299,7 @@ const CHAT_GROUPED_MESSAGE_GAP = 3;
 const CHAT_AVATAR_SIZE = 30;
 const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
 const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
-const COMPOSER_INPUT_VERTICAL_PADDING = Platform.OS === "ios" ? 20 : 16;
+const COMPOSER_INPUT_VERTICAL_PADDING = Platform.OS === "ios" ? 20 : Platform.OS === "android" ? 18 : 16;
 const COMPOSER_INPUT_BORDER_HEIGHT = 2;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
@@ -333,6 +308,9 @@ const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
 const VOICE_MESSAGE_MIN_DURATION_MS = 700;
 const VOICE_MESSAGE_SEND_MIN_DURATION_MS = Platform.OS === "android" ? 1500 : VOICE_MESSAGE_MIN_DURATION_MS;
 const VOICE_MESSAGE_MIME_TYPE = "audio/mp4";
+// The native recorder instance handed back by VoiceRecorderHost.
+type VoiceRecorder = ReturnType<typeof useAudioRecorder>;
+
 const VOICE_RECORDING_OPTIONS: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
   bitRate: Platform.OS === "android" ? 64000 : RecordingPresets.HIGH_QUALITY.bitRate,
@@ -347,6 +325,8 @@ const VOICE_RECORDING_OPTIONS: RecordingOptions = {
 };
 const SELECTION_INLINE_BUTTON_SIZE = Platform.OS === "web" ? 30 : 32;
 const SELECTION_SECONDARY_ICON_SIZE = 19;
+const REPLY_SWIPE_ACTIVATION_DISTANCE = 30;
+const REPLY_SWIPE_VERTICAL_TOLERANCE = 4;
 const REPLY_SWIPE_TRIGGER_DISTANCE = 54;
 const REPLY_SWIPE_MAX_TRANSLATE = 58;
 const FLOATING_ADD_EDGE_OFFSET = spacing.lg + 6;
@@ -357,6 +337,9 @@ const FLOATING_ADD_MENU_GAP = 14;
 const ROOM_HEADER_SECTION_GAP = 6;
 const ROOM_HEADER_HORIZONTAL_PADDING = 18;
 const ROOM_HEADER_CONTENT_INSET = 8;
+// Inner padding of the room tab bar. Shared by the style and the active-pill
+// geometry so the two can never drift apart.
+const MODE_TABS_PADDING = 2;
 const ROOM_HEADER_CONTROL_SIZE = 34;
 const ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP = 2;
 const ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE = 3;
@@ -378,6 +361,10 @@ const ROOM_HEADER_TABS_TOP = ROOM_HEADER_DETAILS_TOP + ROOM_HEADER_DETAILS_HEIGH
 // avoids feeding animated header measurements back into the room screen.
 const TABLE_HEADER_CLEARANCE = ROOM_HEADER_EXPANDED_HEIGHT;
 const CHAT_COMPOSER_CLEARANCE = 88;
+// How long after the room settles before the Chat pane is built in the
+// background. Long enough that the mount cannot land on the frames where the
+// room is still becoming interactive.
+const MEMORY_ROOM_CHAT_WARM_DELAY_MS = 450;
 const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
 
 const MEDIA_GALLERY_GAP = 2;
@@ -387,10 +374,22 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
-const ROOM_PANE_TRANSLATE_Y = 5;
-const CHAT_MAIN_INITIAL_RENDER_COUNT = 10;
-const CHAT_MAIN_MAX_RENDER_BATCH = 8;
-const CHAT_MAIN_WINDOW_SIZE = 7;
+// Paint a complete phone viewport from the durable local snapshot in the first
+// list commit. Rows outside the viewport remain virtualized; this is view
+// recycling, not staged message loading.
+const CHAT_MAIN_INITIAL_RENDER_COUNT = 18;
+const CHAT_MAIN_MAX_RENDER_BATCH = 12;
+// Keep only the visible viewport plus one render-ahead viewport on either side.
+// A window of nine mounted every row in medium rooms (42 messages produced
+// ~1,000 native views), making both background warm-up and route teardown scale
+// with total history even though FlatList already owns incremental rendering.
+const CHAT_MAIN_WINDOW_SIZE = 3;
+const CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS = 650;
+const CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD = 0.55;
+const CHAT_MAIN_SCROLL_POSITION_CONFIG = {
+  autoscrollToTopThreshold: 72,
+  minIndexForVisible: 0
+};
 const CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS = 18;
 const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
 const CHAT_TIMELINE_MAX_RENDER_BATCH = 12;
@@ -815,7 +814,6 @@ function buildMemoryChatMainMessages({
 
 function MemoryChatMainSurface({
   active,
-  bottomClearance,
   canLoadOlderMessages,
   data,
   loadingOlderMessages,
@@ -837,7 +835,6 @@ function MemoryChatMainSurface({
   onDeleteTarget,
   onDeleteSelected,
   onEditMessage,
-  onInputToolbarLayout,
   onLoadOlderMessages,
   onNearBottomChange,
   onOpenDish,
@@ -854,18 +851,17 @@ function MemoryChatMainSurface({
   replyingToMessage,
   resolvedTheme,
   closedComposerBottomPadding,
+  keyboardTopReserve,
   surfaceKeyboardStyle,
-  toolbarInsetStyle,
-  typingVisible
+  toolbarInsetStyle
 }: {
   active: boolean;
-  bottomClearance: number;
   canLoadOlderMessages: boolean;
   data: MemoryRoom;
   loadingOlderMessages: boolean;
   message: string;
   myUsername: string;
-  inputRef: RefObject<TextInput | null>;
+  inputRef: RefObject<NativeChatInputHandle | null>;
   listRef: RefObject<ChatMainAnimatedList<MemoryChatMainMessage> | null>;
   canDeleteSelected: boolean;
   deleteError?: string;
@@ -881,7 +877,6 @@ function MemoryChatMainSurface({
   onDeleteTarget: (target: MemoryActionTarget) => void;
   onDeleteSelected: () => void;
   onEditMessage: (message: MemoryMessage) => void;
-  onInputToolbarLayout: (event: LayoutChangeEvent) => void;
   onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
   onOpenDish: (dishId: string) => void;
@@ -898,22 +893,27 @@ function MemoryChatMainSurface({
   replyingToMessage: MemoryMessage | null;
   resolvedTheme: "dark" | "light";
   closedComposerBottomPadding: number;
+  keyboardTopReserve: SharedValue<number>;
   surfaceKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
-  typingVisible: boolean;
 }) {
   const { width: screenWidth } = useWindowDimensions();
-  const unreadAnchorMessageIdRef = useRef<string | null>(
-    active ? firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername) : null
-  );
-  const unreadAnchorVisitRef = useRef({ active, roomId: data.id });
-  if (unreadAnchorVisitRef.current.active !== active || unreadAnchorVisitRef.current.roomId !== data.id) {
-    unreadAnchorVisitRef.current = { active, roomId: data.id };
-    unreadAnchorMessageIdRef.current = active
-      ? firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername)
-      : null;
+  // Latched once per room and deliberately NOT tied to `active`. It has to be
+  // evaluated against `lastReadAt` as it stood when the room opened, because
+  // opening the chat marks the room read — and recomputing it on activation
+  // rebuilt every message object (new Date, new user, new reaction arrays) at
+  // the exact moment the warmed pane became visible, throwing away the warm
+  // layout and stalling the first Table→Chat switch. Holding the anchor for the
+  // whole room visit also keeps the divider from vanishing when you leave the
+  // Chat tab and come back.
+  const unreadAnchorRef = useRef<{ id: string | null; roomId: string } | null>(null);
+  if (!unreadAnchorRef.current || unreadAnchorRef.current.roomId !== data.id) {
+    unreadAnchorRef.current = {
+      id: firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername),
+      roomId: data.id
+    };
   }
-  const unreadAnchorMessageId = active ? unreadAnchorMessageIdRef.current : null;
+  const unreadAnchorMessageId = unreadAnchorRef.current.id;
   const chatMessages = useMemo(() => (
     buildMemoryChatMainMessages({ data, myUsername, reactions, unreadAnchorMessageId })
   ), [data, myUsername, reactions, unreadAnchorMessageId]);
@@ -925,12 +925,46 @@ function MemoryChatMainSurface({
     : false;
   const selectionMode = selectedItemKeys.length > 0;
   const chatMainNearBottomRef = useRef(true);
+  const chatMainAtBottomRef = useRef(true);
   const chatMainFollowBottomRef = useRef(true);
-  const chatMainDraggingRef = useRef(false);
+  const chatMainInteractingRef = useRef(false);
+  const chatMainMomentumRef = useRef(false);
+  const chatMainInteractionReleaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const olderPageRequestGuardRef = useRef({ inFlight: false, lastRequestAt: 0 });
   const latestChatMessageIdRef = useRef(latestChatMessageId);
-  const voiceRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
-  const voiceRecorderState = useAudioRecorderState(voiceRecorder, 200);
+  // The recorder is created on demand, not on mount. `ensureVoiceRecorder`
+  // mounts VoiceRecorderHost and resolves once it hands the instance back;
+  // startVoiceRecording already awaits a permission round trip first, so the
+  // extra render is hidden behind work that had to happen anyway.
+  const [voiceRecorderMounted, setVoiceRecorderMounted] = useState(false);
+  const voiceRecorderRef = useRef<VoiceRecorder | null>(null);
+  const voiceRecorderReadyRef = useRef<((recorder: VoiceRecorder) => void) | null>(null);
+  // The in-flight request is cached so overlapping callers share one promise.
+  // Without it, a second press while the first is still awaiting microphone
+  // permission would replace the pending resolver and leave the first await
+  // hanging for the life of the screen.
+  const voiceRecorderPendingRef = useRef<Promise<VoiceRecorder> | null>(null);
+  const ensureVoiceRecorder = useCallback(() => {
+    if (voiceRecorderRef.current) return Promise.resolve(voiceRecorderRef.current);
+    if (voiceRecorderPendingRef.current) return voiceRecorderPendingRef.current;
+    const pending = new Promise<VoiceRecorder>((resolve) => {
+      voiceRecorderReadyRef.current = resolve;
+    });
+    voiceRecorderPendingRef.current = pending;
+    setVoiceRecorderMounted(true);
+    return pending;
+  }, []);
+  const handleVoiceRecorderReady = useCallback((recorder: VoiceRecorder) => {
+    voiceRecorderRef.current = recorder;
+    voiceRecorderPendingRef.current = null;
+    const resolveReady = voiceRecorderReadyRef.current;
+    voiceRecorderReadyRef.current = null;
+    resolveReady?.(recorder);
+  }, []);
   const [voiceMode, setVoiceMode] = useState<"idle" | "recording" | "sending">("idle");
+  // Polling only while a recording is in flight: outside that there is no
+  // recorder to ask, and its status cannot change.
+  const voiceRecorderState = useVoiceRecorderState(voiceRecorderRef, 200, voiceMode !== "idle");
   const voiceModeRef = useRef(voiceMode);
   const voiceRecordingStartedAtRef = useRef<number | null>(null);
   const voiceWallDurationMs = voiceMode === "recording" && voiceRecordingStartedAtRef.current
@@ -943,6 +977,61 @@ function MemoryChatMainSurface({
   const voiceActive = voiceMode !== "idle";
   const voiceSending = voiceMode === "sending";
   const voiceSendDisabled = voiceSending || voiceDurationMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS;
+  // The message box and the list reserve share UI-thread height values. A
+  // newline/backspace writes both in the same event, so the composer and newest
+  // messages move together without a parent React render or follow-up RAF.
+  const messageBoxHeight = useSharedValue(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
+  const composerClearance = useSharedValue(CHAT_COMPOSER_CLEARANCE);
+  const composerListSpacerStyle = useAnimatedStyle(() => ({
+    height: composerClearance.value
+  }), [composerClearance]);
+  const keyboardTopSpacerStyle = useAnimatedStyle(() => ({
+    height: Math.max(0, keyboardTopReserve.value)
+  }), [keyboardTopReserve]);
+  const renderComposerListSpacer = useCallback(() => (
+    <Reanimated.View pointerEvents="none" style={composerListSpacerStyle} />
+  ), [composerListSpacerStyle]);
+  const renderKeyboardTopSpacer = useCallback(() => (
+    <Reanimated.View pointerEvents="none" style={keyboardTopSpacerStyle} />
+  ), [keyboardTopSpacerStyle]);
+
+  // Toolbar onLayout is a JS event and can arrive after a newer native
+  // newline/backspace height. Measure only when the toolbar's structure really
+  // changes; draft line-height changes are already applied atomically by the
+  // native height event above.
+  const toolbarLayoutIdentity = selectionMode
+    ? [
+        "selection",
+        selectedItemKeys.length,
+        deleteError ?? "",
+        deletePending,
+        editableSelectedMessage?.id ?? "",
+        screenWidth,
+        closedComposerBottomPadding
+      ].join(":")
+    : [
+        "input",
+        editingMessage?.id ?? "",
+        editingMessage?.body ?? "",
+        replyingToMessage?.id ?? "",
+        replyingToMessage?.body ?? "",
+        voiceMode,
+        screenWidth,
+        closedComposerBottomPadding
+      ].join(":");
+  const activeToolbarLayoutIdentityRef = useRef(toolbarLayoutIdentity);
+  const measuredToolbarLayoutIdentityRef = useRef<string | null>(null);
+  activeToolbarLayoutIdentityRef.current = toolbarLayoutIdentity;
+  const handleInputToolbarLayout = useCallback((event: LayoutChangeEvent) => {
+    if (
+      activeToolbarLayoutIdentityRef.current !== toolbarLayoutIdentity ||
+      measuredToolbarLayoutIdentityRef.current === toolbarLayoutIdentity
+    ) {
+      return;
+    }
+    measuredToolbarLayoutIdentityRef.current = toolbarLayoutIdentity;
+    composerClearance.value = event.nativeEvent.layout.height;
+  }, [composerClearance, toolbarLayoutIdentity]);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -961,17 +1050,21 @@ function MemoryChatMainSurface({
     voiceModeRef.current = "idle";
     voiceRecordingStartedAtRef.current = null;
     setVoiceMode("idle");
+    // Reachable only from a non-idle mode, which cannot be entered without the
+    // recorder having been created, so a missing instance means there is simply
+    // nothing to stop or clean up.
+    const recorder = voiceRecorderRef.current;
     try {
-      if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
-        await voiceRecorder.stop();
+      if (recorder && (recorder.isRecording || voiceRecorderState.isRecording)) {
+        await recorder.stop();
       }
     } catch {
       // Cancelling should be quiet; a stale native recorder can already be stopped.
     } finally {
-      await discardTemporaryAccountFile(voiceRecorder.uri ?? voiceRecorderState.url).catch(() => {});
+      await discardTemporaryAccountFile(recorder?.uri ?? voiceRecorderState.url).catch(() => {});
       await resetVoiceAudioMode();
     }
-  }, [resetVoiceAudioMode, voiceRecorder, voiceRecorderState.isRecording, voiceRecorderState.url]);
+  }, [resetVoiceAudioMode, voiceRecorderState.isRecording, voiceRecorderState.url]);
 
   const startVoiceRecording = useCallback(async () => {
     if (voiceModeRef.current !== "idle" || message.trim().length > 0) return;
@@ -991,8 +1084,9 @@ function MemoryChatMainSurface({
         interruptionMode: "duckOthers",
         playsInSilentMode: true
       });
-      await voiceRecorder.prepareToRecordAsync(VOICE_RECORDING_OPTIONS);
-      voiceRecorder.record();
+      const recorder = await ensureVoiceRecorder();
+      await recorder.prepareToRecordAsync(VOICE_RECORDING_OPTIONS);
+      recorder.record();
       voiceRecordingStartedAtRef.current = Date.now();
       voiceModeRef.current = "recording";
       setVoiceMode("recording");
@@ -1004,7 +1098,7 @@ function MemoryChatMainSurface({
       await resetVoiceAudioMode();
       Alert.alert("Could not start recording", error instanceof Error ? error.message : "Please try again.");
     }
-  }, [message, resetVoiceAudioMode, voiceRecorder]);
+  }, [ensureVoiceRecorder, message, resetVoiceAudioMode]);
 
   const finishAndSendVoiceRecording = useCallback(async () => {
     if (voiceModeRef.current !== "recording") return;
@@ -1016,10 +1110,14 @@ function MemoryChatMainSurface({
     voiceModeRef.current = "sending";
     setVoiceMode("sending");
 
+    // Recording mode cannot be entered without the recorder existing, so this
+    // is resolved rather than optional from here down.
+    const recorder = voiceRecorderRef.current;
     try {
-      if (voiceRecorder.isRecording || voiceRecorderState.isRecording) {
+      if (!recorder) throw new Error("voice_recorder_unavailable");
+      if (recorder.isRecording || voiceRecorderState.isRecording) {
         try {
-          await voiceRecorder.stop();
+          await recorder.stop();
         } catch (error) {
           if (durationBeforeStopMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS + 500) {
             Alert.alert("Audio is too short", "Record for a moment longer before sending.");
@@ -1028,9 +1126,9 @@ function MemoryChatMainSurface({
           throw error;
         }
       }
-      const status = voiceRecorder.getStatus();
+      const status = recorder.getStatus();
       const durationMs = Math.max(durationBeforeStopMs, status.durationMillis ?? 0);
-      const uri = voiceRecorder.uri ?? status.url ?? voiceRecorderState.url;
+      const uri = recorder.uri ?? status.url ?? voiceRecorderState.url;
       if (!uri) throw new Error("voice_recording_missing_uri");
       if (durationMs < VOICE_MESSAGE_SEND_MIN_DURATION_MS) {
         Alert.alert("Audio is too short", "Record for at least a moment before sending.");
@@ -1053,13 +1151,13 @@ function MemoryChatMainSurface({
       console.warn("[memory-chat] Could not send audio");
       Alert.alert("Could not send audio", error instanceof Error ? error.message : "Please try recording again.");
     } finally {
-      await discardTemporaryAccountFile(voiceRecorder.uri ?? voiceRecorderState.url).catch(() => {});
+      await discardTemporaryAccountFile(recorder?.uri ?? voiceRecorderState.url).catch(() => {});
       voiceRecordingStartedAtRef.current = null;
       voiceModeRef.current = "idle";
       setVoiceMode("idle");
       await resetVoiceAudioMode();
     }
-  }, [onSendAudio, resetVoiceAudioMode, voiceRecorder, voiceRecorderState.durationMillis, voiceRecorderState.isRecording, voiceRecorderState.url]);
+  }, [onSendAudio, resetVoiceAudioMode, voiceRecorderState.durationMillis, voiceRecorderState.isRecording, voiceRecorderState.url]);
 
   useEffect(() => {
     if (voiceMode !== "recording" || voiceDurationMs < MEMORY_AUDIO_MAX_DURATION_MS) return;
@@ -1075,13 +1173,20 @@ function MemoryChatMainSurface({
     if (voiceModeRef.current === "idle") return;
     voiceModeRef.current = "idle";
     voiceRecordingStartedAtRef.current = null;
-    void voiceRecorder.stop().catch(() => undefined);
+    void voiceRecorderRef.current?.stop().catch(() => undefined);
     void resetVoiceAudioMode();
-  }, [resetVoiceAudioMode, voiceRecorder]);
+  }, [resetVoiceAudioMode]);
 
   useEffect(() => {
     chatMainNearBottomRef.current = true;
+    chatMainAtBottomRef.current = true;
     chatMainFollowBottomRef.current = true;
+    chatMainInteractingRef.current = false;
+    chatMainMomentumRef.current = false;
+    if (chatMainInteractionReleaseRef.current) {
+      clearTimeout(chatMainInteractionReleaseRef.current);
+      chatMainInteractionReleaseRef.current = null;
+    }
     latestChatMessageIdRef.current = latestChatMessageId;
     // Room switches reset the anchor baseline; new-message changes are handled
     // by the follow-bottom effect below.
@@ -1092,9 +1197,11 @@ function MemoryChatMainSurface({
     const previousLatestMessageId = latestChatMessageIdRef.current;
     latestChatMessageIdRef.current = latestChatMessageId;
     if (!active || !latestChatMessageId || previousLatestMessageId === latestChatMessageId) return;
+    if (chatMainInteractingRef.current) return;
     if (!latestChatMessageMine && !chatMainNearBottomRef.current && !chatMainFollowBottomRef.current) return;
     chatMainFollowBottomRef.current = true;
     chatMainNearBottomRef.current = true;
+    chatMainAtBottomRef.current = true;
     onNearBottomChange(true);
     const timeout = setTimeout(() => scrollToBottom(false), 0);
     return () => clearTimeout(timeout);
@@ -1104,34 +1211,84 @@ function MemoryChatMainSurface({
     if (!active) return;
     const distanceFromBottom = event.contentOffset.y;
     const isNearBottom = distanceFromBottom < 96;
+    const isAtBottom = distanceFromBottom < 4;
     chatMainNearBottomRef.current = isNearBottom;
+    chatMainAtBottomRef.current = isAtBottom;
     onNearBottomChange(isNearBottom);
-    if (!chatMainDraggingRef.current) {
-      if (distanceFromBottom < 4) {
-        chatMainFollowBottomRef.current = true;
-      } else if (chatMainFollowBottomRef.current) {
-        scrollToBottom(false);
-      }
+    // A native scroll event only records intent. It must never issue another
+    // scroll command or it will fight the user's drag on the next frame.
+    if (!isAtBottom) {
+      chatMainFollowBottomRef.current = false;
+    } else if (!chatMainInteractingRef.current) {
+      chatMainFollowBottomRef.current = true;
     }
-  }, [active, onNearBottomChange, scrollToBottom]);
+  }, [active, onNearBottomChange]);
+
+  const clearChatMainInteractionRelease = useCallback(() => {
+    if (!chatMainInteractionReleaseRef.current) return;
+    clearTimeout(chatMainInteractionReleaseRef.current);
+    chatMainInteractionReleaseRef.current = null;
+  }, []);
+
+  const finishChatMainInteraction = useCallback(() => {
+    clearChatMainInteractionRelease();
+    chatMainMomentumRef.current = false;
+    chatMainInteractingRef.current = false;
+    if (chatMainAtBottomRef.current) chatMainFollowBottomRef.current = true;
+  }, [clearChatMainInteractionRelease]);
 
   const handleChatMainScrollBeginDrag = useCallback(() => {
-    chatMainDraggingRef.current = true;
+    clearChatMainInteractionRelease();
+    chatMainMomentumRef.current = false;
+    chatMainInteractingRef.current = true;
     chatMainFollowBottomRef.current = false;
-  }, []);
+  }, [clearChatMainInteractionRelease]);
 
   const handleChatMainScrollEndDrag = useCallback(() => {
-    chatMainDraggingRef.current = false;
-  }, []);
+    clearChatMainInteractionRelease();
+    // Momentum begins just after end-drag. Keep ownership with the user across
+    // that hand-off; release only if no momentum event follows.
+    chatMainInteractionReleaseRef.current = setTimeout(() => {
+      chatMainInteractionReleaseRef.current = null;
+      if (chatMainMomentumRef.current) return;
+      chatMainInteractingRef.current = false;
+      if (chatMainAtBottomRef.current) chatMainFollowBottomRef.current = true;
+    }, 48);
+  }, [clearChatMainInteractionRelease]);
 
-  const handleChatMainContentSizeChange = useCallback(() => {
-    if (!active) return;
-    if (!chatMainFollowBottomRef.current && !chatMainNearBottomRef.current) return;
-    chatMainFollowBottomRef.current = true;
-    chatMainNearBottomRef.current = true;
-    scrollToBottom(false);
-    onNearBottomChange(true);
-  }, [active, onNearBottomChange, scrollToBottom]);
+  const handleChatMainMomentumBegin = useCallback(() => {
+    clearChatMainInteractionRelease();
+    chatMainMomentumRef.current = true;
+    chatMainInteractingRef.current = true;
+    chatMainFollowBottomRef.current = false;
+  }, [clearChatMainInteractionRelease]);
+
+  const handleChatMainMomentumEnd = useCallback(() => {
+    finishChatMainInteraction();
+  }, [finishChatMainInteraction]);
+
+  useEffect(() => () => {
+    clearChatMainInteractionRelease();
+  }, [clearChatMainInteractionRelease]);
+
+  useEffect(() => {
+    if (!loadingOlderMessages) olderPageRequestGuardRef.current.inFlight = false;
+  }, [loadingOlderMessages]);
+
+  const requestOlderPage = useCallback(() => {
+    // A hidden prewarmed list can report an end-reached event while it lays out.
+    // Only the active inverted list may extend the history window.
+    if (!active || !canLoadOlderMessages || loadingOlderMessages) return;
+    const now = Date.now();
+    if (
+      olderPageRequestGuardRef.current.inFlight ||
+      now - olderPageRequestGuardRef.current.lastRequestAt < CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS
+    ) {
+      return;
+    }
+    olderPageRequestGuardRef.current = { inFlight: true, lastRequestAt: now };
+    onLoadOlderMessages();
+  }, [active, canLoadOlderMessages, loadingOlderMessages, onLoadOlderMessages]);
 
   const buildMenuActions = useCallback((target: MemoryChatMainMessage | undefined): MemoryChatMenuAction[] => {
     const actionTarget = memoryChatActionTarget(target);
@@ -1198,10 +1355,6 @@ function MemoryChatMainSurface({
     return actions;
   }, [myUsername, onBeginSelection, onDeleteTarget, onEditMessage, onReplyMessage]);
 
-  const chatMainListContentStyle = useMemo(() => [
-    styles.chatMainListContent,
-    { paddingTop: bottomClearance }
-  ], [bottomClearance]);
   const sendToolbarMessage = useCallback((
     outgoingMessages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[]
   ) => {
@@ -1221,18 +1374,20 @@ function MemoryChatMainSurface({
       onCancel={onCancelSelection}
       onDelete={onDeleteSelected}
       onEdit={onEditMessage}
-      onInputToolbarLayout={onInputToolbarLayout}
+      onInputToolbarLayout={handleInputToolbarLayout}
       toolbarInsetStyle={toolbarInsetStyle}
     />
   ) : (
     <MemoryChatMainInputToolbar
       editingMessage={editingMessage}
+      composerClearance={composerClearance}
       inputRef={inputRef}
+      messageBoxHeight={messageBoxHeight}
       myUsername={myUsername}
       onCancelEdit={onCancelEdit}
       onCancelVoice={() => { void cancelVoiceRecording(); }}
       onClearReply={onCancelReply}
-      onInputToolbarLayout={onInputToolbarLayout}
+      onInputToolbarLayout={handleInputToolbarLayout}
       onSend={sendToolbarMessage}
       onSendAudio={() => { void finishAndSendVoiceRecording(); }}
       onStartAudio={() => { void startVoiceRecording(); }}
@@ -1518,25 +1673,39 @@ function MemoryChatMainSurface({
         <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
           disableKeyboardProvider
+          initiallyInitialized
           provideSafeAreaContext={false}
-          isDayAnimationEnabled
+          isDayAnimationEnabled={false}
           isScrollToBottomEnabled
-          isTyping={typingVisible || voiceSending}
           isAvatarOnTop
           isUserAvatarVisible={false}
           avatarImageStyle={{ left: styles.chatMainAvatarImage }}
           avatarTextStyle={styles.chatMainAvatarText}
           keyboardAvoidingViewProps={{ enabled: false }}
+          renderBottomSpacer={renderComposerListSpacer}
+          renderTopSpacer={renderKeyboardTopSpacer}
           listProps={{
-            contentContainerStyle: chatMainListContentStyle,
+            contentContainerStyle: styles.chatMainListContent,
+            directionalLockEnabled: true,
             extraData: selectedItemKeys.join("|"),
             initialNumToRender: CHAT_MAIN_INITIAL_RENDER_COUNT,
+            maintainVisibleContentPosition: CHAT_MAIN_SCROLL_POSITION_CONFIG,
             maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH,
-            onContentSizeChange: handleChatMainContentSizeChange,
+            nestedScrollEnabled: true,
+            onEndReached: requestOlderPage,
+            onEndReachedThreshold: CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD,
             onScroll: handleChatMainScroll,
             onScrollBeginDrag: handleChatMainScrollBeginDrag,
             onScrollEndDrag: handleChatMainScrollEndDrag,
-            removeClippedSubviews: false,
+            onMomentumScrollBegin: handleChatMainMomentumBegin,
+            onMomentumScrollEnd: handleChatMainMomentumEnd,
+            // Android otherwise keeps off-window message subtrees attached to
+            // the native hierarchy even though FlatList has virtualized their
+            // React rows. Detaching them is essential for bounded route pop
+            // cost in populated rooms; iOS retains its safer default because
+            // transformed/inverted clipping behaves differently there.
+            removeClippedSubviews: Platform.OS === "android",
+            scrollEnabled: true,
             updateCellsBatchingPeriod: 50,
             windowSize: CHAT_MAIN_WINDOW_SIZE
           }}
@@ -1544,7 +1713,7 @@ function MemoryChatMainSurface({
             isAvailable: canLoadOlderMessages,
             isInfiniteScrollEnabled: true,
             isLoading: loadingOlderMessages,
-            onPress: onLoadOlderMessages
+            onPress: requestOlderPage
           }}
           messageTextProps={{
             hashtag: true,
@@ -1615,7 +1784,7 @@ function MemoryChatMainSurface({
           }}
           reactions={{
             emojis: [...MEMORY_REACTION_EMOJIS],
-            isEnabled: true,
+            isEnabled: MEMORY_REACTIONS_ENABLED,
             onReactionPress: (target, emoji) => {
               if (selectionMode) return;
               if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
@@ -1632,6 +1801,7 @@ function MemoryChatMainSurface({
       </View>
       <View pointerEvents="none" style={styles.chatKeyboardBridge} />
       {composerToolbar}
+      {voiceRecorderMounted ? <VoiceRecorderHost onReady={handleVoiceRecorderReady} /> : null}
     </>
   );
 
@@ -1709,12 +1879,25 @@ function ChatMainBodyWithTime({
   // that estimate once and becomes a monotonic latch, protecting later Android
   // relayouts from transient zero/under-reported widths.
   const estimatedTimeWidth = estimateChatTimestampWidth(time);
+  // Chat timestamps repeat heavily (many messages share a minute; the format
+  // repeats), so once ANY bubble has measured a given label, every later bubble
+  // with that label paints at the final width on its FIRST frame — including the
+  // optimistic->server reconcile of a message you just sent, which re-mounts the
+  // row. That removes the estimate->measured spacer swap that reflowed the
+  // bubble a frame after it appeared (the "jitter after send").
+  const cachedTimeWidth = chatTimestampWidthCache.get(time);
   const [measuredTime, setMeasuredTime] = useState<{
     label: string;
     native: boolean;
     width: number;
-  }>({ label: time, native: false, width: estimatedTimeWidth });
-  const timeWidth = measuredTime.label === time ? measuredTime.width : estimatedTimeWidth;
+  }>(() => (
+    cachedTimeWidth !== undefined
+      ? { label: time, native: true, width: cachedTimeWidth }
+      : { label: time, native: false, width: estimatedTimeWidth }
+  ));
+  const timeWidth = measuredTime.label === time
+    ? measuredTime.width
+    : cachedTimeWidth ?? estimatedTimeWidth;
   const spacerWidth = timeWidth + CHAT_TIME_GAP;
 
   // Android quirks measured on-device (see git history for the logs):
@@ -1893,6 +2076,11 @@ function ChatMainBodyWithTime({
           numberOfLines={1}
           onLayout={(event) => {
             const next = Math.ceil(event.nativeEvent.layout.width);
+            // Cache the (monotonic max) measured width so later bubbles with this
+            // same label skip the estimate and never reflow.
+            if (next > (chatTimestampWidthCache.get(time) ?? 0)) {
+              chatTimestampWidthCache.set(time, next);
+            }
             setMeasuredTime((previous) => {
               if (previous.label !== time || !previous.native) {
                 return { label: time, native: true, width: next };
@@ -1908,6 +2096,12 @@ function ChatMainBodyWithTime({
     </View>
   );
 }
+
+// Measured timestamp widths keyed by exact label (e.g. "12:52 am"). Labels are
+// bounded (~1440 unique) and repeat across messages, so this stays tiny and lets
+// a freshly rendered bubble skip the estimate->measured spacer swap. See the
+// cache read in ChatMainBodyWithTime.
+const chatTimestampWidthCache = new Map<string, number>();
 
 function estimateChatTimestampWidth(label: string) {
   const estimated = Array.from(label).reduce((width, character) => {
@@ -2039,8 +2233,10 @@ function MemoryChatMainVoiceComposer({
 }
 
 type MemoryChatMainToolbarProps = {
+  composerClearance: SharedValue<number>;
   editingMessage: MemoryMessage | null;
-  inputRef: RefObject<TextInput | null>;
+  inputRef: RefObject<NativeChatInputHandle | null>;
+  messageBoxHeight: SharedValue<number>;
   myUsername: string;
   onCancelEdit: () => void;
   onCancelVoice: () => void;
@@ -2064,8 +2260,10 @@ type MemoryChatMainToolbarProps = {
 };
 
 function MemoryChatMainInputToolbar({
+  composerClearance,
   editingMessage,
   inputRef,
+  messageBoxHeight,
   myUsername,
   onCancelEdit,
   onCancelVoice,
@@ -2085,6 +2283,7 @@ function MemoryChatMainInputToolbar({
   voiceSending
 }: MemoryChatMainToolbarProps) {
   const [draft, setDraft] = useState(text ?? "");
+  const [nativeEventCount, setNativeEventCount] = useState(0);
   const draftRef = useRef(draft);
   const latestExternalTextRef = useRef(text ?? "");
   const ignoreExternalTextUntilResetRef = useRef(false);
@@ -2097,10 +2296,35 @@ function MemoryChatMainInputToolbar({
   const replyAuthorId = String(replyMessage?.user?._id ?? "");
   const replyAuthor = replyAuthorId && replyAuthorId === myUsername ? "You" : replyMessage?.user?.name || "Unknown";
   const replyBody = replyMessage?.text || (replyMessage?.image ? "Photo" : replyMessage?.audio ? "Audio" : "Message");
-  // Sizes the message box to the draft. A trailing zero-width space (no newline)
-  // makes a real trailing newline in the draft count as a line WITHOUT inflating
-  // every single-line draft to two lines.
-  const measuredDraft = `${draft}​`;
+  const messageBoxHeightStyle = useAnimatedStyle(() => ({
+    height: messageBoxHeight.value
+  }), [messageBoxHeight]);
+  const nativeInputColors = {
+    cursor: processColor(ROOM_COLORS.cool) as number,
+    fill: processColor(ROOM_COLORS.panelRaised) as number,
+    placeholder: processColor(ROOM_COLORS.muted) as number,
+    stroke: processColor(ROOM_COLORS.borderStrong) as number,
+    text: processColor(ROOM_COLORS.onSurface) as number
+  };
+
+  const updateMessageBoxHeight = useCallback((nextHeight: number) => {
+    const previousHeight = messageBoxHeight.value;
+    if (Math.abs(nextHeight - previousHeight) <= 0.5) return;
+    messageBoxHeight.value = nextHeight;
+    composerClearance.value = Math.max(0, composerClearance.value + nextHeight - previousHeight);
+  }, [composerClearance, messageBoxHeight]);
+
+  const handleNativeHeightChange = useEvent<NativeChatInputHeightEvent>((event) => {
+    "worklet";
+    const nextHeight = Math.max(
+      COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+      Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(event.height))
+    );
+    const previousHeight = messageBoxHeight.value;
+    if (Math.abs(nextHeight - previousHeight) <= 0.5) return;
+    messageBoxHeight.value = nextHeight;
+    composerClearance.value = Math.max(0, composerClearance.value + nextHeight - previousHeight);
+  }, ["onHeightChange"]);
 
   useEffect(() => {
     const externalText = text ?? "";
@@ -2118,11 +2342,37 @@ function MemoryChatMainInputToolbar({
     setDraft(externalText);
   }, [text]);
 
+  useEffect(() => {
+    if (Platform.OS !== "android" && (text ?? "").length === 0) {
+      updateMessageBoxHeight(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
+    }
+  }, [text, updateMessageBoxHeight]);
+
+  useEffect(() => {
+    if (!voiceActive) return;
+    updateMessageBoxHeight(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
+  }, [updateMessageBoxHeight, voiceActive]);
+
   function handleChangeText(value: string) {
     draftRef.current = value;
     latestExternalTextRef.current = value;
     setDraft(value);
     textInputProps?.onChangeText?.(value);
+  }
+
+  function handleContentSizeChange(event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) {
+    const contentHeight = event.nativeEvent.contentSize.height + COMPOSER_INPUT_BORDER_HEIGHT;
+    const nextHeight = Math.max(
+      COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+      Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(contentHeight))
+    );
+    updateMessageBoxHeight(nextHeight);
+    textInputProps?.onContentSizeChange?.(event);
+  }
+
+  function handleNativeTextChange(event: NativeSyntheticEvent<NativeChatInputTextEvent>) {
+    setNativeEventCount(event.nativeEvent.eventCount);
+    handleChangeText(event.nativeEvent.text);
   }
 
   function handlePress() {
@@ -2194,38 +2444,66 @@ function MemoryChatMainInputToolbar({
               sending={voiceSending}
             />
           ) : (
-            <View style={styles.chatMainDraftMessageBox}>
-              <Text
-                accessible={false}
-                importantForAccessibility="no-hide-descendants"
-                pointerEvents="none"
-                style={styles.chatMainDraftMeasureText}
-              >
-                {measuredDraft}
-              </Text>
-              <TextInput
-                accessible
-                accessibilityLabel="Type a message"
-                autoCapitalize="sentences"
-                blurOnSubmit={false}
-                disableFullscreenUI
-                enablesReturnKeyAutomatically
-                keyboardAppearance={themeMode === "dark" ? "dark" : "default"}
-                maxLength={MEMORY_TEXT_MAX_LENGTH}
-                multiline
-                onChangeText={handleChangeText}
-                placeholder="Type a message"
-                placeholderTextColor={ROOM_COLORS.muted}
-                ref={inputRef}
-                scrollEnabled
-                smartInsertDelete={false}
-                style={styles.chatMainDraftInput}
-                submitBehavior="newline"
-                textContentType="none"
-                underlineColorAndroid="transparent"
-                value={draft}
-              />
-            </View>
+            <Reanimated.View
+              style={[
+                styles.chatMainDraftMessageBox,
+                Platform.OS === "android" && styles.chatMainDraftMessageBoxNative,
+                messageBoxHeightStyle
+              ]}
+            >
+              {Platform.OS === "android" ? (
+                <AnimatedNativeChatInput
+                  accessibilityLabel="Type a message"
+                  borderRadius={radius.input}
+                  borderWidth={1}
+                  bottomPadding={10}
+                  cursorColor={nativeInputColors.cursor}
+                  editable
+                  fillColor={nativeInputColors.fill}
+                  fontFamily={fontFamilies.medium}
+                  fontSize={COMPOSER_INPUT_FONT_SIZE}
+                  horizontalPadding={spacing.md}
+                  lineHeight={COMPOSER_INPUT_LINE_HEIGHT}
+                  maxInputHeight={COMPOSER_INPUT_MAX_HEIGHT}
+                  maxLength={MEMORY_TEXT_MAX_LENGTH}
+                  minInputHeight={COMPOSER_MESSAGE_BOX_MIN_HEIGHT}
+                  onHeightChange={handleNativeHeightChange as unknown as NativeChatInputProps["onHeightChange"]}
+                  onTextChange={handleNativeTextChange}
+                  placeholder="Type a message"
+                  placeholderColor={nativeInputColors.placeholder}
+                  pointerEvents="box-none"
+                  ref={inputRef}
+                  strokeColor={nativeInputColors.stroke}
+                  style={styles.chatMainNativeDraftInput}
+                  textColor={nativeInputColors.text}
+                  topPadding={8}
+                  value={{ eventCount: nativeEventCount, text: draft }}
+                />
+              ) : (
+                <TextInput
+                  accessible
+                  accessibilityLabel="Type a message"
+                  autoCapitalize="sentences"
+                  blurOnSubmit={false}
+                  disableFullscreenUI
+                  enablesReturnKeyAutomatically
+                  keyboardAppearance={themeMode === "dark" ? "dark" : "default"}
+                  maxLength={MEMORY_TEXT_MAX_LENGTH}
+                  multiline
+                  onChangeText={handleChangeText}
+                  onContentSizeChange={handleContentSizeChange}
+                  placeholder="Type a message"
+                  placeholderTextColor={ROOM_COLORS.muted}
+                  ref={inputRef as RefObject<TextInput | null>}
+                  scrollEnabled
+                  smartInsertDelete={false}
+                  style={styles.chatMainDraftInput}
+                  submitBehavior="newline"
+                  textContentType="none"
+                  value={draft}
+                />
+              )}
+            </Reanimated.View>
           )}
           <View style={styles.chatMainSendContainer}>
             <Pressable
@@ -2616,10 +2894,6 @@ function getChatKeyboardShift(
   return -Math.max(0, drivenKeyboardHeight - closedSafeAreaGap);
 }
 
-function hasMeaningfulComposerHeightChange(nextHeight: number, committedHeight: number) {
-  return Math.abs(nextHeight - committedHeight) > COMPOSER_HEIGHT_COMMIT_THRESHOLD;
-}
-
 type KeyboardMotionValues = {
   offset: SharedValue<number>;
   progress: SharedValue<number>;
@@ -2641,13 +2915,88 @@ function useSmoothedKeyboardOffset(): SharedValue<number> {
   return useKeyboardMotion().offset;
 }
 
-// Memoized pane wrappers over the hoisted pane components below. Their handler
-// props are stabilized (useStableHandler / already-stable setters) so these skip
-// re-rendering when the room screen re-renders for unrelated reasons — chat
-// keystrokes, realtime ticks, tab switches. Itinerary / Media / Dishes receive
-// no `active` prop, so once mounted they re-render only when their own data
-// changes; the chat surface still re-renders on its own prop changes (draft,
-// selection, new messages) but no longer on churn from the other panes.
+// expo-audio's useAudioRecorderState polls the native recorder on an
+// unconditional setInterval, and its effect deps are [recorder.id] — the
+// interval argument cannot switch it off. That poll used to be bounded by the
+// chat pane's lifetime, because an inactive RoomPane unmounted the surface
+// outright. Now that the pane stays mounted, the same hook would keep making a
+// native round trip five times a second for the whole room visit, including
+// during the tab-switch frames this work exists to keep free.
+//
+// Gating on `enabled` restores exactly the previous behaviour: polling only
+// while Chat is the visible pane. Recording is already cancelled when the pane
+// goes inactive, so nothing in flight can be missed. The metering comparison
+// upstream performs is dropped because no caller reads `metering`; it only ever
+// decided whether to trigger a re-render.
+const IDLE_VOICE_RECORDER_STATE: RecorderState = {
+  canRecord: false,
+  durationMillis: 0,
+  isRecording: false,
+  mediaServicesDidReset: false,
+  url: null
+};
+
+function useVoiceRecorderState(
+  recorderRef: RefObject<VoiceRecorder | null>,
+  intervalMs: number,
+  enabled: boolean
+) {
+  const [state, setState] = useState<RecorderState>(IDLE_VOICE_RECORDER_STATE);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    // Seed synchronously so the first frame after activation is not a stale read.
+    setState(recorder.getStatus());
+    const intervalId = setInterval(() => {
+      setState((previous) => {
+        const current = recorderRef.current;
+        if (!current) return previous;
+        const next = current.getStatus();
+        if (
+          previous.canRecord !== next.canRecord ||
+          previous.isRecording !== next.isRecording ||
+          previous.mediaServicesDidReset !== next.mediaServicesDidReset ||
+          previous.url !== next.url ||
+          Math.abs((previous.durationMillis ?? 0) - (next.durationMillis ?? 0)) > 50
+        ) {
+          return next;
+        }
+        return previous;
+      });
+    }, intervalMs);
+    return () => {
+      clearInterval(intervalId);
+      // Nothing is polling once recording ends, so drop back to the idle
+      // snapshot rather than leaving the last recording's duration/url behind.
+      setState(IDLE_VOICE_RECORDER_STATE);
+    };
+  }, [enabled, intervalMs, recorderRef]);
+
+  return state;
+}
+
+// Owns the native AudioRecorder and nothing else. Mounted only once the user
+// has actually asked to record, because `useAudioRecorder` allocates a native
+// recorder plus a status listener on mount and releases them on unmount — a
+// cost every chat surface used to pay, and (now that Chat is warmed in the
+// background) one that every room open paid even for people who never record.
+// Rendering null keeps it out of the composer's layout entirely.
+function VoiceRecorderHost({ onReady }: { onReady: (recorder: VoiceRecorder) => void }) {
+  const recorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
+
+  useEffect(() => {
+    onReady(recorder);
+  }, [onReady, recorder]);
+
+  return null;
+}
+
+// Memoized pane components keep active-tab updates scoped to the data or
+// handlers that actually changed. Inactive panes stay mounted (RoomPane detaches
+// them from the window rather than unmounting), so these memo boundaries are
+// what keeps a hidden pane from re-rendering when unrelated room state moves.
 const ItineraryPanelPane = memo(ItineraryPanel);
 const MemoryChatMainSurfacePane = memo(MemoryChatMainSurface);
 const MediaGalleryPane = memo(MediaGallery);
@@ -2665,16 +3014,16 @@ export default function MemoryDetailScreen() {
   // the UI-thread keyboard transform.
   const [frozenComposerBottomInset] = useState(() => insets.bottom);
   const { resolvedTheme } = useThemePreference();
-  applyRoomTheme(resolvedTheme, "unknown");
+  const cachedRoomSummary = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).find((memory) => memory.id === roomId);
+  applyRoomTheme(resolvedTheme, cachedRoomSummary?.occasionType ?? "unknown");
   const room = useMemoryRoomQuery(roomId);
   useMemoryRoomRealtime(roomId);
   const addParticipant = useAddMemoryParticipantMutation(roomId);
   const addMessage = useAddMemoryMessageMutation(roomId);
-  const addDish = useAddMemoryDishMutation(roomId);
   const addPhoto = useAddMemoryPhotoMutation(roomId);
   const rateDish = useSetMemoryDishRatingMutation(roomId);
-  const createStop = useCreateMemoryStopMutation(roomId);
-  const deleteStop = useDeleteMemoryStopMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const dismissFailedMessage = useDismissFailedMemoryMessage(roomId);
@@ -2685,16 +3034,10 @@ export default function MemoryDetailScreen() {
   const addMessageMutateAsyncRef = useRef(addMessage.mutateAsync);
   addMessageMutateAsyncRef.current = addMessage.mutateAsync;
   const peopleInputRef = useRef<TextInput>(null);
-  const messageInputRef = useRef<TextInput>(null);
+  const messageInputRef = useRef<NativeChatInputHandle>(null);
   const chatMainListRef = useRef<ChatMainAnimatedList<MemoryChatMainMessage>>(null);
   const keyboardVisibleRef = useRef(false);
   const nearBottomRef = useRef(false);
-  const composerHeightRef = useRef(0);
-  const pendingComposerHeightRef = useRef<number | null>(null);
-  const reconcileChatAfterKeyboardSettleRef = useRef<() => void>(() => {});
-  const reconcileChatAfterKeyboardSettle = useCallback(() => {
-    reconcileChatAfterKeyboardSettleRef.current();
-  }, []);
   // Active chat uses the vendored inverted AnimatedFlatList (newest at offset 0).
   // Keep bottom-follow wired to that live list, not the inactive ChatTimeline.
   const scrollChatToBottom = useCallback((animated: boolean) => {
@@ -2712,6 +3055,8 @@ export default function MemoryDetailScreen() {
   const {
     mode,
     pagerPosition,
+    activePaneIndex,
+    markPanesWarm,
     paneTabMode,
     requestRoomMode
   } = useMemoryRoomController(params.tab);
@@ -2719,9 +3064,6 @@ export default function MemoryDetailScreen() {
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
   const [peopleToastMessage, setPeopleToastMessage] = useState("");
-  const [dishName, setDishName] = useState("");
-  const [dishNote, setDishNote] = useState("");
-  const [dishRating, setDishRating] = useState(0);
   // Dish whose detail / "who rated" sheet is open (null = closed). Held by id so
   // realtime rating updates flow into the open sheet via the live `data.dishes`.
   const [detailDishId, setDetailDishId] = useState<string | null>(null);
@@ -2733,22 +3075,10 @@ export default function MemoryDetailScreen() {
   const [messageReactions, setMessageReactions] = useState<MemoryReactionState>({});
   const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState("");
-  const [cameraOpening, setCameraOpening] = useState(false);
-  const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
-  const [stopComposerVisible, setStopComposerVisible] = useState(false);
-  const [dishTargetStopId, setDishTargetStopId] = useState<string | null>(null);
-  const [attachmentInitialView, setAttachmentInitialView] = useState<AttachmentSheetView>("actions");
-  const [attachmentOriginMode, setAttachmentOriginMode] = useState<RoomMode>("overview");
   const [floatingAddMenuOpen, setFloatingAddMenuOpen] = useState(false);
-  // When an option is launched from the speed-dial, re-open the speed-dial if
-  // that sub-flow is cancelled (so the user can pick the other option).
-  const [reopenAddMenuOnCancel, setReopenAddMenuOnCancel] = useState(false);
-  // Per-frame openness (0 closed -> 1 open) of the dish/media sheet's keyboard,
-  // written from inside the modal. Drives the header hide in exact lockstep.
-  const dishKeyboardProgress = useSharedValue(0);
+  const overlayKeyboardProgress = useSharedValue(0);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
-  const [chatBottomClearance, setChatBottomClearance] = useState(CHAT_COMPOSER_CLEARANCE);
   const [memberCircleStatusOverrides, setMemberCircleStatusOverrides] = useState<Record<string, MemberCircleStatus>>({});
   const floatingAddMenuProgress = useRef(new Animated.Value(0)).current;
   const excludedParticipantUsernames = useMemo(() => ([
@@ -2776,15 +3106,33 @@ export default function MemoryDetailScreen() {
     ...(memberCircleStatusQuery.data ?? {}),
     ...memberCircleStatusOverrides
   }), [memberCircleStatusOverrides, memberCircleStatusQuery.data]);
+  // External sets (edit prefill, reply, clear-after-send) must push a value
+  // back down to the composer, so they update BOTH the ref and parent state.
   function updateMessageDraft(value: string) {
     messageDraftRef.current = value;
     setMessage(value);
   }
+  // Live typing from the composer updates ONLY the ref — never parent state —
+  // so a keystroke no longer re-renders the ~12k-line room screen or the chat
+  // surface. The composer owns its live text (native EditText + local draft);
+  // send/caption paths read messageDraftRef, which this keeps current. Parent
+  // `message` state is intentionally allowed to lag the ref while typing; the
+  // composer ignores an unchanged `text` prop, so it never loses characters.
+  function syncComposerDraft(value: string) {
+    messageDraftRef.current = value;
+  }
 
   const finishPeopleClose = useCallback(() => {
-    setPeopleClosing(false);
     requestRoomMode("overview");
   }, [requestRoomMode]);
+
+  useEffect(() => {
+    // Keep the Members panel at the end of its exit animation until the
+    // deferred room-mode commit has actually removed it. Resetting `closing`
+    // inside the animation callback made the still-mounted panel begin its
+    // enter animation again for a frame: close -> reopen -> close.
+    if (mode !== "people" && peopleClosing) setPeopleClosing(false);
+  }, [mode, peopleClosing]);
 
   useEffect(() => {
     if (!room.data) return;
@@ -2815,12 +3163,6 @@ export default function MemoryDetailScreen() {
   useEffect(() => {
     if (mode !== "overview") setFloatingAddMenuOpen(false);
   }, [mode]);
-
-  // Safety: if the sheet closes before the keyboard finishes dismissing, snap the
-  // header back.
-  useEffect(() => {
-    if (!attachmentOptionsVisible) dishKeyboardProgress.value = 0;
-  }, [attachmentOptionsVisible, dishKeyboardProgress]);
 
   useEffect(() => () => {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
@@ -2854,6 +3196,17 @@ export default function MemoryDetailScreen() {
     };
   }, [mode]);
 
+  const goBackToOrigin = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    // A room can also be the first route after a cold deep link. There is no
+    // previous screen to pop in that case, so rebuild the expected destination.
+    router.replace({ pathname: "/profile", params: { tab: "memories" } });
+  }, [router]);
+
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (selectedMedia) {
@@ -2863,20 +3216,6 @@ export default function MemoryDetailScreen() {
 
       if (roomActionsVisible) {
         setRoomActionsVisible(false);
-        return true;
-      }
-
-      if (attachmentOptionsVisible) {
-        setAttachmentOptionsVisible(false);
-        if (reopenAddMenuOnCancel) {
-          setReopenAddMenuOnCancel(false);
-          setFloatingAddMenuOpen(true);
-        }
-        return true;
-      }
-
-      if (stopComposerVisible) {
-        setStopComposerVisible(false);
         return true;
       }
 
@@ -2922,26 +3261,23 @@ export default function MemoryDetailScreen() {
         return true;
       }
 
-      router.dismissTo({ pathname: "/profile", params: { tab: "memories" } });
+      goBackToOrigin();
       return true;
     });
 
     return () => subscription.remove();
   }, [
-    attachmentOptionsVisible,
     detailDishId,
     editingMessage,
     floatingAddMenuOpen,
+    goBackToOrigin,
     mode,
     peopleClosing,
     reactionPickerMessageId,
-    reopenAddMenuOnCancel,
     replyingToMessage,
     roomActionsVisible,
-    router,
     selectedItemKeys.length,
-    selectedMedia,
-    stopComposerVisible
+    selectedMedia
   ]));
 
   // Deferred so the mutation's cache writes (and the re-renders they trigger) stay out
@@ -2999,12 +3335,11 @@ export default function MemoryDetailScreen() {
   // useDrivenKeyboardHeight for the full forensics. The closed safe-area gap is
   // a flat subtraction from that one value; the panel-coloured bridge masks the
   // strip the keyboard is still sliding into while the parked surface waits.
-  //
-  // keyboardMotion (raw provider progress) is kept ONLY for non-visual
-  // bookkeeping — deferring composer-height layout commits out of the slide
-  // window and reconciling them once the real keyboard settles.
-  const keyboardMotion = useKeyboardMotion();
-  const { height: drivenKeyboardHeight } = useDrivenKeyboardHeight();
+  const {
+    height: drivenKeyboardHeight,
+    settled: settledKeyboardHeight,
+    target: targetKeyboardHeight
+  } = useDrivenKeyboardHeight();
   const isChatMode = mode === "chat";
   const closedComposerBottomPadding = getComposerClosedBottomPadding(frozenComposerBottomInset);
   const chatKeyboardShift = useDerivedValue(() => {
@@ -3014,6 +3349,22 @@ export default function MemoryDetailScreen() {
       closedComposerBottomPadding
     );
   }, [closedComposerBottomPadding, isChatMode]);
+  // The chat surface translates upward with the keyboard instead of resizing.
+  // Reserve the same distance beyond the oldest message so the user can still
+  // pull that message fully below the fixed header while the IME is open.
+  // max(target, settled) changes only at transition boundaries: it appears at
+  // open-start and stays until close-end, avoiding per-frame list layout work.
+  const chatKeyboardTopReserve = useDerivedValue(() => {
+    if (!isChatMode) return 0;
+    const reservedKeyboardHeight = Math.max(
+      targetKeyboardHeight.value,
+      settledKeyboardHeight.value
+    );
+    return Math.max(
+      0,
+      -getChatKeyboardShift(reservedKeyboardHeight, closedComposerBottomPadding)
+    );
+  }, [closedComposerBottomPadding, isChatMode]);
   const chatMainSurfaceKeyboardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: chatKeyboardShift.value }]
   }), []);
@@ -3021,72 +3372,10 @@ export default function MemoryDetailScreen() {
     paddingBottom: closedComposerBottomPadding
   }), [closedComposerBottomPadding]);
 
-  function repinChatToBottom() {
-    if (!nearBottomRef.current) return;
-    requestAnimationFrame(() => scrollChatToBottom(false));
-  }
-
-  function isChatKeyboardTransitioning() {
-    if (!isChatMode) return false;
-    const progress = keyboardMotion.progress.value;
-    return progress > 0.001 && progress < 0.999;
-  }
-
-  function commitComposerHeight(nextHeight: number, repin = true) {
-    if (!hasMeaningfulComposerHeightChange(nextHeight, composerHeightRef.current)) return false;
-    composerHeightRef.current = nextHeight;
-    setChatBottomClearance(nextHeight);
-    if (repin) repinChatToBottom();
-    return true;
-  }
-
-  function handleComposerLayout(event: LayoutChangeEvent) {
-    const nextHeight = event.nativeEvent.layout.height;
-    if (!hasMeaningfulComposerHeightChange(nextHeight, composerHeightRef.current)) {
-      pendingComposerHeightRef.current = null;
-      return;
-    }
-    if (isChatKeyboardTransitioning()) {
-      pendingComposerHeightRef.current = nextHeight;
-      return;
-    }
-    pendingComposerHeightRef.current = null;
-    commitComposerHeight(nextHeight);
-  }
-
   function handleChatNearBottomChange(isNearBottom: boolean) {
     nearBottomRef.current = isNearBottom;
     if (isNearBottom) markLatestRoomRead();
   }
-
-  reconcileChatAfterKeyboardSettleRef.current = () => {
-    if (!isChatMode) return;
-    const pendingHeight = pendingComposerHeightRef.current;
-    pendingComposerHeightRef.current = null;
-    if (pendingHeight == null) return;
-    if (!hasMeaningfulComposerHeightChange(pendingHeight, composerHeightRef.current)) return;
-    if (!commitComposerHeight(pendingHeight, false)) return;
-    // Reconcile only when real composer content changed during the transition.
-    // An ordinary keyboard open/close performs no scroll or React layout work.
-    repinChatToBottom();
-  };
-
-  useAnimatedReaction(
-    () => keyboardMotion.progress.value,
-    (currentProgress, previousProgress) => {
-      const currentBoundary = currentProgress <= 0.001 ? 0 : currentProgress >= 0.999 ? 1 : -1;
-      const previousBoundary = previousProgress == null
-        ? currentBoundary
-        : previousProgress <= 0.001
-          ? 0
-          : previousProgress >= 0.999
-            ? 1
-            : -1;
-      if (currentBoundary < 0 || currentBoundary === previousBoundary) return;
-      runOnJS(reconcileChatAfterKeyboardSettle)();
-    },
-    [keyboardMotion.progress, reconcileChatAfterKeyboardSettle]
-  );
 
   function showPeopleToast(message: string) {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
@@ -3186,16 +3475,20 @@ export default function MemoryDetailScreen() {
         // no entry animation. Clear the input and pin to the newest message.
         updateMessageDraft("");
         setReplyingToMessage(null);
-        void addMessageMutateAsyncRef.current({
-          body: outgoingBody,
-          clientId,
-          replyToMessageId: outgoingReply?.id ?? null
-        }).catch(() => {
-          // The failed optimistic row stays visible with retry/cancel actions.
-        });
-        // The active vendored list pins from MemoryChatMainSurface after the new
-        // row/layout exists, so avoid a second stale-height scroll here.
+        // Defer the optimistic write one frame. The composer has already cleared
+        // itself locally, so the tap returns immediately and the heavy new-row
+        // render (bubble + timestamp measurement) lands next frame instead of
+        // blocking the send button / the next keystrokes — this is what makes
+        // fast write-then-send responsive. clientId/sequence are captured above,
+        // so message ordering is preserved even across rapid sends.
         requestAnimationFrame(() => {
+          void addMessageMutateAsyncRef.current({
+            body: outgoingBody,
+            clientId,
+            replyToMessageId: outgoingReply?.id ?? null
+          }).catch(() => {
+            // The failed optimistic row stays visible with retry/cancel actions.
+          });
           messageInputRef.current?.focus();
         });
         return;
@@ -3210,8 +3503,11 @@ export default function MemoryDetailScreen() {
 
   function retryFailedMessage(target: MemoryMessage) {
     if (target.deliveryStatus !== "failed") return;
-    const clientId = `retry:${Date.now()}:${sendSequenceRef.current}`;
-    sendSequenceRef.current += 1;
+    const optimisticPrefix = `optimistic-message:${roomId}:`;
+    const clientId = target.id.startsWith(optimisticPrefix)
+      ? target.id.slice(optimisticPrefix.length)
+      : `retry:${Date.now()}:${sendSequenceRef.current}`;
+    if (!target.id.startsWith(optimisticPrefix)) sendSequenceRef.current += 1;
     void addMessageMutateAsyncRef.current({
       body: target.body,
       clientId,
@@ -3245,9 +3541,17 @@ export default function MemoryDetailScreen() {
     setEditingMessage(null);
     setReplyingToMessage(target);
     requestRoomMode("chat");
-    requestAnimationFrame(() => {
-      setTimeout(() => messageInputRef.current?.focus(), 80);
-    });
+    // Focus in the same event as the state change so the IME starts its slide
+    // together with the reply chip. Deferring it (a frame plus 80 ms) made the
+    // chip appear first and the keyboard follow as a separate second stage.
+    // The composer is always mounted with the chat surface, so the ref is
+    // normally live already; the retry only covers a first entry where the
+    // chat pane is still mounting.
+    if (!messageInputRef.current) {
+      requestAnimationFrame(() => messageInputRef.current?.focus());
+      return;
+    }
+    messageInputRef.current.focus();
   }
 
   function cancelEditMessage() {
@@ -3426,46 +3730,6 @@ export default function MemoryDetailScreen() {
     });
   }
 
-  async function sendMediaAssets(selectedAssets: MemoryCaptureAsset[]) {
-    setMediaError("");
-    if (selectedAssets.length === 0) return;
-    const validationError = validateMemoryMediaAssets(selectedAssets.map((asset) => ({
-      duration: asset.duration,
-      fileSize: asset.fileSize,
-      mediaMimeType: asset.mimeType,
-      mediaType: asset.type,
-      mediaUri: asset.uri
-    })));
-    if (validationError) {
-      setMediaError(validationError);
-      return;
-    }
-
-    try {
-      await addPhoto.mutateAsync({
-        assets: selectedAssets.map((asset) => ({
-          duration: asset.duration ?? null,
-          fileSize: asset.fileSize ?? null,
-          imageHeight: asset.height ?? null,
-          imageWidth: asset.width ?? null,
-          mediaMimeType: asset.mimeType,
-          mediaType: asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image",
-          mediaUri: asset.uri
-        })),
-        body: message.trim() || undefined,
-        replyToMessageId: replyingToMessage?.id ?? null,
-        roomId
-      });
-      updateMessageDraft("");
-      setReplyingToMessage(null);
-      const nextMode = attachmentOriginMode === "chat" ? "chat" : "media";
-      requestRoomMode(nextMode);
-      if (nextMode === "chat") requestAnimationFrame(() => scrollChatToBottom(true));
-    } catch {
-      // Rendered from mutation state.
-    }
-  }
-
   async function sendAudioMessage(asset: AddMemoryMediaAsset) {
     setMediaError("");
     if (editingMessage) throw new Error("Finish editing before sending audio.");
@@ -3491,69 +3755,9 @@ export default function MemoryDetailScreen() {
     }
   }
 
-  async function submitMedia(picker: () => Promise<MemoryMediaPickerResult>) {
-    setAttachmentOptionsVisible(false);
-    setMediaError("");
-    const result = await picker();
-    if (result.error) {
-      setMediaError(result.error);
-      return;
-    }
-    await sendMediaAssets(result.assets ?? (result.asset ? [result.asset] : []));
-  }
-
-  async function submitDish() {
-    try {
-      await addDish.mutateAsync({
-        dishName,
-        note: dishNote,
-        rating: dishRating || null,
-        stopId: dishTargetStopId
-      });
-      setDishName("");
-      setDishNote("");
-      setDishRating(0);
-      setDishTargetStopId(null);
-      return true;
-    } catch {
-      // Rendered from mutation state.
-      return false;
-    }
-  }
-
-  function openStopComposer() {
+  function openAddPlace() {
     setFloatingAddMenuOpen(false);
-    setStopComposerVisible(true);
-  }
-
-  async function submitStop(input: { stopType: MemoryStopType; name: string; note?: string }) {
-    try {
-      await createStop.mutateAsync(input);
-      setStopComposerVisible(false);
-      return true;
-    } catch {
-      // Rendered from mutation state.
-      return false;
-    }
-  }
-
-  function addDishToStop(stopId: string) {
-    setDishTargetStopId(stopId);
-    setFloatingAddMenuOpen(false);
-    setReopenAddMenuOnCancel(false);
-    openAttachmentOptions("dish");
-  }
-
-  function removeStop(stopId: string) {
-    deleteStop.mutate(stopId);
-  }
-
-  async function submitDishFromAttachment() {
-    const didAdd = await submitDish();
-    if (!didAdd) return;
-    setAttachmentOptionsVisible(false);
-    requestRoomMode("chat");
-    requestAnimationFrame(() => scrollChatToBottom(true));
+    router.push({ pathname: "/memories/[id]/add-place", params: { id: roomId } });
   }
 
   function openPeopleAdd() {
@@ -3618,30 +3822,12 @@ export default function MemoryDetailScreen() {
     void room.refetch();
   }
 
-  function openAttachmentOptions(initialView: AttachmentSheetView = "actions") {
-    setAttachmentOriginMode(mode);
-    setAttachmentInitialView(initialView);
-    setAttachmentOptionsVisible(true);
-  }
-
-  // Cancel path for the attachment sheet. A successful dish add closes the sheet
-  // directly (and switches mode), so it never routes through here — only a real
-  // dismiss does, which is where we restore the speed-dial.
-  function cancelAttachmentOptions() {
-    setAttachmentOptionsVisible(false);
-    if (reopenAddMenuOnCancel) {
-      setReopenAddMenuOnCancel(false);
-      setFloatingAddMenuOpen(true);
-    }
-  }
-
   function closeFloatingAddMenu() {
     setFloatingAddMenuOpen(false);
   }
 
   function openFloatingAddMedia() {
     setFloatingAddMenuOpen(false);
-    setAttachmentOptionsVisible(false);
     router.push({
       pathname: "/memories/[id]/camera",
       params: { id: roomId }
@@ -3649,10 +3835,8 @@ export default function MemoryDetailScreen() {
   }
 
   function openFloatingAddDish() {
-    setDishTargetStopId(null);
     setFloatingAddMenuOpen(false);
-    setReopenAddMenuOnCancel(true);
-    openAttachmentOptions("dish");
+    router.push({ pathname: "/memories/[id]/add-dish", params: { id: roomId } });
   }
 
   function openRoomActions() {
@@ -3686,52 +3870,20 @@ export default function MemoryDetailScreen() {
     );
   }
 
-  async function openNativeCameraForMemory() {
-    if (cameraOpening) return;
-    setCameraOpening(true);
-    setMediaError("");
-    try {
-      const result = await pickMemoryMediaFromCamera();
-      if (result.error) {
-        setMediaError(result.error);
-        Alert.alert("Could not open camera", result.error);
-        return;
-      }
-      const asset = result.asset;
-      if (!asset?.uri) return;
-      const mediaType = asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image";
-      const capture = saveMemoryCapture({
-        duration: asset.duration ?? null,
-        fileSize: asset.fileSize ?? null,
-        height: asset.height ?? null,
-        mediaType,
-        mimeType: asset.mimeType ?? null,
-        source: "camera",
-        uri: asset.uri,
-        width: asset.width ?? null
-      });
-      router.push({
-        pathname: "/memories/[id]/preview",
-        params: { captureId: capture.id, id: roomId }
-      });
-    } catch {
-      setMediaError("Could not open camera.");
-      Alert.alert("Could not open camera", "Try again.");
-    } finally {
-      setCameraOpening(false);
-    }
+  // The pagination anchor is latched to the oldest message the room had when
+  // history paging first became possible, and only re-latches when the room
+  // itself changes. Reading it live from `room.data` fed pagination its own
+  // output: each loaded page lands in SQLite, the next detail refetch returns a
+  // wider room, the anchor slides older, and paging restarts — the top of the
+  // chat spun "loading earlier messages" forever without ever finishing.
+  const olderMessagesAnchorRef = useRef<{ cursor: string | null; roomId: string }>({ cursor: null, roomId });
+  if (olderMessagesAnchorRef.current.roomId !== roomId) {
+    olderMessagesAnchorRef.current = { cursor: null, roomId };
   }
-
-  function openCamera() {
-    setAttachmentOptionsVisible(false);
-    void openNativeCameraForMemory();
+  if (!olderMessagesAnchorRef.current.cursor) {
+    olderMessagesAnchorRef.current.cursor = room.data?.messages[0]?.createdAt ?? null;
   }
-
-  function goBackToMemories() {
-    router.dismissTo({ pathname: "/profile", params: { tab: "memories" } });
-  }
-
-  const olderMessagesCursor = room.data?.messages[0]?.createdAt ?? null;
+  const olderMessagesCursor = olderMessagesAnchorRef.current.cursor;
   const olderMessages = useMemoryMessagePagesQuery(roomId, olderMessagesCursor);
   const olderMessageItems = useMemo(() => (
     olderMessages.data?.pages.flatMap((page) => page.messages) ?? []
@@ -3739,6 +3891,40 @@ export default function MemoryDetailScreen() {
   const mergedRoomData = useMemo(() => (
     room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
   ), [olderMessageItems, room.data]);
+  // The room snapshot already supplies cached media metadata synchronously, but
+  // the paged gallery used to start resolving only at the moment Media was
+  // selected, so the first visit waited on the query no matter how warm the
+  // cache was. Arm it once the room has data and the opening interactions have
+  // settled, so the switch itself finds the pages already resolved. The query
+  // is SQLite-first now, so warming costs a local read rather than a request.
+  // Warm the CHAT pane only, and late. Warming all four put every pane's mount
+  // and layout into the room's opening moments and every pane's teardown into
+  // the back press, which is what made opening a memory card and leaving the
+  // room feel heavy — route teardown cost scales with what is mounted. Chat is
+  // the one that actually needs it: it is by far the largest subtree, and its
+  // composer clearance has to be measured before the first visit or the list
+  // re-spaces on arrival. Media and Dishes are small trees and mount on first
+  // visit, which is cheap enough not to be worth carrying at open and exit.
+  const [chatWarmed, setChatWarmed] = useState(false);
+  useEffect(() => {
+    if (chatWarmed || !room.data) return;
+    let warmTimer: ReturnType<typeof setTimeout> | null = null;
+    const warmTask = InteractionManager.runAfterInteractions(() => {
+      // runAfterInteractions can fire while the navigation transition is still
+      // settling. The extra delay keeps the mount off the frames where the room
+      // is becoming interactive, which is the part that reads as a slow open.
+      warmTimer = setTimeout(() => setChatWarmed(true), MEMORY_ROOM_CHAT_WARM_DELAY_MS);
+    });
+    return () => {
+      warmTask.cancel();
+      if (warmTimer) clearTimeout(warmTimer);
+    };
+  }, [chatWarmed, room.data]);
+  // Once every pane is mounted, a tab change no longer has to mount anything,
+  // so the controller can stop committing it synchronously on the tap.
+  useEffect(() => {
+    if (chatWarmed) markPanesWarm();
+  }, [chatWarmed, markPanesWarm]);
   const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
@@ -3754,8 +3940,12 @@ export default function MemoryDetailScreen() {
     return () => prefetchTask.cancel();
   }, [galleryPhotos, mode]);
   const hasLoadedOlderMessagePages = Boolean(olderMessages.data?.pages.length);
-  const initialMessageSliceMayHaveOlder = (room.data?.messages.length ?? 0) >= MEMORY_CHAT_PRELOAD_LIMIT;
-  const canLoadOlderMessages = initialMessageSliceMayHaveOlder && Boolean(olderMessagesCursor) && (
+  // SQLite may contain fewer than the server bootstrap size (an older install,
+  // a partial sync, or a room that was first opened offline). Any non-empty
+  // local range gets one boundary lookup; the returned page cursor then walks
+  // cached rows first and hands off to the server only at the cache boundary.
+  const cachedHistoryMayHaveOlder = (room.data?.messages.length ?? 0) > 0;
+  const canLoadOlderMessages = cachedHistoryMayHaveOlder && Boolean(olderMessagesCursor) && (
     !hasLoadedOlderMessagePages || Boolean(olderMessages.hasNextPage)
   );
   const loadOlderMessages = useCallback(() => {
@@ -3775,8 +3965,6 @@ export default function MemoryDetailScreen() {
   // loadOlderMessages, loadMoreMedia and scrollChatToBottom are already stable.
   const stableOpenMedia = useStableHandler(openMediaViewer);
   const stableRateDish = useStableHandler((dishId: string, rating: number) => rateDish.mutate({ dishId, rating }));
-  const stableAddDishToStop = useStableHandler(addDishToStop);
-  const stableRemoveStop = useStableHandler(removeStop);
   const stableBeginSelection = useStableHandler(beginSelection);
   const stableToggleSelection = useStableHandler(toggleSelectedItem);
   const stableCancelSelection = useStableHandler(cancelSelection);
@@ -3786,18 +3974,20 @@ export default function MemoryDetailScreen() {
   const stableCancelEdit = useStableHandler(cancelEditMessage);
   const stableReplyMessage = useStableHandler(beginReplyMessage);
   const stableCancelReply = useStableHandler(cancelReplyMessage);
-  const stableChangeMessage = useStableHandler(updateMessageDraft);
+  const stableChangeMessage = useStableHandler(syncComposerDraft);
   const stableSend = useStableHandler(submitMessage);
   const stableSendAudio = useStableHandler(sendAudioMessage);
   const stableToggleReaction = useStableHandler(toggleMessageReaction);
-  const stableInputToolbarLayout = useStableHandler(handleComposerLayout);
   const stableNearBottomChange = useStableHandler(handleChatNearBottomChange);
 
   if (room.isLoading) {
     return (
-      <Screen>
-        <MemoryCenterState loading />
-      </Screen>
+      <MemoryRoomLoadingShell
+        onBack={goBackToOrigin}
+        selectedMode={memoryRoomModeFromTabParam(params.tab) ?? "overview"}
+        showSkeleton={room.isColdLoading}
+        summary={cachedRoomSummary}
+      />
     );
   }
 
@@ -3807,7 +3997,7 @@ export default function MemoryDetailScreen() {
         <MemoryCenterState
           body={room.error?.message ?? "Table memory not found"}
           buttonLabel="Go back"
-          onPress={goBackToMemories}
+          onPress={goBackToOrigin}
           title="Could not load memory"
         />
       </Screen>
@@ -3832,7 +4022,7 @@ export default function MemoryDetailScreen() {
     canEditMemoryMessage(selectedTargets[0].value, myUsername)
       ? selectedTargets[0].value
       : null;
-  const floatingAddAvailable = !attachmentOptionsVisible && !selectedMedia;
+  const floatingAddAvailable = !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
   const summaryUnreadChatCount = memoryRoomSummariesFromPages(
@@ -3843,14 +4033,15 @@ export default function MemoryDetailScreen() {
   return (
     <Screen padded={false} style={styles.screenContent}>
       <RoomHeader
+        activePaneIndex={activePaneIndex}
         data={data}
         displayRestaurantName={displayRestaurantName}
-        keyboardProgress={dishKeyboardProgress}
+        keyboardProgress={overlayKeyboardProgress}
         mode={headerMode}
         myUsername={myUsername}
         pagerPosition={pagerPosition}
         onAddPeople={openPeopleAdd}
-        onBack={mode === "people" ? closePeopleScreen : goBackToMemories}
+        onBack={mode === "people" ? closePeopleScreen : goBackToOrigin}
         onChangeMode={requestRoomMode}
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
@@ -3865,27 +4056,32 @@ export default function MemoryDetailScreen() {
             mode === "chat" && styles.roomStageChat
           ]}
         >
-          <FoodChatWallpaper patternKey={roomOccasionTheme.backgroundPattern} themeKey={`${resolvedTheme}-${roomOccasionTheme.id}`} visible />
+          <FoodChatWallpaper />
           <View style={styles.roomStageShift}>
             <View style={styles.body}>
               <View style={styles.roomPager}>
-                <RoomPane active={paneTabMode === "overview"} motion="fade">
+                <RoomPane
+                  active={paneTabMode === "overview"}
+                  activePaneIndex={activePaneIndex}
+                  index={0}
+                  warm={false}
+                >
                   <ItineraryPanelPane
                     dishes={data.dishes}
-                    error={createStop.error?.message ?? deleteStop.error?.message}
-                    onAddDishToStop={stableAddDishToStop}
                     onOpenDish={setDetailDishId}
-                    onRemoveStop={stableRemoveStop}
-                    removingStopId={deleteStop.isPending ? deleteStop.variables ?? null : null}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
                     topInset={TABLE_HEADER_CLEARANCE}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "chat"}>
+                <RoomPane
+                  active={paneTabMode === "chat"}
+                  activePaneIndex={activePaneIndex}
+                  index={1}
+                  warm={chatWarmed}
+                >
                   <MemoryChatMainSurfacePane
                     active={paneTabMode === "chat"}
-                    bottomClearance={chatBottomClearance}
                     canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
                     data={data}
@@ -3894,6 +4090,7 @@ export default function MemoryDetailScreen() {
                     editableSelectedMessage={editableSelectedMessage}
                     editingMessage={editingMessage}
                     inputRef={messageInputRef}
+                    keyboardTopReserve={chatKeyboardTopReserve}
                     listRef={chatMainListRef}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
                     message={message}
@@ -3907,7 +4104,6 @@ export default function MemoryDetailScreen() {
                     onDeleteSelected={stableDeleteSelected}
                     onDeleteTarget={stableDeleteTarget}
                     onEditMessage={stableEditMessage}
-                    onInputToolbarLayout={stableInputToolbarLayout}
                     onLoadOlderMessages={loadOlderMessages}
                     onNearBottomChange={stableNearBottomChange}
                     onOpenDish={setDetailDishId}
@@ -3926,14 +4122,22 @@ export default function MemoryDetailScreen() {
                     scrollToBottom={scrollChatToBottom}
                     surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
                     toolbarInsetStyle={composerBottomInsetStyle}
-                    typingVisible={addMessage.isPending || addPhoto.isPending}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "media"}>
+                <RoomPane
+                  active={paneTabMode === "media"}
+                  activePaneIndex={activePaneIndex}
+                  index={2}
+                  warm={false}
+                >
                   <MediaGalleryPane
                     error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
                     hasMore={Boolean(mediaPages.hasNextPage)}
-                    loading={mediaPages.isLoading && galleryPhotos.length === 0}
+                    loading={
+                      room.openedWithoutLocalReplica &&
+                      mediaPages.isLoading &&
+                      galleryPhotos.length === 0
+                    }
                     loadingMore={mediaPages.isFetchingNextPage}
                     onLoadMore={loadMoreMedia}
                     onOpenMedia={stableOpenMedia}
@@ -3941,7 +4145,12 @@ export default function MemoryDetailScreen() {
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "dishes"}>
+                <RoomPane
+                  active={paneTabMode === "dishes"}
+                  activePaneIndex={activePaneIndex}
+                  index={3}
+                  warm={false}
+                >
                   <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
@@ -3969,9 +4178,8 @@ export default function MemoryDetailScreen() {
           selection={selectedMedia}
         />
       </RoomKeyboardContainer>
-      {/* Scrim for the speed-dial only. The dish/media sheet carries its own
-          backdrop (attachSheetBackdrop) that fades in/out with its slide, so we
-          don't dim here for it — that would stack a second, abrupt black layer. */}
+      {/* Scrim for the speed-dial only. Place, Dish and Media each navigate to
+          their own route, so this layer disappears before the next screen opens. */}
       {floatingAddMenuOpen ? (
         <Pressable
           accessibilityLabel="Close add menu"
@@ -3991,6 +4199,7 @@ export default function MemoryDetailScreen() {
       {floatingAddAvailable ? (
         <FloatingAddMenu
           bottomInset={insets.bottom}
+          pagerPosition={pagerPosition}
           visible={floatingAddVisible}
           open={floatingAddMenuOpen}
           progress={floatingAddMenuProgress}
@@ -4002,39 +4211,11 @@ export default function MemoryDetailScreen() {
           bottomInset={insets.bottom}
           onDish={openFloatingAddDish}
           onMedia={openFloatingAddMedia}
-          onStop={openStopComposer}
+          onStop={openAddPlace}
           open={floatingAddMenuOpen}
           progress={floatingAddMenuProgress}
         />
       ) : null}
-      {/* Screen-level so the overlay covers the full screen (RN anchors absolute
-          children to their immediate parent); rendered after the speed-dial so it
-          stacks above the scrim. */}
-      <AttachmentOptionsSheet
-        dishError={addDish.error?.message}
-        dishName={dishName}
-        dishNote={dishNote}
-        dishPending={addDish.isPending}
-        dishRating={dishRating}
-        initialView={attachmentInitialView}
-        onChangeDishName={setDishName}
-        onChangeDishNote={setDishNote}
-        onChangeDishRating={setDishRating}
-        onCamera={openCamera}
-        onClose={cancelAttachmentOptions}
-        onDishSubmit={submitDishFromAttachment}
-        onGallery={() => submitMedia(pickMemoryMediaFromGallery)}
-        keyboardProgress={dishKeyboardProgress}
-        pending={addPhoto.isPending || cameraOpening}
-        visible={attachmentOptionsVisible}
-      />
-      <StopComposerSheet
-        error={createStop.error?.message}
-        onClose={() => setStopComposerVisible(false)}
-        onSubmit={submitStop}
-        pending={createStop.isPending}
-        visible={stopComposerVisible}
-      />
       <DishDetailSheet
         dish={detailDish}
         error={rateDish.error?.message}
@@ -4073,6 +4254,214 @@ export default function MemoryDetailScreen() {
   );
 }
 
+function MemoryRoomLoadingShell({
+  onBack,
+  selectedMode = "overview",
+  showSkeleton,
+  summary
+}: {
+  onBack: () => void;
+  selectedMode?: RoomTabMode;
+  showSkeleton: boolean;
+  summary?: MemoryRoomSummary;
+}) {
+  const roomTitle = summary?.title?.trim() || summary?.restaurantName?.trim() || "Table memory";
+  const placeLabel = summary?.placeNames?.filter(Boolean).join(" · ")
+    || summary?.restaurantName?.trim()
+    || "Your table";
+  const dateLabel = summary
+    ? formatDisplayDate(summary.visitDate ?? summary.createdAt)
+    : "Opening room";
+  return (
+    <Screen padded={false} style={styles.screenContent}>
+      <View style={styles.roomLoadingHeader}>
+        <View style={styles.roomLoadingTopRow}>
+          <Pressable
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={onBack}
+            style={[styles.headerIconButton, styles.headerBackButton]}
+          >
+            <Ionicons name="arrow-back" size={20} color={ROOM_COLORS.onSurface} />
+          </Pressable>
+          <View style={styles.roomLoadingTitleBlock}>
+            <Text numberOfLines={1} style={styles.roomLoadingTitle}>{roomTitle}</Text>
+            <Text numberOfLines={1} style={styles.roomLoadingSubtitle}>{placeLabel} · {dateLabel}</Text>
+          </View>
+          <View style={styles.roomLoadingHeaderSpacer} />
+        </View>
+        <View accessibilityRole="tablist" style={styles.roomLoadingTabs}>
+          {ROOM_TABS.map((tab) => (
+            <View
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab.mode === selectedMode }}
+              key={tab.mode}
+              style={[styles.roomLoadingTab, tab.mode === selectedMode && styles.roomLoadingTabActive]}
+            >
+              <Ionicons
+                name={tab.icon}
+                size={17}
+                color={tab.mode === selectedMode ? ROOM_COLORS.onSurface : ROOM_COLORS.muted}
+              />
+              <Text style={[styles.roomLoadingTabText, tab.mode === selectedMode && styles.roomLoadingTabTextActive]}>
+                {tab.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <View style={styles.roomLoadingStage}>
+        <FoodChatWallpaper />
+        <View style={styles.roomLoadingContent}>
+          {showSkeleton ? <RoomTabLoadingSkeleton mode={selectedMode} /> : null}
+        </View>
+      </View>
+    </Screen>
+  );
+}
+
+function RoomSkeletonPulse({
+  accessibilityLabel,
+  children
+}: {
+  accessibilityLabel: string;
+  children: ReactNode;
+}) {
+  const reducedMotion = useReducedMotionPreference();
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    opacity.stopAnimation();
+    if (reducedMotion) {
+      opacity.setValue(1);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          duration: 850,
+          toValue: 0.52,
+          useNativeDriver: true
+        }),
+        Animated.timing(opacity, {
+          duration: 850,
+          toValue: 1,
+          useNativeDriver: true
+        })
+      ])
+    );
+    animation.start();
+    return () => {
+      animation.stop();
+      opacity.stopAnimation();
+    };
+  }, [opacity, reducedMotion]);
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={accessibilityLabel}
+      accessibilityLiveRegion="polite"
+      accessibilityRole="progressbar"
+      accessibilityState={{ busy: true }}
+      pointerEvents="none"
+    >
+      <Animated.View style={{ opacity }}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
+function RoomTabLoadingSkeleton({ mode }: { mode: RoomTabMode }) {
+  if (mode === "chat") {
+    return (
+      <RoomSkeletonPulse accessibilityLabel="Loading messages">
+        <View style={styles.roomSkeletonChat}>
+          {[0, 1, 2, 3, 4].map((row) => {
+            const mine = row === 1 || row === 3;
+            return (
+              <View
+                key={row}
+                style={[styles.roomSkeletonChatRow, mine && styles.roomSkeletonChatRowMine]}
+              >
+                {!mine ? <View style={styles.roomSkeletonAvatar} /> : null}
+                <View
+                  style={[
+                    styles.roomSkeletonBubble,
+                    mine && styles.roomSkeletonBubbleMine,
+                    row === 2 && styles.roomSkeletonBubbleWide
+                  ]}
+                >
+                  <View style={styles.roomSkeletonLineWide} />
+                  <View style={styles.roomSkeletonLineShort} />
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      </RoomSkeletonPulse>
+    );
+  }
+
+  if (mode === "media") {
+    return (
+      <RoomSkeletonPulse accessibilityLabel="Loading media">
+        <View style={styles.roomSkeletonMediaGrid}>
+          {Array.from({ length: 6 }, (_, index) => (
+            <View key={index} style={styles.roomSkeletonMediaTile} />
+          ))}
+        </View>
+      </RoomSkeletonPulse>
+    );
+  }
+
+  if (mode === "dishes") {
+    return (
+      <RoomSkeletonPulse accessibilityLabel="Loading dishes">
+        <View style={styles.roomSkeletonDishList}>
+          {[0, 1, 2].map((row) => (
+            <View key={row} style={styles.roomSkeletonDishCard}>
+              <View style={styles.roomSkeletonDishIcon} />
+              <View style={styles.roomSkeletonDishCopy}>
+                <View style={styles.roomSkeletonLineMedium} />
+                <View style={styles.roomSkeletonLineShort} />
+              </View>
+              <View style={styles.roomSkeletonRating} />
+            </View>
+          ))}
+        </View>
+      </RoomSkeletonPulse>
+    );
+  }
+
+  return (
+    <RoomSkeletonPulse accessibilityLabel="Loading places">
+      <View style={styles.roomSkeletonTable}>
+        <View style={styles.roomSkeletonPostButton} />
+        <View style={styles.roomSkeletonSectionTitle} />
+        {[0, 1, 2].map((row) => (
+          <View key={row} style={styles.roomSkeletonStopRow}>
+            <View style={styles.roomSkeletonStopRail}>
+              {row > 0 ? <View style={styles.roomSkeletonStopConnectorTop} /> : null}
+              {row < 2 ? <View style={styles.roomSkeletonStopConnectorBottom} /> : null}
+              <View style={styles.roomSkeletonStopMarker} />
+            </View>
+            <View style={styles.roomSkeletonStopCard}>
+              <View style={styles.roomSkeletonStopCopy}>
+                <View style={styles.roomSkeletonLineMedium} />
+                <View style={styles.roomSkeletonLineShort} />
+              </View>
+            </View>
+          </View>
+        ))}
+      </View>
+    </RoomSkeletonPulse>
+  );
+}
+
 function RoomKeyboardContainer({ chatMode, children }: { chatMode: boolean; children: ReactNode }) {
   return (
     <KeyboardAvoidingView
@@ -4087,6 +4476,7 @@ function RoomKeyboardContainer({ chatMode, children }: { chatMode: boolean; chil
 }
 
 function RoomHeader({
+  activePaneIndex,
   data,
   displayRestaurantName,
   keyboardProgress,
@@ -4101,6 +4491,7 @@ function RoomHeader({
   transitioning,
   unreadChatCount
 }: {
+  activePaneIndex: SharedValue<number>;
   data: MemoryRoom;
   displayRestaurantName: string;
   keyboardProgress: SharedValue<number>;
@@ -4276,6 +4667,7 @@ function RoomHeader({
 
       <Reanimated.View style={[styles.headerTabsPosition, tabsMotionStyle]}>
         <RoomModeTabs
+          activePaneIndex={activePaneIndex}
           mode={visualTabMode}
           onChangeMode={onChangeMode}
           pagerPosition={pagerPosition}
@@ -4286,46 +4678,70 @@ function RoomHeader({
   );
 }
 
+// Vector icons render a <Text> under the hood, so the glyph colour is a style
+// prop and Reanimated can drive it directly.
+const AnimatedIonicons = Reanimated.createAnimatedComponent(Ionicons);
+
 function RoomModeTabs({
+  activePaneIndex,
   mode,
   onChangeMode,
   pagerPosition,
   unreadChatCount
 }: {
+  activePaneIndex: SharedValue<number>;
   mode: RoomTabMode;
   onChangeMode: (mode: RoomMode) => void;
   pagerPosition: SharedValue<number>;
   unreadChatCount: number;
 }) {
-  const [tabBarWidth, setTabBarWidth] = useState(0);
-  const tabTrackWidth = Math.max(0, tabBarWidth - 4);
-  const tabWidth = tabTrackWidth > 0 ? tabTrackWidth / ROOM_TABS.length : 0;
+  // The pill is four equal flex tabs wide inside a header that is the window
+  // width capped at ROOM_MAX_WIDTH, so its geometry is known at the FIRST
+  // render — no measurement required. It used to be gated behind an
+  // onLayout -> setState round trip (`tabWidth > 0 ? ... : null`), which meant
+  // the purple box did not exist in the room's first frames at all and popped
+  // in only after a layout event and a header re-render.
+  const { width: windowWidth } = useWindowDimensions();
+  const derivedTabWidth = Math.max(
+    0,
+    Math.min(windowWidth, ROOM_MAX_WIDTH) - ROOM_HEADER_CONTENT_INSET * 2 - MODE_TABS_PADDING * 2
+  ) / ROOM_TABS.length;
+  // Layout corrections land here rather than in state, so a correction can
+  // never re-render the header mid-transition.
+  const tabWidth = useSharedValue(derivedTabWidth);
+  useEffect(() => {
+    tabWidth.value = derivedTabWidth;
+  }, [derivedTabWidth, tabWidth]);
+  const handleTabBarLayout = useCallback((event: LayoutChangeEvent) => {
+    const measured = Math.max(0, event.nativeEvent.layout.width - MODE_TABS_PADDING * 2) / ROOM_TABS.length;
+    if (Math.abs(measured - tabWidth.value) > 0.5) tabWidth.value = measured;
+  }, [tabWidth]);
   const tabIndicatorStyle = useAnimatedStyle(() => ({
+    width: tabWidth.value,
     transform: [
-      { translateX: 2 + tabWidth * Math.min(Math.max(pagerPosition.value, 0), ROOM_TABS.length - 1) }
+      {
+        translateX: MODE_TABS_PADDING
+          + tabWidth.value * Math.min(Math.max(pagerPosition.value, 0), ROOM_TABS.length - 1)
+      }
     ]
   }));
 
   return (
     <View style={styles.modeTabsAnimated}>
       <View
-        onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+        onLayout={handleTabBarLayout}
         style={styles.modeTabs}
       >
-        {tabWidth > 0 ? (
-          <Reanimated.View
-            pointerEvents="none"
-            style={[
-              styles.modeTabIndicator,
-              { width: tabWidth },
-              tabIndicatorStyle
-            ]}
-          />
-        ) : null}
-        {ROOM_TABS.map((tab) => (
+        <Reanimated.View
+          pointerEvents="none"
+          style={[styles.modeTabIndicator, tabIndicatorStyle]}
+        />
+        {ROOM_TABS.map((tab, index) => (
           <ModeButton
+            activePaneIndex={activePaneIndex}
             active={mode === tab.mode}
             icon={tab.icon}
+            index={index}
             key={tab.mode}
             label={tab.label}
             onPress={() => onChangeMode(tab.mode)}
@@ -4343,19 +4759,34 @@ function friendSummaryName(participant: MemoryParticipant, myUsername: string) {
 }
 
 function ModeButton({
+  activePaneIndex,
   active,
   icon,
+  index,
   label,
   onPress,
   unreadCount
 }: {
+  activePaneIndex: SharedValue<number>;
   active: boolean;
   icon: keyof typeof Ionicons.glyphMap;
+  index: number;
   label: string;
   onPress: () => void;
   unreadCount?: number;
 }) {
-  const iconColor = active ? ROOM_COLORS.onSurface : ROOM_COLORS.muted;
+  // Lit the moment the tap is handled, independent of the indicator's travel.
+  // `activePaneIndex` is written synchronously in requestRoomMode, on the UI
+  // thread, so the label brightens on the next frame while the box is still
+  // sliding toward it. Deliberately NOT tied to the slide: syncing the two was
+  // tried (withTiming's completion callback, an exact-position test, then a
+  // continuous interpolation of the box's position) and the user preferred the
+  // label leading. A step also means a tab the box merely slides past on a
+  // non-adjacent jump can never flash. `active` still feeds accessibilityState,
+  // where a commit-time update is fine.
+  const tintStyle = useAnimatedStyle(() => ({
+    color: activePaneIndex.value === index ? ROOM_COLORS.onSurface : ROOM_COLORS.muted
+  }));
   const hasUnread = Boolean(unreadCount && unreadCount > 0);
   const accessibilityLabel = hasUnread ? `${label}, ${unreadCount} unread` : label;
 
@@ -4371,8 +4802,8 @@ function ModeButton({
         pressed && !active && styles.modeButtonPressed
       ]}
     >
-      <Ionicons name={icon} size={15} color={iconColor} />
-      <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
+      <AnimatedIonicons name={icon} size={15} style={tintStyle} />
+      <Reanimated.Text style={[styles.modeButtonText, tintStyle]}>{label}</Reanimated.Text>
       {hasUnread ? (
         <View pointerEvents="none" style={styles.modeButtonUnreadBadge}>
           <Text style={styles.modeButtonUnreadText}>{unreadCount && unreadCount > 99 ? "99+" : unreadCount}</Text>
@@ -4383,48 +4814,64 @@ function ModeButton({
 }
 
 function RoomPane({
+  activePaneIndex,
   active,
   children,
-  lazy = true,
-  motion = "lift"
+  index,
+  warm
 }: {
+  activePaneIndex: SharedValue<number>;
   active: boolean;
   children: ReactNode;
-  lazy?: boolean;
-  motion?: "fade" | "lift";
+  index: number;
+  warm: boolean;
 }) {
-  const [hasMounted, setHasMounted] = useState(active || !lazy);
-  const progress = useSharedValue(active ? 1 : 0);
+  // Mount lazily on first visit, then NEVER unmount. Returning null for an
+  // inactive pane meant every tab switch rebuilt that subtree from scratch —
+  // for Chat that is CHAT_MAIN_INITIAL_RENDER_COUNT rows, each carrying a pan
+  // GestureDetector and several Reanimated worklets, constructed synchronously
+  // on the tap. SQLite removes the *network* wait; only a retained view removes
+  // the *construction* wait, and the construction wait is what makes a switch
+  // feel staged instead of instant. memo() cannot help here: mounting is not
+  // re-rendering.
+  //
+  // Inactive panes are parked OFF-SCREEN rather than hidden. `display: none`
+  // was the obvious choice and was wrong in a specific, expensive way: Yoga
+  // skips a display:none subtree, so a warmed pane never laid out at all and
+  // paid its entire first layout pass at the moment it was revealed. For Chat
+  // that meant the tab felt slow AND the list visibly re-spaced on arrival —
+  // the composer's clearance comes from the input toolbar's onLayout, which
+  // cannot fire while the subtree is skipped, so the list sat on the
+  // CHAT_COMPOSER_CLEARANCE estimate until the exact frame you switched to it.
+  //
+  // A translate keeps every pane fully laid out during the idle warm-up, so the
+  // toolbar measures and the clearance is already correct before the first
+  // visit. The pane sits a full screen width to the right, past the window's
+  // own clip bounds, and the swap is still a single UI-thread transform.
+  const { width: paneOffscreenOffset } = useWindowDimensions();
+  const paneMotionStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: activePaneIndex.value === index ? 0 : paneOffscreenOffset }
+    ]
+  }), [paneOffscreenOffset]);
 
-  useEffect(() => {
-    if (active) setHasMounted(true);
-  }, [active]);
+  // Mount decision resolved during render rather than in an effect. As a
+  // useState + useEffect pair this rendered null first and only mounted on the
+  // follow-up commit, so a tab's first visit cost two renders before anything
+  // appeared. `warm` mounts every pane once the room is idle, so after that no
+  // switch touches React to become visible at all.
+  const hasMountedRef = useRef(active);
+  if (active || warm) hasMountedRef.current = true;
 
-  // Cross-fade the content on the SAME timing (MEMORY_ROOM_TAB_TIMING) as the
-  // header collapse + tab indicator, started in the same commit, so the whole
-  // room moves as one unit. No enter delay, and warmed panes fade in WITH the
-  // header instead of snapping ahead of it (the old instant-snap was the desync).
-  // Reanimated's withTiming also interrupts gracefully from the current value,
-  // so rapid tab switches no longer hard-cut.
-  useEffect(() => {
-    progress.value = withTiming(active ? 1 : 0, MEMORY_ROOM_TAB_TIMING);
-  }, [active, progress]);
-
-  const liftOffset = motion === "lift" ? ROOM_PANE_TRANSLATE_Y : 0;
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    transform: [{ translateY: liftOffset * (1 - progress.value) }]
-  }));
-
-  if (lazy && !hasMounted) return null;
+  if (!hasMountedRef.current) return null;
 
   return (
     <Reanimated.View
-      accessibilityElementsHidden={!active}
       collapsable={false}
-      importantForAccessibility={active ? "auto" : "no-hide-descendants"}
+      // Off-screen panes cannot be touched anyway; this only closes the window
+      // between the tap and the deferred commit that updates `active`.
       pointerEvents={active ? "auto" : "none"}
-      style={[styles.roomPagerPage, { zIndex: active ? 2 : 1 }, animatedStyle]}
+      style={[styles.roomPagerPage, paneMotionStyle]}
     >
       {children}
     </Reanimated.View>
@@ -4463,52 +4910,53 @@ function PaneReveal({
 function FloatingAddMenu({
   bottomInset,
   onToggle,
+  pagerPosition,
   visible,
   open,
   progress
 }: {
   bottomInset: number;
   onToggle: () => void;
+  pagerPosition: SharedValue<number>;
   visible: boolean;
   open: boolean;
   progress: Animated.Value;
 }) {
-  const visibilityProgress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const buttonBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6);
   const iconRotate = progress.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "45deg"]
   });
-  const buttonOpacity = visibilityProgress;
-  const buttonTranslateX = visibilityProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [86, 0]
+  // The button belongs to Table, so it rides the SAME value as the header's
+  // collapse rather than running its own timeline. It used to be a legacy
+  // Animated.timing kicked off by a useEffect on a `mode`-derived prop, which
+  // put it two steps behind: it could not start until React committed the mode
+  // change (now deliberately deferred via startTransition), and only then began
+  // its own 180ms. Coming back to Table, the header had finished expanding on
+  // the UI thread before the button had started moving. Reading pagerPosition
+  // means it expands WITH the header, on the same clock, with no timing of its
+  // own to drift.
+  const buttonMotionStyle = useAnimatedStyle(() => {
+    const revealed = 1 - Math.min(Math.max(pagerPosition.value, 0), 1);
+    return {
+      opacity: revealed,
+      transform: [
+        { translateX: 86 * (1 - revealed) },
+        { scale: 0.92 + (0.08 * revealed) }
+      ]
+    };
   });
-  const buttonScale = visibilityProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.92, 1]
-  });
-
-  useEffect(() => {
-    Animated.timing(visibilityProgress, {
-      duration: visible ? 180 : 150,
-      easing: Easing.out(Easing.cubic),
-      toValue: visible ? 1 : 0,
-      useNativeDriver: true
-    }).start();
-  }, [visibilityProgress, visible]);
 
   return (
-    <Animated.View
+    <Reanimated.View
       pointerEvents={visible ? "auto" : "none"}
       style={[
         styles.floatingAddButtonFrame,
         {
           bottom: buttonBottom,
-          opacity: buttonOpacity,
-          right: FLOATING_ADD_EDGE_OFFSET,
-          transform: [{ translateX: buttonTranslateX }, { scale: buttonScale }]
-        }
+          right: FLOATING_ADD_EDGE_OFFSET
+        },
+        buttonMotionStyle
       ]}
     >
       <Pressable
@@ -4522,7 +4970,7 @@ function FloatingAddMenu({
           <Ionicons name="add" size={FLOATING_ADD_ICON_SIZE} color={ROOM_COLORS.onCool} style={styles.floatingAddIcon} />
         </Animated.View>
       </Pressable>
-    </Animated.View>
+    </Reanimated.View>
   );
 }
 
@@ -4670,6 +5118,10 @@ function ChatHistoryHeader({
 }
 
 const prefetchedMemoryMediaKeys = new Set<string>();
+// Reactions are intentionally disabled until they have server authority,
+// realtime delivery and a SQLite projection. Do not present component-only
+// state as a shared room feature.
+const MEMORY_REACTIONS_ENABLED = false;
 
 function memoryMediaCacheKey(media: MemoryPhoto) {
   return media.storagePath || media.id || media.publicUrl;
@@ -4680,6 +5132,12 @@ function prefetchMemoryMedia(media: MemoryPhoto) {
   if (!media.publicUrl || prefetchedMemoryMediaKeys.has(cacheKey)) return;
   prefetchedMemoryMediaKeys.add(cacheKey);
   if (media.mediaType === "video") {
+    if (media.posterUrl) {
+      Image.prefetch(media.posterUrl).catch(() => {
+        prefetchedMemoryMediaKeys.delete(cacheKey);
+      });
+      return;
+    }
     void generateCachedVideoThumbnail(cacheKey, media.publicUrl)
       .then((thumbnail) => {
         if (!thumbnail) prefetchedMemoryMediaKeys.delete(cacheKey);
@@ -5255,8 +5713,8 @@ function ChatTimeline({
           editing={editingMessageId === item.value.id}
           groupPosition={item.groupPosition}
           highlighted={highlightedMessageId === item.value.id}
-          reactionPickerOpen={!selectionMode && reactionPickerMessageId === item.value.id}
-          reactions={reactions[item.value.id] ?? {}}
+          reactionPickerOpen={MEMORY_REACTIONS_ENABLED && !selectionMode && reactionPickerMessageId === item.value.id}
+          reactions={MEMORY_REACTIONS_ENABLED ? reactions[item.value.id] ?? {} : {}}
           rowStyle={rowStyle}
           selected={selectedItemKeys.includes(`message:${item.value.id}`)}
           selectionMode={selectionMode}
@@ -5496,75 +5954,26 @@ function ChatTimeline({
   );
 }
 
-const ROMANTIC_WALLPAPER_PLACEMENTS = [
-  { transform: "translate(28 30) scale(0.55)", strokeWidth: 2 },
-  { transform: "translate(124 96) scale(0.48)", strokeWidth: 2 },
-  { transform: "translate(198 38) scale(0.42)", strokeWidth: 2 }
-] as const;
-const ROMANTIC_HEART_PATH = "M12 21s-7-4.4-9.3-8.2C.8 9.7 1.6 6 4.7 5.2c1.8-.5 3.5.2 4.5 1.6 1-1.4 2.7-2.1 4.5-1.6 3.1.8 3.9 4.5 2 7.6C19 16.6 12 21 12 21Z";
-
-const FoodChatWallpaper = memo(function FoodChatWallpaper({
-  patternKey,
-  themeKey,
-  visible
-}: {
-  patternKey: string;
-  themeKey: string;
-  visible: boolean;
-}) {
-  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
-  const patternId = `foodChatDoodlePattern-${themeKey}`;
-  const romantic = patternKey === "romantic-food-pattern";
-
-  useEffect(() => {
-    Animated.timing(opacity, {
-      duration: visible ? 180 : 120,
-      easing: Easing.out(Easing.cubic),
-      toValue: visible ? 1 : 0,
-      useNativeDriver: true
-    }).start();
-  }, [opacity, visible]);
-
+const FoodChatWallpaper = memo(function FoodChatWallpaper() {
   return (
-    <Animated.View
+    <View
       pointerEvents="none"
-      style={[styles.chatWallpaper, { backgroundColor: ROOM_COLORS.wallpaperBg, opacity }]}
+      style={[styles.chatWallpaper, { backgroundColor: ROOM_COLORS.wallpaperBg }]}
     >
-      <ImageBackground
-        imageStyle={{ opacity: ROOM_COLORS.wallpaperOpacity, tintColor: ROOM_COLORS.wallpaperLine }}
-        resizeMode="repeat"
-        source={FOOD_WALLPAPER_TILE_SOURCE}
-        style={StyleSheet.absoluteFill}
-      />
-      {romantic ? (
-        <Svg height="100%" style={StyleSheet.absoluteFill} width="100%">
-          <Defs>
-            <Pattern
-              height={FOOD_WALLPAPER_TILE_SIZE}
-              id={patternId}
-              patternUnits="userSpaceOnUse"
-              width={FOOD_WALLPAPER_TILE_SIZE}
-              x={0}
-              y={0}
-            >
-              <G
-                fill="none"
-                opacity={ROOM_COLORS.wallpaperOpacity}
-                stroke={ROOM_COLORS.wallpaperLine}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                {ROMANTIC_WALLPAPER_PLACEMENTS.map((placement, index) => (
-                  <Path key={`heart-${index}`} d={ROMANTIC_HEART_PATH} strokeWidth={placement.strokeWidth} transform={placement.transform} />
-                ))}
-              </G>
-            </Pattern>
-          </Defs>
-          <Rect fill={`url(#${patternId})`} height="100%" width="100%" x={0} y={0} />
-        </Svg>
-      ) : null}
-      <View style={styles.chatWallpaperOverlay} />
-    </Animated.View>
+      {/* One pre-baked tile ships in the app: the theme tint (#D7CAB9) and its
+          0.2 opacity are already painted into the tile's pixels, so there is no
+          per-frame tintColor shader and no fade-in — it appears instantly on room
+          entry. Rasterized once to a hardware texture so scroll/keyboard frames
+          blit a cached bitmap instead of re-tiling. */}
+      <View renderToHardwareTextureAndroid style={StyleSheet.absoluteFill}>
+        <ImageBackground
+          resizeMode="repeat"
+          source={FOOD_WALLPAPER_TILE_SOURCE}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.chatWallpaperOverlay} />
+      </View>
+    </View>
   );
 });
 
@@ -5701,12 +6110,28 @@ function generateCachedVideoThumbnail(cacheKey: string, sourceUri: string) {
 function VideoThumbnailLayer({
   cacheKey,
   contentFit = "cover",
+  posterUri,
   uri
 }: {
   cacheKey: string;
   contentFit?: "contain" | "cover";
+  posterUri?: string | null;
   uri: string;
 }) {
+  if (posterUri) {
+    return (
+      <View style={styles.videoThumbnailLayer}>
+        <Image
+          cachePolicy="memory-disk"
+          contentFit={contentFit}
+          priority="high"
+          recyclingKey={`${cacheKey}:poster`}
+          source={posterUri}
+          style={styles.videoThumbnailImage}
+        />
+      </View>
+    );
+  }
   if (Platform.OS === "web") {
     return <WebVideoThumbnailLayer contentFit={contentFit} uri={uri} />;
   }
@@ -6035,7 +6460,41 @@ function MessageRow({
   swipeEnabled?: boolean;
 }) {
   const accentColor = senderAccent(senderName);
-  const swipeableRef = useRef<SwipeableMethods>(null);
+  const replySwipeX = useSharedValue(0);
+  const replySwipeProgress = useDerivedValue(() => (
+    Math.min(1, Math.max(0, replySwipeX.value / REPLY_SWIPE_TRIGGER_DISTANCE))
+  ));
+  const replySwipeContentStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: replySwipeX.value }]
+  }), [replySwipeX]);
+  const triggerSwipeReply = useCallback(() => {
+    if (swipeEnabled) onSwipeRight?.();
+  }, [onSwipeRight, swipeEnabled]);
+  const replySwipeGesture = useMemo(() => (
+    Gesture.Pan()
+      .enabled(Boolean(onSwipeRight && swipeEnabled))
+      // A vertical list gets the gesture as soon as vertical intent is clear.
+      // Reply activates only after a deliberate, horizontally dominant drag.
+      .activeOffsetX(REPLY_SWIPE_ACTIVATION_DISTANCE)
+      .failOffsetY([-REPLY_SWIPE_VERTICAL_TOLERANCE, REPLY_SWIPE_VERTICAL_TOLERANCE])
+      .onUpdate((event) => {
+        const horizontalDistance = Math.max(0, event.translationX);
+        replySwipeX.value = Math.min(horizontalDistance, REPLY_SWIPE_MAX_TRANSLATE);
+      })
+      .onEnd((event) => {
+        const isDeliberateReplySwipe = (
+          event.translationX >= REPLY_SWIPE_TRIGGER_DISTANCE &&
+          event.translationX > Math.abs(event.translationY) * 1.5
+        );
+        if (isDeliberateReplySwipe) runOnJS(triggerSwipeReply)();
+      })
+      .onFinalize(() => {
+        replySwipeX.value = withTiming(0, {
+          duration: 150,
+          easing: ReanimatedEasing.out(ReanimatedEasing.cubic)
+        });
+      })
+  ), [onSwipeRight, replySwipeX, swipeEnabled, triggerSwipeReply]);
 
   const rowContent = mine ? (
     <>
@@ -6080,33 +6539,15 @@ function MessageRow({
   );
 
   if (onSwipeRight) {
-    const renderLeftActions = (progress: SharedValue<number>) => (
-      <ReplySwipeAction progress={progress} />
-    );
-    const handleSwipeableWillOpen = () => {
-      if (swipeEnabled) onSwipeRight();
-    };
-    const handleSwipeableOpen = () => {
-      swipeableRef.current?.close();
-    };
-
     return (
-      <ReanimatedSwipeable
-        ref={swipeableRef}
-        containerStyle={styles.swipeReplyWrap}
-        dragOffsetFromLeftEdge={8}
-        enabled={swipeEnabled}
-        friction={1.35}
-        leftThreshold={REPLY_SWIPE_TRIGGER_DISTANCE}
-        onSwipeableOpen={handleSwipeableOpen}
-        onSwipeableWillOpen={handleSwipeableWillOpen}
-        overshootLeft={false}
-        renderLeftActions={renderLeftActions}
-      >
-        <View style={styles.swipeReplyContent}>
-          {rowElement}
-        </View>
-      </ReanimatedSwipeable>
+      <View style={styles.swipeReplyWrap}>
+        <ReplySwipeAction progress={replySwipeProgress} />
+        <GestureDetector gesture={replySwipeGesture} touchAction="pan-y">
+          <Reanimated.View style={[styles.swipeReplyContent, replySwipeContentStyle]}>
+            {rowElement}
+          </Reanimated.View>
+        </GestureDetector>
+      </View>
     );
   }
 
@@ -7189,7 +7630,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={styles.gridVideoPreview}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
           {!uploading ? (
@@ -7213,7 +7654,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
         cachePolicy="memory-disk"
         contentFit="contain"
         recyclingKey={media.storagePath || media.publicUrl}
-        source={media.publicUrl}
+        source={media.thumbnailUrl || media.publicUrl}
         style={styles.gridMediaFill}
       />
       {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
@@ -7252,15 +7693,15 @@ function MediaGallery({
       data={photos}
       initialNumToRender={MEDIA_GALLERY_INITIAL_RENDER_COUNT}
       keyExtractor={(item) => item.id}
-      ListEmptyComponent={(
+      ListEmptyComponent={loading ? (
+        <RoomTabLoadingSkeleton mode="media" />
+      ) : (
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
-            <Ionicons name={loading ? "hourglass-outline" : "images-outline"} size={26} color={ROOM_COLORS.cool} />
+            <Ionicons name="images-outline" size={26} color={ROOM_COLORS.cool} />
           </View>
-          <Text style={styles.emptyTitle}>{loading ? "Loading media" : themeCopy.emptyTitle}</Text>
-          <Text style={styles.emptyText}>
-            {loading ? "Fetching photos and videos from this table." : themeCopy.emptyDescription}
-          </Text>
+          <Text style={styles.emptyTitle}>{themeCopy.emptyTitle}</Text>
+          <Text style={styles.emptyText}>{themeCopy.emptyDescription}</Text>
         </View>
       )}
       ListFooterComponent={loadingMore ? (
@@ -7314,25 +7755,17 @@ function memoryDishRaterSummary(dish: MemoryDish) {
 
 function ItineraryPanel({
   dishes,
-  error,
-  onAddDishToStop,
   onOpenDish,
-  onRemoveStop,
-  removingStopId,
   stops,
   topInset
 }: {
   dishes: MemoryDish[];
-  error?: string;
-  onAddDishToStop: (stopId: string) => void;
   onOpenDish: (dishId: string) => void;
-  onRemoveStop: (stopId: string) => void;
-  removingStopId?: string | null;
   stops: MemoryStop[];
   themeCopy: OccasionTheme["copy"];
   topInset?: number;
 }) {
-  const topPadding = topInset != null ? topInset + spacing.sm : TABLE_HEADER_CLEARANCE;
+  const topPadding = topInset != null ? topInset + 10 : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
   const dishesByStop = dishes.reduce<Record<string, MemoryDish[]>>((groups, dish) => {
     if (!dish.stopId) return groups;
@@ -7359,7 +7792,6 @@ function ItineraryPanel({
             Tap + and choose Place to add each location from this occasion, in the order you visited.
           </Text>
         </View>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
     );
   }
@@ -7369,46 +7801,55 @@ function ItineraryPanel({
       contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.itineraryHeading}>Itinerary</Text>
+      <View style={styles.tablePostActionRow}>
+        <Pressable
+          accessibilityLabel="Post this table memory"
+          accessibilityRole="button"
+          accessibilityState={{ disabled: true }}
+          disabled
+          style={styles.tablePostButton}
+        >
+          <Ionicons name="create-outline" size={16} color={ROOM_COLORS.onCool} />
+          <Text style={styles.tablePostButtonText}>Post</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.itineraryHeading}>Places Visited</Text>
       {stops.map((stop, index) => {
-        const meta = MEMORY_STOP_META[stop.stopType];
         const stopDishes = dishesByStop[stop.id] ?? [];
-        const removing = removingStopId === stop.id;
+        const isFirstStop = index === 0;
+        const isLastStop = index === stops.length - 1;
         return (
-          <View key={stop.id} style={[styles.stopCard, removing && styles.stopCardRemoving]}>
-            <View style={styles.stopHeaderRow}>
-              <View style={styles.stopEmojiWrap}>
-                <Text style={styles.stopEmoji}>{meta.emoji}</Text>
+          <View
+            key={stop.id}
+            style={styles.stopTimelineRow}
+          >
+            <View pointerEvents="none" style={styles.stopTimelineRail}>
+              {!isFirstStop ? <View style={styles.stopTimelineConnectorTop} /> : null}
+              {!isLastStop ? <View style={styles.stopTimelineConnectorBottom} /> : null}
+              <View style={styles.stopTimelineMarker}>
+                <Ionicons name="location" size={16} color={ROOM_COLORS.onCool} />
               </View>
-              <View style={styles.stopHeaderText}>
-                <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
-                <Text style={styles.stopTypeLabel}>{`Stop ${index + 1} · ${meta.label}`}</Text>
-              </View>
-              <Pressable
-                accessibilityLabel={`Remove ${stop.name}`}
-                accessibilityRole="button"
-                disabled={removing}
-                hitSlop={8}
-                onPress={() => onRemoveStop(stop.id)}
-                style={styles.stopRemoveButton}
-              >
-                <Ionicons name="close" size={16} color={ROOM_COLORS.muted} />
-              </Pressable>
             </View>
-            {stop.note ? <Text style={styles.stopNote}>{stop.note}</Text> : null}
-            {stopDishes.length > 0 ? (
-              <View style={styles.stopDishList}>
-                {stopDishes.map((dish) => (
-                  <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
-                ))}
+
+            <View style={[styles.stopCard, styles.stopTimelineCard]}>
+              <View style={styles.stopHeaderRow}>
+                <View style={styles.stopHeaderText}>
+                  <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
+                  {stop.note ? (
+                    <Text ellipsizeMode="tail" numberOfLines={1} style={styles.stopLocation}>
+                      {stop.note}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
-            ) : null}
-            {meta.canHaveDishes ? (
-              <Pressable accessibilityRole="button" onPress={() => onAddDishToStop(stop.id)} style={styles.stopAddDishButton}>
-                <Ionicons name="add" size={15} color={ROOM_COLORS.cool} />
-                <Text style={styles.stopAddDishText}>Add dish</Text>
-              </Pressable>
-            ) : null}
+              {stopDishes.length > 0 ? (
+                <View style={styles.stopDishList}>
+                  {stopDishes.map((dish) => (
+                    <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
+                  ))}
+                </View>
+              ) : null}
+            </View>
           </View>
         );
       })}
@@ -7432,7 +7873,6 @@ function ItineraryPanel({
         </View>
       ) : null}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
     </ScrollView>
   );
 }
@@ -7450,100 +7890,6 @@ function StopDishRow({ dish, onPress }: { dish: MemoryDish; onPress: () => void 
       </View>
       <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
     </Pressable>
-  );
-}
-
-function StopComposerSheet({
-  error,
-  onClose,
-  onSubmit,
-  pending,
-  visible
-}: {
-  error?: string;
-  onClose: () => void;
-  onSubmit: (input: { stopType: MemoryStopType; name: string; note?: string }) => Promise<boolean> | boolean;
-  pending: boolean;
-  visible: boolean;
-}) {
-  const [stopType, setStopType] = useState<MemoryStopType>("restaurant");
-  const [name, setName] = useState("");
-  const [note, setNote] = useState("");
-
-  useEffect(() => {
-    if (!visible) return;
-    setStopType("restaurant");
-    setName("");
-    setNote("");
-  }, [visible]);
-
-  const canSubmit = name.trim().length > 0 && !pending;
-
-  async function handleSubmit() {
-    if (!canSubmit) return;
-    await onSubmit({ stopType, name: name.trim(), note: note.trim() || undefined });
-  }
-
-  return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.stopSheetRoot}>
-        <Pressable accessibilityLabel="Close" onPress={onClose} style={styles.stopSheetBackdrop} />
-        <View style={styles.stopSheet}>
-          <View style={styles.stopSheetHandle} />
-          <Text style={styles.stopSheetTitle}>Add a stop</Text>
-          <Text style={styles.stopSheetSubtitle}>Where did the occasion take you?</Text>
-
-          <View style={styles.stopTypeGrid}>
-            {MEMORY_STOP_ORDER.map((type) => {
-              const meta = MEMORY_STOP_META[type];
-              const active = stopType === type;
-              return (
-                <Pressable
-                  accessibilityLabel={meta.label}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  key={type}
-                  onPress={() => setStopType(type)}
-                  style={[styles.stopTypeChip, active && styles.stopTypeChipActive]}
-                >
-                  <Text style={styles.stopTypeChipEmoji}>{meta.emoji}</Text>
-                  <Text style={[styles.stopTypeChipLabel, active && styles.stopTypeChipLabelActive]}>{meta.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <TextInput
-            autoFocus
-            onChangeText={setName}
-            placeholder="Name this stop (e.g. Blue Tokai)"
-            placeholderTextColor={ROOM_COLORS.muted}
-            returnKeyType="done"
-            style={styles.stopInput}
-            value={name}
-          />
-          <TextInput
-            multiline
-            onChangeText={setNote}
-            placeholder="Add a note (optional)"
-            placeholderTextColor={ROOM_COLORS.muted}
-            style={[styles.stopInput, styles.stopNoteInput]}
-            value={note}
-          />
-
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          <Pressable
-            accessibilityRole="button"
-            disabled={!canSubmit}
-            onPress={handleSubmit}
-            style={[styles.stopSubmitButton, !canSubmit && styles.stopSubmitButtonDisabled]}
-          >
-            <Text style={styles.stopSubmitText}>{pending ? "Adding…" : "Add stop"}</Text>
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
   );
 }
 
@@ -8094,25 +8440,53 @@ const ATTACH_SHEET_FALLBACK_HEIGHT = 520;
 // `slide` (0 docked off-screen -> 1 open) drives both the sheet's translateY and
 // a dedicated backdrop's opacity, so the dim grows in and out with the sheet —
 // this is the only dimming layer for the sheet (the room scrim is for the + menu).
-function KeyboardAwareSheetSurface({ onClose, keyboardProgress, slide, sheetHeight, children }: { onClose: () => void; keyboardProgress: SharedValue<number>; slide: SharedValue<number>; sheetHeight: SharedValue<number>; children: ReactNode }) {
-  const insets = useSafeAreaInsets();
-  // Smoothed offset (0 -> -keyboardHeight) so the dish/media sheet hugs the keys
-  // without the Gboard emoji-height bounce the chat composer used to show.
-  const keyboardOffset = useSmoothedKeyboardOffset();
-  // Keyboard closed -> float the sheet above the gesture-nav / home-indicator
-  // inset, so the sheet's own bottom padding stays visible instead of being
-  // tucked under the system nav. Keyboard open -> hug the keyboard with a small
-  // gap. Blended along the keyboard curve so the transition is smooth.
-  const insetStyle = useAnimatedStyle(() => {
-    const open = keyboardProgress.value;
-    return {
-      paddingBottom: insets.bottom * (1 - open) + (-keyboardOffset.value + ATTACH_SHEET_KEYBOARD_GAP) * open
-    };
-  }, [insets.bottom]);
+function KeyboardAwareSheetSurface({ onClose, drivenKeyboardHeight, keyboardProgress, slide, sheetHeight, children }: { onClose: () => void; drivenKeyboardHeight: SharedValue<number>; keyboardProgress: SharedValue<number>; slide: SharedValue<number>; sheetHeight: SharedValue<number>; children: ReactNode }) {
+  const liveInsets = useSafeAreaInsets();
+  // Freeze the closed baseline for this sheet mount. Edge-to-edge Android can
+  // report bottom=0 as soon as the IME covers the gesture area; accepting that
+  // live update would relayout the overlay while its keyboard transform is
+  // moving and create a second visible correction at the end of the slide.
+  const [frozenBottomInset] = useState(() => liveInsets.bottom);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: slide.value }));
-  const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT) }]
-  }));
+  // Same model as the chat composer and the comments sheet, for the same
+  // reasons — this surface previously broke all three of its rules at once:
+  //
+  // 1. It animated paddingBottom per frame. Per-frame LAYOUT of a sheet that
+  //    contains TextInputs re-measures the whole subtree every frame; the
+  //    comments sheet shipped exactly this first and visibly jittered. Motion
+  //    has to be transform-only.
+  // 2. It rode the RAW per-frame keyboard height. Frame-by-frame captures on
+  //    this device proved every ride variant reads as wiggle, because the app
+  //    render-freezes ~4 frames at slide start while the IME window keeps
+  //    moving. The driven height PARKS instead: one pre-calculated move
+  //    announced by onStart, stationary before the keyboard finishes.
+  // 3. It blended two signals (`insets * (1 - progress)` against
+  //    `keyboardOffset * progress`). Two channels can land on different frames,
+  //    which snaps at the settle point — the "two-stop" feel.
+  //
+  // Now: static resting padding, and ONE monotonic signal with the safe-area
+  // gap as a flat subtraction, folded into the SAME transform as the open/close
+  // slide so the sheet can never move on two clocks. Mirrors
+  // getChatKeyboardShift: closed -> 0, open -> rests ATTACH_SHEET_KEYBOARD_GAP
+  // above the keyboard top.
+  const sheetSlideStyle = useAnimatedStyle(() => {
+    const slideOffset = (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT);
+    return {
+      transform: [{ translateY: slideOffset }]
+    };
+  });
+  // iOS fallback: use the same parked, monotonic height as Comments. Android
+  // does not consume this style; NativeKeyboardInsetView owns every IME frame
+  // on the native thread and the inner view owns only the sheet open/close
+  // slide, so the two motions never compete in one JavaScript transform.
+  const jsKeyboardSheetStyle = useAnimatedStyle(() => {
+    const closedSafeAreaGap = Math.max(0, frozenBottomInset - ATTACH_SHEET_KEYBOARD_GAP);
+    const keyboardLift = Math.max(0, drivenKeyboardHeight.value - closedSafeAreaGap);
+    const slideOffset = (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT);
+    return {
+      transform: [{ translateY: slideOffset - keyboardLift }]
+    };
+  }, [frozenBottomInset]);
   // The keyboard is tracked here (inside the modal's provider) reliably. Mirror
   // its per-frame openness (0 closed -> 1 open) into a room-owned shared value so
   // the room header can hide in exact lockstep with the keyboard — same motion,
@@ -8122,23 +8496,37 @@ function KeyboardAwareSheetSurface({ onClose, keyboardProgress, slide, sheetHeig
     onMove: (event) => { "worklet"; keyboardProgress.value = event.progress; },
     onEnd: (event) => { "worklet"; keyboardProgress.value = event.progress; }
   }, []);
+  const sheetBody = (
+    <Reanimated.View
+      onLayout={(event) => { sheetHeight.value = event.nativeEvent.layout.height; }}
+      style={USE_NATIVE_KEYBOARD_INSET ? sheetSlideStyle : jsKeyboardSheetStyle}
+    >
+      {children}
+    </Reanimated.View>
+  );
+
   return (
-    <Reanimated.View style={[styles.attachSheetKeyboard, insetStyle]}>
+    <View style={[styles.attachSheetKeyboard, { paddingBottom: frozenBottomInset }]}>
       <Reanimated.View pointerEvents="none" style={[styles.attachSheetBackdrop, backdropStyle]} />
       <Pressable accessibilityLabel="Close" onPress={onClose} style={StyleSheet.absoluteFill} />
-      <Reanimated.View
-        onLayout={(event) => { sheetHeight.value = event.nativeEvent.layout.height; }}
-        style={sheetStyle}
-      >
-        {children}
-      </Reanimated.View>
-    </Reanimated.View>
+      {USE_NATIVE_KEYBOARD_INSET ? (
+        <NativeKeyboardInsetView
+          active
+          closedGap={frozenBottomInset}
+          openGap={ATTACH_SHEET_KEYBOARD_GAP}
+          style={styles.attachSheetNativeKeyboardInset}
+        >
+          {sheetBody}
+        </NativeKeyboardInsetView>
+      ) : sheetBody}
+    </View>
   );
 }
 
 function AttachmentOptionsSheet({
   dishError,
   dishName,
+  drivenKeyboardHeight,
   dishNote,
   dishPending,
   dishRating,
@@ -8156,6 +8544,7 @@ function AttachmentOptionsSheet({
 }: {
   dishError?: string;
   dishName: string;
+  drivenKeyboardHeight: SharedValue<number>;
   dishNote: string;
   dishPending: boolean;
   dishRating: number;
@@ -8181,6 +8570,10 @@ function AttachmentOptionsSheet({
   const [mounted, setMounted] = useState(visible);
   const slide = useSharedValue(visible ? 1 : 0); // 0 = docked off-screen, 1 = open
   const sheetHeight = useSharedValue(0);
+  const dismissSheet = useCallback(() => {
+    Keyboard.dismiss();
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     if (visible) {
@@ -8199,16 +8592,20 @@ function AttachmentOptionsSheet({
     if (visible) setView(initialView);
   }, [initialView, visible]);
 
+  useEffect(() => {
+    if (!visible) Keyboard.dismiss();
+  }, [visible]);
+
   // The sheet is a plain in-tree overlay (not a RN Modal), so wire up Android's
   // hardware back ourselves to dismiss it while it's open.
   useEffect(() => {
     if (!mounted) return undefined;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      onClose();
+      dismissSheet();
       return true;
     });
     return () => subscription.remove();
-  }, [mounted, onClose]);
+  }, [dismissSheet, mounted]);
 
   const title = view === "dish" ? "Add dish" : view === "media" ? "Add media" : "Add to memory";
   // Back only makes sense when the sheet opened on the action list and the user
@@ -8225,18 +8622,26 @@ function AttachmentOptionsSheet({
     // chat composer's keyboard after this sheet was used. In-tree, the keyboard is
     // tracked exactly like the composer, so the sheet hugs the keys the same way.
     <View style={styles.attachOverlay}>
-        <KeyboardAwareSheetSurface onClose={onClose} keyboardProgress={keyboardProgress} slide={slide} sheetHeight={sheetHeight}>
+        <KeyboardAwareSheetSurface drivenKeyboardHeight={drivenKeyboardHeight} onClose={dismissSheet} keyboardProgress={keyboardProgress} slide={slide} sheetHeight={sheetHeight}>
           <Pressable style={styles.attachSheet} onPress={(event) => event.stopPropagation()}>
             <View style={styles.attachSheetHeaderRow}>
               {showBack ? (
-                <Pressable accessibilityLabel="Back" hitSlop={8} onPress={() => setView("actions")} style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderBack]}>
+                <Pressable
+                  accessibilityLabel="Back"
+                  hitSlop={8}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setView("actions");
+                  }}
+                  style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderBack]}
+                >
                   <Ionicons name="chevron-back" size={18} color={ROOM_COLORS.cool} />
                 </Pressable>
               ) : <View style={styles.attachSheetHeaderSpacer} />}
               <View style={styles.attachSheetHeaderText}>
                 {view === "dish" ? null : <Text style={styles.attachSheetTitle}>{title}</Text>}
               </View>
-              <Pressable accessibilityLabel="Close" hitSlop={8} onPress={onClose} style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderClose]}>
+              <Pressable accessibilityLabel="Close" hitSlop={8} onPress={dismissSheet} style={[styles.attachSheetHeaderButton, styles.attachSheetHeaderClose]}>
                 <Ionicons name="close" size={18} color={ROOM_COLORS.muted} />
               </Pressable>
             </View>
@@ -8343,7 +8748,14 @@ function AttachmentOptionsSheet({
                     </View>
                   </View>
                 </View>
-                <Pressable disabled={!canSubmitDish} onPress={onDishSubmit} style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}>
+                <Pressable
+                  disabled={!canSubmitDish}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onDishSubmit();
+                  }}
+                  style={[styles.attachDishSubmit, !canSubmitDish && styles.attachDishSubmitDisabled]}
+                >
                   <Text style={styles.attachDishSubmitText}>{dishPending ? "Adding..." : "Add dish"}</Text>
                 </Pressable>
                 {dishError ? <Text style={styles.error}>{dishError}</Text> : null}
@@ -8502,7 +8914,7 @@ function MediaViewer({
         <ViewerVideo media={media} />
       ) : memoryMediaKind(media) === "video" ? (
         <View style={styles.viewerVideo}>
-          <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" uri={media.publicUrl} />
+          <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} />
         </View>
       ) : (
         <Image
@@ -8596,7 +9008,7 @@ function MediaViewer({
                     </View>
                   ) : memoryMediaKind(media) === "video" ? (
                     <View style={styles.viewerThumbnailVideo}>
-                      <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} uri={media.publicUrl} />
+                      <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} posterUri={media.posterUrl} uri={media.publicUrl} />
                       <View pointerEvents="none" style={styles.videoThumbnailScrim} />
                       <Ionicons name="play" size={14} color={ROOM_COLORS.white} />
                     </View>
@@ -8798,7 +9210,7 @@ function MediaPreview({
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} posterUri={media.posterUrl} uri={media.publicUrl} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
@@ -8820,7 +9232,7 @@ function MediaPreview({
         cachePolicy="memory-disk"
         contentFit={contentFit}
         recyclingKey={media.storagePath || media.publicUrl}
-        source={media.publicUrl}
+        source={media.thumbnailUrl || media.publicUrl}
         style={styles.mediaImage}
       />
       {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
@@ -8837,6 +9249,268 @@ function createStyles(ROOM_COLORS: RoomColors) {
     overflow: "hidden",
     paddingBottom: 0,
     position: "relative"
+  },
+  roomLoadingHeader: {
+    alignSelf: "center",
+    backgroundColor: ROOM_COLORS.header,
+    borderBottomColor: ROOM_COLORS.border,
+    borderBottomWidth: 1,
+    height: ROOM_HEADER_EXPANDED_HEIGHT,
+    left: 0,
+    maxWidth: ROOM_MAX_WIDTH,
+    paddingHorizontal: ROOM_HEADER_HORIZONTAL_PADDING,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: "100%",
+    zIndex: 20
+  },
+  roomLoadingTopRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 78
+  },
+  roomLoadingTitleBlock: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0
+  },
+  roomLoadingTitle: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onSurface,
+    fontSize: 20,
+    lineHeight: 27
+  },
+  roomLoadingSubtitle: {
+    ...fontStyles.semiBold,
+    color: ROOM_COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  roomLoadingHeaderSpacer: {
+    width: ROOM_HEADER_CONTROL_SIZE - 8
+  },
+  roomLoadingTabs: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    bottom: 18,
+    flexDirection: "row",
+    gap: MODE_TABS_PADDING,
+    left: ROOM_HEADER_HORIZONTAL_PADDING,
+    padding: MODE_TABS_PADDING,
+    position: "absolute",
+    right: ROOM_HEADER_HORIZONTAL_PADDING
+  },
+  roomLoadingTab: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    flex: 1,
+    flexDirection: "row",
+    gap: 5,
+    justifyContent: "center",
+    minHeight: 39,
+    paddingHorizontal: 5
+  },
+  roomLoadingTabActive: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderWidth: 1
+  },
+  roomLoadingTabText: {
+    ...fontStyles.bold,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14
+  },
+  roomLoadingTabTextActive: {
+    color: ROOM_COLORS.onSurface
+  },
+  roomLoadingStage: {
+    backgroundColor: ROOM_COLORS.bg,
+    flex: 1,
+    position: "relative"
+  },
+  roomLoadingContent: {
+    alignSelf: "center",
+    maxWidth: ROOM_MAX_WIDTH,
+    paddingHorizontal: spacing.lg,
+    paddingTop: ROOM_HEADER_EXPANDED_HEIGHT + spacing.xl,
+    width: "100%"
+  },
+  roomSkeletonLineWide: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 11,
+    width: "88%"
+  },
+  roomSkeletonLineMedium: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 11,
+    width: "70%"
+  },
+  roomSkeletonLineShort: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 9,
+    width: "44%"
+  },
+  roomSkeletonChat: {
+    gap: spacing.base,
+    paddingTop: spacing.md
+  },
+  roomSkeletonChatRow: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    gap: spacing.s,
+    width: "100%"
+  },
+  roomSkeletonChatRowMine: {
+    justifyContent: "flex-end"
+  },
+  roomSkeletonAvatar: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 30,
+    width: 30
+  },
+  roomSkeletonBubble: {
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 16,
+    borderBottomLeftRadius: 5,
+    borderWidth: 1,
+    gap: 9,
+    minHeight: 62,
+    padding: spacing.md,
+    width: "62%"
+  },
+  roomSkeletonBubbleMine: {
+    backgroundColor: ROOM_COLORS.coolDim,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 5,
+    borderColor: ROOM_COLORS.coolBorder,
+    width: "54%"
+  },
+  roomSkeletonBubbleWide: {
+    width: "70%"
+  },
+  roomSkeletonMediaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6
+  },
+  roomSkeletonMediaTile: {
+    aspectRatio: 1,
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    width: "49%"
+  },
+  roomSkeletonDishList: {
+    gap: spacing.sm
+  },
+  roomSkeletonDishCard: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 76,
+    padding: spacing.md
+  },
+  roomSkeletonDishIcon: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 38,
+    width: 38
+  },
+  roomSkeletonDishCopy: {
+    flex: 1,
+    gap: 8,
+    minWidth: 0
+  },
+  roomSkeletonRating: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 24,
+    width: 48
+  },
+  roomSkeletonTable: {
+    gap: spacing.sm
+  },
+  roomSkeletonPostButton: {
+    alignSelf: "flex-end",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 36,
+    width: 82
+  },
+  roomSkeletonSectionTitle: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderRadius: radius.pill,
+    height: 10,
+    marginBottom: 4,
+    width: 104
+  },
+  roomSkeletonStopRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  roomSkeletonStopRail: {
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    width: 32
+  },
+  roomSkeletonStopConnectorTop: {
+    backgroundColor: ROOM_COLORS.coolBorder,
+    bottom: "50%",
+    left: 15,
+    position: "absolute",
+    top: -spacing.sm,
+    width: 2
+  },
+  roomSkeletonStopConnectorBottom: {
+    backgroundColor: ROOM_COLORS.coolBorder,
+    bottom: -spacing.sm,
+    left: 15,
+    position: "absolute",
+    top: "50%",
+    width: 2
+  },
+  roomSkeletonStopMarker: {
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    width: 32,
+    zIndex: 1
+  },
+  roomSkeletonStopCard: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panel,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 74,
+    padding: spacing.base
+  },
+  roomSkeletonStopCopy: {
+    flex: 1,
+    gap: 8,
+    minWidth: 0
   },
   roomStage: {
     flex: 1,
@@ -9021,15 +9695,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
     overflow: "hidden",
     position: "relative"
   },
-  chatMainDraftMeasureText: {
-    ...fontStyles.medium,
-    color: ROOM_COLORS.onSurface,
-    fontSize: COMPOSER_INPUT_FONT_SIZE,
-    lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-    opacity: 0,
-    paddingHorizontal: spacing.md,
-    paddingVertical: Platform.OS === "ios" ? 10 : 8,
-    textAlignVertical: "top"
+  chatMainDraftMessageBoxNative: {
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    overflow: "visible"
   },
   chatMainDraftInput: {
     ...fontStyles.medium,
@@ -9044,6 +9713,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
     right: 0,
     textAlignVertical: "top",
     top: 0
+  },
+  chatMainNativeDraftInput: {
+    bottom: 0,
+    height: COMPOSER_INPUT_MAX_HEIGHT,
+    left: 0,
+    position: "absolute",
+    right: 0
   },
   chatMainSendContainer: {
     justifyContent: "flex-end"
@@ -9733,7 +10409,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexDirection: "row",
     marginHorizontal: ROOM_HEADER_CONTENT_INSET,
     overflow: "hidden",
-    padding: 2,
+    padding: MODE_TABS_PADDING,
     position: "relative"
   },
   modeTabIndicator: {
@@ -9741,10 +10417,10 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderColor: ROOM_COLORS.cool,
     borderRadius: radius.md,
     borderWidth: 1,
-    bottom: 2,
+    bottom: MODE_TABS_PADDING,
     left: 0,
     position: "absolute",
-    top: 2
+    top: MODE_TABS_PADDING
   },
   modeButton: {
     alignItems: "center",
@@ -9768,12 +10444,12 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   modeButtonText: {
     ...fontStyles.extraBold,
+    // Unselected colour only. The selected tint is applied by ModeButton's
+    // animated style, which is composed after this one, so selection lands on
+    // the UI thread with the indicator instead of on the React commit.
     color: ROOM_COLORS.muted,
     fontSize: 10,
     lineHeight: 13
-  },
-  modeButtonTextActive: {
-    color: ROOM_COLORS.onSurface
   },
   modeButtonUnreadBadge: {
     alignItems: "center",
@@ -10141,8 +10817,12 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   swipeReplyAction: {
     alignItems: "center",
+    bottom: 0,
     justifyContent: "center",
+    left: 0,
     paddingLeft: CHAT_ROW_SIDE_PADDING,
+    position: "absolute",
+    top: 0,
     width: REPLY_SWIPE_MAX_TRANSLATE
   },
   swipeReplyIndicator: {
@@ -10911,11 +11591,15 @@ function createStyles(ROOM_COLORS: RoomColors) {
     zIndex: 20
   },
   attachSheetKeyboard: {
-    // Bottom-anchored; the animated paddingBottom (KeyboardAwareSheetSurface)
-    // lifts the sheet above the keyboard. The dim is the attachSheetBackdrop
-    // below, faded in/out with the sheet's slide.
+    // Bottom-anchored. Resting bottom padding is applied statically by
+    // KeyboardAwareSheetSurface; the keyboard lift is a transform on the sheet
+    // itself, never layout. The dim is the attachSheetBackdrop below, faded
+    // in/out with the sheet's slide.
     flex: 1,
     justifyContent: "flex-end"
+  },
+  attachSheetNativeKeyboardInset: {
+    alignSelf: "stretch"
   },
   attachSheetBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -11446,7 +12130,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     paddingBottom: spacing.xl + 92
   },
   itineraryContent: {
-    gap: spacing.sm,
+    gap: 10,
     padding: spacing.lg,
     paddingTop: TABLE_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
@@ -11455,6 +12139,27 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flex: 1,
     gap: spacing.sm,
     paddingHorizontal: spacing.lg
+  },
+  tablePostActionRow: {
+    alignItems: "flex-end"
+  },
+  tablePostButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    minHeight: 36,
+    paddingHorizontal: spacing.base
+  },
+  tablePostButtonText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.onCool,
+    fontSize: 13,
+    lineHeight: 16
   },
   itineraryHeading: {
     ...fontStyles.extraBold,
@@ -11472,8 +12177,47 @@ function createStyles(ROOM_COLORS: RoomColors) {
     gap: spacing.sm,
     padding: spacing.base
   },
-  stopCardRemoving: {
-    opacity: 0.5
+  stopTimelineRow: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  stopTimelineRail: {
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    width: 32
+  },
+  stopTimelineConnectorTop: {
+    backgroundColor: ROOM_COLORS.coolBorder,
+    bottom: "50%",
+    left: 15,
+    position: "absolute",
+    top: -spacing.sm,
+    width: 2
+  },
+  stopTimelineConnectorBottom: {
+    backgroundColor: ROOM_COLORS.coolBorder,
+    bottom: -spacing.sm,
+    left: 15,
+    position: "absolute",
+    top: "50%",
+    width: 2
+  },
+  stopTimelineMarker: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.cool,
+    borderColor: ROOM_COLORS.coolBorder,
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+    zIndex: 1
+  },
+  stopTimelineCard: {
+    flex: 1,
+    minWidth: 0
   },
   stopHeaderRow: {
     alignItems: "center",
@@ -11506,17 +12250,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.muted,
     fontSize: 12
   },
-  stopRemoveButton: {
-    alignItems: "center",
-    height: 28,
-    justifyContent: "center",
-    width: 28
-  },
-  stopNote: {
-    ...fontStyles.regular,
+  stopLocation: {
+    ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18
+    fontSize: 12,
+    lineHeight: 16
   },
   stopDishList: {
     gap: 6
@@ -11550,114 +12288,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flex: 1,
     fontSize: 14,
     minWidth: 0
-  },
-  stopAddDishButton: {
-    alignItems: "center",
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    gap: 4,
-    paddingVertical: 2
-  },
-  stopAddDishText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.cool,
-    fontSize: 13
-  },
-  stopSheetRoot: {
-    flex: 1,
-    justifyContent: "flex-end"
-  },
-  stopSheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: ROOM_COLORS.scrim
-  },
-  stopSheet: {
-    backgroundColor: ROOM_COLORS.surfaceHigh,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    gap: spacing.md,
-    paddingBottom: spacing.xl,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md
-  },
-  stopSheetHandle: {
-    alignSelf: "center",
-    backgroundColor: ROOM_COLORS.borderStrong,
-    borderRadius: radius.pill,
-    height: 4,
-    width: 40
-  },
-  stopSheetTitle: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onSurface,
-    fontSize: 18
-  },
-  stopSheetSubtitle: {
-    ...fontStyles.regular,
-    color: ROOM_COLORS.muted,
-    fontSize: 13,
-    marginTop: -6
-  },
-  stopTypeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  stopTypeChip: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8
-  },
-  stopTypeChipActive: {
-    backgroundColor: ROOM_COLORS.coolDim,
-    borderColor: ROOM_COLORS.cool
-  },
-  stopTypeChipEmoji: {
-    fontSize: 15
-  },
-  stopTypeChipLabel: {
-    ...fontStyles.bold,
-    color: ROOM_COLORS.muted,
-    fontSize: 13
-  },
-  stopTypeChipLabelActive: {
-    color: ROOM_COLORS.cool
-  },
-  stopInput: {
-    ...fontStyles.medium,
-    backgroundColor: ROOM_COLORS.panel,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    color: ROOM_COLORS.onSurface,
-    fontSize: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 12
-  },
-  stopNoteInput: {
-    minHeight: 64,
-    textAlignVertical: "top"
-  },
-  stopSubmitButton: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.cool,
-    borderRadius: radius.input,
-    justifyContent: "center",
-    minHeight: 50
-  },
-  stopSubmitButtonDisabled: {
-    opacity: 0.5
-  },
-  stopSubmitText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onCool,
-    fontSize: 15
   },
   peoplePanelContent: {
     gap: 0,

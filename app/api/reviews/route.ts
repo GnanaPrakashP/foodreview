@@ -8,7 +8,16 @@ import { refreshUserReputationFoundation } from "@/lib/server/reputation";
 import { REVIEW_MEDIA_BUCKET, REVIEW_POST_MAX_ITEMS, type ReviewMediaKind } from "@/lib/server/review-media";
 import { accessClassForPostVisibility, MEDIA_PRIVATE_BUCKET, type MediaDerivativeRow } from "@/lib/server/media-pipeline";
 import { replaceReviewDishMentions } from "@/lib/server/dish-identity";
-import { boundedJsonError, enforceRateLimit, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+import {
+  abandonIdempotency,
+  boundedJsonError,
+  claimIdempotency,
+  completeIdempotency,
+  enforceRateLimit,
+  idempotencyFailure,
+  rateLimitResponse,
+  readBoundedJson
+} from "@/lib/server/api-security";
 
 const METHODS = ["POST"];
 
@@ -172,10 +181,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Videos must be ${MAX_REVIEW_VIDEO_DURATION_SECONDS} seconds or less` }, { status: 400 });
   }
 
+  const idempotency = await claimIdempotency(req, "review.create", actor.userId, body);
+  if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
+
   // reviewer_name is always derived from the authenticated session — never from the request body
   const writeDb = createAdminClient();
   const validatedMedia = await loadFinalizedReviewMedia(writeDb, actor, visibility, incomingMediaItems);
   if (!validatedMedia.ok) {
+    await abandonIdempotency(idempotency).catch(() => undefined);
     return NextResponse.json({ error: validatedMedia.error }, { status: validatedMedia.status });
   }
 
@@ -218,6 +231,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) {
+    await abandonIdempotency(idempotency).catch(() => undefined);
     await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
     return NextResponse.json({ error: "Could not create review" }, { status: 500 });
   }
@@ -233,76 +247,23 @@ export async function POST(req: NextRequest) {
     console.error("[reviews] dish mention write failed");
     await writeDb.from("reviews").delete().eq("id", data.id);
     await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
+    await abandonIdempotency(idempotency).catch(() => undefined);
     return NextResponse.json({ error: "Could not create review" }, { status: 500 });
   }
 
-  // Insert review_photos rows (position = index in the array). The table name is
-  // legacy; rows can now represent either images or videos.
-  if (validatedMedia.media.length > 0) {
-    const mediaRows = validatedMedia.media.map((p, i) => ({
-      review_id: data.id,
-      storage_path: p.storagePath,
-      public_url: p.publicUrl,
-      media_type: p.mediaType,
-      width: typeof p.width === "number" ? p.width : null,
-      height: typeof p.height === "number" ? p.height : null,
-      size_bytes: p.sizeBytes,
-      media_asset_id: p.mediaAssetId ?? null,
-      position: i,
-    }));
-    const { error: photoError } = await writeDb.from("review_photos").insert(mediaRows);
-    if (photoError) {
-      await writeDb.from("reviews").delete().eq("id", data.id);
-      await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
-      return NextResponse.json({ error: "Could not attach review media" }, { status: 500 });
-    }
-    const legacyIntentIds = validatedMedia.media.map((item) => item.intentId).filter((id): id is string => Boolean(id));
-    const mediaAssetIds = validatedMedia.media.map((item) => item.mediaAssetId).filter((id): id is string => Boolean(id));
-    const { error: consumeError } = legacyIntentIds.length > 0
-      ? await writeDb
-        .from("review_media_upload_intents")
-        .update({ status: "consumed" })
-        .in("id", legacyIntentIds)
-        .eq("user_id", actor.userId)
-        .eq("category", "post")
-        .eq("status", "finalized")
-      : { error: null };
-    const { error: consumeAssetError } = mediaAssetIds.length > 0
-      ? await writeDb
-        .from("media_assets")
-        .update({ consumed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .in("id", mediaAssetIds)
-        .eq("owner_id", actor.userId)
-        .eq("surface", "post")
-        .eq("status", "ready")
-      : { error: null };
-    if (consumeError || consumeAssetError) {
-      await writeDb.from("reviews").delete().eq("id", data.id);
-      await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
-      return NextResponse.json({ error: "Could not attach review media" }, { status: 500 });
-    }
-  }
-
-  const { data: publishedReview, error: publishError } = await writeDb
-    .from("reviews")
-    .update({ status: "active" })
-    .eq("id", data.id)
-    .eq("status", "draft")
-    .select("id")
-    .maybeSingle();
-  if (publishError || !publishedReview) {
+  const mediaAssetIds = validatedMedia.media
+    .map((item) => item.mediaAssetId)
+    .filter((id): id is string => Boolean(id));
+  const { data: attached, error: attachError } = await writeDb.rpc("attach_review_media_assets_v1", {
+    p_asset_ids: mediaAssetIds,
+    p_owner_id: actor.userId,
+    p_owner_name: actor.actorName,
+    p_review_id: data.id
+  });
+  if (attachError || attached !== true) {
     await writeDb.from("reviews").delete().eq("id", data.id);
-    const consumedAssetIds = validatedMedia.media
-      .map((item) => item.mediaAssetId)
-      .filter((id): id is string => Boolean(id));
-    if (consumedAssetIds.length > 0) {
-      await writeDb
-        .from("media_assets")
-        .update({ consumed_at: null, updated_at: new Date().toISOString() })
-        .in("id", consumedAssetIds)
-        .eq("owner_id", actor.userId);
-    }
     await cleanupUnusedReviewMedia(writeDb, actor.userId, validatedMedia.media);
+    await abandonIdempotency(idempotency).catch(() => undefined);
     return NextResponse.json({ error: "Published posts require ready media" }, { status: 409 });
   }
 
@@ -312,7 +273,9 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[reviews] Failed to refresh reputation:", error);
   }
-  return NextResponse.json({ id: data.id });
+  const responseBody = { id: data.id };
+  await completeIdempotency(idempotency, 200, responseBody);
+  return NextResponse.json(responseBody);
 }
 
 async function loadFinalizedReviewMedia(

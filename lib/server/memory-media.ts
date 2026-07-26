@@ -38,6 +38,17 @@ export type MemoryMediaModerationResult = {
   status: MemoryModerationStatus;
 };
 
+function moderationApiKey(env: NodeJS.ProcessEnv = process.env) {
+  return env.GOOGLE_API_KEY ??
+    env.GOOGLE_VISION_API_KEY ??
+    env.GOOGLE_VIDEO_INTELLIGENCE_API_KEY ??
+    null;
+}
+
+export function mediaModerationProviderConfigured(env: NodeJS.ProcessEnv = process.env) {
+  return Boolean(moderationApiKey(env)?.trim());
+}
+
 type SafeSearchLikelihood = "UNKNOWN" | "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY";
 type VideoLikelihood =
   | "LIKELIHOOD_UNSPECIFIED"
@@ -50,6 +61,7 @@ type VideoLikelihood =
 const UNSAFE_IMAGE_LIKELIHOODS: Set<SafeSearchLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
 const UNSAFE_VIDEO_LIKELIHOODS: Set<VideoLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
 const MAX_INLINE_VIDEO_MODERATION_BYTES = 20 * 1024 * 1024;
+const MODERATION_REQUEST_TIMEOUT_MS = 20_000;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_PATH_REGEX = /^[A-Za-z0-9._~/-]+$/;
 
@@ -279,10 +291,7 @@ export async function moderateMemoryMediaBuffer({
   buffer: Buffer;
   kind: MemoryMediaKind;
 }): Promise<MemoryMediaModerationResult> {
-  const apiKey =
-    process.env.GOOGLE_API_KEY ??
-    process.env.GOOGLE_VISION_API_KEY ??
-    process.env.GOOGLE_VIDEO_INTELLIGENCE_API_KEY;
+  const apiKey = moderationApiKey();
 
   if (kind === "audio") return { status: "approved" };
 
@@ -326,10 +335,20 @@ function normalizeNullablePositiveInteger(value: unknown) {
   return normalized > 0 ? normalized : null;
 }
 
+async function moderationFetch(url: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MODERATION_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<MemoryMediaModerationResult> {
   let response: Response;
   try {
-    response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
+    response = await moderationFetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
       body: JSON.stringify({
         requests: [{
           features: [{ maxResults: 1, type: "SAFE_SEARCH_DETECTION" }],
@@ -344,8 +363,9 @@ async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<Memo
   }
 
   if (!response.ok) return { reason: "moderation_service_unavailable", status: "pending" };
-  const data = await response.json() as {
+  let data: {
     responses?: Array<{
+      error?: unknown;
       safeSearchAnnotation?: {
         adult?: SafeSearchLikelihood;
         racy?: SafeSearchLikelihood;
@@ -353,9 +373,16 @@ async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<Memo
       };
     }>;
   };
+  try {
+    data = await response.json();
+  } catch {
+    return { reason: "moderation_response_invalid", status: "pending" };
+  }
+  if (data.responses?.[0]?.error) return { reason: "moderation_check_failed", status: "pending" };
   const annotation = data.responses?.[0]?.safeSearchAnnotation;
-  if (!annotation) return { status: "approved" };
+  if (!annotation) return { reason: "moderation_response_invalid", status: "pending" };
   if (UNSAFE_IMAGE_LIKELIHOODS.has(annotation.adult ?? "UNKNOWN")) return { reason: "adult_content", status: "rejected" };
+  if (UNSAFE_IMAGE_LIKELIHOODS.has(annotation.racy ?? "UNKNOWN")) return { reason: "racy_content", status: "rejected" };
   if (UNSAFE_IMAGE_LIKELIHOODS.has(annotation.violence ?? "UNKNOWN")) return { reason: "violent_content", status: "rejected" };
   return { status: "approved" };
 }
@@ -363,7 +390,7 @@ async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<Memo
 async function moderateVideoBuffer(buffer: Buffer, apiKey: string): Promise<MemoryMediaModerationResult> {
   let annotateResponse: Response;
   try {
-    annotateResponse = await fetch(`https://videointelligence.googleapis.com/v1/videos:annotate?key=${apiKey}`, {
+    annotateResponse = await moderationFetch(`https://videointelligence.googleapis.com/v1/videos:annotate?key=${apiKey}`, {
       body: JSON.stringify({
         features: ["EXPLICIT_CONTENT_DETECTION"],
         inputContent: buffer.toString("base64")
@@ -376,7 +403,12 @@ async function moderateVideoBuffer(buffer: Buffer, apiKey: string): Promise<Memo
   }
 
   if (!annotateResponse.ok) return { reason: "moderation_service_unavailable", status: "pending" };
-  const { name } = await annotateResponse.json() as { name?: string };
+  let name: string | undefined;
+  try {
+    ({ name } = await annotateResponse.json() as { name?: string });
+  } catch {
+    return { reason: "moderation_response_invalid", status: "pending" };
+  }
   if (!name) return { reason: "moderation_service_unavailable", status: "pending" };
 
   const deadline = Date.now() + 55_000;
@@ -387,13 +419,13 @@ async function moderateVideoBuffer(buffer: Buffer, apiKey: string): Promise<Memo
 
     let pollResponse: Response;
     try {
-      pollResponse = await fetch(`https://videointelligence.googleapis.com/v1/${name}?key=${apiKey}`);
+      pollResponse = await moderationFetch(`https://videointelligence.googleapis.com/v1/${name}?key=${apiKey}`);
     } catch {
       return { reason: "moderation_service_unavailable", status: "pending" };
     }
 
     if (!pollResponse.ok) return { reason: "moderation_service_unavailable", status: "pending" };
-    const operation = await pollResponse.json() as {
+    let operation: {
       done?: boolean;
       error?: unknown;
       response?: {
@@ -404,6 +436,11 @@ async function moderateVideoBuffer(buffer: Buffer, apiKey: string): Promise<Memo
         }>;
       };
     };
+    try {
+      operation = await pollResponse.json();
+    } catch {
+      return { reason: "moderation_response_invalid", status: "pending" };
+    }
     if (!operation.done) continue;
     if (operation.error) return { reason: "moderation_check_failed", status: "pending" };
 

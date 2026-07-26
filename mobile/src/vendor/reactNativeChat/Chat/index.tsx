@@ -83,7 +83,9 @@ function Chat<TMessage extends IMessage = IMessage> (
     [props.textInputRef]
   )
 
-  const [isInitialized, setIsInitialized] = useState<boolean>(false)
+  const [isInitialized, setIsInitialized] = useState<boolean>(
+    () => props.initiallyInitialized === true
+  )
   const [text, setText] = useState<string | undefined>(() => props.text || '')
   const [internalReplyMessage, setInternalReplyMessage] = useState<ReplyMessage | null>(null)
 

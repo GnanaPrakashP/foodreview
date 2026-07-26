@@ -157,12 +157,13 @@ test("main bottom tabs use the standard Expo Router tab navigator", () => {
   assert.doesNotMatch(tabLayoutSource, /MainTabPager|PanResponder|Animated\.ScrollView|usePathname|useRouter/);
 });
 
-test("offscreen Profile content queries stay focus-gated while only its header is warmed after Home", () => {
+test("offscreen Profile content stays focus-gated while app-level memory sync remains active", () => {
   assert.match(profileTabSource, /useCurrentProfilePageQuery\(\{ enabled: isFocused && isReady && isAuthenticated \}\)/);
   assert.match(profileTabSource, /const profileMemoriesFocused = isActiveMainTab && activeTab === "memories"/);
   assert.match(profileTabSource, /useMemoryRoomsQuery\(\{\s*enabled: profileMemoriesFocused && isReady && isAuthenticated && Boolean\(profileUsername\)/);
-  assert.match(profileTabSource, /useMemoryRoomsRealtime\(profileMemoriesFocused/);
+  assert.doesNotMatch(profileTabSource, /useMemoryRoomsRealtime/);
   assert.match(profileTabSource, /useProfilePostsInfiniteQuery\(profileUsername, \{ enabled: isActiveMainTab && Boolean\(profileUsername\) \}\)/);
+  assert.match(appProvidersSource, /<MemoryRoomSyncBootstrap \/>/);
   assert.match(appProvidersSource, /<ProfileHeaderPrefetchBootstrap \/>/);
   assert.match(profilePrefetchSource, /feedKeys\.circlePagesForLocation\(location\)/);
   assert.match(profilePrefetchSource, /queryClient\.getQueryState\(notificationKeys\.hasUnread\)/);

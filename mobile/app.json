@@ -130,8 +130,7 @@
           "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound."
         }
       ],
-      "expo-video",
-      "react-native-compressor"
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

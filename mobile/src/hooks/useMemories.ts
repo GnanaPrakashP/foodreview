@@ -1,5 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { InteractionManager } from "react-native";
 import { supabase } from "@/api/supabase";
 import {
   addMemoryDish,
@@ -13,9 +14,12 @@ import {
   deleteMemoryPhoto,
   deleteMemoryStop,
   editMemoryMessage,
-  getMemoryMediaPageOfflineFirst,
+  fetchMemoryMediaPage,
   getMemoryMessagesPageOfflineFirst,
   getMemoryRoomOfflineFirst,
+  isAuthoritativeMemoryAccessError,
+  readMemoryMediaPageOffline,
+  warmMemoryRoomOfflineFirst,
   leaveMemoryRoom,
   listMemoryRoomsPageOfflineFirst,
   markMemoryRoomRead,
@@ -29,6 +33,7 @@ import {
   type AddMemoryPhotoResult,
   type AddMemoryDishInput,
   type CreateMemoryRoomInput,
+  type CreateMemoryRoomResult,
   type CreateMemoryStopInput,
   type MemoryMediaPage,
   type MemoryMessagesPage,
@@ -41,14 +46,23 @@ import {
 import { notificationKeys } from "@/hooks/useNotifications";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import {
+  commitOfflineMemoryOutboxMessage,
   deleteOfflineMemoryMessage,
+  deleteOfflineMemoryOutboxMessage,
   deleteOfflineMemoryPhoto,
+  deleteOfflineMemoryRoom,
   readOfflineMemoryRoom,
   readOfflineMemorySummaries,
-  saveOfflineMemoryRoom
+  saveOfflineMemoryMessage,
+  saveOfflineMemoryOutboxMessage,
+  saveOfflineMemoryPhoto,
+  saveOfflineMemoryReadState,
+  saveOfflineMemoryRoom,
+  saveOfflineMemorySummaries
 } from "@/services/memoryOfflineStore";
+import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
+import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
@@ -62,11 +76,337 @@ export const memoryKeys = {
 
 const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
 const REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000;
+const REALTIME_ROOM_CACHE_RECONCILE_DELAY_MS = 350;
 const REALTIME_SUMMARY_RECONCILE_DELAY_MS = 15_000;
 const recentMediaMessageExpiries = new Map<string, number>();
 registerSensitiveResourceCleanup(() => recentMediaMessageExpiries.clear());
 const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
 const OPTIMISTIC_TEXT_MESSAGE_PREFIX = "optimistic-message:";
+const MEMORY_ROOM_WARM_CONCURRENCY = 2;
+const MEMORY_ROOM_WARM_LIMIT = 12;
+
+type MemoryRoomWarmState = {
+  requestVersion: number;
+  promise?: Promise<void>;
+  revision: string;
+  summary: MemoryRoomSummary;
+  status: "pending" | "ready";
+};
+
+const memoryRoomWarmStates = new WeakMap<QueryClient, Map<string, MemoryRoomWarmState>>();
+const memorySummaryRestoreFlights = new WeakMap<QueryClient, Promise<void>>();
+const realtimeReconcileStates = new WeakMap<QueryClient, {
+  promise?: Promise<void>;
+  roomIds: Set<string>;
+  timer?: ReturnType<typeof setTimeout>;
+}>();
+
+function removeMemoryRoomFromQueryClient(queryClient: QueryClient, roomId: string) {
+  queryClient.removeQueries({ queryKey: memoryKeys.detail(roomId) });
+  queryClient.removeQueries({ queryKey: memoryKeys.chat(roomId) });
+  queryClient.removeQueries({ queryKey: memoryKeys.media(roomId) });
+  queryClient.setQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list, (current) => (
+    current
+      ? {
+        ...current,
+        pages: current.pages.map((page) => ({
+          ...page,
+          rooms: page.rooms.filter((room) => room.id !== roomId)
+        }))
+      }
+      : current
+  ));
+}
+
+function observeOfflineMemoryWrite(promise: Promise<unknown>, operation: string) {
+  void promise.catch((error) => {
+    captureMobileError("memory.sqlite_async_write_failed", error, { operation });
+  });
+}
+
+async function removeAuthoritativeMemoryRoomProjection(queryClient: QueryClient, roomId: string) {
+  removeMemoryRoomFromQueryClient(queryClient, roomId);
+  try {
+    await deleteOfflineMemoryRoom(roomId);
+  } catch (error) {
+    captureMobileError("memory.authoritative_local_delete_failed", error);
+    throw error;
+  }
+}
+
+function scheduleRealtimeCursorReconciliation(queryClient: QueryClient, roomId?: string) {
+  let state = realtimeReconcileStates.get(queryClient);
+  if (!state) {
+    state = { roomIds: new Set<string>() };
+    realtimeReconcileStates.set(queryClient, state);
+  }
+  if (roomId) state.roomIds.add(roomId);
+  if (state.timer || state.promise) return;
+
+  state.timer = setTimeout(() => {
+    if (!state) return;
+    state.timer = undefined;
+    state.promise = (async () => {
+      do {
+        const explicitRoomIds = Array.from(state?.roomIds ?? []);
+        state?.roomIds.clear();
+        await queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
+        await syncLoadedMemoryRoomCaches(queryClient, { force: true });
+        const ownerGeneration = getActiveCacheGeneration();
+        for (const explicitRoomId of explicitRoomIds) {
+          if (!isCacheGenerationActive(ownerGeneration)) return;
+          try {
+            const room = await getMemoryRoomOfflineFirst(explicitRoomId);
+            if (isCacheGenerationActive(ownerGeneration)) {
+              queryClient.setQueryData(memoryKeys.detail(explicitRoomId), room);
+            }
+          } catch (error) {
+            if (isAuthoritativeMemoryAccessError(error)) {
+              await removeAuthoritativeMemoryRoomProjection(queryClient, explicitRoomId).catch(() => {});
+            } else {
+              captureMobileError("memory.realtime_reconcile_failed", error);
+            }
+          }
+        }
+      } while ((state?.roomIds.size ?? 0) > 0);
+    })().finally(() => {
+      if (!state) return;
+      state.promise = undefined;
+      // A subscribe callback can land after the loop checked roomIds but
+      // before this promise settled. Schedule that late signal instead of
+      // leaving it stranded until another realtime event arrives.
+      if (state.roomIds.size > 0) {
+        scheduleRealtimeCursorReconciliation(queryClient);
+      }
+    });
+  }, 150);
+}
+
+function memoryRoomWarmRevision(summary: MemoryRoomSummary) {
+  return [
+    summary.latestActivityAt,
+    summary.participantCount,
+    summary.dishCount,
+    summary.messageCount,
+    summary.photoCount,
+    (summary.placeNames ?? []).join("\u001f")
+  ].join(":");
+}
+
+function warmStatesForClient(queryClient: QueryClient) {
+  const current = memoryRoomWarmStates.get(queryClient);
+  if (current) return current;
+  const next = new Map<string, MemoryRoomWarmState>();
+  memoryRoomWarmStates.set(queryClient, next);
+  return next;
+}
+
+function createdMemoryRoomSnapshot(
+  input: CreateMemoryRoomInput,
+  result: CreateMemoryRoomResult,
+  profile: { displayName: string; username: string }
+) {
+  const createdAt = new Date().toISOString();
+  const restaurantName = input.restaurantName.trim() || "Table Memory";
+  const area = input.area?.trim() || null;
+  const title = input.occasion?.trim() || restaurantName;
+  const occasionType = input.occasionType ?? "unknown";
+  const occasionConfidence = Math.max(0, Math.min(Number(input.occasionConfidence ?? 0), 1));
+  const themeKey = input.themeKey?.trim() || getOccasionTheme(occasionType).id;
+  const participantUsernames = Array.from(new Set([
+    profile.username,
+    ...result.added,
+    ...result.alreadyMembers
+  ]));
+  const participants = participantUsernames.map((username) => ({
+    displayName: username === profile.username ? profile.displayName : username,
+    id: `created:${result.id}:${username}`,
+    joinedAt: createdAt,
+    role: username === profile.username ? "owner" as const : "participant" as const,
+    username
+  }));
+  const room: MemoryRoom = {
+    area,
+    createdAt,
+    createdBy: profile.username,
+    dishes: [],
+    id: result.id,
+    lastReadAt: null,
+    messages: [],
+    occasionConfidence,
+    occasionConfirmedByUser: input.occasionConfirmedByUser === true,
+    occasionType,
+    participants,
+    photos: [],
+    restaurantId: input.restaurantId?.trim() || null,
+    restaurantName,
+    sourcePostId: input.sourcePostId?.trim() || null,
+    status: "draft",
+    stops: [],
+    themeKey,
+    title,
+    visitDate: input.visitDate?.trim() || null
+  };
+  const placeNames = restaurantName.toLowerCase() !== "table memory"
+    ? [restaurantName]
+    : area
+      ? [area]
+      : [];
+  const summary: MemoryRoomSummary = {
+    area,
+    createdAt,
+    createdBy: profile.username,
+    dishCount: 0,
+    id: result.id,
+    latestActivityAt: createdAt,
+    latestMessage: null,
+    messageCount: 0,
+    occasionConfidence,
+    occasionConfirmedByUser: input.occasionConfirmedByUser === true,
+    occasionType,
+    participantCount: participants.length,
+    photoCount: 0,
+    placeNames,
+    restaurantName,
+    sourcePostId: input.sourcePostId?.trim() || null,
+    themeKey,
+    title,
+    unreadCount: 0,
+    visitDate: input.visitDate?.trim() || null
+  };
+
+  return { room, summary };
+}
+
+async function warmMemoryRoomQueries(
+  queryClient: QueryClient,
+  summaries: MemoryRoomSummary[],
+  ownerGeneration: number,
+  options: { force?: boolean } = {}
+) {
+  const states = warmStatesForClient(queryClient);
+  const pending = summaries.filter((summary) => {
+    const state = states.get(summary.id);
+    return options.force || state?.revision !== memoryRoomWarmRevision(summary);
+  });
+
+  for (let offset = 0; offset < pending.length; offset += MEMORY_ROOM_WARM_CONCURRENCY) {
+    if (!isCacheGenerationActive(ownerGeneration)) return;
+    const batch = pending.slice(offset, offset + MEMORY_ROOM_WARM_CONCURRENCY);
+    await Promise.all(batch.map((summary) => {
+      const revision = memoryRoomWarmRevision(summary);
+      const existing = states.get(summary.id);
+      if (existing?.status === "pending" && existing.promise) {
+        // Serialize refreshes for the same room. Realtime can advance the
+        // summary while an older warm is in flight; the running loop picks up
+        // this newest revision instead of allowing stale network results to win.
+        existing.revision = revision;
+        existing.summary = summary;
+        if (options.force) existing.requestVersion += 1;
+        return existing.promise;
+      }
+
+      const state: MemoryRoomWarmState = {
+        requestVersion: options.force ? 1 : 0,
+        revision,
+        status: "pending",
+        summary
+      };
+      const promise = (async () => {
+        while (isCacheGenerationActive(ownerGeneration)) {
+          const targetRequestVersion = state.requestVersion;
+          const targetRevision = state.revision;
+          const targetSummary = state.summary;
+          try {
+            const cached = await readOfflineMemoryRoom(targetSummary.id);
+            if (!isCacheGenerationActive(ownerGeneration)) return;
+            if (cached && !queryClient.getQueryData(memoryKeys.detail(targetSummary.id))) {
+              // Make the complete local snapshot available to the destination
+              // route before any remote reconciliation finishes.
+              queryClient.setQueryData(memoryKeys.detail(targetSummary.id), cached, { updatedAt: 0 });
+            }
+
+            const fresh = await warmMemoryRoomOfflineFirst(targetSummary.id);
+            if (!isCacheGenerationActive(ownerGeneration)) return;
+            if (
+              state.revision !== targetRevision ||
+              state.requestVersion !== targetRequestVersion
+            ) continue;
+            queryClient.setQueryData(memoryKeys.detail(targetSummary.id), fresh);
+            state.status = "ready";
+            state.promise = undefined;
+            return;
+          } catch (error) {
+            if (!isCacheGenerationActive(ownerGeneration)) return;
+            if (state.revision !== targetRevision) continue;
+            states.delete(targetSummary.id);
+            if (isAuthoritativeMemoryAccessError(error)) {
+              await removeAuthoritativeMemoryRoomProjection(queryClient, targetSummary.id).catch(() => {});
+              return;
+            }
+            captureMobileError("memory.room_warm_failed", error);
+            return;
+          }
+        }
+      })();
+      state.promise = promise;
+      states.set(summary.id, state);
+      return promise;
+    }));
+  }
+}
+
+export async function syncLoadedMemoryRoomCaches(
+  queryClient: QueryClient,
+  options: { force?: boolean } = {}
+) {
+  const ownerGeneration = getActiveCacheGeneration();
+  if (!isCacheGenerationActive(ownerGeneration)) return;
+  const summaries = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).slice(0, MEMORY_ROOM_WARM_LIMIT);
+  if (summaries.length === 0) return;
+  await warmMemoryRoomQueries(queryClient, summaries, ownerGeneration, options);
+}
+
+export async function restoreJoinedMemoryRoomSummaries(queryClient: QueryClient) {
+  const existing = memorySummaryRestoreFlights.get(queryClient);
+  if (existing) return existing;
+  const ownerGeneration = getActiveCacheGeneration();
+  const flight = (async () => {
+    let current = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+    let cursor = current?.pages[current.pages.length - 1]?.nextCursor ?? null;
+    const seenCursors = new Set<string>();
+
+    while (cursor && isCacheGenerationActive(ownerGeneration)) {
+      if (seenCursors.has(cursor)) throw new Error("memory_summary_cursor_repeated");
+      seenCursors.add(cursor);
+      const pageCursor = cursor;
+      const page = await listMemoryRoomsPageOfflineFirst(pageCursor);
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      queryClient.setQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list, (data) => {
+        if (!data) return data;
+        const existingIds = new Set(memoryRoomSummariesFromPages(data).map((room) => room.id));
+        const rooms = page.rooms.filter((room) => !existingIds.has(room.id));
+        if (rooms.length === 0 && data.pageParams.includes(pageCursor)) return data;
+        return {
+          pageParams: [...data.pageParams, pageCursor],
+          pages: [...data.pages, { ...page, rooms }]
+        };
+      });
+      cursor = page.nextCursor;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      current = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      if (!current) return;
+    }
+  })().finally(() => {
+    if (memorySummaryRestoreFlights.get(queryClient) === flight) {
+      memorySummaryRestoreFlights.delete(queryClient);
+    }
+  });
+  memorySummaryRestoreFlights.set(queryClient, flight);
+  return flight;
+}
 
 export function memoryRoomSummariesFromPages(data: InfiniteData<MemoryRoomsPage> | undefined) {
   const seen = new Set<string>();
@@ -146,6 +486,7 @@ type MemoryPhotoRealtimePayload = {
     id: string;
     image_height: number | null;
     image_width: number | null;
+    media_asset_id: string | null;
     media_type: "audio" | "image" | "video" | null;
     message_id: string | null;
     moderation_status: "approved" | "pending" | "rejected" | null;
@@ -153,7 +494,9 @@ type MemoryPhotoRealtimePayload = {
     public_url: string | null;
     room_id: string;
     stop_id: string | null;
-    storage_path: string;
+    storage_path: string | null;
+    thumbnail_url: string | null;
+    poster_url: string | null;
     uploader_id: string | null;
     uploader_name: string;
   }>;
@@ -163,6 +506,7 @@ type MemoryPhotoRealtimePayload = {
     id: string;
     image_height: number | null;
     image_width: number | null;
+    media_asset_id: string | null;
     media_type: "audio" | "image" | "video" | null;
     message_id: string | null;
     moderation_status: "approved" | "pending" | "rejected" | null;
@@ -170,10 +514,17 @@ type MemoryPhotoRealtimePayload = {
     public_url: string | null;
     room_id: string;
     stop_id: string | null;
-    storage_path: string;
+    storage_path: string | null;
+    thumbnail_url: string | null;
+    poster_url: string | null;
     uploader_id: string | null;
     uploader_name: string;
   }>;
+};
+type MemoryRoomEntityRealtimePayload = {
+  eventType: "DELETE" | "INSERT" | "UPDATE";
+  new?: Partial<{ id: string; room_id: string; user_name: string }>;
+  old?: Partial<{ id: string; room_id: string; user_name: string }>;
 };
 const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>>();
 registerSensitiveResourceCleanup(() => pendingMemoryDeleteBatches.clear());
@@ -223,13 +574,19 @@ function mapUploadedMemoryPhoto(
     id: photo.id,
     imageHeight: photo.image_height ?? null,
     imageWidth: photo.image_width ?? null,
-    mediaType: photo.media_type === "video" ? "video" : "image",
+    fileSizeBytes: photo.file_size_bytes ?? null,
+    mediaAssetId: photo.media_asset_id ?? null,
+    mediaType: photo.media_type === "audio" ? "audio" : photo.media_type === "video" ? "video" : "image",
     messageId: photo.message_id ?? null,
+    mimeType: photo.mime_type ?? null,
     moderationStatus: photo.moderation_status ?? "approved",
     position: photo.position ?? 0,
-    publicUrl: photo.public_url || photo.storage_path,
+    publicUrl: photo.public_url || "",
+    thumbnailUrl: photo.thumbnail_url ?? null,
+    posterUrl: photo.poster_url ?? null,
     roomId: photo.room_id,
-    storagePath: photo.storage_path,
+    signedUrlExpiresAt: photo.signed_url_expires_at ?? null,
+    storagePath: photo.storage_path ?? null,
     uploaderId: photo.uploader_id ?? null,
     uploaderDisplayName,
     uploaderName: photo.uploader_name
@@ -280,6 +637,38 @@ function sortMemoryPhotos(photos: MemoryPhoto[]) {
     first.position - second.position ||
     first.id.localeCompare(second.id)
   ));
+}
+
+function sortMemoryStops(stops: MemoryStop[]) {
+  return [...stops].sort((first, second) => (
+    first.position - second.position ||
+    timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
+    first.id.localeCompare(second.id)
+  ));
+}
+
+function upsertMemoryStop(stops: MemoryStop[], stop: MemoryStop) {
+  return sortMemoryStops([
+    ...stops.filter((current) => current.id !== stop.id),
+    stop
+  ]);
+}
+
+function uniqueMemoryPlaceNames(names: string[]) {
+  const seen = new Set<string>();
+  return names
+    .map((name) => name.replace(/\s+/g, " ").trim())
+    .filter((name) => {
+      if (!name) return false;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function memoryPlaceNamesFromStops(stops: MemoryStop[]) {
+  return uniqueMemoryPlaceNames(sortMemoryStops(stops).map((stop) => stop.name));
 }
 
 function upsertMemoryPhoto(photos: MemoryPhoto[], photo: MemoryPhoto) {
@@ -548,6 +937,7 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     id,
     image_height: imageHeight,
     image_width: imageWidth,
+    media_asset_id: mediaAssetId,
     media_type: mediaType,
     message_id: messageId,
     moderation_status: moderationStatus,
@@ -556,10 +946,12 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     room_id: rowRoomId,
     stop_id: stopId,
     storage_path: storagePath,
+    thumbnail_url: thumbnailUrl,
+    poster_url: posterUrl,
     uploader_id: uploaderId,
     uploader_name: uploaderName
   } = row;
-  if (!id || !rowRoomId || !storagePath || !uploaderName || !createdAt) return null;
+  if (!id || !rowRoomId || (!storagePath && !mediaAssetId) || !uploaderName || !createdAt) return null;
 
   const uploaderDisplayName = currentRoom.participants.find((participant) => sameUsername(participant.username, uploaderName))?.displayName ??
     currentRoom.messages.find((message) => sameUsername(message.authorName, uploaderName))?.authorDisplayName ??
@@ -572,14 +964,17 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     id,
     imageHeight: imageHeight ?? null,
     imageWidth: imageWidth ?? null,
+    mediaAssetId: mediaAssetId ?? null,
     mediaType: mediaType === "audio" || mediaType === "video" ? mediaType : "image",
     messageId: messageId ?? null,
     moderationStatus: moderationStatus ?? "approved",
     position: position ?? 0,
-    publicUrl: publicUrl || storagePath,
+    posterUrl: posterUrl ?? null,
+    publicUrl: publicUrl || storagePath || "",
     roomId: rowRoomId,
     stopId: stopId ?? null,
-    storagePath,
+    storagePath: storagePath ?? null,
+    thumbnailUrl: thumbnailUrl ?? null,
     uploaderId: uploaderId ?? null,
     uploaderDisplayName,
     uploaderName
@@ -997,7 +1392,7 @@ export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
     };
   }, [enabled, queryClient]);
 
-  return useInfiniteQuery({
+  const rooms = useInfiniteQuery({
     queryKey: memoryKeys.list,
     queryFn: ({ pageParam }) => listMemoryRoomsPageOfflineFirst(pageParam),
     enabled,
@@ -1006,6 +1401,25 @@ export function useMemoryRoomsQuery(options: { enabled?: boolean } = {}) {
     refetchOnWindowFocus: false,
     staleTime: 45_000
   });
+
+  const warmRevision = memoryRoomSummariesFromPages(rooms.data)
+    .map((summary) => `${summary.id}:${memoryRoomWarmRevision(summary)}`)
+    .join("|");
+
+  useEffect(() => {
+    if (!enabled || !warmRevision) return undefined;
+    const ownerGeneration = getActiveCacheGeneration();
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      const summaries = memoryRoomSummariesFromPages(
+        queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+      ).slice(0, MEMORY_ROOM_WARM_LIMIT);
+      void warmMemoryRoomQueries(queryClient, summaries, ownerGeneration);
+    });
+    return () => task.cancel();
+  }, [enabled, queryClient, warmRevision]);
+
+  return rooms;
 }
 
 export function useMemoryRoomsRealtime(enabled = true) {
@@ -1017,13 +1431,62 @@ export function useMemoryRoomsRealtime(enabled = true) {
 
     const ownerGeneration = getActiveCacheGeneration();
     let invalidationTimeout: ReturnType<typeof setTimeout> | null = null;
+    const roomSyncTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
     const scheduleRefresh = () => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       invalidationTimeout = setTimeout(() => {
         if (!isCacheGenerationActive(ownerGeneration)) return;
-        queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+        queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
       }, REALTIME_SUMMARY_RECONCILE_DELAY_MS);
+    };
+    const scheduleRoomCacheRefresh = (roomId: string | null) => {
+      if (!roomId || !isCacheGenerationActive(ownerGeneration)) {
+        scheduleRefresh();
+        return;
+      }
+      const existing = roomSyncTimeouts.get(roomId);
+      if (existing) clearTimeout(existing);
+      roomSyncTimeouts.set(roomId, setTimeout(() => {
+        roomSyncTimeouts.delete(roomId);
+        if (!isCacheGenerationActive(ownerGeneration)) return;
+        const summary = memoryRoomSummariesFromPages(
+          queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+        ).find((memory) => memory.id === roomId);
+        if (!summary) {
+          scheduleRefresh();
+          return;
+        }
+        // Detail sync returns the complete overview projection (members,
+        // dishes, ratings and stops) plus chat/media deltas, then persists the
+        // merged result to owner-scoped SQLite.
+        void warmMemoryRoomQueries(
+          queryClient,
+          [summary],
+          ownerGeneration,
+          { force: true }
+        );
+      }, REALTIME_ROOM_CACHE_RECONCILE_DELAY_MS));
+    };
+    const handleRoomEntityChange = (
+      payload: MemoryRoomEntityRealtimePayload,
+      roomRow = false
+    ) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+      const roomId = roomRow ? row?.id : row?.room_id;
+      const authoritativeRoomDelete = roomRow && payload.eventType === "DELETE";
+      const authoritativeMembershipDelete = (
+        !roomRow &&
+        payload.eventType === "DELETE" &&
+        row?.user_name === profile?.username
+      );
+      if (roomId && (authoritativeRoomDelete || authoritativeMembershipDelete)) {
+        void removeAuthoritativeMemoryRoomProjection(queryClient, roomId).catch(() => {});
+        return;
+      }
+      scheduleRoomCacheRefresh(roomId?.trim() || null);
+      scheduleRefresh();
     };
     const handleMessageChange = (payload: MemoryMessageRealtimePayload) => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1038,6 +1501,7 @@ export function useMemoryRoomsRealtime(enabled = true) {
         if (row.id) return applyRealtimeMessageDeleteToSummaries(current, row, profile?.username);
         return current;
       });
+      scheduleRoomCacheRefresh(row.room_id);
     };
     const handlePhotoChange = (payload: MemoryPhotoRealtimePayload) => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1055,6 +1519,7 @@ export function useMemoryRoomsRealtime(enabled = true) {
           applyRealtimePhotoDeleteToSummaries(current, row, profile?.username)
         ));
       }
+      scheduleRoomCacheRefresh(row.room_id);
     };
 
     const channel = supabase
@@ -1072,27 +1537,48 @@ export function useMemoryRoomsRealtime(enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dishes" },
-        scheduleRefresh
+        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dish_ratings" },
-        scheduleRefresh
+        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_stops" },
+        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_members" },
-        scheduleRefresh
+        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_rooms" },
-        scheduleRefresh
+        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload, true)
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          recordMobileFlow("memory.realtime_connect", 0, "success", { scope: "global" });
+          scheduleRealtimeCursorReconciliation(queryClient);
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          recordMobileFlow("memory.realtime_connect", 0, "failure", {
+            scope: "global",
+            state: status.toLowerCase()
+          });
+          captureMobileError(
+            "memory.realtime_connect_failed",
+            new Error("realtime_channel_failure"),
+            { scope: "global", state: status.toLowerCase() }
+          );
+        }
+      });
 
     return () => {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
+      for (const timeout of roomSyncTimeouts.values()) clearTimeout(timeout);
       void supabase.removeChannel(channel);
     };
   }, [enabled, profile?.username, queryClient]);
@@ -1100,24 +1586,80 @@ export function useMemoryRoomsRealtime(enabled = true) {
 
 export function useMemoryRoomQuery(roomId: string) {
   const queryClient = useQueryClient();
+  const [localCacheProbe, setLocalCacheProbe] = useState<{
+    roomId: string;
+    state: "checking" | "hit" | "miss";
+  }>({ roomId, state: "checking" });
+  const localCacheState = localCacheProbe.roomId === roomId
+    ? localCacheProbe.state
+    : "checking";
 
   useEffect(() => {
-    if (!roomId || queryClient.getQueryData(memoryKeys.detail(roomId))) return;
+    if (!roomId) return;
     let cancelled = false;
-    void readOfflineMemoryRoom(roomId).then((cached) => {
-      if (cancelled || !cached || queryClient.getQueryData(memoryKeys.detail(roomId))) return;
-      queryClient.setQueryData(memoryKeys.detail(roomId), cached);
-    });
+    const detailKey = memoryKeys.detail(roomId);
+    const cachedInMemory = queryClient.getQueryData<MemoryRoom>(detailKey);
+
+    if (cachedInMemory) {
+      setLocalCacheProbe({ roomId, state: "hit" });
+      // A prefetched room can still carry an older overview (for example a
+      // stop created while this device was offline). Query freshness must not
+      // suppress the room-open reconciliation that repairs SQLite.
+      const ownerGeneration = getActiveCacheGeneration();
+      void getMemoryRoomOfflineFirst(roomId)
+        .then((freshRoom) => {
+          if (cancelled || !isCacheGenerationActive(ownerGeneration)) return;
+          queryClient.setQueryData(detailKey, freshRoom);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          if (isAuthoritativeMemoryAccessError(error)) {
+            void removeAuthoritativeMemoryRoomProjection(queryClient, roomId).catch(() => {});
+            return;
+          }
+          captureMobileError("memory.room_mount_refresh_failed", error);
+        });
+    } else {
+      void readOfflineMemoryRoom(roomId).then((cached) => {
+        if (cancelled) return;
+        setLocalCacheProbe({ roomId, state: cached ? "hit" : "miss" });
+        if (!cached || queryClient.getQueryData(detailKey)) return;
+        queryClient.setQueryData(detailKey, cached, { updatedAt: 0 });
+      });
+    }
+
     return () => {
       cancelled = true;
     };
   }, [queryClient, roomId]);
 
-  return useQuery({
+  const query = useQuery({
     queryKey: memoryKeys.detail(roomId),
     queryFn: async () => {
       const startedAt = Date.now();
       try {
+        // Resolve the mounted room from SQLite first. Remote reconciliation
+        // continues in the background and patches the same query when ready,
+        // so opening Table or Chat never waits on network latency.
+        const cached = await readOfflineMemoryRoom(roomId);
+        if (cached) {
+          const ownerGeneration = getActiveCacheGeneration();
+          void getMemoryRoomOfflineFirst(roomId)
+            .then((freshRoom) => {
+              if (!isCacheGenerationActive(ownerGeneration)) return;
+              queryClient.setQueryData(memoryKeys.detail(roomId), freshRoom);
+            })
+            .catch((error) => {
+              if (isAuthoritativeMemoryAccessError(error)) {
+                void removeAuthoritativeMemoryRoomProjection(queryClient, roomId).catch(() => {});
+                return;
+              }
+              captureMobileError("memory.room_refresh_failed", error);
+            });
+          recordMobileFlow("memory.room_open", Date.now() - startedAt, "success");
+          return cached;
+        }
+
         const result = await getMemoryRoomOfflineFirst(roomId);
         recordMobileFlow("memory.room_open", Date.now() - startedAt, "success");
         return result;
@@ -1137,11 +1679,27 @@ export function useMemoryRoomQuery(roomId: string) {
     staleTime: 30_000,
     structuralSharing: preserveRecentMediaAttachments
   });
+
+  return {
+    ...query,
+    // A React Query request also reports "loading" during its very short
+    // asynchronous SQLite lookup. Keep that warm lookup visually silent.
+    // Only a confirmed local miss is a real cold load that should show the
+    // server-restoration skeleton.
+    isColdLoading: query.isLoading && localCacheState === "miss",
+    openedWithoutLocalReplica: localCacheState === "miss"
+  };
 }
 
 export function useMemoryMessagePagesQuery(roomId: string, before: string | null) {
   return useInfiniteQuery({
-    queryKey: [...memoryKeys.chat(roomId), before ?? "initial"] as const,
+    // The cursor must NOT be part of the key. Loading a page writes it to
+    // SQLite, so the room's oldest cached message moves, so a cursor derived
+    // from room data moves too — and a moving key discarded every page already
+    // loaded, which reset `hasNextPage` and re-armed the "load earlier"
+    // affordance on every completed page. That was the endless spinner at the
+    // top of history. One room, one paginated history.
+    queryKey: memoryKeys.chat(roomId),
     queryFn: async ({ pageParam }) => {
       const startedAt = Date.now();
       const firstPage = !pageParam && !before;
@@ -1164,11 +1722,48 @@ export function useMemoryMessagePagesQuery(roomId: string, before: string | null
 }
 
 export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
+  const queryClient = useQueryClient();
+
   return useInfiniteQuery({
     queryKey: memoryKeys.media(roomId),
-    queryFn: ({ pageParam }) => getMemoryMediaPageOfflineFirst(roomId, {
-      before: typeof pageParam === "string" && pageParam ? pageParam : null
-    }),
+    queryFn: async ({ pageParam }) => {
+      const before = typeof pageParam === "string" && pageParam ? pageParam : null;
+      const cached = await readMemoryMediaPageOffline(roomId, { before });
+      // Cache miss means either a cold room or the end of locally stored
+      // history, which is exactly where the server should be consulted.
+      if (!cached) return fetchMemoryMediaPage(roomId, { before });
+
+      // Photos are newest-first, so only the first page can gain rows; older
+      // pages are immutable history. One background reconcile of that page
+      // keeps invalidating memoryKeys.media meaningful — after an upload,
+      // usePostMemoryRoomMediaMutation relies on the invalidation actually
+      // reaching the server rather than reading the same local rows back.
+      if (!before) {
+        const ownerGeneration = getActiveCacheGeneration();
+        void fetchMemoryMediaPage(roomId, { before })
+          .then((fresh) => {
+            if (!isCacheGenerationActive(ownerGeneration)) return;
+            queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(
+              memoryKeys.media(roomId),
+              (current) => {
+                // Only swap in the reconciled page while it is the only one
+                // loaded. Once the user has paged into history, a fresh first
+                // page covers a shifted range — photos added since caching push
+                // older ones past its boundary — and replacing it in place would
+                // leave those stranded in the seam before page two. Newly added
+                // photos still reach the gallery through the room snapshot.
+                if (!current || current.pages.length !== 1) return current;
+                return { ...current, pages: [fresh] };
+              }
+            );
+          })
+          .catch((error) => {
+            captureMobileError("memory.media_page_refresh_failed", error);
+          });
+      }
+
+      return cached;
+    },
     initialPageParam: "",
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: Boolean(roomId) && enabled
@@ -1193,10 +1788,10 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.invalidateQueries({ queryKey: memoryKeys.list });
       }, REALTIME_FALLBACK_RECONCILE_DELAY_MS);
     };
-    const persistOfflineRoom = () => {
+    const reconcileRoomOverview = () => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
-      const current = queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId));
-      if (current) void saveOfflineMemoryRoom(current);
+      scheduleRealtimeCursorReconciliation(queryClient, roomId);
+      scheduleRefresh();
     };
     const handleMessageChange = (payload: MemoryMessageRealtimePayload) => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1207,15 +1802,19 @@ export function useMemoryRoomRealtime(roomId: string) {
           return;
         }
 
+        let mappedMessage: MemoryMessage | null = null;
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
-          const message = memoryMessageFromRealtimeRow(row, current);
-          return message ? applyRealtimeMessageInsert(current, message) : current;
+          mappedMessage = memoryMessageFromRealtimeRow(row, current);
+          return mappedMessage ? applyRealtimeMessageInsert(current, mappedMessage) : current;
         });
         setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageToSummaries(current, row, profile?.username)
         ));
-        persistOfflineRoom();
+        if (mappedMessage) observeOfflineMemoryWrite(
+          saveOfflineMemoryMessage(roomId, mappedMessage),
+          "realtime_message_insert"
+        );
         return;
       }
 
@@ -1241,7 +1840,10 @@ export function useMemoryRoomRealtime(roomId: string) {
         setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageUpdateToSummaries(current, row)
         ));
-        persistOfflineRoom();
+        if (mappedMessage) observeOfflineMemoryWrite(
+          saveOfflineMemoryMessage(roomId, mappedMessage),
+          "realtime_message_update"
+        );
         return;
       }
 
@@ -1265,8 +1867,10 @@ export function useMemoryRoomRealtime(roomId: string) {
         setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
         ));
-        void deleteOfflineMemoryMessage(row.id as string);
-        persistOfflineRoom();
+        observeOfflineMemoryWrite(
+          deleteOfflineMemoryMessage(row.id as string),
+          "realtime_message_delete"
+        );
         return;
       }
 
@@ -1301,7 +1905,11 @@ export function useMemoryRoomRealtime(roomId: string) {
             applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
           ));
         }
-        persistOfflineRoom();
+        if (mappedPhoto) observeOfflineMemoryWrite(
+          saveOfflineMemoryPhoto(roomId, mappedPhoto),
+          "realtime_photo_upsert"
+        );
+        if (row.media_asset_id && !row.public_url) scheduleRefresh();
         return;
       }
 
@@ -1325,8 +1933,10 @@ export function useMemoryRoomRealtime(roomId: string) {
         setMemorySummaryPages(queryClient, (current) => (
           applyRealtimePhotoDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
         ));
-        void deleteOfflineMemoryPhoto(row.id as string);
-        persistOfflineRoom();
+        observeOfflineMemoryWrite(
+          deleteOfflineMemoryPhoto(row.id as string),
+          "realtime_photo_delete"
+        );
         return;
       }
 
@@ -1350,28 +1960,42 @@ export function useMemoryRoomRealtime(roomId: string) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dishes", filter: `room_id=eq.${roomId}` },
-        scheduleRefresh
+        reconcileRoomOverview
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_memory_stops", filter: `room_id=eq.${roomId}` },
+        reconcileRoomOverview
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dish_ratings", filter: `room_id=eq.${roomId}` },
-        scheduleRefresh
+        reconcileRoomOverview
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_members", filter: `room_id=eq.${roomId}` },
-        scheduleRefresh
+        reconcileRoomOverview
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_rooms", filter: `id=eq.${roomId}` },
-        scheduleRefresh
+        reconcileRoomOverview
       )
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") recordMobileFlow("memory.realtime_connect", 0, "success");
+        if (status === "SUBSCRIBED") {
+          recordMobileFlow("memory.realtime_connect", 0, "success", { scope: "room" });
+          scheduleRealtimeCursorReconciliation(queryClient, roomId);
+        }
         else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          recordMobileFlow("memory.realtime_connect", 0, "failure", { state: status.toLowerCase() });
-          captureMobileError("memory.realtime_connect_failed", new Error("realtime_channel_failure"), { state: status.toLowerCase() });
+          recordMobileFlow("memory.realtime_connect", 0, "failure", {
+            scope: "room",
+            state: status.toLowerCase()
+          });
+          captureMobileError("memory.realtime_connect_failed", new Error("realtime_channel_failure"), {
+            scope: "room",
+            state: status.toLowerCase()
+          });
         }
       });
 
@@ -1384,10 +2008,50 @@ export function useMemoryRoomRealtime(roomId: string) {
 
 export function useCreateMemoryRoomMutation() {
   const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
   return useMutation({
     mutationFn: (input: CreateMemoryRoomInput) => createMemoryRoom(input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    onSuccess: async (result, input) => {
+      if (profile?.username) {
+        const ownerGeneration = getActiveCacheGeneration();
+        const created = createdMemoryRoomSnapshot(input, result, {
+          displayName: profile.displayName || profile.username,
+          username: profile.username
+        });
+
+        // Creation seeds both memory and SQLite before mutateAsync resolves, so
+        // the destination route has a complete empty-room snapshot on frame one.
+        queryClient.setQueryData(memoryKeys.detail(result.id), created.room);
+        queryClient.setQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list, (current) => {
+          if (!current) {
+            return {
+              pageParams: [null],
+              pages: [{ nextCursor: null, rooms: [created.summary] }]
+            };
+          }
+          return {
+            ...current,
+            pages: current.pages.map((page, index) => ({
+              ...page,
+              rooms: [
+                ...(index === 0 ? [created.summary] : []),
+                ...page.rooms.filter((summary) => summary.id !== result.id)
+              ]
+            }))
+          };
+        });
+        await Promise.all([
+          saveOfflineMemoryRoom(created.room, null, { replaceChat: true }),
+          saveOfflineMemorySummaries([created.summary])
+        ]);
+
+        // Replace provisional participant display names/ids with authoritative
+        // server rows in the background; opening the room never waits for this.
+        if (isCacheGenerationActive(ownerGeneration)) {
+          void warmMemoryRoomQueries(queryClient, [created.summary], ownerGeneration);
+        }
+      }
+      queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
     }
   });
 }
@@ -1455,7 +2119,7 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
         ));
       });
 
-      return { previousList, previousRoom };
+      return { previousList, previousRoom, readAt: now };
     },
     onError: (_error, _input, context) => {
       if (context?.previousRoom) {
@@ -1464,6 +2128,16 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
       if (context?.previousList) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
       }
+    },
+    onSuccess: (result, _input, context) => {
+      if (!result.ok || !context?.readAt) return;
+      void saveOfflineMemoryReadState(roomId, context.readAt).catch((error) => {
+        captureMobileError("memory.read_state_persist_failed", error);
+        // The server acknowledgement remains authoritative. Re-fetching causes
+        // the normal room sync path to retry the durable snapshot/read write.
+        void queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
+        void queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
+      });
     }
   });
 }
@@ -1483,9 +2157,26 @@ export function useRespondToMemoryInviteMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: RespondToMemoryInviteInput) => respondToMemoryInvite(input),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(result.roomId) });
+    onSuccess: async (result) => {
+      if (result.status === "accepted") {
+        const ownerGeneration = getActiveCacheGeneration();
+        try {
+          // `mutateAsync` does not resolve until the joined room has been
+          // fetched, written to SQLite and placed in QueryClient. The
+          // notification screen can then navigate without a cold detail load.
+          const joinedRoom = await warmMemoryRoomOfflineFirst(result.roomId);
+          if (isCacheGenerationActive(ownerGeneration)) {
+            queryClient.setQueryData(memoryKeys.detail(result.roomId), joinedRoom);
+          }
+        } catch (error) {
+          // The server-side join already succeeded. Do not report a false
+          // invitation failure if only the durable replica warm failed; the
+          // destination route can retry from the authoritative server.
+          captureMobileError("memory.joined_room_warm_failed", error);
+        }
+      }
+      queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
+      queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.detail(result.roomId) });
       queryClient.invalidateQueries({ queryKey: notificationKeys.list });
       queryClient.invalidateQueries({ queryKey: notificationKeys.hasUnread });
     }
@@ -1496,10 +2187,8 @@ export function useLeaveMemoryRoomMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => leaveMemoryRoom(roomId),
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.removeQueries({ queryKey: memoryKeys.chat(roomId) });
-      queryClient.removeQueries({ queryKey: memoryKeys.media(roomId) });
+    onSuccess: async () => {
+      await removeAuthoritativeMemoryRoomProjection(queryClient, roomId);
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
@@ -1510,7 +2199,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
     mutationFn: (input: AddMemoryMessageInput) => (
-      addMemoryMessage(roomId, input.body, input.replyToMessageId)
+      addMemoryMessage(roomId, input.body, input.replyToMessageId, input.clientId)
     ),
     onMutate: async (input) => {
       const body = input.body;
@@ -1519,6 +2208,8 @@ export function useAddMemoryMessageMutation(roomId: string) {
 
       const detailKey = memoryKeys.detail(roomId);
       const now = new Date().toISOString();
+      const clientId = input.clientId ?? `text:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+      input.clientId = clientId;
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const replyToMessage = input.replyToMessageId
         ? previousRoom?.messages.find((message) => message.id === input.replyToMessageId) ?? null
@@ -1531,7 +2222,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
         createdAt: now,
         deliveryStatus: "pending",
         editedAt: null,
-        id: input.clientId ? `optimistic-message:${roomId}:${input.clientId}` : `optimistic-message:${roomId}:${now}`,
+        id: `optimistic-message:${roomId}:${clientId}`,
         replyToMessage: replyToMessage
           ? {
             id: replyToMessage.id,
@@ -1572,7 +2263,12 @@ export function useAddMemoryMessageMutation(roomId: string) {
             : memory);
       });
 
-      return { optimisticMessage, previousList, previousRoom };
+      await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
+      if (input.replacesMessageId) {
+        await deleteOfflineMemoryOutboxMessage(input.replacesMessageId);
+      }
+
+      return { clientId, optimisticMessage, previousList, previousRoom };
     },
     onError: (_error, input, context) => {
       if (context?.optimisticMessage) {
@@ -1592,9 +2288,44 @@ export function useAddMemoryMessageMutation(roomId: string) {
               : [...messages, failedMessage]
           };
         });
+        observeOfflineMemoryWrite(
+          saveOfflineMemoryOutboxMessage(context.clientId, failedMessage),
+          "outbox_mark_failed"
+        );
       }
       if (context?.previousList) {
         queryClient.setQueryData(memoryKeys.list, context.previousList);
+      }
+    },
+    onSuccess: (result, _input, context) => {
+      if (context?.optimisticMessage) {
+        const sentMessage: MemoryMessage = {
+          ...context.optimisticMessage,
+          authorName: result.author_name,
+          body: result.body,
+          createdAt: result.created_at,
+          deliveryStatus: "sent",
+          editedAt: result.edited_at ?? null,
+          id: result.id,
+          replyToMessageId: result.reply_to_message_id ?? null,
+          roomId: result.room_id
+        };
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+          if (!current) return current;
+          let inserted = false;
+          const messages = current.messages.flatMap((message) => {
+            if (message.id !== context.optimisticMessage.id && message.id !== sentMessage.id) return [message];
+            if (inserted) return [];
+            inserted = true;
+            return [{ ...sentMessage, attachments: message.attachments }];
+          });
+          if (!inserted) messages.push(sentMessage);
+          return { ...current, messages: sortMemoryMessages(messages) };
+        });
+        observeOfflineMemoryWrite(
+          commitOfflineMemoryOutboxMessage(context.optimisticMessage.id, sentMessage),
+          "outbox_commit"
+        );
       }
     }
   });
@@ -1608,6 +2339,7 @@ export function useDismissFailedMemoryMessage(roomId: string) {
         ? { ...current, messages: current.messages.filter((message) => message.id !== messageId) }
         : current
     ));
+    observeOfflineMemoryWrite(deleteOfflineMemoryOutboxMessage(messageId), "outbox_dismiss");
   }, [queryClient, roomId]);
 }
 
@@ -1759,9 +2491,60 @@ export function useCreateMemoryStopMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: Omit<CreateMemoryStopInput, "roomId">) => createMemoryStop({ ...input, roomId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    onSuccess: async (createdStop) => {
+      const detailKey = memoryKeys.detail(roomId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+
+      const currentRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const nextRoom = currentRoom
+        ? { ...currentRoom, stops: upsertMemoryStop(currentRoom.stops ?? [], createdStop) }
+        : undefined;
+      if (nextRoom) {
+        queryClient.setQueryData(detailKey, nextRoom);
+      }
+
+      let updatedSummary: MemoryRoomSummary | undefined;
+      setMemorySummaryPages(queryClient, (current) => {
+        if (!current) return current;
+        const placeNames = nextRoom
+          ? memoryPlaceNamesFromStops(nextRoom.stops)
+          : undefined;
+        return current.map((memory) => {
+          if (memory.id !== roomId) return memory;
+          updatedSummary = {
+            ...memory,
+            placeNames: placeNames?.length
+              ? placeNames
+              : uniqueMemoryPlaceNames([...(memory.placeNames ?? []), createdStop.name])
+          };
+          return updatedSummary;
+        });
+      });
+
+      await Promise.all([
+        nextRoom
+          ? saveOfflineMemoryRoom(nextRoom).catch((error) => {
+            captureMobileError("memory.stop_room_persist_failed", error, { roomId });
+          })
+          : Promise.resolve(),
+        updatedSummary
+          ? saveOfflineMemorySummaries([updatedSummary]).catch((error) => {
+            captureMobileError("memory.stop_summary_persist_failed", error, { roomId });
+          })
+          : Promise.resolve()
+      ]);
+
+      if (!nextRoom) {
+        // A direct add-place deep link may not have a mounted room projection.
+        // In that uncommon case, reconstruct it from the authoritative server.
+        void queryClient.invalidateQueries({ queryKey: detailKey });
+      }
+      // Do not invalidate a populated room here. The SQLite-first query would
+      // briefly replay its pre-mutation snapshot and hide the new place.
+      // Realtime and normal incremental reconciliation still converge it.
     }
   });
 }

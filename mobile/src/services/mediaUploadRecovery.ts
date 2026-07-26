@@ -16,7 +16,8 @@ export type PendingMediaUploadState =
   | "ready";
 
 export type PendingMediaUploadRecord = {
-  accessClass: "public_post" | "circle_post" | "private_post";
+  accessClass: "public_post" | "circle_post" | "private_post" | "memory_private";
+  audioPolicy: "preserve" | "strip";
   assetId: string | null;
   createdAt: number;
   cropRect: { height: number; targetAspect?: number | null; width: number; x: number; y: number };
@@ -27,12 +28,21 @@ export type PendingMediaUploadRecord = {
   lastCheckedAt: number | null;
   localUploadId: string;
   mediaKind: "image" | "video";
+  memoryAttachment: {
+    assetCount: number;
+    batchId: string;
+    body: string;
+    position: number;
+    replyToMessageId: string | null;
+    roomId: string;
+  } | null;
   mimeType: string;
   ownerScope: string;
   preparedUri: string;
   schemaVersion: typeof LOCAL_DATA_SCHEMA_VERSION;
   sourceUri: string;
   state: PendingMediaUploadState;
+  surface: "memory" | "post";
   uploadBucket: string | null;
   uploadPath: string | null;
   width: number | null;
@@ -67,12 +77,31 @@ function activeContext() {
 }
 
 function recordIsValid(record: Partial<PendingMediaUploadRecord>, scope: string): record is PendingMediaUploadRecord {
+  const surface = record.surface ?? "post";
   const hasServerIdentity = typeof record.assetId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.assetId) &&
     record.uploadBucket === "media-sources" &&
     typeof record.uploadPath === "string" &&
-    new RegExp(`^sources/post/[0-9a-f-]{36}/${record.assetId}/original\\.[a-z0-9]{1,8}$`, "i").test(record.uploadPath) &&
+    new RegExp(`^sources/${surface}/[0-9a-f-]{36}/${record.assetId}/original\\.[a-z0-9]{1,8}$`, "i").test(record.uploadPath) &&
     !record.uploadPath.includes("..");
+  const memoryAttachment = record.memoryAttachment;
+  const hasValidMemoryAttachment = Boolean(
+    memoryAttachment &&
+    /^[0-9a-f-]{36}$/i.test(memoryAttachment.roomId) &&
+    /^[A-Za-z0-9._:-]{16,128}$/.test(memoryAttachment.batchId) &&
+    typeof memoryAttachment.body === "string" &&
+    memoryAttachment.body.length <= 1000 &&
+    Number.isSafeInteger(memoryAttachment.position) &&
+    memoryAttachment.position >= 0 &&
+    Number.isSafeInteger(memoryAttachment.assetCount) &&
+    memoryAttachment.assetCount >= 1 &&
+    memoryAttachment.assetCount <= 10 &&
+    memoryAttachment.position < memoryAttachment.assetCount &&
+    (
+      memoryAttachment.replyToMessageId === null ||
+      /^[0-9a-f-]{36}$/i.test(memoryAttachment.replyToMessageId)
+    )
+  );
   const state = record.state ?? "";
   return record.schemaVersion === LOCAL_DATA_SCHEMA_VERSION &&
     record.ownerScope === scope &&
@@ -86,7 +115,16 @@ function recordIsValid(record: Partial<PendingMediaUploadRecord>, scope: string)
     typeof record.preparedUri === "string" &&
     isOwnedAccountFileUri(record.sourceUri, scope) &&
     isOwnedAccountFileUri(record.preparedUri, scope) &&
-    ["public_post", "circle_post", "private_post"].includes(record.accessClass ?? "") &&
+    ["public_post", "circle_post", "private_post", "memory_private"].includes(record.accessClass ?? "") &&
+    (
+      record.audioPolicy === "preserve" ||
+      (surface === "post" && record.mediaKind === "video" && record.audioPolicy === "strip")
+    ) &&
+    (surface === "post" || surface === "memory") &&
+    (
+      (surface === "post" && record.accessClass !== "memory_private" && memoryAttachment == null) ||
+      (surface === "memory" && record.accessClass === "memory_private" && hasValidMemoryAttachment)
+    ) &&
     Boolean(record.cropRect) &&
     typeof record.cropRect?.x === "number" &&
     typeof record.cropRect?.y === "number" &&
@@ -113,7 +151,15 @@ function readRecords(scope: string) {
   try {
     const parsed = JSON.parse(raw) as Array<Partial<PendingMediaUploadRecord>>;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((record) => recordIsValid(record, scope)).slice(0, MAX_RECORDS);
+    return parsed
+      .map((record): Partial<PendingMediaUploadRecord> => ({
+        ...record,
+        audioPolicy: record.audioPolicy ?? "preserve",
+        memoryAttachment: record.memoryAttachment ?? null,
+        surface: record.surface ?? "post"
+      }))
+      .filter((record): record is PendingMediaUploadRecord => recordIsValid(record, scope))
+      .slice(0, MAX_RECORDS);
   } catch {
     return [];
   }
@@ -136,9 +182,17 @@ export function pendingMediaUploads() {
   return records;
 }
 
-export function findPendingMediaUpload(sourceUri: string, mediaKind: "image" | "video", accessClass: PendingMediaUploadRecord["accessClass"]) {
+export function findPendingMediaUpload(
+  sourceUri: string,
+  mediaKind: "image" | "video",
+  accessClass: PendingMediaUploadRecord["accessClass"],
+  surface: PendingMediaUploadRecord["surface"]
+) {
   return pendingMediaUploads().find((record) => (
-    record.sourceUri === sourceUri && record.mediaKind === mediaKind && record.accessClass === accessClass
+    record.sourceUri === sourceUri &&
+    record.mediaKind === mediaKind &&
+    record.accessClass === accessClass &&
+    record.surface === surface
   )) ?? null;
 }
 

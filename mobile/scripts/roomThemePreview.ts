@@ -30,7 +30,7 @@ function primSvg(p: DoodlePrimitive): string {
   }
 }
 const patternBody = placements
-  .map((pl) => `<g opacity="${pl.opacity}" stroke-width="${pl.strokeWidth}" transform="${pl.transform}">${pl.shape.primitives.map(primSvg).join("")}</g>`)
+  .map((pl) => `<g opacity="${pl.opacity}" stroke-width="${pl.strokeWidth}" transform="${pl.transform}">${pl.primitives.map(primSvg).join("")}</g>`)
   .join("");
 
 function wallpaper(bg: string, line: string, opacity: number, id: string): string {

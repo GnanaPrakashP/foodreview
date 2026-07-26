@@ -315,11 +315,14 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
     if (id === "expo-sqlite") return sqlite;
     if (id === "expo-file-system/legacy") return {
       documentDirectory: "file:///documents/",
+      deleteAsync: async () => {},
       getInfoAsync: async () => ({ exists: false })
     };
     if (id === "@/services/accountFileStore") return {
       accountFileDirectoryForScope: (scope) => `file:///cache/private/${scope}`,
-      ensureAccountFileDirectory: async (scope) => `file:///cache/private/${scope}`
+      clearMemoryDatabaseDirectory: async () => {},
+      ensureMemoryDatabaseDirectory: async (scope) => `file:///documents/private/${scope}/table-memory`,
+      memoryDatabaseDirectoryForScope: (scope) => `file:///documents/private/${scope}/table-memory`
     };
     if (id === "@/security/cacheOwnership") return ownership;
     if (id === "@/security/offlineMemorySecurity") return {
@@ -328,6 +331,10 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
       sanitizeOfflineMemoryRoom: (value) => value
     };
     if (id === "@/services/memories" || id === "@/types/models") return {};
+    if (id === "@/observability/mobileTelemetry") return {
+      captureMobileError: () => {},
+      recordMobileFlow: () => {}
+    };
     throw new Error(`Unexpected import: ${id}`);
   });
   const alice = ownership.cacheOwnerForUserId(ALICE_ID);
@@ -341,7 +348,7 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
   await store.saveOfflineMemorySummaries([{ id: "bob-room", latestActivityAt: "2026-01-02T00:00:00Z" }]);
   await store.clearMemoryOfflineOwnerScope(alice.scope);
   assert.equal((await store.readOfflineMemorySummaries())[0].id, "bob-room");
-  assert.equal(databases.has(`file:///cache/private/${alice.scope}`), false);
+  assert.equal(databases.has(`file:///documents/private/${alice.scope}/table-memory`), false);
 });
 
 test("offline private signed URLs expire closed while public legacy media remains readable", () => {
@@ -360,7 +367,11 @@ test("offline private signed URLs expire closed while public legacy media remain
   assert.equal(expired.signedUrlExpiresAt, null);
   const fresh = policy.sanitizeOfflineMemoryPhoto({ ...base, signedUrlExpiresAt: "2026-01-03T00:00:00.000Z" }, Date.parse("2026-01-02T00:00:00.000Z"));
   assert.equal(fresh.publicUrl, base.publicUrl);
-  const publicMedia = policy.sanitizeOfflineMemoryPhoto({ ...base, storagePath: "legacy/public.jpg" }, Date.parse("2027-01-01T00:00:00.000Z"));
+  const publicMedia = policy.sanitizeOfflineMemoryPhoto({
+    ...base,
+    signedUrlExpiresAt: null,
+    storagePath: "legacy/public.jpg"
+  }, Date.parse("2027-01-01T00:00:00.000Z"));
   assert.equal(publicMedia.publicUrl, base.publicUrl);
 });
 

@@ -1,24 +1,18 @@
-import { StatusBar } from "expo-status-bar";
-import { useFocusEffect, useRouter } from "expo-router";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Animated, BackHandler, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Bell, Bookmark, ChevronRight, FileText, Heart, Info, LifeBuoy, Lock, LogOut, MessageCircle, Monitor, Moon, Settings, Shield, Sun, Trash2, UserCog, UserX } from "lucide-react-native";
-import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { useLogoutMutation } from "@/hooks/useAuth";
 import { useCurrentUserProfileQuery, useUpdateAccountTypeMutation } from "@/hooks/useProfiles";
 import { useDeleteAccountMutation } from "@/hooks/useSettings";
-import { PROFILE_SUB_SCREEN_HEADER_TOP_PADDING } from "@/components/profile/ProfileSubScreen";
+import { ProfileSubScreen } from "@/components/profile/ProfileSubScreen";
+import { useSlideOverScreen } from "@/hooks/useSlideOverScreen";
 import { useSessionStore } from "@/stores/sessionStore";
 import { themeColorsFor, useThemePreference, type ThemeMode } from "@/hooks/useThemePreference";
-import { colors, fontStyles, radius, screenLayout, spacing } from "@/theme";
+import { colors, fontStyles, radius, spacing } from "@/theme";
 import { confirmAction, notify } from "@/utils/confirm";
 import type { AccountType } from "@/types/models";
 
-// Slide-in/out timing, matched to the table-memory members panel (PeoplePanel).
-const SETTINGS_ENTER_MS = 150;
-const SETTINGS_EXIT_MS = 120;
-const SETTINGS_PANEL_TRAVEL_MAX = 640;
 const SEGMENT_ANIMATION_MS = 180;
 const SEGMENT_GAP = 2;
 const APPEARANCE_SEGMENT_WIDTH = 31;
@@ -44,8 +38,18 @@ function accountTypeLabel(value?: "private" | "public") {
 
 function useSlidingSegmentPosition(index: number, step: number) {
   const translateX = useRef(new Animated.Value(index * step)).current;
+  const settled = useRef(false);
 
   useEffect(() => {
+    // The panel is mounted on demand, so an animated first pass would have the
+    // indicators sliding into place while the panel itself is still entering.
+    // Only animate once the control is already on screen — which still covers
+    // the real case of accountType arriving from the query after first paint.
+    if (!settled.current) {
+      settled.current = true;
+      translateX.setValue(index * step);
+      return;
+    }
     Animated.timing(translateX, {
       duration: SEGMENT_ANIMATION_MS,
       easing: Easing.out(Easing.cubic),
@@ -72,70 +76,19 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
   const logout = useLogoutMutation();
   const updateAccountType = useUpdateAccountTypeMutation();
   const deleteAccount = useDeleteAccountMutation();
-  const { mode: themeMode, resolvedTheme, setThemeMode, themeColors } = useThemePreference();
+  const { mode: themeMode, setThemeMode, themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
-  const [closing, setClosing] = useState(false);
   const accountType = profile.data?.accountType ?? sessionProfile?.accountType;
 
-  // Mirrors the table-memory PeoplePanel motion so settings feels like the same
-  // slide-over surface: native-driver timing, capped travel, and subtle fade.
-  const { width } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const enterProgress = useRef(new Animated.Value(0)).current;
-  const isClosingRef = useRef(false);
-  const panelTranslateX = enterProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [Math.min(width, SETTINGS_PANEL_TRAVEL_MAX), 0]
+  // Same slide-over motion as every settings sub-screen. `onDismiss` is set when
+  // the profile tab renders this inline, where closing means unmounting the
+  // panel rather than popping a route.
+  const { close, isClosing, slideStyle } = useSlideOverScreen({
+    fallbackHref: "/profile",
+    onDismiss: onCloseEnd
   });
-  const panelOpacity = enterProgress.interpolate({
-    inputRange: [0, 0.35, 1],
-    outputRange: [0.92, 1, 1]
-  });
-
-  useEffect(() => {
-    Animated.timing(enterProgress, {
-      duration: SETTINGS_ENTER_MS,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true
-    }).start();
-  }, [enterProgress]);
-
-  const performBack = useCallback(() => {
-    if (onCloseEnd) {
-      onCloseEnd();
-      return;
-    }
-    if (router.canGoBack()) router.back();
-    else router.dismissTo("/profile");
-  }, [onCloseEnd, router]);
-
-  const closeSettings = useCallback(() => {
-    if (isClosingRef.current) return;
-    isClosingRef.current = true;
-    setClosing(true);
-    Animated.timing(enterProgress, {
-      duration: SETTINGS_EXIT_MS,
-      easing: Easing.in(Easing.cubic),
-      toValue: 0,
-      useNativeDriver: true
-    }).start(({ finished }) => {
-      if (finished) performBack();
-    });
-  }, [enterProgress, performBack]);
-
-  // Android hardware back should play the slide-out too.
-  useFocusEffect(
-    useCallback(() => {
-      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-        closeSettings();
-        return true;
-      });
-      return () => subscription.remove();
-    }, [closeSettings])
-  );
 
   async function confirmAccountType(nextType: AccountType) {
     if (!profile.data || profile.data.accountType === nextType || updateAccountType.isPending) return;
@@ -192,174 +145,157 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
 
   return (
     <SettingsThemeContext.Provider value={{ styles, themeColors }}>
-      <Animated.View
-        pointerEvents={closing ? "none" : "auto"}
-        style={[
-          styles.slide,
-          {
-            opacity: panelOpacity,
-            transform: [{ translateX: panelTranslateX }]
-          }
-        ]}
+      <ProfileSubScreen
+        onBack={close}
+        overlay
+        pointerEvents={isClosing ? "none" : "auto"}
+        slideStyle={slideStyle}
+        themeColors={themeColors}
+        title="Settings"
       >
-        <StatusBar backgroundColor={themeColors.bg} style={resolvedTheme === "light" ? "dark" : "light"} />
-        <SafeAreaView edges={["top"]} style={styles.screenContent}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.content,
-            { paddingBottom: spacing.xl + insets.bottom, paddingTop: PROFILE_SUB_SCREEN_HEADER_TOP_PADDING }
-          ]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={styles.screenContent}
-        >
-          <SettingsHeader onBack={closeSettings} />
+        <SettingsSection title="Account">
+          <SettingsRow
+            Icon={Settings}
+            label="Edit Profile"
+            onPress={() => router.push("/profile/settings/edit")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Lock}
+            label="Account & Security"
+            onPress={() => router.push("/profile/settings/security")}
+          />
+        </SettingsSection>
 
-          <SettingsSection title="Account">
-            <SettingsRow
-              Icon={Settings}
-              label="Edit Profile"
-              onPress={() => router.push("/profile/settings/edit")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={Lock}
-              label="Account & Security"
-              onPress={() => router.push("/profile/settings/security")}
-            />
-          </SettingsSection>
+        <SettingsSection title="Activity">
+          <SettingsRow
+            Icon={Heart}
+            label="Liked Posts"
+            onPress={() => router.push("/profile/settings/liked")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Bookmark}
+            label="Saved Posts"
+            onPress={() => router.push("/profile/settings/saved")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={MessageCircle}
+            label="My Comments"
+            onPress={() => router.push("/profile/settings/comments")}
+          />
+        </SettingsSection>
 
-          <SettingsSection title="Activity">
-            <SettingsRow
-              Icon={Heart}
-              label="Liked Posts"
-              onPress={() => router.push("/profile/settings/liked")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={Bookmark}
-              label="Saved Posts"
-              onPress={() => router.push("/profile/settings/saved")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={MessageCircle}
-              label="My Comments"
-              onPress={() => router.push("/profile/settings/comments")}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Preferences">
-            <View style={styles.row}>
-              <View style={styles.rowIcon}>
-                {themeMode === "light" ? (
-                  <Sun size={16} color={themeColors.muted} strokeWidth={2.1} />
-                ) : themeMode === "dark" ? (
-                  <Moon size={16} color={themeColors.muted} strokeWidth={2.1} />
-                ) : (
-                  <Monitor size={16} color={themeColors.muted} strokeWidth={2.1} />
-                )}
-              </View>
-              <Text style={styles.rowLabel}>Appearance</Text>
-              <AppearanceSegmentedControl onChange={setThemeMode} value={themeMode} />
+        <SettingsSection title="Preferences">
+          <View style={styles.row}>
+            <View style={styles.rowIcon}>
+              {themeMode === "light" ? (
+                <Sun size={16} color={themeColors.muted} strokeWidth={2.1} />
+              ) : themeMode === "dark" ? (
+                <Moon size={16} color={themeColors.muted} strokeWidth={2.1} />
+              ) : (
+                <Monitor size={16} color={themeColors.muted} strokeWidth={2.1} />
+              )}
             </View>
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={Bell}
-              label="Notifications"
-              onPress={() => router.push("/profile/settings/notifications")}
-            />
-          </SettingsSection>
+            <Text style={styles.rowLabel}>Appearance</Text>
+            <AppearanceSegmentedControl onChange={setThemeMode} value={themeMode} />
+          </View>
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Bell}
+            label="Notifications"
+            onPress={() => router.push("/profile/settings/notifications")}
+          />
+        </SettingsSection>
 
-          <SettingsSection title="Privacy & Safety">
-            <View style={styles.row}>
-              <View style={styles.rowIcon}>
-                <Shield size={16} color={themeColors.muted} strokeWidth={2.1} />
-              </View>
-              <View style={styles.rowLabelStack}>
-                <Text style={styles.rowLabel}>Account Type</Text>
-                <Text style={styles.rowSubLabel}>
-                  {accountType === "private"
-                    ? "Approve requests before they join"
-                    : accountType === "public"
-                      ? "Requests join your circle immediately"
-                      : "Loading circle access"}
-                </Text>
-              </View>
-              <AccountTypeSegmentedControl
-                disabled={!profile.data || updateAccountType.isPending}
-                onChange={confirmAccountType}
-                value={accountType}
-              />
+        <SettingsSection title="Privacy & Safety">
+          <View style={styles.row}>
+            <View style={styles.rowIcon}>
+              <Shield size={16} color={themeColors.muted} strokeWidth={2.1} />
             </View>
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={UserX}
-              label="Blocked Accounts"
-              onPress={() => router.push("/profile/settings/blocked")}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Support">
-            <SettingsRow
-              Icon={LifeBuoy}
-              label="Help & Contact"
-              onPress={() => router.push("/profile/settings/help")}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="About & Legal">
-            <SettingsRow
-              Icon={Info}
-              label="About CircleBites"
-              onPress={() => router.push("/profile/settings/about")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={Shield}
-              label="Privacy Policy"
-              onPress={() => router.push("/profile/settings/privacy")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow
-              Icon={FileText}
-              label="Terms of Service"
-              onPress={() => router.push("/profile/settings/terms")}
-            />
-          </SettingsSection>
-
-          <Pressable
-            accessibilityRole="button"
-            disabled={logout.isPending}
-            onPress={confirmLogout}
-            style={({ pressed }) => [styles.logoutButton, pressed && styles.pressedSurface]}
-          >
-            <LogOut size={16} color={themeColors.dangerSoft} strokeWidth={2.2} />
-            <Text style={styles.logoutText}>{logout.isPending ? "Signing out..." : "Log out"}</Text>
-          </Pressable>
-
-          <SettingsSection title="Danger Zone">
-            <View style={styles.dangerCard}>
-              <View style={styles.dangerCardHeader}>
-                <UserCog size={16} color={themeColors.dangerSoft} strokeWidth={2.1} />
-                <Text style={styles.dangerCardTitle}>Delete account</Text>
-              </View>
-              <Text style={styles.dangerCardBody}>
-                Permanently deletes your profile, posts, comments, saved items and owned media. Shared rooms remain for other members without your account data. This cannot be undone.
+            <View style={styles.rowLabelStack}>
+              <Text style={styles.rowLabel}>Account Type</Text>
+              <Text style={styles.rowSubLabel}>
+                {accountType === "private"
+                  ? "Approve requests before they join"
+                  : accountType === "public"
+                    ? "Requests join your circle immediately"
+                    : "Loading circle access"}
               </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={openDeleteModal}
-                style={({ pressed }) => [styles.dangerButton, pressed && styles.pressedSurface]}
-              >
-                <Trash2 size={15} color={themeColors.white} strokeWidth={2.2} />
-                <Text style={styles.dangerButtonText}>Delete account</Text>
-              </Pressable>
             </View>
-          </SettingsSection>
-        </ScrollView>
-        </SafeAreaView>
-      </Animated.View>
+            <AccountTypeSegmentedControl
+              disabled={!profile.data || updateAccountType.isPending}
+              onChange={confirmAccountType}
+              value={accountType}
+            />
+          </View>
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={UserX}
+            label="Blocked Accounts"
+            onPress={() => router.push("/profile/settings/blocked")}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Support">
+          <SettingsRow
+            Icon={LifeBuoy}
+            label="Help & Contact"
+            onPress={() => router.push("/profile/settings/help")}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="About & Legal">
+          <SettingsRow
+            Icon={Info}
+            label="About CircleBites"
+            onPress={() => router.push("/profile/settings/about")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={Shield}
+            label="Privacy Policy"
+            onPress={() => router.push("/profile/settings/privacy")}
+          />
+          <View style={styles.separator} />
+          <SettingsRow
+            Icon={FileText}
+            label="Terms of Service"
+            onPress={() => router.push("/profile/settings/terms")}
+          />
+        </SettingsSection>
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={logout.isPending}
+          onPress={confirmLogout}
+          style={({ pressed }) => [styles.logoutButton, pressed && styles.pressedSurface]}
+        >
+          <LogOut size={16} color={themeColors.dangerSoft} strokeWidth={2.2} />
+          <Text style={styles.logoutText}>{logout.isPending ? "Signing out..." : "Log out"}</Text>
+        </Pressable>
+
+        <SettingsSection title="Danger Zone">
+          <View style={styles.dangerCard}>
+            <View style={styles.dangerCardHeader}>
+              <UserCog size={16} color={themeColors.dangerSoft} strokeWidth={2.1} />
+              <Text style={styles.dangerCardTitle}>Delete account</Text>
+            </View>
+            <Text style={styles.dangerCardBody}>
+              Permanently deletes your profile, posts, comments, saved items and owned media. Shared rooms remain for other members without your account data. This cannot be undone.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={openDeleteModal}
+              style={({ pressed }) => [styles.dangerButton, pressed && styles.pressedSurface]}
+            >
+              <Trash2 size={15} color={themeColors.white} strokeWidth={2.2} />
+              <Text style={styles.dangerButtonText}>Delete account</Text>
+            </Pressable>
+          </View>
+        </SettingsSection>
+      </ProfileSubScreen>
 
       <DeleteAccountModal
         confirmValue={deleteConfirm}
@@ -529,20 +465,6 @@ function SettingsSection({ children, title }: { children: ReactNode; title: stri
   );
 }
 
-function SettingsHeader({ onBack }: { onBack: () => void }) {
-  const { themeColors } = useSettingsTheme();
-
-  return (
-    <MemoryRouteHeader
-      backButtonVariant="plain"
-      onBack={onBack}
-      themeColors={themeColors}
-      title="Settings"
-      titleWeight="regular"
-    />
-  );
-}
-
 function SettingsRow({
   Icon,
   label,
@@ -576,19 +498,6 @@ function createStyles(themeColors: SettingsColors) {
   const subtleIcon = themeColors === colors.dark ? "rgba(245, 237, 216, 0.055)" : themeColors.surface;
 
   return StyleSheet.create({
-    slide: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: themeColors.bg,
-      zIndex: 20
-    },
-    screenContent: {
-      backgroundColor: themeColors.bg,
-      flex: 1
-    },
-    content: {
-      gap: screenLayout.headerContentGap,
-      padding: spacing.lg
-    },
     section: {
       gap: spacing.xs
     },

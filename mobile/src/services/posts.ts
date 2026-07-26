@@ -150,6 +150,7 @@ async function uploadOneWithProgress(
     height: media.height,
     mediaKind: mediaType,
     mimeType: media.mimeType,
+    muted: media.muted,
     intendedVisibility: visibility,
     onUploadProgress,
     width: media.width,
@@ -191,6 +192,8 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
   const token = data.session?.access_token;
   if (!token) throw new Error("Log in before posting");
 
+  const authorizedHeaders = await authorizedApiHeaders("sharing a post", "POST");
+  const stablePostKey = uploaded[0]?.assetId ? `post-${uploaded[0].assetId}` : authorizedHeaders["Idempotency-Key"];
   const response = await fetch(apiUrl("/api/reviews"), {
     body: JSON.stringify({
       area: input.restaurantArea,
@@ -213,7 +216,10 @@ async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedi
       tags: input.tags,
       visibility: input.visibility
     }),
-    headers: await authorizedApiHeaders("sharing a post", "POST"),
+    headers: {
+      ...authorizedHeaders,
+      ...(stablePostKey ? { "Idempotency-Key": stablePostKey } : {})
+    },
     method: "POST"
   });
   const payload = await response.json().catch(() => null) as { id?: string; error?: string } | null;

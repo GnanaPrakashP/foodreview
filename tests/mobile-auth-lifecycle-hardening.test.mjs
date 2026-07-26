@@ -179,11 +179,13 @@ test("legacy recovery sessions are rejected before protected state mounts", () =
   assert.doesNotMatch(auth, /resetPasswordForEmail|updateRecoveredPassword|completePasswordRecovery/);
 });
 
-test("native token refresh is foreground-owned and expiry hides the app before validation", () => {
+test("native token refresh is foreground-owned and transient failure retains the owner replica", () => {
   const boundary = source("mobile/src/providers/AccountSessionBoundary.tsx");
-  assert.match(boundary, /setHost\(null\);\s*useSessionStore\.getState\(\)\.beginTransition\(\);\s*const refreshed/);
   assert.match(boundary, /supabase\.auth\.refreshSession\(\)/);
-  assert.match(boundary, /getAccountLifecycleStatus\(refreshed\.access_token\)/);
+  assert.match(boundary, /getAccountLifecycleStatus\(refresh\.session\.access_token\)/);
+  assert.match(boundary, /authoritativeFailure/);
+  assert.match(boundary, /replica_retained: true/);
+  assert.match(boundary, /recoverExpiredSession\(ownerHost, "timer"\)/);
   assert.match(boundary, /supabase\.auth\.startAutoRefresh\(\)/);
   assert.match(boundary, /supabase\.auth\.stopAutoRefresh\(\)/);
   assert.match(boundary, /AUTH_BOOTSTRAP_TIMEOUT_MS/);
@@ -198,5 +200,5 @@ test("explicit logout removes the device push association before local identity 
   const settings = source("mobile/src/services/settings.ts");
   assert.match(settings, /removePushTokensForUser\(viewer\.username\)[\s\S]*fetch\(apiUrl\("\/api\/delete-account"\)/);
   const boundary = source("mobile/src/providers/AccountSessionBoundary.tsx");
-  assert.match(boundary, /if \(!session\) \{\s*setHost\(null\);\s*useSessionStore\.getState\(\)\.beginTransition\(\)/);
+  assert.match(boundary, /if \(!session\) \{[\s\S]*getActiveCacheOwner\(\)\?\.userId === current\.ownerUserId[\s\S]*recoverExpiredSession\(current, "timer"\)/);
 });

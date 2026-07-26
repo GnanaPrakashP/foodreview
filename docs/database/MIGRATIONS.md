@@ -164,3 +164,67 @@ Canonical migration `202606180006_shared_memory_phase3_scalability.sql` introduc
 Monitor the Upload intent create rate and error rate, Finalize success/error rate and latency, pending/expired intent counts, cleanup throughput, cleanup storage deletion failures, notification outcomes, and blocked membership attempts. Alert on sustained error rates, growing pending/expired queues, repeated cleanup failures, and unexpected authorization denials.
 
 Memory telemetry is metadata-only. Never add room IDs, user IDs, usernames, message text, captions, signed URLs, Storage paths, tokens, or credentials to logs, metrics, alerts, or traces.
+
+### Local-first Table Memory sync verification
+
+Migration `202607250001_shared_memory_local_first_sync.sql` adds the service-only
+chat change ledger, the member-scoped bounded delta RPC, a bootstrap cursor, and
+Realtime publication for stops. Deploy in this order:
+
+1. Export and review hosted drift, confirm backup/PITR, then apply the migration
+   to disposable staging with the repository-pinned Supabase CLI.
+2. Deploy the web/API routes, including the idempotent message endpoint.
+3. Release the mobile client only after both staging contracts pass.
+
+Use two real members, one non-member, and one blocked relationship in staging.
+Verify all of the following before production:
+
+- `shared_memory_chat_changes` has RLS enabled and no grants for `anon` or
+  `authenticated`; its columns contain identifiers and operation metadata only.
+- `shared_memory_room_sync_v1` has `prosecdef = true`, a `public`-only
+  `search_path`, and execute permission only for `authenticated` and
+  `service_role`.
+- A member cold bootstrap returns `syncCursor`; after inserting, editing, and
+  deleting a message/photo, successive delta calls return only the affected
+  rows/tombstones, advance the cursor, and never exceed the requested bound.
+- A non-member and a user in a blocked room relationship cannot read the
+  bootstrap or delta. Private photo payloads contain no `storage_path`; the API
+  returns only short-lived signed URLs for authorized photo IDs.
+- `shared_memory_stops` is present in `supabase_realtime`, and a stop mutation
+  reaches another subscribed member.
+- Repeating `POST /api/mobile/memories/{roomId}/messages` with the same
+  `Idempotency-Key` and body returns the same message; reusing that key with a
+  different body fails and creates no second row.
+- Offline/relaunch testing shows cached messages immediately, retains a failed
+  outbox row, retries it with the same key, and reconciles it to one server row.
+
+The migration and `0009_shared_memory_local_first_sync.sql` pgTAP contract were
+executed successfully against the local Supabase PostgreSQL container inside a
+rollback-only transaction. Hosted staging, real multi-device Realtime, and
+release-app checks remain required deployment evidence. Rollback is
+roll-forward: keep RLS and private media controls intact, stop the mobile
+rollout, and correct the RPC/trigger in a new migration.
+
+### Shared Table Memory media pipeline
+
+Apply these migrations in order:
+
+1. `202607260001_shared_memory_media_pipeline.sql` moves Table Memory
+   photo/video attachment onto the shared private media asset pipeline.
+2. `202607260002_shared_media_pipeline_hardening.sql` enforces full-frame Table
+   Memory media, persists Dining Experience video audio policy, lets leased
+   workers moderate pending assets, adds owner-scoped batch cancellation, and
+   makes Dining Experience review/media attachment atomic.
+
+Deploy the migrations before the matching API, worker, and mobile release.
+The worker must remain stopped if either migration is missing. Before enabling
+it, configure the moderation provider and the API security HMAC secret and make
+sure the internal media health endpoint reports ready.
+
+Table Memory's contract is intentionally different from the feed composer:
+room photos and videos are never cropped. Dining Experience may continue using
+its 4:5 feed crop, and avatars may continue using a square crop.
+
+Rollback is roll-forward. Do not remove the private buckets, weaken the
+service-role guards, make Table Memory derivatives public, or restore
+`memoryStorage`.

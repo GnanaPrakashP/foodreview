@@ -1,5 +1,5 @@
 import { type PropsWithChildren } from "react";
-import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from "react-native";
 import Animated, { type AnimatedStyle } from "react-native-reanimated";
 import { MemoryRouteHeader } from "@/components/memories/MemoryRouteHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
@@ -15,6 +15,9 @@ type ProfileSubScreenProps = PropsWithChildren<{
   contentStyle?: ViewStyle | ViewStyle[];
   headerContentGap?: number;
   onBack: () => void;
+  // Render over a still parent screen instead of filling a route of its own.
+  overlay?: boolean;
+  pointerEvents?: ViewProps["pointerEvents"];
   scroll?: boolean;
   slideStyle?: AnimatedStyle<ViewStyle>;
   subtitle?: string;
@@ -33,6 +36,8 @@ export function ProfileSubScreen({
   contentStyle,
   headerContentGap = screenLayout.headerContentGap,
   onBack,
+  overlay = false,
+  pointerEvents,
   scroll = true,
   slideStyle,
   subtitle,
@@ -48,7 +53,11 @@ export function ProfileSubScreen({
   else if (contentStyle) screenStyle.push(contentStyle);
 
   return (
-    <Animated.View accessibilityViewIsModal style={[styles.slide, { backgroundColor: themeColors.bg }, slideStyle]}>
+    <Animated.View
+      accessibilityViewIsModal
+      pointerEvents={pointerEvents}
+      style={[overlay ? styles.slideOverlay : styles.slide, { backgroundColor: themeColors.bg }, slideStyle]}
+    >
       <Screen
         backgroundColor={themeColors.bg}
         padded={false}
@@ -79,6 +88,10 @@ export function ProfileSubScreen({
 const styles = StyleSheet.create({
   slide: {
     flex: 1
+  },
+  slideOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20
   },
   screenContent: {},
   headerWrap: {

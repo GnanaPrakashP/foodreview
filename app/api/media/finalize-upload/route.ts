@@ -6,10 +6,17 @@ import {
 } from "@/lib/server/media-pipeline";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson } from "@/lib/server/api-security";
+import {
+  boundedJsonError,
+  enforceRateLimit,
+  mobileApiJson,
+  mobileOptions,
+  rateLimitResponse,
+  readBoundedJson
+} from "@/lib/server/api-security";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const METHODS = ["POST"];
 

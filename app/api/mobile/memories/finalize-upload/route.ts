@@ -134,11 +134,21 @@ async function finalizedPhotoResponse(
   const { data: signed } = await admin.storage
     .from(MEMORY_MEDIA_BUCKET)
     .createSignedUrl(intent.storage_path, MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS);
+  const safePhoto: Partial<MemoryPhotoFinalizeRow> = { ...photo };
+  delete safePhoto.public_url;
+  delete safePhoto.storage_path;
+  const signedUrlExpiresAt = signed?.signedUrl
+    ? new Date(Date.now() + MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000).toISOString()
+    : null;
 
   return mobileJson(req, {
     ...mediaLimitResponse(intent.media_type),
     moderationStatus: photo.moderation_status ?? "pending",
-    photo: signed?.signedUrl ? { ...photo, public_url: signed.signedUrl } : photo
+    photo: {
+      ...safePhoto,
+      public_url: signed?.signedUrl ?? null,
+      signed_url_expires_at: signedUrlExpiresAt
+    }
   });
 }
 

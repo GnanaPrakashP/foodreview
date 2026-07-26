@@ -1,10 +1,10 @@
 import { apiBaseUrl, apiUrl } from "@/api/config";
-import { authorizedApiHeaders, authorizedJson } from "@/api/client";
+import { authorizedApiHeaders, authorizedJson, MobileApiError } from "@/api/client";
 import { createRequestId, getInstallId } from "@/services/installIdentity";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
-import { mapMemoryMessages, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
+import { mapMemoryMessages, mapMemoryPhoto, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   memoryTablesError,
   normalizeUsername,
@@ -25,24 +25,35 @@ import {
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
 import {
-  createSignedMemoryMediaUrls,
-  finalizeMemoryMediaUpload,
-  isPrivateMemoryMediaPath,
-  removeMemoryMediaFiles,
-  uploadMemoryPhoto
-} from "@/services/memoryStorage";
+  createSignedLegacyMemoryMediaUrls,
+  finalizeLegacyMemoryAudio,
+  isLegacyPrivateMemoryMediaPath,
+  uploadMemoryAudio
+} from "@/services/memoryLegacyMedia";
 import {
+  completeRecoveredMediaUploads,
+  uploadMemoryMediaAsset
+} from "@/services/mediaPipeline";
+import {
+  applyOfflineMemoryChatDelta,
+  commitOfflineMemoryOutboxMessage,
+  deleteOfflineMemoryRoom,
+  isOfflineMemoryPersistenceError,
   readOfflineMemoryMediaPage,
   readOfflineMemoryMessagesPage,
   readOfflineMemoryRoom,
+  readOfflineMemoryRoomSyncCursor,
   readOfflineMemorySummaries,
   saveOfflineMemoryMediaPage,
   saveOfflineMemoryMessagePage,
+  saveOfflineMemoryPhoto,
   saveOfflineMemoryRoom,
   saveOfflineMemorySummaries
 } from "@/services/memoryOfflineStore";
 import { assertValidMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { getCurrentUserProfile } from "@/services/profiles";
+import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
+import { runCursorSync } from "@/services/memorySyncRunner";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
 
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
@@ -50,14 +61,37 @@ export const MEMORY_CHAT_PAGE_SIZE = 50;
 export const MEMORY_MEDIA_PAGE_SIZE = 30;
 export const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 12;
 const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
+const MEMORY_SYNC_PAGE_LIMIT = 200;
+const MEMORY_SYNC_YIELD_EVERY_PAGES = 8;
+const MEMORY_SYNC_MAX_PAGES_PER_CHUNK = 500;
+const memoryRoomSyncFlights = new Map<string, Promise<MemoryRoomSyncResult>>();
+const memoryMediaRenewFlights = new Map<string, Promise<MemoryPhoto>>();
+const memoryRoomOverviewVersions = new Map<string, number>();
+const MEMORY_MEDIA_RENEW_SAFETY_MS = 30_000;
+
+type MemoryRoomSyncResult = {
+  replaceChat: boolean;
+  room: MemoryRoom;
+  syncCursor: string | null;
+};
 
 const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, room_id, author_name, body, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_LEGACY = "id, room_id, author_name, body, created_at";
-const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
+const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_asset_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
 const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
+const MEMORY_STOP_SELECT = "id, room_id, stop_type, name, note, position, created_by, created_at";
+
+function memoryRoomOverviewVersion(roomId: string) {
+  return memoryRoomOverviewVersions.get(`${getActiveCacheGeneration()}:${roomId}`) ?? 0;
+}
+
+function bumpMemoryRoomOverviewVersion(roomId: string) {
+  const key = `${getActiveCacheGeneration()}:${roomId}`;
+  memoryRoomOverviewVersions.set(key, (memoryRoomOverviewVersions.get(key) ?? 0) + 1);
+}
 
 function assertMemoryTextLength(value: string) {
   if (value.length > MEMORY_TEXT_MAX_LENGTH) {
@@ -176,6 +210,7 @@ export type SetMemoryDishRatingInput = {
 };
 
 type MemoryActivityNotificationInput = {
+  idempotencyKey?: string;
   kind: "message" | "media" | "dish";
   preview?: string;
   roomId: string;
@@ -232,6 +267,26 @@ type MemoryChatPageRpcPayload = {
   photos?: MemoryPhotoRow[];
   profiles?: MemoryChatPageProfileRow[];
   replyMessages?: MemoryMessageRow[];
+};
+
+type MemoryRoomSyncPayload = {
+  changes?: {
+    deletedMessageIds?: string[];
+    deletedPhotoIds?: string[];
+    messages?: MemoryMessageRow[];
+    photos?: MemoryPhotoRow[];
+    replyMessages?: MemoryMessageRow[];
+  };
+  dishRatings?: MemoryDishRatingRow[];
+  dishes?: MemoryDishRow[];
+  hasMore?: boolean;
+  members?: MemoryMemberRow[];
+  profiles?: MemoryChatPageProfileRow[];
+  read?: MemoryReadRow | null;
+  room?: MemoryRoomRow;
+  stops?: MemoryStopRow[];
+  syncCursor?: string;
+  viewerName?: string;
 };
 
 type MemoryMessageRowsPage = {
@@ -360,14 +415,14 @@ function assertLoadedMemoryRoomMember(members: MemoryMemberRow[], username: stri
 async function signMemoryPhotoRows(rows: MemoryPhotoRow[]) {
   const privatePaths = rows
     .map((row) => row.storage_path)
-    .filter(isPrivateMemoryMediaPath);
+    .filter((path): path is string => Boolean(path) && isLegacyPrivateMemoryMediaPath(path));
 
   if (privatePaths.length === 0) return rows;
 
-  const urls = await createSignedMemoryMediaUrls(privatePaths);
+  const urls = await createSignedLegacyMemoryMediaUrls(privatePaths);
   const signedUrlExpiresAt = new Date(Date.now() + MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000).toISOString();
   return rows.map((row) => {
-    const signedUrl = urls.get(row.storage_path);
+    const signedUrl = row.storage_path ? urls.get(row.storage_path) : null;
     return signedUrl ? { ...row, public_url: signedUrl, signed_url_expires_at: signedUrlExpiresAt } : row;
   });
 }
@@ -387,7 +442,7 @@ async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) 
     headers: {
       "Authorization": `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": createRequestId(),
+      "Idempotency-Key": input.idempotencyKey ?? createRequestId(),
       "X-FoodReview-Install-Id": await getInstallId()
     },
     method: "POST"
@@ -429,7 +484,7 @@ function isMissingMemoryPhotoDimensionColumn(error: { message?: string; code?: s
 function isMissingMemoryPhotoPhase2Column(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "PGRST204" ||
-    /uploader_id|upload_intent_id|moderation_status|moderation_reason|file_size_bytes|mime_type|duration_ms|schema cache|could not find .*column/i.test(message);
+    /uploader_id|upload_intent_id|media_asset_id|moderation_status|moderation_reason|file_size_bytes|mime_type|duration_ms|schema cache|could not find .*column/i.test(message);
 }
 
 function withMemoryPhotoPhase2Defaults<T extends Partial<MemoryPhotoRow>>(photo: T): MemoryPhotoRow {
@@ -439,6 +494,7 @@ function withMemoryPhotoPhase2Defaults<T extends Partial<MemoryPhotoRow>>(photo:
     image_height: null,
     image_width: null,
     media_type: "image",
+    media_asset_id: null,
     message_id: null,
     mime_type: null,
     moderation_reason: null,
@@ -914,6 +970,7 @@ async function fetchRoomParts(roomId: string) {
     read?: MemoryReadRow | null;
     room?: MemoryRoomRow;
     stops?: MemoryStopRow[];
+    syncCursor?: string;
     viewerName?: string;
   }>(
     `/api/mobile/memories/read?action=detail&roomId=${encodeURIComponent(roomId)}&limit=${MEMORY_CHAT_PRELOAD_LIMIT}`,
@@ -936,12 +993,14 @@ async function fetchRoomParts(roomId: string) {
       ...rpcArray(payload.profiles),
       ...rpcArray(chat.profiles)
     ]),
+    syncCursor: typeof payload.syncCursor === "string" && /^\d+$/.test(payload.syncCursor)
+      ? payload.syncCursor
+      : null,
     viewerName: payload.viewerName ?? ""
   };
 }
 
-export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
-  const parts = await fetchRoomParts(roomId);
+function memoryRoomFromParts(parts: Awaited<ReturnType<typeof fetchRoomParts>>) {
   assertLoadedMemoryRoomMember(parts.members, parts.viewerName);
 
   return mapMemoryRoom({
@@ -957,6 +1016,443 @@ export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
     viewerName: parts.viewerName,
     room: parts.room
   });
+}
+
+async function getMemoryRoomBootstrap(roomId: string) {
+  const parts = await fetchRoomParts(roomId);
+  return { replaceChat: true, room: memoryRoomFromParts(parts), syncCursor: parts.syncCursor };
+}
+
+export async function getMemoryRoom(roomId: string): Promise<MemoryRoom> {
+  return (await getMemoryRoomBootstrap(roomId)).room;
+}
+
+function memoryPhotoNeedsRenewal(photo: MemoryPhoto, now = Date.now()) {
+  if (!photo.publicUrl) return true;
+  if (!photo.signedUrlExpiresAt) return false;
+  const expiresAt = new Date(photo.signedUrlExpiresAt).getTime();
+  return !Number.isFinite(expiresAt) || expiresAt <= now + MEMORY_MEDIA_RENEW_SAFETY_MS;
+}
+
+function mergeRenewedMemoryPhoto(current: MemoryPhoto, renewed: MemoryPhoto): MemoryPhoto {
+  return {
+    ...current,
+    ...renewed,
+    storagePath: current.storagePath ?? renewed.storagePath ?? null,
+    uploaderDisplayName: current.uploaderDisplayName || renewed.uploaderDisplayName
+  };
+}
+
+export async function renewMemoryPhoto(roomId: string, mediaId: string) {
+  const ownerGeneration = getActiveCacheGeneration();
+  const key = `${ownerGeneration}:${roomId}:${mediaId}`;
+  const existing = memoryMediaRenewFlights.get(key);
+  if (existing) return existing;
+  const flight = (async () => {
+    const payload = await authorizedJson<{ photo?: MemoryPhotoRow | null }>(
+      `/api/mobile/memories/read?action=renewMedia&roomId=${encodeURIComponent(roomId)}&mediaId=${encodeURIComponent(mediaId)}`,
+      { method: "GET" },
+      { action: "renewing memory media", timeoutMs: 12_000 }
+    );
+    if (!payload.photo) throw new Error("memory_media_not_found");
+    const renewed = mapMemoryPhoto(payload.photo, {});
+    if (!renewed.publicUrl || !renewed.signedUrlExpiresAt) {
+      throw new Error("memory_media_renewal_incomplete");
+    }
+    if (!isCacheGenerationActive(ownerGeneration)) throw new Error("memory_media_renewal_cancelled");
+    await saveOfflineMemoryPhoto(roomId, renewed);
+    return renewed;
+  })().finally(() => {
+    if (memoryMediaRenewFlights.get(key) === flight) memoryMediaRenewFlights.delete(key);
+  });
+  memoryMediaRenewFlights.set(key, flight);
+  return flight;
+}
+
+async function renewMemoryPhotos(photos: MemoryPhoto[]) {
+  const byId = new Map<string, MemoryPhoto>();
+  for (const photo of photos) {
+    if (memoryPhotoNeedsRenewal(photo)) byId.set(photo.id, photo);
+  }
+  const renewedById = new Map<string, MemoryPhoto>();
+  const candidates = Array.from(byId.values());
+  for (let offset = 0; offset < candidates.length; offset += 4) {
+    await Promise.all(candidates.slice(offset, offset + 4).map(async (photo) => {
+      try {
+        const renewed = await renewMemoryPhoto(photo.roomId, photo.id);
+        renewedById.set(photo.id, mergeRenewedMemoryPhoto(photo, renewed));
+      } catch {
+        // The stable metadata remains usable offline. API/storage telemetry
+        // records renewal failures without exposing its URL or private path.
+      }
+    }));
+  }
+  return renewedById;
+}
+
+async function refreshVisibleMemoryRoomMedia(room: MemoryRoom) {
+  const visiblePhotos = [
+    ...room.photos.slice(-MEMORY_MEDIA_PAGE_SIZE),
+    ...room.messages.slice(-MEMORY_CHAT_PRELOAD_LIMIT).flatMap((message) => message.attachments)
+  ];
+  const renewedById = await renewMemoryPhotos(visiblePhotos);
+  if (renewedById.size === 0) return room;
+  return {
+    ...room,
+    messages: room.messages.map((message) => ({
+      ...message,
+      attachments: message.attachments.map((photo) => renewedById.get(photo.id) ?? photo)
+    })),
+    photos: room.photos.map((photo) => renewedById.get(photo.id) ?? photo)
+  };
+}
+
+async function refreshMemoryMessagePageMedia(page: MemoryMessagesPage) {
+  const renewedById = await renewMemoryPhotos(page.messages.flatMap((message) => message.attachments));
+  if (renewedById.size === 0) return page;
+  return {
+    ...page,
+    messages: page.messages.map((message) => ({
+      ...message,
+      attachments: message.attachments.map((photo) => renewedById.get(photo.id) ?? photo)
+    }))
+  };
+}
+
+async function refreshMemoryMediaPageUrls(page: MemoryMediaPage) {
+  const renewedById = await renewMemoryPhotos(page.photos);
+  if (renewedById.size === 0) return page;
+  return {
+    ...page,
+    photos: page.photos.map((photo) => renewedById.get(photo.id) ?? photo)
+  };
+}
+
+async function fetchMemoryRoomDelta(roomId: string, cursor: string) {
+  return authorizedJson<MemoryRoomSyncPayload>(
+    `/api/mobile/memories/read?action=sync&roomId=${encodeURIComponent(roomId)}&changeCursor=${encodeURIComponent(cursor)}&limit=${MEMORY_SYNC_PAGE_LIMIT}`,
+    { method: "GET" },
+    { action: "refreshing memory", timeoutMs: 12_000 }
+  );
+}
+
+function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayload) {
+  if (!payload.room) throw memoryRoomNotFoundError();
+  const members = rpcArray(payload.members);
+  const viewerName = payload.viewerName ?? "";
+  assertLoadedMemoryRoomMember(members, viewerName);
+  const namesByUsername = displayNameMapFromProfiles(rpcArray(payload.profiles));
+  const overview = mapMemoryRoom({
+    dishes: rpcArray(payload.dishes),
+    dishRatings: rpcArray(payload.dishRatings),
+    lastReadAt: payload.read?.last_read_at ?? null,
+    members,
+    messages: [],
+    namesByUsername,
+    photos: [],
+    stops: rpcArray(payload.stops),
+    viewerName,
+    room: payload.room
+  });
+  const changes = payload.changes ?? {};
+  const deletedMessageIds = new Set(rpcArray(changes.deletedMessageIds));
+  const deletedPhotoIds = new Set(rpcArray(changes.deletedPhotoIds));
+  const changedPhotos = mapMemoryPhotos({
+    namesByUsername,
+    photos: rpcArray(changes.photos)
+  });
+  const changedMessages = mapMemoryMessages({
+    messages: rpcArray(changes.messages),
+    namesByUsername,
+    photos: changedPhotos,
+    replyMessages: rpcArray(changes.replyMessages)
+  });
+
+  const messagesById = new Map(
+    current.messages
+      .filter((message) => !deletedMessageIds.has(message.id))
+      .map((message) => [message.id, message])
+  );
+  for (const message of changedMessages) {
+    const previous = messagesById.get(message.id);
+    messagesById.set(message.id, {
+      ...message,
+      attachments: previous?.attachments.length ? previous.attachments : message.attachments,
+      deliveryStatus: "sent"
+    });
+  }
+
+  const photosById = new Map(
+    current.photos
+      .filter((photo) => !deletedPhotoIds.has(photo.id))
+      .filter((photo) => !photo.messageId || !deletedMessageIds.has(photo.messageId))
+      .map((photo) => [photo.id, photo])
+  );
+  for (const photo of changedPhotos) photosById.set(photo.id, photo);
+
+  const allMessages = Array.from(messagesById.values());
+  const sentMessages = allMessages
+    .filter((message) => message.deliveryStatus !== "pending" && message.deliveryStatus !== "failed")
+    .sort((first, second) => new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime());
+  const localOutboxMessages = allMessages.filter(
+    (message) => message.deliveryStatus === "pending" || message.deliveryStatus === "failed"
+  );
+  const visibleMessages = [...sentMessages, ...localOutboxMessages].sort(
+    (first, second) => new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime()
+  );
+  const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
+  const visiblePhotos = Array.from(photosById.values())
+    .filter((photo) => !photo.messageId || visibleMessageIds.has(photo.messageId))
+    .sort((first, second) => (
+      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+      first.position - second.position ||
+      first.id.localeCompare(second.id)
+    ));
+  const photosByMessageId = visiblePhotos.reduce<Record<string, MemoryPhoto[]>>((groups, photo) => {
+    if (!photo.messageId) return groups;
+    groups[photo.messageId] = [...(groups[photo.messageId] ?? []), photo];
+    return groups;
+  }, {});
+  const changedMessageById = new Map(changedMessages.map((message) => [message.id, message]));
+
+  return {
+    changedMessages,
+    changedPhotos,
+    deletedMessageIds: Array.from(deletedMessageIds),
+    deletedPhotoIds: Array.from(deletedPhotoIds),
+    room: {
+      ...overview,
+      messages: visibleMessages.map((message) => {
+        const changedReplyTarget = message.replyToMessageId
+          ? changedMessageById.get(message.replyToMessageId)
+          : null;
+        return {
+          ...message,
+          attachments: photosByMessageId[message.id] ?? [],
+          ...(message.replyToMessageId && deletedMessageIds.has(message.replyToMessageId)
+            ? { replyToMessage: null, replyToMessageId: null }
+            : changedReplyTarget
+              ? {
+                replyToMessage: {
+                  authorDisplayName: changedReplyTarget.authorDisplayName,
+                  body: changedReplyTarget.body || "Media",
+                  id: changedReplyTarget.id
+                }
+              }
+              : {})
+        };
+      }),
+      photos: visiblePhotos
+    }
+  };
+}
+
+async function syncCachedMemoryRoom(
+  roomId: string,
+  cached: MemoryRoom,
+  initialCursor: string,
+  ownerGeneration: number
+): Promise<MemoryRoomSyncResult> {
+  type SyncState = {
+    merged: ReturnType<typeof mergeMemoryRoomDelta> | null;
+    room: MemoryRoom;
+  };
+  let state: SyncState = { merged: null, room: cached };
+  let cursor = initialCursor;
+
+  while (isCacheGenerationActive(ownerGeneration)) {
+    const result = await runCursorSync<SyncState, MemoryRoomSyncPayload>({
+      fetchPage: (pageCursor) => fetchMemoryRoomDelta(roomId, pageCursor),
+      initialCursor: cursor,
+      initialState: state,
+      isActive: () => isCacheGenerationActive(ownerGeneration),
+      maxPages: MEMORY_SYNC_MAX_PAGES_PER_CHUNK,
+      mergePage: (current, payload) => {
+        const merged = mergeMemoryRoomDelta(current.room, payload);
+        return { merged, room: merged.room };
+      },
+      persistPage: async (_payload, nextState, nextCursor) => {
+        if (!nextState.merged) throw new Error("memory_sync_merge_missing");
+        // The page's rows/tombstones and its cursor commit together. A failed
+        // SQLite transaction leaves the previous cursor intact, so retry cannot
+        // skip an unapplied server change.
+        await applyOfflineMemoryChatDelta(roomId, {
+          deletedMessageIds: nextState.merged.deletedMessageIds,
+          deletedPhotoIds: nextState.merged.deletedPhotoIds,
+          messages: nextState.merged.changedMessages,
+          photos: nextState.merged.changedPhotos,
+          syncCursor: nextCursor
+        });
+      },
+      yieldEveryPages: MEMORY_SYNC_YIELD_EVERY_PAGES
+    });
+    state = result.state;
+    cursor = result.syncCursor;
+    if (!result.hasMore) {
+      return { replaceChat: false, room: state.room, syncCursor: cursor };
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  throw new Error("memory_sync_cancelled");
+}
+
+async function syncCachedMemoryRoomSingleFlight(
+  roomId: string,
+  cached: MemoryRoom,
+  initialCursor: string,
+  ownerGeneration: number
+) {
+  const key = `${ownerGeneration}:${roomId}`;
+  const existing = memoryRoomSyncFlights.get(key);
+  if (existing) return existing;
+  const flight = syncCachedMemoryRoom(roomId, cached, initialCursor, ownerGeneration)
+    .finally(() => {
+      if (memoryRoomSyncFlights.get(key) === flight) memoryRoomSyncFlights.delete(key);
+    });
+  memoryRoomSyncFlights.set(key, flight);
+  return flight;
+}
+
+function mergeCachedMemoryChat(room: MemoryRoom, cached: MemoryRoom) {
+  const messagesById = new Map(cached.messages.map((message) => [message.id, message]));
+  for (const message of room.messages) {
+    const previous = messagesById.get(message.id);
+    messagesById.set(message.id, {
+      ...message,
+      attachments: message.attachments.length ? message.attachments : previous?.attachments ?? []
+    });
+  }
+
+  const photosById = new Map(cached.photos.map((photo) => [photo.id, photo]));
+  for (const photo of room.photos) photosById.set(photo.id, photo);
+
+  return {
+    ...room,
+    messages: Array.from(messagesById.values()).sort((first, second) => (
+      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+      first.id.localeCompare(second.id)
+    )),
+    photos: Array.from(photosById.values()).sort((first, second) => (
+      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+      first.position - second.position ||
+      first.id.localeCompare(second.id)
+    ))
+  };
+}
+
+async function restoreAuthoritativeMemoryStops(
+  room: MemoryRoom,
+  cached: MemoryRoom | null,
+  force = false
+) {
+  if (!force && room.stops.length > 0) return room;
+
+  const { data, error } = await supabase
+    .from("shared_memory_stops")
+    .select(MEMORY_STOP_SELECT)
+    .eq("room_id", room.id)
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true })
+    .returns<MemoryStopRow[]>();
+
+  if (error) {
+    // A transient secondary read must never turn a known populated timeline
+    // into the empty state. The next room sync retries server convergence.
+    return cached?.stops.length
+      ? { ...room, stops: cached.stops }
+      : room;
+  }
+
+  const namesByUsername = Object.fromEntries(
+    room.participants.map((participant) => [participant.username, participant.displayName])
+  );
+  return {
+    ...room,
+    stops: (data ?? [])
+      .map((stop) => mapMemoryStop(stop, namesByUsername))
+      .sort((first, second) => (
+        first.position - second.position ||
+        new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+        first.id.localeCompare(second.id)
+      ))
+  };
+}
+
+function mergeLocalOutboxMessages(room: MemoryRoom, cached: MemoryRoom | null) {
+  if (!cached) return room;
+  const localMessages = cached.messages.filter(
+    (message) => message.deliveryStatus === "pending" || message.deliveryStatus === "failed"
+  );
+  if (localMessages.length === 0) return room;
+  const messages = [...room.messages];
+  for (const localMessage of localMessages) {
+    if (!messages.some((message) => message.id === localMessage.id)) messages.push(localMessage);
+  }
+  messages.sort((first, second) => (
+    new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+    first.id.localeCompare(second.id)
+  ));
+  return { ...room, messages };
+}
+
+async function recoverPendingMemoryMessages(
+  roomId: string,
+  current: MemoryRoom,
+  ownerGeneration: number
+) {
+  let room = current;
+  const prefix = `optimistic-message:${roomId}:`;
+  const pendingMessages = room.messages
+    .filter((message) => message.deliveryStatus === "pending" && message.id.startsWith(prefix))
+    .slice(0, 10);
+
+  for (const pendingMessage of pendingMessages) {
+    if (!isCacheGenerationActive(ownerGeneration)) break;
+    const clientId = pendingMessage.id.slice(prefix.length);
+    try {
+      const result = await addMemoryMessage(
+        roomId,
+        pendingMessage.body,
+        pendingMessage.replyToMessageId,
+        clientId
+      );
+      const sentMessage: MemoryMessage = {
+        ...pendingMessage,
+        authorName: result.author_name,
+        body: result.body,
+        createdAt: result.created_at,
+        deliveryStatus: "sent",
+        editedAt: result.edited_at ?? null,
+        id: result.id,
+        replyToMessageId: result.reply_to_message_id ?? null,
+        roomId: result.room_id
+      };
+      let inserted = false;
+      const messages = room.messages.flatMap((message) => {
+        if (message.id !== pendingMessage.id && message.id !== sentMessage.id) return [message];
+        if (inserted) return [];
+        inserted = true;
+        return [{ ...sentMessage, attachments: message.attachments }];
+      });
+      if (!inserted) messages.push(sentMessage);
+      room = {
+        ...room,
+        messages: messages.sort((first, second) => (
+          new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+          first.id.localeCompare(second.id)
+        ))
+      };
+      if (isCacheGenerationActive(ownerGeneration)) {
+        await commitOfflineMemoryOutboxMessage(pendingMessage.id, sentMessage);
+      }
+    } catch {
+      // Keep the durable pending row. A later reconnect/refetch retries the same
+      // idempotency key, so an ambiguous response cannot create a duplicate.
+    }
+  }
+
+  return room;
 }
 
 export async function getMemoryMessagesPage(
@@ -1017,9 +1513,10 @@ export async function getMemoryMediaPage(
 export async function listMemoryRoomsOfflineFirst(): Promise<MemoryRoomSummary[]> {
   try {
     const summaries = await listMemoryRooms();
-    void saveOfflineMemorySummaries(summaries);
+    await saveOfflineMemorySummaries(summaries);
     return summaries;
   } catch (error) {
+    if (isOfflineMemoryPersistenceError(error)) throw error;
     const cached = await readOfflineMemorySummaries();
     if (cached) return cached;
     throw error;
@@ -1029,59 +1526,157 @@ export async function listMemoryRoomsOfflineFirst(): Promise<MemoryRoomSummary[]
 export async function listMemoryRoomsPageOfflineFirst(cursor?: string | null): Promise<MemoryRoomsPage> {
   try {
     const page = await listMemoryRoomsPage(cursor);
-    if (!cursor) void saveOfflineMemorySummaries(page.rooms);
+    await saveOfflineMemorySummaries(page.rooms);
     return page;
   } catch (error) {
+    if (isOfflineMemoryPersistenceError(error)) throw error;
     if (cursor) throw error;
     const cached = await readOfflineMemorySummaries();
     if (cached) {
       return {
         nextCursor: null,
-        rooms: cached.slice(0, MEMORY_ROOM_SUMMARY_PAGE_SIZE)
+        // Every summary is lightweight and already durable. Returning the full
+        // local set keeps every joined room discoverable while offline.
+        rooms: cached
       };
     }
     throw error;
   }
 }
 
-export async function getMemoryRoomOfflineFirst(roomId: string): Promise<MemoryRoom> {
+async function resolveMemoryRoomOfflineFirst(
+  roomId: string,
+  options: { recoverOutbox: boolean }
+): Promise<MemoryRoom> {
+  const ownerGeneration = getActiveCacheGeneration();
+  const overviewVersionAtStart = memoryRoomOverviewVersion(roomId);
+  const [cached, cachedCursor] = await Promise.all([
+    readOfflineMemoryRoom(roomId),
+    readOfflineMemoryRoomSyncCursor(roomId)
+  ]);
   try {
-    const room = await getMemoryRoom(roomId);
-    void saveOfflineMemoryRoom(room);
-    return room;
+    let result = cached && cachedCursor
+      ? await syncCachedMemoryRoomSingleFlight(roomId, cached, cachedCursor, ownerGeneration)
+      : await getMemoryRoomBootstrap(roomId);
+    if (cached && !cachedCursor) {
+      result = {
+        ...result,
+        // Older caches may not have a sync cursor yet. Merge the fresh head
+        // into their history; the bootstrap is not an authoritative full list.
+        replaceChat: false,
+        room: mergeCachedMemoryChat(result.room, cached)
+      };
+    }
+    const roomWithStops = await restoreAuthoritativeMemoryStops(result.room, cached);
+    const roomWithOutbox = mergeLocalOutboxMessages(roomWithStops, cached);
+    const recoveredRoom = options.recoverOutbox
+      ? await recoverPendingMemoryMessages(roomId, roomWithOutbox, ownerGeneration)
+      : roomWithOutbox;
+    let roomWithFreshMedia = await refreshVisibleMemoryRoomMedia(recoveredRoom);
+    if (isCacheGenerationActive(ownerGeneration)) {
+      // A stop mutation can finish while an older room refresh is in flight.
+      // Re-read the authoritative stop list whenever that happens so the stale
+      // response cannot erase a just-created place from SQLite or React Query.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const targetOverviewVersion = memoryRoomOverviewVersion(roomId);
+        if (targetOverviewVersion !== overviewVersionAtStart || attempt > 0) {
+          roomWithFreshMedia = await restoreAuthoritativeMemoryStops(
+            { ...roomWithFreshMedia, stops: [] },
+            cached,
+            true
+          );
+        }
+
+        // Resolve only after the durable SQLite replica contains the same
+        // room snapshot. Join/create navigation can then safely open from local
+        // data without racing this write.
+        await saveOfflineMemoryRoom(roomWithFreshMedia, result.syncCursor, { replaceChat: result.replaceChat });
+        if (memoryRoomOverviewVersion(roomId) === targetOverviewVersion) break;
+      }
+    }
+    return roomWithFreshMedia;
   } catch (error) {
-    const cached = await readOfflineMemoryRoom(roomId);
+    if (isAuthoritativeMemoryAccessError(error)) {
+      await deleteOfflineMemoryRoom(roomId);
+      throw error;
+    }
+    if (isOfflineMemoryPersistenceError(error)) throw error;
     if (cached) return cached;
     throw error;
   }
+}
+
+export function isAuthoritativeMemoryAccessError(error: unknown) {
+  return error instanceof MobileApiError && (error.status === 403 || error.status === 404);
+}
+
+export async function getMemoryRoomOfflineFirst(roomId: string): Promise<MemoryRoom> {
+  return resolveMemoryRoomOfflineFirst(roomId, { recoverOutbox: true });
+}
+
+// Profile room warming is read-only: it refreshes the owner-scoped snapshot and
+// chat/media metadata without replaying durable message outbox entries. Sending
+// remains tied to opening the room or an explicit send.
+export async function warmMemoryRoomOfflineFirst(roomId: string): Promise<MemoryRoom> {
+  return resolveMemoryRoomOfflineFirst(roomId, { recoverOutbox: false });
 }
 
 export async function getMemoryMessagesPageOfflineFirst(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMessagesPage> {
+  // Older-page requests are latency-sensitive and immutable enough to serve
+  // directly from SQLite. A cache miss falls through to the network.
+  const cached = input.before
+    ? await readOfflineMemoryMessagesPage(roomId, input)
+    : null;
+  if (cached) return refreshMemoryMessagePageMedia(cached);
+
   try {
     const page = await getMemoryMessagesPage(roomId, input);
-    void saveOfflineMemoryMessagePage(roomId, page);
+    await saveOfflineMemoryMessagePage(roomId, page);
     return page;
   } catch (error) {
-    const cached = await readOfflineMemoryMessagesPage(roomId, input);
-    if (cached) return cached;
+    if (isOfflineMemoryPersistenceError(error)) throw error;
+    const fallback = await readOfflineMemoryMessagesPage(roomId, input);
+    if (fallback) return fallback;
     throw error;
   }
 }
 
-export async function getMemoryMediaPageOfflineFirst(
+// SQLite-first, matching messages and the room snapshot. This used to await the
+// network on every call and only touch the offline store on error, so opening
+// the Media tab always cost a round trip even when the page was already on
+// disk — the one read path in the room that was still network-first. Returns
+// null on a cache miss so the caller can decide how to reach the server.
+export async function readMemoryMediaPageOffline(
+  roomId: string,
+  input: { before?: string | null; limit?: number } = {}
+): Promise<MemoryMediaPage | null> {
+  const cached = await readOfflineMemoryMediaPage(roomId, input);
+  if (!cached) return null;
+  // Cached rows carry whatever signed URLs were valid when they were stored.
+  // Renewal is a no-op (and costs no request) while those URLs are still
+  // inside their safety margin, which is the common warm case.
+  return refreshMemoryMediaPageUrls(cached);
+}
+
+// Network-first with a cache fallback: the previous behaviour of
+// getMemoryMediaPageOfflineFirst, kept for callers that specifically want
+// server truth — the cache boundary and the background reconcile in
+// useMemoryMediaPagesQuery.
+export async function fetchMemoryMediaPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMediaPage> {
   try {
     const page = await getMemoryMediaPage(roomId, input);
-    void saveOfflineMemoryMediaPage(roomId, page);
+    await saveOfflineMemoryMediaPage(roomId, page);
     return page;
   } catch (error) {
+    if (isOfflineMemoryPersistenceError(error)) throw error;
     const cached = await readOfflineMemoryMediaPage(roomId, input);
-    if (cached) return cached;
+    if (cached) return refreshMemoryMediaPageUrls(cached);
     throw error;
   }
 }
@@ -1176,33 +1771,38 @@ export async function leaveMemoryRoom(roomId: string) {
   return { ok: true };
 }
 
-export async function addMemoryMessage(roomId: string, body: string, replyToMessageId?: string | null) {
-  const authorName = await myUsername();
-  await assertMemoryRoomMember(roomId, authorName);
+export async function addMemoryMessage(
+  roomId: string,
+  body: string,
+  replyToMessageId?: string | null,
+  clientId = createRequestId()
+) {
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
   assertMemoryTextLength(trimmed);
-  const messageInsert = {
-    room_id: roomId,
-    author_name: authorName,
-    body: trimmed,
-    ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {})
-  };
-
-  const { error } = await supabase
-    .from("shared_memory_messages")
-    .insert(messageInsert);
-
-  if (isMissingMemoryMessageReplyColumn(error)) {
-    throw new Error("Run mobile/supabase/migrations/202606090004_shared_memory_message_replies.sql before replying to messages.");
-  }
-  if (error) throw memoryTablesError(error);
+  const normalizedClientId = clientId.replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 96);
+  const idempotencyKey = /^[A-Za-z0-9._:-]{16,128}$/.test(clientId)
+    ? clientId
+    : `memory-message:${normalizedClientId}`;
+  const payload = await authorizedJson<{ message: MemoryMessageRow }>(
+    `/api/mobile/memories/${encodeURIComponent(roomId)}/messages`,
+    {
+      body: JSON.stringify({
+        body: trimmed,
+        replyToMessageId: replyToMessageId ?? null
+      }),
+      headers: { "Idempotency-Key": idempotencyKey },
+      method: "POST"
+    },
+    { action: "sending a message", timeoutMs: 12_000 }
+  );
   void notifyMemoryRoomActivity({
+    idempotencyKey,
     kind: "message",
     preview: trimmed,
     roomId
   }).catch(() => {});
-  return { ok: true };
+  return payload.message;
 }
 
 export async function editMemoryMessage(roomId: string, messageId: string, body: string) {
@@ -1224,32 +1824,7 @@ export async function editMemoryMessage(roomId: string, messageId: string, body:
 }
 
 export async function deleteMemoryMessage(roomId: string, messageId: string) {
-  const authorName = await myUsername();
-  await assertMemoryRoomMember(roomId, authorName);
-  const { data: photos, error: photosError } = await supabase
-    .from("shared_memory_photos")
-    .select("storage_path")
-    .eq("room_id", roomId)
-    .eq("message_id", messageId)
-    .eq("uploader_name", authorName)
-    .returns<Array<Pick<MemoryPhotoRow, "storage_path">>>();
-
-  if (photosError) throw memoryTablesError(photosError);
-
-  const { error } = await supabase
-    .from("shared_memory_messages")
-    .delete()
-    .eq("id", messageId)
-    .eq("room_id", roomId)
-    .eq("author_name", authorName);
-
-  if (error) throw memoryTablesError(error);
-
-  const paths = (photos ?? []).map((photo) => photo.storage_path).filter(Boolean);
-  if (paths.length > 0) {
-    await removeMemoryMediaFiles(paths);
-  }
-
+  await deleteMemoryMediaSelection(roomId, { messageIds: [messageId] });
   return { ok: true };
 }
 
@@ -1257,8 +1832,6 @@ export async function deleteMemoryItems(
   roomId: string,
   input: { messageIds?: string[]; photoIds?: string[] }
 ) {
-  const authorName = await myUsername();
-  await assertMemoryRoomMember(roomId, authorName);
   const messageIds = Array.from(new Set(input.messageIds ?? [])).filter(Boolean);
   const photoIds = Array.from(new Set(input.photoIds ?? [])).filter(Boolean);
 
@@ -1266,86 +1839,30 @@ export async function deleteMemoryItems(
     throw new Error("Select at least one item to delete");
   }
 
-  const storagePaths: string[] = [];
-
-  if (messageIds.length > 0) {
-    const { data: messagePhotos, error: messagePhotosError } = await supabase
-      .from("shared_memory_photos")
-      .select("storage_path")
-      .eq("room_id", roomId)
-      .eq("uploader_name", authorName)
-      .in("message_id", messageIds)
-      .returns<Array<Pick<MemoryPhotoRow, "storage_path">>>();
-
-    if (messagePhotosError) throw memoryTablesError(messagePhotosError);
-    storagePaths.push(...(messagePhotos ?? []).map((photo) => photo.storage_path).filter(Boolean));
-
-    const { error: messagesError } = await supabase
-      .from("shared_memory_messages")
-      .delete()
-      .eq("room_id", roomId)
-      .eq("author_name", authorName)
-      .in("id", messageIds);
-
-    if (messagesError) throw memoryTablesError(messagesError);
-  }
-
-  if (photoIds.length > 0) {
-    const { data: photos, error: photosError } = await supabase
-      .from("shared_memory_photos")
-      .select("storage_path")
-      .eq("room_id", roomId)
-      .eq("uploader_name", authorName)
-      .in("id", photoIds)
-      .returns<Array<Pick<MemoryPhotoRow, "storage_path">>>();
-
-    if (photosError) throw memoryTablesError(photosError);
-    storagePaths.push(...(photos ?? []).map((photo) => photo.storage_path).filter(Boolean));
-
-    const { error: deletePhotosError } = await supabase
-      .from("shared_memory_photos")
-      .delete()
-      .eq("room_id", roomId)
-      .eq("uploader_name", authorName)
-      .in("id", photoIds);
-
-    if (deletePhotosError) throw memoryTablesError(deletePhotosError);
-  }
-
-  const uniquePaths = Array.from(new Set(storagePaths));
-  if (uniquePaths.length > 0) {
-    await removeMemoryMediaFiles(uniquePaths);
-  }
-
+  await deleteMemoryMediaSelection(roomId, { messageIds, photoIds });
   return { ok: true };
 }
 
 export async function deleteMemoryPhoto(roomId: string, photoId: string) {
-  const uploaderName = await myUsername();
-  await assertMemoryRoomMember(roomId, uploaderName);
-  const { data: photo, error: fetchError } = await supabase
-    .from("shared_memory_photos")
-    .select("storage_path")
-    .eq("id", photoId)
-    .eq("room_id", roomId)
-    .eq("uploader_name", uploaderName)
-    .maybeSingle<Pick<MemoryPhotoRow, "storage_path">>();
-
-  if (fetchError) throw memoryTablesError(fetchError);
-
-  const { error } = await supabase
-    .from("shared_memory_photos")
-    .delete()
-    .eq("id", photoId)
-    .eq("room_id", roomId)
-    .eq("uploader_name", uploaderName);
-
-  if (error) throw memoryTablesError(error);
-  if (photo?.storage_path) {
-    await removeMemoryMediaFiles([photo.storage_path]);
-  }
-
+  await deleteMemoryMediaSelection(roomId, { photoIds: [photoId] });
   return { ok: true };
+}
+
+async function deleteMemoryMediaSelection(
+  roomId: string,
+  input: { messageIds?: string[]; photoIds?: string[] }
+) {
+  await authorizedJson<{ ok: true }>(
+    `/api/mobile/memories/${encodeURIComponent(roomId)}/media`,
+    {
+      body: JSON.stringify({
+        messageIds: input.messageIds ?? [],
+        photoIds: input.photoIds ?? []
+      }),
+      method: "DELETE"
+    },
+    { action: "deleting room media", timeoutMs: 20_000 }
+  );
 }
 
 const STOPS_MIGRATION_HINT = "Run mobile/supabase/migrations/202606220001_shared_memory_stops.sql before adding stops.";
@@ -1380,6 +1897,7 @@ export async function createMemoryStop(input: CreateMemoryStopInput): Promise<Me
 
   if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
   if (error) throw memoryTablesError(error);
+  bumpMemoryRoomOverviewVersion(input.roomId);
   void notifyMemoryRoomActivity({ kind: "dish", preview: name, roomId: input.roomId }).catch(() => {});
   return mapMemoryStop(data, { [createdBy]: createdBy });
 }
@@ -1406,6 +1924,7 @@ export async function updateMemoryStop(input: UpdateMemoryStopInput): Promise<{ 
 
   if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
   if (error) throw memoryTablesError(error);
+  bumpMemoryRoomOverviewVersion(input.roomId);
   return { ok: true };
 }
 
@@ -1420,6 +1939,7 @@ export async function deleteMemoryStop(roomId: string, stopId: string): Promise<
 
   if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
   if (error) throw memoryTablesError(error);
+  bumpMemoryRoomOverviewVersion(roomId);
   return { ok: true };
 }
 
@@ -1506,19 +2026,6 @@ export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
 export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMemoryPhotoResult> {
   const uploaderName = await myUsername();
   await assertMemoryRoomMember(input.roomId, uploaderName);
-  const { error: schemaError } = await supabase
-    .from("shared_memory_photos")
-    .select("media_type, message_id, image_width, image_height, position")
-    .eq("room_id", input.roomId)
-    .limit(1);
-
-  if (isMissingMemoryPhotoDimensionColumn(schemaError)) {
-    throw new Error("Run mobile/supabase/migrations/202606090001_shared_memory_media_dimensions.sql before sending media in memory rooms.");
-  }
-  if (isMissingMemoryPhotoColumn(schemaError)) {
-    throw new Error("Run mobile/supabase/migrations/202606070001_shared_memory_photo_message_groups.sql before sending grouped media in memory rooms.");
-  }
-  if (schemaError) throw memoryTablesError(schemaError);
 
   const assets = input.assets?.length
     ? input.assets
@@ -1536,103 +2043,130 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
   assertValidMemoryMediaAssets(assets);
   const messageBody = input.body?.trim() ?? "";
   assertMemoryTextLength(messageBody);
+  const audioAssets = assets.filter((asset) => (
+    asset.mediaType === "audio" ||
+    asset.mediaMimeType?.startsWith("audio/") ||
+    asset.imageMimeType?.startsWith("audio/")
+  ));
+  if (audioAssets.length > 0) {
+    if (audioAssets.length !== assets.length) {
+      throw new Error("Voice messages cannot be combined with photos or videos.");
+    }
+    return addLegacyMemoryAudio({
+      assets: audioAssets,
+      body: messageBody,
+      replyToMessageId: input.replyToMessageId ?? null,
+      roomId: input.roomId,
+      uploaderName
+    });
+  }
 
-  const uploadInputs = assets.map((asset) => ({ ...asset, roomId: input.roomId }));
-  const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryPhoto>> | null> = [];
-  let message: MemoryMessageRow | null = null;
-  let photosInserted = false;
+  const attachmentBatchId = input.uploadBatchId ?? createRequestId();
+  const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryMediaAsset>>> = [];
+  for (const [position, asset] of assets.entries()) {
+    const uri = asset.mediaUri ?? asset.imageUri;
+    if (!uri) throw new Error("Choose a photo or video");
+    const mimeType = asset.mediaMimeType ?? asset.imageMimeType ?? null;
+    const mediaKind = asset.mediaType === "video" || mimeType?.startsWith("video/") ? "video" : "image";
+    uploaded.push(await uploadMemoryMediaAsset({
+      attachmentBatchId,
+      attachmentCount: assets.length,
+      attachmentPosition: position,
+      body: messageBody,
+      durationMs: normalizedMemoryDurationMs(asset.duration),
+      fileSize: asset.fileSize,
+      height: asset.imageHeight,
+      mediaKind,
+      mimeType,
+      onUploadProgress: asset.onUploadProgress,
+      replyToMessageId: input.replyToMessageId ?? null,
+      roomId: input.roomId,
+      uri,
+      width: asset.imageWidth
+    }));
+  }
+
+  const result = await authorizedJson<AddMemoryPhotoResult>(
+    `/api/mobile/memories/${encodeURIComponent(input.roomId)}/media`,
+    {
+      body: JSON.stringify({
+        assetIds: uploaded.map((item) => item.assetId),
+        body: messageBody,
+        replyToMessageId: input.replyToMessageId ?? null
+      }),
+      headers: { "Idempotency-Key": attachmentBatchId },
+      method: "POST"
+    },
+    { action: "posting room media", timeoutMs: 30_000 }
+  );
+  await completeRecoveredMediaUploads(uploaded.map((item) => item.recoveryId));
+  assets.forEach((asset) => asset.onUploadProgress?.(1));
+  void notifyMemoryRoomActivity({
+    kind: "media",
+    preview: messageBody || `${uploaded.length} media item${uploaded.length === 1 ? "" : "s"}`,
+    roomId: input.roomId
+  }).catch(() => {});
+  return result;
+}
+
+function normalizedMemoryDurationMs(duration?: number | null) {
+  if (!duration || duration <= 0 || !Number.isFinite(duration)) return null;
+  return Math.round(duration > 1000 ? duration : duration * 1000);
+}
+
+async function addLegacyMemoryAudio(input: {
+  assets: AddMemoryMediaAsset[];
+  body: string;
+  replyToMessageId: string | null;
+  roomId: string;
+  uploaderName: string;
+}): Promise<AddMemoryPhotoResult> {
+  const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryAudio>>> = [];
+  for (const asset of input.assets) {
+    uploaded.push(await uploadMemoryAudio({ ...asset, roomId: input.roomId }));
+  }
+
+  const { data: message, error: messageError } = await supabase
+    .from("shared_memory_messages")
+    .insert({
+      author_name: input.uploaderName,
+      body: input.body,
+      reply_to_message_id: input.replyToMessageId,
+      room_id: input.roomId
+    })
+    .select(MEMORY_MESSAGE_SELECT)
+    .single<MemoryMessageRow>();
+  if (messageError) throw memoryTablesError(messageError);
+  if (!message) throw new Error("Could not create audio message.");
 
   try {
-    const uploadResults: Array<Awaited<ReturnType<typeof uploadMemoryPhoto>>> = [];
-    for (const [index, asset] of uploadInputs.entries()) {
-      const result = await uploadMemoryPhoto(asset, uploaderName);
-      uploaded[index] = result;
-      uploadResults.push(result);
-    }
-
-    const messageInsert = {
-      author_name: uploaderName,
-      body: messageBody,
-      room_id: input.roomId,
-      ...(input.replyToMessageId ? { reply_to_message_id: input.replyToMessageId } : {})
-    };
-
-    const { data: insertedMessage, error: messageError } = await supabase
-      .from("shared_memory_messages")
-      .insert(messageInsert)
-      .select(MEMORY_MESSAGE_SELECT)
-      .single<MemoryMessageRow>();
-
-    if (isMissingMemoryMessageReplyColumn(messageError)) {
-      throw new Error("Run mobile/supabase/migrations/202606090004_shared_memory_message_replies.sql before replying to messages.");
-    }
-    if (messageError) throw memoryTablesError(messageError);
-    if (!insertedMessage) throw new Error("Could not create media message.");
-    message = insertedMessage;
-
-    const { error } = await supabase
-      .from("shared_memory_photos")
-      .select("media_type, message_id, image_width, image_height, position, upload_intent_id, moderation_status, uploader_id")
-      .eq("room_id", input.roomId)
-      .limit(1);
-
-    if (isMissingMemoryPhotoPhase2Column(error)) {
-      throw new Error("Run mobile/supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql before sending media in memory rooms.");
-    }
-    if (isMissingMemoryPhotoDimensionColumn(error)) {
-      throw new Error("Run mobile/supabase/migrations/202606090001_shared_memory_media_dimensions.sql before sending media in memory rooms.");
-    }
-    if (isMissingMemoryPhotoColumn(error)) {
-      throw new Error("Run mobile/supabase/migrations/202606070001_shared_memory_photo_message_groups.sql before sending grouped media in memory rooms.");
-    }
-    if (error) throw memoryTablesError(error);
-
     const photos: MemoryPhotoRow[] = [];
-    for (const [position, media] of uploadResults.entries()) {
-      photos.push(await finalizeMemoryMediaUpload({
-        intentId: media.intentId,
-        messageId: insertedMessage.id,
+    for (const [position, audio] of uploaded.entries()) {
+      photos.push(await finalizeLegacyMemoryAudio({
+        intentId: audio.intentId,
+        messageId: message.id,
         position,
         roomId: input.roomId,
-        storagePath: media.storagePath
+        storagePath: audio.storagePath
       }));
     }
-
-    photosInserted = true;
-    const signedPhotos = photos.map((photo, index) => {
-      const upload = uploadResults[index];
-      return photo.public_url ? photo : { ...photo, public_url: upload.publicUrl };
-    });
-
-    assets.forEach((asset) => asset.onUploadProgress?.(1));
-    if (signedPhotos.some((photo) => photo.moderation_status === "approved")) {
-      void notifyMemoryRoomActivity({
-        kind: "media",
-        preview: input.body?.trim() || `${uploadResults.length} media item${uploadResults.length === 1 ? "" : "s"}`,
-        roomId: input.roomId
-      }).catch(() => {});
-    }
-    return { message: insertedMessage, photos: signedPhotos };
+    input.assets.forEach((asset) => asset.onUploadProgress?.(1));
+    void notifyMemoryRoomActivity({
+      kind: "media",
+      preview: input.body || "Voice message",
+      roomId: input.roomId
+    }).catch(() => {});
+    return { message, photos };
   } catch (error) {
-    if (!photosInserted) {
-      if (message?.id) {
-        try {
-          await supabase
-            .from("shared_memory_messages")
-            .delete()
-            .eq("id", message.id)
-            .eq("room_id", input.roomId)
-            .eq("author_name", uploaderName);
-        } catch {
-          // Cleanup is best-effort; preserve the original upload error.
-        }
-      }
-      const uploadedPaths = uploaded
-        .map((item) => item?.storagePath)
-        .filter((path): path is string => Boolean(path));
-      if (uploadedPaths.length > 0) {
-        await removeMemoryMediaFiles(uploadedPaths).catch(() => undefined);
-      }
+    try {
+      await supabase
+        .from("shared_memory_messages")
+        .delete()
+        .eq("id", message.id)
+        .eq("room_id", input.roomId)
+        .eq("author_name", input.uploaderName);
+    } catch {
+      // The server expires the unconsumed audio intent/object independently.
     }
     throw error;
   }

@@ -1,4 +1,5 @@
 export const MEDIA_PRIVATE_BUCKET = "media-private";
+export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_POST_SIGNED_URL_TTL_SECONDS = 5 * 60;
 
 export type MediaDerivativeKind = "canonical" | "feed" | "thumbnail" | "poster";

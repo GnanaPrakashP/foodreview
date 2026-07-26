@@ -33,7 +33,7 @@ const placements = buildFoodWallpaperPlacements();
 const patternBody = placements
   .map(
     (pl) =>
-      `<g stroke-width="${pl.strokeWidth}" transform="${pl.transform}">${pl.shape.primitives.map(primitiveToSvg).join("")}</g>`
+      `<g stroke-width="${pl.strokeWidth}" transform="${pl.transform}">${pl.primitives.map(primitiveToSvg).join("")}</g>`
   )
   .join("\n      ");
 

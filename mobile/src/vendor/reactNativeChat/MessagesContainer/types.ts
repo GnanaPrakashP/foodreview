@@ -66,6 +66,10 @@ export interface MessagesContainerProps<TMessage extends IMessage = IMessage>
   renderChatEmpty?: () => React.ReactNode
   /** Custom footer component on the ListView, e.g. 'User is typing...' */
   renderFooter?: (props: MessagesContainerProps<TMessage>) => React.ReactNode
+  /** Animated reserve rendered at the visual bottom without relying on contentContainerStyle updates. */
+  renderBottomSpacer?: () => React.ReactNode
+  /** Animated reserve rendered beyond the oldest message at the visual top. */
+  renderTopSpacer?: () => React.ReactNode
   /** Custom message container */
   renderMessage?: (props: MessageProps<TMessage>) => React.ReactElement
   /** Custom day above a message */

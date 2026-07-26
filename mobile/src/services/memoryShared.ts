@@ -77,9 +77,14 @@ export type MemoryPhotoRow = {
   uploader_id: string | null;
   uploader_name: string;
   public_url: string | null;
+  thumbnail_url?: string | null;
+  poster_url?: string | null;
+  blurhash?: string | null;
   /** Client-only metadata added when a private storage URL is signed. */
   signed_url_expires_at?: string | null;
-  storage_path: string;
+  /** Server-only on private API responses; mobile renewal uses the opaque id. */
+  storage_path?: string | null;
+  media_asset_id?: string | null;
   media_type: "audio" | "image" | "video" | null;
   image_width: number | null;
   image_height: number | null;

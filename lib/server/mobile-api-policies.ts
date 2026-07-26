@@ -229,6 +229,18 @@ export const MOBILE_API_POLICIES = {
       { cost: 1, dimension: "ip", limit: 60, windowSeconds: 3600 },
     ],
   },
+  "memory.message": {
+    authentication: "required",
+    bodyBytes: 4096,
+    cors: "mobile",
+    idempotency: "required",
+    providerCost: "none",
+    rateLimits: [
+      { cost: 1, dimension: "user", limit: 120, windowSeconds: 60 },
+      { cost: 1, dimension: "install", limit: 180, windowSeconds: 60 },
+      { cost: 1, dimension: "ip", limit: 360, windowSeconds: 60 },
+    ],
+  },
   "internal.worker": {
     authentication: "internal",
     bodyBytes: 4096,

@@ -9,7 +9,9 @@ const roomSecurity = readFileSync("lib/server/memory-room-security.ts", "utf8");
 const uploadIntentRoute = readFileSync("app/api/mobile/memories/upload-intent/route.ts", "utf8");
 const finalizeRoute = readFileSync("app/api/mobile/memories/finalize-upload/route.ts", "utf8");
 const cleanupRoute = readFileSync("app/api/mobile/memories/uploads/cleanup/route.ts", "utf8");
-const memoryStorage = readFileSync("mobile/src/services/memoryStorage.ts", "utf8");
+const memoryPipeline = readFileSync("mobile/src/services/mediaPipeline.ts", "utf8");
+const memoryLegacyMedia = readFileSync("mobile/src/services/memoryLegacyMedia.ts", "utf8");
+const memoryMediaRoute = readFileSync("app/api/mobile/memories/[roomId]/media/route.ts", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const phase2Migration = readFileSync(
   "supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql",
@@ -159,11 +161,15 @@ test("cleanup is protected and transitions DB state before deleting storage", ()
   assert.doesNotMatch(cleanupRoute, /signedUrl|public_url|media_url|caption|message body/i);
 });
 
-test("mobile uses upload intent, approved path upload, and server finalize instead of direct media row insert", () => {
-  assert.match(memoryStorage, /\/api\/mobile\/memories\/upload-intent/);
-  assert.match(memoryStorage, /path: intent\.storagePath/);
-  assert.match(memoryStorage, /\/api\/mobile\/memories\/finalize-upload/);
-  assert.match(memoryService, /finalizeMemoryMediaUpload/);
+test("mobile uses the shared processed pipeline for room image/video and keeps legacy finalization only for audio", () => {
+  assert.match(memoryPipeline, /surface:\s*"memory"/);
+  assert.match(memoryPipeline, /accessClass:\s*"memory_private"/);
+  assert.match(memoryPipeline, /\/api\/media\/upload-intent/);
+  assert.match(memoryPipeline, /\/api\/media\/finalize-upload/);
+  assert.match(memoryService, /uploadMemoryMediaAsset/);
+  assert.match(memoryMediaRoute, /attach_shared_memory_media_assets_v1/);
+  assert.match(memoryLegacyMedia, /\/api\/mobile\/memories\/upload-intent/);
+  assert.match(memoryLegacyMedia, /\/api\/mobile\/memories\/finalize-upload/);
   assert.doesNotMatch(memoryService, /\.from\("shared_memory_photos"\)[\s\S]{0,260}\.insert\(uploadResults\.map/);
 });
 

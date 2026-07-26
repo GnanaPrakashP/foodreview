@@ -9,7 +9,19 @@ import {
 } from "@/lib/server/media-pipeline";
 import { getRouteActor } from "@/lib/server/route-supabase";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { boundedJsonError, enforceRateLimit, mobileApiJson, mobileOptions, rateLimitResponse, readBoundedJson, requireIdempotencyKey } from "@/lib/server/api-security";
+import {
+  abandonIdempotency,
+  boundedJsonError,
+  claimIdempotency,
+  completeIdempotency,
+  enforceRateLimit,
+  idempotencyFailure,
+  mobileApiJson,
+  mobileOptions,
+  rateLimitResponse,
+  readBoundedJson,
+  requireIdempotencyKey
+} from "@/lib/server/api-security";
 
 export const runtime = "nodejs";
 
@@ -32,6 +44,7 @@ export async function POST(req: NextRequest) {
   let media;
   try {
     media = normalizeMediaIntentInput({
+      audioPolicy: body?.audioPolicy,
       cropRect: body?.cropRect,
       durationMs: body?.durationMs ?? body?.duration,
       fileName: body?.fileName,
@@ -65,11 +78,27 @@ export async function POST(req: NextRequest) {
   const { data: accountActive, error: accountError } = await admin.rpc("account_is_active", { p_user_id: actor.userId });
   if (accountError) return mediaJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
   if (accountActive !== true) return mediaJson(req, { error: "Account deletion is in progress" }, { status: 409 });
+  const normalizedRequest = {
+    accessClass: media.accessClass,
+    audioPolicy: media.audioPolicy,
+    cropRect: media.cropRect,
+    durationMs: media.durationMs,
+    fileSizeBytes: media.fileSizeBytes,
+    height: media.height,
+    mediaType: media.mediaType,
+    mimeType: media.mimeType,
+    surface: media.surface,
+    visibility: media.visibility,
+    width: media.width
+  };
+  const idempotency = await claimIdempotency(req, "media.upload.intent", actor.userId, normalizedRequest);
+  if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
   const { error } = await admin
     .from("media_assets")
     .insert({
       crop_rect: media.cropRect,
       access_class: media.accessClass,
+      audio_policy: media.audioPolicy,
       duration_ms: media.durationMs,
       expires_at: expiresAt,
       id: media.assetId,
@@ -88,11 +117,15 @@ export async function POST(req: NextRequest) {
       visibility: media.visibility
     });
 
-  if (error) return mediaJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
+  if (error) {
+    await abandonIdempotency(idempotency).catch(() => undefined);
+    return mediaJson(req, { error: "Unable to authorize media upload" }, { status: 500 });
+  }
 
-  return mediaJson(req, {
+  const responseBody = {
     assetId: media.assetId,
     accessClass: media.accessClass,
+    audioPolicy: media.audioPolicy,
     cropRect: media.cropRect,
     expiresAt,
     maxAllowedSize: media.maxBytes,
@@ -102,7 +135,9 @@ export async function POST(req: NextRequest) {
     surface: media.surface,
     uploadBucket: MEDIA_SOURCE_BUCKET,
     uploadPath: sourceStoragePath
-  });
+  };
+  await completeIdempotency(idempotency, 200, responseBody);
+  return mediaJson(req, responseBody);
 }
 
 export function OPTIONS(req: NextRequest) {

@@ -6,7 +6,10 @@ import {
   isValidCacheOwnerScope
 } from "@/security/cacheOwnership";
 
-const PRIVATE_ROOT = `${FileSystem.cacheDirectory ?? ""}circlebites-private/v2`;
+// Reconstructable files (uploads, thumbnails and downloaded media) remain in the
+// OS-managed cache. Structured Table Memory state must never be placed here.
+const PRIVATE_CACHE_ROOT = `${FileSystem.cacheDirectory ?? ""}circlebites-private/v2`;
+const PRIVATE_DATA_ROOT = `${FileSystem.documentDirectory ?? ""}circlebites-private/v2`;
 let activeOwnerScope: string | null = null;
 
 function requireScope(scope: string | null | undefined) {
@@ -15,7 +18,11 @@ function requireScope(scope: string | null | undefined) {
 }
 
 function ownerDirectory(scope: string) {
-  return `${PRIVATE_ROOT}/${requireScope(scope)}`;
+  return `${PRIVATE_CACHE_ROOT}/${requireScope(scope)}`;
+}
+
+function ownerDataDirectory(scope: string) {
+  return `${PRIVATE_DATA_ROOT}/${requireScope(scope)}`;
 }
 
 export function isOwnedAccountFileUri(uri: string, scope: string) {
@@ -45,6 +52,21 @@ export async function ensureAccountFileDirectory(scope: string) {
   if (!FileSystem.cacheDirectory) throw new Error("account_file_cache_unavailable");
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
   return directory;
+}
+
+export function memoryDatabaseDirectoryForScope(scope: string) {
+  return `${ownerDataDirectory(scope)}/table-memory`;
+}
+
+export async function ensureMemoryDatabaseDirectory(scope: string) {
+  if (!FileSystem.documentDirectory) throw new Error("memory_database_storage_unavailable");
+  const directory = memoryDatabaseDirectoryForScope(scope);
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  return directory;
+}
+
+export async function clearMemoryDatabaseDirectory(scope: string) {
+  await FileSystem.deleteAsync(memoryDatabaseDirectoryForScope(scope), { idempotent: true });
 }
 
 export async function stageAccountFile(uri: string, category: string) {

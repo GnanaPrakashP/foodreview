@@ -1,0 +1,205 @@
+import { NextRequest } from "next/server";
+import { MEMORY_MEDIA_BUCKET } from "@/lib/memory-media-policy";
+import { recordAccountMediaCleanupJob } from "@/lib/server/account-media-cleanup";
+import { signMemoryPhotoPayload } from "@/lib/server/memory-media-delivery";
+import {
+  assertMemoryRoomMutationAllowed,
+  memoryRoomSecurityErrorStatus
+} from "@/lib/server/memory-room-security";
+import { getRouteActor } from "@/lib/server/route-supabase";
+import {
+  abandonIdempotency,
+  boundedJsonError,
+  claimIdempotency,
+  completeIdempotency,
+  enforceRateLimit,
+  idempotencyFailure,
+  mobileApiError,
+  mobileApiJson,
+  mobileOptions,
+  rateLimitResponse,
+  readBoundedJson,
+  requireIdempotencyKey,
+  type IdempotencyClaim
+} from "@/lib/server/api-security";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+const METHODS = ["POST", "DELETE"];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MEMORY_TEXT_MAX_LENGTH = 1000;
+const MAX_MEDIA_ITEMS = 10;
+const MAX_DELETE_ITEMS = 100;
+
+type JsonRecord = Record<string, unknown>;
+
+function uuidArray(value: unknown, limit: number) {
+  if (!Array.isArray(value) || value.length > limit) return null;
+  const ids = Array.from(new Set(
+    value.filter((item): item is string => typeof item === "string" && UUID_PATTERN.test(item))
+  ));
+  return ids.length === value.length ? ids : null;
+}
+
+function roomMediaError(req: NextRequest, status: number) {
+  if (status === 403) return mobileApiError(req, METHODS, "permanent_denial", "Room media is unavailable", status);
+  if (status === 404) return mobileApiError(req, METHODS, "permanent_denial", "Memory room not found", status);
+  return mobileApiError(req, METHODS, "temporary_failure", "Unable to update room media", status);
+}
+
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ roomId: string }> }
+) {
+  let activeIdempotency: Extract<IdempotencyClaim, { state: "claimed" }> | null = null;
+  try {
+    const { roomId } = await context.params;
+    const { actor, supabase } = await getRouteActor(req);
+    if (!actor) return mobileApiError(req, METHODS, "authentication_required", "Authentication required", 401);
+    if (!UUID_PATTERN.test(roomId)) {
+      return mobileApiError(req, METHODS, "invalid_input", "Invalid room", 400);
+    }
+
+    const rate = await enforceRateLimit(req, "memory.message", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+    const parsed = await readBoundedJson<JsonRecord>(req, 16 * 1024);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+
+    const assetIds = uuidArray(parsed.value.assetIds, MAX_MEDIA_ITEMS);
+    const body = typeof parsed.value.body === "string" ? parsed.value.body.trim() : "";
+    const rawReplyId = parsed.value.replyToMessageId;
+    const replyToMessageId = rawReplyId == null || rawReplyId === ""
+      ? null
+      : typeof rawReplyId === "string" && UUID_PATTERN.test(rawReplyId)
+        ? rawReplyId
+        : undefined;
+    const clientId = requireIdempotencyKey(req);
+    if (
+      !assetIds ||
+      assetIds.length < 1 ||
+      body.length > MEMORY_TEXT_MAX_LENGTH ||
+      replyToMessageId === undefined ||
+      !clientId
+    ) {
+      return mobileApiError(req, METHODS, "invalid_input", "Invalid room media", 400);
+    }
+
+    const admin = createAdminClient();
+    await assertMemoryRoomMutationAllowed({
+      actorName: actor.actorName,
+      admin,
+      roomId,
+      supabase
+    });
+
+    const normalizedRequest = { assetIds, body, replyToMessageId, roomId };
+    const idempotency = await claimIdempotency(req, "memory.media.attach", actor.userId, normalizedRequest);
+    if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
+    activeIdempotency = idempotency;
+
+    const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v1", {
+      p_asset_ids: assetIds,
+      p_body: body,
+      p_client_id: clientId,
+      p_owner_id: actor.userId,
+      p_owner_name: actor.actorName,
+      p_reply_to_message_id: replyToMessageId,
+      p_room_id: roomId
+    });
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) throw error ?? new Error("memory_media_attach_failed");
+
+    const responseBody = await signMemoryPhotoPayload(data as JsonRecord, roomId);
+    await completeIdempotency(idempotency, 200, responseBody);
+    activeIdempotency = null;
+    return mobileApiJson(req, METHODS, responseBody);
+  } catch (error) {
+    if (activeIdempotency) await abandonIdempotency(activeIdempotency).catch(() => undefined);
+    return roomMediaError(req, memoryRoomSecurityErrorStatus(error));
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ roomId: string }> }
+) {
+  let activeIdempotency: Extract<IdempotencyClaim, { state: "claimed" }> | null = null;
+  try {
+    const { roomId } = await context.params;
+    const { actor, supabase } = await getRouteActor(req);
+    if (!actor) return mobileApiError(req, METHODS, "authentication_required", "Authentication required", 401);
+    if (!UUID_PATTERN.test(roomId)) {
+      return mobileApiError(req, METHODS, "invalid_input", "Invalid room", 400);
+    }
+
+    const rate = await enforceRateLimit(req, "memory.message", { actorUserId: actor.userId });
+    if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
+    const parsed = await readBoundedJson<JsonRecord>(req, 16 * 1024);
+    if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
+
+    const messageIds = uuidArray(parsed.value.messageIds ?? [], MAX_DELETE_ITEMS);
+    const photoIds = uuidArray(parsed.value.photoIds ?? [], MAX_DELETE_ITEMS);
+    if (!messageIds || !photoIds || messageIds.length + photoIds.length < 1 || messageIds.length + photoIds.length > MAX_DELETE_ITEMS) {
+      return mobileApiError(req, METHODS, "invalid_input", "Invalid delete selection", 400);
+    }
+
+    const admin = createAdminClient();
+    await assertMemoryRoomMutationAllowed({
+      actorName: actor.actorName,
+      admin,
+      roomId,
+      supabase
+    });
+
+    const normalizedRequest = {
+      messageIds: [...messageIds].sort(),
+      photoIds: [...photoIds].sort(),
+      roomId
+    };
+    const idempotency = await claimIdempotency(req, "memory.media.delete", actor.userId, normalizedRequest);
+    if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
+    activeIdempotency = idempotency;
+
+    const { data, error } = await admin.rpc("delete_shared_memory_media_items_v1", {
+      p_message_ids: messageIds,
+      p_owner_id: actor.userId,
+      p_owner_name: actor.actorName,
+      p_photo_ids: photoIds,
+      p_room_id: roomId
+    });
+    if (error) throw error;
+
+    const legacyPaths = data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as JsonRecord).legacyPaths)
+      ? (data as JsonRecord).legacyPaths as unknown[]
+      : [];
+    const safeLegacyPaths = legacyPaths.filter((path): path is string => (
+      typeof path === "string" &&
+      path.startsWith(`memories/${roomId}/`) &&
+      !path.includes("..") &&
+      !path.includes("?") &&
+      !path.includes("#")
+    ));
+    if (safeLegacyPaths.length > 0) {
+      const { error: removeError } = await admin.storage.from(MEMORY_MEDIA_BUCKET).remove(safeLegacyPaths);
+      if (removeError) {
+        await recordAccountMediaCleanupJob(admin, {
+          bucketId: MEMORY_MEDIA_BUCKET,
+          error: removeError,
+          ownerNames: [actor.actorName],
+          paths: safeLegacyPaths,
+          userId: actor.userId
+        }).catch(() => undefined);
+      }
+    }
+
+    const responseBody = { ok: true };
+    await completeIdempotency(idempotency, 200, responseBody);
+    activeIdempotency = null;
+    return mobileApiJson(req, METHODS, responseBody);
+  } catch (error) {
+    if (activeIdempotency) await abandonIdempotency(activeIdempotency).catch(() => undefined);
+    return roomMediaError(req, memoryRoomSecurityErrorStatus(error));
+  }
+}
+
+export function OPTIONS(req: NextRequest) {
+  return mobileOptions(req, METHODS);
+}

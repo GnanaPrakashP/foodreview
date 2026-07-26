@@ -5,6 +5,7 @@ import {
   MEMORY_ALLOWED_IMAGE_MIME_TYPES,
   MEMORY_ALLOWED_VIDEO_EXTENSIONS,
   MEMORY_ALLOWED_VIDEO_MIME_TYPES,
+  MEMORY_IMAGE_MAX_SOURCE_BYTES,
   MEMORY_AUDIO_MAX_DURATION_MS,
   MEMORY_AUDIO_MAX_UPLOAD_BYTES,
   MEMORY_IMAGE_MAX_UPLOAD_BYTES,
@@ -44,8 +45,9 @@ export function validateMemoryMediaAssets(assets: MemoryMediaValidationAsset[]) 
       return unsupportedMemoryMediaError(kind);
     }
 
-    if (asset.fileSize && asset.fileSize > memoryMediaMaxOriginalBytes(kind)) {
-      return memoryMediaSizeError(kind);
+    const sourceLimit = kind === "image" ? MEMORY_IMAGE_MAX_SOURCE_BYTES : memoryMediaMaxOriginalBytes(kind);
+    if (asset.fileSize && asset.fileSize > sourceLimit) {
+      return memoryMediaSizeError(kind, sourceLimit);
     }
 
     if (kind === "video") {
@@ -114,8 +116,8 @@ export function memoryMediaMaxOriginalBytes(kind: MemoryMediaKind) {
   return kind === "video" ? MEMORY_VIDEO_MAX_UPLOAD_BYTES : MEMORY_IMAGE_MAX_UPLOAD_BYTES;
 }
 
-function memoryMediaSizeError(kind: MemoryMediaKind) {
-  const mb = memoryMediaMaxOriginalBytes(kind) / (1024 * 1024);
+function memoryMediaSizeError(kind: MemoryMediaKind, limitBytes = memoryMediaMaxOriginalBytes(kind)) {
+  const mb = limitBytes / (1024 * 1024);
   if (kind === "audio") return `Audio messages must be ${mb} MB or less.`;
   return kind === "video"
     ? `Videos must be ${mb} MB or less.`

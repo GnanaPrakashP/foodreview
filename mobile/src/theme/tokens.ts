@@ -96,7 +96,10 @@ export const dark = {
   onPrimaryContainer: memoryPurple[200],
   primaryOutline: "rgba(157, 91, 232, 0.42)",
   wallpaperLine: "#D7CAB9",
-  wallpaperOpacity: 0.2,
+  // Baked into the chat wallpaper tile rather than applied at runtime; changing
+  // it here alone does nothing until the tile is regenerated. See
+  // scripts/generateFoodWallpaperTile.mjs.
+  wallpaperOpacity: 0.22,
 
   // Secondary — neutral, for quiet supporting accents.
   secondary: neutral[200],

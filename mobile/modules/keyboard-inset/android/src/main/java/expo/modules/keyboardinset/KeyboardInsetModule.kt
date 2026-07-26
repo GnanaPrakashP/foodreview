@@ -33,5 +33,78 @@ class KeyboardInsetModule : Module() {
         view.debug = debug
       }
     }
+
+    View(NativeChatInputView::class) {
+      Name("ChatInput")
+      Events("onTextChange", "onHeightChange")
+
+      Prop("value") { view, value: NativeChatInputValue ->
+        view.setTextValue(value.text, value.eventCount)
+      }
+      Prop("placeholder") { view, placeholder: String ->
+        view.setPlaceholder(placeholder)
+      }
+      Prop("accessibilityLabel") { view, label: String ->
+        view.setAccessibilityLabel(label)
+      }
+      Prop("editable") { view, editable: Boolean ->
+        view.setEditable(editable)
+      }
+      Prop("maxLength") { view, maxLength: Int ->
+        view.setMaximumLength(maxLength)
+      }
+      Prop("minInputHeight") { view, height: Double ->
+        view.setMinimumInputHeight(height)
+      }
+      Prop("maxInputHeight") { view, height: Double ->
+        view.setMaximumInputHeight(height)
+      }
+      Prop("horizontalPadding") { view, padding: Double ->
+        view.setHorizontalPadding(padding)
+      }
+      Prop("topPadding") { view, padding: Double ->
+        view.setTopPadding(padding)
+      }
+      Prop("bottomPadding") { view, padding: Double ->
+        view.setBottomPadding(padding)
+      }
+      Prop("fontSize") { view, fontSize: Double ->
+        view.setFontSize(fontSize)
+      }
+      Prop("lineHeight") { view, lineHeight: Double ->
+        view.applyLineHeight(lineHeight)
+      }
+      Prop("fontFamily") { view, fontFamily: String ->
+        view.applyFontFamily(fontFamily)
+      }
+      Prop("textColor") { view, color: Int ->
+        view.setTextColorValue(color)
+      }
+      Prop("placeholderColor") { view, color: Int ->
+        view.setPlaceholderColorValue(color)
+      }
+      Prop("cursorColor") { view, color: Int ->
+        view.setCursorColorValue(color)
+      }
+      Prop("fillColor") { view, color: Int ->
+        view.setFillColor(color)
+      }
+      Prop("strokeColor") { view, color: Int ->
+        view.setStrokeColor(color)
+      }
+      Prop("borderWidth") { view, width: Double ->
+        view.setBorderWidth(width)
+      }
+      Prop("borderRadius") { view, radius: Double ->
+        view.setBorderRadius(radius)
+      }
+
+      AsyncFunction("focus") { view: NativeChatInputView ->
+        view.focusInput()
+      }
+      AsyncFunction("clear") { view: NativeChatInputView ->
+        view.clearInput()
+      }
+    }
   }
 }

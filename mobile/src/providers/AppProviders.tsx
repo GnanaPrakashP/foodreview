@@ -3,6 +3,7 @@ import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-c
 import { RuntimeActivityCoordinator } from "@/performance/runtimeActivity";
 import { AccountSessionBoundary } from "@/providers/AccountSessionBoundary";
 import { AuthIntentCapture } from "@/providers/AuthIntentCapture";
+import { MemoryRoomSyncBootstrap } from "@/providers/MemoryRoomSyncBootstrap";
 import { PushNotificationBootstrap } from "@/providers/PushNotificationBootstrap";
 import { ProfileHeaderPrefetchBootstrap } from "@/providers/ProfileHeaderPrefetchBootstrap";
 import { UserLocationBootstrap } from "@/providers/UserLocationBootstrap";
@@ -19,6 +20,7 @@ function AuthenticatedRuntimeBootstrap() {
   return (
     <>
       <UserLocationBootstrap />
+      <MemoryRoomSyncBootstrap />
       {startupLocationResolved ? (
         <>
           <PushNotificationBootstrap />

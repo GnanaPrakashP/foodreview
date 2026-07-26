@@ -2,7 +2,7 @@ import { Image } from "expo-image";
 import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CalendarDays, Camera, ChevronRight, FileText, MapPin, MessageCircle, Pencil, Settings, Shield, ShieldCheck, TrendingUp, User, UserPlus, Users, Utensils, X } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type RefreshControlProps } from "react-native";
 import { Tabs, useCollapsibleStyle, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,7 +14,7 @@ import { AppText } from "@/components/ui/AppText";
 import { EmptyState, ErrorState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
-import { memoryRoomSummariesFromPages, useMemoryRoomsQuery, useMemoryRoomsRealtime } from "@/hooks/useMemories";
+import { memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMemories";
 import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -146,19 +146,8 @@ export default function ProfileScreen() {
     !page.isFetching
   );
   const canRefresh = isReady && isAuthenticated;
-  const [settingsVisible, setSettingsVisible] = useState(false);
-  const openingSettingsRef = useRef(false);
-
-  const openSettings = useCallback(() => {
-    if (openingSettingsRef.current) return;
-    openingSettingsRef.current = true;
-    setSettingsVisible(true);
-  }, []);
-
-  const finishSettingsClose = useCallback(() => {
-    setSettingsVisible(false);
-    openingSettingsRef.current = false;
-  }, []);
+  const settingsRef = useRef<SettingsOverlayHandle>(null);
+  const openSettings = useCallback(() => settingsRef.current?.open(), []);
 
   return (
     <View style={styles.root}>
@@ -179,10 +168,27 @@ export default function ProfileScreen() {
           />
         </View>
       </Screen>
-      {settingsVisible ? <ProfileSettingsPanel onCloseEnd={finishSettingsClose} /> : null}
+      <SettingsOverlay ref={settingsRef} />
     </View>
   );
 }
+
+type SettingsOverlayHandle = { open: () => void };
+
+// Owns the settings panel's visibility so that opening it re-renders only this
+// component. Holding the flag in ProfileScreen meant one tap re-rendered
+// ProfileContent — the hero, the tab bar and both tab lists (whose renderItem
+// identity changes every render, so every mounted cell re-rendered too) — in the
+// same commit that first mounted the settings tree. The slide-in could not start
+// until all of that had finished, which is what made the animation look delayed.
+const SettingsOverlay = forwardRef<SettingsOverlayHandle>(function SettingsOverlay(_props, ref) {
+  const [visible, setVisible] = useState(false);
+  const close = useCallback(() => setVisible(false), []);
+  useImperativeHandle(ref, () => ({ open: () => setVisible(true) }), []);
+
+  if (!visible) return null;
+  return <ProfileSettingsPanel onCloseEnd={close} />;
+});
 
 function ProfileContent({
   canRefresh,
@@ -261,7 +267,10 @@ function ProfileContent({
     isLoading: memoriesIsLoading,
     refetch: memoriesRefetch
   } = memories;
-  useMemoryRoomsRealtime(profileMemoriesFocused && isReady && isAuthenticated && memoriesData.length > 0);
+  // react-query hands back a fresh proxy object every render, so depending on
+  // `pageQuery` itself would rebuild every callback below on every render.
+  // `refetch` is bound once by the observer, `error` only changes with the error.
+  const { error: pageError, refetch: pageRefetch } = pageQuery;
   const posts = useProfilePostsInfiniteQuery(profileUsername, { enabled: isActiveMainTab && Boolean(profileUsername) });
   const pagedPosts = useMemo(
     () => posts.data?.pages.flatMap((postPage) => postPage.posts) ?? [],
@@ -346,8 +355,8 @@ function ProfileContent({
             <ListState>
               <ErrorState
                 actionLabel="Try again"
-                message={profileErrorMessage(pageQuery.error, "We couldn't load your profile. Try again.")}
-                onAction={() => pageQuery.refetch()}
+                message={profileErrorMessage(pageError, "We couldn't load your profile. Try again.")}
+                onAction={() => { void pageRefetch(); }}
                 title="Profile unavailable"
               />
             </ListState>
@@ -399,7 +408,11 @@ function ProfileContent({
       default:
         return null;
     }
-  }, [memoriesError, memoriesRefetch, openMemoryCreate, pageQuery, styles]);
+  }, [memoriesError, memoriesRefetch, openMemoryCreate, pageError, pageRefetch, styles]);
+
+  // Both lists need a stable renderItem: an inline arrow here gives the prop a
+  // new identity on every render, which re-renders every mounted cell.
+  const renderListItem = useCallback(({ item }: { item: ProfileListRow }) => renderListRow(item), [renderListRow]);
 
   const makeRefreshControl = useCallback((onRefresh: () => void, refreshing: boolean) => canRefresh ? (
     <RefreshControl
@@ -541,7 +554,7 @@ function ProfileContent({
           <Tabs.FlatList
             data={postRows}
             keyExtractor={profileListKey}
-            renderItem={({ item }) => renderListRow(item)}
+            renderItem={renderListItem}
             contentContainerStyle={styles.profileListContent}
             initialNumToRender={PROFILE_LIST_INITIAL_RENDER_COUNT}
             keyboardShouldPersistTaps="handled"
@@ -568,7 +581,7 @@ function ProfileContent({
             drawDistance={900}
             getItemType={(item) => item.type}
             keyExtractor={profileListKey}
-            renderItem={({ item }) => renderListRow(item)}
+            renderItem={renderListItem}
             ItemSeparatorComponent={ProfileListGap}
             ListFooterComponent={(
               <ProfileMemoriesFooter
@@ -1048,7 +1061,15 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
   const placeLabel = memoryPlaceLabel(memory);
 
   return (
-    <Pressable onPress={onPress} style={[styles.memoryCard, hasUnread && styles.memoryCardUnread]}>
+    <Pressable
+      android_ripple={{ color: PROFILE_COLORS.accentDim, foreground: true }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.memoryCard,
+        hasUnread && styles.memoryCardUnread,
+        pressed && styles.memoryCardPressed
+      ]}
+    >
       <View style={styles.memoryContentRow}>
         <View style={styles.memoryDate}>
           <Text style={styles.memoryDay}>{date.day}</Text>
@@ -1664,6 +1685,9 @@ function createStyles(PROFILE_COLORS: ProfilePalette) {
   },
   memoryCardUnread: {
     borderColor: PROFILE_COLORS.accentBorder
+  },
+  memoryCardPressed: {
+    opacity: 0.88
   },
   skeletonMemoryList: {
     gap: spacing.md,

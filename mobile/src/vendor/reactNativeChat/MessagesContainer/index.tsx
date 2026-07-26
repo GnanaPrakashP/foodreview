@@ -22,6 +22,9 @@ import { MessagesContainerProps, DaysPositions, AnimatedFlatList } from './types
 
 export * from './types'
 
+// Shared stand-in for a missing previous/next neighbour (first and last rows).
+const EMPTY_NEIGHBOUR = Object.freeze({})
+
 export const MessagesContainer = <TMessage extends IMessage>(props: MessagesContainerProps<TMessage>) => {
   const {
     messages = [],
@@ -38,6 +41,8 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     loadEarlierMessagesProps,
     renderTypingIndicator: renderTypingIndicatorProp,
     renderFooter: renderFooterProp,
+    renderBottomSpacer: renderBottomSpacerProp,
+    renderTopSpacer: renderTopSpacerProp,
     renderLoadEarlier: renderLoadEarlierProp,
     forwardRef,
     scrollToBottomComponent: scrollToBottomComponentProp,
@@ -82,6 +87,16 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
 
     return renderTypingIndicator()
   }, [renderFooterProp, renderTypingIndicator, props])
+
+  const BottomSpacerComponent = useMemo(
+    () => renderBottomSpacerProp?.() ?? null,
+    [renderBottomSpacerProp]
+  )
+
+  const TopSpacerComponent = useMemo(
+    () => renderTopSpacerProp?.() ?? null,
+    [renderTopSpacerProp]
+  )
 
   const renderLoadEarlier = useCallback(() => {
     if (loadEarlierMessagesProps?.isAvailable) {
@@ -181,10 +196,13 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     }
 
     if (messages) {
+      // A fresh `{}` per call would give the first and last rows new prop
+      // identities on every render, so those two rows could never bail out of
+      // the Item memo boundary.
       const previousMessage =
-        (isInverted ? messages[index + 1] : messages[index - 1]) || {}
+        (isInverted ? messages[index + 1] : messages[index - 1]) || EMPTY_NEIGHBOUR
       const nextMessage =
-        (isInverted ? messages[index - 1] : messages[index + 1]) || {}
+        (isInverted ? messages[index - 1] : messages[index + 1]) || EMPTY_NEIGHBOUR
 
       const messageProps: ItemProps<TMessage> = {
         position: user?._id != null && messageItem.user?._id === user._id ? 'right' : 'left',
@@ -457,10 +475,14 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
         contentContainerStyle={styles.messagesContainer}
         ListEmptyComponent={renderChatEmpty}
         ListFooterComponent={
-          isInverted ? ListHeaderComponent : <>{ListFooterComponent}</>
+          isInverted
+            ? <>{TopSpacerComponent}{ListHeaderComponent}</>
+            : <>{ListFooterComponent}{BottomSpacerComponent}</>
         }
         ListHeaderComponent={
-          isInverted ? <>{ListFooterComponent}</> : ListHeaderComponent
+          isInverted
+            ? <>{BottomSpacerComponent}{ListFooterComponent}</>
+            : <>{TopSpacerComponent}{ListHeaderComponent}</>
         }
         scrollEventThrottle={16}
         onEndReached={onEndReached}

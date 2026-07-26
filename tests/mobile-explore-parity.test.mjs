@@ -549,14 +549,15 @@ test("mobile table memory header prefers visit date and keeps metadata concise",
   assert.doesNotMatch(roomHeader, /join\(" · "\)/);
 });
 
-test("mobile table memory room applies dynamic occasion themes", () => {
+test("mobile table memory room applies dynamic occasion themes around the bundled wallpaper", () => {
   const memoryRoom = source("mobile/app/memories/[id].tsx");
   const memoryComposer = source("mobile/src/features/memories/room/MemoryComposer.tsx");
 
   assert.match(memoryRoom, /effectiveRoomOccasionType/);
   assert.match(memoryRoom, /roomOccasionTheme = getOccasionTheme\(roomOccasionType\)/);
   assert.match(memoryRoom, /applyRoomTheme\(resolvedTheme, roomOccasionType\)/);
-  assert.match(memoryRoom, /FoodChatWallpaper patternKey=\{roomOccasionTheme\.backgroundPattern\}/);
+  assert.match(memoryRoom, /<FoodChatWallpaper \/>/);
+  assert.match(memoryRoom, /food-wallpaper-tile-baked\.png/);
   assert.match(memoryRoom, /themeCopy=\{roomOccasionTheme\.copy\}/);
   assert.match(memoryComposer, /placeholder=\{themeCopy\.composerPlaceholder\}/);
 });

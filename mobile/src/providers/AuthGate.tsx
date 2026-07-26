@@ -42,7 +42,12 @@ const SLIDE_OVER_ROUTES = new Set<string>([
 const CAMERA_ROUTES = new Set<string>(["memories/[id]/camera", "share/camera"]);
 
 function protectedScreenOptions(name: string) {
-  if (name === "(tabs)") return { animation: "none" } as const;
+  // Memory rooms can retain a prewarmed chat tree with hundreds of native
+  // views. Animating that whole tree during a stack pop makes Android Back
+  // scale with message count even though the Profile screen is already below
+  // it. Swap the route immediately; the room's own pane transitions still
+  // provide motion while navigating inside the room.
+  if (name === "(tabs)" || name === "memories/[id]") return { animation: "none" } as const;
   if (CAMERA_ROUTES.has(name)) return { animation: "fade", animationDuration: 150 } as const;
   if (SLIDE_OVER_ROUTES.has(name)) return SLIDE_OVER_OPTIONS;
   return undefined;

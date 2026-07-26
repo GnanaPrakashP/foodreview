@@ -46,6 +46,11 @@ export interface ChatProps<TMessage extends IMessage> extends Partial<Omit<Messa
   /* Input text; default is undefined, but if specified, it will override Chat's internal state */
   text?: string
   initialText?: string
+  /**
+   * Render messages and the controlled composer in the first commit when the
+   * parent already guarantees a non-zero flex layout.
+   */
+  initiallyInitialized?: boolean
   /* User sending the messages: { _id, name, avatar } */
   user?: User
   /*  Locale to localize the dates */

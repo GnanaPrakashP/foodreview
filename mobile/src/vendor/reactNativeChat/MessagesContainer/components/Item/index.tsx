@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useMemo } from 'react'
+import React, { memo, useMemo } from 'react'
 import { View } from 'react-native'
 import Animated, { useAnimatedStyle, useDerivedValue } from 'react-native-reanimated'
 import { Day } from '../../../Day'
@@ -91,7 +91,7 @@ const AnimatedDayWrapper = <TMessage extends IMessage>(props: ItemProps<TMessage
   )
 }
 
-export const Item = <TMessage extends IMessage>(props: ItemProps<TMessage>) => {
+const ItemComponent = <TMessage extends IMessage>(props: ItemProps<TMessage>) => {
   const {
     renderMessage: renderMessageProp,
     isDayAnimationEnabled,
@@ -131,3 +131,19 @@ export const Item = <TMessage extends IMessage>(props: ItemProps<TMessage>) => {
     </View>
   )
 }
+
+// The row is the memo boundary for the whole list. VirtualizedList re-renders
+// its cells on every render-window update (~20x/second while scrolling) and
+// each cell re-invokes renderItem, so without this boundary every visible
+// row's subtree — Swipeable pan handler, bubble long-press/tap gestures,
+// timestamp measurement, day separator — re-renders on every one of those
+// updates even though nothing about the row changed. Measured on-device
+// (Hermes sampling profile, 6s fling): React render + Fabric commit was 49%
+// of wall clock with the surface component itself running only 13ms, i.e. the
+// work was cell re-renders, not app state changes.
+//
+// A plain shallow compare is safe here: every prop is either value-stable
+// during a scroll (the message objects, the Reanimated shared values, the
+// isDayAnimationEnabled flag) or a callback/config object whose identity
+// changes exactly when the surface re-renders and rows genuinely must follow.
+export const Item = memo(ItemComponent) as typeof ItemComponent

@@ -244,11 +244,11 @@ test("notifications patch their pages and have no duplicate interval polling", (
   assert.doesNotMatch(notifications, /invalidateQueries/);
 });
 
-test("Memory mounts tabs on visit and realtime deltas avoid immediate reloads", () => {
+test("Memory keeps inactive panes lazy and realtime deltas avoid immediate reloads", () => {
   const room = source("mobile/app/memories/[id].tsx");
   const memories = source("mobile/src/hooks/useMemories.ts");
   const pane = room.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
-  assert.match(pane, /useState\(active \|\| !lazy\)/);
+  assert.match(pane, /useState\(active \|\| !lazy \|\| shouldPrewarm\)/);
   assert.match(pane, /if \(active\) setHasMounted\(true\)/);
   assert.doesNotMatch(room, /panesPreloaded|setChatPreloaded/);
   assert.match(memories, /REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000/);

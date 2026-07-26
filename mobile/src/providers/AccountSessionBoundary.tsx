@@ -17,7 +17,7 @@ import {
   clearAccountProfileCache
 } from "@/services/accountProfileCache";
 import { useSessionStore } from "@/stores/sessionStore";
-import { reconcilePendingPostMediaUploads } from "@/services/mediaPipeline";
+import { reconcilePendingMediaUploads } from "@/services/mediaPipeline";
 import { getRuntimeActivitySnapshot, subscribeRuntimeActivity } from "@/performance/runtimeActivity";
 import { recordPerformanceSample } from "@/performance/mobilePerformance";
 import {
@@ -26,7 +26,7 @@ import {
   recordMobileFlow,
   safeMobileErrorCode
 } from "@/observability/mobileTelemetry";
-import { cacheOwnerForUserId } from "@/security/cacheOwnership";
+import { cacheOwnerForUserId, getActiveCacheOwner } from "@/security/cacheOwnership";
 import { clearSavedUserLocationForScope } from "@/services/userLocation";
 import { clearOccasionCorrectionsForScope } from "@/features/occasions/occasionStorage";
 import { isProfileComplete } from "@/utils/profileCompleteness";
@@ -92,31 +92,46 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
     let bufferedSession: Session | null | undefined;
     let tokenExpiryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const refreshExpiredSession = async () => {
+    const refreshExpiredSession = async (): Promise<{
+      authoritativeFailure: boolean;
+      session: Session | null;
+    }> => {
       try {
         const { data, error } = await within(
           supabase.auth.refreshSession(),
           AUTH_BOOTSTRAP_TIMEOUT_MS,
           "auth_refresh_timeout"
         );
-        if (error || !data.session || !sessionIsLocallyValid(data.session)) return null;
-        return data.session;
-      } catch {
-        return null;
+        if (error) {
+          return {
+            authoritativeFailure: isAuthoritativeAuthFailure(error),
+            session: null
+          };
+        }
+        return {
+          authoritativeFailure: false,
+          session: data.session && sessionIsLocallyValid(data.session) ? data.session : null
+        };
+      } catch (error) {
+        return {
+          authoritativeFailure: isAuthoritativeAuthFailure(
+            error && typeof error === "object" ? error as { message?: string; status?: number } : null
+          ),
+          session: null
+        };
       }
     };
 
     async function recoverExpiredSession(ownerHost: Host, reason: "foreground" | "timer") {
       if (hostRef.current !== ownerHost) return;
       const previousProfile = useSessionStore.getState().profile;
-      setHost(null);
-      useSessionStore.getState().beginTransition();
-      const refreshed = await refreshExpiredSession();
+      const refresh = await refreshExpiredSession();
       if (hostRef.current !== ownerHost) return;
-      if (refreshed) {
+      let authoritativeFailure = refresh.authoritativeFailure;
+      if (refresh.session) {
         try {
           const lifecycle = await within(
-            getAccountLifecycleStatus(refreshed.access_token),
+            getAccountLifecycleStatus(refresh.session.access_token),
             AUTH_VALIDATION_TIMEOUT_MS,
             "account_status_timeout"
           );
@@ -124,17 +139,47 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
             (lifecycle === "active" && Boolean(previousProfile) && isProfileComplete(previousProfile)) ||
             (lifecycle === "incomplete" && Boolean(previousProfile) && !isProfileComplete(previousProfile)) ||
             (lifecycle === "missing" && !previousProfile);
-          if (!lifecycleMatchesSession) throw new Error("refreshed_account_unavailable");
-          useSessionStore.getState().setSession(refreshed, previousProfile);
-          scheduleTokenExpiry(refreshed, ownerHost);
+          if (!lifecycleMatchesSession) {
+            authoritativeFailure = true;
+            throw new Error("refreshed_account_unavailable");
+          }
+          useSessionStore.getState().setSession(refresh.session, previousProfile);
+          scheduleTokenExpiry(refresh.session, ownerHost);
           if (alive) setHost(ownerHost);
           recordMobileFlow("auth.token_refresh", 0, "success", { reason });
           return;
-        } catch {
-          // A refreshed token without an active account is not sufficient to
-          // remount account-owned navigation or caches.
+        } catch (error) {
+          authoritativeFailure = authoritativeFailure ||
+            (error instanceof Error && error.message === "account_status_unauthenticated");
+          if (!authoritativeFailure) {
+            // Authentication succeeded but lifecycle validation was temporarily
+            // unavailable. Keep the owner-scoped replica mounted and retry.
+            useSessionStore.getState().setSession(refresh.session, previousProfile);
+            scheduleTokenExpiry(refresh.session, ownerHost);
+            if (alive) setHost(ownerHost);
+            recordMobileFlow("auth.token_refresh", 0, "failure", {
+              reason,
+              replica_retained: true
+            });
+            return;
+          }
         }
       }
+      if (!authoritativeFailure) {
+        // A timeout, offline device, or temporary auth outage must not erase
+        // the durable replica. Keep the current owner mounted and retry later.
+        if (alive) setHost(ownerHost);
+        tokenExpiryTimeout = setTimeout(() => {
+          queueRef.current = queueRef.current.then(() => recoverExpiredSession(ownerHost, "timer"));
+        }, 30_000);
+        recordMobileFlow("auth.token_refresh", 0, "failure", {
+          reason,
+          replica_retained: true
+        });
+        return;
+      }
+      setHost(null);
+      useSessionStore.getState().beginTransition();
       await cleanupCurrentLocalData("token_expired", ownerHost.client).catch(() => {});
       await logout().catch(() => {});
       await transition(null);
@@ -181,6 +226,28 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       const nextClient = createAccountQueryClient();
 
       try {
+        if (session && !sessionIsLocallyValid(session)) {
+          resolutionPhase = "expired_session_refresh";
+          const refresh = await refreshExpiredSession();
+          if (refresh.session) {
+            await transition(refresh.session);
+            return;
+          }
+          if (!refresh.authoritativeFailure) {
+            // On a cold offline start there is no safe authenticated host to
+            // mount yet, but the previous owner's durable files remain intact.
+            // A later successful login reopens the same owner-scoped replica.
+            useSessionStore.getState().clearSession();
+            const retainedHost = { client: nextClient, ownerUserId: null };
+            hostRef.current = retainedHost;
+            if (alive) setHost(retainedHost);
+            recordMobileFlow("auth.session_resolution", Date.now() - transitionStartedAt, "failure", {
+              replica_retained: true,
+              state: "offline_expired"
+            });
+            return;
+          }
+        }
         if (!session || !sessionIsLocallyValid(session)) {
           resolutionPhase = "signed_out_cleanup";
           await prepareSignedOutLocalData(nextClient, current?.client);
@@ -284,7 +351,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
           cache_owner_changed: ownerChanged,
           state: isProfileComplete(actor) ? "active" : "onboarding"
         });
-        void reconcilePendingPostMediaUploads().catch(() => {});
+        void reconcilePendingMediaUploads().catch(() => {});
       } catch (error) {
         if (__DEV__) {
           console.error("CB_AUTH_SESSION_RESOLUTION_FAILED", {
@@ -336,7 +403,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
       void getAccountLifecycleStatus(session.access_token)
         .then((status) => {
           if (status === "active" && stillCurrent()) {
-            void reconcilePendingPostMediaUploads().catch(() => {});
+            void reconcilePendingMediaUploads().catch(() => {});
           }
           if (status === "incomplete" && stillCurrent()) {
             const currentProfile = useSessionStore.getState().profile;
@@ -390,6 +457,14 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         void supabase.auth.startAutoRefresh();
       }
       if (!session) {
+        const current = hostRef.current;
+        if (
+          current?.ownerUserId &&
+          getActiveCacheOwner()?.userId === current.ownerUserId
+        ) {
+          queueRef.current = queueRef.current.then(() => recoverExpiredSession(current, "timer"));
+          return;
+        }
         setHost(null);
         useSessionStore.getState().beginTransition();
       }
@@ -425,11 +500,15 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
         initialResolved = true;
         enqueue(resolvedSession);
       })
-      .catch(async (error) => {
+      .catch((error) => {
         captureMobileError("auth.initial_session_read_failed", error);
-        await logout().catch(() => {});
         initialResolved = true;
-        enqueue(null);
+        // Session storage could not be read or refreshed. Do not interpret a
+        // timeout as authorization to erase an owner-scoped durable replica.
+        useSessionStore.getState().clearSession();
+        const retainedHost = { client: createAccountQueryClient(), ownerUserId: null };
+        hostRef.current = retainedHost;
+        if (alive) setHost(retainedHost);
       });
 
     return () => {

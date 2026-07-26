@@ -43,29 +43,36 @@ const SCALE_DURATION_IN = 400
 const SCALE_DURATION_OUT = 200
 const SCALE_EASING = Easing.inOut(Easing.quad)
 
-export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<TMessage>): React.ReactElement => {
-  const {
-    currentMessage,
-    nextMessage,
-    position,
-    containerToNextStyle,
-    previousMessage,
-    containerToPreviousStyle,
-    onQuickReply,
-    renderQuickReplySend,
-    quickReplyStyle,
-    quickReplyTextStyle,
-    quickReplyContainerStyle,
-    containerStyle,
-    wrapperStyle,
-    bottomContainerStyle,
-    onPressMessage: onPressMessageProp,
-    onLongPressMessage: onLongPressMessageProp,
-    reactions,
-  } = props
-
-  const context = useChatContext()
-
+// The long-press/tap reaction machinery lives in its own component so it is
+// only constructed when reactions are actually enabled. Held inline in Bubble,
+// its useSharedValue + useAnimatedStyle and three Gesture builders were paid by
+// EVERY message row on mount even with reactions off — hooks cannot be called
+// conditionally, but a component can be rendered conditionally. Per-row mount
+// cost is what makes a cold chat list expensive, and unlike re-render cost it
+// cannot be memoized away.
+const ReactionsBubble = <TMessage extends IMessage = IMessage>({
+  containerStyle,
+  context,
+  currentMessage,
+  onPressMessage,
+  position,
+  reactions,
+  renderBubbleBody,
+  renderQuickReplies,
+  renderReactionsDisplay,
+  wrapperStyleList,
+}: {
+  containerStyle?: unknown
+  context: unknown
+  currentMessage?: TMessage
+  onPressMessage?: (context: unknown, message?: TMessage) => void
+  position: 'left' | 'right'
+  reactions: NonNullable<BubbleProps<TMessage>['reactions']>
+  renderBubbleBody: () => React.ReactNode
+  renderQuickReplies: () => React.ReactNode
+  renderReactionsDisplay: () => React.ReactNode
+  wrapperStyleList: unknown
+}): React.ReactElement => {
   const bubbleContainerRef = useRef<View>(null)
 
   const [isPickerVisible, setIsPickerVisible] = useState(false)
@@ -76,25 +83,11 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
     bubbleHeight: 0,
   })
 
-  // Scale shared value is declared unconditionally so hooks order stays stable
-  // whether or not reactions are enabled.
   const messageScale = useSharedValue(1)
 
   const bubbleScaleStyle = useAnimatedStyle(() => ({
     transform: [{ scale: messageScale.value }],
   }))
-
-  const onPress = useCallback(() => {
-    onPressMessageProp?.(context, currentMessage)
-  }, [onPressMessageProp, context, currentMessage])
-
-  const onLongPress = useCallback(() => {
-    onLongPressMessageProp?.(context, currentMessage)
-  }, [
-    currentMessage,
-    context,
-    onLongPressMessageProp,
-  ])
 
   const measureBubble = useCallback(() => {
     bubbleContainerRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
@@ -108,9 +101,9 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
         .runOnJS(true)
         .onEnd((_e, success) => {
           if (success)
-            onPressMessageProp?.(context, currentMessage)
+            onPressMessage?.(context, currentMessage)
         }),
-    [onPressMessageProp, context, currentMessage]
+    [onPressMessage, context, currentMessage]
   )
 
   const longPressGesture = useMemo(
@@ -144,6 +137,81 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
     () => Gesture.Exclusive(longPressGesture, tapGesture),
     [longPressGesture, tapGesture]
   )
+
+  const renderReactionPickerModal = useCallback(() => {
+    const emojis = reactions.emojis ?? DEFAULT_REACTION_EMOJIS
+
+    const pickerProps = {
+      visible: isPickerVisible,
+      message: currentMessage,
+      emojis,
+      onSelect: (emoji: string) => reactions?.onReactionPress?.(currentMessage, emoji),
+      onDismiss: () => setIsPickerVisible(false),
+      position,
+      ...pickerAnchor,
+      pickerContainerStyle: reactions.pickerContainerStyle,
+      pickerEmojiStyle: reactions.pickerEmojiStyle,
+    }
+
+    if (reactions.renderReactionPicker)
+      return renderComponentOrElement(reactions.renderReactionPicker, pickerProps)
+
+    return <ReactionPicker {...pickerProps} />
+  }, [reactions, isPickerVisible, currentMessage, position, pickerAnchor])
+
+  // The Animated.View carries only the scale transform, keeping the animation
+  // isolated from the static bubble styles on the inner View. Tap/long-press
+  // are handled by the composed gesture.
+  return (
+    <Animated.View style={containerStyle} ref={bubbleContainerRef}>
+      <GestureDetector gesture={reactionsGesture}>
+        <Animated.View style={bubbleScaleStyle}>
+          <View style={wrapperStyleList}>
+            {renderBubbleBody()}
+          </View>
+        </Animated.View>
+      </GestureDetector>
+      {renderQuickReplies()}
+      {renderReactionsDisplay()}
+      {renderReactionPickerModal()}
+    </Animated.View>
+  )
+}
+
+export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<TMessage>): React.ReactElement => {
+  const {
+    currentMessage,
+    nextMessage,
+    position,
+    containerToNextStyle,
+    previousMessage,
+    containerToPreviousStyle,
+    onQuickReply,
+    renderQuickReplySend,
+    quickReplyStyle,
+    quickReplyTextStyle,
+    quickReplyContainerStyle,
+    containerStyle,
+    wrapperStyle,
+    bottomContainerStyle,
+    onPressMessage: onPressMessageProp,
+    onLongPressMessage: onLongPressMessageProp,
+    reactions,
+  } = props
+
+  const context = useChatContext()
+
+  const onPress = useCallback(() => {
+    onPressMessageProp?.(context, currentMessage)
+  }, [onPressMessageProp, context, currentMessage])
+
+  const onLongPress = useCallback(() => {
+    onLongPressMessageProp?.(context, currentMessage)
+  }, [
+    currentMessage,
+    context,
+    onLongPressMessageProp,
+  ])
 
   const styledBubbleToNext = useMemo(() => {
     if (
@@ -516,47 +584,20 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
     return <MessageReactions {...displayProps} />
   }, [currentMessage, position, props.user, reactions])
 
-  const renderReactionPickerModal = useCallback(() => {
-    if (!reactions?.isEnabled)
-      return null
-
-    const emojis = reactions.emojis ?? DEFAULT_REACTION_EMOJIS
-
-    const pickerProps = {
-      visible: isPickerVisible,
-      message: currentMessage,
-      emojis,
-      onSelect: (emoji: string) => reactions?.onReactionPress?.(currentMessage, emoji),
-      onDismiss: () => setIsPickerVisible(false),
-      position,
-      ...pickerAnchor,
-      pickerContainerStyle: reactions.pickerContainerStyle,
-      pickerEmojiStyle: reactions.pickerEmojiStyle,
-    }
-
-    if (reactions.renderReactionPicker)
-      return renderComponentOrElement(reactions.renderReactionPicker, pickerProps)
-
-    return <ReactionPicker {...pickerProps} />
-  }, [reactions, isPickerVisible, currentMessage, position, pickerAnchor])
-
   if (reactions?.isEnabled)
-    // Reactions path: the Animated.View carries only the scale transform,
-    // keeping the animation isolated from the static bubble styles on the
-    // inner View. Tap/long-press are handled by the composed gesture.
     return (
-      <Animated.View style={containerStyle?.[position]} ref={bubbleContainerRef}>
-        <GestureDetector gesture={reactionsGesture}>
-          <Animated.View style={bubbleScaleStyle}>
-            <View style={wrapperStyleList}>
-              {renderBubbleBody()}
-            </View>
-          </Animated.View>
-        </GestureDetector>
-        {renderQuickReplies()}
-        {renderReactionsDisplay()}
-        {renderReactionPickerModal()}
-      </Animated.View>
+      <ReactionsBubble
+        containerStyle={containerStyle?.[position]}
+        context={context}
+        currentMessage={currentMessage}
+        onPressMessage={onPressMessageProp}
+        position={position}
+        reactions={reactions}
+        renderBubbleBody={renderBubbleBody}
+        renderQuickReplies={renderQuickReplies}
+        renderReactionsDisplay={renderReactionsDisplay}
+        wrapperStyleList={wrapperStyleList}
+      />
     )
 
   // Default path: unchanged behaviour for existing users, preserving

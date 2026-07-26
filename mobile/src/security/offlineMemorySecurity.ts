@@ -1,10 +1,19 @@
 import type { MemoryMessage, MemoryPhoto, MemoryRoom } from "@/types/models";
 
 export function sanitizeOfflineMemoryPhoto(photo: MemoryPhoto, now = Date.now()): MemoryPhoto {
-  if (!photo.storagePath.startsWith("memories/")) return photo;
+  const privateMedia = Boolean(photo.mediaAssetId) ||
+    photo.storagePath?.startsWith("memories/") ||
+    Boolean(photo.signedUrlExpiresAt);
+  if (!privateMedia) return photo;
   const expiresAt = photo.signedUrlExpiresAt ? new Date(photo.signedUrlExpiresAt).getTime() : 0;
   if (Number.isFinite(expiresAt) && expiresAt > now) return photo;
-  return { ...photo, publicUrl: "", signedUrlExpiresAt: null };
+  return {
+    ...photo,
+    posterUrl: null,
+    publicUrl: "",
+    signedUrlExpiresAt: null,
+    thumbnailUrl: null
+  };
 }
 
 export function sanitizeOfflineMemoryMessage(message: MemoryMessage, now = Date.now()): MemoryMessage {

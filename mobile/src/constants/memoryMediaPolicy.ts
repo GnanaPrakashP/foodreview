@@ -1,19 +1,21 @@
 // Keep these values in sync with lib/memory-media-policy.ts.
 export const MEMORY_MEDIA_UPLOAD_INTENT_TTL_SECONDS = 15 * 60;
 export const MEMORY_MEDIA_PENDING_REVIEW_TTL_HOURS = 24;
-// Must exceed the on-device cache lifetimes (React Query MMKV persistence ~7d and the
-// SQLite offline store's OFFLINE_CACHE_MAX_AGE_MS 7d) so cached/persisted media URLs stay
-// valid while still being served from cache. Was 60 * 60 (1h) — URLs expired long before
-// the caches evicted them, so restored rows pointed at dead URLs (broken images).
+// Long enough to avoid excessive signing traffic during normal use. SQLite is a durable
+// replica, so clients must renew expired URLs by stable media ID instead of relying on
+// the signed URL to outlive the local row.
 export const MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS = 8 * 24 * 60 * 60;
 export const MEMORY_MEDIA_MAX_ITEMS = 4;
 
 export const MEMORY_IMAGE_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MEMORY_IMAGE_MAX_SOURCE_BYTES = 60 * 1024 * 1024;
 export const MEMORY_IMAGE_TARGET_COMPRESSED_BYTES = 2 * 1024 * 1024;
 export const MEMORY_IMAGE_MAX_RESOLUTION = 4096;
 export const MEMORY_IMAGE_THUMBNAIL_WIDTH = 512;
 
-export const MEMORY_VIDEO_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+// Keep this at or below the server moderation input ceiling. Larger camera
+// originals must be prepared before an upload intent is created.
+export const MEMORY_VIDEO_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Duration/resolution are validated from declared mobile metadata in Phase 2.1.
 // Byte-level media probing belongs in the later media-processing pipeline.
 export const MEMORY_VIDEO_MAX_DURATION_MS = 60_000;

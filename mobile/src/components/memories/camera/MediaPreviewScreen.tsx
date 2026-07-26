@@ -7,12 +7,10 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,10 +29,6 @@ export function MediaPreviewScreen({
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [captionOpen, setCaptionOpen] = useState(false);
-  const [dishOpen, setDishOpen] = useState(false);
-  const [caption, setCaption] = useState("");
-  const [dishName, setDishName] = useState("");
   const [posting, setPosting] = useState(false);
   const [navigating, setNavigating] = useState(false);
   const [postError, setPostError] = useState("");
@@ -47,8 +41,6 @@ export function MediaPreviewScreen({
     setPosting(true);
     setPostError("");
 
-    const trimmedCaption = caption.trim();
-    const trimmedDishName = dishName.trim();
     const mimeType = asset.mimeType ?? (asset.mediaType === "video" ? "video/mp4" : "image/jpeg");
     const validationError = validateMemoryMediaAssets([{
       duration: asset.duration,
@@ -68,8 +60,6 @@ export function MediaPreviewScreen({
     try {
       await postMemoryRoomMedia({
         asset,
-        caption: trimmedCaption,
-        dishName: trimmedDishName,
         roomId
       });
       removeMemoryCapture(asset.id);
@@ -105,7 +95,7 @@ export function MediaPreviewScreen({
         {asset.mediaType === "video" ? (
           <CapturedVideo muted={videoMuted} uri={asset.uri} />
         ) : (
-          <Image alt="Captured photo" contentFit="cover" source={{ uri: asset.uri }} style={styles.imagePreview} />
+          <Image alt="Captured photo" contentFit="contain" source={{ uri: asset.uri }} style={styles.imagePreview} />
         )}
       </View>
 
@@ -129,58 +119,13 @@ export function MediaPreviewScreen({
         ) : null}
       </View>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        pointerEvents="box-none"
-        style={styles.bottomOverlay}
-      >
+      <View pointerEvents="box-none" style={styles.bottomOverlay}>
         <LinearGradient
           colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.86)"]}
           pointerEvents="none"
           style={styles.bottomGradient}
         />
         <View style={[styles.controls, { paddingBottom: bottomInset }]}>
-          <View style={styles.secondaryActions}>
-            <Pressable
-              accessibilityLabel="Add caption"
-              onPress={() => setCaptionOpen((current) => !current)}
-              style={[styles.secondaryAction, captionOpen && styles.secondaryActionActive]}
-            >
-              <Ionicons name="chatbubble-ellipses-outline" size={16} color={captionOpen ? colors.dark.bg : colors.dark.white} />
-              <Text style={[styles.secondaryActionText, captionOpen && styles.secondaryActionTextActive]}>Add caption</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Add dish"
-              onPress={() => setDishOpen((current) => !current)}
-              style={[styles.secondaryAction, dishOpen && styles.secondaryActionActive]}
-            >
-              <Ionicons name="restaurant-outline" size={16} color={dishOpen ? colors.dark.bg : colors.dark.white} />
-              <Text style={[styles.secondaryActionText, dishOpen && styles.secondaryActionTextActive]}>Add dish</Text>
-            </Pressable>
-          </View>
-
-          {captionOpen ? (
-            <TextInput
-              maxLength={180}
-              onChangeText={setCaption}
-              placeholder="Caption"
-              placeholderTextColor="rgba(245,237,216,0.54)"
-              style={styles.textInput}
-              value={caption}
-            />
-          ) : null}
-
-          {dishOpen ? (
-            <TextInput
-              maxLength={80}
-              onChangeText={setDishName}
-              placeholder="Dish name"
-              placeholderTextColor="rgba(245,237,216,0.54)"
-              style={styles.textInput}
-              value={dishName}
-            />
-          ) : null}
-
           {postError ? <Text style={styles.errorText}>{postError}</Text> : null}
 
           <Pressable
@@ -192,7 +137,7 @@ export function MediaPreviewScreen({
             <Text style={styles.postButtonText}>Post to Room</Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </View>
   );
 }
@@ -220,7 +165,7 @@ function CapturedVideo({ muted, uri }: { muted: boolean; uri: string }) {
       <VideoView
         allowsFullscreen={false}
         allowsPictureInPicture={false}
-        contentFit="cover"
+        contentFit="contain"
         nativeControls={false}
         player={player}
         pointerEvents="none"
@@ -327,46 +272,6 @@ const styles = StyleSheet.create({
   controls: {
     gap: spacing.md,
     paddingHorizontal: spacing.lg
-  },
-  secondaryActions: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  secondaryAction: {
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.10)",
-    borderColor: "rgba(255,255,255,0.12)",
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 7,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9
-  },
-  secondaryActionActive: {
-    backgroundColor: colors.dark.memory,
-    borderColor: colors.dark.memoryBorder
-  },
-  secondaryActionText: {
-    ...fontStyles.extraBold,
-    color: colors.dark.white,
-    fontSize: typography.caption,
-    letterSpacing: 0
-  },
-  secondaryActionTextActive: {
-    color: colors.dark.white
-  },
-  textInput: {
-    ...fontStyles.semiBold,
-    backgroundColor: "rgba(14,11,8,0.78)",
-    borderColor: "rgba(255,255,255,0.14)",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.dark.cream,
-    fontSize: typography.body,
-    letterSpacing: 0,
-    minHeight: 48,
-    paddingHorizontal: spacing.base
   },
   errorText: {
     ...fontStyles.semiBold,

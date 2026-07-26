@@ -1,13 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import sharp from "sharp";
 import { mediaWorkerLogger } from "@/lib/observability/server";
+import { moderateMemoryMediaBuffer } from "@/lib/server/memory-media";
+import { hashSecurityIdentifier } from "@/lib/server/api-security";
 import {
   accessClassForPostVisibility,
   MEDIA_PRIVATE_BUCKET,
+  MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS,
   MEDIA_POST_SIGNED_URL_TTL_SECONDS,
   type MediaAccessClass,
   type MediaDerivativeKind
@@ -48,7 +52,6 @@ export {
   MEDIA_POST_THUMB_HEIGHT,
   MEDIA_POST_THUMB_WIDTH
 };
-export const MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MEDIA_IMAGE_MAX_PIXELS = 80_000_000;
 export const MEDIA_VIDEO_MAX_PIXELS = 16_000_000;
 export const MEDIA_MAX_ATTEMPTS = 5;
@@ -61,6 +64,7 @@ export type MediaAssetStatus = "created" | "uploaded" | "processing" | "ready" |
 export {
   accessClassForPostVisibility,
   MEDIA_PRIVATE_BUCKET,
+  MEDIA_PRIVATE_SIGNED_URL_TTL_SECONDS,
   MEDIA_POST_SIGNED_URL_TTL_SECONDS,
   type MediaAccessClass,
   type MediaDerivativeKind
@@ -75,6 +79,7 @@ export type NormalizedCropRect = {
 };
 
 export type NormalizedMediaIntent = {
+  audioPolicy: "preserve" | "strip";
   assetId: string;
   cropRect: NormalizedCropRect;
   durationMs: number | null;
@@ -108,10 +113,12 @@ export type MediaAssetRow = {
   source_storage_path: string;
   status: MediaAssetStatus;
   access_class: MediaAccessClass;
+  audio_policy: "preserve" | "strip";
   visibility: "public" | "private";
   expires_at?: string;
   failure_code?: string | null;
   failure_reason?: string | null;
+  moderation_status?: "pending" | "approved" | "rejected";
   consumed_at?: string | null;
 };
 
@@ -189,12 +196,12 @@ const MIME_EXTENSION: Record<string, string> = {
   "video/quicktime": "mov",
   "video/webm": "webm"
 };
-// A 60s 1080p H.264 clip is ~40-80MB; 100MB leaves headroom without letting
-// mobile uploads run long enough to routinely time out.
+// Keep the accepted source contract aligned with mobile validation and the
+// moderation provider. Increasing one surface requires increasing all three.
 const MAX_BYTES: Record<MediaSurface, Record<MediaType, number>> = {
   avatar: { image: 5 * 1024 * 1024, video: 0 },
-  memory: { image: 60 * 1024 * 1024, video: 100 * 1024 * 1024 },
-  post: { image: 60 * 1024 * 1024, video: 100 * 1024 * 1024 }
+  memory: { image: 10 * 1024 * 1024, video: 20 * 1024 * 1024 },
+  post: { image: 10 * 1024 * 1024, video: 20 * 1024 * 1024 }
 };
 // Enforced against the probed duration at processing time — the intent's
 // client-supplied duration is advisory only. Small tolerance for container
@@ -305,6 +312,11 @@ function optionalDurationMs(value: unknown) {
 }
 
 export function normalizeCropRect(surface: MediaSurface, value: unknown): NormalizedCropRect {
+  // Table Memory is a chat surface. Preserve the complete camera/gallery frame
+  // and ignore any client-supplied crop contract.
+  if (surface === "memory") {
+    return { height: 1, targetAspect: null, width: 1, x: 0, y: 0 };
+  }
   const targetAspect = surface === "post" ? MEDIA_POST_TARGET_ASPECT : surface === "avatar" ? 1 : null;
   if (!value || typeof value !== "object") {
     return { height: 1, targetAspect, width: 1, x: 0, y: 0 };
@@ -314,22 +326,27 @@ export function normalizeCropRect(surface: MediaSurface, value: unknown): Normal
   const y = finiteNumber(input.y) ?? 0;
   const width = finiteNumber(input.width) ?? 1;
   const height = finiteNumber(input.height) ?? 1;
-  const requestedAspect = finiteNumber(input.targetAspect);
-  const normalizedTargetAspect = requestedAspect && requestedAspect > 0 ? requestedAspect : targetAspect;
 
   if (x < 0 || y < 0 || width <= 0 || height <= 0 || x >= 1 || y >= 1 || x + width > 1.001 || y + height > 1.001) {
     throw new Error("media_crop_rect_invalid");
   }
   return {
     height: Math.min(1 - y, height),
-    targetAspect: normalizedTargetAspect,
+    // Aspect policy belongs to the server surface, not the client payload.
+    targetAspect,
     width: Math.min(1 - x, width),
     x,
     y
   };
 }
 
+function normalizeAudioPolicy(surface: MediaSurface, mediaType: MediaType, value: unknown) {
+  if (surface === "post" && mediaType === "video" && value === "strip") return "strip" as const;
+  return "preserve" as const;
+}
+
 export function normalizeMediaIntentInput(input: {
+  audioPolicy?: unknown;
   cropRect?: unknown;
   durationMs?: unknown;
   fileName?: unknown;
@@ -357,6 +374,7 @@ export function normalizeMediaIntentInput(input: {
   const accessClass = accessClassForIntent(surface, input.intendedVisibility);
   return {
     accessClass,
+    audioPolicy: normalizeAudioPolicy(surface, mediaType, input.audioPolicy),
     assetId,
     cropRect: normalizeCropRect(surface, input.cropRect),
     durationMs: optionalDurationMs(input.durationMs),
@@ -472,6 +490,21 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
     case "dead_letter":
     case "retry_exhausted":
       return "Media processing needs support. Please try a new upload.";
+    case "moderation_rejected":
+    case "adult_content":
+    case "explicit_content":
+    case "racy_content":
+    case "violent_content":
+      return "Media did not pass the safety review.";
+    case "moderation_service_unavailable":
+    case "moderation_provider_not_configured":
+    case "moderation_provider_error":
+    case "moderation_response_invalid":
+    case "moderation_check_failed":
+    case "moderation_check_timed_out":
+    case "video_too_large_for_inline_moderation":
+      return "Media is still awaiting safety review.";
+    case "owner_cancelled":
     case "cancelled":
       return "Media processing was cancelled.";
     default:
@@ -494,7 +527,8 @@ const PERMANENT_MEDIA_FAILURES = new Set([
   "source_owner_mismatch",
   "visibility_contract_mismatch",
   "account_deleting",
-  "intent_expired"
+  "intent_expired",
+  "moderation_rejected"
 ]);
 
 export function classifyMediaProcessingFailure(error: unknown): { code: string; failureClass: MediaFailureClass } {
@@ -613,9 +647,52 @@ export async function processMediaAsset(
     expectedMimeType: asset.original_mime_type
   });
   await lease?.checkpoint("after_source_validation");
+  await ensureMediaAssetModeration(admin, asset, buffer, lease);
   return asset.media_type === "image"
     ? processImageAsset(admin, asset, buffer, lease, config)
     : processVideoAsset(admin, asset, buffer, lease, config);
+}
+
+async function ensureMediaAssetModeration(
+  admin: AdminClient,
+  asset: MediaAssetRow,
+  buffer: Buffer,
+  lease?: ProcessingLease
+) {
+  if (asset.moderation_status === "approved") return;
+  if (asset.moderation_status === "rejected") throw new Error("moderation_rejected");
+
+  await lease?.checkpoint("before_moderation");
+  const moderation = await moderateMemoryMediaBuffer({
+    buffer,
+    kind: asset.media_type
+  });
+  await lease?.checkpoint("after_moderation");
+  if (moderation.status === "pending") {
+    throw new Error(moderation.reason ?? "moderation_service_unavailable");
+  }
+
+  const operatorHash = hashSecurityIdentifier("media-moderation", "shared-media-worker");
+  if (!operatorHash) throw new Error("moderation_service_unavailable");
+  const { data: changed, error } = await admin.rpc("apply_media_moderation_action", {
+    p_action: moderation.status,
+    p_asset_id: asset.id,
+    p_operator_hash: operatorHash,
+    p_reason_code: moderation.reason ?? null
+  });
+  if (error) throw new Error("database_temporarily_unavailable");
+  if (changed !== true) {
+    const { data: current, error: currentError } = await admin
+      .from("media_assets")
+      .select("moderation_status")
+      .eq("id", asset.id)
+      .maybeSingle();
+    if (currentError) throw new Error("database_temporarily_unavailable");
+    if (current?.moderation_status === "approved") return;
+    if (current?.moderation_status === "rejected") throw new Error("moderation_rejected");
+    throw new Error("moderation_state_changed");
+  }
+  if (moderation.status === "rejected") throw new Error("moderation_rejected");
 }
 
 async function processImageAsset(
@@ -758,44 +835,50 @@ async function processVideoAsset(
     }
     const crop = cropPixelsForRect(asset.crop_rect, probe.width, probe.height);
     const filter = videoFilterFor(asset.surface, crop);
-    await runCommand("ffmpeg", [
+    const ffmpegArgs = [
       "-y",
       "-i",
       inputPath,
+      "-map",
+      "0:v:0",
+      ...(asset.audio_policy === "strip" ? [] : ["-map", "0:a:0?"]),
+      "-map_metadata",
+      "-1",
       "-vf",
       filter,
       "-c:v",
       "libx264",
+      "-pix_fmt",
+      "yuv420p",
       "-preset",
       "veryfast",
       "-crf",
       "23",
       "-movflags",
       "+faststart",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
+      ...(asset.audio_policy === "strip" ? ["-an"] : ["-c:a", "aac", "-b:a", "128k"]),
       outputPath
-    ], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    ];
+    await runCommand("ffmpeg", ffmpegArgs, config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
     await lease?.checkpoint("after_canonical_creation");
     // Poster from ~1s in, clamped to the clip's midpoint so sub-second
     // videos still yield a frame.
     const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
     await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
     await lease?.checkpoint("after_poster_creation");
-    const output = await readFile(outputPath);
     const poster = await readFile(posterPath);
+    const outputStats = await stat(outputPath);
     const posterMeta = await sharp(poster).metadata();
     const blurhash = await blurhashForImage(poster);
     const canonicalPath = buildMediaDerivativePath(asset, "canonical", "mp4");
     const posterStoragePath = buildMediaDerivativePath(asset, "poster", "jpg");
     const bucketId = derivativeBucketForSurface(asset.surface);
+    const outputSize = videoOutputSize(asset.surface, crop);
 
-    if (output.byteLength + poster.byteLength + buffer.byteLength > config.maxTempBytes) throw new Error("temporary_disk_limit_exceeded");
+    if (outputStats.size + poster.byteLength + buffer.byteLength > config.maxTempBytes) throw new Error("temporary_disk_limit_exceeded");
     await lease?.assertCurrent();
     const uploadStarted = Date.now();
-    await uploadDerivative(admin, bucketId, canonicalPath, output, "video/mp4", asset.surface, config.uploadTimeoutMs);
+    await uploadDerivative(admin, bucketId, canonicalPath, createReadStream(outputPath), "video/mp4", asset.surface, config.uploadTimeoutMs);
     await lease?.checkpoint("after_first_derivative_upload");
     await uploadDerivative(admin, bucketId, posterStoragePath, poster, "image/jpeg", asset.surface, config.uploadTimeoutMs);
     await lease?.checkpoint("after_all_derivative_uploads");
@@ -814,13 +897,13 @@ async function processVideoAsset(
       blurhash: null,
       bucket_id: bucketId,
       duration_ms: probe.durationMs ?? asset.duration_ms ?? null,
-      file_size_bytes: output.byteLength,
-      height: videoOutputSize(asset.surface).height,
+      file_size_bytes: outputStats.size,
+      height: outputSize.height,
       kind: "canonical",
       mime_type: "video/mp4",
       public_url: publicUrlFor(admin, bucketId, canonicalPath),
       storage_path: canonicalPath,
-      width: videoOutputSize(asset.surface).width
+      width: outputSize.width
     });
     await upsertDerivative(admin, {
       asset_id: asset.id,
@@ -836,7 +919,7 @@ async function processVideoAsset(
       width: posterMeta.width ?? null
     });
     await lease?.checkpoint("after_derivative_metadata");
-    return { ...videoOutputSize(asset.surface), durationMs: probe.durationMs };
+    return { ...outputSize, durationMs: probe.durationMs };
   } finally {
     await rm(dir, { force: true, recursive: true }).catch(() => undefined);
   }
@@ -856,13 +939,20 @@ function videoFilterFor(surface: MediaSurface, crop: { height: number; left: num
   const cropFilter = `crop=${evenDimension(crop.width)}:${evenDimension(crop.height)}:${evenOffset(crop.left)}:${evenOffset(crop.top)}`;
   if (surface === "post") return `${cropFilter},scale=${MEDIA_POST_CANONICAL_WIDTH}:${MEDIA_POST_CANONICAL_HEIGHT},setsar=1`;
   if (surface === "avatar") return `${cropFilter},scale=${MEDIA_AVATAR_CANONICAL_SIZE}:${MEDIA_AVATAR_CANONICAL_SIZE},setsar=1`;
-  return `${cropFilter},scale=w='min(${MEDIA_MEMORY_MAX_EDGE},iw)':h=-2,setsar=1`;
+  return `${cropFilter},scale=w='if(gte(iw,ih),min(${MEDIA_MEMORY_MAX_EDGE},iw),-2)':h='if(gte(iw,ih),-2,min(${MEDIA_MEMORY_MAX_EDGE},ih))',setsar=1`;
 }
 
-function videoOutputSize(surface: MediaSurface) {
+function videoOutputSize(
+  surface: MediaSurface,
+  crop: { height: number; width: number }
+): { height: number; width: number } {
   if (surface === "post") return { height: MEDIA_POST_CANONICAL_HEIGHT, width: MEDIA_POST_CANONICAL_WIDTH };
   if (surface === "avatar") return { height: MEDIA_AVATAR_CANONICAL_SIZE, width: MEDIA_AVATAR_CANONICAL_SIZE };
-  return { height: null, width: null };
+  const scale = Math.min(1, MEDIA_MEMORY_MAX_EDGE / Math.max(crop.width, crop.height));
+  return {
+    height: evenDimension(crop.height * scale),
+    width: evenDimension(crop.width * scale)
+  };
 }
 
 async function ffprobe(inputPath: string, timeoutMs: number) {
@@ -948,13 +1038,13 @@ async function uploadDerivative(
   admin: AdminClient,
   bucketId: string,
   storagePath: string,
-  buffer: Buffer,
+  body: Buffer | NodeJS.ReadableStream,
   contentType: string,
   surface: MediaSurface,
   timeoutMs: number
 ) {
   const { error } = await withTimeout<{ error: unknown }>(
-    admin.storage.from(bucketId).upload(storagePath, buffer, {
+    admin.storage.from(bucketId).upload(storagePath, body, {
       cacheControl: String(derivativeCacheSeconds(surface)),
       contentType,
       upsert: true

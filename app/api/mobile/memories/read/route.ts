@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { MEMORY_MEDIA_BUCKET, MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/lib/memory-media-policy";
+import { signMemoryPhotoPayload } from "@/lib/server/memory-media-delivery";
 import { decodeStableTimestampCursor, encodeStableTimestampCursor } from "@/lib/server/stable-cursor";
 import { getRouteActor } from "@/lib/server/route-supabase";
-import { createAdminClient } from "@/lib/supabase/admin";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -17,6 +16,17 @@ function privateJson(body: unknown, init?: ResponseInit) {
 function boundedLimit(value: string | null, fallback: number) {
   const parsed = Number(value ?? fallback);
   return Math.min(Math.max(Number.isFinite(parsed) ? Math.floor(parsed) : fallback, 1), 50);
+}
+
+function boundedSyncLimit(value: string | null) {
+  const parsed = Number(value ?? 200);
+  return Math.min(Math.max(Number.isFinite(parsed) ? Math.floor(parsed) : 200, 1), 500);
+}
+
+function changeCursor(value: string | null) {
+  if (!value || !/^\d{1,19}$/.test(value)) return null;
+  const normalized = value.replace(/^0+(?=\d)/, "");
+  return normalized.length < 19 || normalized <= "9223372036854775807" ? normalized : null;
 }
 
 function memoryCursorParts(value: string | null | undefined) {
@@ -39,70 +49,20 @@ function photosFromPayload(payload: JsonRecord) {
     : [];
 }
 
-function withoutStoredMediaLocation(photo: JsonRecord) {
-  const safePhoto = { ...photo };
-  delete safePhoto.storage_path;
-  delete safePhoto.public_url;
-  return safePhoto;
-}
-
 function withoutTimelineCursor(room: JsonRecord) {
   const safeRoom = { ...room };
   delete safeRoom.timeline_date;
   return safeRoom;
 }
 
-async function signPhotoPayload(payload: JsonRecord, roomId: string) {
-  const photos = photosFromPayload(payload);
-  const photoIds = Array.from(new Set(
-    photos.map((photo) => typeof photo.id === "string" ? photo.id : "").filter((id) => UUID_PATTERN.test(id))
-  ));
-  if (photoIds.length === 0) {
-    return { ...payload, photos: photos.map(withoutStoredMediaLocation) };
-  }
-
-  const admin = createAdminClient();
-  const { data: storageRows, error: storageError } = await admin
-    .from("shared_memory_photos")
-    .select("id, storage_path")
-    .eq("room_id", roomId)
-    .in("id", photoIds)
-    .returns<Array<{ id: string; storage_path: string | null }>>();
-  if (storageError) throw storageError;
-
-  const paths = Array.from(new Set(
-    (storageRows ?? []).map((row) => row.storage_path?.trim() ?? "").filter(Boolean)
-  ));
-  const { data: signedRows, error: signingError } = paths.length > 0
-    ? await admin.storage.from(MEMORY_MEDIA_BUCKET).createSignedUrls(paths, MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS)
-    : { data: [], error: null };
-  if (signingError) throw signingError;
-
-  const pathById = new Map((storageRows ?? []).map((row) => [row.id, row.storage_path]));
-  const urlByPath = new Map(
-    (signedRows ?? [])
-      .filter((row) => row.signedUrl)
-      .map((row) => [row.path, row.signedUrl] as const)
-  );
-  const signedUrlExpiresAt = new Date(Date.now() + MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000).toISOString();
-
-  return {
-    ...payload,
-    photos: photos.map((photo) => {
-      const path = typeof photo.id === "string" ? pathById.get(photo.id) : null;
-      const publicUrl = path ? urlByPath.get(path) ?? null : null;
-      return {
-        ...withoutStoredMediaLocation(photo),
-        public_url: publicUrl,
-        signed_url_expires_at: publicUrl ? signedUrlExpiresAt : null,
-      };
-    }),
-  };
-}
-
 async function signNestedChat(payload: JsonRecord, roomId: string) {
   if (!payload.chat || typeof payload.chat !== "object" || Array.isArray(payload.chat)) return payload;
-  return { ...payload, chat: await signPhotoPayload(payload.chat as JsonRecord, roomId) };
+  return { ...payload, chat: await signMemoryPhotoPayload(payload.chat as JsonRecord, roomId) };
+}
+
+async function signNestedChanges(payload: JsonRecord, roomId: string) {
+  if (!payload.changes || typeof payload.changes !== "object" || Array.isArray(payload.changes)) return payload;
+  return { ...payload, changes: await signMemoryPhotoPayload(payload.changes as JsonRecord, roomId) };
 }
 
 export async function GET(req: NextRequest) {
@@ -110,7 +70,9 @@ export async function GET(req: NextRequest) {
   if (!actor) return privateJson({ error: "Unauthorized" }, { status: 401 });
 
   const action = req.nextUrl.searchParams.get("action") ?? "";
-  const limit = boundedLimit(req.nextUrl.searchParams.get("limit"), action === "rooms" ? 50 : 30);
+  const limit = action === "sync"
+    ? boundedSyncLimit(req.nextUrl.searchParams.get("limit"))
+    : boundedLimit(req.nextUrl.searchParams.get("limit"), action === "rooms" ? 50 : 30);
   const rawCursor = req.nextUrl.searchParams.get("cursor");
   const cursor = decodeStableTimestampCursor(rawCursor);
   if (rawCursor && !cursor) return privateJson({ error: "Invalid cursor" }, { status: 400 });
@@ -138,6 +100,24 @@ export async function GET(req: NextRequest) {
     const roomId = req.nextUrl.searchParams.get("roomId") ?? "";
     if (!UUID_PATTERN.test(roomId)) return privateJson({ error: "Invalid room id" }, { status: 400 });
 
+    if (action === "renewMedia") {
+      const mediaId = req.nextUrl.searchParams.get("mediaId") ?? "";
+      if (!UUID_PATTERN.test(mediaId)) return privateJson({ error: "Invalid media id" }, { status: 400 });
+      // The actor-scoped client performs the authorization read. The delivery
+      // helper signs only this already-authorized photo id and never expands
+      // the caller's visible row set.
+      const { data: photo, error } = await supabase
+        .from("shared_memory_photos")
+        .select("id, room_id, stop_id, message_id, uploader_name, uploader_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at")
+        .eq("id", mediaId)
+        .eq("room_id", roomId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!photo) return privateJson({ error: "Memory media not found" }, { status: 404 });
+      const signed = await signMemoryPhotoPayload({ photos: [photo] }, roomId);
+      return privateJson({ photo: photosFromPayload(signed)[0] ?? null });
+    }
+
     if (action === "detail") {
       const { data, error } = await supabase.rpc("shared_memory_room_bootstrap_v1", {
         p_message_limit: limit,
@@ -153,6 +133,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    if (action === "sync") {
+      const rawChangeCursor = req.nextUrl.searchParams.get("changeCursor");
+      const afterCursor = changeCursor(rawChangeCursor);
+      if (!afterCursor) return privateJson({ error: "Invalid change cursor" }, { status: 400 });
+      const { data, error } = await supabase.rpc("shared_memory_room_sync_v1", {
+        p_after_cursor: afterCursor,
+        p_limit: limit,
+        p_room_id: roomId,
+      });
+      if (error) throw error;
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        return privateJson({ error: "Memory room not found" }, { status: 404 });
+      }
+      return privateJson({
+        ...await signNestedChanges(data as JsonRecord, roomId),
+        viewerName: actor.actorName,
+      });
+    }
+
     if (action === "chat") {
       const { data, error } = await supabase.rpc("shared_memory_chat_page", {
         p_before_created_at: cursor?.createdAt ?? null,
@@ -163,7 +162,7 @@ export async function GET(req: NextRequest) {
       if (error) throw error;
       const payload = data && typeof data === "object" && !Array.isArray(data) ? data as JsonRecord : {};
       return privateJson({
-        ...await signPhotoPayload(payload, roomId),
+        ...await signMemoryPhotoPayload(payload, roomId),
         nextCursor: opaqueMemoryCursor(payload.nextCursor),
       });
     }
@@ -178,7 +177,7 @@ export async function GET(req: NextRequest) {
       if (error) throw error;
       const payload = data && typeof data === "object" && !Array.isArray(data) ? data as JsonRecord : {};
       return privateJson({
-        ...await signPhotoPayload(payload, roomId),
+        ...await signMemoryPhotoPayload(payload, roomId),
         nextCursor: opaqueMemoryCursor(payload.nextCursor),
       });
     }
