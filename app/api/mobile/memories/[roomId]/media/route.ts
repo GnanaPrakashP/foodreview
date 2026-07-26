@@ -64,9 +64,10 @@ export async function POST(
     const parsed = await readBoundedJson<JsonRecord>(req, 16 * 1024);
     if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
 
-    const assetIds = uuidArray(parsed.value.assetIds, MAX_MEDIA_ITEMS);
-    const body = typeof parsed.value.body === "string" ? parsed.value.body.trim() : "";
-    const rawReplyId = parsed.value.replyToMessageId;
+    const requestBody = parsed.value ?? {};
+    const assetIds = uuidArray(requestBody.assetIds, MAX_MEDIA_ITEMS);
+    const body = typeof requestBody.body === "string" ? requestBody.body.trim() : "";
+    const rawReplyId = requestBody.replyToMessageId;
     const replyToMessageId = rawReplyId == null || rawReplyId === ""
       ? null
       : typeof rawReplyId === "string" && UUID_PATTERN.test(rawReplyId)
@@ -135,8 +136,9 @@ export async function DELETE(
     const parsed = await readBoundedJson<JsonRecord>(req, 16 * 1024);
     if (!parsed.ok) return boundedJsonError(req, METHODS, parsed.reason);
 
-    const messageIds = uuidArray(parsed.value.messageIds ?? [], MAX_DELETE_ITEMS);
-    const photoIds = uuidArray(parsed.value.photoIds ?? [], MAX_DELETE_ITEMS);
+    const requestBody = parsed.value ?? {};
+    const messageIds = uuidArray(requestBody.messageIds ?? [], MAX_DELETE_ITEMS);
+    const photoIds = uuidArray(requestBody.photoIds ?? [], MAX_DELETE_ITEMS);
     if (!messageIds || !photoIds || messageIds.length + photoIds.length < 1 || messageIds.length + photoIds.length > MAX_DELETE_ITEMS) {
       return mobileApiError(req, METHODS, "invalid_input", "Invalid delete selection", 400);
     }
