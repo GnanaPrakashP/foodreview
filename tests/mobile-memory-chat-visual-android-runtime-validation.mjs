@@ -454,18 +454,10 @@ async function sendRapidTextBurst(
         sendPoint = (await waitForPoint(["Send message"], "acknowledged rapid send button")).point;
       }
       await tap(sendPoint);
-      if (await waitForObservedSendPress(expectedCount, 1_500)) continue;
-
-      // Under a saturated instrumented list Android can discard an injected
-      // tap before dispatch. Do not type the next identical fixture into the
-      // uncleared composer: prove the button is still Send, then retry only
-      // that same physical press.
-      sendPoint = (await waitForPoint(["Send message"], "retryable rapid send button")).point;
-      await tap(sendPoint);
       assert.equal(
-        await waitForObservedSendPress(expectedCount, 3_000),
+        await waitForObservedSendPress(expectedCount, 1_500),
         true,
-        "acknowledged rapid send did not reach SEND_PRESS"
+        "the first acknowledged tap did not reach SEND_PRESS"
       );
     }
     return sendPoint;

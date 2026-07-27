@@ -39,6 +39,9 @@ const STRING_FIELDS = new Set([
   "scrollCommandSource"
 ]);
 
+const MAX_CLIENT_LIFECYCLES = 256;
+const MAX_EVENTS_PER_CLIENT = 256;
+
 let enabledOverride = null;
 let eventSink = null;
 let activeClientId = null;
@@ -47,7 +50,6 @@ let lifecycleByClient = new Map();
 
 function environmentEnabled() {
   if (enabledOverride !== null) return enabledOverride;
-  if (typeof __DEV__ !== "undefined" && __DEV__) return true;
   return typeof process !== "undefined" &&
     process.env.EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS === "1";
 }
@@ -85,6 +87,7 @@ function sanitizeDetails(details) {
 function emptyLifecycle(clientId) {
   return {
     clientId,
+    confirmed: false,
     confirmationLayoutCount: 0,
     contentSizeChangeCount: 0,
     events: [],
@@ -99,23 +102,31 @@ function emptyLifecycle(clientId) {
 function appendLifecycle(event) {
   const clientId = event.clientId;
   if (!clientId) return;
-  const current = lifecycleByClient.get(clientId) ?? emptyLifecycle(clientId);
-  const next = {
-    ...current,
-    events: [...current.events, event]
-  };
-  if (event.name === "ROW_MOUNTED") next.mountCount += 1;
-  if (event.name === "ROW_RENDERED") next.renderCount += 1;
-  if (event.name === "ROW_LAYOUT") {
-    next.rowLayoutCount += 1;
-    if (current.events.some((value) => (
-      value.name === "HTTP_CONFIRMED" || value.name === "REALTIME_CONFIRMED"
-    ))) next.confirmationLayoutCount += 1;
+  let current = lifecycleByClient.get(clientId);
+  if (!current) {
+    if (lifecycleByClient.size >= MAX_CLIENT_LIFECYCLES) {
+      const oldestClientId = lifecycleByClient.keys().next().value;
+      if (oldestClientId) lifecycleByClient.delete(oldestClientId);
+    }
+    current = emptyLifecycle(clientId);
   }
-  if (event.name === "BOTTOM_FOLLOW_REQUESTED") next.scrollCommandCount += 1;
-  if (event.name === "CONTENT_SIZE_CHANGED") next.contentSizeChangeCount += 1;
-  if (Number.isInteger(event.renderIndex)) next.latestRenderIndex = event.renderIndex;
-  lifecycleByClient.set(clientId, next);
+  current.events.push(event);
+  if (current.events.length > MAX_EVENTS_PER_CLIENT) {
+    current.events.splice(0, current.events.length - MAX_EVENTS_PER_CLIENT);
+  }
+  if (event.name === "ROW_MOUNTED") current.mountCount += 1;
+  if (event.name === "ROW_RENDERED") current.renderCount += 1;
+  if (event.name === "HTTP_CONFIRMED" || event.name === "REALTIME_CONFIRMED") {
+    current.confirmed = true;
+  }
+  if (event.name === "ROW_LAYOUT") {
+    current.rowLayoutCount += 1;
+    if (current.confirmed) current.confirmationLayoutCount += 1;
+  }
+  if (event.name === "BOTTOM_FOLLOW_REQUESTED") current.scrollCommandCount += 1;
+  if (event.name === "CONTENT_SIZE_CHANGED") current.contentSizeChangeCount += 1;
+  if (Number.isInteger(event.renderIndex)) current.latestRenderIndex = event.renderIndex;
+  lifecycleByClient.set(clientId, current);
 }
 
 export function configureMemoryChatPlacementDiagnostics(options = {}) {
@@ -159,10 +170,18 @@ export function memoryChatPlacementSnapshot(clientId) {
   const safeId = safeClientId(clientId);
   if (!safeId) return null;
   const lifecycle = lifecycleByClient.get(safeId);
-  return lifecycle ? {
-    ...lifecycle,
-    events: lifecycle.events.map((event) => ({ ...event }))
-  } : null;
+  if (!lifecycle) return null;
+  return {
+    clientId: lifecycle.clientId,
+    confirmationLayoutCount: lifecycle.confirmationLayoutCount,
+    contentSizeChangeCount: lifecycle.contentSizeChangeCount,
+    events: lifecycle.events.map((event) => ({ ...event })),
+    latestRenderIndex: lifecycle.latestRenderIndex,
+    mountCount: lifecycle.mountCount,
+    renderCount: lifecycle.renderCount,
+    rowLayoutCount: lifecycle.rowLayoutCount,
+    scrollCommandCount: lifecycle.scrollCommandCount
+  };
 }
 
 export function memoryChatPlacementEventNames() {

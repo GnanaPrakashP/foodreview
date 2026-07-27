@@ -21,6 +21,14 @@ const placementFixtures = readFileSync(
   "mobile/src/services/memoryChatPlacementFixtures.ts",
   "utf8"
 );
+const placementDiagnostics = readFileSync(
+  "mobile/src/services/memoryChatPlacementDiagnostics.mjs",
+  "utf8"
+);
+const androidRuntimeValidation = readFileSync(
+  "tests/mobile-memory-chat-visual-android-runtime-validation.mjs",
+  "utf8"
+);
 const appConfig = readFileSync("mobile/app.config.js", "utf8");
 const messageRoute = readFileSync(
   "app/api/mobile/memories/[roomId]/messages/route.ts",
@@ -169,6 +177,47 @@ test("diagnostic payload discards bodies, tokens, URLs, paths, and arbitrary ide
   for (const forbidden of ["body", "signedUrl", "storagePath", "token"]) {
     assert.equal(Object.hasOwn(events[0], forbidden), false);
   }
+});
+
+test("chat placement diagnostics are opt-in and keep bounded per-client history", () => {
+  assert.doesNotMatch(
+    placementDiagnostics,
+    /typeof __DEV__ !== "undefined" && __DEV__/
+  );
+  assert.match(
+    placementDiagnostics,
+    /process\.env\.EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS === "1"/
+  );
+
+  for (let index = 0; index < 300; index += 1) {
+    recordMemoryChatPlacement("ROW_RENDERED", {
+      clientId: "visual-bounded",
+      deliveryStatus: "pending",
+      renderIndex: index
+    });
+  }
+  const snapshot = memoryChatPlacementSnapshot("visual-bounded");
+  assert.equal(snapshot.events.length, 256);
+  assert.equal(snapshot.renderCount, 300);
+  assert.equal(snapshot.latestRenderIndex, 299);
+
+  for (let index = 0; index < 300; index += 1) {
+    recordMemoryChatPlacement("SEND_PRESS", { clientId: `bounded-client-${index}` });
+  }
+  assert.equal(memoryChatPlacementSnapshot("bounded-client-0"), null);
+  assert.ok(memoryChatPlacementSnapshot("bounded-client-299"));
+});
+
+test("row diagnostics and the physical validator cannot hide a missed first tap", () => {
+  assert.match(
+    screen,
+    /recordMemoryChatPlacement\("ROW_RENDERED",[\s\S]*?\}, \[clientId, deliveryStatus, renderIndex\]\);/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /"the first acknowledged tap did not reach SEND_PRESS"/
+  );
+  assert.doesNotMatch(androidRuntimeValidation, /retryable rapid send button/);
 });
 
 test("active inverted data is newest-first at its final index before first render", () => {

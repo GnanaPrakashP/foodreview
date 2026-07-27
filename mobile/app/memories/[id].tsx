@@ -908,7 +908,7 @@ function MemoryChatPlacementRow({
       deliveryStatus,
       renderIndex
     });
-  });
+  }, [clientId, deliveryStatus, renderIndex]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     if (!clientId) return;
