@@ -809,3 +809,21 @@ Phase 9 adds a production-rejecting, staging-allowlisted Node 22 harness for aut
 The model is 1,000 registered users, 200 DAU, 100 peak concurrently active users, 30 Memory rooms and 20 concurrent uploads, with 2× stress and a four-hour soak. This is a target, not a result. No hosted staging identity/topology/release, Realtime/provider evidence, failure controller, provider restore or signed physical-device run is available in this checkout.
 
 Security conclusion: **NOT PROVEN** for hosted capacity. Any unauthorized Realtime delivery, cross-account state, private-media access, deletion resurrection or reconciliation drift is a zero-tolerance release blocker. The allowable implementation gate is `PASS LOCALLY — HOSTED CAPACITY NOT PROVEN`; it does not authorize a 1,000-user readiness claim.
+
+## Memory Room release performance and resilience acceptance
+
+The 2026-07-28 production-like Android acceptance result is **FAIL**. The
+signed, minified Hermes release/profile APK completed all 12 directed tab
+pairs, a 31-minute authenticated soak, three true offline/reconnect cycles, and
+pending text/reply/ambiguous-success process-kill recovery with zero
+crash/ANR/OOM. The APK privacy/secret scan passed, instrumentation was disabled
+by default and emitted only stable content-free marker names and aggregate
+resource/SQLite counters, and disposable fixture rows/files were removed.
+
+Release remains blocked because active-soak PSS grew 91.0 MiB without a proven
+plateau, soak FrameTimeline jank was 34.57% with a 30.14 ms p95, the requested
+moto g57 power/lower-memory Android and physical iOS were unavailable,
+moderate/poor shaped-network and pending-media process-kill cases were not
+completed, and the independent Next 15.5.20 Turbopack build still stalls with
+an idle worker. The full A–O evidence and exact gate classification are in
+`docs/performance/MEMORY_ROOM_RELEASE_ACCEPTANCE_2026-07-28.md`.
