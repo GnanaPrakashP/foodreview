@@ -504,6 +504,14 @@ export function CameraScreen({
           <Pressable onPress={() => void cameraPermission.requestPermission()} style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>Try again</Text>
           </Pressable>
+          <Pressable
+            accessibilityLabel="Choose from gallery"
+            accessibilityRole="button"
+            onPress={() => void openGallery()}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>Choose from gallery</Text>
+          </Pressable>
           {cameraPermission.error ? <Text style={styles.errorText}>{cameraPermission.error}</Text> : null}
         </View>
       </CameraShell>

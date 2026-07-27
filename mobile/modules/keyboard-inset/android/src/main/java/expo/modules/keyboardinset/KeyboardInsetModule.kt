@@ -1,11 +1,34 @@
 package expo.modules.keyboardinset
 
+import android.os.Build
+import android.os.Trace
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 class KeyboardInsetModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("KeyboardInset")
+
+    // Release-profile instrumentation uses Android's app trace tag directly.
+    // React Native's Systrace.isEnabled() remains false on some production
+    // builds even when atrace/Perfetto has enabled app tracing.
+    Function("beginMemoryRoomTrace") { name: String, cookie: Int ->
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        Trace.beginAsyncSection(name, cookie)
+      }
+    }
+
+    Function("endMemoryRoomTrace") { name: String, cookie: Int ->
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        Trace.endAsyncSection(name, cookie)
+      }
+    }
+
+    Function("setMemoryRoomTraceCounter") { name: String, value: Int ->
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        Trace.setCounter(name, value.toLong())
+      }
+    }
 
     View(KeyboardInsetView::class) {
       // Whether this surface should track the IME. Only the visible chat tab

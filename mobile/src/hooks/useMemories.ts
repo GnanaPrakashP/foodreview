@@ -86,6 +86,11 @@ import {
   recordMemoryRoomJourney,
   type MemoryRoomJourneySession
 } from "@/services/memoryRoomJourneyDiagnostics.mjs";
+import {
+  adjustMemoryRoomResourceCounter,
+  beginMemoryRoomServerReconcile,
+  markMemoryRoomTracePoint
+} from "@/performance/memoryRoomReleaseProfile";
 
 export const memoryKeys = {
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
@@ -1585,7 +1590,6 @@ export function useMemoryRoomsRealtime(enabled = true) {
           );
         }
       });
-
     return () => {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
       for (const timeout of roomSyncTimeouts.values()) clearTimeout(timeout);
@@ -1609,6 +1613,7 @@ export function useMemoryRoomQuery(roomId: string, journeySession?: MemoryRoomJo
   const refreshRoom = useCallback((networkRequestCategory: "room_bootstrap" | "room_reconcile") => {
     return requestCoordinator.refresh(roomId, () => {
       const startedAt = Date.now();
+      const finishServerReconcile = beginMemoryRoomServerReconcile();
       recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_STARTED", {
         networkRequestCategory,
         queryState: networkRequestCategory === "room_bootstrap" ? "loading" : "refreshing",
@@ -1616,6 +1621,7 @@ export function useMemoryRoomQuery(roomId: string, journeySession?: MemoryRoomJo
       });
       return getMemoryRoomOfflineFirst(roomId)
         .then((freshRoom) => {
+          markMemoryRoomTracePoint("MemoryRoomServerReconcileApplied");
           recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_APPLIED", {
             durationMs: Date.now() - startedAt,
             networkRequestCategory,
@@ -1632,7 +1638,8 @@ export function useMemoryRoomQuery(roomId: string, journeySession?: MemoryRoomJo
             tab: journeySession?.initialTab ?? "overview"
           });
           throw error;
-        });
+        })
+        .finally(finishServerReconcile);
     });
   }, [journeySession, requestCoordinator, roomId]);
   const [localCacheProbe, setLocalCacheProbe] = useState<{
@@ -2183,6 +2190,10 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
           });
         }
       });
+    const releaseRealtimeCounter = adjustMemoryRoomResourceCounter(
+      "MemoryRoomActiveRealtimeChannels",
+      1
+    );
 
     return () => {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
@@ -2190,6 +2201,7 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
         realtimeState: "unsubscribed",
         tab: journeySession?.initialTab ?? "overview"
       });
+      releaseRealtimeCounter();
       void supabase.removeChannel(channel);
     };
   }, [journeySession, profile?.username, queryClient, roomId]);

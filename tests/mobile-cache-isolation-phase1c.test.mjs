@@ -337,6 +337,9 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
       captureMobileError: () => {},
       recordMobileFlow: () => {}
     };
+    if (id === "@/performance/memoryRoomReleaseProfile") return {
+      beginMemoryRoomSqliteOperation: () => () => {}
+    };
     throw new Error(`Unexpected import: ${id}`);
   });
   const alice = ownership.cacheOwnerForUserId(ALICE_ID);

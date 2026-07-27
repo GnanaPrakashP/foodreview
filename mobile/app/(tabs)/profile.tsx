@@ -30,6 +30,7 @@ import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { MemoryRoomSummary, ProfilePageData } from "@/types/models";
 import { fallbackAvatarColor } from "@/utils/fallbackAvatar";
 import { useTabPerformance } from "@/performance/useTabPerformance";
+import { beginMemoryRoomEntry } from "@/performance/memoryRoomReleaseProfile";
 
 type ProfileTab = "posts" | "memories";
 
@@ -1016,6 +1017,7 @@ function profileListKey(item: ProfileListRow) {
 function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
   const router = useRouter();
   const openMemory = useCallback(() => {
+    beginMemoryRoomEntry("overview");
     if (!memoryRoomJourneyDiagnosticsEnabled()) {
       router.push({ pathname: "/memories/[id]", params: { id: memory.id } });
       return;
@@ -1084,7 +1086,7 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
 
   return (
     <Pressable
-      accessibilityLabel="Open memory room"
+      accessibilityLabel={`Open ${memory.title || "memory"} room${hasUnread ? `, ${memory.unreadCount} unread` : ""}`}
       accessibilityRole="button"
       android_ripple={{ color: PROFILE_COLORS.accentDim, foreground: true }}
       onPress={onPress}

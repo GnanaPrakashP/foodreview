@@ -20,6 +20,10 @@ import {
   memoryMessageServerId,
   mergeMemoryMessageSnapshot
 } from "@/services/memoryMessageReconciliation.mjs";
+import {
+  beginMemoryRoomSqliteOperation,
+  type MemoryRoomSqliteOperation
+} from "@/performance/memoryRoomReleaseProfile";
 
 const DB_NAME = `circlebites-memory-offline-v${LOCAL_DATA_SCHEMA_VERSION}.db`;
 const LEGACY_DB_NAME = "circlebites-memory-offline.db";
@@ -47,6 +51,7 @@ let dbState: { ownerScope: string; promise: Promise<SQLite.SQLiteDatabase> } | n
 // with confirmation cleanup (media adds a photo write to the same transaction).
 // Serialize every critical write while keeping the queue live after failures.
 let offlineWriteQueue: Promise<void> = Promise.resolve();
+let offlineWriteQueueDepth = 0;
 
 async function ensureTableColumns(
   db: SQLite.SQLiteDatabase,
@@ -432,6 +437,22 @@ export function isOfflineMemoryPersistenceError(error: unknown) {
 }
 
 async function criticalOfflineWrite<T>(operation: string, action: () => Promise<T>) {
+  const profileOperation: MemoryRoomSqliteOperation =
+    operation === "read_state"
+      ? "read_position_write"
+      : operation === "room" ||
+          operation === "sync_delta" ||
+          operation === "message_page" ||
+          operation === "media_page" ||
+          operation === "outbox_commit"
+        ? "reconciliation_write"
+        : "write";
+  offlineWriteQueueDepth += 1;
+  const finishProfile = beginMemoryRoomSqliteOperation(
+    profileOperation,
+    "write",
+    offlineWriteQueueDepth
+  );
   const execute = async () => {
     const startedAt = Date.now();
     try {
@@ -450,7 +471,10 @@ async function criticalOfflineWrite<T>(operation: string, action: () => Promise<
   };
   const result = offlineWriteQueue.then(execute, execute);
   offlineWriteQueue = result.then(() => undefined, () => undefined);
-  return result;
+  return result.finally(() => {
+    offlineWriteQueueDepth = Math.max(0, offlineWriteQueueDepth - 1);
+    finishProfile(offlineWriteQueueDepth);
+  });
 }
 
 function photosFromMessages(messages: MemoryMessage[]) {
@@ -574,6 +598,7 @@ export async function saveOfflineMemorySummaries(summaries: MemoryRoomSummary[])
 }
 
 export async function readOfflineMemorySummaries() {
+  const finishProfile = beginMemoryRoomSqliteOperation("summary_read", "read");
   try {
     const db = await offlineDb();
     const rows = await db.getAllAsync<StoredPayloadRow>(
@@ -587,6 +612,8 @@ export async function readOfflineMemorySummaries() {
     return summaries.length > 0 ? summaries : null;
   } catch {
     return null;
+  } finally {
+    finishProfile();
   }
 }
 
@@ -646,6 +673,7 @@ export async function saveOfflineMemoryRoom(
 }
 
 export async function readOfflineMemoryRoom(roomId: string) {
+  const finishProfile = beginMemoryRoomSqliteOperation("local_snapshot_read", "read");
   try {
     const db = await offlineDb();
     const [snapshotRows, messageRows, outboxRows] = await Promise.all([
@@ -712,10 +740,13 @@ export async function readOfflineMemoryRoom(roomId: string) {
     });
   } catch {
     return null;
+  } finally {
+    finishProfile();
   }
 }
 
 export async function readOfflineMemoryRoomSyncCursor(roomId: string) {
+  const finishProfile = beginMemoryRoomSqliteOperation("sync_cursor_read", "read");
   try {
     const db = await offlineDb();
     const row = await db.getFirstAsync<StoredSyncCursorRow>(
@@ -725,6 +756,8 @@ export async function readOfflineMemoryRoomSyncCursor(roomId: string) {
     return row?.sync_cursor ?? null;
   } catch {
     return null;
+  } finally {
+    finishProfile();
   }
 }
 
@@ -907,6 +940,7 @@ export async function readOfflineMemoryMessagesPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMessagesPage | null> {
+  const finishProfile = beginMemoryRoomSqliteOperation("message_page_read", "read");
   try {
     const db = await offlineDb();
     const cursor = parseMemoryPageCursor(input.before);
@@ -953,6 +987,8 @@ export async function readOfflineMemoryMessagesPage(
     };
   } catch {
     return null;
+  } finally {
+    finishProfile();
   }
 }
 
@@ -1020,6 +1056,7 @@ export async function readOfflineMemoryMediaPage(
   roomId: string,
   input: { before?: string | null; limit?: number } = {}
 ): Promise<MemoryMediaPage | null> {
+  const finishProfile = beginMemoryRoomSqliteOperation("media_page_read", "read");
   try {
     const db = await offlineDb();
     const cursor = parseMemoryPageCursor(input.before);
@@ -1060,6 +1097,8 @@ export async function readOfflineMemoryMediaPage(
     };
   } catch {
     return null;
+  } finally {
+    finishProfile();
   }
 }
 

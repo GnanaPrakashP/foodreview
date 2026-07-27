@@ -173,7 +173,7 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   const roomHeaderBody = memoryRoomScreen.match(/function RoomHeader\([\s\S]*?\nfunction RoomModeTabs/)?.[0] ?? "";
   const keyboardContainerBody = memoryRoomScreen.match(/function RoomKeyboardContainer\([\s\S]*?\nfunction RoomHeader/)?.[0] ?? "";
 
-  assert.match(memoryRoomScreen, /const ROOM_HEADER_EXPANDED_HEIGHT = 183/);
+  assert.match(memoryRoomScreen, /const ROOM_HEADER_EXPANDED_HEIGHT = 190/);
   assert.match(roomHeaderBody, /styles\.headerExpansionSurface/);
   assert.match(roomHeaderBody, /styles\.movingRoomTitle/);
   assert.match(roomHeaderBody, /styles\.headerDetailsClip/);

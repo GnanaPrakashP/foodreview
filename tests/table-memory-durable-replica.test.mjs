@@ -389,6 +389,9 @@ test("an interrupted cache-to-durable SQLite migration preserves the source and 
       captureMobileError: (event) => telemetry.push(event),
       recordMobileFlow: () => {}
     };
+    if (id === "@/performance/memoryRoomReleaseProfile") return {
+      beginMemoryRoomSqliteOperation: () => () => {}
+    };
     if (id === "@/security/offlineMemorySecurity") return {
       sanitizeOfflineMemoryMessage: (value) => value,
       sanitizeOfflineMemoryPhoto: (value) => value,
