@@ -381,10 +381,6 @@ const ROOM_HEADER_TABS_TOP = ROOM_HEADER_DETAILS_TOP + ROOM_HEADER_DETAILS_HEIGH
 // avoids feeding animated header measurements back into the room screen.
 const TABLE_HEADER_CLEARANCE = ROOM_HEADER_EXPANDED_HEIGHT;
 const CHAT_COMPOSER_CLEARANCE = 88;
-// How long after the room settles before the Chat pane is built in the
-// background. Long enough that the mount cannot land on the frames where the
-// room is still becoming interactive.
-const MEMORY_ROOM_CHAT_WARM_DELAY_MS = 450;
 const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
 
 const MEDIA_GALLERY_GAP = 2;
@@ -3493,18 +3489,8 @@ function useSmoothedKeyboardOffset(): SharedValue<number> {
 }
 
 // expo-audio's useAudioRecorderState polls the native recorder on an
-// unconditional setInterval, and its effect deps are [recorder.id] — the
-// interval argument cannot switch it off. That poll used to be bounded by the
-// chat pane's lifetime, because an inactive RoomPane unmounted the surface
-// outright. Now that the pane stays mounted, the same hook would keep making a
-// native round trip five times a second for the whole room visit, including
-// during the tab-switch frames this work exists to keep free.
-//
-// Gating on `enabled` restores exactly the previous behaviour: polling only
-// while Chat is the visible pane. Recording is already cancelled when the pane
-// goes inactive, so nothing in flight can be missed. The metering comparison
-// upstream performs is dropped because no caller reads `metering`; it only ever
-// decided whether to trigger a re-render.
+// unconditional setInterval. Keep that polling gated to the visible Chat pane
+// so a recorder can never extend the work performed while leaving the room.
 const IDLE_VOICE_RECORDER_STATE: RecorderState = {
   canRecord: false,
   durationMillis: 0,
@@ -3571,9 +3557,7 @@ function VoiceRecorderHost({ onReady }: { onReady: (recorder: VoiceRecorder) => 
 }
 
 // Memoized pane components keep active-tab updates scoped to the data or
-// handlers that actually changed. Inactive panes stay mounted (RoomPane detaches
-// them from the window rather than unmounting), so these memo boundaries are
-// what keeps a hidden pane from re-rendering when unrelated room state moves.
+// handlers that actually changed.
 const ItineraryPanelPane = memo(ItineraryPanel);
 const MemoryChatMainSurfacePane = memo(MemoryChatMainSurface);
 const MediaGalleryPane = memo(MediaGallery);
@@ -3610,6 +3594,8 @@ export default function MemoryDetailScreen() {
   const myUsername = useSessionStore((state) => state.profile?.username ?? "");
   const addMessageMutateAsyncRef = useRef(addMessage.mutateAsync);
   addMessageMutateAsyncRef.current = addMessage.mutateAsync;
+  const markReadMutateRef = useRef(markRead.mutate);
+  markReadMutateRef.current = markRead.mutate;
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<NativeChatInputHandle>(null);
   const chatMainListRef = useRef<ChatMainAnimatedList<MemoryChatMainMessage>>(null);
@@ -3646,7 +3632,6 @@ export default function MemoryDetailScreen() {
     mode,
     pagerPosition,
     activePaneIndex,
-    markPanesWarm,
     paneTabMode,
     requestRoomMode
   } = useMemoryRoomController(params.tab);
@@ -3893,8 +3878,11 @@ export default function MemoryDetailScreen() {
     if (!markReadTimeoutRef.current) return;
     clearTimeout(markReadTimeoutRef.current);
     markReadTimeoutRef.current = null;
-    markRead.mutate(undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const persistReadState = markReadMutateRef.current;
+    // Cache projection and SQLite/network writes do not need to share the
+    // route-pop commit. Run them after navigation has revealed the previous
+    // screen so a quick Chat visit cannot make Back wait on read persistence.
+    InteractionManager.runAfterInteractions(() => persistReadState(undefined));
   }, []);
 
   // Opening the chat tab counts as reading the room, no matter where the list is
@@ -4545,40 +4533,6 @@ export default function MemoryDetailScreen() {
   const mergedRoomData = useMemo(() => (
     room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
   ), [olderMessageItems, room.data]);
-  // The room snapshot already supplies cached media metadata synchronously, but
-  // the paged gallery used to start resolving only at the moment Media was
-  // selected, so the first visit waited on the query no matter how warm the
-  // cache was. Arm it once the room has data and the opening interactions have
-  // settled, so the switch itself finds the pages already resolved. The query
-  // is SQLite-first now, so warming costs a local read rather than a request.
-  // Warm the CHAT pane only, and late. Warming all four put every pane's mount
-  // and layout into the room's opening moments and every pane's teardown into
-  // the back press, which is what made opening a memory card and leaving the
-  // room feel heavy — route teardown cost scales with what is mounted. Chat is
-  // the one that actually needs it: it is by far the largest subtree, and its
-  // composer clearance has to be measured before the first visit or the list
-  // re-spaces on arrival. Media and Dishes are small trees and mount on first
-  // visit, which is cheap enough not to be worth carrying at open and exit.
-  const [chatWarmed, setChatWarmed] = useState(false);
-  useEffect(() => {
-    if (chatWarmed || !room.data) return;
-    let warmTimer: ReturnType<typeof setTimeout> | null = null;
-    const warmTask = InteractionManager.runAfterInteractions(() => {
-      // runAfterInteractions can fire while the navigation transition is still
-      // settling. The extra delay keeps the mount off the frames where the room
-      // is becoming interactive, which is the part that reads as a slow open.
-      warmTimer = setTimeout(() => setChatWarmed(true), MEMORY_ROOM_CHAT_WARM_DELAY_MS);
-    });
-    return () => {
-      warmTask.cancel();
-      if (warmTimer) clearTimeout(warmTimer);
-    };
-  }, [chatWarmed, room.data]);
-  // Once every pane is mounted, a tab change no longer has to mount anything,
-  // so the controller can stop committing it synchronously on the tap.
-  useEffect(() => {
-    if (chatWarmed) markPanesWarm();
-  }, [chatWarmed, markPanesWarm]);
   const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
@@ -4755,12 +4709,7 @@ export default function MemoryDetailScreen() {
           <View style={styles.roomStageShift}>
             <View style={styles.body}>
               <View style={styles.roomPager}>
-                <RoomPane
-                  active={paneTabMode === "overview"}
-                  activePaneIndex={activePaneIndex}
-                  index={0}
-                  warm={false}
-                >
+                <RoomPane active={paneTabMode === "overview"}>
                   <ItineraryPanelPane
                     dishes={data.dishes}
                     onOpenDish={setDetailDishId}
@@ -4769,12 +4718,7 @@ export default function MemoryDetailScreen() {
                     topInset={TABLE_HEADER_CLEARANCE}
                   />
                 </RoomPane>
-                <RoomPane
-                  active={paneTabMode === "chat"}
-                  activePaneIndex={activePaneIndex}
-                  index={1}
-                  warm={chatWarmed}
-                >
+                <RoomPane active={paneTabMode === "chat"}>
                   <MemoryChatMainSurfacePane
                     active={paneTabMode === "chat"}
                     canDeleteSelected={canDeleteSelected}
@@ -4820,12 +4764,7 @@ export default function MemoryDetailScreen() {
                     toolbarInsetStyle={composerBottomInsetStyle}
                   />
                 </RoomPane>
-                <RoomPane
-                  active={paneTabMode === "media"}
-                  activePaneIndex={activePaneIndex}
-                  index={2}
-                  warm={false}
-                >
+                <RoomPane active={paneTabMode === "media"}>
                   <MediaGalleryPane
                     error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
                     hasMore={Boolean(mediaPages.hasNextPage)}
@@ -4841,12 +4780,7 @@ export default function MemoryDetailScreen() {
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
-                <RoomPane
-                  active={paneTabMode === "dishes"}
-                  activePaneIndex={activePaneIndex}
-                  index={3}
-                  warm={false}
-                >
+                <RoomPane active={paneTabMode === "dishes"}>
                   <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
@@ -5514,67 +5448,21 @@ function ModeButton({
 }
 
 function RoomPane({
-  activePaneIndex,
   active,
-  children,
-  index,
-  warm
+  children
 }: {
-  activePaneIndex: SharedValue<number>;
   active: boolean;
   children: ReactNode;
-  index: number;
-  warm: boolean;
 }) {
-  // Mount lazily on first visit, then NEVER unmount. Returning null for an
-  // inactive pane meant every tab switch rebuilt that subtree from scratch —
-  // for Chat that is CHAT_MAIN_INITIAL_RENDER_COUNT rows, each carrying a pan
-  // GestureDetector and several Reanimated worklets, constructed synchronously
-  // on the tap. SQLite removes the *network* wait; only a retained view removes
-  // the *construction* wait, and the construction wait is what makes a switch
-  // feel staged instead of instant. memo() cannot help here: mounting is not
-  // re-rendering.
-  //
-  // Inactive panes are parked OFF-SCREEN rather than hidden. `display: none`
-  // was the obvious choice and was wrong in a specific, expensive way: Yoga
-  // skips a display:none subtree, so a warmed pane never laid out at all and
-  // paid its entire first layout pass at the moment it was revealed. For Chat
-  // that meant the tab felt slow AND the list visibly re-spaced on arrival —
-  // the composer's clearance comes from the input toolbar's onLayout, which
-  // cannot fire while the subtree is skipped, so the list sat on the
-  // CHAT_COMPOSER_CLEARANCE estimate until the exact frame you switched to it.
-  //
-  // A translate keeps every pane fully laid out during the idle warm-up, so the
-  // toolbar measures and the clearance is already correct before the first
-  // visit. The pane sits a full screen width to the right, past the window's
-  // own clip bounds, and the swap is still a single UI-thread transform.
-  const { width: paneOffscreenOffset } = useWindowDimensions();
-  const paneMotionStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: activePaneIndex.value === index ? 0 : paneOffscreenOffset }
-    ]
-  }), [paneOffscreenOffset]);
-
-  // Mount decision resolved during render rather than in an effect. As a
-  // useState + useEffect pair this rendered null first and only mounted on the
-  // follow-up commit, so a tab's first visit cost two renders before anything
-  // appeared. `warm` mounts every pane once the room is idle, so after that no
-  // switch touches React to become visible at all.
-  const hasMountedRef = useRef(active);
-  if (active || warm) hasMountedRef.current = true;
-
-  if (!hasMountedRef.current) return null;
+  // One pane owns native views at a time. Retaining Chat, Media, and Dishes
+  // off-screen made route teardown proportional to which tabs had been visited
+  // and how much content a room contained, producing inconsistent Back latency.
+  if (!active) return null;
 
   return (
-    <Reanimated.View
-      collapsable={false}
-      // Off-screen panes cannot be touched anyway; this only closes the window
-      // between the tap and the deferred commit that updates `active`.
-      pointerEvents={active ? "auto" : "none"}
-      style={[styles.roomPagerPage, paneMotionStyle]}
-    >
+    <View collapsable={false} style={styles.roomPagerPage}>
       {children}
-    </Reanimated.View>
+    </View>
   );
 }
 
@@ -5631,8 +5519,8 @@ function FloatingAddMenu({
   // collapse rather than running its own timeline. It used to be a legacy
   // Animated.timing kicked off by a useEffect on a `mode`-derived prop, which
   // put it two steps behind: it could not start until React committed the mode
-  // change (now deliberately deferred via startTransition), and only then began
-  // its own 180ms. Coming back to Table, the header had finished expanding on
+  // change, and only then began its own 180ms. Coming back to Table, the header
+  // had finished expanding on
   // the UI thread before the button had started moving. Reading pagerPosition
   // means it expands WITH the header, on the same clock, with no timing of its
   // own to drift.

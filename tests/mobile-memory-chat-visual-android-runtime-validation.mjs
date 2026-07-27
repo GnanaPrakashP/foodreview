@@ -399,6 +399,22 @@ async function navigateToChat() {
   return { input: input.point, send: send.point };
 }
 
+async function exitRoomFromTableAfterChatVisit() {
+  const table = await waitForPoint(["Table"], "Table tab before room exit");
+  await tap(table.point);
+  await delay(300);
+  const back = await waitForPoint(["Go back"], "Memory Room back button");
+  const requestedAt = Date.now();
+  await tap(back.point);
+  await waitForPoint(["Posts"], "Profile after Memory Room exit");
+  const elapsedMs = Date.now() - requestedAt;
+  assert.ok(
+    elapsedMs <= 5_000,
+    `Memory Room exit did not reveal Profile within the bounded window (${elapsedMs}ms)`
+  );
+  return elapsedMs;
+}
+
 function inputTextArgument(value) {
   return value.replaceAll(" ", "%s");
 }
@@ -734,7 +750,7 @@ async function stopRecording(remote) {
 
 async function main() {
   mkdirSync(artifactDir, { recursive: true });
-  assert.ok(["full", "media", "stale", "tail"].includes(scenario), `Unsupported scenario: ${scenario}`);
+  assert.ok(["exit", "full", "media", "stale", "tail"].includes(scenario), `Unsupported scenario: ${scenario}`);
   assert.ok(["image", "video"].includes(mediaKind), `Unsupported media kind: ${mediaKind}`);
   const device = await readConnectedDevice();
   if (scenario === "media") await prepareSyntheticMediaFixtures();
@@ -854,6 +870,40 @@ async function main() {
     return;
   }
 
+  if (scenario === "exit") {
+    await sendRapidTextBurst(
+      Array.from({ length: 20 }, (_, index) => `E${String(index + 1).padStart(2, "0")}`),
+      null,
+      0.05,
+      true
+    );
+    const events = await waitForSendCount(20, 30_000);
+    const sendIds = events
+      .filter((event) => event.name === "SEND_PRESS")
+      .slice(0, 20)
+      .map((event) => event.clientId);
+    await waitForAllConfirmations(sendIds, 60_000);
+    const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
+    const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
+    await stopRecording(remoteRecording);
+    writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(await readPlacementEvents(), null, 2)}\n`);
+
+    const report = {
+      artifact: `${artifactDir}/memory-chat-visual.mp4`,
+      device,
+      gfx,
+      messagesBeforeExit: sendIds.length,
+      roomExitAfterChatMs,
+      scenario: "roomExitAfterRichChat",
+      status: "PASS"
+    };
+    writeFileSync(`${artifactDir}/report.json`, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(JSON.stringify(report, null, 2));
+    await cleanup(admin, fixture);
+    fixture = null;
+    return;
+  }
+
   if (scenario === "media") {
     let events = await waitForSendCount(1, 30_000);
     const initialSendIds = events.filter((event) => event.name === "SEND_PRESS").map((event) => event.clientId);
@@ -944,6 +994,7 @@ async function main() {
     );
     const voice = scenarioSummary(events, [sendIds[2]]);
     const voiceOverlapText = scenarioSummary(events, sendIds.slice(3, 6));
+    const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
     const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
     await stopRecording(remoteRecording);
     writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
@@ -974,6 +1025,7 @@ async function main() {
       gfx,
       multiline,
       oneCharacter,
+      roomExitAfterChatMs,
       scenario: "oneCharacterMultilineVoiceTail",
       status: "PASS",
       voice,
@@ -1042,6 +1094,7 @@ async function main() {
     multilineId ? [multilineId] : [],
     multilineWindowEnds
   );
+  const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
   const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
   await stopRecording(remoteRecording);
   writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
@@ -1107,6 +1160,7 @@ async function main() {
     identical,
     multiline,
     numbered,
+    roomExitAfterChatMs,
     scenarios: {
       basicRapid: 5,
       identical: 5,

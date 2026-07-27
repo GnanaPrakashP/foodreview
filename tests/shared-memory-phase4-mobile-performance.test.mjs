@@ -175,7 +175,7 @@ test("room tab transitions keep the header layout-stable and start cold panes im
 
 test("only the selected room tab owns a mounted native view tree", () => {
   const requestRoomModeBody = memoryRoomController.match(
-    /const requestRoomMode = useCallback\([\s\S]*?\}, \[pagerPosition\]\);/
+    /const requestRoomMode = useCallback\([\s\S]*?\}, \[activePaneIndex, pagerPosition\]\);/
   )?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
 
@@ -214,15 +214,32 @@ test("memory room back pops its existing stack entry without dismissing through 
   const backBody = memoryRoomScreen.match(
     /const goBackToOrigin = useCallback\(\(\) => \{[\s\S]*?\}, \[router\]\);/
   )?.[0] ?? "";
-  const hardwareBackBody = memoryRoomScreen.match(
-    /BackHandler\.addEventListener\("hardwareBackPress",[\s\S]*?return true;\s*\}\);/
-  )?.[0] ?? "";
+  const hardwareBackBody = Array.from(memoryRoomScreen.matchAll(
+    /BackHandler\.addEventListener\("hardwareBackPress",[\s\S]*?return true;\s*\}\);/g
+  )).map((match) => match[0]).find((body) => body.includes("goBackToOrigin()")) ?? "";
 
   assert.match(backBody, /if \(router\.canGoBack\(\)\)/);
   assert.match(backBody, /router\.back\(\)/);
   assert.match(backBody, /router\.replace\(\{ pathname: "\/profile", params: \{ tab: "memories" \} \}\)/);
   assert.doesNotMatch(backBody, /dismissTo/);
   assert.match(hardwareBackBody, /goBackToOrigin\(\)/);
+});
+
+test("room exit owns only the selected pane and defers pending read persistence", () => {
+  const roomPaneBody = memoryRoomScreen.match(
+    /function RoomPane\([\s\S]*?\nfunction PaneReveal/
+  )?.[0] ?? "";
+  const pendingReadCleanup = memoryRoomScreen.match(
+    /useEffect\(\(\) => \(\) => \{[\s\S]*?markReadTimeoutRef\.current = null;[\s\S]*?\}, \[\]\);/
+  )?.[0] ?? "";
+
+  assert.match(roomPaneBody, /if \(!active\) return null/);
+  assert.doesNotMatch(
+    memoryRoomScreen,
+    /MEMORY_ROOM_CHAT_WARM_DELAY_MS|chatWarmed|markPanesWarm|warm=\{/
+  );
+  assert.match(pendingReadCleanup, /InteractionManager\.runAfterInteractions/);
+  assert.doesNotMatch(pendingReadCleanup, /markRead\.mutate\(undefined\)/);
 });
 
 test("memory room stack swaps without animating its retained chat view tree", () => {

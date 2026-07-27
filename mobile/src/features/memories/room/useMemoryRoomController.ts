@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Easing as ReanimatedEasing, runOnUI, useSharedValue, withTiming } from "react-native-reanimated";
 
 export type MemoryRoomMode = "overview" | "chat" | "media" | "dishes" | "people";
@@ -49,14 +49,6 @@ export function useMemoryRoomController(tabParam?: string | string[] | null) {
   const paneTabModeRef = useRef<MemoryRoomTabMode>(initialMode);
   // Tracks the latest requested mode so rapid taps dedupe before React commits.
   const requestedModeRef = useRef<MemoryRoomMode>(initialMode);
-  // Set once every pane has been mounted by the room's idle warm-up. Until
-  // then a mode change still has to mount the target pane, which must stay
-  // urgent or the pane would turn visible while still empty.
-  const panesWarmRef = useRef(false);
-  const markPanesWarm = useCallback(() => {
-    panesWarmRef.current = true;
-  }, []);
-
   const requestRoomMode = useCallback((nextMode: MemoryRoomMode) => {
     if (requestedModeRef.current === nextMode) return;
     requestedModeRef.current = nextMode;
@@ -93,16 +85,10 @@ export function useMemoryRoomController(tabParam?: string | string[] | null) {
     // frame the thread came back — which is why the box looked like it landed
     // first and the label brightened afterwards.
     //
-    // Once the panes are warm nothing visible depends on this state any more
-    // (visibility, indicator, header and tint are all shared-value driven), so
-    // it can yield. Before warm-up it must stay urgent: the pane still needs
-    // mounting, and a deferred mount would reveal an empty pane.
-    const commit = () => {
-      setMode(nextMode);
-      if (paneChanged) setPaneTabMode(nextTabMode);
-    };
-    if (panesWarmRef.current) startTransition(commit);
-    else commit();
+    // Only the selected pane is mounted. Commit immediately so its native tree
+    // exists in the same interaction that moves the UI-thread indicator.
+    setMode(nextMode);
+    if (paneChanged) setPaneTabMode(nextTabMode);
   }, [activePaneIndex, pagerPosition]);
 
   useEffect(() => {
@@ -115,7 +101,6 @@ export function useMemoryRoomController(tabParam?: string | string[] | null) {
   return {
     activePaneIndex,
     activePaneTabIndex,
-    markPanesWarm,
     mode,
     pagerPosition,
     paneTabMode,
