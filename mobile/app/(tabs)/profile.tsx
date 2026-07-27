@@ -511,7 +511,7 @@ function ProfileContent({
             <ProfileEmptyTabScroll refreshControl={postsRefreshControl}>
               <View style={styles.listInset}>
                 <EmptyState
-                  actionLabel="Share review"
+                  actionLabel="Share experience"
                   icon="restaurant-outline"
                   message="Share your first dining experience."
                   onAction={openPostCreate}
@@ -523,7 +523,7 @@ function ProfileContent({
             <PostFeed
               collapsibleTabView
               contentContainerStyle={styles.profileListContent}
-              emptyActionLabel="Share review"
+              emptyActionLabel="Share experience"
               emptyMessage="Share your first dining experience."
               emptyStateStyle={styles.profileEmptyState}
               emptyTitle="No posts yet"
@@ -1041,15 +1041,13 @@ function cleanMemoryPlacePart(value?: string | null) {
 function memoryPlaceLabel(memory: MemoryRoomSummary): string {
   const placeNames = (memory.placeNames ?? [])
     .map(cleanMemoryPlacePart)
-    .filter(Boolean);
+    .filter((placeName) => placeName && placeName.toLowerCase() !== "table memory");
   if (placeNames.length > 0) return placeNames.join(", ");
 
   const restaurantName = cleanMemoryPlacePart(memory.restaurantName);
-  const area = cleanMemoryPlacePart(memory.area);
   const hasNamedPlace = restaurantName && restaurantName.toLowerCase() !== "table memory";
 
   if (hasNamedPlace) return restaurantName;
-  if (area) return area;
   return "No places added";
 }
 
