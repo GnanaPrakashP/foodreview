@@ -7,6 +7,7 @@ const packageJson = JSON.parse(read("package.json"));
 const orchestrator = read("scripts/mobile-local-device.mjs");
 const androidInstaller = read("mobile/scripts/reinstall-android-phone.mjs");
 const appConfig = read("mobile/app.config.js");
+const gitignore = read(".gitignore");
 
 test("local physical-device commands remain separate from the normal hosted reinstall", () => {
   assert.equal(packageJson.scripts["mobile:reinstall:phone"], "npm --prefix mobile run android:reinstall:phone --");
@@ -42,6 +43,25 @@ test("Android USB mode reverses Metro, API, and local Supabase ports", () => {
   assert.match(androidInstaller, /reverse", `tcp:\$\{options\.port\}`/);
   assert.match(androidInstaller, /reverse", `tcp:\$\{apiPort\(mobileApiUrl\)}`/);
   assert.match(androidInstaller, /reverse", `tcp:\$\{apiPort\(mobileSupabaseUrl\)}`/);
+});
+
+test("Android reinstall handles signing-key replacement only with explicit data-loss authorization", () => {
+  assert.match(androidInstaller, /--replace-signature/);
+  assert.match(androidInstaller, /INSTALL_FAILED_UPDATE_INCOMPATIBLE/);
+  assert.match(androidInstaller, /!options\.replaceSignature && !options\.clearData/);
+  assert.match(androidInstaller, /"uninstall", APP_ID/);
+  assert.match(androidInstaller, /hosted account and server data are not deleted/i);
+});
+
+test("Android reinstall discovers and exports the SDK root for Gradle and Hermes", () => {
+  assert.match(androidInstaller, /function androidSdkRoot\(adb\)/);
+  assert.match(androidInstaller, /resolve\(dirname\(adb\), "\.\."\)/);
+  assert.match(androidInstaller, /ANDROID_HOME: androidSdk/);
+  assert.match(androidInstaller, /ANDROID_SDK_ROOT: androidSdk/);
+});
+
+test("native module build output cannot dirty the tracked worktree", () => {
+  assert.match(gitignore, /\/mobile\/modules\/keyboard-inset\/android\/build\//);
 });
 
 test("iPhone mode advertises only a private LAN host and verifies Supabase reachability", () => {

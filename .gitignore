@@ -25,6 +25,7 @@
 
 # production
 /build
+/mobile/modules/keyboard-inset/android/build/
 
 # misc
 .DS_Store

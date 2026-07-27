@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import http from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +27,7 @@ function parseArgs(argv) {
     host: "",
     launch: true,
     port: DEFAULT_PORT,
+    replaceSignature: false,
     startApi: true,
     restartMetro: true,
     startMetro: true
@@ -86,6 +87,10 @@ function parseArgs(argv) {
       options.clearData = true;
       continue;
     }
+    if (arg === "--replace-signature") {
+      options.replaceSignature = true;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -110,6 +115,9 @@ Options:
   --host <ip>        Metro host/IP for the dev client. Defaults to EXPO_DEV_HOST or ${DEFAULT_HOST} over adb reverse.
   --port <port>      Metro port. Defaults to ${DEFAULT_PORT}.
   --clear-data       Clear Android app data after reinstall. This signs you out and resets local app storage.
+  --replace-signature
+                      If Android reports a signing-key mismatch, uninstall the existing
+                      ${APP_ID} package and install the debug APK. This deletes its local data.
   --no-start-api     Do not auto-start the local Next API when EXPO_PUBLIC_API_BASE_URL is loopback.
   --no-start-metro   Do not auto-start Expo Metro when the port is not reachable.
   --no-restart-metro Keep an already-running Metro process instead of restarting it with a cleared cache.
@@ -128,6 +136,25 @@ function adbPath() {
   if (existsSync(homebrewAdb)) return homebrewAdb;
   if (commandExists("adb")) return "adb";
   throw new Error("Could not find adb. Set ADB=/path/to/adb and try again.");
+}
+
+function androidSdkRoot(adb) {
+  const adbParent = adb.includes("/") ? resolve(dirname(adb), "..") : "";
+  const candidates = [
+    process.env.ANDROID_SDK_ROOT,
+    process.env.ANDROID_HOME,
+    adbParent,
+    join(homedir(), "Library", "Android", "sdk"),
+    join(homedir(), "Android", "Sdk")
+  ].filter(Boolean);
+  const sdkRoot = candidates.find((candidate) => (
+    existsSync(join(candidate, "platform-tools")) &&
+    existsSync(join(candidate, "build-tools"))
+  ));
+  if (sdkRoot) return sdkRoot;
+  throw new Error(
+    "Could not find the Android SDK root. Set ANDROID_SDK_ROOT or ANDROID_HOME and try again."
+  );
 }
 
 function validJavaHome(path) {
@@ -179,6 +206,45 @@ function run(command, args, options = {}) {
   }
 
   return result.stdout ?? "";
+}
+
+function installDebugApk(adb, device, options) {
+  const installArgs = ["-s", device, "install", "-r", "-d", debugApk];
+  console.log(`$ ${[adb, ...installArgs].join(" ")}`);
+  const result = spawnSync(adb, installArgs, {
+    cwd: mobileRoot,
+    encoding: "utf8",
+    env: process.env,
+    stdio: "pipe"
+  });
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status === 0) return;
+
+  const signatureMismatch = output.includes("INSTALL_FAILED_UPDATE_INCOMPATIBLE");
+  if (!signatureMismatch) {
+    throw new Error(output || `${adb} exited with status ${result.status}`);
+  }
+  if (!options.replaceSignature && !options.clearData) {
+    throw new Error([
+      `The installed ${APP_ID} app uses a different signing certificate.`,
+      "Android cannot update it with this debug APK.",
+      "",
+      "To replace it and delete its local app data, rerun with:",
+      "  ./run-phone.sh --replace-signature",
+      "",
+      "The hosted account and server data are not deleted."
+    ].join("\n"));
+  }
+
+  const authorization = options.replaceSignature ? "--replace-signature" : "--clear-data";
+  console.log(
+    `Signing-key replacement was authorized by ${authorization}; ` +
+    `uninstalling ${APP_ID}. This deletes only that package's local Android data.`
+  );
+  run(adb, ["-s", device, "uninstall", APP_ID]);
+  run(adb, ["-s", device, "install", "-d", debugApk]);
 }
 
 function connectedDevices(adb) {
@@ -540,6 +606,7 @@ function devClientUrl(host, port) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const adb = adbPath();
+  const androidSdk = androidSdkRoot(adb);
   const device = selectDevice(adb, options.device);
   const host = options.host || defaultHost();
   const mobileApiUrl = apiBaseUrl();
@@ -552,7 +619,10 @@ async function main() {
   const javaHome = javaHomePath();
   const buildEnv = {
     ...mobileProcessEnv(),
+    ANDROID_HOME: androidSdk,
+    ANDROID_SDK_ROOT: androidSdk,
     JAVA_HOME: javaHome,
+    NODE_ENV: process.env.NODE_ENV ?? "development",
     PATH: `${join(javaHome, "bin")}:${process.env.PATH ?? ""}`
   };
 
@@ -572,6 +642,7 @@ async function main() {
     console.log("EXPO_PUBLIC_SUPABASE_URL is not configured; Supabase-backed mobile features may be unavailable.");
   }
   console.log(`Using JAVA_HOME: ${javaHome}`);
+  console.log(`Using Android SDK: ${androidSdk}`);
 
   if (!existsSync(gradlew)) {
     throw new Error(`Gradle wrapper not found at ${gradlew}`);
@@ -583,7 +654,7 @@ async function main() {
     throw new Error(`Debug APK was not created at ${debugApk}`);
   }
 
-  run(adb, ["-s", device, "install", "-r", "-d", debugApk]);
+  installDebugApk(adb, device, options);
   if (options.clearData) {
     run(adb, ["-s", device, "shell", "pm", "clear", APP_ID]);
   }
