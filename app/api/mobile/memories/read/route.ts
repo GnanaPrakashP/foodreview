@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "detail") {
-      const { data, error } = await supabase.rpc("shared_memory_room_bootstrap_v1", {
+      const { data, error } = await supabase.rpc("shared_memory_room_bootstrap_v2", {
         p_message_limit: limit,
         p_room_id: roomId,
       });
@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
       const rawChangeCursor = req.nextUrl.searchParams.get("changeCursor");
       const afterCursor = changeCursor(rawChangeCursor);
       if (!afterCursor) return privateJson({ error: "Invalid change cursor" }, { status: 400 });
-      const { data, error } = await supabase.rpc("shared_memory_room_sync_v1", {
+      const { data, error } = await supabase.rpc("shared_memory_room_sync_v2", {
         p_after_cursor: afterCursor,
         p_limit: limit,
         p_room_id: roomId,
@@ -153,7 +153,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "chat") {
-      const { data, error } = await supabase.rpc("shared_memory_chat_page", {
+      const { data, error } = await supabase.rpc("shared_memory_chat_page_v2", {
         p_before_created_at: cursor?.createdAt ?? null,
         p_before_message_id: cursor?.id ?? null,
         p_limit: limit,

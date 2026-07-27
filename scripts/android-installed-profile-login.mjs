@@ -23,6 +23,8 @@ const configuredOtp = envValue("ANDROID_LOGIN_OTP", "");
 const mailpitUrl = envValue("ANDROID_MAILPIT_URL", "http://127.0.0.1:54324");
 const appPackage = envValue("ANDROID_APP_PACKAGE", "com.circlebites.mobile");
 const appActivity = envValue("ANDROID_APP_ACTIVITY", ".MainActivity");
+const appLaunchUrl = envValue("ANDROID_APP_LAUNCH_URL", "");
+const grantLocation = envValue("ANDROID_PROFILE_GRANT_LOCATION", "") === "1";
 const apkPath = envValue("ANDROID_APK_PATH", "");
 const timeoutMs = numberFromArg("--timeout-ms", 90_000);
 const serverLogPath = resolve(artifactDir, "installed-profile-next.log");
@@ -88,6 +90,14 @@ async function main() {
   await adbExec(adb, [
     "-s", serial, "shell", "pm", "grant", appPackage, "android.permission.POST_NOTIFICATIONS"
   ], { allowFailure: true });
+  if (grantLocation) {
+    await adbExec(adb, [
+      "-s", serial, "shell", "pm", "grant", appPackage, "android.permission.ACCESS_COARSE_LOCATION"
+    ], { allowFailure: true });
+    await adbExec(adb, [
+      "-s", serial, "shell", "pm", "grant", appPackage, "android.permission.ACCESS_FINE_LOCATION"
+    ], { allowFailure: true });
+  }
 
   // Keep installed-build automation from silently polling behind an ambient or
   // non-secure keyguard. A secure device still has to be unlocked by its owner.
@@ -95,7 +105,17 @@ async function main() {
   await adbExec(adb, ["-s", serial, "shell", "wm", "dismiss-keyguard"], { allowFailure: true });
   console.log(`Launching ${appPackage}/${appActivity}.`);
   await adbExec(adb, ["-s", serial, "shell", "am", "force-stop", appPackage], { allowFailure: true });
-  await adbExec(adb, ["-s", serial, "shell", "am", "start", "-n", `${appPackage}/${appActivity}`]);
+  if (appLaunchUrl) {
+    await adbExec(adb, [
+      "-s", serial, "shell", "am", "start",
+      "-a", "android.intent.action.VIEW",
+      "-d", appLaunchUrl,
+      "-p", appPackage
+    ]);
+  } else {
+    await adbExec(adb, ["-s", serial, "shell", "am", "start", "-n", `${appPackage}/${appActivity}`]);
+  }
+  if (appLaunchUrl) await dismissDevClientWelcome(adb, serial);
 
   await openEmailLogin(adb, serial);
   await fillEmailAndSendCode(adb, serial);
@@ -186,6 +206,37 @@ async function openEmailLogin(adb, serial) {
   await tapText(adb, serial, xml, "Continue with Email", fallbackPoint(await screenSize(adb, serial), 0.5, 0.75));
   await waitForUiText(adb, serial, ["name@example.com", "Send code"], "email form");
   await captureScreenshot(adb, serial, resolve(artifactDir, "installed-email-form.png"));
+}
+
+async function dismissDevClientWelcome(adb, serial) {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const xml = await readUiXml(adb, serial).catch(() => "");
+    const normalized = normalizedXml(xml);
+    if (
+      normalized.includes("this is the developer menu") &&
+      normalized.includes("continue")
+    ) {
+      await tapText(
+        adb,
+        serial,
+        xml,
+        "Continue",
+        fallbackPoint(await screenSize(adb, serial), 0.5, 0.94)
+      );
+      await delay(1_000);
+      // The one-time sheet reveals the regular developer menu underneath.
+      // Android Back closes that menu and returns to the loaded application.
+      await adbExec(adb, ["-s", serial, "shell", "input", "keyevent", "4"], { allowFailure: true });
+      await delay(1_000);
+      return;
+    }
+    if (
+      normalized.includes("continue with email") ||
+      normalized.includes("name@example.com")
+    ) return;
+    await delay(500);
+  }
 }
 
 async function fillEmailAndSendCode(adb, serial) {
@@ -348,9 +399,13 @@ async function waitForAnyUiText(adb, serial, terms, label) {
 
 async function dismissBlockingSystemDialog(adb, serial, xml, normalized) {
   const isNotificationPrompt = normalized.includes("allow circlebites to send you notifications");
-  if (!isNotificationPrompt) return false;
+  const isLocationPrompt =
+    normalized.includes("allow circlebites dev to access this device’s location") ||
+    normalized.includes("allow circlebites dev to access this device's location");
+  if (!isNotificationPrompt && !isLocationPrompt) return false;
 
   const bounds =
+    (isLocationPrompt ? findBounds(xml, "text", "While using the app") : null) ??
     findBounds(xml, "text", "Don’t allow") ??
     findBounds(xml, "text", "Don't allow") ??
     findBounds(xml, "text", "Deny") ??

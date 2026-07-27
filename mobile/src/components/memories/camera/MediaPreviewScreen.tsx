@@ -5,7 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -16,7 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { removeMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
-import { postMemoryRoomMedia } from "@/services/mediaUploadService";
+import { useAddMemoryPhotoMutation } from "@/hooks/useMemories";
+import { createRequestId } from "@/services/installIdentity";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
 
@@ -28,6 +29,8 @@ export function MediaPreviewScreen({
   roomId: string;
 }) {
   const router = useRouter();
+  const addPhoto = useAddMemoryPhotoMutation(roomId);
+  const postStartedRef = useRef(false);
   const insets = useSafeAreaInsets();
   const [posting, setPosting] = useState(false);
   const [navigating, setNavigating] = useState(false);
@@ -37,7 +40,8 @@ export function MediaPreviewScreen({
   const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, 42);
 
   async function postToRoom() {
-    if (posting) return;
+    if (postStartedRef.current) return;
+    postStartedRef.current = true;
     setPosting(true);
     setPostError("");
 
@@ -52,27 +56,35 @@ export function MediaPreviewScreen({
     if (validationError) {
       setPostError(validationError);
       setPosting(false);
+      postStartedRef.current = false;
       return;
     }
 
-    await nextFrame();
-
-    try {
-      await postMemoryRoomMedia({
-        asset,
-        roomId
-      });
-      removeMemoryCapture(asset.id);
-      setNavigating(true);
-      await nextFrame();
-      router.dismissTo({
-        pathname: "/memories/[id]",
-        params: { id: roomId, tab: "chat" }
-      });
-    } catch {
-      setPostError("Could not post media. Check your connection and try again.");
-      setPosting(false);
-    }
+    const clientId = createRequestId();
+    const clientCreatedAt = new Date().toISOString();
+    const clientSequence = Date.now();
+    addPhoto.mutate({
+      assets: [{
+        duration: asset.duration ?? null,
+        fileSize: asset.fileSize ?? null,
+        imageHeight: asset.height ?? null,
+        imageWidth: asset.width ?? null,
+        mediaMimeType: mimeType,
+        mediaType: asset.mediaType,
+        mediaUri: asset.uri
+      }],
+      clientCreatedAt,
+      clientOrderKey: `${clientCreatedAt}:${String(clientSequence).padStart(16, "0")}:${clientId}`,
+      clientSequence,
+      roomId,
+      uploadBatchId: clientId
+    });
+    removeMemoryCapture(asset.id);
+    setNavigating(true);
+    router.dismissTo({
+      pathname: "/memories/[id]",
+      params: { id: roomId, tab: "chat" }
+    });
   }
 
   if (posting) {
@@ -301,9 +313,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   }
 });
-
-function nextFrame() {
-  return new Promise<void>((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
-}

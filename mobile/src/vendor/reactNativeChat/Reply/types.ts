@@ -12,6 +12,8 @@ import { IMessage, ReplyMessage } from '../Models'
 export interface SwipeToReplyProps<TMessage extends IMessage> {
   /** Enable swipe to reply on messages; default is false */
   isEnabled?: boolean
+  /** Keep the stable swipe wrapper mounted while independently gating the gesture */
+  isGestureEnabled?: boolean
   /** Direction to swipe for reply; default is 'left' (swipe left, icon appears on right) */
   direction?: 'left' | 'right'
   /** Callback when swipe to reply is triggered */

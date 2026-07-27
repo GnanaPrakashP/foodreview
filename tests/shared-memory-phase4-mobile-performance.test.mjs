@@ -397,7 +397,8 @@ test("rapid newline and backspace use one native Android composer height transac
 
   assert.match(nativeKeyboardModule, /View\(NativeChatInputView::class\)/);
   assert.match(nativeKeyboardModule, /Name\("ChatInput"\)/);
-  assert.match(nativeKeyboardModule, /Events\("onTextChange", "onHeightChange"\)/);
+  assert.match(nativeKeyboardModule, /Events\("onTextChange", "onHeightChange", "onHasTextChange"\)/);
+  assert.match(nativeKeyboardModule, /AsyncFunction\("submit"\)/);
   assert.match(nativeChatInputWrapper, /requireNativeViewManager<NativeChatInputProps>\("KeyboardInset", "ChatInput"\)/);
   assert.match(nativeChatInput, /class NativeChatInputView[\s\S]*: ExpoView/);
   assert.match(nativeChatInput, /private val textWatcher = object : TextWatcher/);
@@ -483,9 +484,13 @@ test("reply requires a deliberate horizontal swipe and yields vertical drags to 
 
   // ChatMain renders the vendored Message component, so its recognizer—not
   // only the dormant legacy timeline row—must carry the deliberate thresholds.
-  assert.match(vendoredMessage, /const REPLY_SWIPE_ACTIVATION_DISTANCE = 30/);
-  assert.match(vendoredMessage, /const REPLY_SWIPE_TRIGGER_DISTANCE = 54/);
-  assert.match(vendoredMessage, /const REPLY_SWIPE_VERTICAL_TOLERANCE = 12/);
+  assert.match(vendoredMessage, /const REPLY_SWIPE_ACTIVATION_DISTANCE = 18/);
+  assert.match(vendoredMessage, /const REPLY_SWIPE_TRIGGER_DISTANCE = 48/);
+  assert.match(vendoredMessage, /const REPLY_SWIPE_VERTICAL_TOLERANCE = 20/);
+  assert.match(
+    vendoredMessage,
+    /isSwipeToReplyGestureEnabled = swipeToReply\?\.isGestureEnabled \?\? isSwipeToReplyEnabled/
+  );
   assert.match(activeSwipeBody, /Gesture\.Pan\(\)/);
   assert.match(activeSwipeBody, /\.activeOffsetX\(/);
   assert.match(
@@ -504,7 +509,10 @@ test("outgoing pending messages do not insert a temporary typing row", () => {
 
   assert.doesNotMatch(chatSurfaceBody, /typingVisible|isTyping=/);
   assert.doesNotMatch(memoryRoomScreen, /typingVisible=\{addMessage\.isPending \|\| addPhoto\.isPending\}/);
-  assert.match(memoryRoomScreen, /streaming: message\.deliveryStatus === "pending"/);
+  assert.match(
+    memoryRoomScreen,
+    /streaming: \(\s*message\.deliveryStatus === "pending"[\s\S]*message\.deliveryStatus === "retrying"[\s\S]*message\.deliveryStatus === "uploading"/
+  );
 });
 
 test("phase 6 mounts chat only while selected and renders timestamps on the first frame", () => {
@@ -640,14 +648,14 @@ test("phase 5 adds SQLite offline store and offline-first memory hooks", () => {
   assert.match(memoryService, /listMemoryRoomsPageOfflineFirst/);
   assert.match(memoryService, /getMemoryRoomOfflineFirst/);
   assert.match(memoryService, /getMemoryMessagesPageOfflineFirst/);
-  assert.match(memoryService, /getMemoryMediaPageOfflineFirst/);
+  assert.match(memoryService, /readMemoryMediaPageOffline/);
   assert.match(memoryHooks, /listMemoryRoomsPageOfflineFirst/);
   assert.match(memoryHooks, /getMemoryRoomOfflineFirst/);
   assert.match(memoryHooks, /getMemoryMessagesPageOfflineFirst/);
-  assert.match(memoryHooks, /getMemoryMediaPageOfflineFirst/);
+  assert.match(memoryHooks, /readMemoryMediaPageOffline/);
   assert.match(memoryHooks, /readOfflineMemorySummaries/);
   assert.match(memoryHooks, /readOfflineMemoryRoom/);
-  assert.match(memoryHooks, /queryClient\.setQueryData\(memoryKeys\.detail\(roomId\), cached\)/);
+  assert.match(memoryHooks, /queryClient\.setQueryData\(detailKey, cached, \{ updatedAt: 0 \}\)/);
   assert.match(memoryHooks, /saveOfflineMemoryMessage/);
   assert.match(memoryHooks, /saveOfflineMemoryPhoto/);
   assert.match(memoryHooks, /saveOfflineMemoryOutboxMessage/);
@@ -661,16 +669,20 @@ test("room mount resolves cached chat before background network reconciliation",
   const roomQuery = memoryHooks.match(
     /export function useMemoryRoomQuery\([\s\S]*?(?=\nexport function useMemoryMessagePagesQuery)/
   )?.[0] ?? "";
-  const cachedRead = roomQuery.indexOf("await readOfflineMemoryRoom(roomId)");
-  const backgroundRefresh = roomQuery.indexOf("void getMemoryRoomOfflineFirst(roomId)");
-  const cachedReturn = roomQuery.indexOf("return cached;");
+  const queryFunction = roomQuery.match(/queryFn: async \(\) => \{[\s\S]*?(?=\n    enabled:)/)?.[0] ?? "";
+  const cachedRead = queryFunction.indexOf("await readOfflineMemoryRoom(roomId)");
+  const backgroundRefresh = queryFunction.indexOf("void getMemoryRoomOfflineFirst(roomId)");
+  const cachedReturn = queryFunction.indexOf("return cached;");
 
   assert.notEqual(cachedRead, -1);
   assert.notEqual(backgroundRefresh, -1);
   assert.notEqual(cachedReturn, -1);
   assert.ok(cachedRead < backgroundRefresh);
   assert.ok(backgroundRefresh < cachedReturn);
-  assert.match(roomQuery, /queryClient\.setQueryData\(memoryKeys\.detail\(roomId\), freshRoom\)/);
+  assert.match(
+    roomQuery,
+    /queryClient\.setQueryData<MemoryRoom>\(memoryKeys\.detail\(roomId\), \(current\) => \(\s*current \? preserveRecentMediaAttachments\(current, freshRoom\) as MemoryRoom : freshRoom/
+  );
   assert.match(roomQuery, /isCacheGenerationActive\(ownerGeneration\)/);
 });
 
@@ -800,7 +812,7 @@ test("cached room hydration and delta merging retain all locally stored chat his
     /export async function readOfflineMemoryRoom\([\s\S]*?(?=\nexport async function readOfflineMemoryRoomSyncCursor)/
   )?.[0] ?? "";
   const persistedMessagesQuery = offlineRoomRead.match(
-    /`select payload\s+from memory_messages\s+where room_id = \?\s+order by created_at desc, message_id desc`/
+    /`select payload\s+from memory_messages\s+where room_id = \?\s+order by created_at asc, client_sequence asc, client_order_key asc, message_id asc`/
   )?.[0] ?? "";
   const deltaMerge = memoryService.match(
     /function mergeMemoryRoomDelta\([\s\S]*?(?=\nasync function syncCachedMemoryRoom)/
@@ -811,7 +823,7 @@ test("cached room hydration and delta merging retain all locally stored chat his
   assert.doesNotMatch(offlineRoomRead, /DEFAULT_CHAT_PAGE_LIMIT/);
   assert.doesNotMatch(deltaMerge, /MEMORY_CHAT_PRELOAD_LIMIT/);
   assert.doesNotMatch(deltaMerge, /\.slice\(\s*-MEMORY_CHAT_PRELOAD_LIMIT\s*\)/);
-  assert.match(deltaMerge, /const sentMessages = allMessages[\s\S]*\.sort\(/);
+  assert.match(deltaMerge, /visibleMessages = sortMemoryMessages\(visibleMessages\)/);
 });
 
 test("a short cached chat page still exposes an older-history cursor", () => {
@@ -860,11 +872,11 @@ test("text sends persist an outbox row and use stable server idempotency", () =>
   assert.match(memoryMessageRoute, /\.eq\("room_id", roomId\)/);
   assert.match(memoryService, /headers: \{ "Idempotency-Key": idempotencyKey \}/);
   assert.match(memoryHooks, /await saveOfflineMemoryOutboxMessage\(clientId, optimisticMessage\)/);
-  assert.match(memoryHooks, /commitOfflineMemoryOutboxMessage\(context\.optimisticMessage\.id, sentMessage\)/);
+  assert.match(memoryHooks, /commitOfflineMemoryOutboxMessage\(context\.clientId, sentMessage\)/);
   assert.match(memoryOfflineStore, /create table if not exists memory_message_outbox/);
   assert.match(memorySyncMigration, /shared_memory_messages_author_client_id_uidx/);
   assert.match(memoryService, /recoverPendingMemoryMessages/);
-  assert.match(memoryService, /message\.deliveryStatus === "pending" && message\.id\.startsWith\(prefix\)/);
+  assert.match(memoryService, /message\.deliveryStatus === "pending"[\s\S]*Boolean\(message\.clientId\)/);
 });
 
 test("chat media previews show the whole captured image or video thumbnail", () => {
@@ -914,11 +926,12 @@ test("phase 4 uploads and finalizes memory media sequentially to cap memory pres
   assert.doesNotMatch(addMediaBody, /Promise\.all\(assets\.map/);
 });
 
-test("camera preview uploads media directly before returning to chat", () => {
-  assert.match(memoryPreviewScreen, /await postMemoryRoomMedia\(\{[\s\S]*asset,[\s\S]*roomId[\s\S]*\}\)/);
+test("camera preview persists a non-blocking optimistic send before returning to chat", () => {
+  assert.match(memoryPreviewScreen, /const addPhoto = useAddMemoryPhotoMutation\(roomId\)/);
+  assert.match(memoryPreviewScreen, /addPhoto\.mutate\(\{[\s\S]*clientCreatedAt,[\s\S]*clientOrderKey:[\s\S]*uploadBatchId: clientId/);
+  assert.doesNotMatch(memoryPreviewScreen, /await addPhoto\.mutateAsync|await postMemoryRoomMedia/);
   assert.match(memoryPreviewScreen, /removeMemoryCapture\(asset\.id\)/);
   assert.match(memoryPreviewScreen, /router\.dismissTo\(\{[\s\S]*params: \{ id: roomId, tab: "chat" \}/);
-  assert.match(memoryPreviewScreen, /Could not post media\. Check your connection and try again\./);
   assert.doesNotMatch(memoryPreviewScreen, /queueMemoryCapturePost\(asset\.id/);
   assert.doesNotMatch(memoryPreviewScreen, /postCaptureId: asset\.id/);
   assert.doesNotMatch(memoryRoomScreen, /consumeMemoryCapturePost\(postCaptureId\)/);

@@ -6,6 +6,13 @@ import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
 import { mapMemoryMessages, mapMemoryPhoto, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
+  mergeMemoryMessageSnapshot,
+  removeMemoryMessage,
+  sortMemoryMessages,
+  upsertMemoryMessage
+} from "@/services/memoryMessageReconciliation.mjs";
+import { isForegroundMemoryMessageSend } from "@/services/memoryMessageSendRegistry.mjs";
+import {
   memoryTablesError,
   normalizeUsername,
   occasionConfidenceForRoom,
@@ -75,8 +82,8 @@ type MemoryRoomSyncResult = {
   syncCursor: string | null;
 };
 
-const MEMORY_MESSAGE_SELECT = "id, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
-const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, room_id, author_name, body, created_at, edited_at";
+const MEMORY_MESSAGE_SELECT = "id, client_id, client_created_at, client_sequence, client_order_key, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
+const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, client_id, client_created_at, client_sequence, client_order_key, room_id, author_name, body, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_LEGACY = "id, room_id, author_name, body, created_at";
 const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_asset_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
@@ -145,8 +152,12 @@ export type RespondToMemoryInviteResult = {
 
 export type AddMemoryPhotoInput = {
   roomId: string;
+  clientCreatedAt?: string;
+  clientSequence?: number;
+  clientOrderKey?: string;
   body?: string;
   replyToMessageId?: string | null;
+  replacesMessageId?: string;
   uploadBatchId?: string;
   imageUri?: string;
   imageMimeType?: string | null;
@@ -172,6 +183,7 @@ export type AddMemoryMediaAsset = {
   duration?: number | null;
   fileSize?: number | null;
   onUploadProgress?: (progress: number) => void;
+  onSourceStaged?: (uri: string) => Promise<void> | void;
 };
 
 export type AddMemoryPhotoResult = {
@@ -1168,16 +1180,13 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
     replyMessages: rpcArray(changes.replyMessages)
   });
 
-  const messagesById = new Map(
-    current.messages
-      .filter((message) => !deletedMessageIds.has(message.id))
-      .map((message) => [message.id, message])
-  );
+  let visibleMessages = current.messages;
+  for (const messageId of deletedMessageIds) {
+    visibleMessages = removeMemoryMessage(visibleMessages, messageId);
+  }
   for (const message of changedMessages) {
-    const previous = messagesById.get(message.id);
-    messagesById.set(message.id, {
+    visibleMessages = upsertMemoryMessage(visibleMessages, {
       ...message,
-      attachments: previous?.attachments.length ? previous.attachments : message.attachments,
       deliveryStatus: "sent"
     });
   }
@@ -1190,17 +1199,10 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
   );
   for (const photo of changedPhotos) photosById.set(photo.id, photo);
 
-  const allMessages = Array.from(messagesById.values());
-  const sentMessages = allMessages
-    .filter((message) => message.deliveryStatus !== "pending" && message.deliveryStatus !== "failed")
-    .sort((first, second) => new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime());
-  const localOutboxMessages = allMessages.filter(
-    (message) => message.deliveryStatus === "pending" || message.deliveryStatus === "failed"
-  );
-  const visibleMessages = [...sentMessages, ...localOutboxMessages].sort(
-    (first, second) => new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime()
-  );
-  const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
+  visibleMessages = sortMemoryMessages(visibleMessages);
+  const visibleMessageIds = new Set(visibleMessages.flatMap((message) => (
+    message.serverId ? [message.serverId, message.id] : [message.id]
+  )));
   const visiblePhotos = Array.from(photosById.values())
     .filter((photo) => !photo.messageId || visibleMessageIds.has(photo.messageId))
     .sort((first, second) => (
@@ -1315,24 +1317,12 @@ async function syncCachedMemoryRoomSingleFlight(
 }
 
 function mergeCachedMemoryChat(room: MemoryRoom, cached: MemoryRoom) {
-  const messagesById = new Map(cached.messages.map((message) => [message.id, message]));
-  for (const message of room.messages) {
-    const previous = messagesById.get(message.id);
-    messagesById.set(message.id, {
-      ...message,
-      attachments: message.attachments.length ? message.attachments : previous?.attachments ?? []
-    });
-  }
-
   const photosById = new Map(cached.photos.map((photo) => [photo.id, photo]));
   for (const photo of room.photos) photosById.set(photo.id, photo);
 
   return {
     ...room,
-    messages: Array.from(messagesById.values()).sort((first, second) => (
-      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
-      first.id.localeCompare(second.id)
-    )),
+    messages: mergeMemoryMessageSnapshot(cached.messages, room.messages),
     photos: Array.from(photosById.values()).sort((first, second) => (
       new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
       first.position - second.position ||
@@ -1379,21 +1369,20 @@ async function restoreAuthoritativeMemoryStops(
   };
 }
 
+export function isReconciledOptimisticTextMessage(
+  optimisticMessage: MemoryMessage,
+  serverMessage: MemoryMessage
+) {
+  return Boolean(
+    optimisticMessage.clientId &&
+    serverMessage.clientId &&
+    optimisticMessage.clientId === serverMessage.clientId
+  );
+}
+
 function mergeLocalOutboxMessages(room: MemoryRoom, cached: MemoryRoom | null) {
   if (!cached) return room;
-  const localMessages = cached.messages.filter(
-    (message) => message.deliveryStatus === "pending" || message.deliveryStatus === "failed"
-  );
-  if (localMessages.length === 0) return room;
-  const messages = [...room.messages];
-  for (const localMessage of localMessages) {
-    if (!messages.some((message) => message.id === localMessage.id)) messages.push(localMessage);
-  }
-  messages.sort((first, second) => (
-    new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
-    first.id.localeCompare(second.id)
-  ));
-  return { ...room, messages };
+  return { ...room, messages: mergeMemoryMessageSnapshot(cached.messages, room.messages) };
 }
 
 async function recoverPendingMemoryMessages(
@@ -1402,53 +1391,145 @@ async function recoverPendingMemoryMessages(
   ownerGeneration: number
 ) {
   let room = current;
-  const prefix = `optimistic-message:${roomId}:`;
   const pendingMessages = room.messages
-    .filter((message) => message.deliveryStatus === "pending" && message.id.startsWith(prefix))
+    .filter((message) => (
+      message.deliveryStatus === "pending" &&
+      message.attachments.length === 0 &&
+      Boolean(message.clientId) &&
+      !isForegroundMemoryMessageSend(message.clientId)
+    ))
     .slice(0, 10);
 
   for (const pendingMessage of pendingMessages) {
     if (!isCacheGenerationActive(ownerGeneration)) break;
-    const clientId = pendingMessage.id.slice(prefix.length);
+    const clientId = pendingMessage.clientId;
+    if (!clientId) continue;
     try {
       const result = await addMemoryMessage(
         roomId,
         pendingMessage.body,
         pendingMessage.replyToMessageId,
-        clientId
+        clientId,
+        pendingMessage.clientCreatedAt,
+        pendingMessage.clientSequence,
+        pendingMessage.clientOrderKey
       );
       const sentMessage: MemoryMessage = {
         ...pendingMessage,
         authorName: result.author_name,
         body: result.body,
-        createdAt: result.created_at,
+        clientId: result.client_id ?? clientId,
+        clientCreatedAt: result.client_created_at ?? pendingMessage.clientCreatedAt,
+        clientSequence: result.client_sequence == null ? pendingMessage.clientSequence : Number(result.client_sequence),
+        clientOrderKey: result.client_order_key ?? pendingMessage.clientOrderKey,
+        createdAt: result.client_created_at ?? pendingMessage.clientCreatedAt,
         deliveryStatus: "sent",
         editedAt: result.edited_at ?? null,
         id: result.id,
+        serverId: result.id,
+        serverCreatedAt: result.created_at,
         replyToMessageId: result.reply_to_message_id ?? null,
         roomId: result.room_id
       };
-      let inserted = false;
-      const messages = room.messages.flatMap((message) => {
-        if (message.id !== pendingMessage.id && message.id !== sentMessage.id) return [message];
-        if (inserted) return [];
-        inserted = true;
-        return [{ ...sentMessage, attachments: message.attachments }];
-      });
-      if (!inserted) messages.push(sentMessage);
       room = {
         ...room,
-        messages: messages.sort((first, second) => (
-          new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
-          first.id.localeCompare(second.id)
-        ))
+        messages: upsertMemoryMessage(room.messages, sentMessage)
       };
       if (isCacheGenerationActive(ownerGeneration)) {
-        await commitOfflineMemoryOutboxMessage(pendingMessage.id, sentMessage);
+        await commitOfflineMemoryOutboxMessage(clientId, sentMessage);
       }
     } catch {
       // Keep the durable pending row. A later reconnect/refetch retries the same
       // idempotency key, so an ambiguous response cannot create a duplicate.
+    }
+  }
+
+  const pendingMediaMessages = room.messages
+    .filter((message) => (
+      (message.deliveryStatus === "uploading" ||
+        message.deliveryStatus === "pending" ||
+        message.deliveryStatus === "retrying") &&
+      message.attachments.length > 0 &&
+      Boolean(message.clientId) &&
+      Number.isSafeInteger(message.clientSequence) &&
+      !isForegroundMemoryMessageSend(message.clientId)
+    ))
+    .slice(0, 4);
+
+  for (const pendingMessage of pendingMediaMessages) {
+    if (!isCacheGenerationActive(ownerGeneration)) break;
+    const clientId = pendingMessage.clientId;
+    if (!clientId || pendingMessage.clientSequence == null) continue;
+    try {
+      const result = await addMemoryPhoto({
+        assets: pendingMessage.attachments.map((attachment, index) => ({
+          clientId: attachment.id.startsWith("optimistic-media:")
+            ? attachment.id.slice("optimistic-media:".length)
+            : `${clientId}-${index}`,
+          duration: attachment.durationMs ?? null,
+          fileSize: attachment.fileSizeBytes ?? null,
+          imageHeight: attachment.imageHeight,
+          imageWidth: attachment.imageWidth,
+          mediaMimeType: attachment.mimeType ?? null,
+          mediaType: attachment.mediaType,
+          mediaUri: attachment.publicUrl
+        })),
+        body: pendingMessage.body,
+        clientCreatedAt: pendingMessage.clientCreatedAt,
+        clientOrderKey: pendingMessage.clientOrderKey,
+        clientSequence: pendingMessage.clientSequence,
+        replyToMessageId: pendingMessage.replyToMessageId,
+        roomId,
+        uploadBatchId: clientId
+      });
+      const namesByUsername = Object.fromEntries(
+        room.participants.map((participant) => [participant.username, participant.displayName])
+      );
+      const photos = mapMemoryPhotos({ namesByUsername, photos: result.photos });
+      const sentMessage: MemoryMessage = {
+        ...pendingMessage,
+        attachments: photos,
+        authorName: result.message.author_name,
+        body: result.message.body,
+        clientCreatedAt: result.message.client_created_at ?? pendingMessage.clientCreatedAt,
+        clientId: result.message.client_id ?? clientId,
+        clientOrderKey: result.message.client_order_key ?? pendingMessage.clientOrderKey,
+        clientSequence: result.message.client_sequence == null
+          ? pendingMessage.clientSequence
+          : Number(result.message.client_sequence),
+        createdAt: result.message.client_created_at ?? pendingMessage.clientCreatedAt,
+        deliveryStatus: "sent",
+        editedAt: result.message.edited_at ?? null,
+        id: result.message.id,
+        replyToMessageId: result.message.reply_to_message_id ?? null,
+        roomId: result.message.room_id,
+        serverCreatedAt: result.message.created_at,
+        serverId: result.message.id
+      };
+      const optimisticPhotoIds = new Set(
+        pendingMessage.attachments.map((attachment) => attachment.id)
+      );
+      const photosById = new Map(
+        room.photos
+          .filter((photo) => !optimisticPhotoIds.has(photo.id))
+          .map((photo) => [photo.id, photo])
+      );
+      for (const photo of photos) photosById.set(photo.id, photo);
+      room = {
+        ...room,
+        messages: upsertMemoryMessage(room.messages, sentMessage),
+        photos: Array.from(photosById.values()).sort((first, second) => (
+          new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+          first.position - second.position ||
+          first.id.localeCompare(second.id)
+        ))
+      };
+      if (isCacheGenerationActive(ownerGeneration)) {
+        await commitOfflineMemoryOutboxMessage(clientId, sentMessage);
+      }
+    } catch {
+      // Keep the stable local media row and staged source. A later reconnect or
+      // explicit retry resumes the same client identity without touching peers.
     }
   }
 
@@ -1775,7 +1856,10 @@ export async function addMemoryMessage(
   roomId: string,
   body: string,
   replyToMessageId?: string | null,
-  clientId = createRequestId()
+  clientId = createRequestId(),
+  clientCreatedAt = new Date().toISOString(),
+  clientSequence: number | null = null,
+  clientOrderKey = `${clientCreatedAt}:${clientId}`
 ) {
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Message is required");
@@ -1789,6 +1873,10 @@ export async function addMemoryMessage(
     {
       body: JSON.stringify({
         body: trimmed,
+        clientCreatedAt,
+        clientId,
+        clientOrderKey,
+        clientSequence,
         replyToMessageId: replyToMessageId ?? null
       }),
       headers: { "Idempotency-Key": idempotencyKey },
@@ -2026,6 +2114,9 @@ export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
 export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMemoryPhotoResult> {
   const uploaderName = await myUsername();
   await assertMemoryRoomMember(input.roomId, uploaderName);
+  const attachmentBatchId = input.uploadBatchId ?? createRequestId();
+  const clientCreatedAt = input.clientCreatedAt ?? new Date().toISOString();
+  const clientOrderKey = input.clientOrderKey ?? `${clientCreatedAt}:${attachmentBatchId}`;
 
   const assets = input.assets?.length
     ? input.assets
@@ -2055,13 +2146,16 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
     return addLegacyMemoryAudio({
       assets: audioAssets,
       body: messageBody,
+      clientCreatedAt,
+      clientId: attachmentBatchId,
+      clientOrderKey,
+      clientSequence: input.clientSequence ?? null,
       replyToMessageId: input.replyToMessageId ?? null,
       roomId: input.roomId,
       uploaderName
     });
   }
 
-  const attachmentBatchId = input.uploadBatchId ?? createRequestId();
   const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryMediaAsset>>> = [];
   for (const [position, asset] of assets.entries()) {
     const uri = asset.mediaUri ?? asset.imageUri;
@@ -2092,6 +2186,10 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
       body: JSON.stringify({
         assetIds: uploaded.map((item) => item.assetId),
         body: messageBody,
+        clientCreatedAt,
+        clientId: attachmentBatchId,
+        clientOrderKey,
+        clientSequence: input.clientSequence,
         replyToMessageId: input.replyToMessageId ?? null
       }),
       headers: { "Idempotency-Key": attachmentBatchId },
@@ -2117,10 +2215,47 @@ function normalizedMemoryDurationMs(duration?: number | null) {
 async function addLegacyMemoryAudio(input: {
   assets: AddMemoryMediaAsset[];
   body: string;
+  clientCreatedAt: string;
+  clientId: string;
+  clientOrderKey: string;
+  clientSequence: number | null;
   replyToMessageId: string | null;
   roomId: string;
   uploaderName: string;
 }): Promise<AddMemoryPhotoResult> {
+  const readExisting = async (): Promise<AddMemoryPhotoResult | null> => {
+    const existingResult = await supabase
+      .from("shared_memory_messages")
+      .select(MEMORY_MESSAGE_SELECT)
+      .eq("room_id", input.roomId)
+      .eq("author_name", input.uploaderName)
+      .eq("client_id", input.clientId)
+      .maybeSingle<MemoryMessageRow>();
+    if (existingResult.error) throw memoryTablesError(existingResult.error);
+    if (!existingResult.data) return null;
+    const photos = await fetchMemoryPhotosForMessages(input.roomId, [existingResult.data.id]);
+    if (photos.length === 0) {
+      throw new Error("Audio message is still finalizing. Try again shortly.");
+    }
+    const signedByPath = await createSignedLegacyMemoryMediaUrls(
+      photos
+        .map((photo) => photo.storage_path)
+        .filter((path): path is string => Boolean(path))
+    );
+    return {
+      message: existingResult.data,
+      photos: photos.map((photo) => ({
+        ...photo,
+        public_url: photo.storage_path
+          ? signedByPath.get(photo.storage_path) ?? photo.public_url
+          : photo.public_url
+      }))
+    };
+  };
+
+  const existing = await readExisting();
+  if (existing) return existing;
+
   const uploaded: Array<Awaited<ReturnType<typeof uploadMemoryAudio>>> = [];
   for (const asset of input.assets) {
     uploaded.push(await uploadMemoryAudio({ ...asset, roomId: input.roomId }));
@@ -2131,12 +2266,22 @@ async function addLegacyMemoryAudio(input: {
     .insert({
       author_name: input.uploaderName,
       body: input.body,
+      client_created_at: input.clientCreatedAt,
+      client_id: input.clientId,
+      client_order_key: input.clientOrderKey,
+      client_sequence: input.clientSequence,
       reply_to_message_id: input.replyToMessageId,
       room_id: input.roomId
     })
     .select(MEMORY_MESSAGE_SELECT)
     .single<MemoryMessageRow>();
-  if (messageError) throw memoryTablesError(messageError);
+  if (messageError) {
+    if (messageError.code === "23505") {
+      const confirmed = await readExisting();
+      if (confirmed) return confirmed;
+    }
+    throw memoryTablesError(messageError);
+  }
   if (!message) throw new Error("Could not create audio message.");
 
   try {

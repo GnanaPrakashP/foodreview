@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.core.widget.TextViewCompat
@@ -33,9 +34,29 @@ private class NativeChatInputHeightEvent(
   @Field val height: Double
 ) : Record
 
+/**
+ * Emitted for every native edit with the same generation as the text event.
+ *
+ * The send/mic button used to be derived from the text event on the JS thread,
+ * so it waited on an event round trip plus a React commit and visibly lagged
+ * the box (which grows natively in the keystroke's own frame). This lets the
+ * button ride the UI thread the same way the height does, without putting the
+ * text event itself on a worklet — the text still has to reach JS in order.
+ */
+private class NativeChatInputHasTextEvent(
+  @Field val hasText: Boolean,
+  @Field val eventCount: Int
+) : Record
+
 class NativeChatInputValue(
   @Field val text: String,
   @Field val eventCount: Int
+) : Record
+
+class NativeChatInputSubmitResult(
+  @Field val text: String,
+  @Field val eventCount: Int,
+  @Field val wasComposing: Boolean
 ) : Record
 
 /**
@@ -55,6 +76,7 @@ class NativeChatInputView(context: Context, appContext: AppContext) : ExpoView(c
   private val density = resources.displayMetrics.density
   private val onTextChange by EventDispatcher<NativeChatInputTextEvent>()
   private val onHeightChange by EventDispatcher<NativeChatInputHeightEvent>()
+  private val onHasTextChange by EventDispatcher<NativeChatInputHasTextEvent>()
 
   private var minInputHeightPx = dp(42.0)
   private var maxInputHeightPx = dp(125.0)
@@ -110,13 +132,10 @@ class NativeChatInputView(context: Context, appContext: AppContext) : ExpoView(c
       synchronizeInputGeometry()
 
       if (!applyingTextProp) {
+        val text = editable?.toString().orEmpty()
         mostRecentNativeEventCount += 1
-        onTextChange(
-          NativeChatInputTextEvent(
-            editable?.toString().orEmpty(),
-            mostRecentNativeEventCount
-          )
-        )
+        onHasTextChange(NativeChatInputHasTextEvent(text.isNotBlank(), mostRecentNativeEventCount))
+        onTextChange(NativeChatInputTextEvent(text, mostRecentNativeEventCount))
       }
     }
   }
@@ -254,7 +273,54 @@ class NativeChatInputView(context: Context, appContext: AppContext) : ExpoView(c
   }
 
   fun clearInput() {
-    replaceTextValue("")
+    clearNativeBuffer()
+    // A programmatic clear used to be completely silent, which lost sends.
+    //
+    // The counter did not move, so a keystroke event still in flight would be
+    // applied by JS after the clear and echoed straight back down through the
+    // controlled `value` prop — and setTextValue's guard let it through,
+    // restoring the text the user had just sent. The next thing they typed was
+    // appended to it and went out as part of the following message.
+    //
+    // Bumping the counter makes that guard reject the stale echo, and
+    // dispatching the empty text tells JS authoritatively, and in order behind
+    // any in-flight event, that the box is now empty.
+    mostRecentNativeEventCount += 1
+    onHasTextChange(NativeChatInputHasTextEvent(false, mostRecentNativeEventCount))
+    onTextChange(NativeChatInputTextEvent("", mostRecentNativeEventCount))
+  }
+
+  /**
+   * One UI-thread transaction owns capture, IME composition commit, clear and
+   * generation advance. JS never reconstructs the submitted value from an
+   * older text event.
+   */
+  fun submitAndClear(): NativeChatInputSubmitResult {
+    val editable = editText.text
+    val wasComposing = editable != null &&
+      BaseInputConnection.getComposingSpanStart(editable) >= 0
+    if (editable != null) BaseInputConnection.removeComposingSpans(editable)
+    val submittedText = editable?.toString().orEmpty()
+    if (submittedText.isBlank()) {
+      return NativeChatInputSubmitResult(submittedText, mostRecentNativeEventCount, wasComposing)
+    }
+
+    clearNativeBuffer()
+    mostRecentNativeEventCount += 1
+    onHasTextChange(NativeChatInputHasTextEvent(false, mostRecentNativeEventCount))
+    onTextChange(NativeChatInputTextEvent("", mostRecentNativeEventCount))
+    return NativeChatInputSubmitResult(submittedText, mostRecentNativeEventCount, wasComposing)
+  }
+
+  private fun clearNativeBuffer() {
+    if (editText.text.isNullOrEmpty()) {
+      synchronizeInputGeometry()
+      return
+    }
+    applyingTextProp = true
+    editText.text?.clear()
+    applyingTextProp = false
+    synchronizeInputGeometry()
   }
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

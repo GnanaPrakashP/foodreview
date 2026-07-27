@@ -29,6 +29,10 @@ export type MemoryMemberRow = {
 
 export type MemoryMessageRow = {
   id: string;
+  client_id?: string | null;
+  client_created_at?: string | null;
+  client_sequence?: number | string | null;
+  client_order_key?: string | null;
   room_id: string;
   author_name: string;
   body: string;

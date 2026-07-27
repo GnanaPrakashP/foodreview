@@ -1,4 +1,5 @@
 // @ts-nocheck
+import Ionicons from '@expo/vector-icons/Ionicons'
 import React, { useCallback, useMemo, useState } from 'react'
 import { View, StyleSheet } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -25,41 +26,39 @@ import { MessageProps } from './types'
 
 export * from './types'
 
-const REPLY_SWIPE_ACTIVATION_DISTANCE = 30
-const REPLY_SWIPE_TRIGGER_DISTANCE = 54
-const REPLY_SWIPE_MAX_TRANSLATE = 68
-const REPLY_SWIPE_VERTICAL_TOLERANCE = 12
+const REPLY_SWIPE_ACTIVATION_DISTANCE = 18
+const REPLY_SWIPE_TRIGGER_DISTANCE = 48
+const REPLY_SWIPE_MAX_TRANSLATE = 64
+const REPLY_SWIPE_VERTICAL_TOLERANCE = 20
 
 interface ReplyIconProps {
   progress: SharedValue<number>
   direction: 'left' | 'right'
-  position: 'left' | 'right'
   style?: SwipeToReplyProps<IMessage>['actionContainerStyle']
 }
 
-const ReplyIcon = ({ progress, direction, position, style }: ReplyIconProps) => {
+const ReplyIcon = ({ progress, direction, style }: ReplyIconProps) => {
   const animatedStyle = useAnimatedStyle(() => {
     'worklet'
 
-    const scale = Math.min(progress.value, 1)
-    // When swiping left (icon on right), icon should move left (negative)
-    // When swiping right (icon on left), icon should move right (positive)
-    const translateX = direction === 'left'
-      ? Math.min(progress.value * -12, -12)
-      : Math.max(progress.value * 12, 12)
+    const resolvedProgress = Math.min(Math.max(progress.value, 0), 1)
+    const scale = 0.86 + resolvedProgress * 0.14
+    const translateX = (1 - resolvedProgress) * (direction === 'left' ? 6 : -6)
 
     return {
-      opacity: progress.value,
+      opacity: resolvedProgress,
       transform: [{ scale }, { translateX }],
-      marginLeft: position === 'left' ? 0 : 16,
-      marginRight: position === 'right' ? 0 : 16,
     }
   })
 
   return (
-    <Animated.Text style={[localStyles.replyIconText, animatedStyle, style]}>
-      {'↩'}
-    </Animated.Text>
+    <Animated.View style={[localStyles.replyIconContainer, animatedStyle, style]}>
+      <Ionicons
+        color={Color.white}
+        name='arrow-undo-outline'
+        size={17}
+      />
+    </Animated.View>
   )
 }
 
@@ -93,7 +92,6 @@ const SwipeActionLayer = ({
     <ReplyIcon
       progress={progress}
       direction={direction}
-      position={position}
       style={style}
     />
   )
@@ -115,6 +113,7 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
 
   // Extract swipe props
   const isSwipeToReplyEnabled = swipeToReply?.isEnabled ?? false
+  const isSwipeToReplyGestureEnabled = swipeToReply?.isGestureEnabled ?? isSwipeToReplyEnabled
   const swipeToReplyDirection = swipeToReply?.direction ?? 'left'
   const onSwipeToReply = swipeToReply?.onSwipe
   const renderSwipeToReplyActionProp = swipeToReply?.renderAction
@@ -123,14 +122,68 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
   const replySwipeContentStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: replySwipeX.value }],
   }), [replySwipeX])
-  // Armed on touch-down (onBegin), not on activation, so the action layer is
-  // mounted well before the 30px activation threshold is crossed and the icon
-  // exists by the time `progress` is visibly non-zero. Never disarmed: this is
-  // a one-time cost per row, paid only by rows the user actually touches.
+  // Arm only after the horizontal pan activates. Arming on finger-down caused
+  // a React update while the nested bubble's long-press timer was running,
+  // cancelling the message-options gesture. Never disarmed: this remains a
+  // one-time cost per row, paid only by rows that are actually swiped.
   const [isSwipeArmed, setIsSwipeArmed] = useState(false)
   const armSwipe = useCallback(() => {
     setIsSwipeArmed(current => (current ? current : true))
   }, [])
+  const triggerSwipeReply = useCallback(() => {
+    if (onSwipeToReply && currentMessage)
+      onSwipeToReply(currentMessage)
+  }, [onSwipeToReply, currentMessage])
+  const replySwipeGesture = useMemo(() => (
+    Gesture.Pan()
+      .enabled(Boolean(isSwipeToReplyGestureEnabled && onSwipeToReply && !currentMessage?.system))
+      .activeOffsetX(
+        swipeToReplyDirection === 'right'
+          ? REPLY_SWIPE_ACTIVATION_DISTANCE
+          : -REPLY_SWIPE_ACTIVATION_DISTANCE
+      )
+      .failOffsetY([-REPLY_SWIPE_VERTICAL_TOLERANCE, REPLY_SWIPE_VERTICAL_TOLERANCE])
+      .onStart(() => {
+        runOnJS(armSwipe)()
+      })
+      .onUpdate(event => {
+        const directionalDistance = swipeToReplyDirection === 'right'
+          ? Math.max(0, event.translationX)
+          : Math.min(0, event.translationX)
+        replySwipeX.value = swipeToReplyDirection === 'right'
+          ? Math.min(directionalDistance, REPLY_SWIPE_MAX_TRANSLATE)
+          : Math.max(directionalDistance, -REPLY_SWIPE_MAX_TRANSLATE)
+      })
+      // Decide from onFinalize rather than onEnd. At the newest edge of an
+      // inverted Android list, the list/composer can cancel an otherwise
+      // deliberate pan during gesture arbitration. Cancelled pans skip onEnd
+      // but always finalize, which previously made the newest rows animate
+      // without ever opening the reply composer.
+      .onFinalize(event => {
+        const directionalDistance = swipeToReplyDirection === 'right'
+          ? event.translationX
+          : -event.translationX
+        const deliberateReplySwipe = (
+          directionalDistance >= REPLY_SWIPE_TRIGGER_DISTANCE &&
+          directionalDistance > Math.abs(event.translationY) * 1.5
+        )
+        if (deliberateReplySwipe)
+          runOnJS(triggerSwipeReply)()
+        replySwipeX.value = withTiming(0, {
+          duration: 150,
+          easing: Easing.out(Easing.cubic),
+        })
+      })
+  ), [
+    armSwipe,
+    currentMessage?.system,
+    isSwipeToReplyEnabled,
+    isSwipeToReplyGestureEnabled,
+    onSwipeToReply,
+    replySwipeX,
+    swipeToReplyDirection,
+    triggerSwipeReply,
+  ])
 
   const renderBubble = useCallback(() => {
     const {
@@ -191,57 +244,6 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
     user,
     currentMessage,
     isUserAvatarVisible,
-  ])
-
-  const triggerSwipeReply = useCallback(() => {
-    if (onSwipeToReply && currentMessage)
-      onSwipeToReply(currentMessage)
-  }, [onSwipeToReply, currentMessage])
-  const replySwipeGesture = useMemo(() => (
-    Gesture.Pan()
-      .enabled(Boolean(isSwipeToReplyEnabled && onSwipeToReply && !currentMessage?.system))
-      .activeOffsetX(
-        swipeToReplyDirection === 'right'
-          ? REPLY_SWIPE_ACTIVATION_DISTANCE
-          : -REPLY_SWIPE_ACTIVATION_DISTANCE
-      )
-      .failOffsetY([-REPLY_SWIPE_VERTICAL_TOLERANCE, REPLY_SWIPE_VERTICAL_TOLERANCE])
-      .onBegin(() => {
-        runOnJS(armSwipe)()
-      })
-      .onUpdate(event => {
-        const directionalDistance = swipeToReplyDirection === 'right'
-          ? Math.max(0, event.translationX)
-          : Math.min(0, event.translationX)
-        replySwipeX.value = swipeToReplyDirection === 'right'
-          ? Math.min(directionalDistance, REPLY_SWIPE_MAX_TRANSLATE)
-          : Math.max(directionalDistance, -REPLY_SWIPE_MAX_TRANSLATE)
-      })
-      .onEnd(event => {
-        const directionalDistance = swipeToReplyDirection === 'right'
-          ? event.translationX
-          : -event.translationX
-        const deliberateReplySwipe = (
-          directionalDistance >= REPLY_SWIPE_TRIGGER_DISTANCE &&
-          directionalDistance > Math.abs(event.translationY) * 1.5
-        )
-        if (deliberateReplySwipe)
-          runOnJS(triggerSwipeReply)()
-      })
-      .onFinalize(() => {
-        replySwipeX.value = withTiming(0, {
-          duration: 150,
-          easing: Easing.out(Easing.cubic),
-        })
-      })
-  ), [
-    armSwipe,
-    currentMessage?.system,
-    isSwipeToReplyEnabled,
-    onSwipeToReply,
-    replySwipeX,
-    swipeToReplyDirection,
-    triggerSwipeReply,
   ])
 
   const sameUser = useMemo(() =>
@@ -310,7 +312,7 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
         </View>
       ) : null}
       <GestureDetector gesture={replySwipeGesture} touchAction="pan-y">
-        <Animated.View style={replySwipeContentStyle}>
+        <Animated.View style={[localStyles.swipeContent, replySwipeContentStyle]}>
           {messageContent}
         </Animated.View>
       </GestureDetector>
@@ -321,6 +323,10 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
 const localStyles = StyleSheet.create({
   swipeContainer: {
     position: 'relative',
+    width: '100%',
+  },
+  swipeContent: {
+    width: '100%',
   },
   swipeActionLayer: {
     alignItems: 'center',
@@ -328,6 +334,7 @@ const localStyles = StyleSheet.create({
     justifyContent: 'center',
     position: 'absolute',
     top: 0,
+    width: REPLY_SWIPE_MAX_TRANSLATE,
   },
   swipeActionLayerLeft: {
     left: 0,
@@ -335,14 +342,12 @@ const localStyles = StyleSheet.create({
   swipeActionLayerRight: {
     right: 0,
   },
-  replyIconText: {
+  replyIconContainer: {
+    alignItems: 'center',
     backgroundColor: Color.defaultBlue,
-    borderRadius: 14,
-    color: Color.white,
-    fontSize: 17,
-    width: 28,
-    height: 28,
-    lineHeight: 28,
-    textAlign: 'center',
+    borderRadius: 16,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
   },
 })

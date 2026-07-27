@@ -324,13 +324,25 @@ export type MemoryParticipant = {
 
 export type MemoryMessage = {
   id: string;
+  /** Stable identity generated once by the sending client. */
+  clientId: string | null;
+  /** Client wall-clock time used for stable visual ordering. */
+  clientCreatedAt: string;
+  /** Monotonic per-room sequence assigned at the send gesture. */
+  clientSequence: number | null;
+  /** Total-order tie breaker generated with clientId. */
+  clientOrderKey: string;
+  /** Authoritative database id once the message has been accepted. */
+  serverId: string | null;
+  /** Authoritative database timestamp; never replaces clientCreatedAt visually. */
+  serverCreatedAt: string | null;
   roomId: string;
   authorName: string;
   authorDisplayName: string;
   body: string;
   attachments: MemoryPhoto[];
   createdAt: string;
-  deliveryStatus?: "pending" | "sent" | "failed";
+  deliveryStatus?: "uploading" | "pending" | "retrying" | "sent" | "failed";
   editedAt: string | null;
   replyToMessageId: string | null;
   replyToMessage: {

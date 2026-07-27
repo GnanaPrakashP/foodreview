@@ -43,6 +43,19 @@ import {
   type UpdateMemoryRoomOccasionInput,
   type UpdateMemoryStopInput
 } from "@/services/memories";
+import {
+  findMemoryMessage,
+  mergeMemoryMessageSnapshot,
+  memoryMessageServerId,
+  removeMemoryMessage,
+  sortMemoryMessages,
+  upsertMemoryMessage
+} from "@/services/memoryMessageReconciliation.mjs";
+import {
+  beginForegroundMemoryMessageSend,
+  endForegroundMemoryMessageSend,
+  resetForegroundMemoryMessageSends
+} from "@/services/memoryMessageSendRegistry.mjs";
 import { notificationKeys } from "@/hooks/useNotifications";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import {
@@ -66,6 +79,8 @@ import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryS
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
+import { createRequestId } from "@/services/installIdentity";
+import { recordMemoryChatPlacement } from "@/services/memoryChatPlacementDiagnostics.mjs";
 
 export const memoryKeys = {
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
@@ -74,14 +89,15 @@ export const memoryKeys = {
   media: (roomId: string) => ["memories", roomId, "media"] as const
 };
 
-const RECENT_MEDIA_MESSAGE_GRACE_MS = 30_000;
+const RECENT_SUMMARY_REALTIME_EVENT_GRACE_MS = 5_000;
 const REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000;
 const REALTIME_ROOM_CACHE_RECONCILE_DELAY_MS = 350;
-const REALTIME_SUMMARY_RECONCILE_DELAY_MS = 15_000;
-const recentMediaMessageExpiries = new Map<string, number>();
-registerSensitiveResourceCleanup(() => recentMediaMessageExpiries.clear());
-const OPTIMISTIC_MEDIA_MESSAGE_PREFIX = "optimistic-media-message:";
-const OPTIMISTIC_TEXT_MESSAGE_PREFIX = "optimistic-message:";
+const REALTIME_SUMMARY_RECONCILE_DELAY_MS = 2_000;
+const recentSummaryRealtimeEventExpiries = new Map<string, number>();
+registerSensitiveResourceCleanup(() => {
+  recentSummaryRealtimeEventExpiries.clear();
+  resetForegroundMemoryMessageSends();
+});
 const MEMORY_ROOM_WARM_CONCURRENCY = 2;
 const MEMORY_ROOM_WARM_LIMIT = 12;
 
@@ -158,7 +174,9 @@ function scheduleRealtimeCursorReconciliation(queryClient: QueryClient, roomId?:
           try {
             const room = await getMemoryRoomOfflineFirst(explicitRoomId);
             if (isCacheGenerationActive(ownerGeneration)) {
-              queryClient.setQueryData(memoryKeys.detail(explicitRoomId), room);
+              queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(explicitRoomId), (current) => (
+                current ? preserveRecentMediaAttachments(current, room) as MemoryRoom : room
+              ));
             }
           } catch (error) {
             if (isAuthoritativeMemoryAccessError(error)) {
@@ -332,7 +350,9 @@ async function warmMemoryRoomQueries(
               state.revision !== targetRevision ||
               state.requestVersion !== targetRequestVersion
             ) continue;
-            queryClient.setQueryData(memoryKeys.detail(targetSummary.id), fresh);
+            queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(targetSummary.id), (current) => (
+              current ? preserveRecentMediaAttachments(current, fresh) as MemoryRoom : fresh
+            ));
             state.status = "ready";
             state.promise = undefined;
             return;
@@ -451,8 +471,65 @@ function setMemorySummaryPages(
     applyMemorySummaryPages(current, update)
   ));
 }
+
+function persistCurrentMemorySummary(
+  queryClient: QueryClient,
+  roomId: string,
+  operation: string
+) {
+  const summary = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).find((memory) => memory.id === roomId);
+  if (!summary) return;
+  observeOfflineMemoryWrite(saveOfflineMemorySummaries([summary]), operation);
+}
+
+function claimRealtimeSummaryEvent(
+  entity: "message" | "photo",
+  eventType: "DELETE" | "INSERT",
+  id?: string
+) {
+  if (!id) return true;
+  const now = Date.now();
+  for (const [key, expiresAt] of recentSummaryRealtimeEventExpiries) {
+    if (expiresAt <= now) recentSummaryRealtimeEventExpiries.delete(key);
+  }
+  const key = `${entity}:${eventType}:${id}`;
+  if ((recentSummaryRealtimeEventExpiries.get(key) ?? 0) > now) return false;
+  recentSummaryRealtimeEventExpiries.set(
+    key,
+    now + RECENT_SUMMARY_REALTIME_EVENT_GRACE_MS
+  );
+  return true;
+}
+
+function applyRealtimeEntityCountToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  roomId: string,
+  eventType: "DELETE" | "INSERT" | "UPDATE",
+  countField: "dishCount" | "participantCount"
+) {
+  if (!current || eventType === "UPDATE") return current;
+  const delta = eventType === "INSERT" ? 1 : -1;
+  return current.map((memory) => (
+    memory.id === roomId
+      ? {
+        ...memory,
+        [countField]: Math.max(0, memory[countField] + delta)
+      }
+      : memory
+  ));
+}
 type DeleteMemoryItemsInput = { messageIds?: string[]; photoIds?: string[] };
-type AddMemoryMessageInput = { body: string; clientId?: string; replacesMessageId?: string; replyToMessageId?: string | null };
+type AddMemoryMessageInput = {
+  body: string;
+  clientCreatedAt: string;
+  clientId: string;
+  clientOrderKey: string;
+  clientSequence: number;
+  replacesMessageId?: string;
+  replyToMessageId?: string | null;
+};
 type MemoryDeleteSets = {
   messageIds: Set<string>;
   photoIds: Set<string>;
@@ -462,6 +539,10 @@ type MemoryMessageRealtimePayload = {
   new: Partial<{
     author_name: string;
     body: string;
+    client_created_at: string | null;
+    client_id: string | null;
+    client_order_key: string | null;
+    client_sequence: number | null;
     created_at: string;
     edited_at: string | null;
     id: string;
@@ -530,8 +611,12 @@ const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>
 registerSensitiveResourceCleanup(() => pendingMemoryDeleteBatches.clear());
 
 function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAsset[] {
-  const uploadBatchId = input.uploadBatchId ?? `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const uploadBatchId = input.uploadBatchId ?? createRequestId();
   input.uploadBatchId = uploadBatchId;
+  input.clientCreatedAt = input.clientCreatedAt ?? new Date().toISOString();
+  input.clientSequence = input.clientSequence ?? Date.now();
+  input.clientOrderKey = input.clientOrderKey ??
+    `${input.clientCreatedAt}:${String(input.clientSequence).padStart(16, "0")}:${uploadBatchId}`;
 
   const assets = input.assets?.length
     ? input.assets
@@ -593,42 +678,9 @@ function mapUploadedMemoryPhoto(
   };
 }
 
-function rememberRecentMediaMessage(messageId: string) {
-  const now = Date.now();
-  for (const [id, expiresAt] of recentMediaMessageExpiries) {
-    if (expiresAt <= now) recentMediaMessageExpiries.delete(id);
-  }
-  recentMediaMessageExpiries.set(messageId, now + RECENT_MEDIA_MESSAGE_GRACE_MS);
-}
-
-function isRecentMediaMessage(messageId: string) {
-  const expiresAt = recentMediaMessageExpiries.get(messageId);
-  if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) {
-    recentMediaMessageExpiries.delete(messageId);
-    return false;
-  }
-  return true;
-}
-
-function isOptimisticMediaMessage(message: MemoryMessage) {
-  return message.id.startsWith(OPTIMISTIC_MEDIA_MESSAGE_PREFIX) && message.attachments.length > 0;
-}
-
-function isOptimisticTextMessage(message: MemoryMessage) {
-  return message.id.startsWith(OPTIMISTIC_TEXT_MESSAGE_PREFIX);
-}
-
 function timeFromIso(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
-}
-
-function sortMemoryMessages(messages: MemoryMessage[]) {
-  return [...messages].sort((first, second) => (
-    timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
-    first.id.localeCompare(second.id)
-  ));
 }
 
 function sortMemoryPhotos(photos: MemoryPhoto[]) {
@@ -682,31 +734,6 @@ function upsertMemoryPhoto(photos: MemoryPhoto[], photo: MemoryPhoto) {
   return sortMemoryPhotos(next);
 }
 
-function isCompatibleMediaMessage(previousMessage: MemoryMessage, nextMessage: MemoryMessage) {
-  if (previousMessage.authorName !== nextMessage.authorName) return false;
-  if (previousMessage.body.trim() !== nextMessage.body.trim()) return false;
-  if ((previousMessage.replyToMessageId ?? null) !== (nextMessage.replyToMessageId ?? null)) return false;
-
-  const previousTime = new Date(previousMessage.createdAt).getTime();
-  const nextTime = new Date(nextMessage.createdAt).getTime();
-  if (!Number.isFinite(previousTime) || !Number.isFinite(nextTime)) return true;
-
-  return nextTime >= previousTime - 5_000 && nextTime - previousTime < 15 * 60_000;
-}
-
-function isCompatibleOptimisticTextMessage(previousMessage: MemoryMessage, nextMessage: MemoryMessage) {
-  if (!isOptimisticTextMessage(previousMessage)) return false;
-  if (previousMessage.authorName !== nextMessage.authorName) return false;
-  if (previousMessage.body.trim() !== nextMessage.body.trim()) return false;
-  if ((previousMessage.replyToMessageId ?? null) !== (nextMessage.replyToMessageId ?? null)) return false;
-
-  const previousTime = timeFromIso(previousMessage.createdAt);
-  const nextTime = timeFromIso(nextMessage.createdAt);
-  if (!previousTime || !nextTime) return true;
-
-  return nextTime >= previousTime - 5_000 && nextTime - previousTime < 5 * 60_000;
-}
-
 function sameUsername(first: string, second: string) {
   return first.toLowerCase() === second.toLowerCase();
 }
@@ -715,6 +742,10 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
   const {
     author_name: authorName,
     body,
+    client_created_at: rowClientCreatedAt,
+    client_id: clientId,
+    client_order_key: rowClientOrderKey,
+    client_sequence: rowClientSequence,
     created_at: createdAt,
     edited_at: editedAt,
     id,
@@ -730,15 +761,24 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
     ? currentRoom.messages.find((message) => message.id === replyToMessageId) ?? null
     : null;
 
+  const clientCreatedAt = rowClientCreatedAt ?? createdAt;
   return {
     attachments: [],
     authorDisplayName,
     authorName,
     body,
-    createdAt,
+    clientCreatedAt,
+    clientId: clientId ?? null,
+    clientOrderKey: rowClientOrderKey ?? `legacy:${createdAt}:${id}`,
+    clientSequence: rowClientSequence == null || !Number.isSafeInteger(Number(rowClientSequence))
+      ? null
+      : Number(rowClientSequence),
+    createdAt: clientCreatedAt,
     deliveryStatus: "sent",
     editedAt: editedAt ?? null,
     id,
+    serverCreatedAt: createdAt,
+    serverId: id,
     replyToMessage: replyToMessage
       ? {
         authorDisplayName: replyToMessage.authorDisplayName,
@@ -752,41 +792,24 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
 }
 
 function applyRealtimeMessageInsert(currentRoom: MemoryRoom, realtimeMessage: MemoryMessage) {
-  let didInsertOrReplace = false;
-  const messages = currentRoom.messages.flatMap((message) => {
-    if (message.id === realtimeMessage.id || isCompatibleOptimisticTextMessage(message, realtimeMessage)) {
-      if (didInsertOrReplace) return [];
-      didInsertOrReplace = true;
-      return [{
-        ...realtimeMessage,
-        attachments: message.attachments.length > 0 ? message.attachments : realtimeMessage.attachments
-      }];
-    }
-    return [message];
-  });
-
-  if (!didInsertOrReplace) messages.push(realtimeMessage);
-
   return {
     ...currentRoom,
-    messages: sortMemoryMessages(messages)
+    messages: upsertMemoryMessage(currentRoom.messages, realtimeMessage)
   };
 }
 
 function applyRealtimeMessageUpdate(currentRoom: MemoryRoom, realtimeMessage: MemoryMessage) {
   let changed = false;
+  const realtimeServerId = memoryMessageServerId(realtimeMessage);
   const messages = currentRoom.messages.map((message) => {
-    if (message.id === realtimeMessage.id) {
+    if (
+      (realtimeMessage.clientId && message.clientId === realtimeMessage.clientId) ||
+      (realtimeServerId && memoryMessageServerId(message) === realtimeServerId)
+    ) {
       changed = true;
-      return {
-        ...message,
-        body: realtimeMessage.body,
-        editedAt: realtimeMessage.editedAt,
-        replyToMessage: realtimeMessage.replyToMessage,
-        replyToMessageId: realtimeMessage.replyToMessageId
-      };
+      return upsertMemoryMessage([message], realtimeMessage)[0];
     }
-    if (message.replyToMessageId === realtimeMessage.id) {
+    if (message.replyToMessageId === realtimeServerId) {
       changed = true;
       return {
         ...message,
@@ -805,14 +828,13 @@ function applyRealtimeMessageUpdate(currentRoom: MemoryRoom, realtimeMessage: Me
 function applyRealtimeMessageDelete(currentRoom: MemoryRoom, messageId: string) {
   return {
     ...currentRoom,
-    messages: currentRoom.messages.flatMap((message) => {
-      if (message.id === messageId) return [];
-      if (message.replyToMessageId !== messageId) return [message];
-      return [{
+    messages: removeMemoryMessage(currentRoom.messages, messageId).map((message) => {
+      if (message.replyToMessageId !== messageId) return message;
+      return {
         ...message,
         replyToMessage: null,
         replyToMessageId: null
-      }];
+      };
     }),
     photos: currentRoom.photos.filter((photo) => photo.messageId !== messageId)
   };
@@ -988,10 +1010,16 @@ function placeholderMessageForPhoto(photo: MemoryPhoto): MemoryMessage | null {
     authorDisplayName: photo.uploaderDisplayName,
     authorName: photo.uploaderName,
     body: "",
+    clientCreatedAt: photo.createdAt,
+    clientId: null,
+    clientOrderKey: `legacy:${photo.createdAt}:${photo.messageId}`,
+    clientSequence: null,
     createdAt: photo.createdAt,
     deliveryStatus: "sent",
     editedAt: null,
     id: photo.messageId,
+    serverCreatedAt: photo.createdAt,
+    serverId: photo.messageId,
     replyToMessage: null,
     replyToMessageId: null,
     roomId: photo.roomId
@@ -1154,84 +1182,18 @@ function applyRealtimePhotoDeleteToSummaries(
   ));
 }
 
-function mapPreservedAttachments(messageId: string, createdAt: string, attachments: MemoryPhoto[]) {
-  return attachments.map((photo) => ({
-    ...photo,
-    createdAt,
-    messageId,
-    uploadProgress: photo.id.startsWith("optimistic-media:") ? 1 : photo.uploadProgress
-  }));
-}
-
 function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
   const previousRoom = previous as MemoryRoom | undefined;
   const nextRoom = next as MemoryRoom | undefined;
   if (!nextRoom) return next;
   if (!previousRoom) return applyPendingMemoryDeletes(nextRoom);
 
-  const previousMessages = new Map(previousRoom.messages.map((message) => [message.id, message]));
-  const optimisticMediaMessages = previousRoom.messages.filter(isOptimisticMediaMessage);
-  const matchedPreviousMessageIds = new Set<string>();
-  const nextMessageIds = new Set(nextRoom.messages.map((message) => message.id));
-  const nextPhotosById = new Set(nextRoom.photos.map((photo) => photo.id));
-  const preservedPhotos: MemoryPhoto[] = [];
-  let changed = false;
-  const matchOptimisticMessage = (message: MemoryMessage) => optimisticMediaMessages
-    .filter((candidate) => !matchedPreviousMessageIds.has(candidate.id))
-    .filter((candidate) => isCompatibleMediaMessage(candidate, message))
-    .sort((first, second) => (
-      Math.abs(new Date(message.createdAt).getTime() - new Date(first.createdAt).getTime()) -
-      Math.abs(new Date(message.createdAt).getTime() - new Date(second.createdAt).getTime())
-    ))[0] ?? null;
-
-  const messages = nextRoom.messages.map((message) => {
-    const matchedOptimisticMessage = matchOptimisticMessage(message);
-    if (matchedOptimisticMessage) {
-      matchedPreviousMessageIds.add(matchedOptimisticMessage.id);
-      rememberRecentMediaMessage(message.id);
-    }
-    if (message.attachments.length > 0) return message;
-
-    const previousMessage = previousMessages.get(message.id);
-    const preservedAttachments = previousMessage?.attachments.length
-      ? previousMessage.attachments
-      : matchedOptimisticMessage
-        ? mapPreservedAttachments(message.id, message.createdAt, matchedOptimisticMessage.attachments)
-        : [];
-
-    if (preservedAttachments.length === 0 || (!isRecentMediaMessage(message.id) && !matchedOptimisticMessage)) {
-      return message;
-    }
-    changed = true;
-    for (const photo of preservedAttachments) {
-      if (!nextPhotosById.has(photo.id)) preservedPhotos.push(photo);
-    }
-    return { ...message, attachments: preservedAttachments };
-  });
-
-  const restoredMessages = previousRoom.messages.filter((message) => (
-    !nextMessageIds.has(message.id) &&
-    !matchedPreviousMessageIds.has(message.id) &&
-    message.attachments.length > 0 &&
-    (isOptimisticMediaMessage(message) || isRecentMediaMessage(message.id))
-  ));
-  if (restoredMessages.length > 0) {
-    changed = true;
-    for (const message of restoredMessages) {
-      for (const photo of message.attachments) {
-        if (!nextPhotosById.has(photo.id)) preservedPhotos.push(photo);
-      }
-    }
-  }
-
-  if (!changed) return applyPendingMemoryDeletes(nextRoom);
-
+  const photosById = new Map(previousRoom.photos.map((photo) => [photo.id, photo]));
+  for (const photo of nextRoom.photos) photosById.set(photo.id, photo);
   return applyPendingMemoryDeletes({
     ...nextRoom,
-    messages: [...messages, ...restoredMessages].sort((first, second) => (
-      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime()
-    )),
-    photos: preservedPhotos.length > 0 ? [...preservedPhotos, ...nextRoom.photos] : nextRoom.photos
+    messages: mergeMemoryMessageSnapshot(previousRoom.messages, nextRoom.messages),
+    photos: sortMemoryPhotos(Array.from(photosById.values()))
   });
 }
 
@@ -1470,20 +1432,42 @@ export function useMemoryRoomsRealtime(enabled = true) {
     };
     const handleRoomEntityChange = (
       payload: MemoryRoomEntityRealtimePayload,
-      roomRow = false
+      options: {
+        countField?: "dishCount" | "participantCount";
+        roomRow?: boolean;
+      } = {}
     ) => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
       const row = payload.eventType === "DELETE" ? payload.old : payload.new;
-      const roomId = roomRow ? row?.id : row?.room_id;
-      const authoritativeRoomDelete = roomRow && payload.eventType === "DELETE";
+      const roomId = options.roomRow ? row?.id : row?.room_id;
+      const authoritativeRoomDelete = options.roomRow && payload.eventType === "DELETE";
       const authoritativeMembershipDelete = (
-        !roomRow &&
+        !options.roomRow &&
         payload.eventType === "DELETE" &&
         row?.user_name === profile?.username
       );
       if (roomId && (authoritativeRoomDelete || authoritativeMembershipDelete)) {
         void removeAuthoritativeMemoryRoomProjection(queryClient, roomId).catch(() => {});
         return;
+      }
+      // Read into a const: narrowing `options.countField` does not survive into
+      // the setMemorySummaryPages callback, since TS discards property
+      // narrowing across a function boundary.
+      const countField = options.countField;
+      if (roomId && countField) {
+        setMemorySummaryPages(queryClient, (current) => (
+          applyRealtimeEntityCountToSummaries(
+            current,
+            roomId,
+            payload.eventType,
+            countField
+          )
+        ));
+        persistCurrentMemorySummary(
+          queryClient,
+          roomId,
+          `realtime_${countField}_update`
+        );
       }
       scheduleRoomCacheRefresh(roomId?.trim() || null);
       scheduleRefresh();
@@ -1495,13 +1479,19 @@ export function useMemoryRoomsRealtime(enabled = true) {
         scheduleRefresh();
         return;
       }
-      setMemorySummaryPages(queryClient, (current) => {
-        if (payload.eventType === "INSERT") return applyRealtimeMessageToSummaries(current, row, profile?.username);
-        if (payload.eventType === "UPDATE") return applyRealtimeMessageUpdateToSummaries(current, row);
-        if (row.id) return applyRealtimeMessageDeleteToSummaries(current, row, profile?.username);
-        return current;
-      });
-      scheduleRoomCacheRefresh(row.room_id);
+      if (
+        payload.eventType === "UPDATE" ||
+        claimRealtimeSummaryEvent("message", payload.eventType, row.id)
+      ) {
+        setMemorySummaryPages(queryClient, (current) => {
+          if (payload.eventType === "INSERT") return applyRealtimeMessageToSummaries(current, row, profile?.username);
+          if (payload.eventType === "UPDATE") return applyRealtimeMessageUpdateToSummaries(current, row);
+          if (row.id) return applyRealtimeMessageDeleteToSummaries(current, row, profile?.username);
+          return current;
+        });
+        persistCurrentMemorySummary(queryClient, row.room_id, "realtime_message_summary");
+      }
+      // The room-scoped subscription owns detail/message reconciliation.
     };
     const handlePhotoChange = (payload: MemoryPhotoRealtimePayload) => {
       if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1511,15 +1501,21 @@ export function useMemoryRoomsRealtime(enabled = true) {
         return;
       }
       if (payload.eventType === "INSERT") {
-        setMemorySummaryPages(queryClient, (current) => (
-          applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
-        ));
+        if (claimRealtimeSummaryEvent("photo", "INSERT", row.id)) {
+          setMemorySummaryPages(queryClient, (current) => (
+            applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
+          ));
+          persistCurrentMemorySummary(queryClient, row.room_id, "realtime_photo_insert_summary");
+        }
       } else if (payload.eventType === "DELETE" && row.id) {
-        setMemorySummaryPages(queryClient, (current) => (
-          applyRealtimePhotoDeleteToSummaries(current, row, profile?.username)
-        ));
+        if (claimRealtimeSummaryEvent("photo", "DELETE", row.id)) {
+          setMemorySummaryPages(queryClient, (current) => (
+            applyRealtimePhotoDeleteToSummaries(current, row, profile?.username)
+          ));
+          persistCurrentMemorySummary(queryClient, row.room_id, "realtime_photo_delete_summary");
+        }
       }
-      scheduleRoomCacheRefresh(row.room_id);
+      // The room-scoped subscription owns detail/media reconciliation.
     };
 
     const channel = supabase
@@ -1537,7 +1533,10 @@ export function useMemoryRoomsRealtime(enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dishes" },
-        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
+        (payload) => handleRoomEntityChange(
+          payload as MemoryRoomEntityRealtimePayload,
+          { countField: "dishCount" }
+        )
       )
       .on(
         "postgres_changes",
@@ -1552,12 +1551,18 @@ export function useMemoryRoomsRealtime(enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_members" },
-        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
+        (payload) => handleRoomEntityChange(
+          payload as MemoryRoomEntityRealtimePayload,
+          { countField: "participantCount" }
+        )
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_rooms" },
-        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload, true)
+        (payload) => handleRoomEntityChange(
+          payload as MemoryRoomEntityRealtimePayload,
+          { roomRow: true }
+        )
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
@@ -1609,7 +1614,9 @@ export function useMemoryRoomQuery(roomId: string) {
       void getMemoryRoomOfflineFirst(roomId)
         .then((freshRoom) => {
           if (cancelled || !isCacheGenerationActive(ownerGeneration)) return;
-          queryClient.setQueryData(detailKey, freshRoom);
+          queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
+            current ? preserveRecentMediaAttachments(current, freshRoom) as MemoryRoom : freshRoom
+          ));
         })
         .catch((error) => {
           if (cancelled) return;
@@ -1647,7 +1654,9 @@ export function useMemoryRoomQuery(roomId: string) {
           void getMemoryRoomOfflineFirst(roomId)
             .then((freshRoom) => {
               if (!isCacheGenerationActive(ownerGeneration)) return;
-              queryClient.setQueryData(memoryKeys.detail(roomId), freshRoom);
+              queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+                current ? preserveRecentMediaAttachments(current, freshRoom) as MemoryRoom : freshRoom
+              ));
             })
             .catch((error) => {
               if (isAuthoritativeMemoryAccessError(error)) {
@@ -1808,13 +1817,22 @@ export function useMemoryRoomRealtime(roomId: string) {
           mappedMessage = memoryMessageFromRealtimeRow(row, current);
           return mappedMessage ? applyRealtimeMessageInsert(current, mappedMessage) : current;
         });
-        setMemorySummaryPages(queryClient, (current) => (
-          applyRealtimeMessageToSummaries(current, row, profile?.username)
-        ));
+        if (claimRealtimeSummaryEvent("message", "INSERT", row.id)) {
+          setMemorySummaryPages(queryClient, (current) => (
+            applyRealtimeMessageToSummaries(current, row, profile?.username)
+          ));
+          persistCurrentMemorySummary(queryClient, roomId, "realtime_message_insert_summary");
+        }
         if (mappedMessage) observeOfflineMemoryWrite(
           saveOfflineMemoryMessage(roomId, mappedMessage),
           "realtime_message_insert"
         );
+        if (row.client_id) {
+          recordMemoryChatPlacement("REALTIME_CONFIRMED", {
+            clientId: row.client_id,
+            deliveryStatus: "sent"
+          });
+        }
         return;
       }
 
@@ -1840,10 +1858,17 @@ export function useMemoryRoomRealtime(roomId: string) {
         setMemorySummaryPages(queryClient, (current) => (
           applyRealtimeMessageUpdateToSummaries(current, row)
         ));
+        persistCurrentMemorySummary(queryClient, roomId, "realtime_message_update_summary");
         if (mappedMessage) observeOfflineMemoryWrite(
           saveOfflineMemoryMessage(roomId, mappedMessage),
           "realtime_message_update"
         );
+        if (row.client_id) {
+          recordMemoryChatPlacement("REALTIME_CONFIRMED", {
+            clientId: row.client_id,
+            deliveryStatus: "sent"
+          });
+        }
         return;
       }
 
@@ -1864,9 +1889,12 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
           deleteMessagePhotosFromMediaPages(current, row.id as string)
         ));
-        setMemorySummaryPages(queryClient, (current) => (
-          applyRealtimeMessageDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
-        ));
+        if (claimRealtimeSummaryEvent("message", "DELETE", row.id)) {
+          setMemorySummaryPages(queryClient, (current) => (
+            applyRealtimeMessageDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
+          ));
+          persistCurrentMemorySummary(queryClient, roomId, "realtime_message_delete_summary");
+        }
         observeOfflineMemoryWrite(
           deleteOfflineMemoryMessage(row.id as string),
           "realtime_message_delete"
@@ -1900,10 +1928,14 @@ export function useMemoryRoomRealtime(roomId: string) {
             upsertPhotoInMediaPages(current, mappedPhoto as MemoryPhoto)
           ));
         }
-        if (payload.eventType === "INSERT") {
+        if (
+          payload.eventType === "INSERT" &&
+          claimRealtimeSummaryEvent("photo", "INSERT", row.id)
+        ) {
           setMemorySummaryPages(queryClient, (current) => (
             applyRealtimePhotoInsertToSummaries(current, row, profile?.username)
           ));
+          persistCurrentMemorySummary(queryClient, roomId, "realtime_photo_insert_summary");
         }
         if (mappedPhoto) observeOfflineMemoryWrite(
           saveOfflineMemoryPhoto(roomId, mappedPhoto),
@@ -1930,9 +1962,12 @@ export function useMemoryRoomRealtime(roomId: string) {
         queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => (
           deletePhotoFromMediaPages(current, row.id as string)
         ));
-        setMemorySummaryPages(queryClient, (current) => (
-          applyRealtimePhotoDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
-        ));
+        if (claimRealtimeSummaryEvent("photo", "DELETE", row.id)) {
+          setMemorySummaryPages(queryClient, (current) => (
+            applyRealtimePhotoDeleteToSummaries(current, { ...row, room_id: row.room_id ?? roomId }, profile?.username)
+          ));
+          persistCurrentMemorySummary(queryClient, roomId, "realtime_photo_delete_summary");
+        }
         observeOfflineMemoryWrite(
           deleteOfflineMemoryPhoto(row.id as string),
           "realtime_photo_delete"
@@ -2199,7 +2234,15 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
     mutationFn: (input: AddMemoryMessageInput) => (
-      addMemoryMessage(roomId, input.body, input.replyToMessageId, input.clientId)
+      addMemoryMessage(
+        roomId,
+        input.body,
+        input.replyToMessageId,
+        input.clientId,
+        input.clientCreatedAt,
+        input.clientSequence,
+        input.clientOrderKey
+      )
     ),
     onMutate: async (input) => {
       const body = input.body;
@@ -2207,48 +2250,54 @@ export function useAddMemoryMessageMutation(roomId: string) {
       if (!trimmed || !profile?.username) return {};
 
       const detailKey = memoryKeys.detail(roomId);
-      const now = new Date().toISOString();
-      const clientId = input.clientId ?? `text:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
-      input.clientId = clientId;
+      const now = input.clientCreatedAt;
+      const clientId = input.clientId;
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const replyToMessage = input.replyToMessageId
-        ? previousRoom?.messages.find((message) => message.id === input.replyToMessageId) ?? null
+        ? findMemoryMessage(previousRoom?.messages ?? [], input.replyToMessageId) ?? null
         : null;
       const optimisticMessage: MemoryMessage = {
         attachments: [],
         authorDisplayName: profile.displayName || profile.username,
         authorName: profile.username,
         body: trimmed,
+        clientCreatedAt: input.clientCreatedAt,
+        clientId,
+        clientOrderKey: input.clientOrderKey,
+        clientSequence: input.clientSequence,
         createdAt: now,
         deliveryStatus: "pending",
         editedAt: null,
         id: `optimistic-message:${roomId}:${clientId}`,
+        serverCreatedAt: null,
+        serverId: null,
         replyToMessage: replyToMessage
           ? {
-            id: replyToMessage.id,
+            id: memoryMessageServerId(replyToMessage) ?? replyToMessage.id,
             authorDisplayName: replyToMessage.authorDisplayName,
             body: replyToMessage.body || "Media"
           }
           : null,
-        replyToMessageId: replyToMessage?.id ?? null,
+        replyToMessageId: replyToMessage ? memoryMessageServerId(replyToMessage) ?? replyToMessage.id : null,
         roomId
       };
 
       void queryClient.cancelQueries({ queryKey: detailKey });
       void queryClient.cancelQueries({ queryKey: memoryKeys.list });
 
-      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
-
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
         if (!current) return current;
-        if (current.messages.some((message) => message.id === optimisticMessage.id)) return current;
         const messages = input.replacesMessageId
-          ? current.messages.filter((message) => message.id !== input.replacesMessageId)
+          ? removeMemoryMessage(current.messages, input.replacesMessageId)
           : current.messages;
         return {
           ...current,
-          messages: [...messages, optimisticMessage]
+          messages: upsertMemoryMessage(messages, optimisticMessage)
         };
+      });
+      recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
       });
 
       setMemorySummaryPages(queryClient, (current) => {
@@ -2258,17 +2307,23 @@ export function useAddMemoryMessageMutation(roomId: string) {
               ...memory,
               latestActivityAt: now,
               latestMessage: trimmed,
-              messageCount: memory.messageCount + 1
+              messageCount: memory.messageCount + (input.replacesMessageId ? 0 : 1)
             }
             : memory);
       });
 
-      await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
-      if (input.replacesMessageId) {
-        await deleteOfflineMemoryOutboxMessage(input.replacesMessageId);
+      beginForegroundMemoryMessageSend(clientId);
+      try {
+        await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
+        if (input.replacesMessageId) {
+          await deleteOfflineMemoryOutboxMessage(input.replacesMessageId);
+        }
+      } catch (error) {
+        endForegroundMemoryMessageSend(clientId);
+        throw error;
       }
 
-      return { clientId, optimisticMessage, previousList, previousRoom };
+      return { clientId, optimisticMessage };
     },
     onError: (_error, input, context) => {
       if (context?.optimisticMessage) {
@@ -2277,69 +2332,94 @@ export function useAddMemoryMessageMutation(roomId: string) {
           deliveryStatus: "failed"
         };
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
-          const base = current ?? context.previousRoom;
-          if (!base) return base;
-          const messages = base.messages.filter((message) => message.id !== input.replacesMessageId);
-          const hasOptimistic = messages.some((message) => message.id === failedMessage.id);
+          if (!current) return current;
+          const messages = input.replacesMessageId
+            ? removeMemoryMessage(current.messages, input.replacesMessageId)
+            : current.messages;
           return {
-            ...base,
-            messages: hasOptimistic
-              ? messages.map((message) => (message.id === failedMessage.id ? failedMessage : message))
-              : [...messages, failedMessage]
+            ...current,
+            messages: upsertMemoryMessage(messages, failedMessage)
           };
         });
-        observeOfflineMemoryWrite(
-          saveOfflineMemoryOutboxMessage(context.clientId, failedMessage),
-          "outbox_mark_failed"
+        const failedWrite = saveOfflineMemoryOutboxMessage(context.clientId, failedMessage);
+        observeOfflineMemoryWrite(failedWrite, "outbox_mark_failed");
+        void failedWrite.then(
+          () => endForegroundMemoryMessageSend(context.clientId),
+          () => endForegroundMemoryMessageSend(context.clientId)
         );
-      }
-      if (context?.previousList) {
-        queryClient.setQueryData(memoryKeys.list, context.previousList);
       }
     },
     onSuccess: (result, _input, context) => {
       if (context?.optimisticMessage) {
+        recordMemoryChatPlacement("HTTP_CONFIRMED", {
+          clientId: context.clientId,
+          deliveryStatus: "sent"
+        });
         const sentMessage: MemoryMessage = {
           ...context.optimisticMessage,
           authorName: result.author_name,
           body: result.body,
-          createdAt: result.created_at,
+          clientCreatedAt: result.client_created_at ?? context.optimisticMessage.clientCreatedAt,
+          clientId: result.client_id ?? context.clientId,
+          clientOrderKey: result.client_order_key ?? context.optimisticMessage.clientOrderKey,
+          clientSequence: result.client_sequence == null
+            ? context.optimisticMessage.clientSequence
+            : Number(result.client_sequence),
+          createdAt: result.client_created_at ?? context.optimisticMessage.clientCreatedAt,
           deliveryStatus: "sent",
           editedAt: result.edited_at ?? null,
           id: result.id,
+          serverCreatedAt: result.created_at,
+          serverId: result.id,
           replyToMessageId: result.reply_to_message_id ?? null,
           roomId: result.room_id
         };
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
-          let inserted = false;
-          const messages = current.messages.flatMap((message) => {
-            if (message.id !== context.optimisticMessage.id && message.id !== sentMessage.id) return [message];
-            if (inserted) return [];
-            inserted = true;
-            return [{ ...sentMessage, attachments: message.attachments }];
-          });
-          if (!inserted) messages.push(sentMessage);
-          return { ...current, messages: sortMemoryMessages(messages) };
+          return { ...current, messages: upsertMemoryMessage(current.messages, sentMessage) };
         });
-        observeOfflineMemoryWrite(
-          commitOfflineMemoryOutboxMessage(context.optimisticMessage.id, sentMessage),
-          "outbox_commit"
+        const commitWrite = commitOfflineMemoryOutboxMessage(context.clientId, sentMessage);
+        observeOfflineMemoryWrite(commitWrite, "outbox_commit");
+        void commitWrite.then(
+          () => endForegroundMemoryMessageSend(context.clientId),
+          () => endForegroundMemoryMessageSend(context.clientId)
         );
       }
+      persistCurrentMemorySummary(queryClient, roomId, "message_send_summary");
     }
   });
 }
 
 export function useDismissFailedMemoryMessage(roomId: string) {
   const queryClient = useQueryClient();
-  return useCallback((messageId: string) => {
-    queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
-      current
-        ? { ...current, messages: current.messages.filter((message) => message.id !== messageId) }
-        : current
-    ));
-    observeOfflineMemoryWrite(deleteOfflineMemoryOutboxMessage(messageId), "outbox_dismiss");
+  return useCallback((messageIdentity: string) => {
+    let removedMessage: MemoryMessage | null = null;
+    let latestRemaining: MemoryMessage | null = null;
+    queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+      if (!current) return current;
+      removedMessage = findMemoryMessage(current.messages, messageIdentity) ?? null;
+      const messages = removeMemoryMessage(current.messages, messageIdentity);
+      latestRemaining = messages[messages.length - 1] ?? null;
+      return { ...current, messages };
+    });
+    if (removedMessage) {
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+        memory.id === roomId
+          ? {
+            ...memory,
+            latestActivityAt: latestRemaining?.clientCreatedAt ?? memory.createdAt,
+            latestMessage: latestRemaining?.body ?? null,
+            messageCount: Math.max(0, memory.messageCount - 1),
+            photoCount: Math.max(0, memory.photoCount - removedMessage!.attachments.length)
+          }
+          : memory
+      )));
+      persistCurrentMemorySummary(queryClient, roomId, "outbox_dismiss_summary");
+    }
+    observeOfflineMemoryWrite(
+      deleteOfflineMemoryOutboxMessage(messageIdentity),
+      "outbox_dismiss"
+    );
   }, [queryClient, roomId]);
 }
 
@@ -2574,6 +2654,47 @@ export function useDeleteMemoryStopMutation(roomId: string) {
 export function useAddMemoryPhotoMutation(roomId: string) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
+  const updateOptimisticSource = async (assetClientId: string, uri: string) => {
+    const detailKey = memoryKeys.detail(roomId);
+    const photoId = `optimistic-media:${assetClientId}`;
+    let updatedMessage: MemoryMessage | null = null;
+    queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        messages: current.messages.map((message) => {
+          if (!message.attachments.some((attachment) => attachment.id === photoId)) return message;
+          const nextMessage = {
+            ...message,
+            attachments: message.attachments.map((attachment) => (
+              attachment.id === photoId ? { ...attachment, publicUrl: uri } : attachment
+            ))
+          };
+          updatedMessage = nextMessage;
+          return nextMessage;
+        }),
+        photos: current.photos.map((photo) => (
+          photo.id === photoId ? { ...photo, publicUrl: uri } : photo
+        ))
+      };
+    });
+    if (!updatedMessage) {
+      const offlineRoom = await readOfflineMemoryRoom(roomId);
+      const offlineMessage = offlineRoom?.messages.find((message) => (
+        message.attachments.some((attachment) => attachment.id === photoId)
+      ));
+      if (offlineMessage) {
+        updatedMessage = {
+          ...offlineMessage,
+          attachments: offlineMessage.attachments.map((attachment) => (
+            attachment.id === photoId ? { ...attachment, publicUrl: uri } : attachment
+          ))
+        };
+      }
+    }
+    if (!updatedMessage?.clientId) throw new Error("memory_media_outbox_source_missing");
+    await saveOfflineMemoryOutboxMessage(updatedMessage.clientId, updatedMessage);
+  };
   const updateOptimisticProgress = (clientId: string, progress: number) => {
     const detailKey = memoryKeys.detail(roomId);
     const photoId = `optimistic-media:${clientId}`;
@@ -2607,6 +2728,9 @@ export function useAddMemoryPhotoMutation(roomId: string) {
             fileSize: asset.fileSize,
             onUploadProgress: clientId
               ? (progress) => updateOptimisticProgress(clientId, progress)
+              : undefined,
+            onSourceStaged: clientId
+              ? (uri) => updateOptimisticSource(clientId, uri)
               : undefined
           };
         })
@@ -2620,11 +2744,12 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       if (usableAssets.length === 0) return {};
 
       const detailKey = memoryKeys.detail(roomId);
-      const now = new Date().toISOString();
-      const optimisticMessageId = `optimistic-media-message:${roomId}:${now}`;
+      const now = input.clientCreatedAt ?? new Date().toISOString();
+      const clientId = input.uploadBatchId ?? createRequestId();
+      const optimisticMessageId = `optimistic-media-message:${roomId}:${clientId}`;
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const replyToMessage = input.replyToMessageId
-        ? previousRoom?.messages.find((message) => message.id === input.replyToMessageId) ?? null
+        ? findMemoryMessage(previousRoom?.messages ?? [], input.replyToMessageId) ?? null
         : null;
       const optimisticPhotos: MemoryPhoto[] = usableAssets.map((asset, index) => {
         const uri = asset.mediaUri || asset.imageUri || "";
@@ -2636,11 +2761,16 @@ export function useAddMemoryPhotoMutation(roomId: string) {
               : "image";
         return {
           createdAt: now,
+          durationMs: asset.duration == null
+            ? null
+            : Math.round(asset.duration > 1000 ? asset.duration : asset.duration * 1000),
+          fileSizeBytes: asset.fileSize ?? null,
           id: `optimistic-media:${asset.clientId}`,
           imageHeight: asset.imageHeight ?? null,
           imageWidth: asset.imageWidth ?? null,
           mediaType,
           messageId: optimisticMessageId,
+          mimeType: asset.mediaMimeType ?? asset.imageMimeType ?? null,
           moderationStatus: "pending",
           position: index,
           publicUrl: uri,
@@ -2657,35 +2787,43 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         authorDisplayName: profile.displayName || profile.username,
         authorName: profile.username,
         body: input.body?.trim() ?? "",
+        clientCreatedAt: now,
+        clientId,
+        clientOrderKey: input.clientOrderKey ?? `${now}:${clientId}`,
+        clientSequence: input.clientSequence ?? null,
         createdAt: now,
-        deliveryStatus: "pending",
+        deliveryStatus: input.replacesMessageId ? "retrying" : "uploading",
         editedAt: null,
         id: optimisticMessageId,
+        serverCreatedAt: null,
+        serverId: null,
         replyToMessage: replyToMessage
           ? {
-            id: replyToMessage.id,
+            id: memoryMessageServerId(replyToMessage) ?? replyToMessage.id,
             authorDisplayName: replyToMessage.authorDisplayName,
             body: replyToMessage.body || "Media"
           }
           : null,
-        replyToMessageId: replyToMessage?.id ?? null,
+        replyToMessageId: replyToMessage ? memoryMessageServerId(replyToMessage) ?? replyToMessage.id : null,
         roomId
       };
 
-      await Promise.all([
-        queryClient.cancelQueries({ queryKey: detailKey }),
-        queryClient.cancelQueries({ queryKey: memoryKeys.list })
-      ]);
-
-      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      void queryClient.cancelQueries({ queryKey: detailKey });
+      void queryClient.cancelQueries({ queryKey: memoryKeys.list });
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
         if (!current) return current;
+        const photosById = new Map(current.photos.map((photo) => [photo.id, photo]));
+        for (const photo of optimisticPhotos) photosById.set(photo.id, photo);
         return {
           ...current,
-          messages: [...current.messages, optimisticMessage],
-          photos: [...optimisticPhotos, ...current.photos]
+          messages: upsertMemoryMessage(current.messages, optimisticMessage),
+          photos: sortMemoryPhotos(Array.from(photosById.values()))
         };
+      });
+      recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
       });
 
       setMemorySummaryPages(queryClient, (current) => {
@@ -2695,30 +2833,51 @@ export function useAddMemoryPhotoMutation(roomId: string) {
               ...memory,
               latestActivityAt: now,
               latestMessage: preview,
-              messageCount: memory.messageCount + 1,
-              photoCount: memory.photoCount + optimisticPhotos.length
+              messageCount: memory.messageCount + (input.replacesMessageId ? 0 : 1),
+              photoCount: memory.photoCount + (input.replacesMessageId ? 0 : optimisticPhotos.length)
             }
             : memory);
       });
 
+      beginForegroundMemoryMessageSend(clientId);
+      try {
+        await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
+      } catch (error) {
+        endForegroundMemoryMessageSend(clientId);
+        throw error;
+      }
       return {
+        clientId,
+        optimisticMessage,
         optimisticMessageId,
         optimisticPhotoIds: optimisticPhotos.map((photo) => photo.id),
-        previousList,
-        previousRoom,
         replyToMessage
       };
     },
     onError: (_error, _input, context) => {
-      if (context?.previousRoom) {
-        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
-      }
-      if (context?.previousList) {
-        queryClient.setQueryData(memoryKeys.list, context.previousList);
+      if (context?.optimisticMessage && context.clientId) {
+        const failedMessage = { ...context.optimisticMessage, deliveryStatus: "failed" as const };
+        queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+          current
+            ? { ...current, messages: upsertMemoryMessage(current.messages, failedMessage) }
+            : current
+        ));
+        const failedWrite = saveOfflineMemoryOutboxMessage(context.clientId, failedMessage);
+        observeOfflineMemoryWrite(failedWrite, "media_outbox_mark_failed");
+        void failedWrite.then(
+          () => endForegroundMemoryMessageSend(context.clientId),
+          () => endForegroundMemoryMessageSend(context.clientId)
+        );
       }
     },
     onSuccess: (result, _input, context) => {
       if (context?.optimisticMessageId && profile?.username) {
+        if (context.clientId) {
+          recordMemoryChatPlacement("HTTP_CONFIRMED", {
+            clientId: context.clientId,
+            deliveryStatus: "sent"
+          });
+        }
         const uploaderDisplayName = profile.displayName || profile.username;
         const photos = result.photos
           .map((photo) => mapUploadedMemoryPhoto(photo, uploaderDisplayName))
@@ -2728,10 +2887,18 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           authorDisplayName: uploaderDisplayName,
           authorName: result.message.author_name,
           body: result.message.body,
-          createdAt: result.message.created_at,
+          clientCreatedAt: result.message.client_created_at ?? context.optimisticMessage?.clientCreatedAt ?? result.message.created_at,
+          clientId: result.message.client_id ?? context.clientId ?? null,
+          clientOrderKey: result.message.client_order_key ?? context.optimisticMessage?.clientOrderKey ?? `legacy:${result.message.created_at}:${result.message.id}`,
+          clientSequence: result.message.client_sequence == null
+            ? context.optimisticMessage?.clientSequence ?? null
+            : Number(result.message.client_sequence),
+          createdAt: result.message.client_created_at ?? context.optimisticMessage?.clientCreatedAt ?? result.message.created_at,
           deliveryStatus: "sent",
           editedAt: result.message.edited_at ?? null,
           id: result.message.id,
+          serverCreatedAt: result.message.created_at,
+          serverId: result.message.id,
           replyToMessage: context.replyToMessage
             ? {
               authorDisplayName: context.replyToMessage.authorDisplayName,
@@ -2744,11 +2911,8 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         };
         const optimisticPhotoIds = new Set(context.optimisticPhotoIds);
         const realPhotoIds = new Set(photos.map((photo) => photo.id));
-        rememberRecentMediaMessage(actualMessage.id);
-
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
-          let inserted = false;
           const fallbackPhotos = photos.length > 0
             ? photos
             : current.photos
@@ -2760,25 +2924,14 @@ export function useAddMemoryPhotoMutation(roomId: string) {
                 uploadProgress: 1
               }));
           const fallbackPhotoIds = new Set(fallbackPhotos.map((photo) => photo.id));
-          const messages = current.messages.flatMap((message) => {
-            if (message.id !== context.optimisticMessageId && message.id !== actualMessage.id) return [message];
-            if (inserted) return [];
-            inserted = true;
-            return [{
-              ...actualMessage,
-              attachments: photos.length > 0
-                ? actualMessage.attachments
-                : fallbackPhotos.length > 0
-                  ? fallbackPhotos
-                  : message.attachments
-            }];
-          });
+          const reconciledMessage = {
+            ...actualMessage,
+            attachments: photos.length > 0 ? actualMessage.attachments : fallbackPhotos
+          };
 
           return {
             ...current,
-            messages: inserted
-              ? messages
-              : [...messages, { ...actualMessage, attachments: fallbackPhotos.length > 0 ? fallbackPhotos : actualMessage.attachments }],
+            messages: upsertMemoryMessage(current.messages, reconciledMessage),
             photos: [
               ...fallbackPhotos,
               ...current.photos.filter((photo) => (
@@ -2789,7 +2942,16 @@ export function useAddMemoryPhotoMutation(roomId: string) {
             ]
           };
         });
+        if (context.clientId) {
+          const commitWrite = commitOfflineMemoryOutboxMessage(context.clientId, actualMessage);
+          observeOfflineMemoryWrite(commitWrite, "media_outbox_commit");
+          void commitWrite.then(
+            () => endForegroundMemoryMessageSend(context.clientId),
+            () => endForegroundMemoryMessageSend(context.clientId)
+          );
+        }
       }
+      persistCurrentMemorySummary(queryClient, roomId, "media_send_summary");
     }
   });
 }

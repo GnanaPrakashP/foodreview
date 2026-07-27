@@ -36,7 +36,7 @@ class KeyboardInsetModule : Module() {
 
     View(NativeChatInputView::class) {
       Name("ChatInput")
-      Events("onTextChange", "onHeightChange")
+      Events("onTextChange", "onHeightChange", "onHasTextChange")
 
       Prop("value") { view, value: NativeChatInputValue ->
         view.setTextValue(value.text, value.eventCount)
@@ -104,6 +104,9 @@ class KeyboardInsetModule : Module() {
       }
       AsyncFunction("clear") { view: NativeChatInputView ->
         view.clearInput()
+      }
+      AsyncFunction("submit") { view: NativeChatInputView ->
+        view.submitAndClear()
       }
     }
   }

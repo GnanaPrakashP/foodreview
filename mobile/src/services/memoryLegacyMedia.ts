@@ -57,6 +57,7 @@ export async function uploadMemoryAudio(
   const sourceUri = input.mediaUri ?? input.imageUri;
   if (!sourceUri) throw new Error("Choose an audio message");
   const stagedUri = await stageAccountFile(sourceUri, "memory-audio-source");
+  await input.onSourceStaged?.(stagedUri);
   const mimeType = input.mediaMimeType ?? input.imageMimeType ?? "audio/mp4";
   if (mimeType !== "audio/mp4" && mimeType !== "audio/x-m4a") {
     throw new Error("Audio messages must be M4A.");

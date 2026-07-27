@@ -222,9 +222,12 @@ function Chat<TMessage extends IMessage = IMessage> (
 
       onSend?.(newMessages)
 
-      setTimeout(() => scrollToBottom(), 10)
+      // No scroll here. The host owns bottom-follow: it already scrolls when
+      // the newest message id changes, and it knows whether the user is
+      // mid-drag. A blind animated scroll 10ms later raced that instant one on
+      // every send, so the list jumped and was then animated to the same place.
     },
-    [messageIdGenerator, onSend, user, resetInputToolbar, scrollToBottom, replyMessage, clearReply]
+    [messageIdGenerator, onSend, user, resetInputToolbar, replyMessage, clearReply]
   )
 
   const _onChangeText = useCallback(

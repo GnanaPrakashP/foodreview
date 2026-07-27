@@ -4,11 +4,9 @@ import {
   View,
   Pressable,
   Text } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
   Easing,
   ReduceMotion,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -45,11 +43,10 @@ const SCALE_EASING = Easing.inOut(Easing.quad)
 
 // The long-press/tap reaction machinery lives in its own component so it is
 // only constructed when reactions are actually enabled. Held inline in Bubble,
-// its useSharedValue + useAnimatedStyle and three Gesture builders were paid by
-// EVERY message row on mount even with reactions off — hooks cannot be called
-// conditionally, but a component can be rendered conditionally. Per-row mount
-// cost is what makes a cold chat list expensive, and unlike re-render cost it
-// cannot be memoized away.
+// its animation and picker state were paid by every message row on mount even
+// with reactions off — hooks cannot be called conditionally, but a component
+// can be rendered conditionally. Per-row mount cost is what makes a cold chat
+// list expensive, and unlike re-render cost it cannot be memoized away.
 const ReactionsBubble = <TMessage extends IMessage = IMessage>({
   containerStyle,
   context,
@@ -95,48 +92,30 @@ const ReactionsBubble = <TMessage extends IMessage = IMessage>({
     })
   }, [])
 
-  const tapGesture = useMemo(
-    () =>
-      Gesture.Tap()
-        .runOnJS(true)
-        .onEnd((_e, success) => {
-          if (success)
-            onPressMessage?.(context, currentMessage)
-        }),
-    [onPressMessage, context, currentMessage]
-  )
+  const handlePress = useCallback(() => {
+    onPressMessage?.(context, currentMessage)
+  }, [context, currentMessage, onPressMessage])
 
-  const longPressGesture = useMemo(
-    () =>
-      Gesture.LongPress()
-        .onBegin(() => {
-          messageScale.value = withTiming(SCALE_PRESSED, {
-            duration: SCALE_DURATION_IN,
-            easing: SCALE_EASING,
-            reduceMotion: ReduceMotion.System,
-          })
-          runOnJS(measureBubble)()
-        })
-        .onStart(() => {
-          runOnJS(setIsPickerVisible)(true)
-        })
-        .onFinalize(() => {
-          messageScale.value = withTiming(1, {
-            duration: SCALE_DURATION_OUT,
-            easing: SCALE_EASING,
-            reduceMotion: ReduceMotion.System,
-          })
-        }),
-    [messageScale, measureBubble]
-  )
+  const handlePressIn = useCallback(() => {
+    messageScale.value = withTiming(SCALE_PRESSED, {
+      duration: SCALE_DURATION_IN,
+      easing: SCALE_EASING,
+      reduceMotion: ReduceMotion.System,
+    })
+    measureBubble()
+  }, [measureBubble, messageScale])
 
-  // Exclusive composition: a long-press wins over the tap when held long
-  // enough; a quick lift lets the tap through. Both share the onBegin/onFinalize
-  // scale animation because onBegin always fires before either gesture wins.
-  const reactionsGesture = useMemo(
-    () => Gesture.Exclusive(longPressGesture, tapGesture),
-    [longPressGesture, tapGesture]
-  )
+  const handlePressOut = useCallback(() => {
+    messageScale.value = withTiming(1, {
+      duration: SCALE_DURATION_OUT,
+      easing: SCALE_EASING,
+      reduceMotion: ReduceMotion.System,
+    })
+  }, [messageScale])
+
+  const handleLongPress = useCallback(() => {
+    setIsPickerVisible(true)
+  }, [])
 
   const renderReactionPickerModal = useCallback(() => {
     const emojis = reactions.emojis ?? DEFAULT_REACTION_EMOJIS
@@ -159,18 +138,24 @@ const ReactionsBubble = <TMessage extends IMessage = IMessage>({
     return <ReactionPicker {...pickerProps} />
   }, [reactions, isPickerVisible, currentMessage, position, pickerAnchor])
 
-  // The Animated.View carries only the scale transform, keeping the animation
-  // isolated from the static bubble styles on the inner View. Tap/long-press
-  // are handled by the composed gesture.
+  // Swipe is owned by the full-width parent row. Using Pressable for the
+  // bubble's hold lifecycle avoids a second nested gesture-handler state
+  // machine competing with that pan on Android.
   return (
     <Animated.View style={containerStyle} ref={bubbleContainerRef}>
-      <GestureDetector gesture={reactionsGesture}>
+      <Pressable
+        delayLongPress={350}
+        onLongPress={handleLongPress}
+        onPress={handlePress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+      >
         <Animated.View style={bubbleScaleStyle}>
           <View style={wrapperStyleList}>
             {renderBubbleBody()}
           </View>
         </Animated.View>
-      </GestureDetector>
+      </Pressable>
       {renderQuickReplies()}
       {renderReactionsDisplay()}
       {renderReactionPickerModal()}

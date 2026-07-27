@@ -106,7 +106,7 @@ test("phase 2 chat page RPC is bounded, member scoped, and mobile preferred", ()
   assert.match(activeChatMigration, /revoke all on function public\.shared_memory_chat_page[\s\S]*from anon/);
   assert.match(activeChatMigration, /grant execute on function public\.shared_memory_chat_page[\s\S]*to authenticated, service_role/);
 
-  assert.match(memoryReadRoute, /\.rpc\("shared_memory_chat_page"/);
+  assert.match(memoryReadRoute, /\.rpc\("shared_memory_chat_page_v2"/);
   assert.match(memoryService, /fetchMemoryMessagePageBundle/);
   assert.match(memoryService, /return fetchMemoryMessagePageViaRpc\(\{ before, limit, roomId \}\)/);
   assert.match(memoryService, /\/api\/mobile\/memories\/read\?\$\{params\.toString\(\)\}/);

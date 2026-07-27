@@ -14,6 +14,142 @@ Next required work: execute the Phase 8 external release gates and the checked-i
 
 Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry/load credentials; deploy canonical disposable staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run the Phase 9 launch, stress, soak, recovery, restore and physical-device evidence matrix. Do not publish automatically.
 
+## Memory Room rapid-send reconciliation (2026-07-27)
+
+Status: **PASS for the authenticated physical rapid-send and visual-placement
+scope; not a production release PASS.** The final source was rebuilt, installed
+and validated on a Motorola moto g57 power running Android 16 with Gboard.
+Every required outgoing text row rendered directly at its final inverted-list
+index. No row first appeared below the timeline and then moved upward. The
+audited A-E, numbered, identical and multiline checkpoints all retained
+`contentOffset = 0`; HTTP, Realtime, SQLite and delivery-state confirmation
+caused zero scroll commands, remounts or coordinate changes.
+
+The physical matrix used an authenticated disposable Memory Room and passed:
+A-E rapid send; 20 numbered messages; five identical messages; immediate
+one-character send plus an accidental second tap; multiline composer collapse;
+slow confirmation; Realtime-before-HTTP; stale refresh; and voice, image and
+video upload overlapped with rapid text. Every accepted text send was present at
+newest-first inverted-list index zero before persistence. A-E, identical,
+multiline, stale-refresh and all media-overlap text rows mounted once. All 20
+numbered rows also mounted once. Every audited text send issued zero
+programmatic scroll commands and had zero confirmation mounts or coordinate
+changes; a few rows received a same-coordinate confirmation-era `onLayout`
+callback, but no text row moved. The stale-refresh case persisted exactly one
+database row and retained one mount and one layout without a transient failed
+state. Image and video each retained one logical media mount; their preview
+dimensions changed once when processed authoritative aspect metadata replaced
+the optimistic fixture, while all three overlapping text rows remained
+stationary.
+
+Physical evidence is retained under:
+
+- `/private/tmp/memory-chat-moto-g57-final/` — final-source A-E, acknowledged
+  20-message burst, identical text, one-character/double-tap, multiline,
+  voice-plus-text, slow confirmation and Realtime-before-HTTP.
+- `/private/tmp/memory-chat-moto-g57-stale2/` — final-source stale refresh
+  during a deliberately delayed server insert.
+- `/private/tmp/memory-chat-moto-g57-image/` and
+  `/private/tmp/memory-chat-moto-g57-video/` — final-source synthetic local
+  media upload/processing plus overlapping text.
+
+Each directory contains `memory-chat-visual.mp4`, `events.json` and
+`report.json`. All four reports are `PASS`. The traces contain only bounded
+client IDs, timestamps, coordinates, dimensions, offsets, status and event
+source; they exclude bodies, private URLs, Storage paths, tokens and personal
+identifiers; a recursive artifact scan passes. The final run captured 36
+device-observed send presses. A-E press intervals were 431-444 ms, the
+acknowledged numbered sequence was 465-1,027 ms, and identical sends were
+734-950 ms under verbose development instrumentation. A-E first-layout
+observations were 15-29 trace-derived 60 Hz frame equivalents. These include
+ADB/UIAutomator, development bundling and diagnostic logging and are not
+production latency claims. Android gfx reports were 345/1,005 janky frames
+(34.33%, p95 69 ms) for the full matrix, 13/82 (15.85%, p95 36 ms) for stale
+refresh, 58/701 (8.27%, p95 36 ms) for image and 66/766 (8.62%, p95 36 ms) for
+video. These are honest development-harness numbers, not release-performance
+evidence.
+
+Physical testing across the two connected Android targets found and fixed five
+implementation defects: the text-send-to-microphone double-tap race,
+overlapping voice/text SQLite transactions, a multiline pending-to-sent
+wrapper-topology change that replayed native text measurement, inverted-list
+visible-position retention that allowed the latest offset to grow instead of
+remaining at zero, and foreground/outbox recovery replay during a stale
+refresh. Foreground ownership now prevents recovery from resending a durable
+outbox row while its original request is active, releases only after the
+corresponding SQLite commit/failure write, and still permits recovery after the
+request ends or the process restarts. The active row keeps its measured text
+subtree and gesture wrapper mounted across confirmation, while reply gestures
+are enabled independently. Development-only placement diagnostics, delay/stale
+forcing and local synthetic media fixtures fail closed in production config.
+
+One canonical reconciliation reducer now owns bootstrap, cursor, cache, outbox,
+HTTP and Realtime merging. It matches exact client identity first, exact server
+identity second, and permits the legacy author/body/time heuristic only for one
+unambiguous pair with no client IDs. Ordering is stable by client timestamp,
+client sequence, client order key and logical identity; confirmation never
+reorders a row. Stale snapshots merge without erasing local pending rows,
+explicit deletes remain targeted, and unaffected sibling object references are
+preserved.
+
+SQLite changes are additive and owner-scoped. Pending/uploading/failed messages
+and media source metadata survive restart in the same logical row and are
+committed by client identity. Migration
+`202607270001_shared_memory_client_ordering.sql` adds validated client-order
+columns, unique indexes, bounded member-scoped v2 reads and a service-only atomic
+media finalize RPC without weakening existing RLS, private media, rate limits or
+signing.
+
+Focused evidence:
+
+- Rapid-send reducer/native contract: 14/14, including all 120 A-E
+  acknowledgement orders, reverse 20-message confirmation, duplicate
+  HTTP/Realtime delivery, identical text, stale snapshots, targeted
+  failure/retry, mixed media/text, restart serialization, explicit delete and
+  reference-counted foreground send ownership.
+- Visual-placement/list contract: 15/15, including final inverted index, stable
+  row key/index/text/wrapper, optimistic-before-transport, zero
+  confirmation-driven scroll, bounded follow ownership, serialized SQLite
+  writes, stale-refresh replay exclusion and safe local media fixtures.
+- New database pgTAP: 8/8; the migration manifest passes with 89 canonical
+  migrations, 107 historical migrations and 2 documented conflicts. The linked
+  remote database applied `202607270001_shared_memory_client_ordering.sql`; its
+  post-apply ledger and schema dump match, and a final push dry run reports no
+  pending migrations.
+- Root and mobile typechecks pass; root lint passes with 0 errors and 81
+  existing warnings; `git diff --check` passes. An isolated Node 20 standard
+  Next production build passes with 96 static pages. The repository's explicit
+  Turbopack build could not be certified in the shared worktree while existing
+  local Next development servers were concurrently writing `.next`.
+- The Kotlin keyboard module compiles, and the debug APK builds, installs and
+  completes the authenticated matrix on the physical Android/Gboard target.
+
+Broader-gate classification:
+
+- `npm run test:memory-hardening` is 86/102 and the canonical
+  `npm run verify:memory-hardening` gate stops there. Its 16 failures are two
+  stale 25 MB source-contract expectations after the canonical limit became
+  20 MB, plus 14 pre-existing Phase 4 source/architecture expectations. The
+  Phase 4 gate is 33/47. None is introduced by rapid-send placement; several
+  cover broader cache, media, pane-navigation and crash-guard behaviour and
+  remain repository debt rather than being weakened to make this task pass.
+- The full root suite is 1,704/1,747. Its 43 failures are the remaining baseline:
+  the 16 Memory-hardening failures above, three other pre-existing Memory
+  cache/private-media/read-state contracts, and 24 pre-existing repository
+  media-worker, navigation, profile, accessibility, review and feed-contract
+  failures. No focused rapid-send or placement test fails.
+- Database contract is 224/225. The single pre-existing schema failure is the
+  unvalidated `media_assets_memory_full_frame_check`; database lint separately
+  reports the pre-existing ambiguous `room_id` in
+  `respond_to_shared_memory_invite`. The new migration's focused pgTAP is 8/8.
+
+Security conclusion: the rapid-send implementation is locally bounded and does
+not relax authorization or media privacy. The exact authenticated physical
+rapid-send/visual-placement requirement is proven and passes. The broader
+release program remains conditional on its separately documented production,
+hosted, signing and repository-debt gates; do not infer whole-app
+beta/production readiness from this scoped PASS.
+
 ## Authentication/profile boundary hardening (2026-07-16)
 
 Status: PASS locally; hosted deployment remains a release gate. Migration `202607160001_auth_profile_boundary_hardening.sql` gives authenticated clients profile SELECT only, removes permissive legacy profile policies, centralizes completeness in `is_profile_complete`, and restricts onboarding/edits to owner-derived RPCs. Google and email OTP are the only product auth paths. Password/recovery UI, API, callback, navigation, and client methods are removed; the Custom Access Token Hook rejects password token issuance. Local clean reset, 132 pgTAP assertions, adversarial synthetic-user validation, and root/mobile typechecks pass. The linked test project aggregate audit found one valid complete profile and no incompatible rows. Hosted migration, Auth Hook activation, same-email identity-link verification, signed-device journeys, telemetry, and minimum-version cutover remain mandatory. Full details: `docs/security/AUTH_PROFILE_BOUNDARY.md`.

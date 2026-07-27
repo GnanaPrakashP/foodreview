@@ -32,6 +32,26 @@ const MAX_DELETE_ITEMS = 100;
 
 type JsonRecord = Record<string, unknown>;
 
+function parseClientMetadata(body: JsonRecord, idempotencyKey: string) {
+  const clientCreatedAt = typeof body.clientCreatedAt === "string" ? body.clientCreatedAt : "";
+  const clientCreatedTime = Date.parse(clientCreatedAt);
+  const clientId = typeof body.clientId === "string" ? body.clientId : "";
+  const clientOrderKey = typeof body.clientOrderKey === "string" ? body.clientOrderKey : "";
+  const clientSequence = body.clientSequence;
+  if (
+    clientId !== idempotencyKey ||
+    !Number.isFinite(clientCreatedTime) ||
+    clientCreatedTime > Date.now() + 5 * 60_000 ||
+    !Number.isSafeInteger(clientSequence) ||
+    (clientSequence as number) < 0 ||
+    clientOrderKey.length < 16 ||
+    clientOrderKey.length > 200 ||
+    !/^[\x20-\x7E]+$/.test(clientOrderKey) ||
+    !clientOrderKey.endsWith(`:${clientId}`)
+  ) return null;
+  return { clientCreatedAt, clientId, clientOrderKey, clientSequence: clientSequence as number };
+}
+
 function uuidArray(value: unknown, limit: number) {
   if (!Array.isArray(value) || value.length > limit) return null;
   const ids = Array.from(new Set(
@@ -74,12 +94,14 @@ export async function POST(
         ? rawReplyId
         : undefined;
     const clientId = requireIdempotencyKey(req);
+    const clientMetadata = clientId ? parseClientMetadata(requestBody, clientId) : null;
     if (
       !assetIds ||
       assetIds.length < 1 ||
       body.length > MEMORY_TEXT_MAX_LENGTH ||
       replyToMessageId === undefined ||
-      !clientId
+      !clientId ||
+      !clientMetadata
     ) {
       return mobileApiError(req, METHODS, "invalid_input", "Invalid room media", 400);
     }
@@ -92,15 +114,18 @@ export async function POST(
       supabase
     });
 
-    const normalizedRequest = { assetIds, body, replyToMessageId, roomId };
+    const normalizedRequest = { assetIds, body, ...clientMetadata, replyToMessageId, roomId };
     const idempotency = await claimIdempotency(req, "memory.media.attach", actor.userId, normalizedRequest);
     if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
     activeIdempotency = idempotency;
 
-    const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v1", {
+    const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v2", {
       p_asset_ids: assetIds,
       p_body: body,
+      p_client_created_at: clientMetadata.clientCreatedAt,
       p_client_id: clientId,
+      p_client_order_key: clientMetadata.clientOrderKey,
+      p_client_sequence: clientMetadata.clientSequence,
       p_owner_id: actor.userId,
       p_owner_name: actor.actorName,
       p_reply_to_message_id: replyToMessageId,

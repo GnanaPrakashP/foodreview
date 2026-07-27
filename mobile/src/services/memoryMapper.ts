@@ -14,6 +14,7 @@ import {
   type MemoryStopRow
 } from "@/services/memoryShared";
 import type { MemoryDish, MemoryMessage, MemoryParticipant, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
+import { sortMemoryMessages } from "@/services/memoryMessageReconciliation.mjs";
 
 const MEMORY_STOP_TYPES: readonly MemoryStopType[] = ["restaurant", "cafe", "bar", "bowling", "movie", "activity", "other"];
 
@@ -126,23 +127,34 @@ export function mapMemoryMessages({
 
   const messageRowsById = new Map([...replyMessages, ...messages].map((message) => [message.id, message]));
 
-  return messages.map((message): MemoryMessage => ({
-    id: message.id,
-    roomId: message.room_id,
-    authorName: message.author_name,
-    authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
-    body: message.body,
-    attachments: photosByMessageId[message.id] ?? [],
-    createdAt: message.created_at,
-    editedAt: message.edited_at ?? null,
-    replyToMessageId: message.reply_to_message_id ?? null,
-    replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
-      ? {
-        id: message.reply_to_message_id,
-        authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
-        body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
-      }
-      : null
+  return sortMemoryMessages(messages.map((message): MemoryMessage => {
+    const clientCreatedAt = message.client_created_at ?? message.created_at;
+    const clientSequence = message.client_sequence == null ? null : Number(message.client_sequence);
+    return {
+      id: message.id,
+      clientId: message.client_id ?? null,
+      clientCreatedAt,
+      clientSequence: Number.isSafeInteger(clientSequence) ? clientSequence : null,
+      clientOrderKey: message.client_order_key ?? `legacy:${message.created_at}:${message.id}`,
+      serverId: message.id,
+      serverCreatedAt: message.created_at,
+      roomId: message.room_id,
+      authorName: message.author_name,
+      authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
+      body: message.body,
+      attachments: photosByMessageId[message.id] ?? [],
+      createdAt: clientCreatedAt,
+      deliveryStatus: "sent",
+      editedAt: message.edited_at ?? null,
+      replyToMessageId: message.reply_to_message_id ?? null,
+      replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
+        ? {
+          id: message.reply_to_message_id,
+          authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
+          body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
+        }
+        : null
+    };
   }));
 }
 

@@ -15,6 +15,11 @@ import {
   sanitizeOfflineMemoryPhoto,
   sanitizeOfflineMemoryRoom
 } from "@/security/offlineMemorySecurity";
+import {
+  memoryMessageLogicalKey,
+  memoryMessageServerId,
+  mergeMemoryMessageSnapshot
+} from "@/services/memoryMessageReconciliation.mjs";
 
 const DB_NAME = `circlebites-memory-offline-v${LOCAL_DATA_SCHEMA_VERSION}.db`;
 const LEGACY_DB_NAME = "circlebites-memory-offline.db";
@@ -37,8 +42,28 @@ type StoredSyncCursorRow = {
 };
 
 let dbState: { ownerScope: string; promise: Promise<SQLite.SQLiteDatabase> } | null = null;
+// Expo SQLite's async transactions share a connection and may absorb queries
+// from overlapping tasks. Rapid sends can therefore collide an outbox insert
+// with confirmation cleanup (media adds a photo write to the same transaction).
+// Serialize every critical write while keeping the queue live after failures.
+let offlineWriteQueue: Promise<void> = Promise.resolve();
+
+async function ensureTableColumns(
+  db: SQLite.SQLiteDatabase,
+  table: string,
+  columns: Record<string, string>
+) {
+  const existing = new Set(
+    (await db.getAllAsync<{ name: string }>(`pragma table_info(${table})`))
+      .map((column) => column.name)
+  );
+  for (const [name, definition] of Object.entries(columns)) {
+    if (!existing.has(name)) await db.execAsync(`alter table ${table} add column ${name} ${definition};`);
+  }
+}
 
 async function closeActiveDb() {
+  await offlineWriteQueue.catch(() => undefined);
   const current = dbState;
   dbState = null;
   if (!current) return;
@@ -176,8 +201,14 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
       );
       create table if not exists memory_messages (
         message_id text primary key not null,
+        server_id text,
+        client_id text,
         room_id text not null,
         created_at text not null,
+        client_sequence integer,
+        client_order_key text,
+        server_created_at text,
+        delivery_status text,
         payload text not null,
         updated_at integer not null
       );
@@ -203,8 +234,14 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
       create table if not exists memory_message_outbox (
         message_id text primary key not null,
         client_id text not null,
+        server_id text,
         room_id text not null,
         created_at text not null,
+        client_sequence integer,
+        client_order_key text,
+        delivery_status text,
+        retry_count integer not null default 0,
+        last_error_category text,
         payload text not null,
         updated_at integer not null
       );
@@ -212,6 +249,41 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
         on memory_message_outbox(client_id);
       create index if not exists memory_message_outbox_room_created_idx
         on memory_message_outbox(room_id, created_at, message_id);
+    `);
+    await ensureTableColumns(db, "memory_messages", {
+      client_id: "text",
+      client_order_key: "text",
+      client_sequence: "integer",
+      delivery_status: "text",
+      server_created_at: "text",
+      server_id: "text"
+    });
+    await ensureTableColumns(db, "memory_message_outbox", {
+      client_order_key: "text",
+      client_sequence: "integer",
+      delivery_status: "text",
+      last_error_category: "text",
+      retry_count: "integer not null default 0",
+      server_id: "text"
+    });
+    // Rows written by schema v2 were all confirmed rows: pending/failed rows
+    // lived only in the outbox. Preserve them in place while adding explicit
+    // transport identity for the new schema.
+    await db.execAsync(`
+      update memory_messages
+      set
+        server_id = coalesce(server_id, message_id),
+        server_created_at = coalesce(server_created_at, created_at),
+        delivery_status = coalesce(delivery_status, 'sent')
+      where server_id is null;
+    `);
+    await db.execAsync(`
+      create unique index if not exists memory_messages_server_id_idx
+        on memory_messages(server_id) where server_id is not null;
+      create unique index if not exists memory_messages_client_id_idx
+        on memory_messages(client_id) where client_id is not null;
+      create index if not exists memory_messages_room_client_order_idx
+        on memory_messages(room_id, created_at, client_sequence, client_order_key);
     `);
     const meta = await db.getFirstAsync<{ owner_scope: string; schema_version: number }>(
       "select owner_scope, schema_version from local_cache_meta where singleton = 1"
@@ -307,6 +379,33 @@ function safeParse<T>(payload: string): T | null {
   }
 }
 
+function normalizeStoredMemoryMessage(message: MemoryMessage): MemoryMessage {
+  const legacyOptimisticPrefix = `optimistic-message:${message.roomId}:`;
+  const legacyClientId = (
+    !message.clientId &&
+    message.id.startsWith(legacyOptimisticPrefix)
+  ) ? message.id.slice(legacyOptimisticPrefix.length) : null;
+  const clientId = message.clientId ?? legacyClientId;
+  const serverId = message.serverId ?? (
+    (message.deliveryStatus ?? "sent") === "sent" &&
+    !message.id.startsWith("optimistic-")
+      ? message.id
+      : null
+  );
+  const clientCreatedAt = message.clientCreatedAt ?? message.createdAt;
+  return {
+    ...message,
+    clientCreatedAt,
+    clientId,
+    clientOrderKey: message.clientOrderKey ??
+      `legacy:${clientCreatedAt}:${clientId ?? serverId ?? message.id}`,
+    clientSequence: Number.isSafeInteger(message.clientSequence) ? message.clientSequence : null,
+    createdAt: clientCreatedAt,
+    serverCreatedAt: message.serverCreatedAt ?? (serverId ? message.createdAt : null),
+    serverId
+  };
+}
+
 async function offlineDb() {
   if (!dbState) throw new Error("memory_cache_owner_unresolved");
   const state = dbState;
@@ -333,20 +432,25 @@ export function isOfflineMemoryPersistenceError(error: unknown) {
 }
 
 async function criticalOfflineWrite<T>(operation: string, action: () => Promise<T>) {
-  const startedAt = Date.now();
-  try {
-    const result = await action();
-    recordMobileFlow("memory.sqlite_write", Date.now() - startedAt, "success", { operation });
-    return result;
-  } catch {
-    captureMobileError(
-      "memory.sqlite_write_failed",
-      new Error("memory_database_write_failed"),
-      { operation }
-    );
-    recordMobileFlow("memory.sqlite_write", Date.now() - startedAt, "failure", { operation });
-    throw new MemoryOfflinePersistenceError(operation);
-  }
+  const execute = async () => {
+    const startedAt = Date.now();
+    try {
+      const result = await action();
+      recordMobileFlow("memory.sqlite_write", Date.now() - startedAt, "success", { operation });
+      return result;
+    } catch {
+      captureMobileError(
+        "memory.sqlite_write_failed",
+        new Error("memory_database_write_failed"),
+        { operation }
+      );
+      recordMobileFlow("memory.sqlite_write", Date.now() - startedAt, "failure", { operation });
+      throw new MemoryOfflinePersistenceError(operation);
+    }
+  };
+  const result = offlineWriteQueue.then(execute, execute);
+  offlineWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 function photosFromMessages(messages: MemoryMessage[]) {
@@ -355,18 +459,50 @@ function photosFromMessages(messages: MemoryMessage[]) {
 
 async function saveMessages(db: SQLite.SQLiteDatabase, roomId: string, messages: MemoryMessage[], now: number) {
   for (const message of messages) {
-    if (message.deliveryStatus === "pending" || message.deliveryStatus === "failed") continue;
+    const logicalId = memoryMessageLogicalKey(message);
+    const serverId = memoryMessageServerId(message);
+    if (serverId || message.clientId) {
+      await db.runAsync(
+        `delete from memory_messages
+         where message_id <> ?
+           and (
+             (? is not null and server_id = ?)
+             or (? is not null and client_id = ?)
+           )`,
+        logicalId,
+        serverId,
+        serverId,
+        message.clientId,
+        message.clientId
+      );
+    }
     await db.runAsync(
-      `insert into memory_messages (message_id, room_id, created_at, payload, updated_at)
-       values (?, ?, ?, ?, ?)
+      `insert into memory_messages (
+         message_id, server_id, client_id, room_id, created_at,
+         client_sequence, client_order_key, server_created_at,
+         delivery_status, payload, updated_at
+       )
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict(message_id) do update set
+         server_id = excluded.server_id,
+         client_id = excluded.client_id,
          room_id = excluded.room_id,
          created_at = excluded.created_at,
+         client_sequence = excluded.client_sequence,
+         client_order_key = excluded.client_order_key,
+         server_created_at = excluded.server_created_at,
+         delivery_status = excluded.delivery_status,
          payload = excluded.payload,
          updated_at = excluded.updated_at`,
-      message.id,
+      logicalId,
+      serverId,
+      message.clientId,
       roomId,
-      message.createdAt,
+      message.clientCreatedAt || message.createdAt,
+      message.clientSequence,
+      message.clientOrderKey,
+      message.serverCreatedAt,
+      message.deliveryStatus ?? "sent",
       JSON.stringify(message),
       now
     );
@@ -391,6 +527,24 @@ async function savePhotos(db: SQLite.SQLiteDatabase, roomId: string, photos: Mem
       JSON.stringify(photo),
       now
     );
+  }
+}
+
+async function deletePhotosForStoredMessage(
+  db: SQLite.SQLiteDatabase,
+  message: MemoryMessage | null
+) {
+  if (!message) return;
+  const messageIds = new Set([
+    message.id,
+    message.serverId,
+    ...message.attachments.map((attachment) => attachment.messageId)
+  ].filter((value): value is string => Boolean(value)));
+  for (const messageId of messageIds) {
+    await db.runAsync("delete from memory_photos where message_id = ?", messageId);
+  }
+  for (const attachment of message.attachments) {
+    await db.runAsync("delete from memory_photos where photo_id = ?", attachment.id);
   }
 }
 
@@ -444,9 +598,7 @@ export async function saveOfflineMemoryRoom(
   return criticalOfflineWrite("room", async () => {
     const db = await offlineDb();
     const now = Date.now();
-    const persistedMessages = room.messages.filter(
-      (message) => message.deliveryStatus !== "pending" && message.deliveryStatus !== "failed"
-    );
+    const persistedMessages = room.messages;
     const photos = [...room.photos, ...photosFromMessages(persistedMessages)];
     const latestMessageAt = persistedMessages[persistedMessages.length - 1]?.createdAt ?? null;
     const latestPhotoAt = photos[photos.length - 1]?.createdAt ?? null;
@@ -505,14 +657,14 @@ export async function readOfflineMemoryRoom(roomId: string) {
         `select payload
          from memory_messages
          where room_id = ?
-         order by created_at desc, message_id desc`,
+         order by created_at asc, client_sequence asc, client_order_key asc, message_id asc`,
         roomId
       ),
       db.getAllAsync<StoredPayloadRow>(
         `select payload
          from memory_message_outbox
          where room_id = ?
-         order by created_at asc, message_id asc`,
+         order by created_at asc, client_sequence asc, client_order_key asc, message_id asc`,
         roomId
       )
     ]);
@@ -522,20 +674,12 @@ export async function readOfflineMemoryRoom(roomId: string) {
     const persistedMessages = messageRows
       .map((row) => safeParse<MemoryMessage>(row.payload))
       .filter((message): message is MemoryMessage => message !== null && message.roomId === roomId)
-      .map((message) => sanitizeOfflineMemoryMessage(message))
-      .reverse();
+      .map((message) => normalizeStoredMemoryMessage(sanitizeOfflineMemoryMessage(message)));
     const outboxMessages = outboxRows
       .map((row) => safeParse<MemoryMessage>(row.payload))
       .filter((message): message is MemoryMessage => message !== null && message.roomId === roomId)
-      .map((message) => sanitizeOfflineMemoryMessage(message));
-    const messages = [...persistedMessages];
-    for (const message of outboxMessages) {
-      if (!messages.some((current) => current.id === message.id)) messages.push(message);
-    }
-    messages.sort((first, second) => (
-      new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
-      first.id.localeCompare(second.id)
-    ));
+      .map((message) => normalizeStoredMemoryMessage(sanitizeOfflineMemoryMessage(message)));
+    const messages = mergeMemoryMessageSnapshot(persistedMessages, outboxMessages);
 
     // Keep the complete downloaded metadata projection. Standalone room,
     // stop/gallery and chat-associated media are all durable; only the binary
@@ -557,7 +701,8 @@ export async function readOfflineMemoryRoom(roomId: string) {
     }
     const hydratedMessages = messages.map((message) => ({
       ...message,
-      attachments: photosByMessageId.get(message.id) ?? []
+      attachments: photosByMessageId.get(memoryMessageServerId(message) ?? message.id) ??
+        (message.attachments ?? [])
     }));
 
     return sanitizeOfflineMemoryRoom({
@@ -617,7 +762,12 @@ export async function applyOfflineMemoryChatDelta(
     await db.withTransactionAsync(async () => {
       for (const messageId of input.deletedMessageIds) {
         await db.runAsync("delete from memory_photos where room_id = ? and message_id = ?", roomId, messageId);
-        await db.runAsync("delete from memory_messages where room_id = ? and message_id = ?", roomId, messageId);
+        await db.runAsync(
+          "delete from memory_messages where room_id = ? and (message_id = ? or server_id = ?)",
+          roomId,
+          messageId,
+          messageId
+        );
       }
       for (const photoId of input.deletedPhotoIds) {
         await db.runAsync("delete from memory_photos where room_id = ? and photo_id = ?", roomId, photoId);
@@ -641,29 +791,73 @@ export async function applyOfflineMemoryChatDelta(
 export async function saveOfflineMemoryOutboxMessage(clientId: string, message: MemoryMessage) {
   return criticalOfflineWrite("outbox_insert", async () => {
     const db = await offlineDb();
-    await db.runAsync(
-      `insert into memory_message_outbox (message_id, client_id, room_id, created_at, payload, updated_at)
-       values (?, ?, ?, ?, ?, ?)
-       on conflict(message_id) do update set
-         client_id = excluded.client_id,
-         room_id = excluded.room_id,
-         created_at = excluded.created_at,
-         payload = excluded.payload,
-         updated_at = excluded.updated_at`,
-      message.id,
-      clientId,
-      message.roomId,
-      message.createdAt,
-      JSON.stringify(message),
-      Date.now()
-    );
+    const now = Date.now();
+    await db.withTransactionAsync(async () => {
+      await saveMessages(db, message.roomId, [message], now);
+      await savePhotos(db, message.roomId, message.attachments, now);
+      await db.runAsync(
+        `insert into memory_message_outbox (
+           message_id, client_id, server_id, room_id, created_at,
+           client_sequence, client_order_key, delivery_status,
+           retry_count, last_error_category, payload, updated_at
+         )
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         on conflict(message_id) do update set
+           client_id = excluded.client_id,
+           server_id = excluded.server_id,
+           room_id = excluded.room_id,
+           created_at = excluded.created_at,
+           client_sequence = excluded.client_sequence,
+           client_order_key = excluded.client_order_key,
+           delivery_status = excluded.delivery_status,
+           retry_count = memory_message_outbox.retry_count +
+             case when excluded.delivery_status = 'retrying' then 1 else 0 end,
+           last_error_category = excluded.last_error_category,
+           payload = excluded.payload,
+           updated_at = excluded.updated_at`,
+        clientId,
+        clientId,
+        memoryMessageServerId(message),
+        message.roomId,
+        message.clientCreatedAt || message.createdAt,
+        message.clientSequence,
+        message.clientOrderKey,
+        message.deliveryStatus ?? "pending",
+        0,
+        message.deliveryStatus === "failed" ? "transient_or_unknown" : null,
+        JSON.stringify(message),
+        now
+      );
+    });
   });
 }
 
 export async function deleteOfflineMemoryOutboxMessage(messageId: string) {
   return criticalOfflineWrite("outbox_delete", async () => {
     const db = await offlineDb();
-    await db.runAsync("delete from memory_message_outbox where message_id = ?", messageId);
+    await db.withTransactionAsync(async () => {
+      const stored = await db.getFirstAsync<StoredPayloadRow>(
+        `select payload from memory_message_outbox
+         where message_id = ? or client_id = ?
+         limit 1`,
+        messageId,
+        messageId
+      );
+      await deletePhotosForStoredMessage(
+        db,
+        stored ? safeParse<MemoryMessage>(stored.payload) : null
+      );
+      await db.runAsync(
+        "delete from memory_message_outbox where message_id = ? or client_id = ?",
+        messageId,
+        messageId
+      );
+      await db.runAsync(
+        "delete from memory_messages where message_id = ? or client_id = ?",
+        messageId,
+        messageId
+      );
+    });
   });
 }
 
@@ -675,9 +869,24 @@ export async function commitOfflineMemoryOutboxMessage(
     const db = await offlineDb();
     const now = Date.now();
     await db.withTransactionAsync(async () => {
+      const stored = await db.getFirstAsync<StoredPayloadRow>(
+        `select payload from memory_message_outbox
+         where message_id = ? or client_id = ?
+         limit 1`,
+        optimisticMessageId,
+        optimisticMessageId
+      );
+      await deletePhotosForStoredMessage(
+        db,
+        stored ? safeParse<MemoryMessage>(stored.payload) : null
+      );
       await saveMessages(db, message.roomId, [message], now);
       await savePhotos(db, message.roomId, message.attachments, now);
-      await db.runAsync("delete from memory_message_outbox where message_id = ?", optimisticMessageId);
+      await db.runAsync(
+        "delete from memory_message_outbox where message_id = ? or client_id = ?",
+        optimisticMessageId,
+        optimisticMessageId
+      );
     });
   });
 }
@@ -707,20 +916,22 @@ export async function readOfflineMemoryMessagesPage(
     let cursorWhere = "";
 
     if (cursor?.id) {
-      cursorWhere = "and (created_at < ? or (created_at = ? and message_id < ?))";
+      cursorWhere = "and (server_created_at < ? or (server_created_at = ? and server_id < ?))";
       params.push(cursor.createdAt, cursor.createdAt, cursor.id);
     } else if (cursor?.createdAt) {
-      cursorWhere = "and created_at < ?";
+      cursorWhere = "and server_created_at < ?";
       params.push(cursor.createdAt);
     }
 
     params.push(pageLimit);
     const rows = await db.getAllAsync<StoredCursorRow>(
-      `select message_id as id, created_at, payload
+      `select server_id as id, server_created_at as created_at, payload
        from memory_messages
        where room_id = ?
+         and server_id is not null
+         and (delivery_status = 'sent' or delivery_status is null)
        ${cursorWhere}
-       order by created_at desc, message_id desc
+       order by server_created_at desc, server_id desc
        limit ?`,
       params
     );
@@ -857,7 +1068,12 @@ export async function deleteOfflineMemoryMessage(messageId: string) {
     const db = await offlineDb();
     await db.withTransactionAsync(async () => {
       await db.runAsync("delete from memory_photos where message_id = ?", messageId);
-      await db.runAsync("delete from memory_messages where message_id = ?", messageId);
+      await db.runAsync(
+        "delete from memory_messages where message_id = ? or server_id = ? or client_id = ?",
+        messageId,
+        messageId,
+        messageId
+      );
     });
   });
 }

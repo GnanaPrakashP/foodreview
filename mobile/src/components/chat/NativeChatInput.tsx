@@ -12,9 +12,23 @@ export type NativeChatInputHeightEvent = {
   height: number;
 };
 
+// Carries the native edit generation so the send/mic button can be driven from
+// the UI thread without putting the text payload itself on a worklet.
+export type NativeChatInputHasTextEvent = {
+  eventCount: number;
+  hasText: boolean;
+};
+
+export type NativeChatInputSubmitResult = {
+  eventCount: number;
+  text: string;
+  wasComposing: boolean;
+};
+
 export type NativeChatInputHandle = {
   clear: () => void | Promise<void>;
   focus: () => void | Promise<void>;
+  submit: () => Promise<NativeChatInputSubmitResult>;
 };
 
 export type NativeChatInputProps = ViewProps & {
@@ -32,6 +46,7 @@ export type NativeChatInputProps = ViewProps & {
   maxInputHeight: number;
   maxLength: number;
   minInputHeight: number;
+  onHasTextChange?: (event: NativeSyntheticEvent<NativeChatInputHasTextEvent>) => void;
   onHeightChange?: (event: NativeSyntheticEvent<NativeChatInputHeightEvent>) => void;
   onTextChange?: (event: NativeSyntheticEvent<NativeChatInputTextEvent>) => void;
   placeholder: string;
