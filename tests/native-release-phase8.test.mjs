@@ -96,7 +96,8 @@ test("production environment rejects local, placeholder, wrong-channel and auto-
     { EXPO_PUBLIC_WEB_BASE_URL: "https://www.circlebites.in/unexpected-base" },
     { EXPO_PUBLIC_SUPABASE_ANON_KEY: "replace-with-key" },
     { EXPO_PUBLIC_RELEASE_CHANNEL: "preview" },
-    { EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD: "not-printed" }
+    { EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD: "not-printed" },
+    { EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS: "1" }
   ]) {
     assert.throws(() => appConfig.validateClientConfiguration({ ...productionEnvironment, ...patch }, appJson.extra));
   }

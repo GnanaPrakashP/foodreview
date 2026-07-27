@@ -90,12 +90,13 @@ function validateClientConfiguration(env = process.env, extra = {}) {
   if (environment === "production") {
     if (
       env.EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS === "1" ||
+      env.EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS === "1" ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_ORIGIN ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_KINDS ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_START_MS ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_STALE_REFRESH_MS
     ) {
-      throw new Error("Chat placement diagnostics and fixtures are forbidden in production");
+      throw new Error("Memory Room diagnostics and fixtures are forbidden in production");
     }
     parsedPublicHttpsUrl(env.EXPO_PUBLIC_SUPABASE_URL, "EXPO_PUBLIC_SUPABASE_URL");
     parsedPublicHttpsUrl(env.EXPO_PUBLIC_API_BASE_URL, "EXPO_PUBLIC_API_BASE_URL");

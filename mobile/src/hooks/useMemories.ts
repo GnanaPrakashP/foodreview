@@ -81,6 +81,11 @@ import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRe
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 import { createRequestId } from "@/services/installIdentity";
 import { recordMemoryChatPlacement } from "@/services/memoryChatPlacementDiagnostics.mjs";
+import {
+  createMemoryRoomRequestCoordinator,
+  recordMemoryRoomJourney,
+  type MemoryRoomJourneySession
+} from "@/services/memoryRoomJourneyDiagnostics.mjs";
 
 export const memoryKeys = {
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
@@ -1589,8 +1594,47 @@ export function useMemoryRoomsRealtime(enabled = true) {
   }, [enabled, profile?.username, queryClient]);
 }
 
-export function useMemoryRoomQuery(roomId: string) {
+export function useMemoryRoomQuery(roomId: string, journeySession?: MemoryRoomJourneySession) {
   const queryClient = useQueryClient();
+  const [requestCoordinator] = useState(() => createMemoryRoomRequestCoordinator());
+  const readInitialLocalRoom = useCallback(() => {
+    return requestCoordinator.readLocal(roomId, () => {
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "LOCAL_SNAPSHOT_STARTED", {
+        sqliteState: "reading",
+        tab: journeySession?.initialTab ?? "overview"
+      });
+      return readOfflineMemoryRoom(roomId);
+    });
+  }, [journeySession, requestCoordinator, roomId]);
+  const refreshRoom = useCallback((networkRequestCategory: "room_bootstrap" | "room_reconcile") => {
+    return requestCoordinator.refresh(roomId, () => {
+      const startedAt = Date.now();
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_STARTED", {
+        networkRequestCategory,
+        queryState: networkRequestCategory === "room_bootstrap" ? "loading" : "refreshing",
+        tab: journeySession?.initialTab ?? "overview"
+      });
+      return getMemoryRoomOfflineFirst(roomId)
+        .then((freshRoom) => {
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_APPLIED", {
+            durationMs: Date.now() - startedAt,
+            networkRequestCategory,
+            queryState: "ready",
+            tab: journeySession?.initialTab ?? "overview"
+          });
+          return freshRoom;
+        })
+        .catch((error) => {
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_FAILED", {
+            durationMs: Date.now() - startedAt,
+            networkRequestCategory,
+            queryState: "degraded",
+            tab: journeySession?.initialTab ?? "overview"
+          });
+          throw error;
+        });
+    });
+  }, [journeySession, requestCoordinator, roomId]);
   const [localCacheProbe, setLocalCacheProbe] = useState<{
     roomId: string;
     state: "checking" | "hit" | "miss";
@@ -1607,11 +1651,16 @@ export function useMemoryRoomQuery(roomId: string) {
 
     if (cachedInMemory) {
       setLocalCacheProbe({ roomId, state: "hit" });
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "LOCAL_SNAPSHOT_RENDERED", {
+        queryState: "usable",
+        sqliteState: "memory_cache_hit",
+        tab: journeySession?.initialTab ?? "overview"
+      });
       // A prefetched room can still carry an older overview (for example a
       // stop created while this device was offline). Query freshness must not
       // suppress the room-open reconciliation that repairs SQLite.
       const ownerGeneration = getActiveCacheGeneration();
-      void getMemoryRoomOfflineFirst(roomId)
+      void refreshRoom("room_reconcile")
         .then((freshRoom) => {
           if (cancelled || !isCacheGenerationActive(ownerGeneration)) return;
           queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
@@ -1627,9 +1676,18 @@ export function useMemoryRoomQuery(roomId: string) {
           captureMobileError("memory.room_mount_refresh_failed", error);
         });
     } else {
-      void readOfflineMemoryRoom(roomId).then((cached) => {
+      void readInitialLocalRoom().then((cached) => {
         if (cancelled) return;
         setLocalCacheProbe({ roomId, state: cached ? "hit" : "miss" });
+        recordMemoryRoomJourney(
+          journeySession as MemoryRoomJourneySession,
+          cached ? "LOCAL_SNAPSHOT_RENDERED" : "LOCAL_SNAPSHOT_MISS",
+          {
+            queryState: cached ? "usable" : "loading",
+            sqliteState: cached ? "hit" : "miss",
+            tab: journeySession?.initialTab ?? "overview"
+          }
+        );
         if (!cached || queryClient.getQueryData(detailKey)) return;
         queryClient.setQueryData(detailKey, cached, { updatedAt: 0 });
       });
@@ -1638,7 +1696,7 @@ export function useMemoryRoomQuery(roomId: string) {
     return () => {
       cancelled = true;
     };
-  }, [queryClient, roomId]);
+  }, [journeySession, queryClient, readInitialLocalRoom, refreshRoom, roomId]);
 
   const query = useQuery({
     queryKey: memoryKeys.detail(roomId),
@@ -1648,10 +1706,10 @@ export function useMemoryRoomQuery(roomId: string) {
         // Resolve the mounted room from SQLite first. Remote reconciliation
         // continues in the background and patches the same query when ready,
         // so opening Table or Chat never waits on network latency.
-        const cached = await readOfflineMemoryRoom(roomId);
+        const cached = await readInitialLocalRoom();
         if (cached) {
           const ownerGeneration = getActiveCacheGeneration();
-          void getMemoryRoomOfflineFirst(roomId)
+          void refreshRoom("room_reconcile")
             .then((freshRoom) => {
               if (!isCacheGenerationActive(ownerGeneration)) return;
               queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
@@ -1669,7 +1727,7 @@ export function useMemoryRoomQuery(roomId: string) {
           return cached;
         }
 
-        const result = await getMemoryRoomOfflineFirst(roomId);
+        const result = await refreshRoom("room_bootstrap");
         recordMobileFlow("memory.room_open", Date.now() - startedAt, "success");
         return result;
       } catch (error) {
@@ -1700,7 +1758,11 @@ export function useMemoryRoomQuery(roomId: string) {
   };
 }
 
-export function useMemoryMessagePagesQuery(roomId: string, before: string | null) {
+export function useMemoryMessagePagesQuery(
+  roomId: string,
+  before: string | null,
+  journeySession?: MemoryRoomJourneySession
+) {
   return useInfiniteQuery({
     // The cursor must NOT be part of the key. Loading a page writes it to
     // SQLite, so the room's oldest cached message moves, so a cursor derived
@@ -1712,15 +1774,32 @@ export function useMemoryMessagePagesQuery(roomId: string, before: string | null
     queryFn: async ({ pageParam }) => {
       const startedAt = Date.now();
       const firstPage = !pageParam && !before;
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_STARTED", {
+        networkRequestCategory: "chat_history",
+        queryState: "loading",
+        tab: "chat"
+      });
       try {
         const page = await getMemoryMessagesPageOfflineFirst(roomId, {
           before: typeof pageParam === "string" && pageParam ? pageParam : before
         });
         recordMobileFlow("memory.chat_page_load", Date.now() - startedAt, "success", { first_page: firstPage });
+        recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_FINISHED", {
+          durationMs: Date.now() - startedAt,
+          networkRequestCategory: "chat_history",
+          queryState: "ready",
+          tab: "chat"
+        });
         return page;
       } catch (error) {
         recordMobileFlow("memory.chat_page_load", Date.now() - startedAt, "failure", { first_page: firstPage });
         captureMobileError("memory.chat_page_load_failed", error, { first_page: firstPage });
+        recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_FAILED", {
+          durationMs: Date.now() - startedAt,
+          networkRequestCategory: "chat_history",
+          queryState: "degraded",
+          tab: "chat"
+        });
         throw error;
       }
     },
@@ -1730,17 +1809,57 @@ export function useMemoryMessagePagesQuery(roomId: string, before: string | null
   });
 }
 
-export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
+export function useMemoryMediaPagesQuery(
+  roomId: string,
+  enabled: boolean,
+  journeySession?: MemoryRoomJourneySession
+) {
   const queryClient = useQueryClient();
 
   return useInfiniteQuery({
     queryKey: memoryKeys.media(roomId),
     queryFn: async ({ pageParam }) => {
+      const startedAt = Date.now();
       const before = typeof pageParam === "string" && pageParam ? pageParam : null;
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_STARTED", {
+        networkRequestCategory: "media_page",
+        queryState: "loading",
+        tab: "media"
+      });
       const cached = await readMemoryMediaPageOffline(roomId, { before });
       // Cache miss means either a cold room or the end of locally stored
       // history, which is exactly where the server should be consulted.
-      if (!cached) return fetchMemoryMediaPage(roomId, { before });
+      if (!cached) {
+        recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_STARTED", {
+          networkRequestCategory: "media_page",
+          queryState: "refreshing",
+          tab: "media"
+        });
+        try {
+          const page = await fetchMemoryMediaPage(roomId, { before });
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_APPLIED", {
+            durationMs: Date.now() - startedAt,
+            networkRequestCategory: "media_page",
+            queryState: "ready",
+            tab: "media"
+          });
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_FINISHED", {
+            durationMs: Date.now() - startedAt,
+            networkRequestCategory: "media_page",
+            queryState: "ready",
+            tab: "media"
+          });
+          return page;
+        } catch (error) {
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_FAILED", {
+            durationMs: Date.now() - startedAt,
+            networkRequestCategory: "media_page",
+            queryState: "degraded",
+            tab: "media"
+          });
+          throw error;
+        }
+      }
 
       // Photos are newest-first, so only the first page can gain rows; older
       // pages are immutable history. One background reconcile of that page
@@ -1749,6 +1868,11 @@ export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
       // reaching the server rather than reading the same local rows back.
       if (!before) {
         const ownerGeneration = getActiveCacheGeneration();
+        recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_STARTED", {
+          networkRequestCategory: "media_reconcile",
+          queryState: "refreshing",
+          tab: "media"
+        });
         void fetchMemoryMediaPage(roomId, { before })
           .then((fresh) => {
             if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -1765,12 +1889,30 @@ export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
                 return { ...current, pages: [fresh] };
               }
             );
+            recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_APPLIED", {
+              durationMs: Date.now() - startedAt,
+              networkRequestCategory: "media_reconcile",
+              queryState: "ready",
+              tab: "media"
+            });
           })
           .catch((error) => {
+            recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "SERVER_REFRESH_FAILED", {
+              durationMs: Date.now() - startedAt,
+              networkRequestCategory: "media_reconcile",
+              queryState: "degraded",
+              tab: "media"
+            });
             captureMobileError("memory.media_page_refresh_failed", error);
           });
       }
 
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "PAGINATION_FINISHED", {
+        durationMs: Date.now() - startedAt,
+        networkRequestCategory: "media_page",
+        queryState: "usable",
+        tab: "media"
+      });
       return cached;
     },
     initialPageParam: "",
@@ -1779,7 +1921,7 @@ export function useMemoryMediaPagesQuery(roomId: string, enabled: boolean) {
   });
 }
 
-export function useMemoryRoomRealtime(roomId: string) {
+export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoomJourneySession) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
 
@@ -2019,10 +2161,18 @@ export function useMemoryRoomRealtime(roomId: string) {
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "REALTIME_SUBSCRIBED", {
+            realtimeState: "subscribed",
+            tab: journeySession?.initialTab ?? "overview"
+          });
           recordMobileFlow("memory.realtime_connect", 0, "success", { scope: "room" });
           scheduleRealtimeCursorReconciliation(queryClient, roomId);
         }
         else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "REALTIME_FAILED", {
+            realtimeState: status.toLowerCase(),
+            tab: journeySession?.initialTab ?? "overview"
+          });
           recordMobileFlow("memory.realtime_connect", 0, "failure", {
             scope: "room",
             state: status.toLowerCase()
@@ -2036,9 +2186,13 @@ export function useMemoryRoomRealtime(roomId: string) {
 
     return () => {
       if (invalidationTimeout) clearTimeout(invalidationTimeout);
+      recordMemoryRoomJourney(journeySession as MemoryRoomJourneySession, "REALTIME_UNSUBSCRIBED", {
+        realtimeState: "unsubscribed",
+        tab: journeySession?.initialTab ?? "overview"
+      });
       void supabase.removeChannel(channel);
     };
-  }, [profile?.username, queryClient, roomId]);
+  }, [journeySession, profile?.username, queryClient, roomId]);
 }
 
 export function useCreateMemoryRoomMutation() {

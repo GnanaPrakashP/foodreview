@@ -282,6 +282,7 @@ test("owned files are moved out of the unowned cache and Alice cleanup cannot de
 
 test("Memory SQLite opens separate owner directories and never queries Alice rows for Bob", async () => {
   const ownership = loadTs("mobile/src/security/cacheOwnership.ts");
+  const reconciliation = await import("../mobile/src/services/memoryMessageReconciliation.mjs");
   const databases = new Map();
   function database(directory) {
     if (!databases.has(directory)) databases.set(directory, { meta: null, summaries: new Map() });
@@ -325,6 +326,7 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
       memoryDatabaseDirectoryForScope: (scope) => `file:///documents/private/${scope}/table-memory`
     };
     if (id === "@/security/cacheOwnership") return ownership;
+    if (id === "@/services/memoryMessageReconciliation.mjs") return reconciliation;
     if (id === "@/security/offlineMemorySecurity") return {
       sanitizeOfflineMemoryMessage: (value) => value,
       sanitizeOfflineMemoryPhoto: (value) => value,

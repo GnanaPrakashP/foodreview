@@ -142,6 +142,11 @@ import {
   updateMemoryChatPlacementContext
 } from "@/services/memoryChatPlacementDiagnostics.mjs";
 import {
+  createMemoryRoomJourneySession,
+  recordMemoryRoomJourney,
+  type MemoryRoomJourneySession
+} from "@/services/memoryRoomJourneyDiagnostics.mjs";
+import {
   downloadMemoryChatPlacementFixture,
   memoryChatPlacementFixtureKinds,
   memoryChatPlacementFixtureStartDelayMs,
@@ -926,6 +931,76 @@ function MemoryChatPlacementRow({
   );
 }
 
+function useMemoryJourneySurfaceDiagnostics(
+  journeySession: MemoryRoomJourneySession,
+  tab: RoomMode,
+  surface: string
+) {
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "SURFACE_RENDER", { surface, tab });
+  });
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "SURFACE_MOUNT", { surface, tab });
+    const usableFrame = requestAnimationFrame(() => {
+      recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
+        screenState: "usable",
+        surface,
+        tab
+      });
+    });
+    return () => {
+      cancelAnimationFrame(usableFrame);
+      recordMemoryRoomJourney(journeySession, "SURFACE_UNMOUNT", { surface, tab });
+    };
+  }, [journeySession, surface, tab]);
+}
+
+function MemoryJourneyRenderProbe({
+  journeySession,
+  surface,
+  tab
+}: {
+  journeySession: MemoryRoomJourneySession;
+  surface: string;
+  tab: RoomTabMode;
+}) {
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "SURFACE_RENDER", { surface, tab });
+  });
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "SURFACE_MOUNT", { surface, tab });
+    return () => {
+      recordMemoryRoomJourney(journeySession, "SURFACE_UNMOUNT", { surface, tab });
+    };
+  }, [journeySession, surface, tab]);
+  return null;
+}
+
+function useMemoryJourneyScrollDiagnostics(
+  journeySession: MemoryRoomJourneySession,
+  tab: RoomTabMode
+) {
+  const scrollingRef = useRef(false);
+  const begin = useCallback(() => {
+    if (scrollingRef.current) return;
+    scrollingRef.current = true;
+    recordMemoryRoomJourney(journeySession, "LIST_SCROLL_STARTED", { tab });
+  }, [journeySession, tab]);
+  const settle = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!scrollingRef.current) return;
+    scrollingRef.current = false;
+    recordMemoryRoomJourney(journeySession, "LIST_SCROLL_SETTLED", {
+      contentHeight: event.nativeEvent.contentSize.height,
+      contentOffset: event.nativeEvent.contentOffset.y,
+      contentWidth: event.nativeEvent.contentSize.width,
+      tab,
+      viewportHeight: event.nativeEvent.layoutMeasurement.height,
+      viewportWidth: event.nativeEvent.layoutMeasurement.width
+    });
+  }, [journeySession, tab]);
+  return { begin, settle };
+}
+
 function MemoryChatMainSurface({
   active,
   canLoadOlderMessages,
@@ -934,6 +1009,7 @@ function MemoryChatMainSurface({
   message,
   myUsername,
   inputRef,
+  journeySession,
   listRef,
   canDeleteSelected,
   deleteError,
@@ -977,6 +1053,7 @@ function MemoryChatMainSurface({
   message: string;
   myUsername: string;
   inputRef: RefObject<NativeChatInputHandle | null>;
+  journeySession: MemoryRoomJourneySession;
   listRef: RefObject<ChatMainAnimatedList<MemoryChatMainMessage> | null>;
   canDeleteSelected: boolean;
   deleteError?: string;
@@ -1013,6 +1090,7 @@ function MemoryChatMainSurface({
   surfaceKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
 }) {
+  useMemoryJourneySurfaceDiagnostics(journeySession, "chat", "chat");
   const { width: screenWidth } = useWindowDimensions();
   // Latched once per room and deliberately NOT tied to `active`. It has to be
   // evaluated against `lastReadAt` as it stood when the room opened, because
@@ -1426,7 +1504,7 @@ function MemoryChatMainSurface({
     } else if (!chatMainInteractingRef.current) {
       chatMainFollowBottomRef.current = true;
     }
-  }, [active, composerClearance, keyboardTopReserve, messageBoxHeight, onNearBottomChange]);
+  }, [active, composerClearance, journeySession, keyboardTopReserve, messageBoxHeight, onNearBottomChange]);
 
   const clearChatMainInteractionRelease = useCallback(() => {
     if (!chatMainInteractionReleaseRef.current) return;
@@ -1439,14 +1517,26 @@ function MemoryChatMainSurface({
     chatMainMomentumRef.current = false;
     chatMainInteractingRef.current = false;
     if (chatMainAtBottomRef.current) chatMainFollowBottomRef.current = true;
-  }, [clearChatMainInteractionRelease]);
+    recordMemoryRoomJourney(journeySession, "LIST_SCROLL_SETTLED", {
+      contentHeight: placementContentHeightRef.current,
+      contentOffset: placementScrollOffsetRef.current,
+      tab: "chat",
+      viewportHeight: placementViewportHeightRef.current
+    });
+  }, [clearChatMainInteractionRelease, journeySession]);
 
   const handleChatMainScrollBeginDrag = useCallback(() => {
     clearChatMainInteractionRelease();
     chatMainMomentumRef.current = false;
     chatMainInteractingRef.current = true;
     chatMainFollowBottomRef.current = false;
-  }, [clearChatMainInteractionRelease]);
+    recordMemoryRoomJourney(journeySession, "LIST_SCROLL_STARTED", {
+      contentHeight: placementContentHeightRef.current,
+      contentOffset: placementScrollOffsetRef.current,
+      tab: "chat",
+      viewportHeight: placementViewportHeightRef.current
+    });
+  }, [clearChatMainInteractionRelease, journeySession]);
 
   const handleChatMainScrollEndDrag = useCallback(() => {
     clearChatMainInteractionRelease();
@@ -1457,8 +1547,14 @@ function MemoryChatMainSurface({
       if (chatMainMomentumRef.current) return;
       chatMainInteractingRef.current = false;
       if (chatMainAtBottomRef.current) chatMainFollowBottomRef.current = true;
+      recordMemoryRoomJourney(journeySession, "LIST_SCROLL_SETTLED", {
+        contentHeight: placementContentHeightRef.current,
+        contentOffset: placementScrollOffsetRef.current,
+        tab: "chat",
+        viewportHeight: placementViewportHeightRef.current
+      });
     }, 48);
-  }, [clearChatMainInteractionRelease]);
+  }, [clearChatMainInteractionRelease, journeySession]);
 
   const handleChatMainMomentumBegin = useCallback(() => {
     clearChatMainInteractionRelease();
@@ -1682,6 +1778,11 @@ function MemoryChatMainSurface({
         renderIndex={placementIndex}
         style={[styles.chatMainRowSelectionFrame, selected && styles.chatMainRowSelectedBackground]}
       >
+        <MemoryJourneyRenderProbe
+          journeySession={journeySession}
+          surface="chat_row"
+          tab="chat"
+        />
         <ChatMainMessageRow<MemoryChatMainMessage>
           {...messageProps}
           swipeToReply={replyTarget
@@ -1708,7 +1809,7 @@ function MemoryChatMainSurface({
         ) : null}
       </MemoryChatPlacementRow>
     );
-  }, [onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
+  }, [journeySession, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
 
   // Message group tails are rendered by renderCustomView so they live INSIDE
   // the vendor's animated wrapper and scale together with the bubble on
@@ -1799,8 +1900,8 @@ function MemoryChatMainSurface({
   }, [onOpenMedia, screenWidth]);
 
   const renderMessageAudio = useCallback((audioProps: ChatMainMessageAudioProps<MemoryChatMainMessage>) => (
-    <ChatMainAudioMessage {...audioProps} />
-  ), []);
+    <ChatMainAudioMessage {...audioProps} journeySession={journeySession} />
+  ), [journeySession]);
 
   const renderCustomView = useCallback((props: {
     currentMessage: MemoryChatMainMessage;
@@ -2459,8 +2560,12 @@ function pauseMediaPlayerQuietly(player: { pause: () => void }) {
 
 function ChatMainAudioMessage({
   currentMessage,
+  journeySession,
   position = "left"
-}: ChatMainMessageAudioProps<MemoryChatMainMessage> & { position?: "left" | "right" }) {
+}: ChatMainMessageAudioProps<MemoryChatMainMessage> & {
+  journeySession: MemoryRoomJourneySession;
+  position?: "left" | "right";
+}) {
   const uri = currentMessage.audio ?? null;
   const mine = position === "right";
   const audio = memoryChatAudioAttachment(currentMessage);
@@ -2474,9 +2579,19 @@ function ChatMainAudioMessage({
   const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
   const isError = status.playbackState === "error";
 
-  useEffect(() => () => {
-    pauseMediaPlayerQuietly(player);
-  }, [player]);
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "PLAYER_CREATED", {
+      playerKind: "audio",
+      tab: "chat"
+    });
+    return () => {
+      pauseMediaPlayerQuietly(player);
+      recordMemoryRoomJourney(journeySession, "PLAYER_RELEASED", {
+        playerKind: "audio",
+        tab: "chat"
+      });
+    };
+  }, [journeySession, player]);
 
   function togglePlayback() {
     if (!uri || isError) return;
@@ -3565,10 +3680,32 @@ const DishesPanelPane = memo(DishesPanel);
 
 export default function MemoryDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; tab?: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    journeyRunId?: string;
+    roomSessionId?: string;
+    tab?: string;
+  }>();
   const roomId = params.id ?? "";
+  const initialJourneyTabRef = useRef({
+    roomId,
+    tab: memoryRoomModeFromTabParam(params.tab) ?? "overview"
+  });
+  if (initialJourneyTabRef.current.roomId !== roomId) {
+    initialJourneyTabRef.current = {
+      roomId,
+      tab: memoryRoomModeFromTabParam(params.tab) ?? "overview"
+    };
+  }
+  const initialJourneyTab = initialJourneyTabRef.current.tab;
+  const journeySession = useMemo(() => createMemoryRoomJourneySession({
+    initialTab: initialJourneyTab,
+    journeyRunId: params.journeyRunId,
+    roomSessionId: params.roomSessionId
+  }), [initialJourneyTab, params.journeyRunId, params.roomSessionId, roomId]);
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  const runtime = useRuntimeActivity();
   // Keep the chat composer's closed-state baseline stable while the IME covers
   // the gesture area. Edge-to-edge Android can report bottom=0 mid-transition;
   // accepting that live inset would add a React layout correction on top of
@@ -3579,8 +3716,8 @@ export default function MemoryDetailScreen() {
     queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
   ).find((memory) => memory.id === roomId);
   applyRoomTheme(resolvedTheme, cachedRoomSummary?.occasionType ?? "unknown");
-  const room = useMemoryRoomQuery(roomId);
-  useMemoryRoomRealtime(roomId);
+  const room = useMemoryRoomQuery(roomId, journeySession);
+  useMemoryRoomRealtime(roomId, journeySession);
   const addParticipant = useAddMemoryParticipantMutation(roomId);
   const addMessage = useAddMemoryMessageMutation(roomId);
   const addPhoto = useAddMemoryPhotoMutation(roomId);
@@ -3628,13 +3765,46 @@ export default function MemoryDetailScreen() {
   const suppressSelectionToggleRef = useRef<string | null>(null);
   const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const roomMountedAtRef = useRef(Date.now());
+  const roomExitStartedRef = useRef(false);
   const {
     mode,
     pagerPosition,
     activePaneIndex,
     paneTabMode,
-    requestRoomMode
+    requestRoomMode: requestRoomModeController
   } = useMemoryRoomController(params.tab);
+  const requestRoomMode = useCallback((nextMode: RoomMode) => {
+    if (nextMode === mode) return;
+    const startedAt = Date.now();
+    recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_STARTED", {
+      fromTab: mode,
+      screenState: "transitioning",
+      tab: nextMode
+    });
+    requestRoomModeController(nextMode);
+    requestAnimationFrame(() => {
+      recordMemoryRoomJourney(journeySession, "TAB_FIRST_FRAME", {
+        durationMs: Date.now() - startedAt,
+        screenState: "visible",
+        tab: nextMode
+      });
+      InteractionManager.runAfterInteractions(() => {
+        recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_SETTLED", {
+          durationMs: Date.now() - startedAt,
+          screenState: "usable",
+          tab: nextMode
+        });
+      });
+    });
+  }, [journeySession, mode, requestRoomModeController]);
+  const handleRoomTabPress = useCallback((nextMode: RoomMode) => {
+    recordMemoryRoomJourney(journeySession, "TAB_PRESS", {
+      fromTab: mode,
+      tab: nextMode
+    });
+    requestRoomMode(nextMode);
+  }, [journeySession, mode, requestRoomMode]);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -3656,6 +3826,60 @@ export default function MemoryDetailScreen() {
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
   const [memberCircleStatusOverrides, setMemberCircleStatusOverrides] = useState<Record<string, MemberCircleStatus>>({});
   const floatingAddMenuProgress = useRef(new Animated.Value(0)).current;
+  const recordKeyboardJourneyStart = useCallback((height: number) => {
+    recordMemoryRoomJourney(journeySession, "KEYBOARD_STARTED", {
+      keyboardState: height > 0 ? "open" : "closed",
+      tab: paneTabMode
+    });
+  }, [journeySession, paneTabMode]);
+  useKeyboardHandler({
+    onStart: (event) => {
+      "worklet";
+      runOnJS(recordKeyboardJourneyStart)(event.height);
+    }
+  }, [recordKeyboardJourneyStart]);
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "ROOM_SCREEN_MOUNT", {
+      queryState: room.data ? "usable" : "loading",
+      screenState: "mounted",
+      tab: paneTabMode
+    });
+    const firstFrame = requestAnimationFrame(() => {
+      recordMemoryRoomJourney(journeySession, "ROOM_FIRST_FRAME", {
+        durationMs: Date.now() - roomMountedAtRef.current,
+        queryState: room.data ? "usable" : "loading",
+        screenState: "visible",
+        tab: paneTabMode
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (roomExitStartedRef.current) {
+        recordMemoryRoomJourney(journeySession, "ROOM_EXIT_FINISHED", {
+          screenState: "unmounted",
+          tab: paneTabMode
+        });
+      }
+      recordMemoryRoomJourney(journeySession, "ROOM_SCREEN_UNMOUNT", {
+        screenState: "unmounted",
+        tab: paneTabMode
+      });
+    };
+  }, [journeySession]);
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "SURFACE_RENDER", {
+      queryState: room.data ? "usable" : room.isError ? "failed" : "loading",
+      surface: "room",
+      tab: paneTabMode
+    });
+  });
+  useEffect(() => {
+    recordMemoryRoomJourney(
+      journeySession,
+      runtime.isForeground ? "APP_FOREGROUND" : "APP_BACKGROUND",
+      { screenState: runtime.isForeground ? "visible" : "background", tab: paneTabMode }
+    );
+  }, [journeySession, paneTabMode, runtime.isForeground]);
   const excludedParticipantUsernames = useMemo(() => ([
     myUsername,
     ...(room.data?.participants ?? []).map((item) => item.username),
@@ -3747,15 +3971,23 @@ export default function MemoryDetailScreen() {
   useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
       keyboardVisibleRef.current = true;
+      recordMemoryRoomJourney(journeySession, "KEYBOARD_SETTLED", {
+        keyboardState: "open",
+        tab: "chat"
+      });
     });
     const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
       keyboardVisibleRef.current = false;
+      recordMemoryRoomJourney(journeySession, "KEYBOARD_SETTLED", {
+        keyboardState: "closed",
+        tab: "chat"
+      });
     });
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, []);
+  }, [journeySession]);
 
   // ADJUST_RESIZE is required for keyboard show/hide to be trackable per-frame:
   // with ADJUST_NOTHING, Android treats the window as not IME-aware and never
@@ -3771,7 +4003,17 @@ export default function MemoryDetailScreen() {
     };
   }, [mode]);
 
+  const beginRoomExit = useCallback(() => {
+    if (roomExitStartedRef.current) return;
+    roomExitStartedRef.current = true;
+    recordMemoryRoomJourney(journeySession, "ROOM_EXIT_STARTED", {
+      screenState: "exiting",
+      tab: paneTabMode
+    });
+  }, [journeySession, paneTabMode]);
+
   const goBackToOrigin = useCallback(() => {
+    beginRoomExit();
     if (router.canGoBack()) {
       router.back();
       return;
@@ -3780,11 +4022,12 @@ export default function MemoryDetailScreen() {
     // A room can also be the first route after a cold deep link. There is no
     // previous screen to pop in that case, so rebuild the expected destination.
     router.replace({ pathname: "/profile", params: { tab: "memories" } });
-  }, [router]);
+  }, [beginRoomExit, router]);
 
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (selectedMedia) {
+        recordMemoryRoomJourney(journeySession, "MEDIA_VIEWER_CLOSED", { tab: paneTabMode });
         setSelectedMedia(null);
         return true;
       }
@@ -3846,7 +4089,9 @@ export default function MemoryDetailScreen() {
     editingMessage,
     floatingAddMenuOpen,
     goBackToOrigin,
+    journeySession,
     mode,
+    paneTabMode,
     peopleClosing,
     reactionPickerMessageId,
     replyingToMessage,
@@ -4067,6 +4312,10 @@ export default function MemoryDetailScreen() {
         // no entry animation. Clear the input and pin to the newest message.
         updateMessageDraft("");
         setReplyingToMessage(null);
+        recordMemoryRoomJourney(journeySession, "MESSAGE_OPTIMISTIC", {
+          queryState: "mutating",
+          tab: "chat"
+        });
         void addMessageMutateAsyncRef.current({
           body: outgoingBody,
           clientCreatedAt,
@@ -4074,7 +4323,16 @@ export default function MemoryDetailScreen() {
           clientOrderKey,
           clientSequence,
           replyToMessageId: outgoingReply ? memoryMessageServerId(outgoingReply) ?? outgoingReply.id : null
+        }).then(() => {
+          recordMemoryRoomJourney(journeySession, "MESSAGE_CONFIRMED", {
+            queryState: "ready",
+            tab: "chat"
+          });
         }).catch(() => {
+          recordMemoryRoomJourney(journeySession, "MESSAGE_FAILED", {
+            queryState: "degraded",
+            tab: "chat"
+          });
           // The failed optimistic row stays visible with retry/cancel actions.
         });
         const staleRefreshDelayMs = memoryChatPlacementStaleRefreshDelayMs();
@@ -4170,6 +4428,7 @@ export default function MemoryDetailScreen() {
     setReactionPickerMessageId(null);
     setEditingMessage(null);
     setReplyingToMessage(target);
+    recordMemoryRoomJourney(journeySession, "REPLY_OPENED", { tab: "chat" });
     requestRoomMode("chat");
     // Focus in the same event as the state change so the IME starts its slide
     // together with the reply chip. Deferring it (a frame plus 80 ms) made the
@@ -4191,6 +4450,7 @@ export default function MemoryDetailScreen() {
 
   function cancelReplyMessage() {
     setReplyingToMessage(null);
+    recordMemoryRoomJourney(journeySession, "REPLY_CANCELLED", { tab: "chat" });
   }
 
   function beginSelection(target: MemoryActionTarget) {
@@ -4381,6 +4641,11 @@ export default function MemoryDetailScreen() {
     updateMessageDraft("");
     setReplyingToMessage(null);
     requestRoomMode("chat");
+    recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_ENQUEUED", {
+      networkRequestCategory: "memory_audio_upload",
+      queryState: "mutating",
+      tab: "chat"
+    });
     try {
       await addPhoto.mutateAsync({
         assets: [asset],
@@ -4391,7 +4656,17 @@ export default function MemoryDetailScreen() {
         roomId,
         uploadBatchId: clientId
       });
+      recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_FINISHED", {
+        networkRequestCategory: "memory_audio_upload",
+        queryState: "ready",
+        tab: "chat"
+      });
     } catch (error) {
+      recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_FAILED", {
+        networkRequestCategory: "memory_audio_upload",
+        queryState: "degraded",
+        tab: "chat"
+      });
       setMediaError(error instanceof Error ? error.message : "Could not send audio.");
       throw error;
     }
@@ -4456,8 +4731,19 @@ export default function MemoryDetailScreen() {
 
   function openMediaViewer(media: MemoryPhoto, group: MemoryPhoto[] = [media]) {
     const index = Math.max(0, group.findIndex((item) => item.id === media.id));
+    recordMemoryRoomJourney(journeySession, "MEDIA_VIEWER_OPENED", {
+      screenState: "viewer",
+      tab: paneTabMode
+    });
     setSelectedMedia({ index, items: group });
-    void room.refetch();
+  }
+
+  function closeMediaViewer() {
+    recordMemoryRoomJourney(journeySession, "MEDIA_VIEWER_CLOSED", {
+      screenState: "usable",
+      tab: paneTabMode
+    });
+    setSelectedMedia(null);
   }
 
   function refreshSelectedMedia() {
@@ -4472,7 +4758,11 @@ export default function MemoryDetailScreen() {
     setFloatingAddMenuOpen(false);
     router.push({
       pathname: "/memories/[id]/camera",
-      params: { id: roomId }
+      params: {
+        id: roomId,
+        journeyRunId: journeySession.journeyRunId,
+        roomSessionId: journeySession.roomSessionId
+      }
     });
   }
 
@@ -4500,6 +4790,7 @@ export default function MemoryDetailScreen() {
           onPress: async () => {
             try {
               await leaveRoom.mutateAsync();
+              beginRoomExit();
               router.replace({ pathname: "/profile", params: { tab: "memories" } });
             } catch (error) {
               Alert.alert("Could not leave room", error instanceof Error ? error.message : "Please try again.");
@@ -4526,14 +4817,14 @@ export default function MemoryDetailScreen() {
     olderMessagesAnchorRef.current.cursor = room.data?.messages[0]?.createdAt ?? null;
   }
   const olderMessagesCursor = olderMessagesAnchorRef.current.cursor;
-  const olderMessages = useMemoryMessagePagesQuery(roomId, olderMessagesCursor);
+  const olderMessages = useMemoryMessagePagesQuery(roomId, olderMessagesCursor, journeySession);
   const olderMessageItems = useMemo(() => (
     olderMessages.data?.pages.flatMap((page) => page.messages) ?? []
   ), [olderMessages.data]);
   const mergedRoomData = useMemo(() => (
     room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
   ), [olderMessageItems, room.data]);
-  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media");
+  const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media", journeySession);
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
   ), [mediaPages.data]);
@@ -4572,7 +4863,26 @@ export default function MemoryDetailScreen() {
   // own data changes — not on chat typing or tab switches. setDetailDishId,
   // loadOlderMessages, loadMoreMedia and scrollChatToBottom are already stable.
   const stableOpenMedia = useStableHandler(openMediaViewer);
-  const stableRateDish = useStableHandler((dishId: string, rating: number) => rateDish.mutate({ dishId, rating }));
+  const stableRateDish = useStableHandler((dishId: string, rating: number) => {
+    recordMemoryRoomJourney(journeySession, "DISH_MUTATION_STARTED", {
+      queryState: "mutating",
+      tab: paneTabMode
+    });
+    rateDish.mutate({ dishId, rating }, {
+      onError: () => {
+        recordMemoryRoomJourney(journeySession, "DISH_MUTATION_FAILED", {
+          queryState: "degraded",
+          tab: paneTabMode
+        });
+      },
+      onSuccess: () => {
+        recordMemoryRoomJourney(journeySession, "DISH_MUTATION_FINISHED", {
+          queryState: "ready",
+          tab: paneTabMode
+        });
+      }
+    });
+  });
   const stableBeginSelection = useStableHandler(beginSelection);
   const stableToggleSelection = useStableHandler(toggleSelectedItem);
   const stableCancelSelection = useStableHandler(cancelSelection);
@@ -4691,7 +5001,7 @@ export default function MemoryDetailScreen() {
         pagerPosition={pagerPosition}
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToOrigin}
-        onChangeMode={requestRoomMode}
+        onChangeMode={handleRoomTabPress}
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
@@ -4712,6 +5022,7 @@ export default function MemoryDetailScreen() {
                 <RoomPane active={paneTabMode === "overview"}>
                   <ItineraryPanelPane
                     dishes={data.dishes}
+                    journeySession={journeySession}
                     onOpenDish={setDetailDishId}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
@@ -4729,6 +5040,7 @@ export default function MemoryDetailScreen() {
                     editableSelectedMessage={editableSelectedMessage}
                     editingMessage={editingMessage}
                     inputRef={messageInputRef}
+                    journeySession={journeySession}
                     keyboardTopReserve={chatKeyboardTopReserve}
                     listRef={chatMainListRef}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
@@ -4774,6 +5086,7 @@ export default function MemoryDetailScreen() {
                       galleryPhotos.length === 0
                     }
                     loadingMore={mediaPages.isFetchingNextPage}
+                    journeySession={journeySession}
                     onLoadMore={loadMoreMedia}
                     onOpenMedia={stableOpenMedia}
                     photos={galleryPhotos}
@@ -4784,6 +5097,7 @@ export default function MemoryDetailScreen() {
                   <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
+                    journeySession={journeySession}
                     onOpenDish={setDetailDishId}
                     onRateDish={stableRateDish}
                     pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
@@ -4802,11 +5116,15 @@ export default function MemoryDetailScreen() {
           onLeave={confirmLeaveRoom}
           visible={roomActionsVisible}
         />
-        <MediaViewer
-          onClose={() => setSelectedMedia(null)}
-          onMediaError={refreshSelectedMedia}
-          selection={selectedMedia}
-        />
+        {selectedMedia ? (
+          <MediaViewer
+            journeySession={journeySession}
+            onClose={closeMediaViewer}
+            onMediaError={refreshSelectedMedia}
+            selection={selectedMedia}
+            tab={paneTabMode}
+          />
+        ) : null}
       </RoomKeyboardContainer>
       {/* Outside RoomKeyboardContainer and outside the chat's keyboard-inset
           view, so the menu is placed in stable screen space rather than riding
@@ -4855,7 +5173,7 @@ export default function MemoryDetailScreen() {
         error={rateDish.error?.message}
         myUsername={myUsername}
         onClose={() => setDetailDishId(null)}
-        onRateDish={(dishId, rating) => rateDish.mutate({ dishId, rating })}
+        onRateDish={stableRateDish}
         pending={rateDish.isPending && rateDish.variables?.dishId === detailDishId}
       />
       {mode === "people" ? (
@@ -5423,13 +5741,49 @@ function ModeButton({
   }));
   const hasUnread = Boolean(unreadCount && unreadCount > 0);
   const accessibilityLabel = hasUnread ? `${label}, ${unreadCount} unread` : label;
+  // Android can begin dismissing/resizing the IME between pointer down and the
+  // release-time `onPress`. That native relayout cancels Pressable's release
+  // callback, making the first tab tap appear ignored while Chat has focus.
+  // Activate on pointer down, before the IME can move the window; keep onPress
+  // as the keyboard/accessibility path and consume the matching release even
+  // when a heavy tab mount delays it beyond an arbitrary clock threshold.
+  const pointerReleasePendingRef = useRef(false);
+  const pointerReleaseExpiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (pointerReleaseExpiryRef.current) {
+      clearTimeout(pointerReleaseExpiryRef.current);
+    }
+  }, []);
+  const activateOnPressIn = useCallback(() => {
+    pointerReleasePendingRef.current = true;
+    if (pointerReleaseExpiryRef.current) {
+      clearTimeout(pointerReleaseExpiryRef.current);
+    }
+    pointerReleaseExpiryRef.current = setTimeout(() => {
+      pointerReleasePendingRef.current = false;
+      pointerReleaseExpiryRef.current = null;
+    }, 5_000);
+    onPress();
+  }, [onPress]);
+  const activateOnPress = useCallback(() => {
+    if (pointerReleasePendingRef.current) {
+      pointerReleasePendingRef.current = false;
+      if (pointerReleaseExpiryRef.current) {
+        clearTimeout(pointerReleaseExpiryRef.current);
+        pointerReleaseExpiryRef.current = null;
+      }
+      return;
+    }
+    onPress();
+  }, [onPress]);
 
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
-      onPress={onPress}
+      onPress={activateOnPress}
+      onPressIn={activateOnPressIn}
       style={({ pressed }) => [
         styles.modeButton,
         active && styles.modeButtonActive,
@@ -8263,6 +8617,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
 function MediaGallery({
   error,
   hasMore,
+  journeySession,
   loading,
   loadingMore,
   onLoadMore,
@@ -8272,6 +8627,7 @@ function MediaGallery({
 }: {
   error?: string;
   hasMore: boolean;
+  journeySession: MemoryRoomJourneySession;
   loading: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
@@ -8279,6 +8635,8 @@ function MediaGallery({
   photos: MemoryPhoto[];
   themeCopy: OccasionTheme["copy"];
 }) {
+  useMemoryJourneySurfaceDiagnostics(journeySession, "media", "media");
+  const scrollDiagnostics = useMemoryJourneyScrollDiagnostics(journeySession, "media");
   const hasMedia = photos.length > 0;
 
   return (
@@ -8311,6 +8669,10 @@ function MediaGallery({
       numColumns={2}
       onEndReached={hasMore && !loadingMore ? onLoadMore : undefined}
       onEndReachedThreshold={0.6}
+      onMomentumScrollBegin={scrollDiagnostics.begin}
+      onMomentumScrollEnd={scrollDiagnostics.settle}
+      onScrollBeginDrag={scrollDiagnostics.begin}
+      onScrollEndDrag={scrollDiagnostics.settle}
       maxToRenderPerBatch={MEDIA_GALLERY_MAX_RENDER_BATCH}
       removeClippedSubviews={false}
       renderItem={({ index, item: photo }) => (
@@ -8320,10 +8682,15 @@ function MediaGallery({
             index % 2 === 0 ? styles.galleryItemLeft : styles.galleryItemRight
           ]}
         >
+          <MemoryJourneyRenderProbe
+            journeySession={journeySession}
+            surface="media_tile"
+            tab="media"
+          />
           <Pressable
             accessibilityLabel={memoryMediaOpenLabel(photo)}
             accessibilityRole="imagebutton"
-            onPress={() => onOpenMedia(photo, [photo])}
+            onPress={() => onOpenMedia(photo, photos)}
             style={styles.galleryMediaButton}
           >
             <MediaPreview contentFit="cover" media={photo} style={styles.galleryMediaPreview} />
@@ -8353,16 +8720,20 @@ function memoryDishRaterSummary(dish: MemoryDish) {
 
 function ItineraryPanel({
   dishes,
+  journeySession,
   onOpenDish,
   stops,
   topInset
 }: {
   dishes: MemoryDish[];
+  journeySession: MemoryRoomJourneySession;
   onOpenDish: (dishId: string) => void;
   stops: MemoryStop[];
   themeCopy: OccasionTheme["copy"];
   topInset?: number;
 }) {
+  useMemoryJourneySurfaceDiagnostics(journeySession, "overview", "table");
+  const scrollDiagnostics = useMemoryJourneyScrollDiagnostics(journeySession, "overview");
   const topPadding = topInset != null ? topInset + 10 : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
   const dishesByStop = dishes.reduce<Record<string, MemoryDish[]>>((groups, dish) => {
@@ -8397,6 +8768,10 @@ function ItineraryPanel({
   return (
     <ScrollView
       contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
+      onMomentumScrollBegin={scrollDiagnostics.begin}
+      onMomentumScrollEnd={scrollDiagnostics.settle}
+      onScrollBeginDrag={scrollDiagnostics.begin}
+      onScrollEndDrag={scrollDiagnostics.settle}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.tablePostActionRow}>
@@ -8494,6 +8869,7 @@ function StopDishRow({ dish, onPress }: { dish: MemoryDish; onPress: () => void 
 function DishesPanel({
   dishes,
   error,
+  journeySession,
   onOpenDish,
   onRateDish,
   pendingDishId,
@@ -8501,13 +8877,23 @@ function DishesPanel({
 }: {
   dishes: MemoryDish[];
   error?: string;
+  journeySession: MemoryRoomJourneySession;
   onOpenDish: (dishId: string) => void;
   onRateDish: (dishId: string, rating: number) => void;
   pendingDishId?: string | null;
   themeCopy: OccasionTheme["copy"];
 }) {
+  useMemoryJourneySurfaceDiagnostics(journeySession, "dishes", "dishes");
+  const scrollDiagnostics = useMemoryJourneyScrollDiagnostics(journeySession, "dishes");
   return (
-    <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      contentContainerStyle={styles.panelContent}
+      onMomentumScrollBegin={scrollDiagnostics.begin}
+      onMomentumScrollEnd={scrollDiagnostics.settle}
+      onScrollBeginDrag={scrollDiagnostics.begin}
+      onScrollEndDrag={scrollDiagnostics.settle}
+      showsVerticalScrollIndicator={false}
+    >
       {dishes.length === 0 ? (
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
@@ -8525,6 +8911,11 @@ function DishesPanel({
 
           return (
             <View key={dish.id} style={styles.dishCard}>
+              <MemoryJourneyRenderProbe
+                journeySession={journeySession}
+                surface="dish_row"
+                tab="dishes"
+              />
               <View style={styles.dishCardTop}>
                 <View style={[styles.dishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
                   <Text style={styles.dishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
@@ -9457,16 +9848,21 @@ function SelectionActionBar({
 }
 
 function MediaViewer({
+  journeySession,
   onClose,
   onMediaError,
-  selection
+  selection,
+  tab
 }: {
+  journeySession: MemoryRoomJourneySession;
   onClose: () => void;
   onMediaError: () => void;
   selection: MediaViewerState | null;
+  tab: RoomTabMode;
 }) {
   const insets = useSafeAreaInsets();
   const viewerListRef = useRef<FlatList<MemoryPhoto>>(null);
+  const firstFrameSelectionRef = useRef<MediaViewerState | null>(null);
   const [activeIndex, setActiveIndex] = useState(selection?.index ?? 0);
   const [carouselWidth, setCarouselWidth] = useState(0);
 
@@ -9507,9 +9903,9 @@ function MediaViewer({
   const renderViewerItem = ({ index, item: media }: { index: number; item: MemoryPhoto }) => (
     <View style={[styles.viewerSlide, carouselWidth > 0 && { width: carouselWidth }]}>
       {memoryMediaKind(media) === "audio" ? (
-        <ViewerAudio media={media} />
+        <ViewerAudio journeySession={journeySession} media={media} tab={tab} />
       ) : memoryMediaKind(media) === "video" && index === safeActiveIndex ? (
-        <ViewerVideo media={media} />
+        <ViewerVideo journeySession={journeySession} media={media} tab={tab} />
       ) : memoryMediaKind(media) === "video" ? (
         <View style={styles.viewerVideo}>
           <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} />
@@ -9539,7 +9935,17 @@ function MediaViewer({
       <View style={styles.viewerBackdrop}>
         <StatusBar hidden />
         <View
-          onLayout={(event) => setCarouselWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => {
+            setCarouselWidth(event.nativeEvent.layout.width);
+            if (firstFrameSelectionRef.current === selection) return;
+            firstFrameSelectionRef.current = selection;
+            recordMemoryRoomJourney(journeySession, "MEDIA_FIRST_FRAME", {
+              contentHeight: event.nativeEvent.layout.height,
+              contentWidth: event.nativeEvent.layout.width,
+              screenState: "viewer",
+              tab
+            });
+          }}
           style={styles.viewerBody}
         >
           <FlatList
@@ -9629,7 +10035,15 @@ function MediaViewer({
   );
 }
 
-function ViewerAudio({ media }: { media: MemoryPhoto }) {
+function ViewerAudio({
+  journeySession,
+  media,
+  tab
+}: {
+  journeySession: MemoryRoomJourneySession;
+  media: MemoryPhoto;
+  tab: RoomTabMode;
+}) {
   const player = useAudioPlayer(media.publicUrl, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
   const isPlaying = status.playing;
@@ -9637,9 +10051,19 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
   const duration = audioDurationSeconds(media, status.duration);
   const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
 
-  useEffect(() => () => {
-    pauseMediaPlayerQuietly(player);
-  }, [player]);
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "PLAYER_CREATED", {
+      playerKind: "audio",
+      tab
+    });
+    return () => {
+      pauseMediaPlayerQuietly(player);
+      recordMemoryRoomJourney(journeySession, "PLAYER_RELEASED", {
+        playerKind: "audio",
+        tab
+      });
+    };
+  }, [journeySession, player, tab]);
 
   function togglePlayback() {
     try {
@@ -9678,7 +10102,15 @@ function ViewerAudio({ media }: { media: MemoryPhoto }) {
   );
 }
 
-function ViewerVideo({ media }: { media: MemoryPhoto }) {
+function ViewerVideo({
+  journeySession,
+  media,
+  tab
+}: {
+  journeySession: MemoryRoomJourneySession;
+  media: MemoryPhoto;
+  tab: RoomTabMode;
+}) {
   const runtime = useRuntimeActivity();
   const player = useVideoPlayer(media.publicUrl, (instance) => {
     instance.loop = false;
@@ -9686,7 +10118,23 @@ function ViewerVideo({ media }: { media: MemoryPhoto }) {
   });
 
   useEffect(() => {
-    if (!runtime.isForeground) player.pause();
+    recordMemoryRoomJourney(journeySession, "PLAYER_CREATED", {
+      playerKind: "video",
+      tab
+    });
+    return () => {
+      // useVideoPlayer owns the native release and registers its cleanup
+      // before this effect. Touching the shared object here can race Expo's
+      // release when a viewer cell or the modal unmounts.
+      recordMemoryRoomJourney(journeySession, "PLAYER_RELEASED", {
+        playerKind: "video",
+        tab
+      });
+    };
+  }, [journeySession, tab]);
+
+  useEffect(() => {
+    if (!runtime.isForeground) pauseMediaPlayerQuietly(player);
   }, [player, runtime.isForeground]);
 
   return (

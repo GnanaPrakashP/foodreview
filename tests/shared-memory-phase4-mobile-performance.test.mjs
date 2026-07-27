@@ -46,6 +46,7 @@ const nativeChatInputWrapper = readFileSync(
   "mobile/src/components/chat/NativeChatInput.tsx",
   "utf8"
 );
+const memoryAddDishScreen = readFileSync("mobile/app/memories/[id]/add-dish.tsx", "utf8");
 
 test("phase 4 chat and media lists use bounded render windows", () => {
   for (const expected of [
@@ -139,6 +140,28 @@ test("phase 4 media viewer is virtualized instead of mounting every media item",
   assert.doesNotMatch(carouselBody, /<ScrollView/);
 });
 
+test("media viewer video cleanup tolerates Expo releasing the native player first", () => {
+  const viewerVideoBody = memoryRoomScreen.match(
+    /function ViewerVideo\([\s\S]*?\nfunction SingleMediaPreview/
+  )?.[0] ?? "";
+
+  const cleanupBody = viewerVideoBody.match(/return \(\) => \{[\s\S]*?PLAYER_RELEASED[\s\S]*?\};/)?.[0] ?? "";
+  assert.doesNotMatch(cleanupBody, /player\.(?:pause|release)\(/);
+  assert.match(viewerVideoBody, /useVideoPlayer owns the native release/);
+  assert.match(
+    viewerVideoBody,
+    /if \(!runtime\.isForeground\) pauseMediaPlayerQuietly\(player\)/
+  );
+});
+
+test("media viewer mounts from a concrete selection so a stale index cannot flash a video player", () => {
+  assert.match(
+    memoryRoomScreen,
+    /\{selectedMedia \? \(\s*<MediaViewer[\s\S]*?selection=\{selectedMedia\}[\s\S]*?\) : null\}/
+  );
+  assert.match(memoryRoomScreen, /useState\(selection\?\.index \?\? 0\)/);
+});
+
 test("phase 4 room panes unmount inactive heavy tabs", () => {
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.match(roomPaneBody, /if \(!active\) return null/);
@@ -171,6 +194,13 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   assert.match(memoryRoomController, /setMode\(nextMode\);[\s\S]*setPaneTabMode\(nextTabMode\)/);
   assert.doesNotMatch(memoryRoomController, /startTransition|setTimeout/);
   assert.match(memoryRoomScreen, /active=\{paneTabMode === "chat"\}/);
+  const modeButtonBody = memoryRoomScreen.match(
+    /function ModeButton\([\s\S]*?\nfunction RoomPane/
+  )?.[0] ?? "";
+  assert.match(modeButtonBody, /onPressIn=\{activateOnPressIn\}/);
+  assert.match(modeButtonBody, /onPress=\{activateOnPress\}/);
+  assert.match(modeButtonBody, /pointerReleasePendingRef/);
+  assert.doesNotMatch(modeButtonBody, /Date\.now\(\).*pointer|lastPointerActivationAtRef/);
 });
 
 test("only the selected room tab owns a mounted native view tree", () => {
@@ -191,7 +221,7 @@ test("only the selected room tab owns a mounted native view tree", () => {
 });
 
 test("Media and Dishes remount from cached data without retained hidden panes", () => {
-  assert.match(memoryRoomScreen, /useMemoryMediaPagesQuery\(roomId, mode === "media"\)/);
+  assert.match(memoryRoomScreen, /useMemoryMediaPagesQuery\(roomId, mode === "media", journeySession\)/);
   assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "media"\}>/);
   assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "dishes"\}>/);
   assert.doesNotMatch(memoryRoomScreen, /shouldMountMediaPane|shouldMountDishesPane/);
@@ -212,12 +242,13 @@ test("cached memory rooms bypass the loading shell", () => {
 
 test("memory room back pops its existing stack entry without dismissing through profile", () => {
   const backBody = memoryRoomScreen.match(
-    /const goBackToOrigin = useCallback\(\(\) => \{[\s\S]*?\}, \[router\]\);/
+    /const goBackToOrigin = useCallback\(\(\) => \{[\s\S]*?\}, \[beginRoomExit, router\]\);/
   )?.[0] ?? "";
   const hardwareBackBody = Array.from(memoryRoomScreen.matchAll(
     /BackHandler\.addEventListener\("hardwareBackPress",[\s\S]*?return true;\s*\}\);/g
   )).map((match) => match[0]).find((body) => body.includes("goBackToOrigin()")) ?? "";
 
+  assert.match(backBody, /beginRoomExit\(\)/);
   assert.match(backBody, /if \(router\.canGoBack\(\)\)/);
   assert.match(backBody, /router\.back\(\)/);
   assert.match(backBody, /router\.replace\(\{ pathname: "\/profile", params: \{ tab: "memories" \} \}\)/);
@@ -459,7 +490,10 @@ test("chat scrolling stays user-owned and the oldest message remains reachable a
     /function MemoryChatMainSurface\([\s\S]*?\n\}\n\n\/\/ Timestamp placement rule/
   )?.[0] ?? "";
   const scrollHandlerBody = chatSurfaceBody.match(
-    /const handleChatMainScroll = useCallback\([\s\S]*?\n  \}, \[active, onNearBottomChange\]\);/
+    /const handleChatMainScroll = useCallback\([\s\S]*?(?=\n\n  const clearChatMainInteractionRelease)/
+  )?.[0] ?? "";
+  const contentSizeHandlerBody = chatSurfaceBody.match(
+    /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  const surfaceInner)/
   )?.[0] ?? "";
   const keyboardBody = memoryRoomScreen.match(/\/\/ Keyboard handling:[\s\S]*?function showPeopleToast/)?.[0] ?? "";
 
@@ -467,8 +501,9 @@ test("chat scrolling stays user-owned and the oldest message remains reachable a
   assert.doesNotMatch(scrollHandlerBody, /scrollToBottom/);
   assert.match(chatSurfaceBody, /onMomentumScrollBegin: handleChatMainMomentumBegin/);
   assert.match(chatSurfaceBody, /onMomentumScrollEnd: handleChatMainMomentumEnd/);
-  assert.doesNotMatch(chatSurfaceBody, /handleChatMainContentSizeChange/);
-  assert.doesNotMatch(chatSurfaceBody, /onContentSizeChange: handleChatMain/);
+  assert.match(contentSizeHandlerBody, /recordMemoryChatPlacement\("CONTENT_SIZE_CHANGED"/);
+  assert.doesNotMatch(contentSizeHandlerBody, /scrollToBottom|scrollToOffset|scrollToIndex/);
+  assert.match(chatSurfaceBody, /onContentSizeChange: handleChatMainContentSizeChange/);
   assert.match(chatSurfaceBody, /directionalLockEnabled: true/);
   assert.match(chatSurfaceBody, /nestedScrollEnabled: true/);
   assert.match(chatSurfaceBody, /scrollEnabled: true/);
@@ -595,7 +630,7 @@ test("single-image chat media keeps one effective rounded clip and stable image 
   // Keyboard progress reaches only the Reanimated parent. The image receives a
   // primitive URI, stable recycling key, static leaf style, and no transition,
   // key, keyboard, or progress prop capable of recreating its native layer.
-  assert.match(imageNode, /source=\{media\.publicUrl\}/);
+  assert.match(imageNode, /source=\{media\.thumbnailUrl \|\| media\.publicUrl\}/);
   assert.match(imageNode, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
   assert.match(imageNode, /style=\{styles\.mediaImage\}/);
   assert.doesNotMatch(imageNode, /source=\{\{/);
@@ -687,8 +722,8 @@ test("room mount resolves cached chat before background network reconciliation",
     /export function useMemoryRoomQuery\([\s\S]*?(?=\nexport function useMemoryMessagePagesQuery)/
   )?.[0] ?? "";
   const queryFunction = roomQuery.match(/queryFn: async \(\) => \{[\s\S]*?(?=\n    enabled:)/)?.[0] ?? "";
-  const cachedRead = queryFunction.indexOf("await readOfflineMemoryRoom(roomId)");
-  const backgroundRefresh = queryFunction.indexOf("void getMemoryRoomOfflineFirst(roomId)");
+  const cachedRead = queryFunction.indexOf("await readInitialLocalRoom()");
+  const backgroundRefresh = queryFunction.indexOf('void refreshRoom("room_reconcile")');
   const cachedReturn = queryFunction.indexOf("return cached;");
 
   assert.notEqual(cachedRead, -1);
@@ -795,15 +830,15 @@ test("a cold room renders its cached summary shell instead of a black spinner", 
   assert.match(memoryRoomScreen, /const cachedRoomSummary = memoryRoomSummariesFromPages/);
   assert.match(loadingBranch, /<MemoryRoomLoadingShell/);
   assert.doesNotMatch(loadingBranch, /MemoryCenterState|ActivityIndicator/);
-  assert.match(loadingShell, /summary\.participantCount/);
-  assert.match(loadingShell, /summary\.messageCount/);
-  assert.match(loadingShell, /summary\.photoCount/);
+  assert.match(loadingShell, /summary\?\.title/);
+  assert.match(loadingShell, /summary\?\.placeNames/);
+  assert.match(loadingShell, /summary\.visitDate \?\? summary\.createdAt/);
   assert.doesNotMatch(loadingShell, /ActivityIndicator/);
 });
 
 test("older chat pages read SQLite before starting the network request", () => {
   const offlineFirstMessagesPage = memoryService.match(
-    /export async function getMemoryMessagesPageOfflineFirst\([\s\S]*?(?=\nexport async function getMemoryMediaPageOfflineFirst)/
+    /export async function getMemoryMessagesPageOfflineFirst\([\s\S]*?(?=\nexport async function readMemoryMediaPageOffline)/
   )?.[0] ?? "";
   const cachedPageRead = offlineFirstMessagesPage.indexOf("await readOfflineMemoryMessagesPage");
   const networkPageRead = offlineFirstMessagesPage.indexOf("await getMemoryMessagesPage(");
@@ -899,7 +934,10 @@ test("text sends persist an outbox row and use stable server idempotency", () =>
 test("chat media previews show the whole captured image or video thumbnail", () => {
   const mediaPreviewBody = memoryRoomScreen.match(/function MediaPreview\([\s\S]*?\nfunction createStyles/)?.[0] ?? "";
   assert.match(mediaPreviewBody, /contentFit = "contain"/);
-  assert.match(mediaPreviewBody, /<VideoThumbnailLayer cacheKey=\{memoryMediaCacheKey\(media\)\} contentFit=\{contentFit\} uri=\{media\.publicUrl\}/);
+  assert.match(
+    mediaPreviewBody,
+    /<VideoThumbnailLayer cacheKey=\{memoryMediaCacheKey\(media\)\} contentFit=\{contentFit\} posterUri=\{media\.posterUrl\} uri=\{media\.publicUrl\}/
+  );
   assert.match(mediaPreviewBody, /contentFit=\{contentFit\}/);
   assert.doesNotMatch(mediaPreviewBody, /contentFit="cover"/);
 });
@@ -930,7 +968,9 @@ test("media tab keeps fixed square gallery blocks independent of chat bubble siz
 test("phase 4 keeps upload-side media crash guards in place", () => {
   assert.match(mediaPipeline, /const UPLOAD_IMAGE_MAX_EDGE = 2400/);
   assert.match(mediaPipeline, /const UPLOAD_IMAGE_QUALITY = 0\.85/);
-  assert.match(mediaPipeline, /uploadTimeoutFor\(body\.byteLength\)/);
+  assert.match(mediaPipeline, /uploadTimeoutFor\(fileSizeBytes\)/);
+  assert.match(mediaPipeline, /FileSystem\.createUploadTask/);
+  assert.doesNotMatch(mediaPipeline, /fileBodyFromUri\(uri\)[\s\S]*uploadTimeoutFor\(body\.byteLength\)/);
   assert.match(memoryValidation, /MEMORY_VIDEO_MAX_DURATION_MS/);
   assert.match(memoryValidation, /memoryMediaMaxOriginalBytes\(kind\)/);
 });
@@ -948,18 +988,27 @@ test("camera preview persists a non-blocking optimistic send before returning to
   assert.match(memoryPreviewScreen, /addPhoto\.mutate\(\{[\s\S]*clientCreatedAt,[\s\S]*clientOrderKey:[\s\S]*uploadBatchId: clientId/);
   assert.doesNotMatch(memoryPreviewScreen, /await addPhoto\.mutateAsync|await postMemoryRoomMedia/);
   assert.match(memoryPreviewScreen, /removeMemoryCapture\(asset\.id\)/);
-  assert.match(memoryPreviewScreen, /router\.dismissTo\(\{[\s\S]*params: \{ id: roomId, tab: "chat" \}/);
+  assert.match(
+    memoryPreviewScreen,
+    /router\.dismissTo\(\{[\s\S]*params: \{[\s\S]*id: roomId,[\s\S]*journeyRunId: journeySession\.journeyRunId,[\s\S]*roomSessionId: journeySession\.roomSessionId,[\s\S]*tab: "chat"/
+  );
   assert.doesNotMatch(memoryPreviewScreen, /queueMemoryCapturePost\(asset\.id/);
   assert.doesNotMatch(memoryPreviewScreen, /postCaptureId: asset\.id/);
   assert.doesNotMatch(memoryRoomScreen, /consumeMemoryCapturePost\(postCaptureId\)/);
   assert.doesNotMatch(memoryRoomScreen, /postCaptureId/);
 });
 
-test("adding a dish from the attachment sheet returns to chat, not the dishes tab", () => {
-  const submitDishBody = memoryRoomScreen.match(/async function submitDishFromAttachment\(\)[\s\S]*?\n  }/)?.[0] ?? "";
-  assert.match(submitDishBody, /setAttachmentOptionsVisible\(false\)/);
-  assert.match(submitDishBody, /requestRoomMode\("chat"\)/);
-  assert.match(submitDishBody, /scrollChatToBottom\(true\)/);
-  assert.doesNotMatch(submitDishBody, /"dishes"/);
-  assert.doesNotMatch(submitDishBody, /attachmentOriginMode === "chat"/);
+test("adding a dish uses the dedicated route and returns to the originating room", () => {
+  const openDishBody = memoryRoomScreen.match(
+    /function openFloatingAddDish\(\) \{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+  const submitDishBody = memoryAddDishScreen.match(
+    /async function submitDish\(\) \{[\s\S]*?\n  \}/
+  )?.[0] ?? "";
+
+  assert.match(openDishBody, /setFloatingAddMenuOpen\(false\)/);
+  assert.match(openDishBody, /pathname: "\/memories\/\[id\]\/add-dish"/);
+  assert.match(submitDishBody, /await addDish\.mutateAsync/);
+  assert.match(submitDishBody, /router\.back\(\)/);
+  assert.doesNotMatch(submitDishBody, /router\.replace|requestRoomMode/);
 });

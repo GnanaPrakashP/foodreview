@@ -25,6 +25,7 @@ const artifactDir = process.env.ANDROID_MEMORY_ARTIFACT_DIR ??
 const apkPath = `${root}mobile/android/app/build/outputs/apk/debug/app-debug.apk`;
 const authOptions = { auth: { autoRefreshToken: false, persistSession: false } };
 let fixture;
+let fixtureSeedUsers = [];
 let fixtureServer;
 let mediaWorkerOutput = [];
 let mediaPumpBusy = false;
@@ -33,9 +34,19 @@ let metro;
 let placementLogger;
 let placementLineBuffer = "";
 let placementEventStream = [];
+let journeyEventStream = [];
 let server;
 let recorder;
 let serverOutput = [];
+let physicalNetworkDisabled = false;
+let tabTapRetryCount = 0;
+let currentRoomTab = null;
+let compactRoomTabPoints = new Map();
+let expandedRoomTabPoints = new Map();
+let deviceViewport = {
+  height: Number.POSITIVE_INFINITY,
+  width: Number.POSITIVE_INFINITY
+};
 const mediaWorkerSecret = "memory-visual-media-worker-secret-material-0123456789";
 
 function localStatus() {
@@ -80,17 +91,35 @@ async function adbRun(args, allowFailure = false, timeout = 30_000) {
   }
 }
 
+async function captureScreenshot(path) {
+  const result = await execFileAsync(
+    adb,
+    ["-s", serial, "exec-out", "screencap", "-p"],
+    { encoding: null, maxBuffer: 32 * 1024 * 1024, timeout: 30_000 }
+  );
+  writeFileSync(path, result.stdout);
+}
+
 async function readConnectedDevice() {
-  const [manufacturer, model, release, inputMethod] = await Promise.all([
+  const [manufacturer, model, release, inputMethod, physicalSize] = await Promise.all([
     adbRun(["shell", "getprop", "ro.product.manufacturer"]),
     adbRun(["shell", "getprop", "ro.product.model"]),
     adbRun(["shell", "getprop", "ro.build.version.release"]),
-    adbRun(["shell", "settings", "get", "secure", "default_input_method"])
+    adbRun(["shell", "settings", "get", "secure", "default_input_method"]),
+    adbRun(["shell", "wm", "size"])
   ]);
+  const viewport = [...physicalSize.matchAll(/(\d+)x(\d+)/g)].at(-1);
+  if (viewport) {
+    deviceViewport = {
+      height: Number(viewport[2]),
+      width: Number(viewport[1])
+    };
+  }
   const keyboard = inputMethod.includes("com.google.android.inputmethod.latin")
     ? "Gboard"
     : inputMethod.trim().slice(0, 80);
   return {
+    display: `${deviceViewport.width}x${deviceViewport.height}`,
     keyboard,
     manufacturer: manufacturer.trim().slice(0, 40),
     model: model.trim().slice(0, 80),
@@ -98,51 +127,191 @@ async function readConnectedDevice() {
   };
 }
 
-async function seed(admin) {
-  const suffix = Date.now().toString(36).slice(-7);
-  const email = `memory-visual-${suffix}@example.test`;
-  const username = `mvv_${suffix}`.slice(0, 20);
+async function createFixtureUser(admin, suffix, label) {
+  const email = `memory-visual-${label}-${suffix}@example.test`;
+  const username = `mvv_${label}_${suffix}`.slice(0, 20);
   const user = await admin.auth.admin.createUser({ email, email_confirm: true });
   if (user.error || !user.data.user) throw user.error ?? new Error("fixture_user_create_failed");
   const userId = user.data.user.id;
   const profile = await admin.from("profiles").upsert({
     account_status: "active",
     account_type: "public",
-    first_name: "Device",
+    first_name: label === "owner" ? "Device" : "Fixture",
     id: userId,
-    last_name: "Visual",
+    last_name: label === "owner" ? "Visual" : label,
     username
   });
   if (profile.error) throw profile.error;
+  const created = { email, userId, username };
+  fixtureSeedUsers.push(created);
+  return created;
+}
+
+async function seed(admin, representative = false) {
+  const suffix = Date.now().toString(36).slice(-7);
+  const owner = await createFixtureUser(admin, suffix, "owner");
+  const participants = representative
+    ? await Promise.all([
+      createFixtureUser(admin, suffix, "guest1"),
+      createFixtureUser(admin, suffix, "guest2")
+    ])
+    : [];
   const room = await admin.from("shared_memory_rooms").insert({
     area: "Synthetic device fixture",
-    created_by: username,
+    created_by: owner.username,
+    occasion_type: "friends_hangout",
     restaurant_name: "Synthetic table",
     status: "published",
-    title: "Visual validation"
+    title: "Visual validation",
+    visit_date: new Date().toISOString().slice(0, 10)
   }).select("id").single();
   if (room.error) throw room.error;
   const roomId = room.data.id;
-  const member = await admin.from("shared_memory_members").insert({
-    role: "owner",
-    room_id: roomId,
-    user_name: username
-  });
+  const member = await admin.from("shared_memory_members").insert([
+    {
+      role: "owner",
+      room_id: roomId,
+      user_name: owner.username
+    },
+    ...participants.map((participant) => ({
+      role: "participant",
+      room_id: roomId,
+      user_name: participant.username
+    }))
+  ]);
   if (member.error) throw member.error;
-  const baseline = await admin.from("shared_memory_messages").insert({
-    author_name: username,
-    body: "Fixture ready",
-    room_id: roomId
-  });
-  if (baseline.error) throw baseline.error;
-  return { email, roomId, userId, username };
+
+  if (!representative) {
+    const baseline = await admin.from("shared_memory_messages").insert({
+      author_name: owner.username,
+      body: "Fixture ready",
+      room_id: roomId
+    });
+    if (baseline.error) throw baseline.error;
+  } else {
+    const stopInsert = await admin.from("shared_memory_stops").insert([
+      {
+        created_by: owner.username,
+        name: "Synthetic cafe",
+        note: "Fixture stop one",
+        position: 0,
+        room_id: roomId,
+        stop_type: "cafe"
+      },
+      {
+        created_by: participants[0].username,
+        name: "Synthetic dinner",
+        note: "Fixture stop two",
+        position: 1,
+        room_id: roomId,
+        stop_type: "restaurant"
+      },
+      {
+        created_by: participants[1].username,
+        name: "Synthetic activity",
+        note: "Fixture stop three",
+        position: 2,
+        room_id: roomId,
+        stop_type: "activity"
+      }
+    ]).select("id");
+    if (stopInsert.error) throw stopInsert.error;
+    const stops = stopInsert.data;
+    const usernames = [owner.username, ...participants.map((item) => item.username)];
+    const dishInsert = await admin.from("shared_memory_dishes").insert(
+      Array.from({ length: 12 }, (_, index) => ({
+        added_by: usernames[index % usernames.length],
+        dish_name: `Fixture dish ${String(index + 1).padStart(2, "0")}`,
+        note: `Synthetic dish note ${index + 1}`,
+        room_id: roomId,
+        stop_id: stops[index % stops.length].id
+      }))
+    ).select("id");
+    if (dishInsert.error) throw dishInsert.error;
+    const ratings = await admin.from("shared_memory_dish_ratings").insert(
+      dishInsert.data.flatMap((dish, index) => usernames.map((ratedBy, raterIndex) => ({
+        dish_id: dish.id,
+        rated_by: ratedBy,
+        rating: ((index + raterIndex) % 5) + 1,
+        room_id: roomId
+      })))
+    );
+    if (ratings.error) throw ratings.error;
+
+    const now = Date.now();
+    const messageInsert = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 60 }, (_, index) => ({
+        author_name: usernames[index % usernames.length],
+        body: `Fixture message ${String(index + 1).padStart(2, "0")}`,
+        created_at: new Date(now - (60 - index) * 60_000).toISOString(),
+        room_id: roomId
+      }))
+    ).select("id");
+    if (messageInsert.error) throw messageInsert.error;
+    const replies = await admin.from("shared_memory_messages").insert(
+      [10, 20, 30, 40, 50].map((index, replyIndex) => ({
+        author_name: usernames[(replyIndex + 1) % usernames.length],
+        body: `Fixture reply ${replyIndex + 1}`,
+        created_at: new Date(now - (5 - replyIndex) * 30_000).toISOString(),
+        reply_to_message_id: messageInsert.data[index].id,
+        room_id: roomId
+      }))
+    );
+    if (replies.error) throw replies.error;
+  }
+
+  let secondRoomId = null;
+  if (representative) {
+    const secondRoom = await admin.from("shared_memory_rooms").insert({
+      area: "Synthetic alternate fixture",
+      created_by: owner.username,
+      occasion_type: "casual",
+      restaurant_name: "Synthetic alternate table",
+      status: "published",
+      title: "Visual validation B",
+      visit_date: new Date().toISOString().slice(0, 10)
+    }).select("id").single();
+    if (secondRoom.error) throw secondRoom.error;
+    secondRoomId = secondRoom.data.id;
+    const secondMembers = await admin.from("shared_memory_members").insert(
+      [owner, ...participants].map((participant, index) => ({
+        role: index === 0 ? "owner" : "participant",
+        room_id: secondRoomId,
+        user_name: participant.username
+      }))
+    );
+    if (secondMembers.error) throw secondMembers.error;
+    const secondMessages = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 8 }, (_, index) => ({
+        author_name: [owner, ...participants][index % 3].username,
+        body: `Alternate room message ${index + 1}`,
+        room_id: secondRoomId
+      }))
+    );
+    if (secondMessages.error) throw secondMessages.error;
+  }
+
+  return {
+    email: owner.email,
+    roomId,
+    roomIds: [roomId, ...(secondRoomId ? [secondRoomId] : [])],
+    secondRoomId,
+    userId: owner.userId,
+    username: owner.username,
+    users: [owner, ...participants]
+  };
 }
 
 async function cleanup(admin, value) {
   if (!value) return;
-  await admin.from("shared_memory_rooms").delete().eq("id", value.roomId);
-  await admin.from("profiles").delete().eq("id", value.userId);
-  await admin.auth.admin.deleteUser(value.userId);
+  for (const roomId of value.roomIds ?? [value.roomId]) {
+    await admin.from("shared_memory_rooms").delete().eq("id", roomId);
+  }
+  for (const user of value.users ?? [{ userId: value.userId }]) {
+    await admin.from("profiles").delete().eq("id", user.userId);
+    await admin.auth.admin.deleteUser(user.userId);
+  }
+  fixtureSeedUsers = [];
 }
 
 function startServer(env) {
@@ -277,6 +446,7 @@ function buildInstrumentedAndroid(env) {
     EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
     EXPO_PUBLIC_APP_ENVIRONMENT: "development",
     EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS: "1",
+    EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS: "1",
     EXPO_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
     EXPO_PUBLIC_SUPABASE_URL: env.url,
     JAVA_HOME: "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
@@ -306,9 +476,13 @@ function startInstrumentedMetro(env) {
       EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
       EXPO_PUBLIC_APP_ENVIRONMENT: "development",
       EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS: "1",
-      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_KINDS: scenario === "media" ? mediaKind : "",
-      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_ORIGIN: scenario === "media" ? fixtureBaseUrl : "",
-      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_START_MS: scenario === "media" ? "5000" : "",
+      EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS: "1",
+      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_KINDS:
+        scenario === "media" ? mediaKind : scenario === "journey" ? "image,video" : "",
+      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_ORIGIN:
+        scenario === "media" || scenario === "journey" ? fixtureBaseUrl : "",
+      EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_START_MS:
+        scenario === "media" || scenario === "journey" ? "5000" : "",
       EXPO_PUBLIC_CHAT_PLACEMENT_STALE_REFRESH_MS: scenario === "stale" ? "400" : "",
       EXPO_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       EXPO_PUBLIC_SUPABASE_URL: env.url,
@@ -355,10 +529,16 @@ function pointFor(xml, labels) {
   const nodes = decodedXml(xml).match(/<node\b[^>]*>/g) ?? [];
   for (const label of labels) {
     const lower = label.toLowerCase();
+    const values = (node) => ({
+      description: /content-desc="([^"]*)"/.exec(node)?.[1]?.toLowerCase() ?? "",
+      text: /text="([^"]*)"/.exec(node)?.[1]?.toLowerCase() ?? ""
+    });
     const node = nodes.find((value) => {
-      const text = /text="([^"]*)"/.exec(value)?.[1]?.toLowerCase() ?? "";
-      const description = /content-desc="([^"]*)"/.exec(value)?.[1]?.toLowerCase() ?? "";
-      return text === lower || description === lower || text.includes(lower) || description.includes(lower);
+      const { description, text } = values(value);
+      return text === lower || description === lower;
+    }) ?? nodes.find((value) => {
+      const { description, text } = values(value);
+      return text.includes(lower) || description.includes(lower);
     });
     const bounds = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
     if (bounds) {
@@ -371,6 +551,26 @@ function pointFor(xml, labels) {
   return null;
 }
 
+function pointForPattern(xml, pattern) {
+  const nodes = decodedXml(xml).match(/<node\b[^>]*>/g) ?? [];
+  const node = nodes.find((value) => {
+    const description = /content-desc="([^"]*)"/.exec(value)?.[1] ?? "";
+    const text = /text="([^"]*)"/.exec(value)?.[1] ?? "";
+    if (!pattern.test(description) && !pattern.test(text)) return false;
+    const bounds = value.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+    if (!bounds) return false;
+    const x = Math.round((Number(bounds[1]) + Number(bounds[3])) / 2);
+    const y = Math.round((Number(bounds[2]) + Number(bounds[4])) / 2);
+    return x > 0 && x < deviceViewport.width && y > 0 && y < deviceViewport.height;
+  });
+  const bounds = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+  if (!bounds) return null;
+  return {
+    x: Math.round((Number(bounds[1]) + Number(bounds[3])) / 2),
+    y: Math.round((Number(bounds[2]) + Number(bounds[4])) / 2)
+  };
+}
+
 async function waitForPoint(labels, label, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   let last = "";
@@ -378,6 +578,16 @@ async function waitForPoint(labels, label, timeoutMs = 20_000) {
     last = await uiXml();
     const point = pointFor(last, labels);
     if (point) return { point, xml: last };
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function waitForPattern(pattern, label, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const point = pointForPattern(await uiXml(), pattern);
+    if (point) return point;
     await delay(250);
   }
   throw new Error(`Timed out waiting for ${label}`);
@@ -397,6 +607,163 @@ async function navigateToChat() {
   const input = await waitForPoint(["Type a message"], "chat composer");
   const send = await waitForPoint(["Record audio message"], "chat send/microphone button");
   return { input: input.point, send: send.point };
+}
+
+async function navigateToRoom(title = "Visual validation") {
+  let target = await waitForPoint(["Memories"], "Profile Memories tab");
+  await tap(target.point);
+  target = await waitForPoint([title], `synthetic Memory Room ${title}`);
+  await tap(target.point);
+  await waitForPoint(["Table"], "Memory Room Table tab");
+  const xml = await uiXml();
+  expandedRoomTabPoints = new Map(
+    ["Table", "Chat", "Media", "Dishes"].map((label) => [label, pointFor(xml, [label])])
+  );
+  compactRoomTabPoints = new Map();
+  currentRoomTab = "overview";
+}
+
+async function switchRoomTab(label) {
+  const tab = label === "Table" ? "overview" : label.toLowerCase();
+  if (currentRoomTab === tab) return;
+  const before = journeyEventStream.filter((event) => (
+    event.action === "TAB_PRESS" && event.tab === tab
+  )).length;
+  const cachedPoint = (
+    currentRoomTab === "overview" ? expandedRoomTabPoints : compactRoomTabPoints
+  ).get(label);
+  const target = cachedPoint ? { point: cachedPoint } : await waitForPoint([label], `${label} tab`);
+  // Header geometry is stable for the room lifecycle. Reusing coordinates
+  // captured at room entry avoids reacquiring UIAutomator's accessibility
+  // channel immediately before a synthetic touch.
+  await tap(target.point);
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (journeyEventStream.filter((event) => (
+      event.action === "TAB_PRESS" && event.tab === tab
+    )).length > before) {
+      const press = journeyEventStream.findLast((event) => (
+        event.action === "TAB_PRESS" && event.tab === tab
+      ));
+      await waitForJourneyActionAfter("TAB_USABLE", tab, press.monotonicTimestampMs);
+      currentRoomTab = tab;
+      if (tab !== "overview" && compactRoomTabPoints.size === 0) {
+        const compactXml = await uiXml();
+        compactRoomTabPoints = new Map(
+          ["Table", "Chat", "Media", "Dishes"].map((tabLabel) => [
+            tabLabel,
+            pointFor(compactXml, [tabLabel])
+          ])
+        );
+        await delay(1_500);
+      }
+      return;
+    }
+    await delay(100);
+  }
+  tabTapRetryCount += 1;
+  // Reuse the already resolved coordinate. Dumping the hierarchy again would
+  // reacquire the same accessibility channel whose release we are testing.
+  await delay(1_500);
+  await tap(target.point);
+  const retryDeadline = Date.now() + 5_000;
+  while (Date.now() < retryDeadline) {
+    if (journeyEventStream.filter((event) => (
+      event.action === "TAB_PRESS" && event.tab === tab
+    )).length > before) {
+      const press = journeyEventStream.findLast((event) => (
+        event.action === "TAB_PRESS" && event.tab === tab
+      ));
+      await waitForJourneyActionAfter("TAB_USABLE", tab, press.monotonicTimestampMs);
+      currentRoomTab = tab;
+      if (tab !== "overview" && compactRoomTabPoints.size === 0) {
+        const compactXml = await uiXml();
+        compactRoomTabPoints = new Map(
+          ["Table", "Chat", "Media", "Dishes"].map((tabLabel) => [
+            tabLabel,
+            pointFor(compactXml, [tabLabel])
+          ])
+        );
+        await delay(1_500);
+      }
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`${label} tab did not respond after a bounded retry`);
+}
+
+async function fastScrollCurrentSurface() {
+  await adbRun(["shell", "input", "swipe", "540", "1750", "540", "550", "240"]);
+  await delay(180);
+  await adbRun(["shell", "input", "swipe", "540", "650", "540", "1650", "240"]);
+  await delay(220);
+}
+
+async function replyToVisibleFixtureMessage() {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const xml = await uiXml();
+    const target = pointFor(xml, [
+      "Video",
+      "Photo",
+      "Fixture message 60",
+      "Fixture message 59",
+      "Fixture reply"
+    ]) ?? { x: 420, y: 1_150 };
+    await adbRun([
+      "shell",
+      "input", "swipe",
+      String(target.x),
+      String(target.y),
+      String(Math.min(1_180, target.x + 380)),
+      String(target.y),
+      "320"
+    ]);
+    try {
+      await waitForPoint(["Cancel reply"], "reply composer", 1_500);
+      await sendText("ReplyJourney");
+      return;
+    } catch {
+      await adbRun(["shell", "input", "swipe", "540", "700", "540", "1600", "280"]);
+      await delay(250);
+    }
+  }
+  throw new Error("Could not activate reply on a visible confirmed message");
+}
+
+async function backgroundAndForeground() {
+  const foregroundCount = journeyEventStream.filter((event) => event.action === "APP_FOREGROUND").length;
+  await adbRun(["shell", "input", "keyevent", "3"]);
+  await delay(1_000);
+  await adbRun([
+    "shell", "monkey",
+    "-p", packageName,
+    "-c", "android.intent.category.LAUNCHER",
+    "1"
+  ]);
+  await waitForPoint(["Table", "Chat", "Type a message"], "foreground Memory Room", 20_000);
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (journeyEventStream.filter((event) => event.action === "APP_FOREGROUND").length > foregroundCount) {
+      const foregroundEvent = journeyEventStream.findLast(
+        (event) => event.action === "APP_FOREGROUND"
+      );
+      if (foregroundEvent?.keyboardState === "open") {
+        await adbRun(["shell", "input", "keyevent", "4"]);
+        await delay(500);
+      }
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error("Memory Room did not publish APP_FOREGROUND after relaunch");
+}
+
+async function setPhysicalNetworkEnabled(enabled) {
+  const value = enabled ? "enable" : "disable";
+  await adbRun(["shell", "svc", "wifi", value], true);
+  await adbRun(["shell", "svc", "data", value], true);
+  await delay(enabled ? 2_500 : 1_500);
 }
 
 async function exitRoomFromTableAfterChatVisit() {
@@ -558,8 +925,22 @@ function placementEvents(logcat) {
   });
 }
 
+function journeyEvents(logcat) {
+  return logcat.split("\n").flatMap((line) => {
+    const payload = /CB_MEMORY_JOURNEY\s+(\{.*\})/.exec(line)?.[1];
+    if (!payload) return [];
+    try {
+      const parsed = JSON.parse(payload);
+      return parsed && typeof parsed === "object" ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function startPlacementLogger() {
   placementEventStream = [];
+  journeyEventStream = [];
   placementLineBuffer = "";
   placementLogger = spawn(adb, [
     "-s", serial,
@@ -574,12 +955,43 @@ function startPlacementLogger() {
     placementLineBuffer = lines.pop() ?? "";
     for (const line of lines) {
       placementEventStream.push(...placementEvents(line));
+      journeyEventStream.push(...journeyEvents(line));
     }
   });
 }
 
 async function readPlacementEvents() {
   return placementEventStream.slice();
+}
+
+async function readJourneyEvents() {
+  return journeyEventStream.slice();
+}
+
+async function waitForJourneyAction(action, tab, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const event = journeyEventStream.findLast((item) => (
+      item.action === action && (!tab || item.tab === tab)
+    ));
+    if (event) return event;
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for journey action ${action}${tab ? ` on ${tab}` : ""}`);
+}
+
+async function waitForJourneyActionAfter(action, tab, afterTimestamp, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const event = journeyEventStream.find((item) => (
+      item.action === action &&
+      (!tab || item.tab === tab) &&
+      item.monotonicTimestampMs >= afterTimestamp
+    ));
+    if (event) return event;
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for new journey action ${action}${tab ? ` on ${tab}` : ""}`);
 }
 
 async function waitForSendCount(count, timeoutMs = 20_000) {
@@ -727,6 +1139,155 @@ function parseGfx(output) {
   };
 }
 
+function summarizeServerRequests(output) {
+  const grouped = new Map();
+  const requestPattern = /(?:^|\n)\s*(GET|POST|PUT|PATCH|DELETE) (\/api\/\S+) \d{3} in (\d+)ms/g;
+  for (const match of output.matchAll(requestPattern)) {
+    const method = match[1];
+    const parsed = new URL(match[2], "http://memory-room.invalid");
+    const route = parsed.pathname.replace(
+      /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi,
+      "/:id"
+    );
+    const action = route === "/api/mobile/memories/read"
+      ? parsed.searchParams.get("action")
+      : null;
+    const category = action && /^[a-z_]+$/i.test(action)
+      ? `${method} ${route}?action=${action}`
+      : `${method} ${route}`;
+    const current = grouped.get(category) ?? { count: 0, durationMs: 0 };
+    current.count += 1;
+    current.durationMs += Number(match[3]);
+    grouped.set(category, current);
+  }
+  return {
+    byCategory: Object.fromEntries([...grouped.entries()].sort(([left], [right]) => (
+      left.localeCompare(right)
+    ))),
+    total: [...grouped.values()].reduce((sum, value) => sum + value.count, 0)
+  };
+}
+
+function memoryValue(output, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return Number(new RegExp(`${escaped}:\\s+([\\d,]+)`, "i").exec(output)?.[1]?.replaceAll(",", "") ?? 0);
+}
+
+async function sampleMemory(label) {
+  const output = await adbRun(["shell", "dumpsys", "meminfo", packageName], true);
+  return {
+    graphicsKb: memoryValue(output, "Graphics"),
+    javaHeapKb: memoryValue(output, "Java Heap"),
+    label,
+    nativeHeapKb: memoryValue(output, "Native Heap"),
+    sampledAt: new Date().toISOString(),
+    totalPssKb: memoryValue(output, "TOTAL PSS")
+  };
+}
+
+function summarizeJourney(events) {
+  const tabTransitions = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const press = events[index];
+    if (press.action !== "TAB_PRESS") continue;
+    const transitionEvents = events.slice(index + 1).filter((event) => (
+      event.roomSessionId === press.roomSessionId && event.tab === press.tab
+    ));
+    const firstFrame = transitionEvents.find((event) => event.action === "TAB_FIRST_FRAME");
+    const usable = transitionEvents.find((event) => event.action === "TAB_USABLE");
+    const settled = transitionEvents.find((event) => event.action === "TAB_TRANSITION_SETTLED");
+    tabTransitions.push({
+      blankFrames: null,
+      firstFrameMs: firstFrame
+        ? Math.max(0, firstFrame.monotonicTimestampMs - press.monotonicTimestampMs)
+        : null,
+      from: press.fromTab ?? null,
+      mountCount: usable
+        ? Math.max(0, usable.mountCount - press.mountCount)
+        : null,
+      networkRequestCount: usable
+        ? Math.max(0, usable.networkRequestCount - press.networkRequestCount)
+        : null,
+      settledMs: settled
+        ? Math.max(0, settled.monotonicTimestampMs - press.monotonicTimestampMs)
+        : null,
+      to: press.tab,
+      usableMs: usable
+        ? Math.max(0, usable.monotonicTimestampMs - press.monotonicTimestampMs)
+        : null
+    });
+  }
+  const final = events.at(-1) ?? null;
+  const roomGroupMap = new Map();
+  for (const event of events) {
+    const roomEvents = roomGroupMap.get(event.roomSessionId) ?? [];
+    roomEvents.push(event);
+    roomGroupMap.set(event.roomSessionId, roomEvents);
+  }
+  const roomGroups = [...roomGroupMap.values()];
+  return {
+    actionCounts: Object.fromEntries(
+      [...new Set(events.map((event) => event.action))].map((action) => [
+        action,
+        events.filter((event) => event.action === action).length
+      ])
+    ),
+    eventCount: events.length,
+    durationMs: events.length > 1
+      ? events.at(-1).monotonicTimestampMs - events[0].monotonicTimestampMs
+      : 0,
+    entry: roomGroups.map((roomEvents) => {
+      const tap = roomEvents.find((event) => event.action === "ROOM_TAP");
+      const relative = (action, tab) => {
+        const event = roomEvents.find((item) => (
+          item.action === action && (!tab || item.tab === tab)
+        ));
+        return tap && event ? event.monotonicTimestampMs - tap.monotonicTimestampMs : null;
+      };
+      return {
+        firstFrameMs: relative("ROOM_FIRST_FRAME"),
+        localSnapshotMs: relative("LOCAL_SNAPSHOT_RENDERED"),
+        serverReconciledMs: relative("SERVER_REFRESH_APPLIED"),
+        tableUsableMs: relative("TAB_USABLE", "overview")
+      };
+    }),
+    exit: roomGroups.map((roomEvents) => {
+      const started = roomEvents.find((event) => event.action === "ROOM_EXIT_STARTED");
+      const unmounted = roomEvents.find((event) => event.action === "ROOM_SCREEN_UNMOUNT");
+      return started && unmounted
+        ? { unmountMs: unmounted.monotonicTimestampMs - started.monotonicTimestampMs }
+        : null;
+    }).filter(Boolean),
+    finalOwners: final ? {
+      playerCount: final.playerCount,
+      realtimeChannelCount: final.realtimeChannelCount
+    } : null,
+    networkCategories: [...new Set(
+      events.map((event) => event.networkRequestCategory).filter((value) => value && value !== "none")
+    )],
+    roomSessions: new Set(events.map((event) => event.roomSessionId)).size,
+    sqlite: {
+      reads: roomGroups.reduce(
+        (sum, roomEvents) => sum + Math.max(...roomEvents.map((event) => event.sqliteReadCount ?? 0)),
+        0
+      ),
+      writes: roomGroups.reduce(
+        (sum, roomEvents) => sum + Math.max(...roomEvents.map((event) => event.sqliteWriteCount ?? 0)),
+        0
+      )
+    },
+    tabTransitions
+  };
+}
+
+async function writeRuntimeStreams() {
+  const placement = await readPlacementEvents();
+  const journey = await readJourneyEvents();
+  writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(placement, null, 2)}\n`);
+  writeFileSync(`${artifactDir}/journey-events.json`, `${JSON.stringify(journey, null, 2)}\n`);
+  return { journey, placement };
+}
+
 async function startRecording() {
   const remote = "/sdcard/memory-chat-visual.mp4";
   await adbRun(["shell", "rm", remote], true);
@@ -746,21 +1307,22 @@ async function stopRecording(remote) {
   await delay(800);
   await adbRun(["pull", remote, `${artifactDir}/memory-chat-visual.mp4`], false, 60_000);
   await adbRun(["shell", "rm", remote], true);
+  recorder = null;
 }
 
 async function main() {
   mkdirSync(artifactDir, { recursive: true });
-  assert.ok(["exit", "full", "media", "stale", "tail"].includes(scenario), `Unsupported scenario: ${scenario}`);
+  assert.ok(["exit", "full", "journey", "media", "stale", "tail"].includes(scenario), `Unsupported scenario: ${scenario}`);
   assert.ok(["image", "video"].includes(mediaKind), `Unsupported media kind: ${mediaKind}`);
   const device = await readConnectedDevice();
-  if (scenario === "media") await prepareSyntheticMediaFixtures();
+  if (scenario === "media" || scenario === "journey") await prepareSyntheticMediaFixtures();
   const env = localStatus();
   const admin = createClient(env.url, env.serviceKey, authOptions);
   if (process.env.ANDROID_MEMORY_SKIP_BUILD !== "1") buildInstrumentedAndroid(env);
-  fixture = await seed(admin);
+  fixture = await seed(admin, scenario === "journey");
   const output = startServer(env);
   await waitForServer(output);
-  if (scenario === "media") startSyntheticMediaProcessingPump(admin);
+  if (scenario === "media" || scenario === "journey") startSyntheticMediaProcessingPump(admin);
   const metroOutput = startInstrumentedMetro(env);
   await waitForMetro(metroOutput);
 
@@ -768,7 +1330,7 @@ async function main() {
   await adbRun(["reverse", `tcp:${apiPort}`, `tcp:${apiPort}`]);
   await adbRun(["reverse", `tcp:${supabasePort}`, `tcp:${supabasePort}`]);
   await adbRun(["reverse", `tcp:${metroPort}`, `tcp:${metroPort}`]);
-  if (scenario === "media") {
+  if (scenario === "media" || scenario === "journey") {
     await adbRun(["reverse", `tcp:${fixturePort}`, `tcp:${fixturePort}`]);
   }
   run(process.execPath, ["scripts/android-installed-profile-login.mjs", "--stop-server-after"], {
@@ -789,22 +1351,191 @@ async function main() {
   });
 
   await adbRun(["shell", "pm", "grant", packageName, "android.permission.RECORD_AUDIO"], true);
-  let remoteRecording;
-  if (scenario === "media") {
-    // The diagnostic fixture starts shortly after Chat becomes active. Attach
-    // the event/video collectors before entering the tab so SEND_PRESS cannot
-    // race logcat startup on a warm device.
-    await adbRun(["logcat", "-c"]);
-    startPlacementLogger();
-    await adbRun(["shell", "dumpsys", "gfxinfo", packageName, "reset"], true);
-    remoteRecording = await startRecording();
-    await navigateToChat();
-  } else {
-    await navigateToChat();
-    await adbRun(["logcat", "-c"]);
-    startPlacementLogger();
-    await adbRun(["shell", "dumpsys", "gfxinfo", packageName, "reset"], true);
-    remoteRecording = await startRecording();
+  // Attach diagnostics before room navigation so entry, cache, subscription,
+  // and first-tab events are part of the same correlated journey.
+  await adbRun(["logcat", "-c"]);
+  startPlacementLogger();
+  await adbRun(["shell", "dumpsys", "gfxinfo", packageName, "reset"], true);
+  let remoteRecording = await startRecording();
+  if (scenario !== "journey") await navigateToChat();
+
+  if (scenario === "journey") {
+    const memorySamples = [await sampleMemory("profile_baseline")];
+    await navigateToRoom();
+    await waitForJourneyAction("TAB_USABLE", "overview");
+    memorySamples.push(await sampleMemory("room_entry"));
+    await fastScrollCurrentSurface();
+
+    await switchRoomTab("Dishes");
+    const rating = await waitForPattern(
+      /Rate Fixture dish \d+ 5 out of 5/i,
+      "visible dish rating control"
+    );
+    await tap(rating);
+    const dishMutationStarted = await waitForJourneyAction("DISH_MUTATION_STARTED", "dishes");
+    await waitForJourneyActionAfter(
+      "DISH_MUTATION_FINISHED",
+      "dishes",
+      dishMutationStarted.monotonicTimestampMs
+    );
+    await fastScrollCurrentSurface();
+
+    await switchRoomTab("Chat");
+    await waitForPoint(["Type a message"], "representative Chat composer");
+    // The development-only fixture posts one image and one video through the
+    // real upload/outbox path. Stay on Chat until both are durably confirmed.
+    let placement = await waitForSendCount(2, 180_000);
+    const fixtureSendIds = placement
+      .filter((event) => event.name === "SEND_PRESS")
+      .slice(0, 2)
+      .map((event) => event.clientId);
+    await waitForAllConfirmations(fixtureSendIds, 180_000);
+    memorySamples.push(await sampleMemory("after_media_uploads"));
+
+    await sendRapidTextBurst(["A", "B", "C", "D", "E"], null, 0.08, true);
+    await waitForSendCount(7, 30_000);
+    await sendMultiline();
+    await waitForSendCount(8, 20_000);
+    await replyToVisibleFixtureMessage();
+    await waitForSendCount(9, 20_000);
+
+    // This first Media switch deliberately happens with the Chat composer and
+    // Gboard still open. Background/foreground is exercised after viewer use;
+    // that path explicitly closes the restored IME before continuing because
+    // Android consumes the first header touch while restoring its IME window.
+    await switchRoomTab("Media");
+    const photo = await waitForPoint(["Open photo"], "uploaded photo in Media", 90_000);
+    await tap(photo.point);
+    const viewerClose = await waitForPoint(["Close media viewer"], "photo viewer");
+    memorySamples.push(await sampleMemory("image_viewer"));
+    await adbRun(["shell", "input", "swipe", "900", "1200", "180", "1200", "300"]);
+    await delay(1_000);
+    await tap(viewerClose.point);
+    await waitForJourneyAction("MEDIA_VIEWER_CLOSED", "media");
+    await waitForPoint(["Open photo", "Open video"], "Media grid after viewer close");
+    memorySamples.push(await sampleMemory("after_viewer_close"));
+    const video = await waitForPoint(["Open video"], "uploaded video in Media", 30_000);
+    const videoViewerOpenedAt = journeyEventStream.findLast(
+      (event) => event.action === "MEDIA_VIEWER_OPENED" && event.tab === "media"
+    )?.monotonicTimestampMs ?? 0;
+    await tap(video.point);
+    const videoViewerOpened = await waitForJourneyActionAfter(
+      "MEDIA_VIEWER_OPENED",
+      "media",
+      videoViewerOpenedAt + 0.001
+    );
+    await waitForJourneyActionAfter(
+      "PLAYER_CREATED",
+      "media",
+      videoViewerOpened.monotonicTimestampMs
+    );
+    await adbRun(["shell", "input", "tap", "540", "1200"]);
+    await delay(1_500);
+    memorySamples.push(await sampleMemory("video_playback"));
+    await tap(viewerClose.point);
+    await waitForJourneyActionAfter(
+      "MEDIA_VIEWER_CLOSED",
+      "media",
+      videoViewerOpened.monotonicTimestampMs
+    );
+
+    await switchRoomTab("Chat");
+    await backgroundAndForeground();
+    memorySamples.push(await sampleMemory("after_chat_background"));
+
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      for (const tab of ["Table", "Media", "Dishes", "Chat"]) {
+        await switchRoomTab(tab);
+      }
+    }
+    memorySamples.push(await sampleMemory("after_10_tab_cycles"));
+
+    physicalNetworkDisabled = true;
+    await setPhysicalNetworkEnabled(false);
+    await switchRoomTab("Chat");
+    await sendText("OfflineJourney");
+    await delay(1_000);
+    await backgroundAndForeground();
+    await setPhysicalNetworkEnabled(true);
+    physicalNetworkDisabled = false;
+    await delay(5_000);
+    await waitForPoint(["Type a message"], "Chat after reconnect");
+    memorySamples.push(await sampleMemory("after_reconnect"));
+
+    const firstExitMs = await exitRoomFromTableAfterChatVisit();
+    memorySamples.push(await sampleMemory("after_first_exit"));
+    await navigateToRoom("Visual validation B");
+    await switchRoomTab("Chat");
+    const alternateXml = await uiXml();
+    assert.ok(
+      pointFor(alternateXml, ["Alternate room message"]),
+      "alternate room did not show its own message history"
+    );
+    assert.equal(
+      pointFor(alternateXml, ["Fixture message 60"]),
+      null,
+      "room A content leaked into room B"
+    );
+    const secondExitMs = await exitRoomFromTableAfterChatVisit();
+    await navigateToRoom("Visual validation");
+    await switchRoomTab("Chat");
+    const returnedXml = await uiXml();
+    assert.equal(
+      pointFor(returnedXml, ["Alternate room message"]),
+      null,
+      "room B content leaked into room A"
+    );
+    const finalExitMs = await exitRoomFromTableAfterChatVisit();
+    await delay(1_000);
+    memorySamples.push(await sampleMemory("after_room_switching_exit"));
+
+    const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
+    await stopRecording(remoteRecording);
+    const streams = await writeRuntimeStreams();
+    const journey = summarizeJourney(streams.journey);
+    const serializedJourney = JSON.stringify(streams.journey);
+    for (const privateValue of [
+      "Fixture message",
+      "Visual validation",
+      fixture.username,
+      "http://",
+      "https://"
+    ]) {
+      assert.equal(
+        serializedJourney.includes(privateValue),
+        false,
+        `journey diagnostics leaked forbidden value: ${privateValue}`
+      );
+    }
+    assert.ok(journey.actionCounts.ROOM_SCREEN_MOUNT >= 3, "room entry instrumentation was incomplete");
+    assert.ok(journey.actionCounts.TAB_PRESS >= 40, "tab-switch journey did not cover ten full cycles");
+    assert.ok(journey.actionCounts.REALTIME_UNSUBSCRIBED >= 3, "room subscriptions did not clean up");
+
+    const report = {
+      artifact: `${artifactDir}/memory-chat-visual.mp4`,
+      device,
+      fixture: {
+        dishes: 12,
+        mediaKinds: ["image", "video"],
+        messages: 65,
+        participants: 3,
+        rooms: 2,
+        stops: 3
+      },
+      gfx,
+      journey,
+      memorySamples,
+      requests: summarizeServerRequests(serverOutput.join("")),
+      roomExitMs: [firstExitMs, secondExitMs, finalExitMs],
+      scenario: "completeMemoryRoomJourney",
+      status: tabTapRetryCount === 0 ? "PASS" : "PASS_WITH_TAB_TAP_RETRIES",
+      tabTapRetryCount
+    };
+    writeFileSync(`${artifactDir}/report.json`, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(JSON.stringify(report, null, 2));
+    await cleanup(admin, fixture);
+    fixture = null;
+    return;
   }
 
   if (scenario === "stale") {
@@ -828,7 +1559,7 @@ async function main() {
     if (row.error) throw row.error;
     const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
     await stopRecording(remoteRecording);
-    writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
+    await writeRuntimeStreams();
 
     assert.ok(
       eventOrder.indexOf("OPTIMISTIC_ENTITY_INSERTED") < eventOrder.indexOf("STALE_REFRESH_REQUESTED"),
@@ -886,7 +1617,7 @@ async function main() {
     const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
     const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
     await stopRecording(remoteRecording);
-    writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(await readPlacementEvents(), null, 2)}\n`);
+    await writeRuntimeStreams();
 
     const report = {
       artifact: `${artifactDir}/memory-chat-visual.mp4`,
@@ -932,7 +1663,7 @@ async function main() {
     );
     const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
     await stopRecording(remoteRecording);
-    writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
+    await writeRuntimeStreams();
 
     for (const item of text) {
       assert.equal(item.mountCount, 1, `overlap text mount count was ${item.mountCount}`);
@@ -997,7 +1728,7 @@ async function main() {
     const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
     const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
     await stopRecording(remoteRecording);
-    writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
+    await writeRuntimeStreams();
 
     assert.equal(oneCharacter[0]?.mountCount, 1, "one-character row did not mount once");
     assert.equal(oneCharacter[0]?.scrollCommandCount, 0, "one-character send issued a bottom-follow command");
@@ -1097,7 +1828,7 @@ async function main() {
   const roomExitAfterChatMs = await exitRoomFromTableAfterChatVisit();
   const gfx = parseGfx(await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true));
   await stopRecording(remoteRecording);
-  writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
+  await writeRuntimeStreams();
 
   assert.equal(basic.length, 5, "A-E did not create five logical sends");
   for (const item of basic) {
@@ -1181,8 +1912,14 @@ try {
   await main();
 } catch (error) {
   mkdirSync(artifactDir, { recursive: true });
+  await captureScreenshot(`${artifactDir}/failure-screen.png`).catch(() => {});
+  if (recorder) {
+    await stopRecording("/sdcard/memory-chat-visual.mp4").catch(() => {});
+  }
   const events = await readPlacementEvents().catch(() => []);
+  const journey = await readJourneyEvents().catch(() => []);
   writeFileSync(`${artifactDir}/events.json`, `${JSON.stringify(events, null, 2)}\n`);
+  writeFileSync(`${artifactDir}/journey-events.json`, `${JSON.stringify(journey, null, 2)}\n`);
   writeFileSync(`${artifactDir}/failure.json`, `${JSON.stringify({
     error: error instanceof Error ? error.message : "unknown_failure",
     mediaWorkerOutput: mediaWorkerOutput.join("").slice(-12_000),
@@ -1190,6 +1927,7 @@ try {
   }, null, 2)}\n`);
   throw error;
 } finally {
+  if (physicalNetworkDisabled) await setPhysicalNetworkEnabled(true).catch(() => {});
   if (recorder?.exitCode === null) recorder.kill("SIGINT");
   if (placementLogger?.exitCode === null) placementLogger.kill("SIGTERM");
   if (mediaPumpTimer) clearInterval(mediaPumpTimer);
@@ -1199,5 +1937,17 @@ try {
   if (fixture) {
     const env = localStatus();
     await cleanup(createClient(env.url, env.serviceKey, authOptions), fixture).catch(() => {});
+  } else if (fixtureSeedUsers.length > 0) {
+    const env = localStatus();
+    const admin = createClient(env.url, env.serviceKey, authOptions);
+    for (const user of fixtureSeedUsers) {
+      try {
+        await admin.from("profiles").delete().eq("id", user.userId);
+      } catch {
+        // Best-effort cleanup after a partially constructed synthetic fixture.
+      }
+      await admin.auth.admin.deleteUser(user.userId).catch(() => {});
+    }
+    fixtureSeedUsers = [];
   }
 }

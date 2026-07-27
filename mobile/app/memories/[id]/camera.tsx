@@ -1,15 +1,35 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo } from "react";
 import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useMemoryRoomQuery } from "@/hooks/useMemories";
 import { saveMemoryCapture } from "@/services/memoryCaptureSession";
+import {
+  createMemoryRoomJourneySession,
+  recordMemoryRoomJourney
+} from "@/services/memoryRoomJourneyDiagnostics.mjs";
 
 export default function MemoryCameraRoute() {
-  const params = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    journeyRunId?: string;
+    roomSessionId?: string;
+  }>();
   const router = useRouter();
   const roomId = typeof params.id === "string" ? params.id : "";
-  const room = useMemoryRoomQuery(roomId);
+  const journeySession = useMemo(() => createMemoryRoomJourneySession({
+    initialTab: "overview",
+    journeyRunId: params.journeyRunId,
+    roomSessionId: params.roomSessionId
+  }), [params.journeyRunId, params.roomSessionId]);
+  const room = useMemoryRoomQuery(roomId, journeySession);
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "CAMERA_OPENED", {
+      screenState: "camera",
+      tab: "overview"
+    });
+  }, [journeySession]);
 
   if (!roomId) {
     return (
@@ -37,11 +57,27 @@ export default function MemoryCameraRoute() {
 
   return (
     <CameraScreen
+      onClose={() => {
+        recordMemoryRoomJourney(journeySession, "CAMERA_CANCELLED", {
+          screenState: "usable",
+          tab: "overview"
+        });
+        router.back();
+      }}
       onCapture={(asset) => {
+        recordMemoryRoomJourney(journeySession, "CAMERA_CAPTURED", {
+          screenState: "preview",
+          tab: "overview"
+        });
         const capture = saveMemoryCapture(asset);
         router.push({
           pathname: "/memories/[id]/preview",
-          params: { captureId: capture.id, id: roomId }
+          params: {
+            captureId: capture.id,
+            id: roomId,
+            journeyRunId: journeySession.journeyRunId,
+            roomSessionId: journeySession.roomSessionId
+          }
         });
       }}
     />

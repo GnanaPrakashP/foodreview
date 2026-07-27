@@ -41,7 +41,7 @@ test("root and mobile media policy constants stay in sync", () => {
     "MEMORY_IMAGE_TARGET_COMPRESSED_BYTES = 2 * 1024 * 1024",
     "MEMORY_IMAGE_MAX_RESOLUTION = 4096",
     "MEMORY_IMAGE_THUMBNAIL_WIDTH = 512",
-    "MEMORY_VIDEO_MAX_UPLOAD_BYTES = 25 * 1024 * 1024",
+    "MEMORY_VIDEO_MAX_UPLOAD_BYTES = 20 * 1024 * 1024",
     "MEMORY_VIDEO_MAX_DURATION_MS = 60_000",
     "MEMORY_AUDIO_MAX_UPLOAD_BYTES = 8 * 1024 * 1024",
     "MEMORY_AUDIO_MAX_DURATION_MS = 60_000",
@@ -217,9 +217,9 @@ test("finalize is the only approval path and repeat calls return the existing ro
   assert.match(finalAuditMigration, /revoke all on function public\.finalize_shared_memory_upload_intent[\s\S]*from authenticated/);
 });
 
-test("bucket and documented media limits stay at the conservative 25 MB video limit", () => {
-  assert.match(rootPolicy, /MEMORY_VIDEO_MAX_UPLOAD_BYTES = 25 \* 1024 \* 1024/);
-  assert.match(mobilePolicy, /MEMORY_VIDEO_MAX_UPLOAD_BYTES = 25 \* 1024 \* 1024/);
+test("app video limits stay at 20 MB beneath the conservative 25 MB storage ceiling", () => {
+  assert.match(rootPolicy, /MEMORY_VIDEO_MAX_UPLOAD_BYTES = 20 \* 1024 \* 1024/);
+  assert.match(mobilePolicy, /MEMORY_VIDEO_MAX_UPLOAD_BYTES = 20 \* 1024 \* 1024/);
   assert.match(phase21Migration, /26214400/);
   assert.doesNotMatch(phase21Migration, /image\/gif/);
 });

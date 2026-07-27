@@ -402,9 +402,13 @@ async function dismissBlockingSystemDialog(adb, serial, xml, normalized) {
   const isLocationPrompt =
     normalized.includes("allow circlebites dev to access this device’s location") ||
     normalized.includes("allow circlebites dev to access this device's location");
-  if (!isNotificationPrompt && !isLocationPrompt) return false;
+  const isLocationPrecisionPrompt =
+    normalized.includes("change circlebites dev’s location access from approximate to precise") ||
+    normalized.includes("change circlebites dev's location access from approximate to precise");
+  if (!isNotificationPrompt && !isLocationPrompt && !isLocationPrecisionPrompt) return false;
 
   const bounds =
+    (isLocationPrecisionPrompt ? findBounds(xml, "text", "Keep approximate location") : null) ??
     (isLocationPrompt ? findBounds(xml, "text", "While using the app") : null) ??
     findBounds(xml, "text", "Don’t allow") ??
     findBounds(xml, "text", "Don't allow") ??

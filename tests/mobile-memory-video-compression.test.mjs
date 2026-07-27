@@ -9,7 +9,7 @@ const mobilePackage = readFileSync("mobile/package.json", "utf8");
 test("memory videos use the shared server transcoder instead of a room-only native compressor", () => {
   assert.match(mediaPipelineSource, /surface:\s*"memory"/);
   assert.match(mediaPipelineSource, /accessClass:\s*"memory_private"/);
-  assert.match(mediaWorkerSource, /"-c:v", "libx264"/);
+  assert.match(mediaWorkerSource, /"-c:v",\s*"libx264"/);
   assert.match(mediaWorkerSource, /MEDIA_MEMORY_MAX_EDGE/);
   assert.doesNotMatch(mobilePackage, /react-native-compressor/);
 });

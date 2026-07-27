@@ -18,14 +18,20 @@ import { removeMemoryCapture } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { useAddMemoryPhotoMutation } from "@/hooks/useMemories";
 import { createRequestId } from "@/services/installIdentity";
+import {
+  recordMemoryRoomJourney,
+  type MemoryRoomJourneySession
+} from "@/services/memoryRoomJourneyDiagnostics.mjs";
 import { colors, fontStyles, radius, spacing, typography } from "@/theme";
 import type { MemoryCapturedMedia } from "@/types/memoryMediaCapture";
 
 export function MediaPreviewScreen({
   asset,
+  journeySession,
   roomId
 }: {
   asset: MemoryCapturedMedia;
+  journeySession: MemoryRoomJourneySession;
   roomId: string;
 }) {
   const router = useRouter();
@@ -54,6 +60,11 @@ export function MediaPreviewScreen({
       mediaUri: asset.uri
     }]);
     if (validationError) {
+      recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_FAILED", {
+        networkRequestCategory: "media_upload",
+        result: "validation_failed",
+        tab: "overview"
+      });
       setPostError(validationError);
       setPosting(false);
       postStartedRef.current = false;
@@ -63,6 +74,11 @@ export function MediaPreviewScreen({
     const clientId = createRequestId();
     const clientCreatedAt = new Date().toISOString();
     const clientSequence = Date.now();
+    recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_ENQUEUED", {
+      networkRequestCategory: "media_upload",
+      result: "queued",
+      tab: "overview"
+    });
     addPhoto.mutate({
       assets: [{
         duration: asset.duration ?? null,
@@ -78,12 +94,32 @@ export function MediaPreviewScreen({
       clientSequence,
       roomId,
       uploadBatchId: clientId
+    }, {
+      onError: () => {
+        recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_FAILED", {
+          networkRequestCategory: "media_upload",
+          result: "failed",
+          tab: "chat"
+        });
+      },
+      onSuccess: () => {
+        recordMemoryRoomJourney(journeySession, "MEDIA_UPLOAD_FINISHED", {
+          networkRequestCategory: "media_upload",
+          result: "confirmed",
+          tab: "chat"
+        });
+      }
     });
     removeMemoryCapture(asset.id);
     setNavigating(true);
     router.dismissTo({
       pathname: "/memories/[id]",
-      params: { id: roomId, tab: "chat" }
+      params: {
+        id: roomId,
+        journeyRunId: journeySession.journeyRunId,
+        roomSessionId: journeySession.roomSessionId,
+        tab: "chat"
+      }
     });
   }
 
@@ -105,7 +141,7 @@ export function MediaPreviewScreen({
       <StatusBar hidden />
       <View style={styles.mediaLayer}>
         {asset.mediaType === "video" ? (
-          <CapturedVideo muted={videoMuted} uri={asset.uri} />
+          <CapturedVideo journeySession={journeySession} muted={videoMuted} uri={asset.uri} />
         ) : (
           <Image alt="Captured photo" contentFit="contain" source={{ uri: asset.uri }} style={styles.imagePreview} />
         )}
@@ -154,12 +190,38 @@ export function MediaPreviewScreen({
   );
 }
 
-function CapturedVideo({ muted, uri }: { muted: boolean; uri: string }) {
+function CapturedVideo({
+  journeySession,
+  muted,
+  uri
+}: {
+  journeySession: MemoryRoomJourneySession;
+  muted: boolean;
+  uri: string;
+}) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.muted = muted;
     instance.play();
   });
+
+  useEffect(() => {
+    recordMemoryRoomJourney(journeySession, "PLAYER_CREATED", {
+      playerKind: "preview_video",
+      tab: "overview"
+    });
+    return () => {
+      try {
+        player.pause();
+      } catch {
+        // The native player can already be released while the route is unmounting.
+      }
+      recordMemoryRoomJourney(journeySession, "PLAYER_RELEASED", {
+        playerKind: "preview_video",
+        tab: "overview"
+      });
+    };
+  }, [journeySession, player]);
 
   useEffect(() => {
     player.muted = muted;

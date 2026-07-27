@@ -72,12 +72,18 @@ test("Memory uses one bounded contract per active read path", async () => {
     read("app/api/mobile/memories/read/route.ts")
   ]);
   assert.match(source, /\/api\/mobile\/memories\/read/);
-  for (const name of ["shared_memory_room_summaries_v3", "shared_memory_room_bootstrap_v1", "shared_memory_chat_page", "shared_memory_media_page_v1"]) {
+  for (const name of [
+    "shared_memory_room_summaries_v3",
+    "shared_memory_room_bootstrap_v2",
+    "shared_memory_room_sync_v2",
+    "shared_memory_chat_page_v2",
+    "shared_memory_media_page_v1"
+  ]) {
     assert.match(route, new RegExp(name));
   }
   assert.doesNotMatch(source, /for\s*\([^)]*room[^)]*\)\s*\{[\s\S]{0,400}supabase\./);
-  assert.match(route, /createSignedUrls/);
-  assert.match(route, /delete safePhoto\.storage_path/);
+  assert.match(route, /signMemoryPhotoPayload/);
+  assert.doesNotMatch(route, /\.select\("[^"]*storage_path/);
 });
 
 test("Phase 5 SQL has stable cursor indexes and service-only feed grants", async () => {

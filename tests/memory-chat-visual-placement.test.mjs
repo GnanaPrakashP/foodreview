@@ -336,5 +336,5 @@ test("synthetic media placement fixtures are local, development-only, and forbid
   assert.match(placementFixtures, /\["127\.0\.0\.1", "localhost", "10\.0\.2\.2"\]/);
   assert.doesNotMatch(placementFixtures, /console\.(?:log|info)|recordMemoryChatPlacement/);
   assert.match(appConfig, /EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_ORIGIN/);
-  assert.match(appConfig, /Chat placement diagnostics and fixtures are forbidden in production/);
+  assert.match(appConfig, /Memory Room diagnostics and fixtures are forbidden in production/);
 });

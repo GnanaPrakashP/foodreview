@@ -18,6 +18,11 @@ import { memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMe
 import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
+import {
+  createMemoryRoomJourneySession,
+  memoryRoomJourneyDiagnosticsEnabled,
+  recordMemoryRoomJourney
+} from "@/services/memoryRoomJourneyDiagnostics.mjs";
 import { ProfileSettingsPanel } from "../profile/settings";
 import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -1010,11 +1015,30 @@ function profileListKey(item: ProfileListRow) {
 
 function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
   const router = useRouter();
+  const openMemory = useCallback(() => {
+    if (!memoryRoomJourneyDiagnosticsEnabled()) {
+      router.push({ pathname: "/memories/[id]", params: { id: memory.id } });
+      return;
+    }
+    const journeySession = createMemoryRoomJourneySession({ initialTab: "overview" });
+    recordMemoryRoomJourney(journeySession, "ROOM_TAP", {
+      screenState: "navigation_requested",
+      tab: "overview"
+    });
+    router.push({
+      pathname: "/memories/[id]",
+      params: {
+        id: memory.id,
+        journeyRunId: journeySession.journeyRunId,
+        roomSessionId: journeySession.roomSessionId
+      }
+    });
+  }, [memory.id, router]);
 
   return (
     <MemoryRow
       memory={memory}
-      onPress={() => router.push({ pathname: "/memories/[id]", params: { id: memory.id } })}
+      onPress={openMemory}
     />
   );
 }
@@ -1060,6 +1084,8 @@ function MemoryRow({ memory, onPress }: { memory: MemoryRoomSummary; onPress: ()
 
   return (
     <Pressable
+      accessibilityLabel="Open memory room"
+      accessibilityRole="button"
       android_ripple={{ color: PROFILE_COLORS.accentDim, foreground: true }}
       onPress={onPress}
       style={({ pressed }) => [

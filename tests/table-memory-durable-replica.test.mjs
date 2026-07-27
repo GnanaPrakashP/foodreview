@@ -281,6 +281,7 @@ test("Table Memory SQLite is durable, owner-scoped, safely migrated, and never a
 
 test("an interrupted cache-to-durable SQLite migration preserves the source and retries losslessly", async () => {
   const ownership = loadStandaloneTs("mobile/src/security/cacheOwnership.ts");
+  const reconciliation = await import("../mobile/src/services/memoryMessageReconciliation.mjs");
   const owner = ownership.cacheOwnerForUserId("11111111-1111-4111-8111-111111111111");
   const databaseName = `circlebites-memory-offline-v${ownership.LOCAL_DATA_SCHEMA_VERSION}.db`;
   const legacyDirectory = `file:///cache/private/${owner.scope}`;
@@ -377,6 +378,7 @@ test("an interrupted cache-to-durable SQLite migration preserves the source and 
     if (id === "expo-file-system/legacy") return fileSystem;
     if (id === "expo-sqlite") return sqlite;
     if (id === "@/security/cacheOwnership") return ownership;
+    if (id === "@/services/memoryMessageReconciliation.mjs") return reconciliation;
     if (id === "@/services/accountFileStore") return {
       accountFileDirectoryForScope: () => legacyDirectory,
       clearMemoryDatabaseDirectory: async () => {},
@@ -476,14 +478,15 @@ test("private media rows persist metadata only and renew signed URLs by stable m
     readRoute.indexOf('if (action === "detail")')
   );
 
-  assert.match(readRoute, /delete safePhoto\.storage_path/);
+  assert.match(readRoute, /signMemoryPhotoPayload/);
+  assert.doesNotMatch(readRoute, /\.select\("[^"]*storage_path/);
   assert.match(finalizeRoute, /delete safePhoto\.storage_path/);
   assert.match(finalizeRoute, /signed_url_expires_at: signedUrlExpiresAt/);
   assert.match(renewal, /\.from\("shared_memory_photos"\)/);
   assert.match(renewal, /\.eq\("id", mediaId\)/);
   assert.match(renewal, /\.eq\("room_id", roomId\)/);
   assert.doesNotMatch(renewal, /\.select\("[^"]*storage_path/);
-  assert.ok(renewal.indexOf(".maybeSingle()") < renewal.lastIndexOf("signPhotoPayload"));
+  assert.ok(renewal.indexOf(".maybeSingle()") < renewal.lastIndexOf("signMemoryPhotoPayload"));
   assert.match(mapper, /publicUrl: photo\.public_url \|\| ""/);
   assert.doesNotMatch(mapper, /publicUrl:[^\n]*storage_path/);
   assert.match(services, /read\?action=renewMedia&roomId=.*&mediaId=/);
@@ -507,5 +510,5 @@ test("read state is durable, transient auth preserves replicas, and reactions re
   assert.match(auth, /setTimeout\(\(\) => \{[\s\S]*recoverExpiredSession\(ownerHost, "timer"\)/);
   assert.match(room, /const MEMORY_REACTIONS_ENABLED = false/);
   assert.match(room, /reactions=\{MEMORY_REACTIONS_ENABLED \?/);
-  assert.match(room, /isEnabled: MEMORY_REACTIONS_ENABLED/);
+  assert.match(room, /if \(!MEMORY_REACTIONS_ENABLED \|\| selectionMode\) return/);
 });

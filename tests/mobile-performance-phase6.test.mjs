@@ -244,15 +244,15 @@ test("notifications patch their pages and have no duplicate interval polling", (
   assert.doesNotMatch(notifications, /invalidateQueries/);
 });
 
-test("Memory keeps inactive panes lazy and realtime deltas avoid immediate reloads", () => {
+test("Memory releases inactive panes and realtime deltas avoid immediate reloads", () => {
   const room = source("mobile/app/memories/[id].tsx");
   const memories = source("mobile/src/hooks/useMemories.ts");
   const pane = room.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
-  assert.match(pane, /useState\(active \|\| !lazy \|\| shouldPrewarm\)/);
-  assert.match(pane, /if \(active\) setHasMounted\(true\)/);
+  assert.match(pane, /if \(!active\) return null/);
+  assert.doesNotMatch(pane, /hasMounted|shouldPrewarm/);
   assert.doesNotMatch(room, /panesPreloaded|setChatPreloaded/);
   assert.match(memories, /REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000/);
-  assert.match(memories, /REALTIME_SUMMARY_RECONCILE_DELAY_MS = 15_000/);
+  assert.match(memories, /REALTIME_SUMMARY_RECONCILE_DELAY_MS = 2_000/);
   assert.match(memories, /applyRealtimeMessageToSummaries/);
   assert.match(memories, /isCacheGenerationActive\(ownerGeneration\)/);
 });
