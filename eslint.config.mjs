@@ -13,6 +13,7 @@ const eslintConfig = [
   {
     ignores: [
       ".next/**",
+      ".vercel/**",
       "coverage/**",
       "mobile/.expo/**",
       "mobile/dist/**",
