@@ -272,6 +272,13 @@ class NativeChatInputView(context: Context, appContext: AppContext) : ExpoView(c
     }
   }
 
+  fun blurInput() {
+    editText.clearFocus()
+    val inputMethodManager =
+      context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    inputMethodManager.hideSoftInputFromWindow(editText.windowToken, 0)
+  }
+
   fun clearInput() {
     clearNativeBuffer()
     // A programmatic clear used to be completely silent, which lost sends.

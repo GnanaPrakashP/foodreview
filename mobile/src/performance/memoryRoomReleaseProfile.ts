@@ -36,7 +36,10 @@ export type MemoryRoomResourceCounter =
   | "MemoryRoomActivePlayers"
   | "MemoryRoomActiveRealtimeChannels"
   | "MemoryRoomActiveRecorders"
+  | "MemoryRoomMountedChatHosts"
+  | "MemoryRoomMountedChatInputs"
   | "MemoryRoomMountedChatRows"
+  | "MemoryRoomMountedChatShells"
   | "MemoryRoomMountedDishRows"
   | "MemoryRoomMountedMediaTiles";
 
@@ -247,6 +250,27 @@ export function recordMemoryRoomCacheProfileSnapshot(
   for (const [name, value] of counters) {
     if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, Math.max(0, value));
     else Systrace.counterEvent(name, Math.max(0, value));
+  }
+}
+
+export function recordMemoryRoomChatLifecycleCandidate(candidateCode: number) {
+  if (!traceAvailable()) return;
+  const value = Math.max(0, Math.floor(candidateCode));
+  if (androidTrace) {
+    androidTrace.setMemoryRoomTraceCounter(
+      "MemoryRoomChatLifecycleCandidate",
+      value
+    );
+  } else {
+    Systrace.counterEvent("MemoryRoomChatLifecycleCandidate", value);
+  }
+  // Re-emit the live ownership snapshot at each measured transition. A warm
+  // candidate may retain its host for the entire trace, so mount-only counter
+  // events would otherwise be absent even though the native resources exist.
+  for (const [name, count] of resourceCounters.entries()) {
+    const normalized = Math.max(0, count);
+    if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, normalized);
+    else Systrace.counterEvent(name, normalized);
   }
 }
 

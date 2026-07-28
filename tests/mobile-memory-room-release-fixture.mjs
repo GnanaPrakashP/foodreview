@@ -39,6 +39,27 @@ function localStatus() {
   };
 }
 
+function fixtureEnvironment() {
+  const configuredUrl = process.env.SUPABASE_URL?.trim();
+  const configuredServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (configuredUrl || configuredServiceKey) {
+    if (!configuredUrl || !configuredServiceKey) {
+      throw new Error("Both SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
+    }
+    const parsed = new URL(configuredUrl);
+    const localHostname = parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "localhost";
+    if (parsed.protocol !== "https:" && !localHostname) {
+      throw new Error("Remote fixture targets must use HTTPS");
+    }
+    return {
+      serviceKey: configuredServiceKey,
+      url: parsed.toString().replace(/\/$/, "")
+    };
+  }
+  return localStatus();
+}
+
 async function createUser(admin, suffix, label) {
   const email = `memory-release-${label}-${suffix}@example.test`;
   const username = `mrel_${label}_${suffix}`.slice(0, 24);
@@ -61,6 +82,22 @@ async function createUser(admin, suffix, label) {
   });
   if (profile.error) throw profile.error;
   return { email, userId, username };
+}
+
+async function findExistingOwner(admin, username) {
+  const profile = await admin
+    .from("profiles")
+    .select("id,username")
+    .eq("username", username)
+    .single();
+  if (profile.error || !profile.data) {
+    throw profile.error ?? new Error("fixture_owner_not_found");
+  }
+  return {
+    email: null,
+    userId: profile.data.id,
+    username: profile.data.username
+  };
 }
 
 function prepareMediaFiles() {
@@ -283,7 +320,7 @@ async function cleanup(admin, fixture) {
   for (const roomId of fixture.roomIds ?? []) {
     await admin.from("shared_memory_rooms").delete().eq("id", roomId);
   }
-  for (const user of fixture.users ?? []) {
+  for (const user of fixture.createdUsers ?? fixture.users ?? []) {
     await admin.from("profiles").delete().eq("id", user.userId);
     await admin.auth.admin.deleteUser(user.userId);
   }
@@ -323,7 +360,7 @@ async function cleanupOrphans(admin) {
 }
 
 async function main() {
-  const env = localStatus();
+  const env = fixtureEnvironment();
   const admin = createClient(env.url, env.serviceKey, authOptions);
   if (process.argv.includes("--cleanup")) {
     if (!existsSync(manifestPath)) return;
@@ -337,13 +374,27 @@ async function main() {
   }
   mkdirSync(artifactDir, { recursive: true });
   const suffix = Date.now().toString(36).slice(-7);
-  const owner = await createUser(admin, suffix, "owner");
+  const existingOwnerUsername = process.env.MEMORY_RELEASE_OWNER_USERNAME?.trim();
+  const owner = existingOwnerUsername
+    ? await findExistingOwner(admin, existingOwnerUsername)
+    : await createUser(admin, suffix, "owner");
   const participants = await Promise.all(
     ["guest1", "guest2", "guest3"].map((label) => createUser(admin, suffix, label))
   );
+  const createdUsers = existingOwnerUsername
+    ? participants
+    : [owner, ...participants];
   const users = [owner, ...participants];
-  const roomA = await createRoom(admin, owner, participants, "Release acceptance A");
-  const roomB = await createRoom(admin, owner, participants, "Release acceptance B", true);
+  const roomTitle = process.env.MEMORY_RELEASE_ROOM_TITLE?.trim() ||
+    "Release acceptance A";
+  const roomA = await createRoom(admin, owner, participants, roomTitle);
+  const roomB = await createRoom(
+    admin,
+    owner,
+    participants,
+    `${roomTitle} alternate`,
+    true
+  );
   const table = await seedTable(admin, roomA, users);
   const messagesA = await seedMessages(admin, roomA, users, 85);
   await seedTable(admin, roomB, users);
@@ -361,6 +412,7 @@ async function main() {
       stops: table.stops,
       videos: 3
     },
+    createdUsers,
     roomIds: [roomA, roomB],
     storagePaths,
     users

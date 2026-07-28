@@ -11,9 +11,13 @@ const adb = process.env.ADB ??
 const serial = process.env.ANDROID_SERIAL ?? "ZA223JVWG7";
 const packageName = process.env.ANDROID_APP_PACKAGE ?? "com.circlebites.mobile.dev";
 const roomTitle = process.env.MEMORY_RELEASE_ROOM_TITLE ?? "Release jank fixture";
+const lifecycleCandidate =
+  process.env.MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE ?? "unknown";
 const artifactDir = process.env.MEMORY_RELEASE_ARTIFACT_DIR ??
   "/private/tmp/memory-room-release-jank";
 const repetitions = Number(process.env.MEMORY_RELEASE_TRANSITION_REPETITIONS ?? 20);
+const prepareWaitMs = Number(process.env.MEMORY_RELEASE_PREPARE_WAIT_MS ?? 1_500);
+const captureExit = process.env.MEMORY_RELEASE_CAPTURE_EXIT === "1";
 const pairs = (process.env.MEMORY_RELEASE_PAIRS ??
   "Chat>Dishes,Table>Chat,Media>Chat,Dishes>Chat")
   .split(",")
@@ -204,7 +208,7 @@ async function startAtrace() {
     "--async_start",
     "-c",
     "-b",
-    "16384",
+    "65536",
     "-a",
     packageName,
     "input",
@@ -244,6 +248,89 @@ function traceDurations(trace, prefix) {
   return values;
 }
 
+function asyncTraceRanges(trace, exactName) {
+  const starts = new Map();
+  const ranges = [];
+  for (const line of trace.split("\n")) {
+    const timestamp = Number(
+      /\s(\d+\.\d+):\s+tracing_mark_write:/.exec(line)?.[1]
+    );
+    const marker =
+      /tracing_mark_write:\s+([SF])\|(\d+)\|([^|]+)\|?(\d+)?/.exec(line);
+    if (!Number.isFinite(timestamp) || !marker || marker[3] !== exactName) continue;
+    const [, kind, pid, name, cookie = "0"] = marker;
+    const key = `${pid}:${name}:${cookie}`;
+    if (kind === "S") starts.set(key, timestamp);
+    if (kind === "F" && starts.has(key)) {
+      ranges.push({ end: timestamp, start: starts.get(key) });
+      starts.delete(key);
+    }
+  }
+  return ranges;
+}
+
+function timestampForTraceLine(line) {
+  return Number(/\s(\d+\.\d+):\s+tracing_mark_write:/.exec(line)?.[1]);
+}
+
+function rangeIndexFor(timestamp, ranges) {
+  return ranges.findIndex(({ start, end }) => timestamp >= start && timestamp <= end);
+}
+
+function fabricWorkByTransition(trace, transitionName) {
+  const ranges = asyncTraceRanges(trace, transitionName);
+  const samples = ranges.map(() => ({
+    creates: 0,
+    deletes: 0,
+    inserts: 0,
+    layouts: 0,
+    nativeViewsCreated: 0,
+    removes: 0
+  }));
+  for (const line of trace.split("\n")) {
+    const timestamp = timestampForTraceLine(line);
+    if (!Number.isFinite(timestamp)) continue;
+    const rangeIndex = rangeIndexFor(timestamp, ranges);
+    if (rangeIndex < 0) continue;
+    if (line.includes("SurfaceMountingManager::createViewUnsafe(")) {
+      samples[rangeIndex].nativeViewsCreated += 1;
+    }
+    const instruction =
+      /mountInstructions::(CREATE|DELETE|INSERT|REMOVE|UPDATE_LAYOUT) numInstructions=(\d+)/.exec(line);
+    if (!instruction) continue;
+    const count = Number(instruction[2]);
+    if (instruction[1] === "CREATE") samples[rangeIndex].creates += count;
+    if (instruction[1] === "DELETE") samples[rangeIndex].deletes += count;
+    if (instruction[1] === "INSERT") samples[rangeIndex].inserts += count;
+    if (instruction[1] === "REMOVE") samples[rangeIndex].removes += count;
+    if (instruction[1] === "UPDATE_LAYOUT") samples[rangeIndex].layouts += count;
+  }
+  return Object.fromEntries(
+    Object.keys(samples[0] ?? {
+      creates: 0,
+      deletes: 0,
+      inserts: 0,
+      layouts: 0,
+      nativeViewsCreated: 0,
+      removes: 0
+    }).map((key) => [key, stats(samples.map((sample) => sample[key]))])
+  );
+}
+
+function traceCounterStats(trace, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const values = [...trace.matchAll(
+    new RegExp(`tracing_mark_write:\\s+C\\|\\d+\\|${escaped}\\|(-?\\d+)`, "g")
+  )].map((match) => Number(match[1]));
+  return {
+    count: values.length,
+    first: values[0] ?? null,
+    last: values.at(-1) ?? null,
+    max: values.length > 0 ? Math.max(...values) : null,
+    min: values.length > 0 ? Math.min(...values) : null
+  };
+}
+
 async function ensureRoomOpen() {
   let xml = await uiXml();
   if (pointFor(xml, ["Table"]) && pointFor(xml, ["Chat"])) return;
@@ -266,7 +353,7 @@ async function ensureRoomOpen() {
   assert.ok(room, "profiling_room_not_visible");
   await tap(room);
   await waitForPoint(["Table"], "room_table");
-  await delay(500);
+  await delay(prepareWaitMs);
 }
 
 async function runPair({ from, to }) {
@@ -297,12 +384,14 @@ async function runPair({ from, to }) {
   const { path, trace } = await stopAtrace(traceName);
   const durations = traceDurations(trace, "MemoryRoom");
   const suffix = `${tabMode[from]}_to_${tabMode[to]}`;
+  const transitionName = `MemoryRoomTabTransition_${suffix}`;
   return {
     after,
     before,
     firstFrameMs: stats(
       durations.get(`MemoryRoomTabFirstFrame_${suffix}`) ?? []
     ),
+    fabric: fabricWorkByTransition(trace, transitionName),
     frames: {
       jankPercent: stats(frames.map((frame) => frame.jankyPercent)),
       maxFrameBucketMs: stats(
@@ -313,14 +402,69 @@ async function runPair({ from, to }) {
     from,
     memoryDeltaKb: after.totalPssKb - before.totalPssKb,
     repetitions,
+    resources: {
+      activePlayers: traceCounterStats(trace, "MemoryRoomActivePlayers"),
+      activeRealtimeChannels: traceCounterStats(
+        trace,
+        "MemoryRoomActiveRealtimeChannels"
+      ),
+      chatHosts: traceCounterStats(trace, "MemoryRoomMountedChatHosts"),
+      chatInputs: traceCounterStats(trace, "MemoryRoomMountedChatInputs"),
+      chatShells: traceCounterStats(trace, "MemoryRoomMountedChatShells")
+    },
     settledMs: stats(
       durations.get(`MemoryRoomTabSettled_${suffix}`) ?? []
     ),
     to,
     trace: path,
     usableMs: stats(
-      durations.get(`MemoryRoomTabTransition_${suffix}`) ?? []
+      durations.get(transitionName) ?? []
     )
+  };
+}
+
+async function waitForRoomExit(timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const xml = await uiXml();
+    if (
+      !tabSelected(xml, "Table") &&
+      !tabSelected(xml, "Chat") &&
+      pointFor(xml, ["Memories"])
+    ) {
+      return;
+    }
+    await delay(200);
+  }
+  throw new Error("timed_out_waiting_for:room_exit");
+}
+
+async function captureRoomExit() {
+  await switchTab("Chat");
+  const before = await sampleMemory("room_exit_before");
+  await startAtrace();
+  const automationStartedAt = Date.now();
+  await adbRun(["shell", "input", "keyevent", "4"]);
+  await waitForRoomExit();
+  const automationMs = Date.now() - automationStartedAt;
+  const after = await sampleMemory("room_exit_after");
+  const { path, trace } = await stopAtrace("room-exit");
+  const appExit = stats(traceDurations(trace, "MemoryRoomExit").get("MemoryRoomExit") ?? []);
+  await delay(10_000);
+  const plus10s = await sampleMemory("room_exit_plus_10s");
+  await delay(20_000);
+  const plus30s = await sampleMemory("room_exit_plus_30s");
+  await delay(30_000);
+  const plus60s = await sampleMemory("room_exit_plus_60s");
+  return {
+    after,
+    appExitMs: appExit,
+    automationMs,
+    before,
+    plus10s,
+    plus30s,
+    plus60s,
+    trace: path
   };
 }
 
@@ -330,10 +474,12 @@ async function main() {
   const start = await sampleMemory("targeted_start");
   const results = [];
   for (const pair of pairs) results.push(await runPair(pair));
-  await switchTab("Table");
+  const exit = captureExit ? await captureRoomExit() : null;
+  if (!captureExit) await switchTab("Table");
   const end = await sampleMemory("targeted_end");
   const crash = await adbRun(["logcat", "-d", "-b", "crash", "-v", "brief"], true);
   const report = {
+    lifecycleCandidate,
     memory: {
       activeGrowthKb: end.totalPssKb - start.totalPssKb,
       end,
@@ -341,6 +487,7 @@ async function main() {
     },
     packageName,
     results,
+    roomExit: exit,
     runtimeErrors: {
       fatal: (
         crash.match(

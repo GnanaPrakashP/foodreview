@@ -121,6 +121,9 @@ test("Android source manifest and Gradle release fail closed", () => {
   assert.match(manifest, /android:usesCleartextTraffic="\$\{circleBitesUsesCleartextTraffic\}"/);
   assert.match(gradle, /allowLocalCleartext = appEnvironment in \["local", "development"\]/);
   assert.match(gradle, /circleBitesUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/);
+  assert.match(manifest, /<profileable android:shell="\$\{circleBitesProfileableShell\}"/);
+  assert.match(gradle, /allowShellProfiling = appEnvironment != "production"/);
+  assert.match(gradle, /circleBitesProfileableShell: allowShellProfiling\.toString\(\)/);
   assert.match(manifest, /android:allowBackup="false"/);
   for (const permission of inventory.androidPermissions.blocked) {
     assert.match(manifest, new RegExp(`android:name="${permission.replaceAll(".", "\\.")}"[^>]*tools:node="remove"`));

@@ -87,10 +87,13 @@ export function useSlideOverScreen(options: SlideOverOptions = {}) {
   // Enter once on mount, not on every focus: a slide-over can stay mounted while
   // a screen is pushed over it (Settings -> Edit Profile), and replaying the
   // entrance when it regains focus would be wrong. Reduced motion is handled by
-  // slideStyle, which ignores progress entirely once the preference resolves.
+  // slideStyle and the timing duration once the preference resolves.
   useEffect(() => {
-    progress.value = withTiming(1, { duration: ENTER_MS, easing: ENTER_EASING });
-  }, [progress]);
+    progress.value = withTiming(1, {
+      duration: reducedMotion ? 0 : ENTER_MS,
+      easing: ENTER_EASING
+    });
+  }, [progress, reducedMotion]);
 
   // Hardware back should play the exit slide; keep this scoped to while focused.
   useFocusEffect(

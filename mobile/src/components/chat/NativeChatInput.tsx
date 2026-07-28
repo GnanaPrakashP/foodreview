@@ -26,6 +26,7 @@ export type NativeChatInputSubmitResult = {
 };
 
 export type NativeChatInputHandle = {
+  blur: () => void | Promise<void>;
   clear: () => void | Promise<void>;
   focus: () => void | Promise<void>;
   submit: () => Promise<NativeChatInputSubmitResult>;

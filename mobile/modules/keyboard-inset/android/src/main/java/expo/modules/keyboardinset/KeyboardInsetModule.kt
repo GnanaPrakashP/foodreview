@@ -125,6 +125,9 @@ class KeyboardInsetModule : Module() {
       AsyncFunction("focus") { view: NativeChatInputView ->
         view.focusInput()
       }
+      AsyncFunction("blur") { view: NativeChatInputView ->
+        view.blurInput()
+      }
       AsyncFunction("clear") { view: NativeChatInputView ->
         view.clearInput()
       }

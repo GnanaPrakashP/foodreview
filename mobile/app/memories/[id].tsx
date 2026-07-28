@@ -116,9 +116,20 @@ import {
   markMemoryRoomTransitionFirstFrame,
   markMemoryRoomTransitionSettled,
   recordMemoryRoomCacheProfileSnapshot,
+  recordMemoryRoomChatLifecycleCandidate,
   recordMemoryRoomSurfaceLifecycle,
   traceMemoryRoomSection
 } from "@/performance/memoryRoomReleaseProfile";
+import {
+  commitPreparedMemoryRoomPaneTransition,
+  createMemoryRoomPaneTransitionState,
+  exitMemoryRoomPaneTransition,
+  MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE,
+  MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE,
+  prepareMemoryRoomPaneTransition,
+  resetMemoryRoomPaneTransition,
+  settleMemoryRoomPaneTransition
+} from "@/performance/memoryRoomChatLifecycle";
 import {
   Bubble as ChatMainBubble,
   Chat as ChatMain,
@@ -405,6 +416,7 @@ const ROOM_HEADER_TABS_TOP = ROOM_HEADER_DETAILS_TOP + ROOM_HEADER_DETAILS_HEIGH
 // avoids feeding animated header measurements back into the room screen.
 const TABLE_HEADER_CLEARANCE = ROOM_HEADER_EXPANDED_HEIGHT;
 const CHAT_COMPOSER_CLEARANCE = 88;
+const MEMORY_ROOM_CHAT_WARM_DELAY_MS = 450;
 const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
 
 const MEDIA_GALLERY_GAP = 2;
@@ -1136,6 +1148,32 @@ function MemoryChatMainSurface({
   toolbarInsetStyle: StyleProp<ViewStyle>;
 }) {
   useMemoryJourneySurfaceDiagnostics(journeySession, "chat", "chat");
+  const previousActiveRef = useRef(active);
+  useEffect(
+    () => adjustMemoryRoomResourceCounter("MemoryRoomMountedChatHosts", 1),
+    []
+  );
+  useEffect(() => {
+    const becameActive = active && !previousActiveRef.current;
+    previousActiveRef.current = active;
+    if (!becameActive) return undefined;
+    // A warmed Chat host does not remount, so its mount-time journey probe
+    // cannot close a later activation trace. Close it from the first frame
+    // where the already-laid-out host is visible and interactive instead.
+    const usableFrame = requestAnimationFrame(() => {
+      markMemoryRoomSurfaceUsable("chat");
+      recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
+        screenState: "usable",
+        surface: "chat_retained_activation",
+        tab: "chat"
+      });
+    });
+    return () => cancelAnimationFrame(usableFrame);
+  }, [active, journeySession]);
+  useEffect(() => {
+    if (active) return;
+    void inputRef.current?.blur();
+  }, [active, inputRef]);
   const { width: screenWidth } = useWindowDimensions();
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
   const latestChatMessage = chatMessages[0] ?? null;
@@ -1731,6 +1769,7 @@ function MemoryChatMainSurface({
     />
   ) : (
     <MemoryChatMainInputToolbar
+      active={active}
       editingMessage={editingMessage}
       composerClearance={composerClearance}
       inputRef={inputRef}
@@ -1947,9 +1986,13 @@ function MemoryChatMainSurface({
     );
   }, [onOpenMedia, screenWidth]);
 
-  const renderMessageAudio = useCallback((audioProps: ChatMainMessageAudioProps<MemoryChatMainMessage>) => (
-    <ChatMainAudioMessage {...audioProps} journeySession={journeySession} />
-  ), [journeySession]);
+  const renderMessageAudio = useCallback((
+    audioProps: ChatMainMessageAudioProps<MemoryChatMainMessage>
+  ) => (
+    active
+      ? <ChatMainAudioMessage {...audioProps} journeySession={journeySession} />
+      : null
+  ), [active, journeySession]);
 
   const renderCustomView = useCallback((props: {
     currentMessage: MemoryChatMainMessage;
@@ -2204,7 +2247,7 @@ function MemoryChatMainSurface({
             },
             swipe: {
               direction: "right",
-              isEnabled: true,
+              isEnabled: active,
               onSwipe: (target) => {
                 if (target.memoryMessage && canReplyToMemoryMessage(target.memoryMessage)) {
                   onReplyMessage(target.memoryMessage);
@@ -2217,7 +2260,7 @@ function MemoryChatMainSurface({
             // This gate owns the long-press message-options surface as well as
             // reactions in the vendored chat. Keep options enabled even while
             // emoji reactions remain disabled for this release.
-            isEnabled: MEMORY_MESSAGE_OPTIONS_ENABLED,
+            isEnabled: active && MEMORY_MESSAGE_OPTIONS_ENABLED,
             onReactionPress: (target, emoji) => {
               if (!MEMORY_REACTIONS_ENABLED || selectionMode) return;
               if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
@@ -2731,6 +2774,7 @@ function MemoryChatMainVoiceComposer({
 }
 
 type MemoryChatMainToolbarProps = {
+  active: boolean;
   composerClearance: SharedValue<number>;
   editingMessage: MemoryMessage | null;
   inputRef: RefObject<NativeChatInputHandle | null>;
@@ -2760,6 +2804,7 @@ type MemoryChatMainToolbarProps = {
 };
 
 function MemoryChatMainInputToolbar({
+  active,
   composerClearance,
   editingMessage,
   inputRef,
@@ -2784,6 +2829,10 @@ function MemoryChatMainInputToolbar({
   voiceDurationMs,
   voiceSending
 }: MemoryChatMainToolbarProps) {
+  useEffect(
+    () => adjustMemoryRoomResourceCounter("MemoryRoomMountedChatInputs", 1),
+    []
+  );
   const [draft, setDraft] = useState(text ?? "");
   const [nativeEventCount, setNativeEventCount] = useState(0);
   const nativeEventCountRef = useRef(0);
@@ -2872,6 +2921,11 @@ function MemoryChatMainInputToolbar({
       updateMessageBoxHeight(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
     }
   }, [text, updateMessageBoxHeight]);
+
+  useEffect(() => {
+    if (active) return;
+    void inputRef.current?.blur();
+  }, [active, inputRef]);
 
   useEffect(() => {
     if (!voiceActive) return;
@@ -3046,12 +3100,12 @@ function MemoryChatMainInputToolbar({
             >
               {Platform.OS === "android" ? (
                 <AnimatedNativeChatInput
-                  accessibilityLabel="Type a message"
+                  accessibilityLabel={active ? "Type a message" : undefined}
                   borderRadius={radius.input}
                   borderWidth={1}
                   bottomPadding={10}
                   cursorColor={nativeInputColors.cursor}
-                  editable
+                  editable={active}
                   fillColor={nativeInputColors.fill}
                   fontFamily={fontFamilies.medium}
                   fontSize={COMPOSER_INPUT_FONT_SIZE}
@@ -3075,11 +3129,12 @@ function MemoryChatMainInputToolbar({
                 />
               ) : (
                 <TextInput
-                  accessible
-                  accessibilityLabel="Type a message"
+                  accessible={active}
+                  accessibilityLabel={active ? "Type a message" : undefined}
                   autoCapitalize="sentences"
                   blurOnSubmit={false}
                   disableFullscreenUI
+                  editable={active}
                   enablesReturnKeyAutomatically
                   keyboardAppearance={themeMode === "dark" ? "dark" : "default"}
                   maxLength={MEMORY_TEXT_MAX_LENGTH}
@@ -3730,6 +3785,22 @@ function VoiceRecorderHost({ onReady }: { onReady: (recorder: VoiceRecorder) => 
   return null;
 }
 
+function MemoryChatRetainedShell() {
+  useEffect(
+    () => adjustMemoryRoomResourceCounter("MemoryRoomMountedChatShells", 1),
+    []
+  );
+  return (
+    <View pointerEvents="none" style={styles.chatRetainedShell}>
+      <View style={styles.chatRetainedShellListHost} />
+      <View style={styles.chatRetainedComposerShell}>
+        <View style={styles.chatRetainedInputShell} />
+        <View style={styles.chatRetainedActionShell} />
+      </View>
+    </View>
+  );
+}
+
 // Memoized pane components keep active-tab updates scoped to the data or
 // handlers that actually changed.
 const ItineraryPanelPane = memo(ItineraryPanel);
@@ -3842,17 +3913,62 @@ export default function MemoryDetailScreen() {
     paneTabMode,
     requestRoomMode: requestRoomModeController
   } = useMemoryRoomController(params.tab);
-  const requestRoomMode = useCallback((nextMode: RoomMode) => {
-    if (nextMode === mode) return;
-    if (mode !== "people" && nextMode !== "people") {
-      beginMemoryRoomTabTransition(mode, nextMode);
+  const [profilePaneTransition, setProfilePaneTransition] = useState(() =>
+    createMemoryRoomPaneTransitionState(initialJourneyTab)
+  );
+  const profilePaneTransitionRef = useRef(profilePaneTransition);
+  profilePaneTransitionRef.current = profilePaneTransition;
+  const precreateRequestRef = useRef<{
+    from: RoomTabMode;
+    generation: number;
+    startedAt: number;
+    target: RoomTabMode;
+  } | null>(null);
+  const precreateFallbackFrameRef = useRef<number | null>(null);
+  const precreateCleanupFrameRef = useRef<number | null>(null);
+  const precreateCleanupTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const profilePrecreateEnabled =
+    MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "precreate";
+  // React can leave a tab button holding the previous render's `mode` closure
+  // while Fabric is committing a native-heavy pane. Compare and update a
+  // synchronous request ref instead, so a legitimate first press can never be
+  // discarded as "already selected". The controller has the same last-request
+  // protection; this ref also keeps transition tracing from opening duplicate
+  // spans for a press on the current tab.
+  const requestedRoomModeRef = useRef<RoomMode>(mode);
+  useEffect(() => {
+    requestedRoomModeRef.current = mode;
+  }, [mode]);
+  const commitRoomMode = useCallback((
+    nextMode: RoomMode,
+    options?: {
+      fromMode?: RoomMode;
+      startedAt?: number;
+      traceStarted?: boolean;
     }
-    const startedAt = Date.now();
-    recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_STARTED", {
-      fromTab: mode,
-      screenState: "transitioning",
-      tab: nextMode
-    });
+  ) => {
+    const requestedMode = requestedRoomModeRef.current;
+    if (nextMode === requestedMode) return;
+    const fromMode = options?.fromMode ?? requestedMode;
+    requestedRoomModeRef.current = nextMode;
+    recordMemoryRoomChatLifecycleCandidate(
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
+    );
+    if (
+      !options?.traceStarted &&
+      fromMode !== "people" &&
+      nextMode !== "people"
+    ) {
+      beginMemoryRoomTabTransition(fromMode, nextMode);
+    }
+    const startedAt = options?.startedAt ?? Date.now();
+    if (!options?.traceStarted) {
+      recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_STARTED", {
+        fromTab: fromMode,
+        screenState: "transitioning",
+        tab: nextMode
+      });
+    }
     requestRoomModeController(nextMode);
     requestAnimationFrame(() => {
       if (nextMode !== "people") markMemoryRoomTransitionFirstFrame(nextMode);
@@ -3870,7 +3986,98 @@ export default function MemoryDetailScreen() {
         });
       });
     });
-  }, [journeySession, mode, requestRoomModeController]);
+  }, [journeySession, requestRoomModeController]);
+  const requestRoomMode = useCallback((nextMode: RoomMode) => {
+    commitRoomMode(nextMode);
+  }, [commitRoomMode]);
+  const finishPreparedRoomMode = useCallback((
+    generation: number,
+    target: RoomTabMode
+  ) => {
+    const request = precreateRequestRef.current;
+    const current = profilePaneTransitionRef.current;
+    if (
+      !profilePrecreateEnabled ||
+      !request ||
+      request.generation !== generation ||
+      request.target !== target ||
+      current.generation !== generation ||
+      current.phase !== "preparing"
+    ) {
+      return;
+    }
+    if (precreateFallbackFrameRef.current !== null) {
+      cancelAnimationFrame(precreateFallbackFrameRef.current);
+      precreateFallbackFrameRef.current = null;
+    }
+    const committed = commitPreparedMemoryRoomPaneTransition(current, generation);
+    profilePaneTransitionRef.current = committed;
+    setProfilePaneTransition(committed);
+    commitRoomMode(target, {
+      fromMode: request.from,
+      startedAt: request.startedAt,
+      traceStarted: true
+    });
+    precreateCleanupFrameRef.current = requestAnimationFrame(() => {
+      precreateCleanupFrameRef.current = null;
+      precreateCleanupTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        precreateCleanupTaskRef.current = null;
+        const latest = profilePaneTransitionRef.current;
+        const settled = settleMemoryRoomPaneTransition(latest, generation);
+        profilePaneTransitionRef.current = settled;
+        setProfilePaneTransition(settled);
+        if (precreateRequestRef.current?.generation === generation) {
+          precreateRequestRef.current = null;
+        }
+      });
+    });
+  }, [commitRoomMode, profilePrecreateEnabled]);
+  const prepareRoomMode = useCallback((nextMode: RoomMode) => {
+    if (
+      !profilePrecreateEnabled ||
+      nextMode === "people" ||
+      nextMode === paneTabMode
+    ) {
+      requestRoomMode(nextMode);
+      return;
+    }
+    const current = profilePaneTransitionRef.current;
+    const prepared = prepareMemoryRoomPaneTransition(current, nextMode);
+    profilePaneTransitionRef.current = prepared;
+    setProfilePaneTransition(prepared);
+    const startedAt = Date.now();
+    beginMemoryRoomTabTransition(paneTabMode, nextMode);
+    recordMemoryRoomChatLifecycleCandidate(
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
+    );
+    recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_STARTED", {
+      fromTab: paneTabMode,
+      screenState: "transitioning",
+      tab: nextMode
+    });
+    precreateRequestRef.current = {
+      from: paneTabMode,
+      generation: prepared.generation,
+      startedAt,
+      target: nextMode
+    };
+    if (precreateFallbackFrameRef.current !== null) {
+      cancelAnimationFrame(precreateFallbackFrameRef.current);
+    }
+    // A mounted destination reports onLayout first. The frame fallback covers
+    // a rapid return to a still-mounted departing pane, whose layout does not
+    // need to fire again.
+    precreateFallbackFrameRef.current = requestAnimationFrame(() => {
+      precreateFallbackFrameRef.current = null;
+      finishPreparedRoomMode(prepared.generation, nextMode);
+    });
+  }, [
+    finishPreparedRoomMode,
+    journeySession,
+    paneTabMode,
+    profilePrecreateEnabled,
+    requestRoomMode
+  ]);
   const handleRoomTabPress = useCallback((nextMode: RoomMode) => {
     recordMemoryRoomJourney(journeySession, "TAB_PRESS", {
       fromTab: mode,
@@ -3878,6 +4085,91 @@ export default function MemoryDetailScreen() {
     });
     requestRoomMode(nextMode);
   }, [journeySession, mode, requestRoomMode]);
+  const handleRoomTabPrepare = useCallback((nextMode: RoomMode) => {
+    recordMemoryRoomJourney(journeySession, "TAB_PRESS", {
+      fromTab: mode,
+      tab: nextMode
+    });
+    prepareRoomMode(nextMode);
+  }, [journeySession, mode, prepareRoomMode]);
+  const [chatWarmReady, setChatWarmReady] = useState(
+    MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&
+    initialJourneyTab === "chat"
+  );
+  useEffect(() => {
+    recordMemoryRoomChatLifecycleCandidate(
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
+    );
+  }, [roomId]);
+  useEffect(() => {
+    const reset = resetMemoryRoomPaneTransition(
+      profilePaneTransitionRef.current,
+      paneTabMode
+    );
+    profilePaneTransitionRef.current = reset;
+    setProfilePaneTransition(reset);
+    setChatWarmReady(
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&
+      paneTabMode === "chat"
+    );
+    // The room id is the ownership boundary. A retained host must never cross
+    // this reset even when Expo Router reuses the route component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
+  useEffect(() => {
+    if (
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE !== "warm-bounded" ||
+      chatWarmReady ||
+      !room.data
+    ) {
+      return undefined;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(
+        () => setChatWarmReady(true),
+        MEMORY_ROOM_CHAT_WARM_DELAY_MS
+      );
+    });
+    return () => {
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
+  }, [chatWarmReady, room.data]);
+  useEffect(() => {
+    if (
+      !profilePrecreateEnabled ||
+      profilePaneTransitionRef.current.selected === paneTabMode
+    ) {
+      return;
+    }
+    const reset = resetMemoryRoomPaneTransition(
+      profilePaneTransitionRef.current,
+      paneTabMode
+    );
+    profilePaneTransitionRef.current = reset;
+    setProfilePaneTransition(reset);
+  }, [paneTabMode, profilePrecreateEnabled]);
+  useEffect(() => {
+    if (!profilePrecreateEnabled || runtime.isForeground) return;
+    const reset = resetMemoryRoomPaneTransition(
+      profilePaneTransitionRef.current,
+      paneTabMode
+    );
+    profilePaneTransitionRef.current = reset;
+    setProfilePaneTransition(reset);
+    precreateRequestRef.current = null;
+  }, [paneTabMode, profilePrecreateEnabled, runtime.isForeground]);
+  useEffect(() => () => {
+    if (precreateFallbackFrameRef.current !== null) {
+      cancelAnimationFrame(precreateFallbackFrameRef.current);
+    }
+    if (precreateCleanupFrameRef.current !== null) {
+      cancelAnimationFrame(precreateCleanupFrameRef.current);
+    }
+    precreateCleanupTaskRef.current?.cancel();
+    precreateRequestRef.current = null;
+  }, []);
   const [peopleClosing, setPeopleClosing] = useState(false);
   const [participant, setParticipant] = useState("");
   const [selectedParticipants, setSelectedParticipants] = useState<UserSearchResult[]>([]);
@@ -3899,6 +4191,34 @@ export default function MemoryDetailScreen() {
   const [selectedMedia, setSelectedMedia] = useState<MediaViewerState | null>(null);
   const [memberCircleStatusOverrides, setMemberCircleStatusOverrides] = useState<Record<string, MemberCircleStatus>>({});
   const floatingAddMenuProgress = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (
+      mode === "chat" ||
+      !["warm-bounded", "precreate"].includes(
+        MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE
+      )
+    ) {
+      return;
+    }
+    void messageInputRef.current?.blur();
+    if (keyboardVisibleRef.current) Keyboard.dismiss();
+    if (replyingToMessage) setReplyingToMessage(null);
+    if (reactionPickerMessageId) setReactionPickerMessageId(null);
+    if (selectedItemKeysRef.current.length > 0 || selectedItemKeys.length > 0) {
+      selectedItemKeysRef.current = [];
+      setSelectedItemKeys([]);
+    }
+    if (editingMessage) {
+      setEditingMessage(null);
+      updateMessageDraft("");
+    }
+  }, [
+    editingMessage,
+    mode,
+    reactionPickerMessageId,
+    replyingToMessage,
+    selectedItemKeys.length
+  ]);
   const recordKeyboardJourneyStart = useCallback((height: number) => {
     recordMemoryRoomJourney(journeySession, "KEYBOARD_STARTED", {
       keyboardState: height > 0 ? "open" : "closed",
@@ -4079,6 +4399,22 @@ export default function MemoryDetailScreen() {
   const beginRoomExit = useCallback(() => {
     if (roomExitStartedRef.current) return;
     roomExitStartedRef.current = true;
+    const exited = exitMemoryRoomPaneTransition(
+      profilePaneTransitionRef.current
+    );
+    profilePaneTransitionRef.current = exited;
+    setProfilePaneTransition(exited);
+    precreateRequestRef.current = null;
+    if (precreateFallbackFrameRef.current !== null) {
+      cancelAnimationFrame(precreateFallbackFrameRef.current);
+      precreateFallbackFrameRef.current = null;
+    }
+    if (precreateCleanupFrameRef.current !== null) {
+      cancelAnimationFrame(precreateCleanupFrameRef.current);
+      precreateCleanupFrameRef.current = null;
+    }
+    precreateCleanupTaskRef.current?.cancel();
+    precreateCleanupTaskRef.current = null;
     beginMemoryRoomExitTrace();
     recordMemoryRoomJourney(journeySession, "ROOM_EXIT_STARTED", {
       screenState: "exiting",
@@ -5070,6 +5406,61 @@ export default function MemoryDetailScreen() {
       )
       : []
   ), [messageReactions, myUsername, projectedRoomData]);
+  const visiblePaneTabMode = profilePrecreateEnabled
+    ? profilePaneTransition.visible
+    : paneTabMode;
+  const interactivePaneTabMode = profilePrecreateEnabled
+    ? profilePaneTransition.interactive
+    : paneTabMode;
+  const chatSurfaceActive =
+    visiblePaneTabMode === "chat" && interactivePaneTabMode === "chat";
+  const retainedChatMessagesRef = useRef<{
+    messages: MemoryChatMainMessage[];
+    roomId: string;
+  }>({ messages: projectedChatMessages, roomId });
+  if (
+    retainedChatMessagesRef.current.roomId !== roomId ||
+    chatSurfaceActive ||
+    retainedChatMessagesRef.current.messages.length === 0
+  ) {
+    retainedChatMessagesRef.current = {
+      messages: projectedChatMessages,
+      roomId
+    };
+  }
+  const chatMessagesForHost =
+    MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded"
+      ? retainedChatMessagesRef.current.messages
+      : projectedChatMessages;
+  const paneMounted = (tab: RoomTabMode) => {
+    if (profilePrecreateEnabled) {
+      return profilePaneTransition.mounted.includes(tab);
+    }
+    if (
+      tab === "chat" &&
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "retained-shell"
+    ) {
+      return true;
+    }
+    if (
+      tab === "chat" &&
+      MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded"
+    ) {
+      return chatWarmReady || paneTabMode === "chat";
+    }
+    return paneTabMode === tab;
+  };
+  const handlePreparedPaneLayout = useCallback((tab: RoomTabMode) => {
+    const request = precreateRequestRef.current;
+    if (
+      !request ||
+      request.target !== tab ||
+      profilePaneTransitionRef.current.phase !== "preparing"
+    ) {
+      return;
+    }
+    finishPreparedRoomMode(request.generation, tab);
+  }, [finishPreparedRoomMode]);
   useEffect(() => {
     if (!projectedRoomData) return;
     const queries = queryClient.getQueryCache().getAll();
@@ -5151,6 +5542,9 @@ export default function MemoryDetailScreen() {
         onAddPeople={openPeopleAdd}
         onBack={mode === "people" ? closePeopleScreen : goBackToOrigin}
         onChangeMode={handleRoomTabPress}
+        onPrepareMode={
+          profilePrecreateEnabled ? handleRoomTabPrepare : undefined
+        }
         onOpenActions={openRoomActions}
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
@@ -5168,7 +5562,12 @@ export default function MemoryDetailScreen() {
           <View style={styles.roomStageShift}>
             <View style={styles.body}>
               <View style={styles.roomPager}>
-                <RoomPane active={paneTabMode === "overview"}>
+                <RoomPane
+                  active={visiblePaneTabMode === "overview"}
+                  interactive={interactivePaneTabMode === "overview"}
+                  mounted={paneMounted("overview")}
+                  onLayout={() => handlePreparedPaneLayout("overview")}
+                >
                   <ItineraryPanelPane
                     initialScrollOffset={readMemoryRoomScrollOffset(scrollSessionRef.current, "overview")}
                     journeySession={journeySession}
@@ -5178,12 +5577,21 @@ export default function MemoryDetailScreen() {
                     topInset={TABLE_HEADER_CLEARANCE}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "chat"}>
-                  <MemoryChatMainSurfacePane
-                    active={paneTabMode === "chat"}
+                <RoomPane
+                  active={visiblePaneTabMode === "chat"}
+                  interactive={interactivePaneTabMode === "chat"}
+                  mounted={paneMounted("chat")}
+                  onLayout={() => handlePreparedPaneLayout("chat")}
+                >
+                  {MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "retained-shell" &&
+                  !chatSurfaceActive ? (
+                    <MemoryChatRetainedShell />
+                  ) : (
+                    <MemoryChatMainSurfacePane
+                    active={chatSurfaceActive}
                     canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
-                    chatMessages={projectedChatMessages}
+                    chatMessages={chatMessagesForHost}
                     deleteError={errorMessage(deleteItems.error)}
                     deletePending={deleteItems.isPending}
                     editableSelectedMessage={editableSelectedMessage}
@@ -5226,8 +5634,14 @@ export default function MemoryDetailScreen() {
                     surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
                     toolbarInsetStyle={composerBottomInsetStyle}
                   />
+                  )}
                 </RoomPane>
-                <RoomPane active={paneTabMode === "media"}>
+                <RoomPane
+                  active={visiblePaneTabMode === "media"}
+                  interactive={interactivePaneTabMode === "media"}
+                  mounted={paneMounted("media")}
+                  onLayout={() => handlePreparedPaneLayout("media")}
+                >
                   <MediaGalleryPane
                     error={mediaError || addPhoto.error?.message || errorMessage(mediaPages.error)}
                     hasMore={Boolean(mediaPages.hasNextPage)}
@@ -5246,7 +5660,12 @@ export default function MemoryDetailScreen() {
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
-                <RoomPane active={paneTabMode === "dishes"}>
+                <RoomPane
+                  active={visiblePaneTabMode === "dishes"}
+                  interactive={interactivePaneTabMode === "dishes"}
+                  mounted={paneMounted("dishes")}
+                  onLayout={() => handlePreparedPaneLayout("dishes")}
+                >
                   <DishesPanelPane
                     dishes={data.dishes}
                     error={rateDish.error?.message}
@@ -5592,6 +6011,7 @@ function RoomHeader({
   onAddPeople,
   onBack,
   onChangeMode,
+  onPrepareMode,
   onOpenActions,
   onViewPeople,
   pagerPosition,
@@ -5607,6 +6027,7 @@ function RoomHeader({
   onAddPeople: () => void;
   onBack: () => void;
   onChangeMode: (mode: RoomMode) => void;
+  onPrepareMode?: (mode: RoomMode) => void;
   onOpenActions: () => void;
   onViewPeople: () => void;
   pagerPosition: SharedValue<number>;
@@ -5777,6 +6198,7 @@ function RoomHeader({
           activePaneIndex={activePaneIndex}
           mode={visualTabMode}
           onChangeMode={onChangeMode}
+          onPrepareMode={onPrepareMode}
           pagerPosition={pagerPosition}
           unreadChatCount={unreadChatCount}
         />
@@ -5793,12 +6215,14 @@ function RoomModeTabs({
   activePaneIndex,
   mode,
   onChangeMode,
+  onPrepareMode,
   pagerPosition,
   unreadChatCount
 }: {
   activePaneIndex: SharedValue<number>;
   mode: RoomTabMode;
   onChangeMode: (mode: RoomMode) => void;
+  onPrepareMode?: (mode: RoomMode) => void;
   pagerPosition: SharedValue<number>;
   unreadChatCount: number;
 }) {
@@ -5852,6 +6276,7 @@ function RoomModeTabs({
             key={tab.mode}
             label={tab.label}
             onPress={() => onChangeMode(tab.mode)}
+            onPrepare={onPrepareMode ? () => onPrepareMode(tab.mode) : undefined}
             unreadCount={tab.mode === "chat" ? unreadChatCount : 0}
           />
         ))}
@@ -5872,6 +6297,7 @@ function ModeButton({
   index,
   label,
   onPress,
+  onPrepare,
   unreadCount
 }: {
   activePaneIndex: SharedValue<number>;
@@ -5880,6 +6306,7 @@ function ModeButton({
   index: number;
   label: string;
   onPress: () => void;
+  onPrepare?: () => void;
   unreadCount?: number;
 }) {
   // Lit the moment the tap is handled, independent of the indicator's travel.
@@ -5918,8 +6345,8 @@ function ModeButton({
       pointerReleasePendingRef.current = false;
       pointerReleaseExpiryRef.current = null;
     }, 5_000);
-    onPress();
-  }, [onPress]);
+    (onPrepare ?? onPress)();
+  }, [onPrepare, onPress]);
   const activateOnPress = useCallback(() => {
     if (pointerReleasePendingRef.current) {
       pointerReleasePendingRef.current = false;
@@ -5958,18 +6385,32 @@ function ModeButton({
 
 function RoomPane({
   active,
-  children
+  children,
+  interactive = active,
+  mounted = active,
+  onLayout
 }: {
   active: boolean;
   children: ReactNode;
+  interactive?: boolean;
+  mounted?: boolean;
+  onLayout?: () => void;
 }) {
-  // One pane owns native views at a time. Retaining Chat, Media, and Dishes
-  // off-screen made route teardown proportional to which tabs had been visited
-  // and how much content a room contained, producing inconsistent Back latency.
-  if (!active) return null;
+  if (!mounted) return null;
 
   return (
-    <View collapsable={false} style={styles.roomPagerPage}>
+    <View
+      aria-hidden={interactive ? undefined : true}
+      accessibilityElementsHidden={!interactive}
+      collapsable={false}
+      importantForAccessibility={interactive ? "auto" : "no-hide-descendants"}
+      onLayout={onLayout}
+      pointerEvents={interactive ? "auto" : "none"}
+      style={[
+        styles.roomPagerPage,
+        active ? styles.roomPagerPageActive : styles.roomPagerPageInactive
+      ]}
+    >
       {children}
     </View>
   );
@@ -10756,6 +11197,34 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flex: 1,
     position: "relative"
   },
+  chatRetainedShell: {
+    flex: 1,
+    position: "relative"
+  },
+  chatRetainedShellListHost: {
+    flex: 1
+  },
+  chatRetainedComposerShell: {
+    alignItems: "center",
+    bottom: 0,
+    flexDirection: "row",
+    gap: spacing.s,
+    left: 0,
+    paddingBottom: COMPOSER_CLOSED_SAFE_GAP,
+    paddingHorizontal: spacing.md,
+    position: "absolute",
+    right: 0
+  },
+  chatRetainedInputShell: {
+    borderRadius: radius.input,
+    flex: 1,
+    height: COMPOSER_MESSAGE_BOX_MIN_HEIGHT
+  },
+  chatRetainedActionShell: {
+    borderRadius: COMPOSER_ACTION_BUTTON_SIZE / 2,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
+    width: COMPOSER_ACTION_BUTTON_SIZE
+  },
   chatMainMessagesLayer: {
     flex: 1
   },
@@ -11728,6 +12197,14 @@ function createStyles(ROOM_COLORS: RoomColors) {
   roomPagerPage: {
     ...StyleSheet.absoluteFillObject,
     flex: 1
+  },
+  roomPagerPageActive: {
+    opacity: 1,
+    zIndex: 1
+  },
+  roomPagerPageInactive: {
+    opacity: 0,
+    zIndex: 0
   },
   chatBottomOverlay: {
     bottom: 0,

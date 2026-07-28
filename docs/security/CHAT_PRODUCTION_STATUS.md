@@ -859,3 +859,35 @@ written or displayed by the mobile flow. This makes the original Table ->
 Chat fixture conservative rather than canonical and does not change the FAIL
 classification established independently by Media/Dishes -> Chat and the
 memory micro-soak.
+
+### Chat lifecycle and native-memory candidate experiment
+
+The 2026-07-28 controlled lifecycle result is **FAIL**. Four profile-only
+candidates—active-only cold mount, content-free retained shell, bounded warm
+Chat and press-down precreation—each completed 80 priority transitions on the
+same authenticated Motorola edge 70 fusion. All 320 official presses selected
+the destination once, host/input ownership remained at most one, the room
+Realtime owner remained one, inactive candidate surfaces were
+non-interactive/accessibility-hidden, and there was no fatal crash.
+
+Candidate C reduced Chat-entry Fabric native-view creation from 291–292 to
+88–89, but its frame p95 remained 48–53 ms, Chat -> Dishes reached 117 ms, and
+the full Stage A run grew PSS 110.9 MiB. The other candidates grew
+99.3–152.8 MiB and also missed the provisional frame budget. Native heap grew
+61.6–101.9 MiB while Java heap finished lower for every candidate, isolating
+the remaining measured owner group to React Native/Fabric native
+view/text/layout/gesture/composer construction and allocator high-water
+behaviour without a proven plateau. Focused exits released 20–24 MiB by +60
+seconds, but did not erase the active-run failure.
+
+No candidate passed Stage A, so Stage B, the three 50-transition plateau
+blocks, the ten-minute micro-soak and the full 30-minute release matrix were
+not run. Store production remains on the cold active-only default; the
+selector and shell profiling are rejected in production configuration. No
+RLS, Storage, private-media, authentication, rate-limit, schema or persistence
+contract changed. Focused Memory gates pass 198/198 (14 rapid-send, 105
+hardening and 79 journey/performance/profile); both typechecks, zero-error
+lint, the standard Next build, all signed APK scans and signatures also pass.
+The full root suite remains 1,765/1,784 with 19 unrelated existing failures.
+Full evidence:
+`docs/performance/MEMORY_ROOM_CHAT_LIFECYCLE_EXPERIMENT_2026-07-28.md`.

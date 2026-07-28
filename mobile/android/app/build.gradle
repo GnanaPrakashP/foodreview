@@ -84,6 +84,8 @@ def nativeIdentity = appEnvironment == "production"
         ? [applicationId: "com.circlebites.mobile.preview", label: "CircleBites Preview", scheme: "circlebites-preview"]
         : [applicationId: "com.circlebites.mobile.dev", label: "CircleBites Dev", scheme: "circlebites-dev"]
 def allowLocalCleartext = appEnvironment in ["local", "development"]
+def allowShellProfiling = appEnvironment != "production" &&
+    System.getenv("EXPO_PUBLIC_PERFORMANCE_PROFILE") == "1"
 def releaseSigningValues = [
     storeFile: System.getenv("CIRCLEBITES_RELEASE_STORE_FILE") ?: findProperty("CIRCLEBITES_RELEASE_STORE_FILE"),
     storePassword: System.getenv("CIRCLEBITES_RELEASE_STORE_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_STORE_PASSWORD"),
@@ -125,6 +127,7 @@ android {
         manifestPlaceholders = [
             circleBitesAppLabel: nativeIdentity.label,
             circleBitesAuthScheme: nativeIdentity.scheme,
+            circleBitesProfileableShell: allowShellProfiling.toString(),
             circleBitesUsesCleartextTraffic: allowLocalCleartext.toString()
         ]
 

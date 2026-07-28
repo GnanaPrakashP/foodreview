@@ -6,6 +6,10 @@ const memoryRoomScreen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
 const profileScreen = readFileSync("mobile/app/(tabs)/profile.tsx", "utf8");
 const notificationsScreen = readFileSync("mobile/app/notifications.tsx", "utf8");
 const memoryRoomController = readFileSync("mobile/src/features/memories/room/useMemoryRoomController.ts", "utf8");
+const memoryRoomChatLifecycle = readFileSync(
+  "mobile/src/performance/memoryRoomChatLifecycle.ts",
+  "utf8"
+);
 const vendoredChat = readFileSync("mobile/src/vendor/reactNativeChat/Chat/index.tsx", "utf8");
 const vendoredChatTypes = readFileSync("mobile/src/vendor/reactNativeChat/Chat/types.ts", "utf8");
 const vendoredMessages = readFileSync("mobile/src/vendor/reactNativeChat/MessagesContainer/index.tsx", "utf8");
@@ -162,10 +166,12 @@ test("media viewer mounts from a concrete selection so a stale index cannot flas
   assert.match(memoryRoomScreen, /useState\(selection\?\.index \?\? 0\)/);
 });
 
-test("phase 4 room panes unmount inactive heavy tabs", () => {
+test("phase 4 production default unmounts inactive heavy tabs", () => {
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
-  assert.match(roomPaneBody, /if \(!active\) return null/);
-  assert.match(roomPaneBody, /<View[\s\S]*style=\{styles\.roomPagerPage\}/);
+  assert.match(memoryRoomChatLifecycle, /const profileEnabled = process\.env\.EXPO_PUBLIC_PERFORMANCE_PROFILE === "1"/);
+  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
+  assert.match(roomPaneBody, /if \(!mounted\) return null/);
+  assert.match(roomPaneBody, /styles\.roomPagerPage/);
   assert.doesNotMatch(roomPaneBody, /lazy|hasMounted|shouldPrewarm|Reanimated\.View/);
 });
 
@@ -193,7 +199,8 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   assert.doesNotMatch(memoryRoomController, /MEMORY_ROOM_FIRST_PANE_MOUNT_DELAY_MS|paneMountTimerRef/);
   assert.match(memoryRoomController, /setMode\(nextMode\);[\s\S]*setPaneTabMode\(nextTabMode\)/);
   assert.doesNotMatch(memoryRoomController, /startTransition|setTimeout/);
-  assert.match(memoryRoomScreen, /active=\{paneTabMode === "chat"\}/);
+  assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "chat"\}/);
+  assert.match(memoryRoomScreen, /mounted=\{paneMounted\("chat"\)\}/);
   const modeButtonBody = memoryRoomScreen.match(
     /function ModeButton\([\s\S]*?\nfunction RoomPane/
   )?.[0] ?? "";
@@ -203,7 +210,7 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   assert.doesNotMatch(modeButtonBody, /Date\.now\(\).*pointer|lastPointerActivationAtRef/);
 });
 
-test("only the selected room tab owns a mounted native view tree", () => {
+test("production defaults to selected-only native ownership", () => {
   const requestRoomModeBody = memoryRoomController.match(
     /const requestRoomMode = useCallback\([\s\S]*?\}, \[activePaneIndex, pagerPosition\]\);/
   )?.[0] ?? "";
@@ -215,15 +222,18 @@ test("only the selected room tab owns a mounted native view tree", () => {
   assert.match(requestRoomModeBody, /setPaneTabMode\(nextTabMode\)/);
   assert.doesNotMatch(requestRoomModeBody, /setTimeout/);
   assert.doesNotMatch(memoryRoomScreen, /RoomPaneMountHintContext/);
-  assert.match(roomPaneBody, /if \(!active\) return null/);
-  assert.match(roomPaneBody, /<View[\s\S]*style=\{styles\.roomPagerPage\}/);
+  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
+  assert.match(roomPaneBody, /if \(!mounted\) return null/);
+  assert.match(roomPaneBody, /styles\.roomPagerPage/);
   assert.doesNotMatch(roomPaneBody, /hasMounted|shouldPrewarm|withTiming|Reanimated\.View/);
 });
 
 test("Media and Dishes remount from cached data without retained hidden panes", () => {
   assert.match(memoryRoomScreen, /useMemoryMediaPagesQuery\(roomId, mode === "media", journeySession\)/);
-  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "media"\}>/);
-  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "dishes"\}>/);
+  assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "media"\}/);
+  assert.match(memoryRoomScreen, /mounted=\{paneMounted\("media"\)\}/);
+  assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "dishes"\}/);
+  assert.match(memoryRoomScreen, /mounted=\{paneMounted\("dishes"\)\}/);
   assert.doesNotMatch(memoryRoomScreen, /shouldMountMediaPane|shouldMountDishesPane/);
 });
 
@@ -256,7 +266,7 @@ test("memory room back pops its existing stack entry without dismissing through 
   assert.match(hardwareBackBody, /goBackToOrigin\(\)/);
 });
 
-test("room exit owns only the selected pane and defers pending read persistence", () => {
+test("room exit destroys profile-only retained panes and defers pending read persistence", () => {
   const roomPaneBody = memoryRoomScreen.match(
     /function RoomPane\([\s\S]*?\nfunction PaneReveal/
   )?.[0] ?? "";
@@ -264,11 +274,14 @@ test("room exit owns only the selected pane and defers pending read persistence"
     /useEffect\(\(\) => \(\) => \{[\s\S]*?markReadTimeoutRef\.current = null;[\s\S]*?\}, \[\]\);/
   )?.[0] ?? "";
 
-  assert.match(roomPaneBody, /if \(!active\) return null/);
-  assert.doesNotMatch(
+  assert.match(roomPaneBody, /if \(!mounted\) return null/);
+  assert.match(memoryRoomChatLifecycle, /export function exitMemoryRoomPaneTransition/);
+  assert.match(memoryRoomChatLifecycle, /mounted: \[\]/);
+  assert.match(
     memoryRoomScreen,
-    /MEMORY_ROOM_CHAT_WARM_DELAY_MS|chatWarmed|markPanesWarm|warm=\{/
+    /MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE !== "warm-bounded"[\s\S]*?MEMORY_ROOM_CHAT_WARM_DELAY_MS/
   );
+  assert.doesNotMatch(memoryRoomScreen, /chatWarmed|markPanesWarm|warm=\{/);
   assert.match(pendingReadCleanup, /InteractionManager\.runAfterInteractions/);
   assert.doesNotMatch(pendingReadCleanup, /markRead\.mutate\(undefined\)/);
 });
@@ -567,12 +580,14 @@ test("outgoing pending messages do not insert a temporary typing row", () => {
   );
 });
 
-test("phase 6 mounts chat only while selected and renders timestamps on the first frame", () => {
+test("phase 6 production default mounts chat only while selected and renders timestamps on the first frame", () => {
   const timeBody = memoryRoomScreen.match(/function ChatMainBodyWithTime\([\s\S]*?\nfunction estimateChatTimestampWidth/)?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.doesNotMatch(memoryRoomScreen, /setChatPreloaded|panesPreloaded/);
-  assert.match(memoryRoomScreen, /<RoomPane active=\{paneTabMode === "chat"\}>/);
-  assert.match(roomPaneBody, /if \(!active\) return null/);
+  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
+  assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "chat"\}/);
+  assert.match(memoryRoomScreen, /mounted=\{paneMounted\("chat"\)\}/);
+  assert.match(roomPaneBody, /if \(!mounted\) return null/);
   assert.match(timeBody, /const estimatedTimeWidth = estimateChatTimestampWidth\(time\)/);
   assert.match(timeBody, /style=\{styles\.chatMainTimePinned\}/);
   assert.doesNotMatch(memoryRoomScreen, /chatMainTimeMeasuring/);
