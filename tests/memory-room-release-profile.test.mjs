@@ -51,10 +51,79 @@ function loadChatLifecycle(environment = {}) {
   return module.exports;
 }
 
+function loadChatRenderer(environment = {}) {
+  const { outputText } = ts.transpileModule(
+    source("mobile/src/performance/memoryRoomChatRenderer.ts"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022
+      }
+    }
+  );
+  const module = { exports: {} };
+  vm.runInNewContext(`(function(module, exports, require, process) {${outputText}\n})`, {
+    module
+  })(
+    module,
+    module.exports,
+    () => {
+      throw new Error("chat renderer has no runtime imports");
+    },
+    { env: environment }
+  );
+  return module.exports;
+}
+
+function loadChatRowModel() {
+  const { outputText } = ts.transpileModule(
+    source("mobile/src/features/memories/chat/memoryChatRowModel.ts"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022
+      }
+    }
+  );
+  const module = { exports: {} };
+  vm.runInNewContext(`(function(module, exports, require) {${outputText}\n})`, {
+    module
+  })(
+    module,
+    module.exports,
+    (id) => {
+      if (id === "@/services/memoryChatRowKeys") {
+        return {
+          memoryChatRowKey: (message) =>
+            message.clientId ? `client:${message.clientId}` : `message:${message.id}`
+        };
+      }
+      if (id === "@/services/memoryMessageReconciliation.mjs") {
+        return {
+          compareMemoryMessages: (left, right) =>
+            left.clientCreatedAt.localeCompare(right.clientCreatedAt) ||
+            left.id.localeCompare(right.id)
+        };
+      }
+      if (id === "@/utils/datetime") {
+        return {
+          formatDisplayDate: (value) => `date:${value.slice(0, 10)}`,
+          formatDisplayTime: (value) => `time:${value.slice(11, 16)}`
+        };
+      }
+      throw new Error(`unexpected chat row model import: ${id}`);
+    }
+  );
+  return module.exports;
+}
+
 const roomScreen = source("mobile/app/memories/[id].tsx");
 const releaseProfile = source("mobile/src/performance/memoryRoomReleaseProfile.ts");
 const jankHarness = source("tests/mobile-memory-room-jank-memory-validation.mjs");
+const releaseFixture = source("tests/mobile-memory-room-release-fixture.mjs");
 const chatLifecycle = source("mobile/src/performance/memoryRoomChatLifecycle.ts");
+const chatRenderer = source("mobile/src/performance/memoryRoomChatRenderer.ts");
+const chatRowModel = source("mobile/src/features/memories/chat/memoryChatRowModel.ts");
 const nativeChatInput = source("mobile/modules/keyboard-inset/android/src/main/java/expo/modules/keyboardinset/NativeChatInputView.kt");
 const offlineStore = source("mobile/src/services/memoryOfflineStore.ts");
 const profileScreen = source("mobile/app/(tabs)/profile.tsx");
@@ -89,7 +158,14 @@ test("pane ownership remains explicit, inaccessible and non-interactive while hi
   assert.match(pane, /accessibilityElementsHidden=\{!interactive\}/);
   assert.match(pane, /importantForAccessibility=\{interactive \? "auto" : "no-hide-descendants"\}/);
   assert.equal((roomScreen.match(/initialScrollOffset=\{readMemoryRoomScrollOffset/g) ?? []).length, 4);
-  assert.equal((roomScreen.match(/contentOffset=\{\{ x: 0, y: initialScrollOffset \}\}/g) ?? []).length, 3);
+  assert.equal(
+    (
+      roomScreen.match(
+        /contentOffset=\{\{ x: 0, y: initialScrollOffset \}\}/g
+      ) ?? []
+    ).length,
+    5
+  );
   assert.match(roomScreen, /contentOffset: \{ x: 0, y: initialScrollOffset \}/);
   assert.equal((roomScreen.match(/scrollEventThrottle=\{32\}/g) ?? []).length, 3);
   assert.match(roomScreen, /captureMemoryRoomScrollOffset\(scrollSessionRef\.current, "chat", offset\)/);
@@ -114,6 +190,219 @@ test("profile-only lifecycle selector preserves cold production default", () => 
     "warm-bounded"
   );
   assert.match(chatLifecycle, /: "cold";/);
+});
+
+test("profile-only Chat renderer preserves the vendored production default", () => {
+  assert.deepEqual(
+    [...loadChatRenderer().MEMORY_ROOM_CHAT_RENDERER_CANDIDATES],
+    ["vendor", "lite-flatlist", "lite-flashlist"]
+  );
+  assert.equal(
+    loadChatRenderer({
+      EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "lite-flatlist"
+    }).MEMORY_ROOM_CHAT_RENDERER,
+    "vendor"
+  );
+  assert.equal(
+    loadChatRenderer({
+      EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "lite-flashlist",
+      EXPO_PUBLIC_PERFORMANCE_PROFILE: "1"
+    }).MEMORY_ROOM_CHAT_RENDERER,
+    "lite-flashlist"
+  );
+  assert.match(chatRenderer, /: "vendor";/);
+  assert.match(roomScreen, /MEMORY_ROOM_CHAT_LITE_RENDERER/);
+});
+
+test("plain-text renderer fixture isolates exactly 50 cached text messages", () => {
+  assert.match(
+    releaseFixture,
+    /MEMORY_RELEASE_FIXTURE_PROFILE[\s\S]*"mixed", "plain-text"/
+  );
+  assert.match(
+    releaseFixture,
+    /fixtureProfile === "plain-text"[\s\S]*seedMessages\(admin, roomA, users, 50/
+  );
+  assert.match(releaseFixture, /multiline: false,[\s\S]*replies: false/);
+  assert.match(
+    releaseFixture,
+    /audio: 0,[\s\S]*dishes: 0,[\s\S]*images: 0,[\s\S]*messages: 50/
+  );
+});
+
+function fixtureMessage({
+  author = "owner",
+  body,
+  clientId,
+  createdAt,
+  deliveryStatus = "sent",
+  id,
+  replyToMessage = null
+}) {
+  return {
+    attachments: [],
+    authorDisplayName: author,
+    authorName: author,
+    body,
+    clientCreatedAt: createdAt,
+    clientId,
+    clientOrderKey: clientId ?? id,
+    clientSequence: null,
+    createdAt,
+    deliveryStatus,
+    editedAt: null,
+    id,
+    replyToMessage,
+    replyToMessageId: replyToMessage?.id ?? null,
+    roomId: "room-a",
+    serverCreatedAt: deliveryStatus === "sent" ? createdAt : null,
+    serverId: deliveryStatus === "sent" ? id : null
+  };
+}
+
+function fixtureRoom(messages) {
+  return {
+    area: null,
+    createdAt: "2026-07-28T09:00:00.000Z",
+    createdBy: "owner",
+    dishes: [],
+    id: "room-a",
+    lastReadAt: null,
+    messages,
+    occasionConfidence: 1,
+    occasionConfirmedByUser: true,
+    occasionType: "friends_hangout",
+    participants: [],
+    photos: [],
+    restaurantId: null,
+    restaurantName: "Fixture",
+    sourcePostId: null,
+    status: "published",
+    stops: [],
+    themeKey: "friends_hangout",
+    title: "Renderer fixture",
+    visitDate: null
+  };
+}
+
+test("lightweight row store preserves unchanged identity and updates one delivery row", () => {
+  const { MemoryChatRowModelStore } = loadChatRowModel();
+  const store = new MemoryChatRowModelStore();
+  const first = fixtureMessage({
+    body: "first",
+    clientId: "a",
+    createdAt: "2026-07-28T09:00:00.000Z",
+    id: "optimistic-a",
+    deliveryStatus: "pending"
+  });
+  const second = fixtureMessage({
+    author: "guest",
+    body: "second",
+    clientId: "b",
+    createdAt: "2026-07-28T09:01:00.000Z",
+    id: "server-b"
+  });
+  const before = store.project(fixtureRoom([first, second]), "owner");
+  const confirmed = {
+    ...first,
+    deliveryStatus: "sent",
+    id: "server-a",
+    serverCreatedAt: "2026-07-28T09:00:01.000Z",
+    serverId: "server-a"
+  };
+  const after = store.project(fixtureRoom([confirmed, second]), "owner");
+  const beforeByKey = new Map(before.map((row) => [row.key, row]));
+  const afterByKey = new Map(after.map((row) => [row.key, row]));
+
+  assert.notEqual(afterByKey.get("client:a"), beforeByKey.get("client:a"));
+  assert.equal(afterByKey.get("client:b"), beforeByKey.get("client:b"));
+  assert.equal(afterByKey.get("client:a").deliveryState, "sent");
+  assert.equal(afterByKey.get("client:a").logicalMessageId, "client:a");
+});
+
+test("incoming insertion keeps existing row objects and explicit stable item types", () => {
+  const { MemoryChatRowModelStore } = loadChatRowModel();
+  const store = new MemoryChatRowModelStore();
+  const rows = [
+    fixtureMessage({
+      author: "guest-a",
+      body: "older",
+      clientId: "older",
+      createdAt: "2026-07-28T09:00:00.000Z",
+      id: "older"
+    }),
+    fixtureMessage({
+      author: "guest-b",
+      body: "newer",
+      clientId: "newer",
+      createdAt: "2026-07-28T09:01:00.000Z",
+      id: "newer"
+    })
+  ];
+  const before = store.project(fixtureRoom(rows), "owner");
+  const incoming = fixtureMessage({
+    author: "guest-c",
+    body: "incoming",
+    clientId: "incoming",
+    createdAt: "2026-07-28T09:02:00.000Z",
+    id: "incoming"
+  });
+  const after = store.project(fixtureRoom([...rows, incoming]), "owner");
+  const afterByKey = new Map(after.map((row) => [row.key, row]));
+
+  for (const row of before) {
+    assert.equal(afterByKey.get(row.key), row);
+  }
+  assert.equal(afterByKey.get("client:incoming").itemType, "incoming-text");
+  assert.doesNotMatch(chatRowModel, /placementIndex:/);
+});
+
+test("reply row model is bounded and contains no complete domain message", () => {
+  const { MemoryChatRowModelStore } = loadChatRowModel();
+  const store = new MemoryChatRowModelStore();
+  const reply = fixtureMessage({
+    body: "bounded reply",
+    clientId: "reply",
+    createdAt: "2026-07-28T09:03:00.000Z",
+    id: "reply",
+    replyToMessage: {
+      authorDisplayName: "Guest",
+      body: "referenced body",
+      id: "referenced-id",
+      ignoredPrivateField: "must-not-survive"
+    }
+  });
+  const [row] = store.project(fixtureRoom([reply]), "owner");
+  assert.equal(row.itemType, "outgoing-reply-text");
+  assert.deepEqual(
+    { ...row.replyPreview },
+    {
+      authorLabel: "Guest",
+      body: "referenced body",
+      logicalMessageId: "referenced-id"
+    }
+  );
+  assert.equal("memoryMessage" in row, false);
+  assert.equal("room" in row, false);
+  assert.equal("attachments" in row, false);
+  assert.equal(JSON.stringify(row).includes("ignoredPrivateField"), false);
+});
+
+test("lite list path is viewport bounded and mounts one screen-level action layer", () => {
+  assert.match(roomScreen, /<FlatList<ChatRowViewModel>/);
+  assert.match(roomScreen, /<FlashList<ChatRowViewModel>/);
+  assert.match(roomScreen, /initialNumToRender=\{10\}/);
+  assert.match(roomScreen, /maxToRenderPerBatch=\{6\}/);
+  assert.match(roomScreen, /windowSize=\{3\}/);
+  assert.match(roomScreen, /getItemType=\{liteListItemType\}/);
+  assert.match(roomScreen, /keyExtractor=\{liteListKeyExtractor\}/);
+  assert.match(roomScreen, /const LiteChatTextRow = memo/);
+  assert.match(roomScreen, /setMemoryChatMenuRequest\(\{/);
+  assert.equal(
+    (roomScreen.match(/<MemoryChatMenuHost \/>/g) ?? []).length,
+    1
+  );
+  assert.match(roomScreen, /row\.deliveryState === "failed"/);
 });
 
 test("precreate coordinator supersedes stale work and never exposes two interactive panes", () => {

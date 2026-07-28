@@ -1,0 +1,93 @@
+{
+  "status": "FAIL",
+  "stage": "A",
+  "device": {
+    "model": "motorola edge 70 fusion",
+    "serial": "ZA223JVWG7",
+    "android": 16,
+    "package": "com.circlebites.mobile.dev"
+  },
+  "fixture": {
+    "title": "Renderer plain text A",
+    "cachedMessages": 50,
+    "replies": 0,
+    "images": 0,
+    "videos": 0,
+    "audio": 0,
+    "dishes": 0,
+    "stops": 0
+  },
+  "gates": {
+    "activePssGrowthKbMaximum": 40960,
+    "frameP95MsMaximum": 20
+  },
+  "candidates": [
+    {
+      "renderer": "vendor",
+      "acceptedChatActivations": 50,
+      "activePssGrowthKb": 30845,
+      "nativeHeapGrowthKb": 18692,
+      "firstFrameP95Ms": 171.623,
+      "composerUsableP95Ms": 384.31,
+      "frameP95Ms": 77,
+      "jankP95Percent": 23.53,
+      "fabricInsertP95": 277,
+      "fabricLayoutP95": 284,
+      "fabricNativeViewsCreatedP95": 289,
+      "mountedRowMaximum": 29,
+      "fatalCrashes": 0,
+      "result": "REJECT"
+    },
+    {
+      "renderer": "lite-flatlist",
+      "acceptedChatActivations": 50,
+      "activePssGrowthKb": 67082,
+      "nativeHeapGrowthKb": 44364,
+      "firstFrameP95Ms": 98.592,
+      "composerUsableP95Ms": 170.038,
+      "frameP95Ms": 46,
+      "jankP95Percent": 33.33,
+      "fabricInsertP95": 68,
+      "fabricLayoutP95": 71,
+      "fabricNativeViewsCreatedP95": 127,
+      "mountedRowMaximum": 29,
+      "mountedGestureOwnerMaximum": 29,
+      "fatalCrashes": 0,
+      "result": "REJECT"
+    },
+    {
+      "renderer": "lite-flashlist",
+      "acceptedChatActivations": 50,
+      "ignoredExitPressesBeforeCleanRetry": 1,
+      "activePssGrowthKb": 35952,
+      "nativeHeapGrowthKb": 18904,
+      "firstFrameP95Ms": 182.225,
+      "composerUsableP95Ms": 183.872,
+      "frameP95Ms": 73,
+      "jankP95Percent": 23.08,
+      "fabricInsertP95": 103,
+      "fabricLayoutP95": 0,
+      "fabricNativeViewsCreatedP95": 115,
+      "mountedRowMaximum": 39,
+      "mountedGestureOwnerMaximum": 39,
+      "fatalCrashes": 0,
+      "result": "REJECT"
+    }
+  ],
+  "apk": {
+    "certificateSha256": "d534872a4714c00142ede6b5e273995ebd381b21e49ef1767294a1f0a0339bde",
+    "vendorSha256": "c3ce1f152d9fa1b4dd464faa3348d8d5205199736ac65a6e2fd92dab243ef36c",
+    "liteFlatlistSha256": "9ca9599a67ea6d8a1cd8f069ec640fa95b6e0293e87aa1969f9f0283be1f08b9",
+    "liteFlashlistSha256": "ff09cfdd4b2d5af67cd9982693967b47de9a17bbfb2da4d070a8603345432528",
+    "artifactScan": "PASS",
+    "signatureVerification": "PASS"
+  },
+  "laterStages": {
+    "repliesAndDeliveryStates": "NOT_RUN_STAGE_A_FAILED",
+    "mediaAndAudio": "NOT_RUN_STAGE_A_FAILED",
+    "stableHost": "NOT_RUN_STAGE_A_FAILED",
+    "threeBlockPlateau": "NOT_RUN_STAGE_A_FAILED",
+    "tenMinuteMicroSoak": "NOT_RUN_STAGE_A_FAILED",
+    "fullAcceptance": "NOT_RUN_STAGE_A_FAILED"
+  }
+}

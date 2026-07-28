@@ -891,3 +891,28 @@ lint, the standard Next build, all signed APK scans and signatures also pass.
 The full root suite remains 1,765/1,784 with 19 unrelated existing failures.
 Full evidence:
 `docs/performance/MEMORY_ROOM_CHAT_LIFECYCLE_EXPERIMENT_2026-07-28.md`.
+
+### Chat row/list renderer experiment
+
+The 2026-07-28 renderer result is **FAIL**. A stable lightweight row store,
+plain-text fast row, lazy screen-level actions and direct FlatList/FlashList
+paths were implemented behind a non-production profile selector. On the same
+authenticated Motorola edge 70 fusion and an isolated cached 50-message room,
+the lightweight paths reduced Chat-entry native-view creation from 289 to
+127/115. They did not meet the 20 ms frame-p95 gate: vendored, FlatList and
+FlashList measured 77, 46 and 73 ms respectively. Direct FlatList grew active
+PSS 65.5 MiB; FlashList stayed at 35.1 MiB but ignored one Chat -> Table press
+before a successful 50-cycle retry.
+
+No candidate passed Stage A, so reply/media expansion, stable-host selection,
+three-block plateau, micro-soak and full acceptance were not run. Production
+continues to resolve to the vendored cold active-only renderer; configuration
+rejects profiling/render selectors in production. RLS, private Storage/media,
+authentication, rate limits, offline/outbox behavior and persistence contracts
+are unchanged. Rapid-send is 14/14, Memory hardening 105/105, journey 15/15,
+Phase 4 50/50 and renderer/profile 20/20; both typechecks, zero-error lint,
+standard Next build, three signed APK scans and signatures pass. The full root
+suite remains 1,771/1,790 with 19 unrelated existing failures.
+
+Full evidence:
+`docs/performance/MEMORY_ROOM_CHAT_RENDERER_EXPERIMENT_2026-07-28.md`.

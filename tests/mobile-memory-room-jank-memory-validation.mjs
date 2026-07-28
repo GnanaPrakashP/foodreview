@@ -13,6 +13,8 @@ const packageName = process.env.ANDROID_APP_PACKAGE ?? "com.circlebites.mobile.d
 const roomTitle = process.env.MEMORY_RELEASE_ROOM_TITLE ?? "Release jank fixture";
 const lifecycleCandidate =
   process.env.MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE ?? "unknown";
+const chatRendererCandidate =
+  process.env.MEMORY_ROOM_CHAT_RENDERER_CANDIDATE ?? "unknown";
 const artifactDir = process.env.MEMORY_RELEASE_ARTIFACT_DIR ??
   "/private/tmp/memory-room-release-jank";
 const repetitions = Number(process.env.MEMORY_RELEASE_TRANSITION_REPETITIONS ?? 20);
@@ -37,7 +39,10 @@ const tabMode = {
 async function adbRun(args, allowFailure = false, timeout = 60_000) {
   try {
     const result = await execFileAsync(adb, ["-s", serial, ...args], {
-      maxBuffer: 64 * 1024 * 1024,
+      // A 50-activation physical renderer block can fill most of atrace's
+      // 64 MiB ring buffer. Leave enough headroom for decoded text and adb's
+      // trace header instead of losing a completed run during async_stop.
+      maxBuffer: 128 * 1024 * 1024,
       timeout
     });
     return `${result.stdout ?? ""}${result.stderr ?? ""}`;
@@ -202,18 +207,20 @@ function parseGfx(output) {
 }
 
 async function startAtrace() {
+  // Restrict this stream to the profiled application. Adding the global
+  // input/am/view categories records continuous Choreographer work for the
+  // whole device and can exceed 128 MiB during 50 UIAutomator-verified
+  // activations. App-scoped markers still include the MemoryRoom sections,
+  // counters, and React Native Fabric mount instructions used below.
   await adbRun([
     "shell",
     "atrace",
     "--async_start",
     "-c",
     "-b",
-    "65536",
+    "32768",
     "-a",
-    packageName,
-    "input",
-    "am",
-    "view"
+    packageName
   ]);
 }
 
@@ -410,7 +417,28 @@ async function runPair({ from, to }) {
       ),
       chatHosts: traceCounterStats(trace, "MemoryRoomMountedChatHosts"),
       chatInputs: traceCounterStats(trace, "MemoryRoomMountedChatInputs"),
-      chatShells: traceCounterStats(trace, "MemoryRoomMountedChatShells")
+      chatRows: traceCounterStats(trace, "MemoryRoomMountedChatRows"),
+      chatShells: traceCounterStats(trace, "MemoryRoomMountedChatShells"),
+      chatTextRows: traceCounterStats(
+        trace,
+        "MemoryRoomMountedChatTextRows"
+      ),
+      chatReplyRows: traceCounterStats(
+        trace,
+        "MemoryRoomMountedChatReplyRows"
+      ),
+      chatVisualRows: traceCounterStats(
+        trace,
+        "MemoryRoomMountedChatVisualRows"
+      ),
+      chatAudioRows: traceCounterStats(
+        trace,
+        "MemoryRoomMountedChatAudioRows"
+      ),
+      chatGestureOwners: traceCounterStats(
+        trace,
+        "MemoryRoomMountedChatGestureOwners"
+      )
     },
     settledMs: stats(
       durations.get(`MemoryRoomTabSettled_${suffix}`) ?? []
@@ -479,6 +507,7 @@ async function main() {
   const end = await sampleMemory("targeted_end");
   const crash = await adbRun(["logcat", "-d", "-b", "crash", "-v", "brief"], true);
   const report = {
+    chatRendererCandidate,
     lifecycleCandidate,
     memory: {
       activeGrowthKb: end.totalPssKb - start.totalPssKb,

@@ -18,6 +18,7 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbnails";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
@@ -117,6 +118,7 @@ import {
   markMemoryRoomTransitionSettled,
   recordMemoryRoomCacheProfileSnapshot,
   recordMemoryRoomChatLifecycleCandidate,
+  recordMemoryRoomChatRendererCandidate,
   recordMemoryRoomSurfaceLifecycle,
   traceMemoryRoomSection
 } from "@/performance/memoryRoomReleaseProfile";
@@ -130,6 +132,15 @@ import {
   resetMemoryRoomPaneTransition,
   settleMemoryRoomPaneTransition
 } from "@/performance/memoryRoomChatLifecycle";
+import {
+  MEMORY_ROOM_CHAT_LITE_RENDERER,
+  MEMORY_ROOM_CHAT_RENDERER,
+  MEMORY_ROOM_CHAT_RENDERER_CODE
+} from "@/performance/memoryRoomChatRenderer";
+import {
+  MemoryChatRowModelStore,
+  type ChatRowViewModel
+} from "@/features/memories/chat/memoryChatRowModel";
 import {
   Bubble as ChatMainBubble,
   Chat as ChatMain,
@@ -238,6 +249,9 @@ type MediaViewerState = {
   items: MemoryPhoto[];
 };
 type OpenMediaHandler = (media: MemoryPhoto, group?: MemoryPhoto[]) => void;
+type ChatListScrollRef = {
+  scrollToOffset: (options: { animated?: boolean; offset: number }) => void;
+};
 type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
   | { type: "photo"; value: MemoryPhoto };
@@ -1054,11 +1068,311 @@ function useMemoryJourneyScrollDiagnostics(
   return { begin, capture, settle };
 }
 
+type LiteChatRowAnchor = {
+  height: number;
+  pageX: number;
+  pageY: number;
+  width: number;
+};
+
+const LITE_CHAT_REPLY_TRIGGER_DISTANCE = 54;
+const LITE_CHAT_REPLY_VERTICAL_TOLERANCE = 4;
+
+const LiteChatTextRow = memo(function LiteChatTextRow({
+  canReply,
+  index,
+  journeySession,
+  onOpenMenu,
+  onReply,
+  onCancelFailed,
+  onRetryFailed,
+  onToggleSelection,
+  row,
+  selected,
+  selectionMode
+}: {
+  canReply: boolean;
+  index: number;
+  journeySession: MemoryRoomJourneySession;
+  onOpenMenu: (key: string, anchor: LiteChatRowAnchor) => void;
+  onReply: (key: string) => void;
+  onCancelFailed: (key: string) => void;
+  onRetryFailed: (key: string) => void;
+  onToggleSelection: (key: string) => void;
+  row: ChatRowViewModel;
+  selected: boolean;
+  selectionMode: boolean;
+}) {
+  const bubbleRef = useRef<View>(null);
+  const initialPlacementRef = useRef({
+    deliveryStatus: row.deliveryState,
+    renderIndex: index
+  });
+  const mine = row.direction === "outgoing";
+  const replyVisible = row.replyPreview !== null;
+
+  useEffect(() => {
+    const releaseText = adjustMemoryRoomResourceCounter(
+      replyVisible
+        ? "MemoryRoomMountedChatReplyRows"
+        : "MemoryRoomMountedChatTextRows",
+      1
+    );
+    const releaseGesture = adjustMemoryRoomResourceCounter(
+      "MemoryRoomMountedChatGestureOwners",
+      1
+    );
+    if (row.clientId) {
+      recordMemoryChatPlacement("ROW_MOUNTED", {
+        clientId: row.clientId,
+        deliveryStatus: initialPlacementRef.current.deliveryStatus,
+        renderIndex: initialPlacementRef.current.renderIndex
+      });
+    }
+    return () => {
+      releaseGesture();
+      releaseText();
+    };
+  }, [replyVisible, row.clientId]);
+
+  useEffect(() => {
+    if (!row.clientId) return;
+    recordMemoryChatPlacement("ROW_RENDERED", {
+      clientId: row.clientId,
+      deliveryStatus: row.deliveryState,
+      renderIndex: index
+    });
+  }, [index, row.clientId, row.deliveryState]);
+
+  const triggerReply = useCallback(() => {
+    onReply(row.key);
+  }, [onReply, row.key]);
+
+  const replyGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(canReply && !selectionMode)
+        .activeOffsetX(LITE_CHAT_REPLY_TRIGGER_DISTANCE / 2)
+        .failOffsetY([
+          -LITE_CHAT_REPLY_VERTICAL_TOLERANCE,
+          LITE_CHAT_REPLY_VERTICAL_TOLERANCE
+        ])
+        .onFinalize((event) => {
+          if (
+            event.translationX >= LITE_CHAT_REPLY_TRIGGER_DISTANCE &&
+            event.translationX > Math.abs(event.translationY) * 1.5
+          ) {
+            runOnJS(triggerReply)();
+          }
+        }),
+    [canReply, selectionMode, triggerReply]
+  );
+
+  const handleLongPress = useCallback(() => {
+    if (selectionMode) {
+      onToggleSelection(row.key);
+      return;
+    }
+    bubbleRef.current?.measureInWindow((pageX, pageY, width, height) => {
+      onOpenMenu(row.key, { height, pageX, pageY, width });
+    });
+  }, [onOpenMenu, onToggleSelection, row.key, selectionMode]);
+
+  const handlePress = useCallback(() => {
+    if (selectionMode) onToggleSelection(row.key);
+  }, [onToggleSelection, row.key, selectionMode]);
+
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      if (!row.clientId) return;
+      const { height, y } = event.nativeEvent.layout;
+      recordMemoryChatPlacement("ROW_LAYOUT", {
+        clientId: row.clientId,
+        deliveryStatus: row.deliveryState,
+        renderIndex: index,
+        rowBottom: y + height,
+        rowHeight: height,
+        rowTop: y
+      });
+    },
+    [index, row.clientId, row.deliveryState]
+  );
+
+  const deliveryLabel =
+    row.deliveryState === "pending" || row.deliveryState === "uploading"
+      ? " sending"
+      : row.deliveryState === "retrying"
+        ? " retrying"
+        : row.deliveryState === "failed"
+          ? " failed"
+          : mine
+            ? " sent"
+            : "";
+  const accessibilityActions = useMemo(
+    () => [
+      ...(canReply && !selectionMode
+        ? [{ label: "Reply", name: "reply" as const }]
+        : []),
+      {
+        label: selectionMode ? "Toggle selection" : "Message actions",
+        name: "activate" as const
+      }
+    ],
+    [canReply, selectionMode]
+  );
+
+  return (
+    <View
+      onLayout={handleLayout}
+      style={[
+        styles.liteChatRow,
+        mine ? styles.liteChatRowMine : styles.liteChatRowOther,
+        row.grouping.spacing === "grouped"
+          ? styles.liteChatRowGrouped
+          : styles.liteChatRowBreak,
+        selected && styles.chatMainRowSelectedBackground
+      ]}
+    >
+      <MemoryJourneyRenderProbe
+        journeySession={journeySession}
+        surface="chat_row"
+        tab="chat"
+      />
+      <GestureDetector gesture={replyGesture} touchAction="pan-y">
+        <Pressable
+          accessibilityActions={accessibilityActions}
+          accessibilityLabel={`${row.senderLabel || (mine ? "You" : "Message")}: ${row.body}${deliveryLabel}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected }}
+          delayLongPress={350}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === "reply" && canReply) {
+              triggerReply();
+              return;
+            }
+            handleLongPress();
+          }}
+          onLongPress={handleLongPress}
+          onPress={handlePress}
+          ref={bubbleRef}
+          style={[
+            styles.liteChatBubble,
+            mine ? styles.liteChatBubbleMine : styles.liteChatBubbleOther,
+            row.grouping.showTail &&
+              (mine
+                ? styles.liteChatBubbleMineWithTail
+                : styles.liteChatBubbleOtherWithTail)
+          ]}
+        >
+          {row.grouping.showTail ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.liteChatTail,
+                mine ? styles.liteChatTailMine : styles.liteChatTailOther
+              ]}
+            />
+          ) : null}
+          {!mine && row.grouping.showSender ? (
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.liteChatSender,
+                { color: senderAccent(row.senderLabel) }
+              ]}
+            >
+              {row.senderLabel}
+            </Text>
+          ) : null}
+          {row.replyPreview ? (
+            <ReplyPreviewBlock
+              author={row.replyPreview.authorLabel}
+              body={row.replyPreview.body}
+              mine={mine}
+              style={styles.liteChatReplyPreview}
+            />
+          ) : null}
+          <Text
+            android_hyphenationFrequency="none"
+            style={[
+              styles.liteChatBody,
+              mine ? styles.messageTextMine : styles.messageTextOther
+            ]}
+            textBreakStrategy="simple"
+          >
+            <SmartMessageTextContent
+              linkStyle={
+                mine ? styles.messageLinkTextMine : styles.messageLinkText
+              }
+              text={row.body}
+              textStyle={[
+                styles.liteChatBody,
+                mine ? styles.messageTextMine : styles.messageTextOther
+              ]}
+            />
+            <Text
+              style={[
+                styles.liteChatInlineMeta,
+                mine
+                  ? styles.inlineTimestampMine
+                  : styles.inlineTimestampOther,
+                row.deliveryState === "failed" && styles.liteChatInlineMetaFailed
+              ]}
+            >
+              {`  ${row.timestampLabel}${
+                row.deliveryState === "pending" ||
+                row.deliveryState === "uploading"
+                  ? " ◷"
+                  : row.deliveryState === "retrying"
+                    ? " ↻"
+                    : mine && row.deliveryState === "sent"
+                      ? " ✓"
+                      : row.deliveryState === "failed"
+                        ? " !"
+                        : ""
+              }`}
+            </Text>
+          </Text>
+        </Pressable>
+      </GestureDetector>
+      {row.deliveryState === "failed" ? (
+        <View
+          style={[
+            styles.chatMainFailedRow,
+            mine && styles.liteChatFailedRowMine
+          ]}
+        >
+          <MessageDeliveryState
+            mine={mine}
+            onCancel={() => onCancelFailed(row.key)}
+            onRetry={() => onRetryFailed(row.key)}
+            status="failed"
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
+const LiteChatSystemRow = memo(function LiteChatSystemRow({
+  row
+}: {
+  row: ChatRowViewModel;
+}) {
+  if (row.itemType === "unread") return <UnreadDivider />;
+  return (
+    <View style={styles.liteChatSystemRow}>
+      <Text style={styles.liteChatSystemText}>{row.body}</Text>
+    </View>
+  );
+});
+
 function MemoryChatMainSurface({
   active,
   canLoadOlderMessages,
   chatMessages,
   loadingOlderMessages,
+  liteRows,
   message,
   myUsername,
   inputRef,
@@ -1105,12 +1419,13 @@ function MemoryChatMainSurface({
   canLoadOlderMessages: boolean;
   chatMessages: MemoryChatMainMessage[];
   loadingOlderMessages: boolean;
+  liteRows: ChatRowViewModel[];
   message: string;
   myUsername: string;
   inputRef: RefObject<NativeChatInputHandle | null>;
   initialScrollOffset: number;
   journeySession: MemoryRoomJourneySession;
-  listRef: RefObject<ChatMainAnimatedList<MemoryChatMainMessage> | null>;
+  listRef: RefObject<ChatListScrollRef | null>;
   canDeleteSelected: boolean;
   deleteError?: string;
   deletePending: boolean;
@@ -1153,6 +1468,9 @@ function MemoryChatMainSurface({
     () => adjustMemoryRoomResourceCounter("MemoryRoomMountedChatHosts", 1),
     []
   );
+  useEffect(() => {
+    recordMemoryRoomChatRendererCandidate(MEMORY_ROOM_CHAT_RENDERER_CODE);
+  }, []);
   useEffect(() => {
     const becameActive = active && !previousActiveRef.current;
     previousActiveRef.current = active;
@@ -1591,6 +1909,12 @@ function MemoryChatMainSurface({
     onNearBottomChange,
     onScrollOffsetChange
   ]);
+  const handleLiteChatScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleChatMainScroll(event.nativeEvent as unknown as ScrollEvent);
+    },
+    [handleChatMainScroll]
+  );
 
   const clearChatMainInteractionRelease = useCallback(() => {
     if (!chatMainInteractionReleaseRef.current) return;
@@ -1743,6 +2067,133 @@ function MemoryChatMainSurface({
 
     return actions;
   }, [myUsername, onBeginSelection, onDeleteTarget, onEditMessage, onReplyMessage]);
+  const liteMessageByKey = useMemo(
+    () =>
+      new Map(
+        chatMessages.map((chatMessage) => [
+          String(chatMessage._id),
+          chatMessage
+        ])
+      ),
+    [chatMessages]
+  );
+  const litePrototypeSupported = liteRows.every(
+    (row) =>
+      row.itemType === "incoming-text" ||
+      row.itemType === "outgoing-text" ||
+      row.itemType === "incoming-reply-text" ||
+      row.itemType === "outgoing-reply-text" ||
+      row.itemType === "date" ||
+      row.itemType === "unread" ||
+      row.itemType === "system"
+  );
+  const liteRendererActive =
+    MEMORY_ROOM_CHAT_LITE_RENDERER && litePrototypeSupported;
+  const liteSelectionKeys = useMemo(
+    () => new Set(selectedItemKeys),
+    [selectedItemKeys]
+  );
+  const liteMessageForKey = useCallback(
+    (key: string) => liteMessageByKey.get(key),
+    [liteMessageByKey]
+  );
+  const openLiteMessageMenu = useCallback(
+    (key: string, anchor: LiteChatRowAnchor) => {
+      const target = liteMessageForKey(key);
+      if (!target) return;
+      const actions = buildMenuActions(target);
+      if (actions.length === 0) return;
+      const dismiss = () => setMemoryChatMenuRequest(null);
+      setMemoryChatMenuRequest({
+        actions,
+        bubbleHeight: anchor.height,
+        bubbleWidth: anchor.width,
+        emojis: [],
+        onDismiss: dismiss,
+        onSelect: () => undefined,
+        pageX: anchor.pageX,
+        pageY: anchor.pageY,
+        position: target.user?._id === currentUser._id ? "right" : "left",
+        showEmojis: false
+      });
+    },
+    [buildMenuActions, currentUser._id, liteMessageForKey]
+  );
+  const replyToLiteMessage = useCallback(
+    (key: string) => {
+      const message = liteMessageForKey(key)?.memoryMessage;
+      if (message && canReplyToMemoryMessage(message)) onReplyMessage(message);
+    },
+    [liteMessageForKey, onReplyMessage]
+  );
+  const toggleLiteMessageSelection = useCallback(
+    (key: string) => {
+      const target = memoryChatActionTarget(liteMessageForKey(key));
+      if (target) onToggleSelection(target);
+    },
+    [liteMessageForKey, onToggleSelection]
+  );
+  const retryLiteMessage = useCallback(
+    (key: string) => {
+      const message = liteMessageForKey(key)?.memoryMessage;
+      if (message?.deliveryStatus === "failed") onRetryFailedMessage(message);
+    },
+    [liteMessageForKey, onRetryFailedMessage]
+  );
+  const cancelLiteMessage = useCallback(
+    (key: string) => {
+      const message = liteMessageForKey(key)?.memoryMessage;
+      if (message?.deliveryStatus === "failed") onCancelFailedMessage(message);
+    },
+    [liteMessageForKey, onCancelFailedMessage]
+  );
+  const renderLiteChatRow = useCallback(
+    ({ index, item }: { index: number; item: ChatRowViewModel }) => {
+      if (
+        item.itemType === "date" ||
+        item.itemType === "unread" ||
+        item.itemType === "system"
+      ) {
+        return <LiteChatSystemRow row={item} />;
+      }
+      const message = liteMessageForKey(item.key)?.memoryMessage;
+      return (
+        <LiteChatTextRow
+          canReply={Boolean(
+            message && canReplyToMemoryMessage(message) && active
+          )}
+          index={index}
+          journeySession={journeySession}
+          onCancelFailed={cancelLiteMessage}
+          onOpenMenu={openLiteMessageMenu}
+          onReply={replyToLiteMessage}
+          onRetryFailed={retryLiteMessage}
+          onToggleSelection={toggleLiteMessageSelection}
+          row={item}
+          selected={
+            message
+              ? liteSelectionKeys.has(
+                memoryActionKey({ type: "message", value: message })
+              )
+              : false
+          }
+          selectionMode={selectionMode}
+        />
+      );
+    },
+    [
+      active,
+      cancelLiteMessage,
+      journeySession,
+      liteMessageForKey,
+      liteSelectionKeys,
+      openLiteMessageMenu,
+      replyToLiteMessage,
+      retryLiteMessage,
+      selectionMode,
+      toggleLiteMessageSelection
+    ]
+  );
 
   const sendToolbarMessage = useCallback((
     outgoingMessages: Partial<MemoryChatMainMessage> | Partial<MemoryChatMainMessage>[]
@@ -2132,11 +2583,103 @@ function MemoryChatMainSurface({
       });
     }
   }, [composerClearance, keyboardTopReserve, messageBoxHeight]);
+  const liteListHeader = useMemo(
+    () => renderComposerListSpacer(),
+    [renderComposerListSpacer]
+  );
+  const liteListFooter = useMemo(
+    () => renderKeyboardTopSpacer(),
+    [renderKeyboardTopSpacer]
+  );
+  const liteListKeyExtractor = useCallback(
+    (row: ChatRowViewModel) => row.key,
+    []
+  );
+  const liteListItemType = useCallback(
+    (row: ChatRowViewModel) => row.itemType,
+    []
+  );
+  const liteList =
+    MEMORY_ROOM_CHAT_RENDERER === "lite-flashlist" ? (
+      <FlashList<ChatRowViewModel>
+        automaticallyAdjustContentInsets={false}
+        contentContainerStyle={styles.chatMainListContent}
+        contentOffset={{ x: 0, y: initialScrollOffset }}
+        data={liteRows}
+        directionalLockEnabled
+        drawDistance={720}
+        extraData={selectedItemKeys.join("|")}
+        getItemType={liteListItemType}
+        inverted
+        keyExtractor={liteListKeyExtractor}
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+        ListFooterComponent={liteListFooter}
+        ListHeaderComponent={liteListHeader}
+        maintainVisibleContentPosition={{
+          disabled: !chatMainPreserveHistoryViewport
+        }}
+        nestedScrollEnabled
+        onContentSizeChange={handleChatMainContentSizeChange}
+        onEndReached={requestOlderPage}
+        onEndReachedThreshold={CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD}
+        onLayout={handleChatMainLayout}
+        onMomentumScrollBegin={handleChatMainMomentumBegin}
+        onMomentumScrollEnd={handleChatMainMomentumEnd}
+        onScroll={handleLiteChatScroll}
+        onScrollBeginDrag={handleChatMainScrollBeginDrag}
+        onScrollEndDrag={handleChatMainScrollEndDrag}
+        ref={listRef as RefObject<FlashListRef<ChatRowViewModel> | null>}
+        renderItem={renderLiteChatRow}
+        scrollEventThrottle={16}
+        style={styles.chatMainMessages}
+      />
+    ) : (
+      <FlatList<ChatRowViewModel>
+        automaticallyAdjustContentInsets={false}
+        contentContainerStyle={styles.chatMainListContent}
+        contentOffset={{ x: 0, y: initialScrollOffset }}
+        data={liteRows}
+        directionalLockEnabled
+        extraData={selectedItemKeys.join("|")}
+        initialNumToRender={10}
+        inverted
+        keyExtractor={liteListKeyExtractor}
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+        ListFooterComponent={liteListFooter}
+        ListHeaderComponent={liteListHeader}
+        maintainVisibleContentPosition={
+          chatMainPreserveHistoryViewport
+            ? CHAT_MAIN_SCROLL_POSITION_CONFIG
+            : undefined
+        }
+        maxToRenderPerBatch={6}
+        nestedScrollEnabled
+        onContentSizeChange={handleChatMainContentSizeChange}
+        onEndReached={requestOlderPage}
+        onEndReachedThreshold={CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD}
+        onLayout={handleChatMainLayout}
+        onMomentumScrollBegin={handleChatMainMomentumBegin}
+        onMomentumScrollEnd={handleChatMainMomentumEnd}
+        onScroll={handleLiteChatScroll}
+        onScrollBeginDrag={handleChatMainScrollBeginDrag}
+        onScrollEndDrag={handleChatMainScrollEndDrag}
+        ref={listRef as RefObject<FlatList<ChatRowViewModel> | null>}
+        removeClippedSubviews={Platform.OS === "android"}
+        renderItem={renderLiteChatRow}
+        scrollEventThrottle={16}
+        style={styles.chatMainMessages}
+        updateCellsBatchingPeriod={32}
+        windowSize={3}
+      />
+    );
 
   const surfaceInner = (
     <>
       <View style={styles.chatMainMessagesLayer}>
-        <ChatMain<MemoryChatMainMessage>
+        {liteRendererActive ? liteList : (
+          <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
           disableKeyboardProvider
           initiallyInitialized
@@ -2273,7 +2816,8 @@ function MemoryChatMainSurface({
             onChangeText: onChangeMessage
           }}
           user={currentUser}
-        />
+          />
+        )}
       </View>
       <View pointerEvents="none" style={styles.chatKeyboardBridge} />
       {composerToolbar}
@@ -3874,7 +4418,7 @@ export default function MemoryDetailScreen() {
   markReadMutateRef.current = markRead.mutate;
   const peopleInputRef = useRef<TextInput>(null);
   const messageInputRef = useRef<NativeChatInputHandle>(null);
-  const chatMainListRef = useRef<ChatMainAnimatedList<MemoryChatMainMessage>>(null);
+  const chatMainListRef = useRef<ChatListScrollRef>(null);
   const keyboardVisibleRef = useRef(false);
   const nearBottomRef = useRef(false);
   // Active chat uses the vendored inverted AnimatedFlatList (newest at offset 0).
@@ -3954,6 +4498,7 @@ export default function MemoryDetailScreen() {
     recordMemoryRoomChatLifecycleCandidate(
       MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
     );
+    recordMemoryRoomChatRendererCandidate(MEMORY_ROOM_CHAT_RENDERER_CODE);
     if (
       !options?.traceStarted &&
       fromMode !== "people" &&
@@ -4050,6 +4595,7 @@ export default function MemoryDetailScreen() {
     recordMemoryRoomChatLifecycleCandidate(
       MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
     );
+    recordMemoryRoomChatRendererCandidate(MEMORY_ROOM_CHAT_RENDERER_CODE);
     recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_STARTED", {
       fromTab: paneTabMode,
       screenState: "transitioning",
@@ -4100,6 +4646,7 @@ export default function MemoryDetailScreen() {
     recordMemoryRoomChatLifecycleCandidate(
       MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE
     );
+    recordMemoryRoomChatRendererCandidate(MEMORY_ROOM_CHAT_RENDERER_CODE);
   }, [roomId]);
   useEffect(() => {
     const reset = resetMemoryRoomPaneTransition(
@@ -5406,6 +5953,22 @@ export default function MemoryDetailScreen() {
       )
       : []
   ), [messageReactions, myUsername, projectedRoomData]);
+  const liteRowStoreRef = useRef<MemoryChatRowModelStore | null>(null);
+  if (!liteRowStoreRef.current) {
+    liteRowStoreRef.current = new MemoryChatRowModelStore();
+  }
+  const projectedLiteChatRows = useMemo(
+    () =>
+      MEMORY_ROOM_CHAT_LITE_RENDERER && projectedRoomData
+        ? traceMemoryRoomSection("MemoryRoomChatLiteRows", () =>
+          liteRowStoreRef.current!.project(
+            projectedRoomData,
+            myUsername,
+            roomUnreadAnchorRef.current?.id ?? null
+          ))
+        : [],
+    [myUsername, projectedRoomData]
+  );
   const visiblePaneTabMode = profilePrecreateEnabled
     ? profilePaneTransition.visible
     : paneTabMode;
@@ -5601,6 +6164,7 @@ export default function MemoryDetailScreen() {
                     journeySession={journeySession}
                     keyboardTopReserve={chatKeyboardTopReserve}
                     listRef={chatMainListRef}
+                    liteRows={projectedLiteChatRows}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
                     message={message}
                     myUsername={myUsername}
@@ -11582,6 +12146,116 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainFailedRow: {
     marginBottom: 2,
     marginTop: 4
+  },
+  liteChatRow: {
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    width: "100%"
+  },
+  liteChatRowMine: {
+    alignItems: "flex-end"
+  },
+  liteChatRowOther: {
+    alignItems: "flex-start"
+  },
+  liteChatRowGrouped: {
+    marginBottom: CHAT_GROUPED_MESSAGE_GAP
+  },
+  liteChatRowBreak: {
+    marginBottom: 10
+  },
+  liteChatBubble: {
+    borderRadius: 16,
+    borderWidth: 1,
+    maxWidth: CHAT_RECEIVED_TEXT_ROW_MAX_WIDTH,
+    paddingBottom: 7,
+    paddingHorizontal: 11,
+    paddingTop: 7,
+    position: "relative"
+  },
+  liteChatBubbleMine: {
+    backgroundColor: ROOM_COLORS.sentBubble,
+    borderColor: ROOM_COLORS.sentBubbleBorder,
+    maxWidth: CHAT_SENT_TEXT_ROW_MAX_WIDTH
+  },
+  liteChatBubbleOther: {
+    backgroundColor: ROOM_COLORS.receivedBubble,
+    borderColor: ROOM_COLORS.border
+  },
+  liteChatBubbleMineWithTail: {
+    borderTopRightRadius: 3
+  },
+  liteChatBubbleOtherWithTail: {
+    borderTopLeftRadius: 3
+  },
+  liteChatTail: {
+    borderBottomWidth: 1,
+    borderRightWidth: 1,
+    height: 10,
+    position: "absolute",
+    top: -1,
+    transform: [{ rotate: "45deg" }],
+    width: 10
+  },
+  liteChatTailMine: {
+    backgroundColor: ROOM_COLORS.sentBubble,
+    borderBottomColor: ROOM_COLORS.sentBubbleBorder,
+    borderRightColor: ROOM_COLORS.sentBubbleBorder,
+    right: -5
+  },
+  liteChatTailOther: {
+    backgroundColor: ROOM_COLORS.receivedBubble,
+    borderBottomColor: ROOM_COLORS.border,
+    borderRightColor: ROOM_COLORS.border,
+    left: -5,
+    transform: [{ rotate: "225deg" }]
+  },
+  liteChatSender: {
+    ...fontStyles.extraBold,
+    fontSize: 12,
+    lineHeight: 15,
+    marginBottom: 3,
+    maxWidth: "100%"
+  },
+  liteChatReplyPreview: {
+    marginBottom: 5,
+    marginHorizontal: 0,
+    marginTop: 0
+  },
+  liteChatBody: {
+    ...fontStyles.medium,
+    flexShrink: 1,
+    fontSize: 16,
+    includeFontPadding: false,
+    lineHeight: 22
+  },
+  liteChatInlineMeta: {
+    ...fontStyles.semiBold,
+    fontSize: 11,
+    includeFontPadding: false,
+    lineHeight: 13
+  },
+  liteChatInlineMetaFailed: {
+    color: ROOM_COLORS.danger
+  },
+  liteChatFailedRowMine: {
+    alignItems: "flex-end"
+  },
+  liteChatSystemRow: {
+    alignItems: "center",
+    paddingHorizontal: CHAT_ROW_SIDE_PADDING,
+    paddingVertical: 5,
+    width: "100%"
+  },
+  liteChatSystemText: {
+    ...fontStyles.semiBold,
+    backgroundColor: ROOM_COLORS.glassDim,
+    borderRadius: 12,
+    color: ROOM_COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 5
   },
   chatMainAvatarImage: {
     borderRadius: CHAT_AVATAR_SIZE / 2,

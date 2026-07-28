@@ -38,7 +38,12 @@ export type MemoryRoomResourceCounter =
   | "MemoryRoomActiveRecorders"
   | "MemoryRoomMountedChatHosts"
   | "MemoryRoomMountedChatInputs"
+  | "MemoryRoomMountedChatAudioRows"
+  | "MemoryRoomMountedChatGestureOwners"
+  | "MemoryRoomMountedChatReplyRows"
   | "MemoryRoomMountedChatRows"
+  | "MemoryRoomMountedChatTextRows"
+  | "MemoryRoomMountedChatVisualRows"
   | "MemoryRoomMountedChatShells"
   | "MemoryRoomMountedDishRows"
   | "MemoryRoomMountedMediaTiles";
@@ -271,6 +276,19 @@ export function recordMemoryRoomChatLifecycleCandidate(candidateCode: number) {
     const normalized = Math.max(0, count);
     if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, normalized);
     else Systrace.counterEvent(name, normalized);
+  }
+}
+
+export function recordMemoryRoomChatRendererCandidate(candidateCode: number) {
+  if (!traceAvailable()) return;
+  const value = Math.max(0, Math.floor(candidateCode));
+  if (androidTrace) {
+    androidTrace.setMemoryRoomTraceCounter(
+      "MemoryRoomChatRendererCandidate",
+      value
+    );
+  } else {
+    Systrace.counterEvent("MemoryRoomChatRendererCandidate", value);
   }
 }
 

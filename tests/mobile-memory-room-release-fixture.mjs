@@ -185,11 +185,17 @@ async function seedTable(admin, roomId, users) {
   return { dishes: dishes.data.length, stops: stopInsert.data.length };
 }
 
-async function seedMessages(admin, roomId, users, count) {
+async function seedMessages(
+  admin,
+  roomId,
+  users,
+  count,
+  { multiline = true, replies = true } = {}
+) {
   const now = Date.now();
   const rows = Array.from({ length: count }, (_, index) => ({
     author_name: users[index % users.length].username,
-    body: index % 11 === 0
+    body: multiline && index % 11 === 0
       ? `Release fixture multiline ${index + 1}\nEmoji 🍽️ and a deliberately longer synthetic line`
       : `Release fixture message ${String(index + 1).padStart(3, "0")}`,
     created_at: new Date(now - (count - index) * 30_000).toISOString(),
@@ -197,7 +203,8 @@ async function seedMessages(admin, roomId, users, count) {
   }));
   const inserted = await admin.from("shared_memory_messages").insert(rows).select("id");
   if (inserted.error) throw inserted.error;
-  const replies = await admin.from("shared_memory_messages").insert(
+  if (!replies) return inserted.data;
+  const replyInsert = await admin.from("shared_memory_messages").insert(
     [8, 18, 28, 38, 48, 58, 68, 78].filter((index) => index < count).map((index, replyIndex) => ({
       author_name: users[(replyIndex + 1) % users.length].username,
       body: `Release fixture reply ${replyIndex + 1}`,
@@ -206,7 +213,7 @@ async function seedMessages(admin, roomId, users, count) {
       room_id: roomId
     }))
   );
-  if (replies.error) throw replies.error;
+  if (replyInsert.error) throw replyInsert.error;
   return inserted.data;
 }
 
@@ -385,9 +392,47 @@ async function main() {
     ? participants
     : [owner, ...participants];
   const users = [owner, ...participants];
+  const fixtureProfile = process.env.MEMORY_RELEASE_FIXTURE_PROFILE?.trim() ||
+    "mixed";
+  if (!["mixed", "plain-text"].includes(fixtureProfile)) {
+    throw new Error("MEMORY_RELEASE_FIXTURE_PROFILE must be mixed or plain-text");
+  }
   const roomTitle = process.env.MEMORY_RELEASE_ROOM_TITLE?.trim() ||
     "Release acceptance A";
   const roomA = await createRoom(admin, owner, participants, roomTitle);
+  if (fixtureProfile === "plain-text") {
+    await seedMessages(admin, roomA, users, 50, {
+      multiline: false,
+      replies: false
+    });
+    const fixture = {
+      email: owner.email,
+      fixtureProfile,
+      counts: {
+        audio: 0,
+        dishes: 0,
+        images: 0,
+        messages: 50,
+        participants: users.length,
+        rooms: 1,
+        stops: 0,
+        videos: 0
+      },
+      createdUsers,
+      roomIds: [roomA],
+      storagePaths: [],
+      users
+    };
+    writeFileSync(manifestPath, `${JSON.stringify(fixture, null, 2)}\n`);
+    console.log(JSON.stringify({
+      counts: fixture.counts,
+      email: fixture.email,
+      fixtureProfile,
+      manifestPath,
+      status: "SEED_PASS"
+    }, null, 2));
+    return;
+  }
   const roomB = await createRoom(
     admin,
     owner,
@@ -402,6 +447,7 @@ async function main() {
   const storagePaths = await seedMedia(admin, roomA, owner, messagesA);
   const fixture = {
     email: owner.email,
+    fixtureProfile,
     counts: {
       audio: 3,
       dishes: table.dishes,

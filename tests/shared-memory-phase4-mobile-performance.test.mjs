@@ -83,7 +83,7 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   assert.doesNotMatch(memoryRoomScreen, /startTransition/);
   assert.match(
     memoryRoomScreen,
-    /<View style=\{styles\.chatMainMessagesLayer\}>\s*<ChatMain<MemoryChatMainMessage>/
+    /<View style=\{styles\.chatMainMessagesLayer\}>\s*\{liteRendererActive \? liteList : \(\s*<ChatMain<MemoryChatMainMessage>/
   );
   assert.match(memoryRoomScreen, /initialNumToRender=\{CHAT_TIMELINE_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{CHAT_TIMELINE_MAX_RENDER_BATCH\}/);

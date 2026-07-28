@@ -11,6 +11,11 @@ const MEMORY_ROOM_CHAT_LIFECYCLES = new Set([
   "warm-bounded",
   "precreate"
 ]);
+const MEMORY_ROOM_CHAT_RENDERERS = new Set([
+  "vendor",
+  "lite-flatlist",
+  "lite-flashlist"
+]);
 const PROD_IDENTITY = Object.freeze({
   androidPackage: "com.circlebites.mobile",
   displayName: "CircleBites",
@@ -92,6 +97,8 @@ function validateClientConfiguration(env = process.env, extra = {}) {
   }
   const configuredMemoryRoomChatLifecycle =
     env.EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE?.trim().toLowerCase();
+  const configuredMemoryRoomChatRenderer =
+    env.EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER?.trim().toLowerCase();
   if (
     configuredMemoryRoomChatLifecycle !== undefined &&
     !MEMORY_ROOM_CHAT_LIFECYCLES.has(configuredMemoryRoomChatLifecycle)
@@ -108,6 +115,22 @@ function validateClientConfiguration(env = process.env, extra = {}) {
       "EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE requires EXPO_PUBLIC_PERFORMANCE_PROFILE=1"
     );
   }
+  if (
+    configuredMemoryRoomChatRenderer !== undefined &&
+    !MEMORY_ROOM_CHAT_RENDERERS.has(configuredMemoryRoomChatRenderer)
+  ) {
+    throw new Error(
+      "EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER must be vendor, lite-flatlist or lite-flashlist"
+    );
+  }
+  if (
+    configuredMemoryRoomChatRenderer !== undefined &&
+    env.EXPO_PUBLIC_PERFORMANCE_PROFILE !== "1"
+  ) {
+    throw new Error(
+      "EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER requires EXPO_PUBLIC_PERFORMANCE_PROFILE=1"
+    );
+  }
   if (releaseBuild && environment === "local") {
     throw new Error("Release and EAS builds must bind EXPO_PUBLIC_APP_ENVIRONMENT explicitly");
   }
@@ -117,6 +140,7 @@ function validateClientConfiguration(env = process.env, extra = {}) {
       env.EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS === "1" ||
       env.EXPO_PUBLIC_PERFORMANCE_PROFILE === "1" ||
       env.EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE ||
+      env.EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_ORIGIN ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_KINDS ||
       env.EXPO_PUBLIC_CHAT_PLACEMENT_FIXTURE_START_MS ||
