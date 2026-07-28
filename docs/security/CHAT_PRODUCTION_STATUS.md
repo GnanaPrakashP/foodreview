@@ -827,3 +827,26 @@ moderate/poor shaped-network and pending-media process-kill cases were not
 completed, and the independent Next 15.5.20 Turbopack build still stalls with
 an idle worker. The full A–O evidence and exact gate classification are in
 `docs/performance/MEMORY_ROOM_RELEASE_ACCEPTANCE_2026-07-28.md`.
+
+### Focused release-jank follow-up
+
+The 2026-07-28 focused blocker-fix result remains **FAIL**. Dishes now uses a
+bounded virtualized window, Chat projection/unread ownership now survives
+active-only tab remounts, Chat initial rows are reduced, completed local-read
+promises release the room graph, and explicit profile counters prove stable
+query/entity cardinalities. The 20x physical series on a Motorola edge 70
+fusion reduced Chat -> Dishes usable p95 from 284 ms to 140 ms and removed the
+repeated 200–250 ms bucket, but frame p95 remained 121 ms. Chat-entry usable
+p95 remained 202–214 ms because cold native Chat creation still inserts about
+260 Fabric instructions.
+
+The 10-minute micro-soak completed 40 tab transitions, 20 text/reply sends, 10
+replies, 10 ratings, 10 entries, 11 exits and three background/foreground
+cycles with zero crash/ANR/OOM. PSS nevertheless grew 101.9 MiB and resumed
+growth after a brief cycle 6–8 shelf; exit +60 s retained 67.8 MiB over the
+soak start. The required 30-minute run was therefore not started. RLS, private
+media, authentication, rate limits and persistence contracts were unchanged.
+All Memory-focused gates, typechecks, zero-error lint, signed APK build/scan,
+and standard Next build pass; the full root suite retains the same 20 unrelated
+branch failures. Full evidence is in
+`docs/performance/MEMORY_ROOM_RELEASE_JANK_FIX_2026-07-28.md`.

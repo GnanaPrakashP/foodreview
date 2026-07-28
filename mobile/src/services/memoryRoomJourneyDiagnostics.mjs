@@ -324,9 +324,10 @@ export function createMemoryRoomRequestCoordinator() {
       localReadStartCount += 1;
       const promise = Promise.resolve().then(load);
       localRead = { promise, roomId };
-      void promise.then(undefined, () => {
+      const clear = () => {
         if (localRead?.promise === promise) localRead = null;
-      });
+      };
+      void promise.then(clear, clear);
       return promise;
     },
     refresh(roomId, load) {

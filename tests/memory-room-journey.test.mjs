@@ -252,6 +252,19 @@ test("room request coordinator deduplicates concurrent local/bootstrap work but 
   assert.strictEqual(localA, localB);
   assert.deepEqual(await localA, { id: "room-a" });
   assert.equal(localReads, 1);
+  await Promise.resolve();
+  assert.equal(
+    coordinator.snapshot().localReadRoomId,
+    null,
+    "a completed SQLite read must not retain the resolved room graph"
+  );
+
+  const laterLocalRead = await coordinator.readLocal("room-a", async () => {
+    localReads += 1;
+    return { id: "room-a", pass: 2 };
+  });
+  assert.deepEqual(laterLocalRead, { id: "room-a", pass: 2 });
+  assert.equal(localReads, 2);
 
   const bootstrapA = coordinator.refresh("room-a", async () => {
     networkRequests += 1;
@@ -275,8 +288,8 @@ test("room request coordinator deduplicates concurrent local/bootstrap work but 
   assert.equal(networkRequests, 2);
   assert.deepEqual(coordinator.snapshot(), {
     activeRefreshRoomId: null,
-    localReadRoomId: "room-a",
-    localReadStartCount: 1,
+    localReadRoomId: null,
+    localReadStartCount: 2,
     refreshStartCount: 2
   });
 });

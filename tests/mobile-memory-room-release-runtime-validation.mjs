@@ -18,6 +18,12 @@ const postExitSettleMs = Number(process.env.MEMORY_RELEASE_POST_EXIT_SETTLE_MS ?
 const skipMatrix = process.env.MEMORY_RELEASE_SKIP_MATRIX === "1";
 const matrixResumePath = process.env.MEMORY_RELEASE_MATRIX_RESUME_FROM ?? "";
 const disconnectEveryCycles = Number(process.env.MEMORY_RELEASE_DISCONNECT_EVERY ?? 6);
+const memorySampleEveryCycles = Number(
+  process.env.MEMORY_RELEASE_MEMORY_SAMPLE_EVERY ?? 5
+);
+const exerciseMedia = process.env.MEMORY_RELEASE_EXERCISE_MEDIA !== "0";
+const roomATitle = process.env.MEMORY_RELEASE_ROOM_A_TITLE ?? "Release acceptance A";
+const roomBTitle = process.env.MEMORY_RELEASE_ROOM_B_TITLE ?? "Release acceptance B";
 const reversePorts = (process.env.MEMORY_RELEASE_REVERSE_PORTS ?? "3036,54321")
   .split(",")
   .map((value) => value.trim())
@@ -367,11 +373,24 @@ async function exitRoom() {
   await waitForPoint(["Memories"], "Memories after room exit");
 }
 
+async function ensureProfileMemories() {
+  let xml = await uiXml();
+  if (pointFor(xml, ["Table"]) && pointFor(xml, ["Chat"])) {
+    await exitRoom();
+    return;
+  }
+  if (pointFor(xml, ["Memories"])) return;
+  const profile = pointFor(xml, ["Profile"]);
+  assert.ok(profile, "Profile navigation is not visible");
+  await tap(profile);
+  await waitForPoint(["Memories"], "Profile Memories tab");
+}
+
 async function runEntrySamples() {
   const samples = [];
   await startAtrace();
   for (let index = 0; index < 6; index += 1) {
-    const room = await waitForPoint(["Release acceptance A"], "room A card");
+    const room = await waitForPoint([roomATitle], "room A card");
     const startedAt = performance.now();
     await tap(room.point);
     await waitForPoint(["Table"], "room Table");
@@ -571,14 +590,14 @@ async function runSoak() {
   };
   const memory = [await sampleMemory("soak_start")];
   let cycle = 0;
-  let currentRoom = "Release acceptance A";
+  let currentRoom = roomATitle;
   while (Date.now() - startedAt < soakDurationMs) {
     cycle += 1;
     for (const label of ["Table", "Media", "Dishes", "Chat"]) {
       await switchTab(label);
       counts.tabTransitions += 1;
       if (label !== "Chat") await scrollSurface();
-      if (label === "Media" && currentRoom === "Release acceptance A") {
+      if (exerciseMedia && label === "Media" && currentRoom === roomATitle) {
         if (counts.imageViewerOpens < 10 && await exerciseViewer("image")) {
           counts.imageViewerOpens += 1;
         }
@@ -618,13 +637,18 @@ async function runSoak() {
     await switchTab("Table");
     await exitRoom();
     counts.roomExits += 1;
-    const title = cycle % 2 === 0 ? "Release acceptance A" : "Release acceptance B";
+    const title = cycle % 2 === 0 ? roomATitle : roomBTitle;
     const room = await waitForPoint([title], title);
     await tap(room.point);
     await waitForPoint(["Table"], "Table after room switch");
     currentRoom = title;
     counts.roomEntries += 1;
-    if (cycle % 5 === 0) memory.push(await sampleMemory(`soak_cycle_${cycle}`));
+    if (
+      memorySampleEveryCycles > 0 &&
+      cycle % memorySampleEveryCycles === 0
+    ) {
+      memory.push(await sampleMemory(`soak_cycle_${cycle}`));
+    }
   }
   await switchTab("Table");
   await exitRoom();
@@ -642,12 +666,13 @@ async function main() {
   assert.equal(directedPairs.length, 12);
   const device = await deviceInfo();
   await adbRun(["logcat", "-c"], true);
+  await ensureProfileMemories();
   const memory = [await sampleMemory("authenticated_profile")];
   const memories = await waitForPoint(["Memories"], "Profile Memories tab");
   await tap(memories.point);
-  await waitForPoint(["Release acceptance A"], "room A card before entry sampling");
+  await waitForPoint([roomATitle], "room A card before entry sampling");
   const entry = skipMatrix ? null : await runEntrySamples();
-  await navigateToRoom("Release acceptance A");
+  await navigateToRoom(roomATitle);
   memory.push(await sampleMemory("before_matrix"));
   const matrix = skipMatrix ? [] : await runDirectedMatrix();
   memory.push(await sampleMemory("after_matrix"));

@@ -65,6 +65,42 @@ test("all four active-only panes restore a bounded initial offset without retain
   assert.match(roomScreen, /captureMemoryRoomScrollOffset\(scrollSessionRef\.current, "chat", offset\)/);
 });
 
+test("Dishes mounts a bounded virtualized window instead of every rating card", () => {
+  const dishesPanel = roomScreen.match(
+    /function DishesPanel\([\s\S]*?\n\}\n\n\/\/ Shared dish detail/
+  )?.[0] ?? "";
+  assert.match(roomScreen, /const DishesPanelRow = memo\(function DishesPanelRow/);
+  assert.match(dishesPanel, /<FlatList/);
+  assert.match(dishesPanel, /initialNumToRender=\{DISHES_INITIAL_RENDER_COUNT\}/);
+  assert.match(dishesPanel, /maxToRenderPerBatch=\{DISHES_MAX_RENDER_BATCH\}/);
+  assert.match(dishesPanel, /windowSize=\{DISHES_WINDOW_SIZE\}/);
+  assert.match(dishesPanel, /removeClippedSubviews=\{Platform\.OS === "android"\}/);
+  assert.doesNotMatch(dishesPanel, /dishes\.map\(/);
+  assert.equal(
+    Number(roomScreen.match(/const DISHES_INITIAL_RENDER_COUNT = (\d+);/)?.[1]),
+    4
+  );
+});
+
+test("Chat projection and unread anchor belong to the room lifetime, not each tab mount", () => {
+  const chatSurface = roomScreen.match(
+    /function MemoryChatMainSurface\([\s\S]*?\nfunction MemoryChatTimeline/
+  )?.[0] ?? "";
+  assert.match(roomScreen, /const roomUnreadAnchorRef = useRef/);
+  assert.match(roomScreen, /const projectedChatMessages = useMemo/);
+  assert.match(roomScreen, /chatMessages=\{projectedChatMessages\}/);
+  assert.doesNotMatch(chatSurface, /buildMemoryChatMainMessages\(/);
+  assert.doesNotMatch(chatSurface, /firstUnreadMemoryMessageId\(/);
+  assert.equal(
+    Number(roomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]),
+    8
+  );
+  assert.equal(
+    Number(roomScreen.match(/const CHAT_MAIN_MAX_RENDER_BATCH = (\d+);/)?.[1]),
+    6
+  );
+});
+
 test("release-profile tracing enumerates every directed tab pair and contains no content fields", () => {
   const tabs = ["overview", "chat", "media", "dishes"];
   const pairs = tabs.flatMap((from) => tabs.filter((to) => to !== from).map((to) => `${from}_to_${to}`));
@@ -124,6 +160,27 @@ test("release trace counters balance room-owned players, Realtime, and recorders
   );
   assert.match(hooks, /releaseRealtimeCounter\(\);[\s\S]*removeChannel\(channel\)/);
   assert.match(roomScreen, /VoiceRecorderHost[\s\S]*MemoryRoomActiveRecorders/);
+});
+
+test("release profile exposes bounded row and cache cardinalities without content", () => {
+  for (const counter of [
+    "MemoryRoomMountedChatRows",
+    "MemoryRoomMountedDishRows",
+    "MemoryRoomMountedMediaTiles",
+    "MemoryRoomQueryCount",
+    "MemoryRoomQueryObserverCount",
+    "MemoryRoomInactiveQueryCount",
+    "MemoryRoomQueryMutationCount",
+    "MemoryRoomCurrentRoomQueryCount",
+    "MemoryRoomChatEntityCount",
+    "MemoryRoomDishEntityCount",
+    "MemoryRoomMediaEntityCount"
+  ]) {
+    assert.match(`${releaseProfile}\n${roomScreen}`, new RegExp(counter));
+  }
+  assert.match(roomScreen, /queries\.filter\(\(query\) => !query\.isActive\(\)\)\.length/);
+  assert.match(roomScreen, /query\.getObserversCount\(\)/);
+  assert.doesNotMatch(releaseProfile, /queryKey|roomId|username|messageBody/);
 });
 
 test("profile hooks preserve one-press-one-transition and end at the target usable frame", () => {

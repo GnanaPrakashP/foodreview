@@ -115,6 +115,7 @@ import {
   markMemoryRoomSurfaceUsable,
   markMemoryRoomTransitionFirstFrame,
   markMemoryRoomTransitionSettled,
+  recordMemoryRoomCacheProfileSnapshot,
   recordMemoryRoomSurfaceLifecycle,
   traceMemoryRoomSection
 } from "@/performance/memoryRoomReleaseProfile";
@@ -413,11 +414,13 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
-// Paint a complete phone viewport from the durable local snapshot in the first
-// list commit. Rows outside the viewport remain virtualized; this is view
-// recycling, not staged message loading.
-const CHAT_MAIN_INITIAL_RENDER_COUNT = 18;
-const CHAT_MAIN_MAX_RENDER_BATCH = 12;
+// A normal phone viewport contains at most eight compact chat rows. Rendering
+// 18 rows during every Chat activation made Fabric create roughly two
+// viewports of text/gesture/native-input work before the first usable frame.
+// Older rows are still present in the same logical timeline and mount through
+// FlatList's ordinary render-ahead window.
+const CHAT_MAIN_INITIAL_RENDER_COUNT = 8;
+const CHAT_MAIN_MAX_RENDER_BATCH = 6;
 // Keep only the visible viewport plus one render-ahead viewport on either side.
 // A window of nine mounted every row in medium rooms (42 messages produced
 // ~1,000 native views), making both background warm-up and route teardown scale
@@ -459,6 +462,9 @@ const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
 const MEDIA_GALLERY_PREFETCH_COUNT = 12;
 const MEDIA_GALLERY_WINDOW_SIZE = 7;
+const DISHES_INITIAL_RENDER_COUNT = 4;
+const DISHES_MAX_RENDER_BATCH = 4;
+const DISHES_WINDOW_SIZE = 3;
 const MEDIA_VIEWER_MAX_RENDER_BATCH = 2;
 const MEDIA_VIEWER_WINDOW_SIZE = 3;
 type MediaPreviewSize = { height: number; width: number };
@@ -990,7 +996,16 @@ function MemoryJourneyRenderProbe({
   });
   useEffect(() => {
     recordMemoryRoomJourney(journeySession, "SURFACE_MOUNT", { surface, tab });
+    const releaseProfileCounter =
+      surface === "chat_row"
+        ? adjustMemoryRoomResourceCounter("MemoryRoomMountedChatRows", 1)
+        : surface === "dish_row"
+          ? adjustMemoryRoomResourceCounter("MemoryRoomMountedDishRows", 1)
+          : surface === "media_tile"
+            ? adjustMemoryRoomResourceCounter("MemoryRoomMountedMediaTiles", 1)
+            : null;
     return () => {
+      releaseProfileCounter?.();
       recordMemoryRoomJourney(journeySession, "SURFACE_UNMOUNT", { surface, tab });
     };
   }, [journeySession, surface, tab]);
@@ -1030,7 +1045,7 @@ function useMemoryJourneyScrollDiagnostics(
 function MemoryChatMainSurface({
   active,
   canLoadOlderMessages,
-  data,
+  chatMessages,
   loadingOlderMessages,
   message,
   myUsername,
@@ -1066,8 +1081,8 @@ function MemoryChatMainSurface({
   onToggleSelection,
   onToggleReaction,
   pendingDishId,
-  reactions,
   replyingToMessage,
+  roomId,
   resolvedTheme,
   closedComposerBottomPadding,
   keyboardTopReserve,
@@ -1076,7 +1091,7 @@ function MemoryChatMainSurface({
 }: {
   active: boolean;
   canLoadOlderMessages: boolean;
-  data: MemoryRoom;
+  chatMessages: MemoryChatMainMessage[];
   loadingOlderMessages: boolean;
   message: string;
   myUsername: string;
@@ -1112,8 +1127,8 @@ function MemoryChatMainSurface({
   onToggleSelection: (target: MemoryActionTarget) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
   pendingDishId?: string | null;
-  reactions: MemoryReactionState;
   replyingToMessage: MemoryMessage | null;
+  roomId: string;
   resolvedTheme: "dark" | "light";
   closedComposerBottomPadding: number;
   keyboardTopReserve: SharedValue<number>;
@@ -1122,26 +1137,6 @@ function MemoryChatMainSurface({
 }) {
   useMemoryJourneySurfaceDiagnostics(journeySession, "chat", "chat");
   const { width: screenWidth } = useWindowDimensions();
-  // Latched once per room and deliberately NOT tied to `active`. It has to be
-  // evaluated against `lastReadAt` as it stood when the room opened, because
-  // opening the chat marks the room read — and recomputing it on activation
-  // rebuilt every message object (new Date, new user, new reaction arrays) at
-  // the exact moment the warmed pane became visible, throwing away the warm
-  // layout and stalling the first Table→Chat switch. Holding the anchor for the
-  // whole room visit also keeps the divider from vanishing when you leave the
-  // Chat tab and come back.
-  const unreadAnchorRef = useRef<{ id: string | null; roomId: string } | null>(null);
-  if (!unreadAnchorRef.current || unreadAnchorRef.current.roomId !== data.id) {
-    unreadAnchorRef.current = {
-      id: firstUnreadMemoryMessageId(data.messages, data.lastReadAt, myUsername),
-      roomId: data.id
-    };
-  }
-  const unreadAnchorMessageId = unreadAnchorRef.current.id;
-  const chatMessages = useMemo(() => traceMemoryRoomSection(
-    "MemoryRoomChatCachedMessages",
-    () => buildMemoryChatMainMessages({ data, myUsername, reactions, unreadAnchorMessageId })
-  ), [data, myUsername, reactions, unreadAnchorMessageId]);
   const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
   const latestChatMessage = chatMessages[0] ?? null;
   const latestChatMessageId = latestChatMessage?._id != null ? String(latestChatMessage._id) : null;
@@ -1460,7 +1455,7 @@ function MemoryChatMainSurface({
     // Room switches reset the anchor baseline; new-message changes are handled
     // by the follow-bottom effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.id]);
+  }, [roomId]);
 
   useEffect(() => {
     for (const chatMessage of chatMessages) {
@@ -5037,6 +5032,62 @@ export default function MemoryDetailScreen() {
     };
   }, [paneTabMode, placementRoomReady, stableSendAudio]);
 
+  const projectedRoomData = mergedRoomData ?? room.data ?? null;
+  // This anchor belongs to the room-screen lifetime, not the Chat pane
+  // lifetime. Chat is intentionally unmounted when inactive, so keeping the
+  // ref inside Chat recreated its entire row projection after mark-read changed
+  // `lastReadAt` on every return.
+  const roomUnreadAnchorRef = useRef<{
+    id: string | null;
+    roomId: string;
+  } | null>(null);
+  if (
+    projectedRoomData &&
+    roomUnreadAnchorRef.current?.roomId !== projectedRoomData.id
+  ) {
+    roomUnreadAnchorRef.current = {
+      id: firstUnreadMemoryMessageId(
+        projectedRoomData.messages,
+        projectedRoomData.lastReadAt,
+        myUsername
+      ),
+      roomId: projectedRoomData.id
+    };
+  }
+  // Prepare stable logical rows once per room snapshot at the lightweight room
+  // owner. Tab changes do not rebuild Date/user/reaction/reply objects, and the
+  // inactive state retains no native Chat pane.
+  const projectedChatMessages = useMemo(() => (
+    projectedRoomData
+      ? traceMemoryRoomSection(
+        "MemoryRoomChatCachedMessages",
+        () => buildMemoryChatMainMessages({
+          data: projectedRoomData,
+          myUsername,
+          reactions: messageReactions,
+          unreadAnchorMessageId: roomUnreadAnchorRef.current?.id ?? null
+        })
+      )
+      : []
+  ), [messageReactions, myUsername, projectedRoomData]);
+  useEffect(() => {
+    if (!projectedRoomData) return;
+    const queries = queryClient.getQueryCache().getAll();
+    recordMemoryRoomCacheProfileSnapshot({
+      chatEntities: projectedRoomData.messages.length,
+      dishEntities: projectedRoomData.dishes.length,
+      inactiveQueries: queries.filter((query) => !query.isActive()).length,
+      mediaEntities: projectedRoomData.photos.length,
+      mutations: queryClient.getMutationCache().getAll().length,
+      observers: queries.reduce(
+        (count, query) => count + query.getObserversCount(),
+        0
+      ),
+      queries: queries.length,
+      roomQueries: queries.filter((query) => query.queryKey.includes(roomId)).length
+    });
+  }, [paneTabMode, projectedRoomData, queryClient, roomId]);
+
   if (room.isLoading) {
     return (
       <MemoryRoomLoadingShell
@@ -5061,7 +5112,7 @@ export default function MemoryDetailScreen() {
     );
   }
 
-  const data = mergedRoomData ?? room.data;
+  const data = projectedRoomData ?? room.data;
   const roomOccasionType = effectiveRoomOccasionType(data);
   const roomOccasionTheme = getOccasionTheme(roomOccasionType);
   applyRoomTheme(resolvedTheme, roomOccasionType);
@@ -5134,7 +5185,7 @@ export default function MemoryDetailScreen() {
                     active={paneTabMode === "chat"}
                     canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
-                    data={data}
+                    chatMessages={projectedChatMessages}
                     deleteError={errorMessage(deleteItems.error)}
                     deletePending={deleteItems.isPending}
                     editableSelectedMessage={editableSelectedMessage}
@@ -5170,8 +5221,8 @@ export default function MemoryDetailScreen() {
                     onToggleSelection={stableToggleSelection}
                     onToggleReaction={stableToggleReaction}
                     pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
-                    reactions={messageReactions}
                     replyingToMessage={replyingToMessage}
+                    roomId={roomId}
                     resolvedTheme={resolvedTheme}
                     closedComposerBottomPadding={closedComposerBottomPadding}
                     surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
@@ -8994,6 +9045,119 @@ function StopDishRow({ dish, onPress }: { dish: MemoryDish; onPress: () => void 
   );
 }
 
+const DishesPanelRow = memo(function DishesPanelRow({
+  dish,
+  journeySession,
+  onOpenDish,
+  onRateDish,
+  pending
+}: {
+  dish: MemoryDish;
+  journeySession: MemoryRoomJourneySession;
+  onOpenDish: (dishId: string) => void;
+  onRateDish: (dishId: string, rating: number) => void;
+  pending: boolean;
+}) {
+  const ratingValue = dish.averageRating;
+  const raterAvatars = dish.ratings.slice(0, 4);
+  const extraRaterCount = Math.max(0, dish.ratingCount - raterAvatars.length);
+
+  return (
+    <View style={styles.dishCard}>
+      <MemoryJourneyRenderProbe
+        journeySession={journeySession}
+        surface="dish_row"
+        tab="dishes"
+      />
+      <View style={styles.dishCardTop}>
+        <View style={[styles.dishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
+          <Text style={styles.dishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={styles.dishText}>
+          <Text numberOfLines={1} style={styles.dishName}>{dish.dishName}</Text>
+          <Text numberOfLines={1} style={styles.dishMeta}>Added by {dish.addedByDisplayName}</Text>
+        </View>
+        <View style={[styles.dishRatingPill, ratingValue === null && styles.dishRatingPillEmpty]}>
+          <Ionicons name={ratingValue === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
+          <Text style={styles.dishRating}>{formatMemoryDishRating(ratingValue)}</Text>
+        </View>
+      </View>
+
+      {dish.note ? <Text style={styles.dishNote}>{dish.note}</Text> : null}
+
+      <View style={styles.dishRatingDetails}>
+        <Pressable
+          accessibilityHint="Opens dish details to see everyone who rated"
+          accessibilityLabel={`${dish.dishName}, ${memoryDishRaterSummary(dish)}`}
+          accessibilityRole="button"
+          onPress={() => onOpenDish(dish.id)}
+          style={styles.dishRaters}
+        >
+          {raterAvatars.length > 0 ? (
+            <View style={styles.dishRaterAvatarStack}>
+              {raterAvatars.map((rating, index) => (
+                <View
+                  key={rating.id}
+                  style={[
+                    styles.dishRaterAvatar,
+                    { backgroundColor: senderAccent(rating.ratedByDisplayName) },
+                    index > 0 && styles.dishRaterAvatarOverlap
+                  ]}
+                >
+                  <Text style={styles.dishRaterInitial}>{senderInitials(rating.ratedByDisplayName)}</Text>
+                </View>
+              ))}
+              {extraRaterCount > 0 ? (
+                <View style={[styles.dishRaterAvatar, styles.dishRaterAvatarMore, styles.dishRaterAvatarOverlap]}>
+                  <Text style={styles.dishRaterInitial}>+{extraRaterCount}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.dishNoRatersIcon}>
+              <Ionicons name="star-outline" size={13} color={ROOM_COLORS.muted} />
+            </View>
+          )}
+          <View style={styles.dishRaterCopy}>
+            <Text numberOfLines={1} style={styles.dishRaterSummary}>{memoryDishRaterSummary(dish)}</Text>
+            <Text style={styles.dishRaterCount}>
+              {dish.ratingCount === 0 ? "Be the first to rate" : `${dish.ratingCount} rating${dish.ratingCount === 1 ? "" : "s"}`}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
+        </Pressable>
+
+        <View style={styles.dishYourRatingRow}>
+          <Text style={styles.dishYourRatingLabel}>
+            {dish.myRating ? `Your rating ${dish.myRating}/5` : "Your rating"}
+          </Text>
+          <View style={styles.dishYourStars}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <Pressable
+                accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: pending, selected: star <= (dish.myRating ?? 0) }}
+                disabled={pending}
+                hitSlop={6}
+                key={star}
+                onPress={() => onRateDish(dish.id, star)}
+                style={[styles.dishYourStarButton, pending && styles.dishYourStarButtonDisabled]}
+              >
+                <Star
+                  size={19}
+                  color={ROOM_COLORS.gold}
+                  fill={star <= (dish.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
+                  strokeWidth={1.8}
+                />
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+});
+
 function DishesPanel({
   dishes,
   error,
@@ -9021,19 +9185,24 @@ function DishesPanel({
     "dishes",
     onScrollOffsetChange
   );
+  const renderDish = useCallback(({ item: dish }: { item: MemoryDish }) => (
+    <DishesPanelRow
+      dish={dish}
+      journeySession={journeySession}
+      onOpenDish={onOpenDish}
+      onRateDish={onRateDish}
+      pending={pendingDishId === dish.id}
+    />
+  ), [journeySession, onOpenDish, onRateDish, pendingDishId]);
+
   return (
-    <ScrollView
+    <FlatList
       contentContainerStyle={styles.panelContent}
       contentOffset={{ x: 0, y: initialScrollOffset }}
-      onMomentumScrollBegin={scrollDiagnostics.begin}
-      onMomentumScrollEnd={scrollDiagnostics.settle}
-      onScroll={scrollDiagnostics.capture}
-      onScrollBeginDrag={scrollDiagnostics.begin}
-      onScrollEndDrag={scrollDiagnostics.settle}
-      scrollEventThrottle={32}
-      showsVerticalScrollIndicator={false}
-    >
-      {dishes.length === 0 ? (
+      data={dishes}
+      initialNumToRender={DISHES_INITIAL_RENDER_COUNT}
+      keyExtractor={(dish) => dish.id}
+      ListEmptyComponent={(
         <View style={styles.emptyPanel}>
           <View style={styles.emptyIcon}>
             <Ionicons name="restaurant-outline" size={26} color={ROOM_COLORS.cool} />
@@ -9041,111 +9210,22 @@ function DishesPanel({
           <Text style={styles.emptyTitle}>{themeCopy.emptyTitle}</Text>
           <Text style={styles.emptyText}>{themeCopy.emptyDescription}</Text>
         </View>
-      ) : (
-        dishes.map((dish) => {
-          const pending = pendingDishId === dish.id;
-          const ratingValue = dish.averageRating;
-          const raterAvatars = dish.ratings.slice(0, 4);
-          const extraRaterCount = Math.max(0, dish.ratingCount - raterAvatars.length);
-
-          return (
-            <View key={dish.id} style={styles.dishCard}>
-              <MemoryJourneyRenderProbe
-                journeySession={journeySession}
-                surface="dish_row"
-                tab="dishes"
-              />
-              <View style={styles.dishCardTop}>
-                <View style={[styles.dishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
-                  <Text style={styles.dishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
-                </View>
-                <View style={styles.dishText}>
-                  <Text numberOfLines={1} style={styles.dishName}>{dish.dishName}</Text>
-                  <Text numberOfLines={1} style={styles.dishMeta}>Added by {dish.addedByDisplayName}</Text>
-                </View>
-                <View style={[styles.dishRatingPill, ratingValue === null && styles.dishRatingPillEmpty]}>
-                  <Ionicons name={ratingValue === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
-                  <Text style={styles.dishRating}>{formatMemoryDishRating(ratingValue)}</Text>
-                </View>
-              </View>
-
-              {dish.note ? <Text style={styles.dishNote}>{dish.note}</Text> : null}
-
-              <View style={styles.dishRatingDetails}>
-                <Pressable
-                  accessibilityHint="Opens dish details to see everyone who rated"
-                  accessibilityLabel={`${dish.dishName}, ${memoryDishRaterSummary(dish)}`}
-                  accessibilityRole="button"
-                  onPress={() => onOpenDish(dish.id)}
-                  style={styles.dishRaters}
-                >
-                  {raterAvatars.length > 0 ? (
-                    <View style={styles.dishRaterAvatarStack}>
-                      {raterAvatars.map((rating, index) => (
-                        <View
-                          key={rating.id}
-                          style={[
-                            styles.dishRaterAvatar,
-                            { backgroundColor: senderAccent(rating.ratedByDisplayName) },
-                            index > 0 && styles.dishRaterAvatarOverlap
-                          ]}
-                        >
-                          <Text style={styles.dishRaterInitial}>{senderInitials(rating.ratedByDisplayName)}</Text>
-                        </View>
-                      ))}
-                      {extraRaterCount > 0 ? (
-                        <View style={[styles.dishRaterAvatar, styles.dishRaterAvatarMore, styles.dishRaterAvatarOverlap]}>
-                          <Text style={styles.dishRaterInitial}>+{extraRaterCount}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : (
-                    <View style={styles.dishNoRatersIcon}>
-                      <Ionicons name="star-outline" size={13} color={ROOM_COLORS.muted} />
-                    </View>
-                  )}
-                  <View style={styles.dishRaterCopy}>
-                    <Text numberOfLines={1} style={styles.dishRaterSummary}>{memoryDishRaterSummary(dish)}</Text>
-                    <Text style={styles.dishRaterCount}>
-                      {dish.ratingCount === 0 ? "Be the first to rate" : `${dish.ratingCount} rating${dish.ratingCount === 1 ? "" : "s"}`}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
-                </Pressable>
-
-                <View style={styles.dishYourRatingRow}>
-                  <Text style={styles.dishYourRatingLabel}>
-                    {dish.myRating ? `Your rating ${dish.myRating}/5` : "Your rating"}
-                  </Text>
-                  <View style={styles.dishYourStars}>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Pressable
-                        accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
-                        accessibilityRole="button"
-                        accessibilityState={{ disabled: pending, selected: star <= (dish.myRating ?? 0) }}
-                        disabled={pending}
-                        hitSlop={6}
-                        key={star}
-                        onPress={() => onRateDish(dish.id, star)}
-                        style={[styles.dishYourStarButton, pending && styles.dishYourStarButtonDisabled]}
-                      >
-                        <Star
-                          size={19}
-                          color={ROOM_COLORS.gold}
-                          fill={star <= (dish.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
-                          strokeWidth={1.8}
-                        />
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </View>
-          );
-        })
       )}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-    </ScrollView>
+      ListFooterComponent={error ? <Text style={styles.error}>{error}</Text> : null}
+      maxToRenderPerBatch={DISHES_MAX_RENDER_BATCH}
+      onMomentumScrollBegin={scrollDiagnostics.begin}
+      onMomentumScrollEnd={scrollDiagnostics.settle}
+      onScroll={scrollDiagnostics.capture}
+      onScrollBeginDrag={scrollDiagnostics.begin}
+      onScrollEndDrag={scrollDiagnostics.settle}
+      removeClippedSubviews={Platform.OS === "android"}
+      renderItem={renderDish}
+      scrollEventThrottle={32}
+      showsVerticalScrollIndicator={false}
+      style={styles.dishesList}
+      updateCellsBatchingPeriod={50}
+      windowSize={DISHES_WINDOW_SIZE}
+    />
   );
 }
 
@@ -13344,6 +13424,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
     padding: spacing.lg,
     paddingTop: CHAT_HEADER_CLEARANCE,
     paddingBottom: spacing.xl + 92
+  },
+  dishesList: {
+    flex: 1
   },
   itineraryContent: {
     gap: 10,

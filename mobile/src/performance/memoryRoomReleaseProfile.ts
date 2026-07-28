@@ -35,7 +35,21 @@ type SqliteProfileSnapshot = {
 export type MemoryRoomResourceCounter =
   | "MemoryRoomActivePlayers"
   | "MemoryRoomActiveRealtimeChannels"
-  | "MemoryRoomActiveRecorders";
+  | "MemoryRoomActiveRecorders"
+  | "MemoryRoomMountedChatRows"
+  | "MemoryRoomMountedDishRows"
+  | "MemoryRoomMountedMediaTiles";
+
+type MemoryRoomCacheProfileSnapshot = {
+  chatEntities: number;
+  dishEntities: number;
+  inactiveQueries: number;
+  mediaEntities: number;
+  mutations: number;
+  observers: number;
+  queries: number;
+  roomQueries: number;
+};
 
 export const MEMORY_ROOM_RELEASE_PROFILE_ENABLED =
   process.env.EXPO_PUBLIC_PERFORMANCE_PROFILE === "1";
@@ -214,6 +228,26 @@ export function adjustMemoryRoomResourceCounter(
       else Systrace.counterEvent(name, released);
     }
   };
+}
+
+export function recordMemoryRoomCacheProfileSnapshot(
+  snapshot: MemoryRoomCacheProfileSnapshot
+) {
+  if (!traceAvailable()) return;
+  const counters: Array<[string, number]> = [
+    ["MemoryRoomQueryCount", snapshot.queries],
+    ["MemoryRoomQueryObserverCount", snapshot.observers],
+    ["MemoryRoomInactiveQueryCount", snapshot.inactiveQueries],
+    ["MemoryRoomQueryMutationCount", snapshot.mutations],
+    ["MemoryRoomCurrentRoomQueryCount", snapshot.roomQueries],
+    ["MemoryRoomChatEntityCount", snapshot.chatEntities],
+    ["MemoryRoomDishEntityCount", snapshot.dishEntities],
+    ["MemoryRoomMediaEntityCount", snapshot.mediaEntities]
+  ];
+  for (const [name, value] of counters) {
+    if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, Math.max(0, value));
+    else Systrace.counterEvent(name, Math.max(0, value));
+  }
 }
 
 export function markMemoryRoomTracePoint(

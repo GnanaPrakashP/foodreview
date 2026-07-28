@@ -102,8 +102,8 @@ test("phase 4 chat and media lists use bounded render windows", () => {
     memoryRoomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]
   );
   assert.ok(
-    chatInitialRenderCount >= 12 && chatInitialRenderCount <= 20,
-    "cold chat must paint a complete phone viewport without constructing the full history"
+    chatInitialRenderCount >= 6 && chatInitialRenderCount <= 10,
+    "cold chat must paint one compact phone viewport without constructing a second viewport"
   );
 });
 
