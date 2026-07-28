@@ -196,7 +196,6 @@ export type AddMemoryDishInput = {
   note?: string;
   rating?: number | null;
   roomId: string;
-  stopId?: string | null;
 };
 
 export type CreateMemoryStopInput = {
@@ -2050,7 +2049,6 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
     rating,
     room_id: input.roomId
   };
-  if (input.stopId) dishInsert.stop_id = input.stopId;
 
   const { data: dish, error } = await supabase
     .from("shared_memory_dishes")

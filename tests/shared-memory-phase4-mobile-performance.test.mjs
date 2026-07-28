@@ -1011,4 +1011,5 @@ test("adding a dish uses the dedicated route and returns to the originating room
   assert.match(submitDishBody, /await addDish\.mutateAsync/);
   assert.match(submitDishBody, /router\.back\(\)/);
   assert.doesNotMatch(submitDishBody, /router\.replace|requestRoomMode/);
+  assert.doesNotMatch(memoryAddDishScreen, /stopId/);
 });

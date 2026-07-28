@@ -5170,10 +5170,8 @@ export default function MemoryDetailScreen() {
               <View style={styles.roomPager}>
                 <RoomPane active={paneTabMode === "overview"}>
                   <ItineraryPanelPane
-                    dishes={data.dishes}
                     initialScrollOffset={readMemoryRoomScrollOffset(scrollSessionRef.current, "overview")}
                     journeySession={journeySession}
-                    onOpenDish={setDetailDishId}
                     onScrollOffsetChange={captureTableScroll}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
@@ -8887,18 +8885,14 @@ function memoryDishRaterSummary(dish: MemoryDish) {
 }
 
 function ItineraryPanel({
-  dishes,
   initialScrollOffset,
   journeySession,
-  onOpenDish,
   onScrollOffsetChange,
   stops,
   topInset
 }: {
-  dishes: MemoryDish[];
   initialScrollOffset: number;
   journeySession: MemoryRoomJourneySession;
-  onOpenDish: (dishId: string) => void;
   onScrollOffsetChange: (offset: number) => void;
   stops: MemoryStop[];
   themeCopy: OccasionTheme["copy"];
@@ -8912,13 +8906,7 @@ function ItineraryPanel({
   );
   const topPadding = topInset != null ? topInset + 10 : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
-  const dishesByStop = dishes.reduce<Record<string, MemoryDish[]>>((groups, dish) => {
-    if (!dish.stopId) return groups;
-    groups[dish.stopId] = [...(groups[dish.stopId] ?? []), dish];
-    return groups;
-  }, {});
-  const unassignedDishes = dishes.filter((dish) => !dish.stopId);
-  const isEmpty = stops.length === 0 && unassignedDishes.length === 0;
+  const isEmpty = stops.length === 0;
 
   if (isEmpty) {
     return (
@@ -8967,7 +8955,6 @@ function ItineraryPanel({
       </View>
       <Text style={styles.itineraryHeading}>Places Visited</Text>
       {stops.map((stop, index) => {
-        const stopDishes = dishesByStop[stop.id] ?? [];
         const isFirstStop = index === 0;
         const isLastStop = index === stops.length - 1;
         return (
@@ -8994,54 +8981,11 @@ function ItineraryPanel({
                   ) : null}
                 </View>
               </View>
-              {stopDishes.length > 0 ? (
-                <View style={styles.stopDishList}>
-                  {stopDishes.map((dish) => (
-                    <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
-                  ))}
-                </View>
-              ) : null}
             </View>
           </View>
         );
       })}
-
-      {unassignedDishes.length > 0 ? (
-        <View style={styles.stopCard}>
-          <View style={styles.stopHeaderRow}>
-            <View style={styles.stopEmojiWrap}>
-              <Text style={styles.stopEmoji}>🍽️</Text>
-            </View>
-            <View style={styles.stopHeaderText}>
-              <Text style={styles.stopName}>Other dishes</Text>
-              <Text style={styles.stopTypeLabel}>Not tied to a stop</Text>
-            </View>
-          </View>
-          <View style={styles.stopDishList}>
-            {unassignedDishes.map((dish) => (
-              <StopDishRow dish={dish} key={dish.id} onPress={() => onOpenDish(dish.id)} />
-            ))}
-          </View>
-        </View>
-      ) : null}
-
     </ScrollView>
-  );
-}
-
-function StopDishRow({ dish, onPress }: { dish: MemoryDish; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.stopDishRow}>
-      <View style={[styles.stopDishIcon, { backgroundColor: senderAccent(dish.dishName) }]}>
-        <Text style={styles.stopDishIconText}>{dish.dishName.slice(0, 1).toUpperCase()}</Text>
-      </View>
-      <Text numberOfLines={1} style={styles.stopDishName}>{dish.dishName}</Text>
-      <View style={[styles.dishRatingPill, dish.averageRating === null && styles.dishRatingPillEmpty]}>
-        <Ionicons name={dish.averageRating === null ? "star-outline" : "star"} size={11} color={ROOM_COLORS.gold} />
-        <Text style={styles.dishRating}>{formatMemoryDishRating(dish.averageRating)}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={14} color={ROOM_COLORS.muted} />
-    </Pressable>
   );
 }
 
@@ -13523,17 +13467,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexDirection: "row",
     gap: spacing.s
   },
-  stopEmojiWrap: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.surfaceHigh,
-    borderRadius: radius.pill,
-    height: 40,
-    justifyContent: "center",
-    width: 40
-  },
-  stopEmoji: {
-    fontSize: 20
-  },
   stopHeaderText: {
     flex: 1,
     gap: 2,
@@ -13544,49 +13477,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.onSurface,
     fontSize: 15
   },
-  stopTypeLabel: {
-    ...fontStyles.semiBold,
-    color: ROOM_COLORS.muted,
-    fontSize: 12
-  },
   stopLocation: {
     ...fontStyles.semiBold,
     color: ROOM_COLORS.muted,
     fontSize: 12,
     lineHeight: 16
-  },
-  stopDishList: {
-    gap: 6
-  },
-  stopDishRow: {
-    alignItems: "center",
-    backgroundColor: ROOM_COLORS.bg,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: radius.input,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.s,
-    paddingHorizontal: spacing.s,
-    paddingVertical: 8
-  },
-  stopDishIcon: {
-    alignItems: "center",
-    borderRadius: radius.pill,
-    height: 28,
-    justifyContent: "center",
-    width: 28
-  },
-  stopDishIconText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.white,
-    fontSize: 12
-  },
-  stopDishName: {
-    ...fontStyles.bold,
-    color: ROOM_COLORS.onSurface,
-    flex: 1,
-    fontSize: 14,
-    minWidth: 0
   },
   peoplePanelContent: {
     gap: 0,

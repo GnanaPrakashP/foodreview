@@ -564,12 +564,13 @@ test("mobile table memory room applies dynamic occasion themes around the bundle
 
 test("mobile table memory empty itinerary stays fixed and explains how stops work", () => {
   const memoryRoom = source("mobile/app/memories/[id].tsx");
-  const itineraryPanel = memoryRoom.match(/function ItineraryPanel\([\s\S]*?\nfunction StopDishRow/)?.[0] ?? "";
+  const itineraryPanel = memoryRoom.match(/function ItineraryPanel\([\s\S]*?\nconst DishesPanelRow/)?.[0] ?? "";
 
   assert.match(itineraryPanel, /if \(isEmpty\) \{[\s\S]*?<View[\s\S]*styles\.itineraryEmptyContent/);
   assert.doesNotMatch(itineraryPanel.match(/if \(isEmpty\) \{[\s\S]*?\n  \}/)?.[0] ?? "", /<ScrollView/);
   assert.match(itineraryPanel, /Tap \+ and choose Place to add each location from this occasion, in the order you visited\./);
   assert.doesNotMatch(itineraryPanel, /the occasion took you/);
+  assert.doesNotMatch(itineraryPanel, /dishes|StopDishRow|Other dishes|stopId/);
   assert.match(memoryRoom, /const buttonBottom = Math\.max\(FLOATING_ADD_EDGE_OFFSET, bottomInset \+ 6\)/);
 });
 

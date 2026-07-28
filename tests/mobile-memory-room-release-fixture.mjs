@@ -132,8 +132,7 @@ async function seedTable(admin, roomId, users) {
       added_by: users[index % users.length].username,
       dish_name: `Release fixture dish ${String(index + 1).padStart(2, "0")}`,
       note: `Synthetic dish detail ${index + 1}`,
-      room_id: roomId,
-      stop_id: stopInsert.data[index % stopInsert.data.length].id
+      room_id: roomId
     }))
   ).select("id");
   if (dishes.error) throw dishes.error;

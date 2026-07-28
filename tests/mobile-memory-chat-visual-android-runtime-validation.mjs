@@ -216,15 +216,13 @@ async function seed(admin, representative = false) {
       }
     ]).select("id");
     if (stopInsert.error) throw stopInsert.error;
-    const stops = stopInsert.data;
     const usernames = [owner.username, ...participants.map((item) => item.username)];
     const dishInsert = await admin.from("shared_memory_dishes").insert(
       Array.from({ length: 12 }, (_, index) => ({
         added_by: usernames[index % usernames.length],
         dish_name: `Fixture dish ${String(index + 1).padStart(2, "0")}`,
         note: `Synthetic dish note ${index + 1}`,
-        room_id: roomId,
-        stop_id: stops[index % stops.length].id
+        room_id: roomId
       }))
     ).select("id");
     if (dishInsert.error) throw dishInsert.error;

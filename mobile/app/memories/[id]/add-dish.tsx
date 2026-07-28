@@ -20,10 +20,9 @@ import { fontStyles, spacing } from "@/theme";
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 export default function AddMemoryDishScreen() {
-  const params = useLocalSearchParams<{ id: string; stopId?: string }>();
+  const params = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const roomId = typeof params.id === "string" ? params.id : "";
-  const stopId = typeof params.stopId === "string" && params.stopId ? params.stopId : null;
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const addDish = useAddMemoryDishMutation(roomId);
@@ -48,8 +47,7 @@ export default function AddMemoryDishScreen() {
       await addDish.mutateAsync({
         dishName: dishName.trim(),
         note: note.trim() || undefined,
-        rating: rating || null,
-        stopId
+        rating: rating || null
       });
       Keyboard.dismiss();
       router.back();

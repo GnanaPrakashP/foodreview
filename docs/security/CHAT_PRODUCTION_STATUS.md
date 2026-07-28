@@ -850,3 +850,12 @@ All Memory-focused gates, typechecks, zero-error lint, signed APK build/scan,
 and standard Next build pass; the full root suite retains the same 20 unrelated
 branch failures. Full evidence is in
 `docs/performance/MEMORY_ROOM_RELEASE_JANK_FIX_2026-07-28.md`.
+
+A follow-up product-model correction removes the dormant dish-to-place UI
+path: Table/Place cards now render stops only, Add Dish always creates a
+room-level dish, and physical fixtures no longer populate legacy dish
+`stop_id`. The compatibility column remains readable for old rows, but is not
+written or displayed by the mobile flow. This makes the original Table ->
+Chat fixture conservative rather than canonical and does not change the FAIL
+classification established independently by Media/Dishes -> Chat and the
+memory micro-soak.

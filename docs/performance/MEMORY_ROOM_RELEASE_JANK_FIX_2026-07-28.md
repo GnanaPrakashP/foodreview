@@ -35,6 +35,17 @@ RLS, private-media, or rate-limit work already accepted on the branch.
   messages. The first cached page exposed 50 chat entities. The exact fixture
   room and all cascade-owned rows were deleted after validation.
 
+Post-run product-model correction: the physical fixture populated the legacy
+optional dish `stop_id`, although the normal Add Dish flow creates room-level
+dishes without a place selection. The follow-up removes dish-to-place writes
+from the mobile service, removes dishes from Table/Place cards, and makes both
+physical fixtures create room-level dishes. The measured Table -> Chat source
+tree was therefore heavier than the supported product flow and should be read
+as a conservative, non-canonical source-pane result. Media -> Chat (only nine
+source removals) and Dishes -> Chat still independently establish the residual
+cold Chat mount blocker, so this correction does not change the release
+rejection.
+
 ## C. Root-cause summary
 
 ### Repeated-flow memory
@@ -245,6 +256,8 @@ series.
 
 - Dishes is now virtualized and mounts a bounded initial/render-ahead window.
 - Dish rows have a memo boundary and stable handler identities.
+- Table/Place cards are place-only; dishes remain room-level Chat/Dishes
+  entities and cannot be assigned to a place by the mobile Add Dish flow.
 - Chat logical projection/unread anchoring now belongs to the room lifetime,
   not each active-tab lifetime.
 - Chat initial native rows and batches were reduced.
