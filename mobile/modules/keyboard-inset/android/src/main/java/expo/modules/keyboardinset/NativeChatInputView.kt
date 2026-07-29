@@ -8,6 +8,7 @@ import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -56,7 +57,10 @@ class NativeChatInputValue(
 class NativeChatInputSubmitResult(
   @Field val text: String,
   @Field val eventCount: Int,
-  @Field val wasComposing: Boolean
+  @Field val wasComposing: Boolean,
+  @Field val nativeSubmitAtMs: Double,
+  @Field val payloadCapturedAtMs: Double,
+  @Field val inputClearedAtMs: Double
 ) : Record
 
 /**
@@ -303,20 +307,37 @@ class NativeChatInputView(context: Context, appContext: AppContext) : ExpoView(c
    * older text event.
    */
   fun submitAndClear(): NativeChatInputSubmitResult {
+    val nativeSubmitAtMs = SystemClock.elapsedRealtimeNanos() / 1_000_000.0
     val editable = editText.text
     val wasComposing = editable != null &&
       BaseInputConnection.getComposingSpanStart(editable) >= 0
     if (editable != null) BaseInputConnection.removeComposingSpans(editable)
     val submittedText = editable?.toString().orEmpty()
+    val payloadCapturedAtMs = SystemClock.elapsedRealtimeNanos() / 1_000_000.0
     if (submittedText.isBlank()) {
-      return NativeChatInputSubmitResult(submittedText, mostRecentNativeEventCount, wasComposing)
+      return NativeChatInputSubmitResult(
+        submittedText,
+        mostRecentNativeEventCount,
+        wasComposing,
+        nativeSubmitAtMs,
+        payloadCapturedAtMs,
+        payloadCapturedAtMs
+      )
     }
 
     clearNativeBuffer()
+    val inputClearedAtMs = SystemClock.elapsedRealtimeNanos() / 1_000_000.0
     mostRecentNativeEventCount += 1
     onHasTextChange(NativeChatInputHasTextEvent(false, mostRecentNativeEventCount))
     onTextChange(NativeChatInputTextEvent("", mostRecentNativeEventCount))
-    return NativeChatInputSubmitResult(submittedText, mostRecentNativeEventCount, wasComposing)
+    return NativeChatInputSubmitResult(
+      submittedText,
+      mostRecentNativeEventCount,
+      wasComposing,
+      nativeSubmitAtMs,
+      payloadCapturedAtMs,
+      inputClearedAtMs
+    )
   }
 
   private fun clearNativeBuffer() {

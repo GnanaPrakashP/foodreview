@@ -16,6 +16,7 @@ import {
   editMemoryMessage,
   fetchMemoryMediaPage,
   getMemoryMessagesPageOfflineFirst,
+  getMemoryUnreadAnchorPageOfflineFirst,
   getMemoryRoomOfflineFirst,
   isAuthoritativeMemoryAccessError,
   readMemoryMediaPageOffline,
@@ -37,6 +38,7 @@ import {
   type CreateMemoryStopInput,
   type MemoryMediaPage,
   type MemoryMessagesPage,
+  type MemoryUnreadAnchorPage,
   type MemoryRoomsPage,
   type RespondToMemoryInviteInput,
   type SetMemoryDishRatingInput,
@@ -81,6 +83,7 @@ import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRe
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 import { createRequestId } from "@/services/installIdentity";
 import { recordMemoryChatPlacement } from "@/services/memoryChatPlacementDiagnostics.mjs";
+import { mediaProcessingIssueKind } from "@/services/mediaPipeline";
 import {
   createMemoryRoomRequestCoordinator,
   recordMemoryRoomJourney,
@@ -93,11 +96,32 @@ import {
 } from "@/performance/memoryRoomReleaseProfile";
 
 export const memoryKeys = {
+  anchor: (roomId: string, lastReadAt: string | null) =>
+    ["memories", roomId, "anchor", lastReadAt] as const,
   chat: (roomId: string) => ["memories", roomId, "chat"] as const,
   list: ["memories"] as const,
   detail: (roomId: string) => ["memories", roomId] as const,
   media: (roomId: string) => ["memories", roomId, "media"] as const
 };
+
+export function useMemoryUnreadAnchorQuery(
+  roomId: string,
+  lastReadAt: string | null,
+  enabled: boolean
+) {
+  const profile = useSessionStore((state) => state.profile);
+  return useQuery<MemoryUnreadAnchorPage | null>({
+    enabled: enabled && Boolean(roomId && profile?.username),
+    gcTime: 60_000,
+    queryFn: () => getMemoryUnreadAnchorPageOfflineFirst(
+      roomId,
+      profile?.username ?? "",
+      { after: lastReadAt }
+    ),
+    queryKey: memoryKeys.anchor(roomId, lastReadAt),
+    staleTime: 30_000
+  });
+}
 
 const RECENT_SUMMARY_REALTIME_EVENT_GRACE_MS = 5_000;
 const REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000;
@@ -2295,11 +2319,13 @@ export function useUpdateMemoryRoomOccasionMutation(roomId: string) {
 
 export function useMarkMemoryRoomReadMutation(roomId: string) {
   const queryClient = useQueryClient();
+  const myUsername = useSessionStore((state) => state.profile?.username ?? "");
   return useMutation({
-    mutationFn: () => markMemoryRoomRead(roomId),
-    onMutate: async () => {
+    mutationFn: (input?: { readAt?: string; remainingUnreadCount?: number }) =>
+      markMemoryRoomRead(roomId, input?.readAt),
+    onMutate: async (input) => {
       const detailKey = memoryKeys.detail(roomId);
-      const now = new Date().toISOString();
+      const requestedReadAt = input?.readAt ?? new Date().toISOString();
 
       await Promise.all([
         queryClient.cancelQueries({ queryKey: detailKey }),
@@ -2308,19 +2334,33 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
 
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      const previousReadMs = Date.parse(previousRoom?.lastReadAt ?? "");
+      const requestedReadMs = Date.parse(requestedReadAt);
+      const readAt =
+        Number.isFinite(previousReadMs) && previousReadMs > requestedReadMs
+          ? previousRoom?.lastReadAt ?? requestedReadAt
+          : requestedReadAt;
+      const remainingUnreadCount = input?.remainingUnreadCount ?? (
+        previousRoom?.messages.filter((message) =>
+          message.authorName !== myUsername &&
+          Date.parse(message.createdAt) > Date.parse(readAt)
+        ).length ?? 0
+      );
 
       queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
-        current ? { ...current, lastReadAt: now } : current
+        current ? { ...current, lastReadAt: readAt } : current
       ));
 
       setMemorySummaryPages(queryClient, (current) => {
         if (!current) return current;
         return current.map((memory) => (
-          memory.id === roomId && memory.unreadCount > 0 ? { ...memory, unreadCount: 0 } : memory
+          memory.id === roomId
+            ? { ...memory, unreadCount: Math.min(memory.unreadCount, remainingUnreadCount) }
+            : memory
         ));
       });
 
-      return { previousList, previousRoom, readAt: now };
+      return { previousList, previousRoom, readAt, remainingUnreadCount };
     },
     onError: (_error, _input, context) => {
       if (context?.previousRoom) {
@@ -2332,7 +2372,13 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
     },
     onSuccess: (result, _input, context) => {
       if (!result.ok || !context?.readAt) return;
-      void saveOfflineMemoryReadState(roomId, context.readAt).catch((error) => {
+      const acknowledgedReadAt =
+        ("readAt" in result ? result.readAt : undefined) ?? context.readAt;
+      void saveOfflineMemoryReadState(
+        roomId,
+        acknowledgedReadAt,
+        context.remainingUnreadCount
+      ).catch((error) => {
         captureMobileError("memory.read_state_persist_failed", error);
         // The server acknowledgement remains authoritative. Re-fetching causes
         // the normal room sync path to retry the durable snapshot/read write.
@@ -2399,8 +2445,12 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const queryClient = useQueryClient();
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
-    mutationFn: (input: AddMemoryMessageInput) => (
-      addMemoryMessage(
+    mutationFn: (input: AddMemoryMessageInput) => {
+      recordMemoryChatPlacement("HTTP_STARTED", {
+        clientId: input.clientId,
+        deliveryStatus: "pending"
+      });
+      return addMemoryMessage(
         roomId,
         input.body,
         input.replyToMessageId,
@@ -2408,9 +2458,9 @@ export function useAddMemoryMessageMutation(roomId: string) {
         input.clientCreatedAt,
         input.clientSequence,
         input.clientOrderKey
-      )
-    ),
-    onMutate: async (input) => {
+      );
+    },
+    onMutate: (input) => {
       const body = input.body;
       const trimmed = body.trim();
       if (!trimmed || !profile?.username) return {};
@@ -2461,6 +2511,10 @@ export function useAddMemoryMessageMutation(roomId: string) {
           messages: upsertMemoryMessage(messages, optimisticMessage)
         };
       });
+      recordMemoryChatPlacement("REACT_QUERY_COMMIT", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
+      });
       recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED", {
         clientId,
         deliveryStatus: optimisticMessage.deliveryStatus
@@ -2479,15 +2533,15 @@ export function useAddMemoryMessageMutation(roomId: string) {
       });
 
       beginForegroundMemoryMessageSend(clientId);
-      try {
-        await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
-        if (input.replacesMessageId) {
-          await deleteOfflineMemoryOutboxMessage(input.replacesMessageId);
-        }
-      } catch (error) {
-        endForegroundMemoryMessageSend(clientId);
-        throw error;
-      }
+      recordMemoryChatPlacement("SQLITE_STARTED", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
+      });
+      const outboxWrite = saveOfflineMemoryOutboxMessage(clientId, optimisticMessage)
+        .then(() => input.replacesMessageId
+          ? deleteOfflineMemoryOutboxMessage(input.replacesMessageId)
+          : undefined);
+      observeOfflineMemoryWrite(outboxWrite, "outbox_insert");
 
       return { clientId, optimisticMessage };
     },
@@ -2873,6 +2927,10 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           if (!message.attachments.some((attachment) => attachment.id === photoId)) return message;
           return {
             ...message,
+            deliveryStatus: progress >= 0.9 &&
+              (message.deliveryStatus === "uploading" || message.deliveryStatus === "retrying")
+              ? "processing"
+              : message.deliveryStatus,
             attachments: message.attachments.map((attachment) => withPhotoProgress(attachment, photoId, progress))
           };
         }),
@@ -2902,7 +2960,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         })
       });
     },
-    onMutate: async (input) => {
+    onMutate: (input) => {
       if (!profile?.username) return {};
 
       const assets = prepareMemoryPhotoAssets(input);
@@ -2987,6 +3045,10 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           photos: sortMemoryPhotos(Array.from(photosById.values()))
         };
       });
+      recordMemoryChatPlacement("REACT_QUERY_COMMIT", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
+      });
       recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED", {
         clientId,
         deliveryStatus: optimisticMessage.deliveryStatus
@@ -3006,12 +3068,14 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       });
 
       beginForegroundMemoryMessageSend(clientId);
-      try {
-        await saveOfflineMemoryOutboxMessage(clientId, optimisticMessage);
-      } catch (error) {
-        endForegroundMemoryMessageSend(clientId);
-        throw error;
-      }
+      recordMemoryChatPlacement("SQLITE_STARTED", {
+        clientId,
+        deliveryStatus: optimisticMessage.deliveryStatus
+      });
+      observeOfflineMemoryWrite(
+        saveOfflineMemoryOutboxMessage(clientId, optimisticMessage),
+        "media_outbox_insert"
+      );
       return {
         clientId,
         optimisticMessage,
@@ -3020,12 +3084,31 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         replyToMessage
       };
     },
-    onError: (_error, _input, context) => {
+    onError: (error, _input, context) => {
       if (context?.optimisticMessage && context.clientId) {
-        const failedMessage = { ...context.optimisticMessage, deliveryStatus: "failed" as const };
+        const issueKind = mediaProcessingIssueKind(error);
+        const deliveryStatus: MemoryMessage["deliveryStatus"] = issueKind === "delayed"
+          ? "processing_delayed"
+          : issueKind === "retryable"
+            ? "processing_failed"
+            : issueKind === "permanent"
+              ? "rejected"
+              : "failed";
+        let failedMessage = { ...context.optimisticMessage, deliveryStatus };
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
           current
-            ? { ...current, messages: upsertMemoryMessage(current.messages, failedMessage) }
+            ? (() => {
+              // The source-staging callback may already have replaced the
+              // picker URI with the account-scoped recovery URI. Preserve
+              // that newer row rather than restoring the stale mutation
+              // context when polling times out or processing fails.
+              const latest = findMemoryMessage(current.messages, context.clientId);
+              failedMessage = {
+                ...(latest ?? context.optimisticMessage),
+                deliveryStatus
+              };
+              return { ...current, messages: upsertMemoryMessage(current.messages, failedMessage) };
+            })()
             : current
         ));
         const failedWrite = saveOfflineMemoryOutboxMessage(context.clientId, failedMessage);

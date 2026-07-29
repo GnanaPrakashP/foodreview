@@ -22,6 +22,7 @@ export type MemoryRoomSqliteOperation =
   | "retry_write"
   | "summary_read"
   | "sync_cursor_read"
+  | "unread_anchor_read"
   | "write";
 
 type SqliteProfileSnapshot = {

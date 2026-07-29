@@ -342,7 +342,16 @@ export type MemoryMessage = {
   body: string;
   attachments: MemoryPhoto[];
   createdAt: string;
-  deliveryStatus?: "uploading" | "pending" | "retrying" | "sent" | "failed";
+  deliveryStatus?:
+    | "uploading"
+    | "processing"
+    | "processing_delayed"
+    | "processing_failed"
+    | "rejected"
+    | "pending"
+    | "retrying"
+    | "sent"
+    | "failed";
   editedAt: string | null;
   replyToMessageId: string | null;
   replyToMessage: {

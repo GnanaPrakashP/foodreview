@@ -13,6 +13,8 @@ export type PendingMediaUploadState =
   | "intent_created"
   | "source_uploaded"
   | "processing"
+  | "processing_delayed"
+  | "processing_failed"
   | "ready";
 
 export type PendingMediaUploadRecord = {
@@ -138,7 +140,7 @@ function recordIsValid(record: Partial<PendingMediaUploadRecord>, scope: string)
     ["image", "video"].includes(record.mediaKind ?? "") &&
     typeof record.mimeType === "string" &&
     /^(image\/(jpeg|png|webp|heic|heif)|video\/(mp4|quicktime|webm))$/.test(record.mimeType) &&
-    ["prepared", "intent_created", "source_uploaded", "processing", "ready"].includes(state) &&
+    ["prepared", "intent_created", "source_uploaded", "processing", "processing_delayed", "processing_failed", "ready"].includes(state) &&
     (state === "prepared"
       ? record.assetId === null && record.uploadBucket === null && record.uploadPath === null
       : hasServerIdentity) &&

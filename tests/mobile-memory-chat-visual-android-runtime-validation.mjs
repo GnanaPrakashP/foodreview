@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { createClient } from "@supabase/supabase-js";
@@ -19,10 +20,13 @@ const metroBaseUrl = `http://127.0.0.1:${metroPort}`;
 const fixturePort = Number(process.env.ANDROID_MEMORY_FIXTURE_PORT ?? 3037);
 const fixtureBaseUrl = `http://127.0.0.1:${fixturePort}`;
 const scenario = process.env.ANDROID_MEMORY_SCENARIO ?? "full";
+const anchorScenario = scenario === "anchor";
 const mediaKind = process.env.ANDROID_MEMORY_MEDIA_KIND ?? "image";
 const artifactDir = process.env.ANDROID_MEMORY_ARTIFACT_DIR ??
   "/private/tmp/memory-chat-visual-android";
-const apkPath = `${root}mobile/android/app/build/outputs/apk/debug/app-debug.apk`;
+const apkPath = anchorScenario
+  ? `${root}mobile/android/app/build/outputs/apk/release/app-release.apk`
+  : `${root}mobile/android/app/build/outputs/apk/debug/app-debug.apk`;
 const authOptions = { auth: { autoRefreshToken: false, persistSession: false } };
 let fixture;
 let fixtureSeedUsers = [];
@@ -41,6 +45,7 @@ let serverOutput = [];
 let physicalNetworkDisabled = false;
 let tabTapRetryCount = 0;
 let currentRoomTab = null;
+let anchorScreenshotCount = 0;
 let compactRoomTabPoints = new Map();
 let expandedRoomTabPoints = new Map();
 let deviceViewport = {
@@ -50,10 +55,17 @@ let deviceViewport = {
 const mediaWorkerSecret = "memory-visual-media-worker-secret-material-0123456789";
 
 function localStatus() {
-  const result = spawnSync(process.execPath, ["scripts/run-supabase.mjs", "status", "-o", "json"], {
+  const localSupabase = `${root}node_modules/.bin/supabase`;
+  const result = spawnSync(
+    existsSync(localSupabase) ? localSupabase : "npx",
+    existsSync(localSupabase)
+      ? ["status", "-o", "json"]
+      : ["supabase", "status", "-o", "json"],
+    {
     cwd: root,
     encoding: "utf8"
-  });
+    }
+  );
   if (result.status !== 0) throw new Error("Local Supabase is unavailable");
   const status = JSON.parse(result.stdout);
   return { anonKey: status.ANON_KEY, serviceKey: status.SERVICE_ROLE_KEY, url: status.API_URL };
@@ -147,7 +159,7 @@ async function createFixtureUser(admin, suffix, label) {
   return created;
 }
 
-async function seed(admin, representative = false) {
+async function seed(admin, representative = false, initialAnchor = false) {
   const suffix = Date.now().toString(36).slice(-7);
   const owner = await createFixtureUser(admin, suffix, "owner");
   const participants = representative
@@ -188,7 +200,7 @@ async function seed(admin, representative = false) {
       room_id: roomId
     });
     if (baseline.error) throw baseline.error;
-  } else {
+  } else if (!initialAnchor) {
     const stopInsert = await admin.from("shared_memory_stops").insert([
       {
         created_by: owner.username,
@@ -279,14 +291,66 @@ async function seed(admin, representative = false) {
       }))
     );
     if (secondMembers.error) throw secondMembers.error;
-    const secondMessages = await admin.from("shared_memory_messages").insert(
-      Array.from({ length: 8 }, (_, index) => ({
-        author_name: [owner, ...participants][index % 3].username,
-        body: `Alternate room message ${index + 1}`,
+    if (!initialAnchor) {
+      const secondMessages = await admin.from("shared_memory_messages").insert(
+        Array.from({ length: 8 }, (_, index) => ({
+          author_name: [owner, ...participants][index % 3].username,
+          body: `Alternate room message ${index + 1}`,
+          room_id: secondRoomId
+        }))
+      );
+      if (secondMessages.error) throw secondMessages.error;
+    }
+  }
+
+  if (initialAnchor) {
+    const usernames = [owner.username, ...participants.map((item) => item.username)];
+    const now = Date.now();
+    const primaryMessages = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 46 }, (_, index) => ({
+        author_name: usernames[index % usernames.length],
+        body: index % 9 === 0
+          ? `Anchor multiline ${index + 1}\nsecond synthetic line`
+          : `Anchor short ${String(index + 1).padStart(2, "0")}`,
+        created_at: new Date(now - (50 - index) * 60_000).toISOString(),
+        room_id: roomId
+      }))
+    ).select("id");
+    if (primaryMessages.error) throw primaryMessages.error;
+    const primaryReplies = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 4 }, (_, index) => ({
+        author_name: usernames[(index + 1) % usernames.length],
+        body: index === 2
+          ? "Anchor reply multiline\nsecond synthetic line"
+          : `Anchor reply ${index + 1}`,
+        created_at: new Date(now - (4 - index) * 30_000).toISOString(),
+        reply_to_message_id: primaryMessages.data[8 + index * 7].id,
+        room_id: roomId
+      }))
+    );
+    if (primaryReplies.error) throw primaryReplies.error;
+
+    const secondaryMessages = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 6 }, (_, index) => ({
+        author_name: usernames[index % usernames.length],
+        body: index === 4
+          ? "Eight room multiline\nsecond synthetic line"
+          : `Eight room short ${index + 1}`,
+        created_at: new Date(now - (8 - index) * 60_000).toISOString(),
+        room_id: secondRoomId
+      }))
+    ).select("id");
+    if (secondaryMessages.error) throw secondaryMessages.error;
+    const secondaryReplies = await admin.from("shared_memory_messages").insert(
+      Array.from({ length: 2 }, (_, index) => ({
+        author_name: usernames[(index + 2) % usernames.length],
+        body: `Eight room reply ${index + 1}`,
+        created_at: new Date(now - (2 - index) * 30_000).toISOString(),
+        reply_to_message_id: secondaryMessages.data[index * 3].id,
         room_id: secondRoomId
       }))
     );
-    if (secondMessages.error) throw secondMessages.error;
+    if (secondaryReplies.error) throw secondaryReplies.error;
   }
 
   return {
@@ -321,7 +385,12 @@ function startServer(env) {
       ...process.env,
       API_RATE_LIMIT_HMAC_SECRET: "memory-visual-rate-limit-secret-material-0123456789",
       MEDIA_WORKER_SECRET: mediaWorkerSecret,
-      MEMORY_CHAT_DEV_CONFIRM_DELAY_MS: scenario === "full" || scenario === "tail" ? "2500" : "0",
+      MEMORY_CHAT_DEV_CONFIRM_DELAY_MS:
+        scenario === "full" || scenario === "tail"
+          ? "2500"
+          : anchorScenario
+            ? "400"
+            : "0",
       MEMORY_CHAT_DEV_PRE_INSERT_DELAY_MS: scenario === "stale" ? "4000" : "0",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
       NEXT_PUBLIC_SUPABASE_URL: env.url,
@@ -455,6 +524,137 @@ function buildInstrumentedAndroid(env) {
     "app:assembleDebug",
     "-PcircleBitesBundleDebugJs=true"
   ], { cwd: `${root}mobile/android`, env: buildEnv });
+}
+
+function buildAnchorReleaseAndroid(env) {
+  const keyStore = process.env.ANDROID_MEMORY_KEYSTORE ??
+    "/private/tmp/circlebites-memory-anchor-measurement.jks";
+  if (!existsSync(keyStore)) {
+    run("/opt/homebrew/opt/openjdk@17/bin/keytool", [
+      "-genkeypair",
+      "-alias", "memoryanchormeasurement",
+      "-keyalg", "RSA",
+      "-keysize", "2048",
+      "-validity", "2",
+      "-dname", "CN=CircleBites Memory Anchor Validation",
+      "-keystore", keyStore,
+      "-storepass", "memoryanchor",
+      "-keypass", "memoryanchor",
+      "-noprompt"
+    ]);
+  }
+  const buildEnv = {
+    ...process.env,
+    ANDROID_HOME: "/opt/homebrew/share/android-commandlinetools",
+    ANDROID_SDK_ROOT: "/opt/homebrew/share/android-commandlinetools",
+    EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
+    EXPO_PUBLIC_APP_ENVIRONMENT: "development",
+    EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS: "1",
+    EXPO_PUBLIC_MEMORY_ROOM_JOURNEY_DIAGNOSTICS: "1",
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
+    EXPO_PUBLIC_SUPABASE_URL: env.url,
+    JAVA_HOME: "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    NODE_ENV: "production"
+  };
+  run("./gradlew", ["app:clean"], {
+    cwd: `${root}mobile/android`,
+    env: buildEnv
+  });
+  run("./gradlew", [
+    "app:assembleRelease",
+    "-Pandroid.enableMinifyInReleaseBuilds=true",
+    "-Pandroid.enableShrinkResourcesInReleaseBuilds=true",
+    `-Pandroid.injected.signing.store.file=${keyStore}`,
+    "-Pandroid.injected.signing.store.password=memoryanchor",
+    "-Pandroid.injected.signing.key.alias=memoryanchormeasurement",
+    "-Pandroid.injected.signing.key.password=memoryanchor"
+  ], { cwd: `${root}mobile/android`, env: buildEnv });
+}
+
+function verifyAnchorReleaseArtifact(env) {
+  const buildToolsRoot = "/opt/homebrew/share/android-commandlinetools/build-tools";
+  const apksigner = [
+    "36.0.0",
+    "35.0.0",
+    "34.0.0"
+  ].map((version) => `${buildToolsRoot}/${version}/apksigner`)
+    .find((candidate) => existsSync(candidate));
+  assert.ok(apksigner, "Android apksigner is unavailable");
+  const signature = run(apksigner, [
+    "verify",
+    "--verbose",
+    "--print-certs",
+    apkPath
+  ], {
+    env: {
+      ...process.env,
+      JAVA_HOME: "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+    }
+  });
+  assert.match(signature, /Verified using v2 scheme \(APK Signature Scheme v2\): true/);
+
+  const inspectionDir = `${artifactDir}/apk-inspection`;
+  mkdirSync(inspectionDir, { recursive: true });
+  run("unzip", [
+    "-qq",
+    "-o",
+    apkPath,
+    "assets/index.android.bundle",
+    "-d",
+    inspectionDir
+  ]);
+  const bundlePath = `${inspectionDir}/assets/index.android.bundle`;
+  const bundle = readFileSync(bundlePath);
+  const apk = readFileSync(apkPath);
+  assert.ok(bundle.length > 1_000_000, "embedded Android bundle is unexpectedly small");
+  assert.notEqual(
+    bundle.subarray(0, 64).toString("utf8").trimStart().startsWith("var "),
+    true,
+    "embedded Android bundle is plain JavaScript instead of Hermes bytecode"
+  );
+  const forbiddenValues = [
+    env.serviceKey,
+    mediaWorkerSecret,
+    "SUPABASE_SERVICE_ROLE_KEY=",
+    "MEDIA_WORKER_SECRET=",
+    "API_RATE_LIMIT_HMAC_SECRET="
+  ];
+  for (const value of forbiddenValues) {
+    if (!value) continue;
+    assert.equal(
+      apk.includes(Buffer.from(value)),
+      false,
+      "release/profile APK contains a forbidden server secret or host path"
+    );
+    assert.equal(
+      bundle.includes(Buffer.from(value)),
+      false,
+      "Hermes bundle contains a forbidden server secret or host path"
+    );
+  }
+  assert.equal(
+    bundle.includes(Buffer.from("/Users/gnanaprakash/")),
+    false,
+    "Hermes bundle contains a developer host path"
+  );
+  const mappingPath = `${root}mobile/android/app/build/outputs/mapping/release/mapping.txt`;
+  assert.ok(existsSync(mappingPath), "R8 mapping was not produced for the minified release");
+  const report = {
+    apkBytes: apk.length,
+    apkSha256: createHash("sha256").update(apk).digest("hex"),
+    hermesBundleBytes: bundle.length,
+    hermesHeaderHex: bundle.subarray(0, 8).toString("hex"),
+    hermesSha256: createHash("sha256").update(bundle).digest("hex"),
+    minified: true,
+    privacySecretScan: "PASS",
+    signature: "PASS"
+  };
+  writeFileSync(`${artifactDir}/apk-signature.txt`, signature);
+  writeFileSync(
+    `${artifactDir}/apk-verification.json`,
+    `${JSON.stringify(report, null, 2)}\n`
+  );
+  return report;
 }
 
 function startInstrumentedMetro(env) {
@@ -1179,7 +1379,8 @@ async function sampleMemory(label) {
     label,
     nativeHeapKb: memoryValue(output, "Native Heap"),
     sampledAt: new Date().toISOString(),
-    totalPssKb: memoryValue(output, "TOTAL PSS")
+    totalPssKb: memoryValue(output, "TOTAL PSS"),
+    viewCount: memoryValue(output, "Views")
   };
 }
 
@@ -1205,6 +1406,9 @@ function summarizeJourney(events) {
         : null,
       networkRequestCount: usable
         ? Math.max(0, usable.networkRequestCount - press.networkRequestCount)
+        : null,
+      renderCount: usable
+        ? Math.max(0, usable.renderCount - press.renderCount)
         : null,
       settledMs: settled
         ? Math.max(0, settled.monotonicTimestampMs - press.monotonicTimestampMs)
@@ -1286,6 +1490,225 @@ async function writeRuntimeStreams() {
   return { journey, placement };
 }
 
+async function captureAnchorCheckpoint(label, afterGeneration = 0) {
+  const deadline = Date.now() + 20_000;
+  let generation = null;
+  while (Date.now() < deadline) {
+    generation = placementEventStream
+      .filter((event) => (
+        event.name === "CHAT_GEOMETRY_MODEL_READY" &&
+        event.layoutGeneration > afterGeneration
+      ))
+      .at(-1)?.layoutGeneration ?? null;
+    if (generation !== null) break;
+    await delay(50);
+  }
+  assert.ok(generation !== null, `${label} did not mount a new Chat layout generation`);
+  await delay(950);
+  anchorScreenshotCount += 1;
+  const file = `anchor-${String(anchorScreenshotCount).padStart(2, "0")}.png`;
+  await captureScreenshot(`${artifactDir}/${file}`);
+  return {
+    eventCount: placementEventStream.length,
+    file,
+    generation,
+    label
+  };
+}
+
+function summarizeAnchorCheckpoints(events, checkpoints) {
+  const summaries = checkpoints.map((checkpoint) => {
+    const generationEvents = events.slice(0, checkpoint.eventCount).filter(
+      (event) => event.layoutGeneration === checkpoint.generation
+    );
+    const model = generationEvents.find(
+      (event) => event.name === "CHAT_GEOMETRY_MODEL_READY"
+    );
+    const list = generationEvents.find(
+      (event) => event.name === "CHAT_LIST_FIRST_LAYOUT"
+    );
+    const composer = generationEvents.find(
+      (event) => event.name === "CHAT_COMPOSER_FIRST_LAYOUT"
+    );
+    const firstRows = generationEvents.filter(
+      (event) => event.name === "CHAT_ROW_FIRST_LAYOUT"
+    );
+    const rowChanges = generationEvents.filter(
+      (event) => event.name === "CHAT_ROW_LAYOUT_CHANGED"
+    );
+    const mismatches = generationEvents.filter(
+      (event) => event.name === "CHAT_GEOMETRY_MISMATCH"
+    );
+    assert.ok(model, `${checkpoint.label} did not publish its geometry model`);
+    assert.ok(list, `${checkpoint.label} did not publish its first list layout`);
+    assert.ok(composer, `${checkpoint.label} did not publish its first composer layout`);
+    assert.equal(
+      new Set(firstRows.map((event) => event.rowKey)).size,
+      8,
+      `${checkpoint.label} did not sample exactly the initial eight rows`
+    );
+    assert.equal(
+      rowChanges.length,
+      0,
+      `${checkpoint.label} moved an already-visible row during the first 750 ms`
+    );
+    assert.equal(
+      mismatches.length,
+      0,
+      `${checkpoint.label} measured a collapsed composer geometry mismatch`
+    );
+    assert.ok(
+      Math.abs(list.contentOffset) <= 0.5,
+      `${checkpoint.label} did not start at inverted offset zero`
+    );
+    const pixelRatio = model.pixelRatio;
+    assert.ok(Number.isFinite(pixelRatio) && pixelRatio >= 1);
+    assert.equal(
+      Math.round(composer.composerHeight * pixelRatio),
+      Math.round(composer.composerModelHeight * pixelRatio),
+      `${checkpoint.label} composer model differed from native layout in physical pixels`
+    );
+    return {
+      composer: {
+        measuredDp: composer.composerHeight,
+        measuredPx: Math.round(composer.composerHeight * pixelRatio),
+        modeledDp: composer.composerModelHeight,
+        modeledPx: Math.round(composer.composerModelHeight * pixelRatio)
+      },
+      contentOffset: list.contentOffset,
+      file: checkpoint.file,
+      firstRowCount: firstRows.length,
+      generation: checkpoint.generation,
+      label: checkpoint.label,
+      rowChanges: rowChanges.length,
+      rows: firstRows.map((event) => ({
+        first: {
+          bottomDp: event.rowBottom,
+          bottomPx: Math.round(event.rowBottom * pixelRatio),
+          heightDp: event.rowHeight,
+          heightPx: Math.round(event.rowHeight * pixelRatio),
+          topDp: event.rowTop,
+          topPx: Math.round(event.rowTop * pixelRatio)
+        },
+        final: {
+          bottomDp: event.rowBottom,
+          bottomPx: Math.round(event.rowBottom * pixelRatio),
+          heightDp: event.rowHeight,
+          heightPx: Math.round(event.rowHeight * pixelRatio),
+          topDp: event.rowTop,
+          topPx: Math.round(event.rowTop * pixelRatio)
+        },
+        renderIndex: event.renderIndex,
+        rowKey: event.rowKey
+      })),
+      timeline: generationEvents
+        .filter((event) => [
+          "CHAT_GEOMETRY_MODEL_READY",
+          "CHAT_LIST_FIRST_LAYOUT",
+          "CHAT_COMPOSER_FIRST_LAYOUT",
+          "CHAT_ROW_FIRST_LAYOUT",
+          "CHAT_ROW_LAYOUT_CHANGED",
+          "CHAT_GEOMETRY_MISMATCH"
+        ].includes(event.name))
+        .map((event) => ({
+          atMs: event.eventTimestamp - model.eventTimestamp,
+          name: event.name,
+          renderIndex: event.renderIndex,
+          rowBottom: event.rowBottom,
+          rowHeight: event.rowHeight,
+          rowTop: event.rowTop
+        }))
+    };
+  });
+  assert.equal(
+    events.filter((event) => event.name === "CHAT_SCROLL_COMMAND").length,
+    0,
+    "initial-anchor matrix issued a programmatic Chat scroll command"
+  );
+  assert.equal(
+    events.filter((event) => event.name === "CHAT_ROW_LAYOUT_CHANGED").length,
+    0,
+    "initial-anchor matrix moved an already-visible row in physical pixels"
+  );
+  return summaries;
+}
+
+function scanAnchorInstrumentation(events) {
+  const allowedFields = new Set([
+    "bottomClearance",
+    "clientId",
+    "composerHeight",
+    "composerModelHeight",
+    "contentHeight",
+    "contentOffset",
+    "deliveryStatus",
+    "eventTimestamp",
+    "fontScale",
+    "framesToStable",
+    "keyboardInset",
+    "layoutGeneration",
+    "lineCount",
+    "name",
+    "pixelRatio",
+    "renderIndex",
+    "rowBottom",
+    "rowHeight",
+    "rowKey",
+    "rowTop",
+    "safeAreaInset",
+    "scrollCommandSource",
+    "viewportHeight"
+  ]);
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+  for (const event of events) {
+    for (const field of Object.keys(event)) {
+      assert.ok(allowedFields.has(field), `placement diagnostics exposed forbidden field ${field}`);
+    }
+    assert.ok(
+      typeof event.eventTimestamp === "number" &&
+      Number.isFinite(event.eventTimestamp),
+      "placement diagnostic timestamp is missing"
+    );
+    assert.ok(
+      event.eventTimestamp >= previousTimestamp,
+      "placement diagnostic timestamps are not monotonic"
+    );
+    assert.ok(
+      event.eventTimestamp < Date.now() / 2,
+      "placement diagnostic used wall time instead of the monotonic clock"
+    );
+    previousTimestamp = event.eventTimestamp;
+  }
+  const report = {
+    eventCount: events.length,
+    eventNames: [...new Set(events.map((event) => event.name))].sort(),
+    forbiddenFieldCount: 0,
+    monotonicTimestamps: true,
+    privacySafe: true,
+    status: "PASS"
+  };
+  writeFileSync(
+    `${artifactDir}/profile-instrumentation-scan.json`,
+    `${JSON.stringify(report, null, 2)}\n`
+  );
+  return report;
+}
+
+function createAnchorContactSheet() {
+  const rows = Math.ceil(anchorScreenshotCount / 4);
+  run("/opt/homebrew/bin/ffmpeg", [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-y",
+    "-framerate", "1",
+    "-start_number", "1",
+    "-i", `${artifactDir}/anchor-%02d.png`,
+    "-vf", `scale=270:-1,tile=4x${rows}`,
+    "-frames:v", "1",
+    `${artifactDir}/contact-sheet.png`
+  ]);
+}
+
 async function startRecording() {
   const remote = "/sdcard/memory-chat-visual.mp4";
   await adbRun(["shell", "rm", remote], true);
@@ -1310,24 +1733,57 @@ async function stopRecording(remote) {
 
 async function main() {
   mkdirSync(artifactDir, { recursive: true });
-  assert.ok(["exit", "full", "journey", "media", "stale", "tail"].includes(scenario), `Unsupported scenario: ${scenario}`);
+  assert.ok(
+    ["anchor", "exit", "full", "journey", "media", "stale", "tail"].includes(scenario),
+    `Unsupported scenario: ${scenario}`
+  );
   assert.ok(["image", "video"].includes(mediaKind), `Unsupported media kind: ${mediaKind}`);
   const device = await readConnectedDevice();
   if (scenario === "media" || scenario === "journey") await prepareSyntheticMediaFixtures();
   const env = localStatus();
   const admin = createClient(env.url, env.serviceKey, authOptions);
-  if (process.env.ANDROID_MEMORY_SKIP_BUILD !== "1") buildInstrumentedAndroid(env);
-  fixture = await seed(admin, scenario === "journey");
+  let apkVerification = null;
+  if (process.env.ANDROID_MEMORY_SKIP_BUILD !== "1") {
+    if (anchorScenario) {
+      buildAnchorReleaseAndroid(env);
+    } else {
+      buildInstrumentedAndroid(env);
+    }
+  }
+  if (anchorScenario) apkVerification = verifyAnchorReleaseArtifact(env);
+  fixture = await seed(
+    admin,
+    scenario === "journey" || anchorScenario,
+    anchorScenario
+  );
+  if (anchorScenario) {
+    const [exact50, exact8] = await Promise.all([
+      admin.from("shared_memory_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("room_id", fixture.roomId),
+      admin.from("shared_memory_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("room_id", fixture.secondRoomId)
+    ]);
+    if (exact50.error) throw exact50.error;
+    if (exact8.error) throw exact8.error;
+    assert.equal(exact50.count, 50, "primary anchor room is not exactly 50 messages");
+    assert.equal(exact8.count, 8, "secondary anchor room is not exactly 8 messages");
+  }
   const output = startServer(env);
   await waitForServer(output);
   if (scenario === "media" || scenario === "journey") startSyntheticMediaProcessingPump(admin);
-  const metroOutput = startInstrumentedMetro(env);
-  await waitForMetro(metroOutput);
+  if (!anchorScenario) {
+    const metroOutput = startInstrumentedMetro(env);
+    await waitForMetro(metroOutput);
+  }
 
   const supabasePort = new URL(env.url).port;
   await adbRun(["reverse", `tcp:${apiPort}`, `tcp:${apiPort}`]);
   await adbRun(["reverse", `tcp:${supabasePort}`, `tcp:${supabasePort}`]);
-  await adbRun(["reverse", `tcp:${metroPort}`, `tcp:${metroPort}`]);
+  if (!anchorScenario) {
+    await adbRun(["reverse", `tcp:${metroPort}`, `tcp:${metroPort}`]);
+  }
   if (scenario === "media" || scenario === "journey") {
     await adbRun(["reverse", `tcp:${fixturePort}`, `tcp:${fixturePort}`]);
   }
@@ -1335,8 +1791,6 @@ async function main() {
     env: {
       ...process.env,
       ANDROID_APP_ACTIVITY: "com.circlebites.mobile.MainActivity",
-      ANDROID_APP_LAUNCH_URL:
-        `circlebites-dev://expo-development-client/?url=${encodeURIComponent(metroBaseUrl)}`,
       ANDROID_APP_PACKAGE: packageName,
       ANDROID_APK_PATH: apkPath,
       ANDROID_LOGIN_EMAIL: fixture.email,
@@ -1344,7 +1798,11 @@ async function main() {
       ANDROID_PROFILE_ARTIFACT_DIR: `${artifactDir}/login`,
       ANDROID_PROFILE_SUCCESS_TEXT: "Device Visual,Posts,Memories",
       ANDROID_SERIAL: serial,
-      EXPO_PUBLIC_API_BASE_URL: apiBaseUrl
+      EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
+      ...(anchorScenario ? {} : {
+        ANDROID_APP_LAUNCH_URL:
+          `circlebites-dev://expo-development-client/?url=${encodeURIComponent(metroBaseUrl)}`
+      })
     }
   });
 
@@ -1355,7 +1813,186 @@ async function main() {
   startPlacementLogger();
   await adbRun(["shell", "dumpsys", "gfxinfo", packageName, "reset"], true);
   let remoteRecording = await startRecording();
-  if (scenario !== "journey") await navigateToChat();
+  if (scenario !== "journey" && !anchorScenario) await navigateToChat();
+
+  if (anchorScenario) {
+    const memorySamples = [await sampleMemory("anchor_profile_baseline")];
+    const checkpoints = [];
+    let generation = 0;
+    const checkpoint = async (label) => {
+      const captured = await captureAnchorCheckpoint(label, generation);
+      generation = captured.generation;
+      checkpoints.push(captured);
+    };
+
+    await navigateToRoom("Visual validation");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_cold_first_open_from_table_keyboard_closed");
+    await switchRoomTab("Table");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_warm_return_from_table");
+    await switchRoomTab("Media");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_warm_return_from_media");
+    await switchRoomTab("Dishes");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_warm_return_from_dishes");
+    const composer50 = await waitForPoint(["Type a message"], "exact-50 composer");
+    await tap(composer50.point);
+    await delay(350);
+    await switchRoomTab("Table");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_return_after_keyboard_open");
+
+    await exitRoomFromTableAfterChatVisit();
+    await navigateToRoom("Visual validation");
+    await switchRoomTab("Chat");
+    await checkpoint("exact50_cold_room_reentry");
+    await exitRoomFromTableAfterChatVisit();
+
+    await navigateToRoom("Visual validation B");
+    await switchRoomTab("Chat");
+    await checkpoint("exact8_cold_first_open_from_table_keyboard_closed");
+    await switchRoomTab("Table");
+    await switchRoomTab("Chat");
+    await checkpoint("exact8_warm_return_from_table");
+    await switchRoomTab("Media");
+    await switchRoomTab("Chat");
+    await checkpoint("exact8_warm_return_from_media");
+    await switchRoomTab("Dishes");
+    await switchRoomTab("Chat");
+    await checkpoint("exact8_warm_return_from_dishes");
+    const composer8 = await waitForPoint(["Type a message"], "exact-8 composer");
+    await tap(composer8.point);
+    await delay(350);
+    await switchRoomTab("Table");
+    await switchRoomTab("Chat");
+    await checkpoint("exact8_return_after_keyboard_open");
+
+    await sendText("AnchorPending");
+    await delay(100);
+    anchorScreenshotCount += 1;
+    await captureScreenshot(
+      `${artifactDir}/anchor-${String(anchorScreenshotCount).padStart(2, "0")}.png`
+    );
+    const sentEvents = await waitForSendCount(1, 20_000);
+    const anchorClientId = sentEvents.find(
+      (event) => event.name === "SEND_PRESS"
+    )?.clientId;
+    assert.ok(anchorClientId, "pending/sent anchor fixture had no logical client id");
+    await waitForClientEvent(anchorClientId, "HTTP_CONFIRMED", 20_000);
+    await delay(850);
+    anchorScreenshotCount += 1;
+    await captureScreenshot(
+      `${artifactDir}/anchor-${String(anchorScreenshotCount).padStart(2, "0")}.png`
+    );
+    memorySamples.push(await sampleMemory("anchor_after_matrix"));
+
+    const gfx = parseGfx(
+      await adbRun(["shell", "dumpsys", "gfxinfo", packageName], true)
+    );
+    await stopRecording(remoteRecording);
+    const streams = await writeRuntimeStreams();
+    const anchor = summarizeAnchorCheckpoints(streams.placement, checkpoints);
+    const instrumentationScan = scanAnchorInstrumentation(streams.placement);
+    const journey = summarizeJourney(streams.journey);
+    const chatTransitions = journey.tabTransitions.filter(
+      (transition) => transition.to === "chat"
+    );
+    const timingValues = (name) => anchor.map((checkpoint) => (
+      checkpoint.timeline.find((event) => event.name === name)?.atMs ?? null
+    )).filter(Number.isFinite);
+    const firstRowValues = anchor.map((checkpoint) => Math.min(
+      ...checkpoint.timeline
+        .filter((event) => event.name === "CHAT_ROW_FIRST_LAYOUT")
+        .map((event) => event.atMs)
+    ));
+    const serializedPlacement = JSON.stringify(streams.placement);
+    for (const privateValue of [
+      "Anchor short",
+      "Anchor multiline",
+      "Anchor reply",
+      "Eight room",
+      "AnchorPending",
+      fixture.username,
+      "http://",
+      "https://",
+      "/Users/"
+    ]) {
+      assert.equal(
+        serializedPlacement.includes(privateValue),
+        false,
+        `anchor diagnostics leaked forbidden content: ${privateValue}`
+      );
+    }
+    createAnchorContactSheet();
+    const report = {
+      anchor,
+      apkVerification,
+      artifact: `${artifactDir}/memory-chat-visual.mp4`,
+      contactSheet: `${artifactDir}/contact-sheet.png`,
+      device,
+      fixture: {
+        exact50Messages: 50,
+        exact8Messages: 8,
+        participants: 3,
+        rooms: 2
+      },
+      gfx,
+      instrumentationScan,
+      journey,
+      matrix: {
+        coldRoomEntry: true,
+        exact8: true,
+        exact50: true,
+        firstChatOpening: true,
+        incomingAndOutgoing: true,
+        keyboardClosed: true,
+        keyboardPreviouslyOpen: true,
+        multilineAndShort: true,
+        pendingAndSent: true,
+        replies: true,
+        returnFromDishes: true,
+        returnFromMedia: true,
+        returnFromTable: true,
+        warmRoomReentry: true
+      },
+      memorySamples,
+      movementThresholdPhysicalPixels: 0,
+      observationWindowMs: 750,
+      performance: {
+        chatFirstRowMaxMs: Math.max(...firstRowValues),
+        chatFirstRowMinMs: Math.min(...firstRowValues),
+        chatListFirstLayoutMaxMs: Math.max(...timingValues("CHAT_LIST_FIRST_LAYOUT")),
+        chatListFirstLayoutMinMs: Math.min(...timingValues("CHAT_LIST_FIRST_LAYOUT")),
+        composerFirstLayoutMaxMs: Math.max(...timingValues("CHAT_COMPOSER_FIRST_LAYOUT")),
+        composerFirstLayoutMinMs: Math.min(...timingValues("CHAT_COMPOSER_FIRST_LAYOUT")),
+        maxJourneyMountDeltaToChat: Math.max(
+          ...chatTransitions.map((transition) => transition.mountCount ?? 0)
+        ),
+        maxJourneyRenderDeltaToChat: Math.max(
+          ...chatTransitions.map((transition) => transition.renderCount ?? 0)
+        ),
+        pssDeltaKb:
+          memorySamples.at(-1).totalPssKb - memorySamples[0].totalPssKb,
+        viewCountDelta:
+          memorySamples.at(-1).viewCount - memorySamples[0].viewCount
+      },
+      scenario: "initialChatBottomAnchor",
+      scrollCommandCount: streams.placement.filter(
+        (event) => event.name === "CHAT_SCROLL_COMMAND"
+      ).length,
+      status: "PASS"
+    };
+    writeFileSync(
+      `${artifactDir}/report.json`,
+      `${JSON.stringify(report, null, 2)}\n`
+    );
+    console.log(JSON.stringify(report, null, 2));
+    await cleanup(admin, fixture);
+    fixture = null;
+    return;
+  }
 
   if (scenario === "journey") {
     const memorySamples = [await sampleMemory("profile_baseline")];

@@ -1,4 +1,13 @@
-const LOCAL_DELIVERY_STATES = new Set(["uploading", "pending", "retrying", "failed"]);
+const LOCAL_DELIVERY_STATES = new Set([
+  "uploading",
+  "processing",
+  "processing_delayed",
+  "processing_failed",
+  "rejected",
+  "pending",
+  "retrying",
+  "failed"
+]);
 
 function validTime(value) {
   const time = Date.parse(value ?? "");

@@ -499,15 +499,22 @@ test("private media rows persist metadata only and renew signed URLs by stable m
   assert.match(offline, /select payload[\s\S]*from memory_photos[\s\S]*where room_id = \?[\s\S]*order by created_at asc, photo_id asc/);
 });
 
-test("read state is durable, transient auth preserves replicas, and reactions remain disabled", () => {
+test("read state is durable and monotonic, transient auth preserves replicas, and reactions remain disabled", () => {
   const offline = source("mobile/src/services/memoryOfflineStore.ts");
   const hooks = source("mobile/src/hooks/useMemories.ts");
   const auth = source("mobile/src/providers/AccountSessionBoundary.tsx");
   const room = source("mobile/app/memories/[id].tsx");
 
   assert.match(offline, /saveOfflineMemoryReadState[\s\S]*lastReadAt/);
-  assert.match(offline, /unreadCount: 0/);
-  assert.match(hooks, /saveOfflineMemoryReadState\(roomId, context\.readAt\)/);
+  assert.match(offline, /storedReadMs[\s\S]*storedReadMs > requestedReadMs/);
+  assert.match(
+    offline,
+    /unreadCount: Math\.min\(\s*summary\.unreadCount,\s*Math\.max\(0, remainingUnreadCount\)/
+  );
+  assert.match(
+    hooks,
+    /saveOfflineMemoryReadState\(\s*roomId,\s*acknowledgedReadAt,\s*context\.remainingUnreadCount/
+  );
   assert.match(auth, /authoritativeFailure/);
   assert.match(auth, /replica_retained: true/);
   assert.match(auth, /setTimeout\(\(\) => \{[\s\S]*recoverExpiredSession\(ownerHost, "timer"\)/);

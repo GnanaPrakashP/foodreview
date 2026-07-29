@@ -81,6 +81,22 @@ export type UploadedMediaAsset = {
   width?: number | null;
 };
 
+export type MediaProcessingIssueKind = "delayed" | "permanent" | "retryable";
+
+export class MediaProcessingIssue extends Error {
+  readonly kind: MediaProcessingIssueKind;
+
+  constructor(kind: MediaProcessingIssueKind, message: string) {
+    super(message);
+    this.name = "MediaProcessingIssue";
+    this.kind = kind;
+  }
+}
+
+export function mediaProcessingIssueKind(error: unknown): MediaProcessingIssueKind | null {
+  return error instanceof MediaProcessingIssue ? error.kind : null;
+}
+
 export type UploadPostMediaAssetInput = {
   cropRect?: MediaCropRect | null;
   durationMs?: number | null;
@@ -115,6 +131,7 @@ export type UploadMemoryMediaAssetInput = {
   mediaKind?: MediaKind;
   mimeType?: string | null;
   onUploadProgress?: (progress: number) => void;
+  onSourceStaged?: (uri: string) => Promise<void> | void;
   replyToMessageId?: string | null;
   roomId: string;
   uri: string;
@@ -376,6 +393,10 @@ function terminalMediaStatus(asset: MediaStatusAsset) {
     ["dead_letter", "rejected", "cancelled"].includes(asset.job?.status ?? "");
 }
 
+function retryableMediaProcessingFailure(asset: MediaStatusAsset) {
+  return asset.job?.status === "dead_letter" && asset.status === "failed";
+}
+
 async function fetchMediaStatuses(assetIds: string[], signal?: AbortSignal) {
   if (assetIds.length === 0) return [];
   const payload = await authorizedMobileJson<{ assets: MediaStatusAsset[] }>(
@@ -434,8 +455,21 @@ async function applyServerMediaStatus(record: PendingMediaUploadRecord, asset: M
     return canonical;
   }
   if (terminalMediaStatus(asset)) {
+    if (retryableMediaProcessingFailure(asset)) {
+      updatePendingMediaUpload(record.localUploadId, {
+        lastCheckedAt: Date.now(),
+        state: "processing_failed"
+      });
+      throw new MediaProcessingIssue(
+        "retryable",
+        asset.failureReason || "Media processing failed. Retry processing without uploading again."
+      );
+    }
     await cancelAndRemoveFailedUploadGroup(record);
-    throw new Error(asset.failureReason || "Media could not be processed. Please select it again.");
+    throw new MediaProcessingIssue(
+      "permanent",
+      asset.failureReason || "Media could not be processed. Please select it again."
+    );
   }
   updatePendingMediaUpload(record.localUploadId, { lastCheckedAt: Date.now(), state: "processing" });
   return null;
@@ -466,8 +500,14 @@ async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: 
       const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
       await sleep(Math.round(delay));
     }
-    updatePendingMediaUpload(record.localUploadId, { lastCheckedAt: Date.now(), state: "processing" });
-    throw new Error("Media is still processing. Keep this draft and try sharing again shortly.");
+    updatePendingMediaUpload(record.localUploadId, {
+      lastCheckedAt: Date.now(),
+      state: "processing_delayed"
+    });
+    throw new MediaProcessingIssue(
+      "delayed",
+      "Media is still processing. This message will remain pending."
+    );
   } catch (error) {
     recordMobileFlow("media.processing_wait", Date.now() - startedAt, "failure", { media_kind: record.mediaKind });
     captureMobileError("media.processing_wait_failed", error, { media_kind: record.mediaKind });
@@ -752,6 +792,7 @@ function storageUploadErrorMessage(responseText: string, status: number) {
 type PersistentMediaUploadInput = UploadPostMediaAssetInput & {
   accessClass: PendingMediaUploadRecord["accessClass"];
   memoryAttachment: PendingMediaUploadRecord["memoryAttachment"];
+  onSourceStaged?: (uri: string) => Promise<void> | void;
   surface: PendingMediaUploadRecord["surface"];
 };
 
@@ -759,6 +800,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   const mediaKind = resolveMediaKind(input);
   input.onUploadProgress?.(0.03);
   const sourceUri = await stageAccountFile(input.uri, `${input.surface}-upload-source`);
+  if (input.surface === "memory") await input.onSourceStaged?.(sourceUri);
   const expectedAccessClass = input.accessClass;
   let record = findPendingMediaUpload(sourceUri, mediaKind, expectedAccessClass, input.surface);
   if (
@@ -863,9 +905,22 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   }
   input.onUploadProgress?.(0.9);
 
-  if (record.state !== "processing" && record.state !== "ready") {
+  if (!["processing", "processing_delayed", "processing_failed", "ready"].includes(record.state)) {
     await finalizeMediaUpload({ assetId, uploadPath });
     record = updatePendingMediaUpload(record.localUploadId, { state: "processing" });
+  }
+  if (record.state === "processing_failed") {
+    await authorizedMobileJson(
+      "/api/media/retry",
+      { assetId },
+      "POST",
+      undefined,
+      createRequestId()
+    );
+    record = updatePendingMediaUpload(record.localUploadId, {
+      lastCheckedAt: Date.now(),
+      state: "processing"
+    });
   }
   const { canonical } = await waitForReadyMedia(record, input.onUploadProgress);
   input.onUploadProgress?.(1);

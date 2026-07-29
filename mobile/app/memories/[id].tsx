@@ -37,6 +37,7 @@ import {
   type TextInputContentSizeChangeEventData,
   type TextLayoutEventData,
   Modal,
+  PixelRatio,
   Platform,
   Pressable,
   processColor,
@@ -93,6 +94,13 @@ import {
   type NativeChatInputTextEvent
 } from "@/components/chat/NativeChatInput";
 import { NativeKeyboardInsetView } from "@/components/chat/NativeKeyboardInsetView";
+import {
+  NativeMemoryChatList,
+  nativeMemoryChatListAvailable,
+  type NativeMemoryChatRevealEvent,
+  type NativeMemoryChatScrollCommand,
+  type NativeMemoryChatVisibleEvent
+} from "@/components/chat/NativeMemoryChatList";
 import Svg, { Circle, Path } from "react-native-svg";
 import {
   MEMORY_ROOM_TABS as ROOM_TABS,
@@ -116,6 +124,7 @@ import {
   markMemoryRoomSurfaceUsable,
   markMemoryRoomTransitionFirstFrame,
   markMemoryRoomTransitionSettled,
+  MEMORY_ROOM_RELEASE_PROFILE_ENABLED,
   recordMemoryRoomCacheProfileSnapshot,
   recordMemoryRoomChatLifecycleCandidate,
   recordMemoryRoomChatRendererCandidate,
@@ -134,6 +143,7 @@ import {
 } from "@/performance/memoryRoomChatLifecycle";
 import {
   MEMORY_ROOM_CHAT_LITE_RENDERER,
+  MEMORY_ROOM_CHAT_NATIVE_RENDERER,
   MEMORY_ROOM_CHAT_RENDERER,
   MEMORY_ROOM_CHAT_RENDERER_CODE
 } from "@/performance/memoryRoomChatRenderer";
@@ -141,6 +151,12 @@ import {
   MemoryChatRowModelStore,
   type ChatRowViewModel
 } from "@/features/memories/chat/memoryChatRowModel";
+import { MemoryChatIncrementalProjectionStore } from "@/features/memories/chat/memoryChatIncrementalProjection.mjs";
+import {
+  memoryChatComposerLayoutContract,
+  memoryChatTimestampReservationWidth,
+  resolveMemoryChatCollapsedComposerGeometry
+} from "@/features/memories/chat/memoryChatGeometry.mjs";
 import {
   Bubble as ChatMainBubble,
   Chat as ChatMain,
@@ -170,6 +186,7 @@ import {
   useMarkMemoryRoomReadMutation,
   useMemoryMediaPagesQuery,
   useMemoryMessagePagesQuery,
+  useMemoryUnreadAnchorQuery,
   useMemoryRoomQuery,
   useMemoryRoomRealtime,
   memoryRoomSummariesFromPages,
@@ -179,6 +196,7 @@ import {
 import type { CircleAccessStatus } from "@/services/circle";
 import { memoryChatRowKey } from "@/services/memoryChatRowKeys";
 import {
+  memoryChatPlacementDiagnosticsEnabled,
   recordMemoryChatPlacement,
   updateMemoryChatPlacementContext
 } from "@/services/memoryChatPlacementDiagnostics.mjs";
@@ -199,6 +217,7 @@ import {
   memoryMessageServerId
 } from "@/services/memoryMessageReconciliation.mjs";
 import { createRequestId } from "@/services/installIdentity";
+import { cancelPendingMemoryUploadBatch } from "@/services/mediaPipeline";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import type { AddMemoryMediaAsset, MemoryRoomsPage } from "@/services/memories";
 import { MEMORY_AUDIO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
@@ -262,7 +281,6 @@ type MemoryChatMainMessage = ChatMainMessage & {
   memoryMessage?: MemoryMessage;
   memoryPhoto?: MemoryPhoto;
   extraAttachments?: MemoryPhoto[];
-  placementIndex?: number;
   showSenderDetails?: boolean;
 };
 // Pre-tinted (theme line #D7CAB9 @ 0.22 baked into pixels) so the chat wallpaper
@@ -340,11 +358,12 @@ let ROOM_COLORS: RoomColors = createRoomColors(memoryRoomTokens.dark);
 let CHAT_OWN_BUBBLE_COLOR = ROOM_COLORS.sentBubble;
 let CHAT_OTHER_BUBBLE_COLOR = ROOM_COLORS.receivedBubble;
 const CHAT_ACCENTS = avatarAccents;
+const CHAT_COMPOSER_LAYOUT_CONTRACT = memoryChatComposerLayoutContract(Platform.OS);
 const COMPOSER_TOP_GAP = 8;
 // Matches COMPOSER_TOP_GAP so the message box sits with an equal gap above (to the
 // composer's opaque top edge) and below (to the keyboard) when the keyboard is open.
 const COMPOSER_KEYBOARD_OPEN_GAP = 8;
-const COMPOSER_CLOSED_SAFE_GAP = 6;
+const COMPOSER_CLOSED_SAFE_GAP = CHAT_COMPOSER_LAYOUT_CONTRACT.closedSafeGap;
 const ANDROID_EDGE_TO_EDGE_MIN_VERSION = 30;
 const IS_ANDROID_EDGE_TO_EDGE = Platform.OS === "android" && Number(Platform.Version) >= ANDROID_EDGE_TO_EDGE_MIN_VERSION;
 // On Android the chat surface is glued to the keyboard by a native
@@ -358,22 +377,20 @@ const USE_NATIVE_KEYBOARD_INSET = Platform.OS === "android";
 // reload), so it can be turned off without a native rebuild. Leave false in
 // normal use; on only for on-device verification.
 const NATIVE_KEYBOARD_INSET_DEBUG = false;
-const COMPOSER_STANDARD_BOTTOM_GAP = spacing.md;
-const COMPOSER_EDGE_TO_EDGE_BOTTOM_GAP = spacing.lg;
 const MEDIA_GRID_GAP = 4;
 const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.md;
 const CHAT_SENT_TEXT_ROW_MAX_WIDTH = "80%";
 const CHAT_RECEIVED_TEXT_ROW_MAX_WIDTH = "74%";
 const CHAT_GROUPED_MESSAGE_GAP = 3;
 const CHAT_AVATAR_SIZE = 30;
-const COMPOSER_INPUT_FONT_SIZE = Platform.OS === "web" ? 14 : 15;
-const COMPOSER_INPUT_LINE_HEIGHT = Platform.OS === "web" ? 20 : 21;
-const COMPOSER_INPUT_VERTICAL_PADDING = Platform.OS === "ios" ? 20 : Platform.OS === "android" ? 18 : 16;
-const COMPOSER_INPUT_BORDER_HEIGHT = 2;
+const COMPOSER_INPUT_FONT_SIZE = CHAT_COMPOSER_LAYOUT_CONTRACT.inputFontSize;
+const COMPOSER_INPUT_LINE_HEIGHT = CHAT_COMPOSER_LAYOUT_CONTRACT.inputLineHeight;
+const COMPOSER_INPUT_VERTICAL_PADDING = CHAT_COMPOSER_LAYOUT_CONTRACT.inputVerticalPadding;
+const COMPOSER_INPUT_BORDER_HEIGHT = CHAT_COMPOSER_LAYOUT_CONTRACT.inputBorderHeight;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
 const COMPOSER_INPUT_MAX_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT * 5 + COMPOSER_INPUT_VERTICAL_PADDING + COMPOSER_INPUT_BORDER_HEIGHT;
 const COMPOSER_MESSAGE_BOX_MIN_HEIGHT = Platform.OS === "web" ? COMPOSER_INPUT_MIN_HEIGHT : Math.max(42, COMPOSER_INPUT_MIN_HEIGHT);
-const COMPOSER_ACTION_BUTTON_SIZE = Platform.OS === "web" ? 36 : 40;
+const COMPOSER_ACTION_BUTTON_SIZE = CHAT_COMPOSER_LAYOUT_CONTRACT.actionButtonSize;
 const VOICE_MESSAGE_MIN_DURATION_MS = 700;
 const VOICE_MESSAGE_SEND_MIN_DURATION_MS = Platform.OS === "android" ? 1500 : VOICE_MESSAGE_MIN_DURATION_MS;
 const VOICE_MESSAGE_MIME_TYPE = "audio/mp4";
@@ -413,7 +430,7 @@ const ROOM_HEADER_CONTROL_SIZE = 34;
 const ROOM_HEADER_EXPANDED_CONTENT_TOP_GAP = 2;
 const ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE = 3;
 const CHAT_HEADER_CLEARANCE = 112;
-const ROOM_HEADER_EXPANDED_HEIGHT = 190;
+const ROOM_HEADER_EXPANDED_HEIGHT = 183;
 const ROOM_HEADER_COMPACT_HEIGHT = 96;
 const ROOM_HEADER_COLLAPSE_DISTANCE = ROOM_HEADER_EXPANDED_HEIGHT - ROOM_HEADER_COMPACT_HEIGHT;
 const ROOM_HEADER_EXPANDED_TITLE_LEFT = ROOM_HEADER_HORIZONTAL_PADDING + ROOM_HEADER_CONTENT_INSET + ROOM_HEADER_EXPANDED_TITLE_LEFT_NUDGE;
@@ -429,7 +446,6 @@ const ROOM_HEADER_TABS_TOP = ROOM_HEADER_DETAILS_TOP + ROOM_HEADER_DETAILS_HEIGH
 // Keep the Table content aligned to the fixed expanded header. A constant inset
 // avoids feeding animated header measurements back into the room screen.
 const TABLE_HEADER_CLEARANCE = ROOM_HEADER_EXPANDED_HEIGHT;
-const CHAT_COMPOSER_CLEARANCE = 88;
 const MEMORY_ROOM_CHAT_WARM_DELAY_MS = 450;
 const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
 
@@ -477,11 +493,8 @@ const CHAT_LATEST_BUTTON_OFFSET_THRESHOLD = 180;
 // line height (~6.5) minus the ~3px of line-height slack the 22px text line
 // already leaves below its glyphs.
 const CHAT_TIME_PINNED_DROP = 3;
-// Minimum horizontal gap between the end of the last text line and the time.
 const CHAT_TIME_GAP = 8;
-// Height of the invisible width-reserving spacer. When it wraps to its own
-// line it adds exactly the room the pinned time (13px, dropped 3px) needs —
-// tighter than a normal 22px text line, per the placement rule.
+const CHAT_TIME_FONT_SIZE = 11;
 const CHAT_TIME_SPACER_HEIGHT = 13 - CHAT_TIME_PINNED_DROP;
 const MEMORY_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😋", "👏"] as const;
 const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
@@ -496,6 +509,13 @@ const MEDIA_VIEWER_WINDOW_SIZE = 3;
 type MediaPreviewSize = { height: number; width: number };
 type MediaTimestampPlacement = "bottom-left" | "bottom-right";
 type MessageGroupPosition = "single" | "first" | "middle" | "last";
+
+let memoryChatLayoutGenerationSequence = 0;
+
+function nextMemoryChatLayoutGeneration() {
+  memoryChatLayoutGenerationSequence += 1;
+  return memoryChatLayoutGenerationSequence;
+}
 
 // Returns a referentially-stable callback that always invokes the LATEST
 // `handler` closure. Lets us pass the room screen's per-render handlers into
@@ -701,8 +721,7 @@ function canEditMemoryMessage(message: MemoryMessage, myUsername: string) {
     message.authorName === myUsername &&
     message.body.trim().length > 0 &&
     message.attachments.length === 0 &&
-    message.deliveryStatus !== "pending" &&
-    message.deliveryStatus !== "failed"
+    message.deliveryStatus === "sent"
   );
 }
 
@@ -710,11 +729,22 @@ function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: str
   if (target.type === "message") {
     return (
       target.value.authorName === myUsername &&
-      target.value.deliveryStatus !== "pending" &&
-      target.value.deliveryStatus !== "failed"
+      target.value.deliveryStatus === "sent"
     );
   }
   return target.value.uploaderName === myUsername;
+}
+
+function hasMemoryDeliveryStrip(status: MemoryMessage["deliveryStatus"]) {
+  return status === "failed" ||
+    status === "processing" ||
+    status === "processing_delayed" ||
+    status === "processing_failed" ||
+    status === "rejected";
+}
+
+function canRetryMemoryDelivery(status: MemoryMessage["deliveryStatus"]) {
+  return status === "failed" || status === "processing_failed";
 }
 
 // Same grouping rule the vendor uses for corner rounding: consecutive
@@ -768,6 +798,55 @@ function memoryChatTimestampLabel(message: MemoryChatMainMessage) {
   if (!message.createdAt) return "";
   const value = message.createdAt instanceof Date ? message.createdAt.toISOString() : String(message.createdAt);
   return formatDisplayTime(value);
+}
+
+function buildMemoryChatMainMessageRow({
+  message,
+  reactions,
+  showSenderDetails
+}: {
+  message: MemoryMessage;
+  reactions: MemoryReactionState;
+  showSenderDetails: boolean;
+}): MemoryChatMainMessage {
+  const primaryAudio = memoryChatPrimaryAudio(message);
+  const primaryMedia = memoryChatPrimaryVisualMedia(message);
+  const primaryAudioUrl = memoryChatMediaUrl(primaryAudio);
+  const primaryMediaUrl = memoryChatMediaUrl(primaryMedia);
+
+  return {
+    // Not message.id: an own send changes id when it reconciles, and the list
+    // keys on _id. The stable client key keeps the native row mounted.
+    _id: memoryChatRowKey(message),
+    audio: primaryAudioUrl,
+    createdAt: new Date(message.createdAt),
+    extraAttachments: message.attachments.slice(1),
+    image: memoryMediaKind(primaryMedia) === "image" ? primaryMediaUrl : undefined,
+    kind: "message",
+    memoryMessage: message,
+    reactions: memoryChatReactionsForMessage(message.id, reactions),
+    replyMessage: message.replyToMessage
+      ? {
+        _id: message.replyToMessage.id,
+        text: message.replyToMessage.body || "Message",
+        user: memoryChatUser(
+          message.replyToMessage.authorDisplayName,
+          message.replyToMessage.authorDisplayName
+        )
+      }
+      : undefined,
+    showSenderDetails,
+    streaming: (
+      message.deliveryStatus === "pending" ||
+      message.deliveryStatus === "retrying" ||
+      message.deliveryStatus === "uploading" ||
+      message.deliveryStatus === "processing" ||
+      message.deliveryStatus === "processing_delayed"
+    ),
+    text: message.body.trim(),
+    user: memoryChatUser(message.authorName, message.authorDisplayName),
+    video: memoryMediaKind(primaryMedia) === "video" ? primaryMediaUrl : undefined
+  };
 }
 
 function buildMemoryChatMainMessages({
@@ -833,41 +912,11 @@ function buildMemoryChatMainMessages({
       );
 
       if (item.type === "message") {
-        const message = item.value;
-        const primaryAudio = memoryChatPrimaryAudio(message);
-        const primaryMedia = memoryChatPrimaryVisualMedia(message);
-        const primaryAudioUrl = memoryChatMediaUrl(primaryAudio);
-        const primaryMediaUrl = memoryChatMediaUrl(primaryMedia);
-
-        return {
-          // Not message.id: an own send changes id when it reconciles, and the
-          // list keys on _id, so using the raw id remounted the bubble mid-send.
-          _id: memoryChatRowKey(message),
-          audio: primaryAudioUrl,
-          createdAt: new Date(message.createdAt),
-          extraAttachments: message.attachments.slice(1),
-          image: memoryMediaKind(primaryMedia) === "image" ? primaryMediaUrl : undefined,
-          kind: "message",
-          memoryMessage: message,
-          placementIndex: index,
-          reactions: memoryChatReactionsForMessage(message.id, reactions),
-          replyMessage: message.replyToMessage
-            ? {
-              _id: message.replyToMessage.id,
-              text: message.replyToMessage.body || "Message",
-              user: memoryChatUser(message.replyToMessage.authorDisplayName, message.replyToMessage.authorDisplayName)
-            }
-            : undefined,
-          showSenderDetails,
-          streaming: (
-            message.deliveryStatus === "pending" ||
-            message.deliveryStatus === "retrying" ||
-            message.deliveryStatus === "uploading"
-          ),
-          text: message.body.trim(),
-          user: memoryChatUser(message.authorName, message.authorDisplayName),
-          video: memoryMediaKind(primaryMedia) === "video" ? primaryMediaUrl : undefined
-        };
+        return buildMemoryChatMainMessageRow({
+          message: item.value,
+          reactions,
+          showSenderDetails
+        });
       }
 
       if (item.type === "media") {
@@ -929,18 +978,33 @@ function MemoryChatPlacementRow({
   children,
   clientId,
   deliveryStatus,
+  layoutGeneration,
   renderIndex,
+  rowKey,
   style
 }: {
   children: ReactNode;
   clientId?: string | null;
   deliveryStatus?: MemoryMessage["deliveryStatus"];
+  layoutGeneration: number;
   renderIndex?: number;
+  rowKey: string;
   style: StyleProp<ViewStyle>;
 }) {
+  const rowRef = useRef<View>(null);
+  const geometrySamplingFrameRef = useRef<number | null>(null);
+  const geometrySamplingStartedRef = useRef(false);
+  const firstLayoutRecordedRef = useRef(false);
+  const lastRoundedGeometryRef = useRef<{
+    bottom: number;
+    height: number;
+    top: number;
+  } | null>(null);
   const initialPlacementRef = useRef({
     deliveryStatus,
-    renderIndex
+    layoutGeneration,
+    renderIndex,
+    rowKey
   });
 
   useEffect(() => {
@@ -962,20 +1026,102 @@ function MemoryChatPlacementRow({
   }, [clientId, deliveryStatus, renderIndex]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    if (!clientId) return;
     const { height, y } = event.nativeEvent.layout;
-    recordMemoryChatPlacement("ROW_LAYOUT", {
-      clientId,
-      deliveryStatus,
-      renderIndex,
-      rowBottom: y + height,
-      rowHeight: height,
-      rowTop: y
-    });
-  }, [clientId, deliveryStatus, renderIndex]);
+    if (clientId) {
+      recordMemoryChatPlacement("ROW_LAYOUT", {
+        clientId,
+        deliveryStatus,
+        renderIndex,
+        rowBottom: y + height,
+        rowHeight: height,
+        rowTop: y
+      });
+      if (!firstLayoutRecordedRef.current) {
+        firstLayoutRecordedRef.current = true;
+        recordMemoryChatPlacement("ROW_FIRST_LAYOUT", {
+          clientId,
+          deliveryStatus,
+          renderIndex,
+          rowBottom: y + height,
+          rowHeight: height,
+          rowTop: y
+        });
+      }
+    }
+    if (
+      !memoryChatPlacementDiagnosticsEnabled() ||
+      geometrySamplingStartedRef.current ||
+      renderIndex === undefined ||
+      renderIndex < 0 ||
+      renderIndex >= CHAT_MAIN_INITIAL_RENDER_COUNT
+    ) {
+      return;
+    }
+    geometrySamplingStartedRef.current = true;
+    const owner = initialPlacementRef.current;
+    const pixelRatio = PixelRatio.get();
+    const startedAt = performance.now();
+    let auditFrame = 0;
+    const sampleGeometry = () => {
+      rowRef.current?.measureInWindow((_x, windowY, _width, windowHeight) => {
+        if (
+          owner.layoutGeneration !== layoutGeneration ||
+          owner.rowKey !== rowKey
+        ) {
+          return;
+        }
+        const rounded = {
+          bottom: Math.round((windowY + windowHeight) * pixelRatio),
+          height: Math.round(windowHeight * pixelRatio),
+          top: Math.round(windowY * pixelRatio)
+        };
+        const previous = lastRoundedGeometryRef.current;
+        if (!previous) {
+          recordMemoryChatPlacement("CHAT_ROW_FIRST_LAYOUT", {
+            framesToStable: auditFrame,
+            layoutGeneration,
+            renderIndex,
+            rowBottom: windowY + windowHeight,
+            rowHeight: windowHeight,
+            rowKey,
+            rowTop: windowY
+          });
+        } else if (
+          previous.bottom !== rounded.bottom ||
+          previous.height !== rounded.height ||
+          previous.top !== rounded.top
+        ) {
+          recordMemoryChatPlacement("CHAT_ROW_LAYOUT_CHANGED", {
+            framesToStable: auditFrame,
+            layoutGeneration,
+            renderIndex,
+            rowBottom: windowY + windowHeight,
+            rowHeight: windowHeight,
+            rowKey,
+            rowTop: windowY
+          });
+        }
+        lastRoundedGeometryRef.current = rounded;
+      });
+      auditFrame += 1;
+      if (performance.now() - startedAt < 800) {
+        geometrySamplingFrameRef.current = requestAnimationFrame(sampleGeometry);
+      } else {
+        geometrySamplingFrameRef.current = null;
+      }
+    };
+    geometrySamplingFrameRef.current = requestAnimationFrame(sampleGeometry);
+  }, [clientId, deliveryStatus, layoutGeneration, renderIndex, rowKey]);
+
+  useEffect(() => () => {
+    if (geometrySamplingFrameRef.current !== null) {
+      cancelAnimationFrame(geometrySamplingFrameRef.current);
+      geometrySamplingFrameRef.current = null;
+    }
+  }, []);
 
   return (
-    <View onLayout={handleLayout} style={style}>
+    <View ref={rowRef} onLayout={handleLayout} style={style}>
       {children}
     </View>
   );
@@ -984,7 +1130,8 @@ function MemoryChatPlacementRow({
 function useMemoryJourneySurfaceDiagnostics(
   journeySession: MemoryRoomJourneySession,
   tab: RoomTabMode,
-  surface: string
+  surface: string,
+  deferUsable = false
 ) {
   useEffect(() => {
     recordMemoryRoomJourney(journeySession, "SURFACE_RENDER", { surface, tab });
@@ -992,20 +1139,22 @@ function useMemoryJourneySurfaceDiagnostics(
   useEffect(() => {
     recordMemoryRoomSurfaceLifecycle(tab, "mounted");
     recordMemoryRoomJourney(journeySession, "SURFACE_MOUNT", { surface, tab });
-    const usableFrame = requestAnimationFrame(() => {
-      markMemoryRoomSurfaceUsable(tab);
-      recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
-        screenState: "usable",
-        surface,
-        tab
+    const usableFrame = deferUsable
+      ? null
+      : requestAnimationFrame(() => {
+        markMemoryRoomSurfaceUsable(tab);
+        recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
+          screenState: "usable",
+          surface,
+          tab
+        });
       });
-    });
     return () => {
-      cancelAnimationFrame(usableFrame);
+      if (usableFrame !== null) cancelAnimationFrame(usableFrame);
       recordMemoryRoomSurfaceLifecycle(tab, "unmounted");
       recordMemoryRoomJourney(journeySession, "SURFACE_UNMOUNT", { surface, tab });
     };
-  }, [journeySession, surface, tab]);
+  }, [deferUsable, journeySession, surface, tab]);
 }
 
 function MemoryJourneyRenderProbe({
@@ -1371,12 +1520,17 @@ function MemoryChatMainSurface({
   active,
   canLoadOlderMessages,
   chatMessages,
+  collapsedComposerGeometry,
   loadingOlderMessages,
   liteRows,
   message,
+  myDisplayName,
   myUsername,
+  nativeAnchorFailed,
+  nativeAnchorReady,
   inputRef,
   initialScrollOffset,
+  initialUnreadMessageId,
   journeySession,
   listRef,
   canDeleteSelected,
@@ -1396,6 +1550,7 @@ function MemoryChatMainSurface({
   onEditMessage,
   onLoadOlderMessages,
   onNearBottomChange,
+  onVisibleReadPosition,
   onScrollOffsetChange,
   onOpenDish,
   onOpenMedia,
@@ -1410,7 +1565,6 @@ function MemoryChatMainSurface({
   replyingToMessage,
   roomId,
   resolvedTheme,
-  closedComposerBottomPadding,
   keyboardTopReserve,
   surfaceKeyboardStyle,
   toolbarInsetStyle
@@ -1418,12 +1572,17 @@ function MemoryChatMainSurface({
   active: boolean;
   canLoadOlderMessages: boolean;
   chatMessages: MemoryChatMainMessage[];
+  collapsedComposerGeometry: ReturnType<typeof resolveMemoryChatCollapsedComposerGeometry>;
   loadingOlderMessages: boolean;
   liteRows: ChatRowViewModel[];
   message: string;
+  myDisplayName: string;
   myUsername: string;
+  nativeAnchorFailed: boolean;
+  nativeAnchorReady: boolean;
   inputRef: RefObject<NativeChatInputHandle | null>;
   initialScrollOffset: number;
+  initialUnreadMessageId: string | null;
   journeySession: MemoryRoomJourneySession;
   listRef: RefObject<ChatListScrollRef | null>;
   canDeleteSelected: boolean;
@@ -1443,13 +1602,14 @@ function MemoryChatMainSurface({
   onEditMessage: (message: MemoryMessage) => void;
   onLoadOlderMessages: () => void;
   onNearBottomChange: (isNearBottom: boolean) => void;
+  onVisibleReadPosition: (createdAt: string) => void;
   onScrollOffsetChange: (offset: number) => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onRateDish: (dishId: string, rating: number) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onRetryFailedMessage: (message: MemoryMessage) => void;
-  onSend: (draft?: string, clientId?: string) => void;
+  onSend: (draft?: string, clientId?: string, clientCreatedAt?: string) => void;
   onSendAudio: (asset: AddMemoryMediaAsset) => Promise<void>;
   onToggleSelection: (target: MemoryActionTarget) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
@@ -1457,12 +1617,18 @@ function MemoryChatMainSurface({
   replyingToMessage: MemoryMessage | null;
   roomId: string;
   resolvedTheme: "dark" | "light";
-  closedComposerBottomPadding: number;
   keyboardTopReserve: SharedValue<number>;
   surfaceKeyboardStyle: StyleProp<ViewStyle>;
   toolbarInsetStyle: StyleProp<ViewStyle>;
 }) {
-  useMemoryJourneySurfaceDiagnostics(journeySession, "chat", "chat");
+  useMemoryJourneySurfaceDiagnostics(
+    journeySession,
+    "chat",
+    "chat",
+    MEMORY_ROOM_CHAT_NATIVE_RENDERER
+  );
+  const [layoutGeneration] = useState(nextMemoryChatLayoutGeneration);
+  const closedComposerBottomPadding = collapsedComposerGeometry.closedBottomPadding;
   const previousActiveRef = useRef(active);
   useEffect(
     () => adjustMemoryRoomResourceCounter("MemoryRoomMountedChatHosts", 1),
@@ -1472,9 +1638,19 @@ function MemoryChatMainSurface({
     recordMemoryRoomChatRendererCandidate(MEMORY_ROOM_CHAT_RENDERER_CODE);
   }, []);
   useEffect(() => {
+    recordMemoryChatPlacement("CHAT_GEOMETRY_MODEL_READY", {
+      bottomClearance: collapsedComposerGeometry.listClearance,
+      composerHeight: collapsedComposerGeometry.composerHeight,
+      fontScale: collapsedComposerGeometry.fontScale,
+      layoutGeneration,
+      pixelRatio: collapsedComposerGeometry.pixelRatio,
+      safeAreaInset: collapsedComposerGeometry.safeAreaInset
+    });
+  }, [collapsedComposerGeometry, layoutGeneration]);
+  useEffect(() => {
     const becameActive = active && !previousActiveRef.current;
     previousActiveRef.current = active;
-    if (!becameActive) return undefined;
+    if (!becameActive || MEMORY_ROOM_CHAT_NATIVE_RENDERER) return undefined;
     // A warmed Chat host does not remount, so its mount-time journey probe
     // cannot close a later activation trace. Close it from the first frame
     // where the already-laid-out host is visible and interactive instead.
@@ -1493,8 +1669,35 @@ function MemoryChatMainSurface({
     void inputRef.current?.blur();
   }, [active, inputRef]);
   const { width: screenWidth } = useWindowDimensions();
-  const currentUser = useMemo(() => memoryChatUser(myUsername, myUsername || "You"), [myUsername]);
-  const latestChatMessage = chatMessages[0] ?? null;
+  const currentUser = useMemo(
+    () => memoryChatUser(myUsername, myDisplayName || myUsername || "You"),
+    [myDisplayName, myUsername]
+  );
+  const [immediateTextRows, setImmediateTextRows] = useState<MemoryChatMainMessage[]>([]);
+  const canonicalClientIds = useMemo(
+    () => new Set(chatMessages.flatMap((row) => row.memoryMessage?.clientId ?? [])),
+    [chatMessages]
+  );
+  const displayChatMessages = useMemo(
+    () => [
+      ...immediateTextRows.filter((row) => {
+        const clientId = row.memoryMessage?.clientId;
+        return Boolean(clientId && !canonicalClientIds.has(clientId));
+      }),
+      ...chatMessages
+    ],
+    [canonicalClientIds, chatMessages, immediateTextRows]
+  );
+  useEffect(() => {
+    setImmediateTextRows((current) => {
+      const next = current.filter((row) => {
+        const clientId = row.memoryMessage?.clientId;
+        return Boolean(clientId && !canonicalClientIds.has(clientId));
+      });
+      return next.length === current.length ? current : next;
+    });
+  }, [canonicalClientIds]);
+  const latestChatMessage = displayChatMessages[0] ?? null;
   const latestChatMessageId = latestChatMessage?._id != null ? String(latestChatMessage._id) : null;
   const latestChatMessageMine = latestChatMessage
     ? String(latestChatMessage.user?._id ?? "") === String(currentUser._id ?? "")
@@ -1511,6 +1714,10 @@ function MemoryChatMainSurface({
   const latestChatMessageIdRef = useRef(latestChatMessageId);
   const placementLatestClientIdRef = useRef<string | null>(null);
   const placementStatusByClientRef = useRef(new Map<string, MemoryMessage["deliveryStatus"]>());
+  const placementIndexByRowKeyRef = useRef(new Map<string, number>());
+  placementIndexByRowKeyRef.current = new Map(
+    displayChatMessages.map((chatMessage, index) => [String(chatMessage._id), index])
+  );
   const placementContentHeightRef = useRef(0);
   const placementViewportHeightRef = useRef(0);
   const chatListLayoutMarkedRef = useRef(false);
@@ -1570,8 +1777,8 @@ function MemoryChatMainSurface({
   // The message box and the list reserve share UI-thread height values. A
   // newline/backspace writes both in the same event, so the composer and newest
   // messages move together without a parent React render or follow-up RAF.
-  const messageBoxHeight = useSharedValue(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
-  const composerClearance = useSharedValue(CHAT_COMPOSER_CLEARANCE);
+  const messageBoxHeight = useSharedValue(collapsedComposerGeometry.messageBoxHeight);
+  const composerClearance = useSharedValue(collapsedComposerGeometry.listClearance);
   const composerListSpacerStyle = useAnimatedStyle(() => ({
     height: composerClearance.value
   }), [composerClearance]);
@@ -1609,6 +1816,11 @@ function MemoryChatMainSurface({
         screenWidth,
         closedComposerBottomPadding
       ].join(":");
+  const collapsedToolbarStructure =
+    !selectionMode &&
+    !editingMessage &&
+    !replyingToMessage &&
+    voiceMode === "idle";
   const activeToolbarLayoutIdentityRef = useRef(toolbarLayoutIdentity);
   const measuredToolbarLayoutIdentityRef = useRef<string | null>(null);
   const composerReadyMarkedRef = useRef(false);
@@ -1621,12 +1833,62 @@ function MemoryChatMainSurface({
       return;
     }
     measuredToolbarLayoutIdentityRef.current = toolbarLayoutIdentity;
-    composerClearance.value = event.nativeEvent.layout.height;
+    const measuredHeight = event.nativeEvent.layout.height;
+    const modeledHeight =
+      collapsedComposerGeometry.listClearance +
+      Math.max(
+        0,
+        messageBoxHeight.value - collapsedComposerGeometry.messageBoxHeight
+      );
+    const targetClearance = collapsedToolbarStructure
+      ? modeledHeight
+      : measuredHeight;
+    const firstComposerLayout = !composerReadyMarkedRef.current;
+    if (firstComposerLayout) {
+      recordMemoryChatPlacement("CHAT_COMPOSER_FIRST_LAYOUT", {
+        bottomClearance: targetClearance,
+        composerHeight: measuredHeight,
+        composerModelHeight: modeledHeight,
+        fontScale: collapsedComposerGeometry.fontScale,
+        layoutGeneration,
+        pixelRatio: collapsedComposerGeometry.pixelRatio,
+        safeAreaInset: collapsedComposerGeometry.safeAreaInset
+      });
+    }
+    if (
+      collapsedToolbarStructure &&
+      PixelRatio.roundToNearestPixel(measuredHeight) !==
+        PixelRatio.roundToNearestPixel(modeledHeight)
+    ) {
+      recordMemoryChatPlacement("CHAT_GEOMETRY_MISMATCH", {
+        bottomClearance: targetClearance,
+        composerHeight: measuredHeight,
+        composerModelHeight: modeledHeight,
+        fontScale: collapsedComposerGeometry.fontScale,
+        layoutGeneration,
+        pixelRatio: collapsedComposerGeometry.pixelRatio,
+        safeAreaInset: collapsedComposerGeometry.safeAreaInset
+      });
+    }
+    // The collapsed list clearance is a mount-time contract. Native layout
+    // validates it but never replaces it, so pixel-rounding or a late onLayout
+    // cannot reposition rows that are already visible. Structural toolbar
+    // modes still use their measured height after an explicit user action.
+    if (Math.abs(composerClearance.value - targetClearance) > 0.5) {
+      composerClearance.value = targetClearance;
+    }
     if (!composerReadyMarkedRef.current) {
       composerReadyMarkedRef.current = true;
       markMemoryRoomTracePoint("MemoryRoomChatComposerReady");
     }
-  }, [composerClearance, toolbarLayoutIdentity]);
+  }, [
+    collapsedComposerGeometry,
+    collapsedToolbarStructure,
+    composerClearance,
+    layoutGeneration,
+    messageBoxHeight,
+    toolbarLayoutIdentity
+  ]);
 
   useEffect(() => {
     voiceModeRef.current = voiceMode;
@@ -1814,7 +2076,7 @@ function MemoryChatMainSurface({
   }, [roomId]);
 
   useEffect(() => {
-    for (const chatMessage of chatMessages) {
+    for (const [renderIndex, chatMessage] of displayChatMessages.entries()) {
       const memoryMessage = chatMessage.memoryMessage;
       const clientId = memoryMessage?.clientId;
       if (!clientId || memoryMessage.authorName !== myUsername) continue;
@@ -1823,20 +2085,25 @@ function MemoryChatMainSurface({
         recordMemoryChatPlacement("LIST_DATA_RECEIVED", {
           clientId,
           deliveryStatus: memoryMessage.deliveryStatus,
-          renderIndex: chatMessage.placementIndex
+          renderIndex
+        });
+        recordMemoryChatPlacement("LIST_DATA_COMMIT", {
+          clientId,
+          deliveryStatus: memoryMessage.deliveryStatus,
+          renderIndex
         });
       }
       if (previousStatus !== memoryMessage.deliveryStatus) {
         recordMemoryChatPlacement("ROW_STATUS_UPDATED", {
           clientId,
           deliveryStatus: memoryMessage.deliveryStatus,
-          renderIndex: chatMessage.placementIndex
+          renderIndex
         });
       }
       placementStatusByClientRef.current.set(clientId, memoryMessage.deliveryStatus);
-      if (chatMessage.placementIndex === 0) placementLatestClientIdRef.current = clientId;
+      if (renderIndex === 0) placementLatestClientIdRef.current = clientId;
     }
-  }, [chatMessages, myUsername]);
+  }, [displayChatMessages, myUsername]);
 
   useEffect(() => {
     const previousLatestMessageId = latestChatMessageIdRef.current;
@@ -2070,12 +2337,12 @@ function MemoryChatMainSurface({
   const liteMessageByKey = useMemo(
     () =>
       new Map(
-        chatMessages.map((chatMessage) => [
+        displayChatMessages.map((chatMessage) => [
           String(chatMessage._id),
           chatMessage
         ])
       ),
-    [chatMessages]
+    [displayChatMessages]
   );
   const litePrototypeSupported = liteRows.every(
     (row) =>
@@ -2087,8 +2354,28 @@ function MemoryChatMainSurface({
       row.itemType === "unread" ||
       row.itemType === "system"
   );
+  const [nativeRevealFailed, setNativeRevealFailed] = useState(false);
+  useEffect(() => {
+    setNativeRevealFailed(false);
+  }, [layoutGeneration]);
+  const nativeRendererActive =
+    MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
+    nativeMemoryChatListAvailable &&
+    nativeAnchorReady &&
+    !nativeAnchorFailed &&
+    !nativeRevealFailed &&
+    litePrototypeSupported;
+  const nativeRendererWaiting =
+    MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
+    nativeMemoryChatListAvailable &&
+    !nativeAnchorReady &&
+    !nativeAnchorFailed &&
+    !nativeRevealFailed &&
+    litePrototypeSupported;
   const liteRendererActive =
-    MEMORY_ROOM_CHAT_LITE_RENDERER && litePrototypeSupported;
+    MEMORY_ROOM_CHAT_LITE_RENDERER &&
+    !MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
+    litePrototypeSupported;
   const liteSelectionKeys = useMemo(
     () => new Set(selectedItemKeys),
     [selectedItemKeys]
@@ -2136,17 +2423,106 @@ function MemoryChatMainSurface({
   const retryLiteMessage = useCallback(
     (key: string) => {
       const message = liteMessageForKey(key)?.memoryMessage;
-      if (message?.deliveryStatus === "failed") onRetryFailedMessage(message);
+      if (message && canRetryMemoryDelivery(message.deliveryStatus)) onRetryFailedMessage(message);
     },
     [liteMessageForKey, onRetryFailedMessage]
   );
   const cancelLiteMessage = useCallback(
     (key: string) => {
       const message = liteMessageForKey(key)?.memoryMessage;
-      if (message?.deliveryStatus === "failed") onCancelFailedMessage(message);
+      if (message && hasMemoryDeliveryStrip(message.deliveryStatus)) onCancelFailedMessage(message);
     },
     [liteMessageForKey, onCancelFailedMessage]
   );
+  const nativeSelectedRowKeys = useMemo(
+    () => displayChatMessages
+      .filter((candidate) => {
+        const target = memoryChatActionTarget(candidate);
+        return target
+          ? liteSelectionKeys.has(memoryActionKey(target))
+          : false;
+      })
+      .map((candidate) => String(candidate._id)),
+    [displayChatMessages, liteSelectionKeys]
+  );
+  const nativeInitialAnchor = useMemo(
+    () => initialUnreadMessageId
+      ? {
+        generation: layoutGeneration,
+        key: initialUnreadMessageId,
+        kind: "unread" as const
+      }
+      : {
+        generation: layoutGeneration,
+        key: "" as const,
+        kind: "latest" as const
+      },
+    [initialUnreadMessageId, layoutGeneration]
+  );
+  const [nativeScrollCommand, setNativeScrollCommand] =
+    useState<NativeMemoryChatScrollCommand>({
+      generation: 0,
+      key: "",
+      kind: "none"
+    });
+  const [nativeNearLatest, setNativeNearLatest] = useState(true);
+  const handleNativeVisibleRange = useCallback(
+    (event: NativeSyntheticEvent<NativeMemoryChatVisibleEvent>) => {
+      const nextNearLatest = event.nativeEvent.nearLatest;
+      setNativeNearLatest((current) =>
+        current === nextNearLatest ? current : nextNearLatest
+      );
+      onNearBottomChange(nextNearLatest);
+      if (event.nativeEvent.latestCreatedAt) {
+        onVisibleReadPosition(event.nativeEvent.latestCreatedAt);
+      }
+    },
+    [onNearBottomChange, onVisibleReadPosition]
+  );
+  const handleNativeRevealState = useCallback(
+    (event: NativeSyntheticEvent<NativeMemoryChatRevealEvent>) => {
+      const state = event.nativeEvent;
+      if (state.event === "NATIVE_CHAT_REVEAL_FAILED") {
+        setNativeRevealFailed(true);
+        return;
+      }
+      if (state.event !== "NATIVE_CHAT_REVEALED") return;
+      markMemoryRoomTransitionFirstFrame("chat");
+      markMemoryRoomSurfaceUsable("chat");
+      markMemoryRoomTransitionSettled("chat");
+      recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
+        screenState: "usable",
+        surface: "native_chat_revealed",
+        tab: "chat"
+      });
+    },
+    [journeySession]
+  );
+  const handleNativeMessagePress = useCallback(
+    (key: string) => {
+      if (selectionMode) toggleLiteMessageSelection(key);
+    },
+    [selectionMode, toggleLiteMessageSelection]
+  );
+  const handleNativeMessageLongPress = useCallback(
+    (
+      key: string,
+      anchor: {
+        height: number;
+        pageX: number;
+        pageY: number;
+        width: number;
+      }
+    ) => openLiteMessageMenu(key, anchor),
+    [openLiteMessageMenu]
+  );
+  const jumpNativeToLatest = useCallback(() => {
+    setNativeScrollCommand((current) => ({
+      generation: current.generation + 1,
+      key: "",
+      kind: "latest"
+    }));
+  }, []);
   const renderLiteChatRow = useCallback(
     ({ index, item }: { index: number; item: ChatRowViewModel }) => {
       if (
@@ -2200,8 +2576,70 @@ function MemoryChatMainSurface({
   ) => {
     const firstMessage = Array.isArray(outgoingMessages) ? outgoingMessages[0] : outgoingMessages;
     const clientId = typeof firstMessage?._id === "string" ? firstMessage._id : undefined;
-    onSend(firstMessage?.text ?? "", clientId);
-  }, [onSend]);
+    const body = firstMessage?.text?.trim() ?? "";
+    if (!body || !clientId || editingMessage) {
+      onSend(body, clientId);
+      return;
+    }
+    const createdAt = firstMessage.createdAt instanceof Date
+      ? firstMessage.createdAt.toISOString()
+      : new Date(firstMessage.createdAt ?? Date.now()).toISOString();
+    const replyTarget = replyingToMessage;
+    const optimisticMessage: MemoryMessage = {
+      attachments: [],
+      authorDisplayName: myDisplayName || myUsername,
+      authorName: myUsername,
+      body,
+      clientCreatedAt: createdAt,
+      clientId,
+      clientOrderKey: `${createdAt}:${clientId}`,
+      clientSequence: null,
+      createdAt,
+      deliveryStatus: "pending",
+      editedAt: null,
+      id: `optimistic-message:${roomId}:${clientId}`,
+      replyToMessage: replyTarget
+        ? {
+          authorDisplayName: replyTarget.authorDisplayName,
+          body: replyTarget.body || "Media",
+          id: memoryMessageServerId(replyTarget) ?? replyTarget.id
+        }
+        : null,
+      replyToMessageId: replyTarget
+        ? memoryMessageServerId(replyTarget) ?? replyTarget.id
+        : null,
+      roomId,
+      serverCreatedAt: null,
+      serverId: null
+    };
+    const row = buildMemoryChatMainMessageRow({
+      message: optimisticMessage,
+      reactions: {},
+      showSenderDetails: false
+    });
+    recordMemoryChatPlacement("OPTIMISTIC_ENTITY_CREATED", {
+      clientId,
+      deliveryStatus: "pending"
+    });
+    setImmediateTextRows((current) => [
+      row,
+      ...current.filter((candidate) => candidate.memoryMessage?.clientId !== clientId)
+    ]);
+    recordMemoryChatPlacement("ROW_MODEL_INSERTED", {
+      affectedRows: 2,
+      clientId,
+      deliveryStatus: "pending",
+      renderIndex: 0
+    });
+    onSend(body, clientId, createdAt);
+  }, [
+    editingMessage,
+    myDisplayName,
+    myUsername,
+    onSend,
+    replyingToMessage,
+    roomId
+  ]);
 
   const renderInputToolbar = useCallback(() => null, []);
 
@@ -2221,6 +2659,7 @@ function MemoryChatMainSurface({
   ) : (
     <MemoryChatMainInputToolbar
       active={active}
+      collapsedMessageBoxHeight={collapsedComposerGeometry.messageBoxHeight}
       editingMessage={editingMessage}
       composerClearance={composerClearance}
       inputRef={inputRef}
@@ -2291,9 +2730,18 @@ function MemoryChatMainSurface({
     // A send that never landed must say so and stay recoverable. Only outgoing
     // messages can fail, so the banner always sits on the sent (right) side;
     // media rows carry no MemoryMessage and report upload failures separately.
-    const failedMessage = messageProps.currentMessage?.memoryMessage?.deliveryStatus === "failed"
-      ? messageProps.currentMessage.memoryMessage
+    const deliveryMessage = hasMemoryDeliveryStrip(
+      messageProps.currentMessage?.memoryMessage?.deliveryStatus
+    )
+      ? messageProps.currentMessage?.memoryMessage ?? null
       : null;
+    // Treat the recovery strip as the next outgoing message in the visual run:
+    // the failed bubble groups into it, then the strip owns the normal spacing
+    // to the following message (or the composer when it is newest).
+    const bubbleBottomGapStyle = deliveryMessage ? styles.chatMainGroupedRowGap : groupedGapStyle;
+    const failedBottomGapStyle = isGroupedWithNext
+      ? styles.chatMainGroupedRowGap
+      : styles.chatMainRowBreakGap;
     // A reply can only reference a message that exists on the server (the
     // column is reply_to_message_id), which rules out two kinds of row: a
     // standalone media row — a photo whose row carries no message_id, so there
@@ -2308,12 +2756,15 @@ function MemoryChatMainSurface({
     const replyTarget = messageProps.currentMessage?.memoryMessage;
     const canReply = replyTarget ? canReplyToMemoryMessage(replyTarget) : false;
     const placementClientId = replyTarget?.clientId;
-    const placementIndex = messageProps.currentMessage?.placementIndex;
+    const placementRowKey = String(messageProps.currentMessage?._id ?? "");
+    const placementIndex = placementIndexByRowKeyRef.current.get(placementRowKey);
     return (
       <MemoryChatPlacementRow
         clientId={placementClientId}
         deliveryStatus={replyTarget?.deliveryStatus}
+        layoutGeneration={layoutGeneration}
         renderIndex={placementIndex}
+        rowKey={placementRowKey}
         style={[styles.chatMainRowSelectionFrame, selected && styles.chatMainRowSelectedBackground]}
       >
         <MemoryJourneyRenderProbe
@@ -2331,23 +2782,23 @@ function MemoryChatMainSurface({
             }
             : undefined}
           containerStyle={{
-            left: [rowStyle, styles.chatMainIncomingRowEdge, groupedGapStyle],
-            right: [rowStyle, groupedGapStyle]
+            left: [rowStyle, styles.chatMainIncomingRowEdge, bubbleBottomGapStyle],
+            right: [rowStyle, bubbleBottomGapStyle]
           }}
         />
-        {failedMessage ? (
-          <View style={styles.chatMainFailedRow}>
+        {deliveryMessage ? (
+          <View style={[styles.chatMainFailedRow, failedBottomGapStyle]}>
             <MessageDeliveryState
               mine
-              onCancel={() => onCancelFailedMessage(failedMessage)}
-              onRetry={() => onRetryFailedMessage(failedMessage)}
-              status={failedMessage.deliveryStatus}
+              onCancel={() => onCancelFailedMessage(deliveryMessage)}
+              onRetry={() => onRetryFailedMessage(deliveryMessage)}
+              status={deliveryMessage.deliveryStatus}
             />
           </View>
         ) : null}
       </MemoryChatPlacementRow>
     );
-  }, [journeySession, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
+  }, [journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
 
   // Message group tails are rendered by renderCustomView so they live INSIDE
   // the vendor's animated wrapper and scale together with the bubble on
@@ -2388,13 +2839,15 @@ function MemoryChatMainSurface({
         body={body}
         hasMedia={hasMedia}
         key={`${String(currentMessage._id)}:${resolvedTheme}`}
+        layoutGeneration={layoutGeneration}
         mine={mine}
         replyVisible={Boolean(currentMessage.replyMessage)}
+        rowKey={String(currentMessage._id)}
         senderVisible={senderVisible}
         time={memoryChatTimestampLabel(currentMessage)}
       />
     );
-  }, [resolvedTheme]);
+  }, [layoutGeneration, resolvedTheme]);
 
   const renderMessageMedia = useCallback((props: { currentMessage: MemoryChatMainMessage }) => {
     const attachments = memoryChatMessageAttachments(props.currentMessage);
@@ -2535,8 +2988,7 @@ function MemoryChatMainSurface({
     const showEmojis = Boolean(
       MEMORY_REACTIONS_ENABLED &&
       targetMessage &&
-      targetMessage.deliveryStatus !== "pending" &&
-      targetMessage.deliveryStatus !== "failed"
+      targetMessage.deliveryStatus === "sent"
     );
 
     return (
@@ -2552,6 +3004,16 @@ function MemoryChatMainSurface({
     if (!chatListLayoutMarkedRef.current) {
       chatListLayoutMarkedRef.current = true;
       markMemoryRoomTracePoint("MemoryRoomChatListFirstLayout");
+      recordMemoryChatPlacement("CHAT_LIST_FIRST_LAYOUT", {
+        bottomClearance: composerClearance.value,
+        composerHeight: messageBoxHeight.value,
+        contentHeight: placementContentHeightRef.current,
+        contentOffset: placementScrollOffsetRef.current,
+        keyboardInset: keyboardTopReserve.value,
+        layoutGeneration,
+        safeAreaInset: collapsedComposerGeometry.safeAreaInset,
+        viewportHeight: event.nativeEvent.layout.height
+      });
     }
     placementViewportHeightRef.current = event.nativeEvent.layout.height;
     updateMemoryChatPlacementContext({
@@ -2562,7 +3024,13 @@ function MemoryChatMainSurface({
       keyboardInset: keyboardTopReserve.value,
       viewportHeight: placementViewportHeightRef.current
     });
-  }, [composerClearance, keyboardTopReserve, messageBoxHeight]);
+  }, [
+    collapsedComposerGeometry.safeAreaInset,
+    composerClearance,
+    keyboardTopReserve,
+    layoutGeneration,
+    messageBoxHeight
+  ]);
 
   const handleChatMainContentSizeChange = useCallback((_width: number, height: number) => {
     if (Math.abs(height - placementContentHeightRef.current) <= 0.5) return;
@@ -2678,7 +3146,61 @@ function MemoryChatMainSurface({
   const surfaceInner = (
     <>
       <View style={styles.chatMainMessagesLayer}>
-        {liteRendererActive ? liteList : (
+        {nativeRendererWaiting ? (
+          <View
+            accessibilityLabel="Loading unread messages"
+            style={styles.chatMainMessages}
+          />
+        ) : nativeRendererActive ? (
+          <>
+            <NativeMemoryChatList
+              active={active}
+              bottomClearance={collapsedComposerGeometry.listClearance}
+              diagnosticsEnabled={MEMORY_ROOM_RELEASE_PROFILE_ENABLED}
+              initialAnchor={nativeInitialAnchor}
+              myUsername={myUsername}
+              onLoadOlder={requestOlderPage}
+              onMessageLongPress={(event) => {
+                const { height, key, pageX, pageY, width } = event.nativeEvent;
+                handleNativeMessageLongPress(key, {
+                  height,
+                  pageX,
+                  pageY,
+                  width
+                });
+              }}
+              onMessagePress={(event) =>
+                handleNativeMessagePress(event.nativeEvent.key)}
+              onReplySwipe={(event) =>
+                replyToLiteMessage(event.nativeEvent.key)}
+              onRevealStateChanged={handleNativeRevealState}
+              onVisibleRangeChanged={handleNativeVisibleRange}
+              rows={liteRows}
+              scrollCommand={nativeScrollCommand}
+              selectedKeys={nativeSelectedRowKeys}
+              style={styles.chatMainMessages}
+              topClearance={CHAT_HEADER_CLEARANCE}
+            />
+            {!nativeNearLatest && liteRows.length > 0 ? (
+              <Pressable
+                accessibilityLabel="Jump to latest memory activity"
+                accessibilityRole="button"
+                onPress={jumpNativeToLatest}
+                style={[
+                  styles.chatLatestButton,
+                  { bottom: collapsedComposerGeometry.listClearance + 12 }
+                ]}
+              >
+                <Ionicons
+                  name="chevron-down"
+                  size={15}
+                  color={ROOM_COLORS.onCool}
+                />
+                <Text style={styles.chatLatestButtonText}>Latest</Text>
+              </Pressable>
+            ) : null}
+          </>
+        ) : liteRendererActive ? liteList : (
           <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
           disableKeyboardProvider
@@ -2746,7 +3268,7 @@ function MemoryChatMainSurface({
               right: styles.messageTextMine
             }
           }}
-          messages={chatMessages}
+          messages={displayChatMessages}
           messagesContainerRef={listRef as RefObject<ChatMainAnimatedList<MemoryChatMainMessage>>}
           messagesContainerStyle={styles.chatMainMessages}
           onQuickReply={(replies) => {
@@ -2861,224 +3383,86 @@ function MemoryChatMainSurface({
   );
 }
 
-// Timestamp placement rule: the bottom edge of the last text line must cut
-// the single time element in half (half beside the text, half hanging into
-// the bubble's bottom padding). The space the time needs is reserved by an
-// invisible block-level spacer that flows after the text in a wrapping row,
-// so Yoga itself decides whether the time fits beside the last line (bubble
-// grows to hold it) or wraps onto its own tight line \u2014 no hand-computed
-// width estimates. The visible time is pinned at the wrapper's bottom-right,
-// which is exactly where the spacer reserved room. The only measured inputs
-// are the time's own width and (as a pure optimization) the text's line
-// layout: multi-line texts whose last line already leaves a gap wide enough
-// for the time skip the spacer so the bubble doesn't grow a needless extra
-// line. Every unmeasured/fallback state renders the spacer \u2014 worst case is
-// a slightly taller bubble, never an overlap or a missing time.
+// Timestamp placement rule: the visible time remains pinned at the wrapper's
+// bottom-right, while a non-text inline spacer participates in the body Text's
+// FIRST native line-break pass. Its width comes synchronously from the bundled
+// timestamp font metrics plus the established 8 px gap. No second timestamp
+// string or post-paint measurement state exists in the native text tree.
 function ChatMainBodyWithTime({
   bodyStyle,
+  layoutGeneration,
   linkStyle,
+  rowKey,
   stretch = false,
   text,
   time,
   timeStyle
 }: {
   bodyStyle: StyleProp<TextStyle>;
+  layoutGeneration: number;
   linkStyle: StyleProp<TextStyle>;
   // Stretch only when a sibling (media block, reply card) defines the bubble
   // width independently, so the time can pin to the bubble's right edge.
   // Default hugs content: stretching inside a bubble whose width comes FROM
   // this wrapper is circular sizing, which Yoga resolves differently across
   // layout passes — bubbles visibly oscillated between the two answers.
+  rowKey: string;
   stretch?: boolean;
   text: string;
   time: string;
   timeStyle: StyleProp<TextStyle>;
 }) {
-  // Reserve a conservative width immediately so the timestamp is visible in
-  // the same first frame as the message body. Native measurement then replaces
-  // that estimate once and becomes a monotonic latch, protecting later Android
-  // relayouts from transient zero/under-reported widths.
-  const estimatedTimeWidth = estimateChatTimestampWidth(time);
-  // Chat timestamps repeat heavily (many messages share a minute; the format
-  // repeats), so once ANY bubble has measured a given label, every later bubble
-  // with that label paints at the final width on its FIRST frame — including the
-  // optimistic->server reconcile of a message you just sent, which re-mounts the
-  // row. That removes the estimate->measured spacer swap that reflowed the
-  // bubble a frame after it appeared (the "jitter after send").
-  const cachedTimeWidth = chatTimestampWidthCache.get(time);
-  const [measuredTime, setMeasuredTime] = useState<{
-    label: string;
-    native: boolean;
-    width: number;
-  }>(() => (
-    cachedTimeWidth !== undefined
-      ? { label: time, native: true, width: cachedTimeWidth }
-      : { label: time, native: false, width: estimatedTimeWidth }
-  ));
-  const timeWidth = measuredTime.label === time
-    ? measuredTime.width
-    : cachedTimeWidth ?? estimatedTimeWidth;
-  const spacerWidth = timeWidth + CHAT_TIME_GAP;
-
-  // Android quirks measured on-device (see git history for the logs):
-  // 1. Android intermittently re-measures the text against the bubble's
-  //    stale (narrower) width, transiently wrapping the spacer; relayouts
-  //    relax the constraint and the layout self-heals — so no decision may
-  //    ever freeze a state that only exists mid-recovery.
-  // 2. A multiline Text fills the full available width instead of hugging
-  //    its longest line, leaving dead space right of shorter lines (long
-  //    unbreakable words). Handled by the hug width below.
-  // 3. The lines report appends a phantom trailing "line" for an inline
-  //    view even when it visually shares the last text line; telling a real
-  //    wrapped-spacer line from the phantom needs the element height from
-  //    the SAME pass.
-  // Layout decisions are evaluated on BOTH measurement events (line report
-  // and element layout) via shared refs — evaluating in only one of them
-  // goes blind when the other is the sole event a pass emits (a spacer-width
-  // change can re-flow lines without changing the element's outer size, so
-  // onLayout never re-fires). A ref value from the "other" event is valid
-  // whenever no size change is in flight, and if one IS in flight its own
-  // event lands right after and re-evaluates — so the non-latching outputs
-  // (margin, ownLine) self-correct. The latching hug width additionally
-  // requires CONFIRMATION: a candidate is applied only when a re-evaluation
-  // ~100ms later (after any in-flight corrective layout has landed) computes
-  // the same value, so a transient mismatched pairing can never be frozen.
-  const linesRef = useRef<{ lines: Array<{ height: number; width: number; y: number }>; timeW: number } | null>(null);
-  const boxRef = useRef<{ height: number; width: number } | null>(null);
-  const pendingHugRef = useRef<{ timeW: number; width: number } | null>(null);
-  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [layoutDecision, setLayoutDecision] = useState<{
-    hugWidth: number; // 0 = no explicit width
-    margin: number; // ≤ 0
-    ownLine: boolean;
-    timeW: number;
-  } | null>(null);
-
+  const measurementOwnerRef = useRef({
+    active: true,
+    layoutGeneration,
+    rowKey
+  });
+  measurementOwnerRef.current = {
+    active: true,
+    layoutGeneration,
+    rowKey
+  };
   useEffect(() => () => {
-    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    measurementOwnerRef.current.active = false;
   }, []);
-
-  const evaluateMeasurements = useCallback(() => {
-    const snapshot = linesRef.current;
-    const box = boxRef.current;
-    if (!snapshot || !box || snapshot.lines.length === 0) return;
-
-    const { lines } = snapshot;
-    const snapshotSpacerWidth = snapshot.timeW + CHAT_TIME_GAP;
-    const last = lines[lines.length - 1];
-    const lastIsSpacerOnly = last.width <= snapshotSpacerWidth + 2;
-    // The lines report appends a phantom trailing "line" for an inline view
-    // even when it visually shares the last text line; a REAL wrapped-spacer
-    // line starts a line-height above the element's bottom edge, a phantom
-    // one starts at (or past) it.
-    const ownLine = lastIsSpacerOnly && box.height - last.y > 4;
-    const margin = ownLine ? -Math.min(14, Math.max(0, box.height - last.y - 11)) : 0;
-    // Hug: a multiline bubble's width should be its longest TEXT line — the
-    // WhatsApp rule. Android's fill-width behavior leaves the element wider
-    // (long unbreakable words), and an inline spacer at the end of the last
-    // line can widen that line beyond every text line; both leave a dead
-    // band right of the text. Shrink to the longest text line (spacer
-    // contribution excluded — if the time then has no room it wraps to its
-    // own line, which is correct), floored at the spacer width so a bubble
-    // is never narrower than its own timestamp. Only when the element is
-    // meaningfully wider than that text width (a settled-state signature,
-    // never a mid-recovery narrow one) and there are at least two real text
-    // lines, so a one-line message can never be hugged at all. Latched per
-    // spacer epoch after confirmation, never removed within the epoch.
-    const realLineCount = lines.length - (lastIsSpacerOnly ? 1 : 0);
-    const textLineWidths = [
-      ...lines.slice(0, -1).map((line) => line.width),
-      ...(lastIsSpacerOnly ? [] : [Math.max(0, last.width - snapshotSpacerWidth)])
-    ];
-    const maxTextLineWidth = textLineWidths.length > 0 ? Math.max(...textLineWidths) : 0;
-    // +2px slack: line widths are reported rounded while real glyph runs are
-    // fractional — constraining the text to EXACTLY its measured widest line
-    // makes that line overflow by a subpixel and re-break, orphaning its
-    // last character onto its own line (observed on device: "Sbdjdbdk" at
-    // width 70 became "Sbdjdbd" + a 9px "k" line, adding dead height).
-    // Hug applies in stretch mode too: stretch makes the WRAPPER reach the
-    // bubble's edge (so the time pins there), hug keeps the TEXT element
-    // from claiming the full row — they're orthogonal. Gating hug on
-    // !stretch left received group-start bubbles (sender header → stretch)
-    // permanently un-hugged and full-width.
-    const hugCandidate = snapshot.timeW > 0 && realLineCount >= 2 &&
-      maxTextLineWidth > 0 && box.width - maxTextLineWidth > 12
-      ? Math.max(maxTextLineWidth, snapshotSpacerWidth) + 2
-      : 0;
-
-    let confirmedHug = 0;
-    const pending = pendingHugRef.current;
-    if (hugCandidate > 0) {
-      if (pending && pending.timeW === snapshot.timeW && Math.abs(pending.width - hugCandidate) <= 2) {
-        confirmedHug = hugCandidate;
-      } else {
-        pendingHugRef.current = { timeW: snapshot.timeW, width: hugCandidate };
-        if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-        confirmTimerRef.current = setTimeout(evaluateMeasurements, 100);
-      }
-    } else {
-      pendingHugRef.current = null;
-    }
-
-    setLayoutDecision((previous) => {
-      const sameEpoch = previous && previous.timeW === snapshot.timeW;
-      const hugWidth = sameEpoch && previous.hugWidth > 0 ? previous.hugWidth : confirmedHug;
-      const next = { hugWidth, margin, ownLine, timeW: snapshot.timeW };
-      return sameEpoch &&
-        previous.hugWidth === next.hugWidth &&
-        previous.margin === next.margin &&
-        previous.ownLine === next.ownLine
-        ? previous
-        : next;
-    });
-  }, [text.length]);
-
+  const timestampFontScale = PixelRatio.getFontScale();
+  const timestampReservationWidth = useMemo(
+    () => memoryChatTimestampReservationWidth(time, {
+      fontScale: timestampFontScale,
+      fontSize: CHAT_TIME_FONT_SIZE,
+      gap: CHAT_TIME_GAP
+    }),
+    [time, timestampFontScale]
+  );
   const handleTextLayout = useCallback((event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    const owner = measurementOwnerRef.current;
+    if (
+      !owner.active ||
+      owner.layoutGeneration !== layoutGeneration ||
+      owner.rowKey !== rowKey
+    ) {
+      return;
+    }
     const eventLines = event.nativeEvent.lines;
     if (!eventLines || eventLines.length === 0) return;
-    linesRef.current = {
-      lines: eventLines.map((line) => ({
-        height: Math.round(line.height),
-        width: Math.ceil(line.width),
-        y: Math.round(line.y)
-      })),
-      timeW: timeWidth
-    };
-    evaluateMeasurements();
-  }, [timeWidth, evaluateMeasurements]);
-
-  const handleTextBoxLayout = useCallback((event: LayoutChangeEvent) => {
-    boxRef.current = {
-      height: Math.round(event.nativeEvent.layout.height),
-      width: Math.round(event.nativeEvent.layout.width)
-    };
-    evaluateMeasurements();
-  }, [evaluateMeasurements]);
-
-  const activeDecision = layoutDecision && layoutDecision.timeW === timeWidth ? layoutDecision : null;
-  const hugTextWidth = activeDecision && activeDecision.hugWidth > 0 ? activeDecision.hugWidth : undefined;
-  const textMarginStyle = activeDecision && activeDecision.margin < 0
-    ? { marginBottom: activeDecision.margin }
-    : null;
+    recordMemoryChatPlacement("CHAT_TEXT_MEASUREMENT_RECEIVED", {
+      layoutGeneration,
+      lineCount: eventLines.length,
+      rowHeight: eventLines.reduce(
+        (height, line) => Math.max(height, line.y + line.height),
+        0
+      ),
+      rowKey
+    });
+  }, [layoutGeneration, rowKey]);
 
   return (
     <View style={[styles.chatMainBodyWithTime, stretch && styles.chatMainBodyWithTimeStretch]}>
-      {/* The spacer is an inline view INSIDE the Text, so the text engine's
-          own line-breaker places it: end of the last line when it fits (even
-          in a multi-line trailing gap), wrapped onto its own line when it
-          doesn't. The text is measured as a plain block — no flex siblings
-          that could squeeze it. textBreakStrategy "simple" (greedy) keeps
-          Android's balanced breaker from wrapping the spacer early to
-          even out ragged lines. */}
       <Text
+        accessibilityLabel={text}
         android_hyphenationFrequency="none"
-        onLayout={handleTextBoxLayout}
         onTextLayout={handleTextLayout}
-        style={[
-          styles.chatMainBodyHostText,
-          hugTextWidth !== undefined && { width: hugTextWidth },
-          textMarginStyle
-        ]}
+        style={styles.chatMainBodyHostText}
         textBreakStrategy="simple"
       >
         <SmartMessageTextContent
@@ -3086,7 +3470,15 @@ function ChatMainBodyWithTime({
           text={text}
           textStyle={bodyStyle}
         />
-        <View style={[styles.chatMainTimeSpacer, { width: spacerWidth }]} />
+        <View
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[
+            styles.chatMainTimeSpacer,
+            { width: timestampReservationWidth }
+          ]}
+        />
       </Text>
       <View
         pointerEvents="none"
@@ -3094,20 +3486,6 @@ function ChatMainBodyWithTime({
       >
         <Text
           numberOfLines={1}
-          onLayout={(event) => {
-            const next = Math.ceil(event.nativeEvent.layout.width);
-            // Cache the (monotonic max) measured width so later bubbles with this
-            // same label skip the estimate and never reflow.
-            if (next > (chatTimestampWidthCache.get(time) ?? 0)) {
-              chatTimestampWidthCache.set(time, next);
-            }
-            setMeasuredTime((previous) => {
-              if (previous.label !== time || !previous.native) {
-                return { label: time, native: true, width: next };
-              }
-              return next > previous.width ? { label: time, native: true, width: next } : previous;
-            });
-          }}
           style={[styles.inlineTimestampText, timeStyle]}
         >
           {time}
@@ -3124,15 +3502,19 @@ function ChatMainBodyWithTime({
 const ChatMainStableMessageText = memo(function ChatMainStableMessageText({
   body,
   hasMedia,
+  layoutGeneration,
   mine,
   replyVisible,
+  rowKey,
   senderVisible,
   time
 }: {
   body: string;
   hasMedia: boolean;
+  layoutGeneration: number;
   mine: boolean;
   replyVisible: boolean;
+  rowKey: string;
   senderVisible: boolean;
   time: string;
 }) {
@@ -3149,7 +3531,9 @@ const ChatMainStableMessageText = memo(function ChatMainStableMessageText({
     >
       <ChatMainBodyWithTime
         bodyStyle={bodyStyle}
+        layoutGeneration={layoutGeneration}
         linkStyle={mine ? styles.messageLinkTextMine : styles.messageLinkText}
+        rowKey={rowKey}
         // Stretch whenever a sibling can out-width the text (media block,
         // reply card, or the sender-name header on received group starts),
         // so the time pins to the bubble's right edge instead of hugging
@@ -3162,22 +3546,6 @@ const ChatMainStableMessageText = memo(function ChatMainStableMessageText({
     </View>
   );
 });
-
-// Measured timestamp widths keyed by exact label (e.g. "12:52 am"). Labels are
-// bounded (~1440 unique) and repeat across messages, so this stays tiny and lets
-// a freshly rendered bubble skip the estimate->measured spacer swap. See the
-// cache read in ChatMainBodyWithTime.
-const chatTimestampWidthCache = new Map<string, number>();
-
-function estimateChatTimestampWidth(label: string) {
-  const estimated = Array.from(label).reduce((width, character) => {
-    if (character === ":") return width + 3.5;
-    if (character === " ") return width + 3;
-    if (/\d/.test(character)) return width + 6.25;
-    return width + 6;
-  }, 2);
-  return Math.max(42, Math.ceil(estimated));
-}
 
 function formatAudioPlaybackTime(seconds: number | null | undefined) {
   const total = Number.isFinite(seconds ?? NaN) ? Math.max(0, Math.floor(seconds ?? 0)) : 0;
@@ -3319,6 +3687,7 @@ function MemoryChatMainVoiceComposer({
 
 type MemoryChatMainToolbarProps = {
   active: boolean;
+  collapsedMessageBoxHeight: number;
   composerClearance: SharedValue<number>;
   editingMessage: MemoryMessage | null;
   inputRef: RefObject<NativeChatInputHandle | null>;
@@ -3349,6 +3718,7 @@ type MemoryChatMainToolbarProps = {
 
 function MemoryChatMainInputToolbar({
   active,
+  collapsedMessageBoxHeight,
   composerClearance,
   editingMessage,
   inputRef,
@@ -3432,7 +3802,7 @@ function MemoryChatMainInputToolbar({
   const handleNativeHeightChange = useEvent<NativeChatInputHeightEvent>((event) => {
     "worklet";
     const nextHeight = Math.max(
-      COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+      collapsedMessageBoxHeight,
       Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(event.height))
     );
     const previousHeight = messageBoxHeight.value;
@@ -3462,9 +3832,9 @@ function MemoryChatMainInputToolbar({
 
   useEffect(() => {
     if (Platform.OS !== "android" && (text ?? "").length === 0) {
-      updateMessageBoxHeight(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
+      updateMessageBoxHeight(collapsedMessageBoxHeight);
     }
-  }, [text, updateMessageBoxHeight]);
+  }, [collapsedMessageBoxHeight, text, updateMessageBoxHeight]);
 
   useEffect(() => {
     if (active) return;
@@ -3473,8 +3843,8 @@ function MemoryChatMainInputToolbar({
 
   useEffect(() => {
     if (!voiceActive) return;
-    updateMessageBoxHeight(COMPOSER_MESSAGE_BOX_MIN_HEIGHT);
-  }, [updateMessageBoxHeight, voiceActive]);
+    updateMessageBoxHeight(collapsedMessageBoxHeight);
+  }, [collapsedMessageBoxHeight, updateMessageBoxHeight, voiceActive]);
 
   function handleChangeText(value: string) {
     draftRef.current = value;
@@ -3492,7 +3862,7 @@ function MemoryChatMainInputToolbar({
   function handleContentSizeChange(event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) {
     const contentHeight = event.nativeEvent.contentSize.height + COMPOSER_INPUT_BORDER_HEIGHT;
     const nextHeight = Math.max(
-      COMPOSER_MESSAGE_BOX_MIN_HEIGHT,
+      collapsedMessageBoxHeight,
       Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.ceil(contentHeight))
     );
     updateMessageBoxHeight(nextHeight);
@@ -3518,15 +3888,31 @@ function MemoryChatMainInputToolbar({
       // starting voice recording.
       if (textSubmitInFlightRef.current) return;
       textSubmitInFlightRef.current = true;
-      const pressedAt = Date.now();
+      const pressedAt = performance.now();
+      const clientId = createRequestId();
       const composerHeightBefore = messageBoxHeight.value;
       try {
         const submission: NativeChatInputSubmitResult | undefined = await inputRef.current?.submit();
         if (!submission) return;
+        recordMemoryChatPlacement("NATIVE_SUBMIT", {
+          clientId,
+          eventTimestamp: submission.nativeSubmitAtMs
+        });
+        recordMemoryChatPlacement("PAYLOAD_CAPTURED", {
+          clientId,
+          eventTimestamp: submission.payloadCapturedAtMs
+        });
+        recordMemoryChatPlacement("INPUT_CLEARED", {
+          clientId,
+          eventTimestamp: submission.inputClearedAtMs
+        });
+        recordMemoryChatPlacement("JS_SUBMIT_RECEIVED", {
+          clientId,
+          eventTimestamp: performance.now()
+        });
         nativeEventCountRef.current = submission.eventCount;
         const outgoingText = submission.text.trim();
         if (outgoingText) {
-          const clientId = createRequestId();
           recordMemoryChatPlacement("SEND_PRESS", {
             clientId,
             composerHeight: composerHeightBefore,
@@ -3542,7 +3928,11 @@ function MemoryChatMainInputToolbar({
           latestExternalTextRef.current = "";
           sendAffordance.value = 0;
           setDraft("");
-          onSend?.({ _id: clientId, text: outgoingText } as Partial<MemoryChatMainMessage>, true);
+          onSend?.({
+            _id: clientId,
+            createdAt: new Date(),
+            text: outgoingText
+          } as Partial<MemoryChatMainMessage>, true);
           return;
         }
         if (
@@ -3564,6 +3954,15 @@ function MemoryChatMainInputToolbar({
       const outgoingText = draftRef.current.trim();
       if (!outgoingText) return;
       const clientId = createRequestId();
+      const submitAt = performance.now();
+      recordMemoryChatPlacement("NATIVE_SUBMIT", {
+        clientId,
+        eventTimestamp: submitAt
+      });
+      recordMemoryChatPlacement("PAYLOAD_CAPTURED", {
+        clientId,
+        eventTimestamp: submitAt
+      });
       recordMemoryChatPlacement("SEND_PRESS", {
         clientId,
         composerHeight: messageBoxHeight.value
@@ -3573,12 +3972,24 @@ function MemoryChatMainInputToolbar({
       latestExternalTextRef.current = "";
       sendAffordance.value = 0;
       inputRef.current?.clear();
+      recordMemoryChatPlacement("INPUT_CLEARED", {
+        clientId,
+        eventTimestamp: performance.now()
+      });
       setDraft("");
       recordMemoryChatPlacement("COMPOSER_HEIGHT_CHANGED", {
         clientId,
-        composerHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT
+        composerHeight: collapsedMessageBoxHeight
       });
-      onSend?.({ _id: clientId, text: outgoingText } as Partial<MemoryChatMainMessage>, true);
+      recordMemoryChatPlacement("JS_SUBMIT_RECEIVED", {
+        clientId,
+        eventTimestamp: performance.now()
+      });
+      onSend?.({
+        _id: clientId,
+        createdAt: new Date(),
+        text: outgoingText
+      } as Partial<MemoryChatMainMessage>, true);
       return;
     }
     onStartAudio();
@@ -3657,7 +4068,7 @@ function MemoryChatMainInputToolbar({
                   lineHeight={COMPOSER_INPUT_LINE_HEIGHT}
                   maxInputHeight={COMPOSER_INPUT_MAX_HEIGHT}
                   maxLength={MEMORY_TEXT_MAX_LENGTH}
-                  minInputHeight={COMPOSER_MESSAGE_BOX_MIN_HEIGHT}
+                  minInputHeight={collapsedMessageBoxHeight}
                   onHasTextChange={handleNativeHasTextChange as unknown as NativeChatInputProps["onHasTextChange"]}
                   onHeightChange={handleNativeHeightChange as unknown as NativeChatInputProps["onHeightChange"]}
                   onTextChange={handleNativeTextChange}
@@ -4208,16 +4619,6 @@ function formatRestaurantDisplayName(name: string) {
   ));
 }
 
-function getComposerClosedBottomPadding(bottomInset: number) {
-  const hasBottomSafeArea = bottomInset > 0;
-  // Mattermost-style edge-to-edge policy: trust OS safe-area when present, but keep
-  // a tokenized minimum for Android layouts that can report 0 while drawing edge-to-edge.
-  const usesEdgeToEdgeBottom = IS_ANDROID_EDGE_TO_EDGE || (Platform.OS === "ios" && hasBottomSafeArea);
-  const fallbackGap = usesEdgeToEdgeBottom ? COMPOSER_EDGE_TO_EDGE_BOTTOM_GAP : COMPOSER_STANDARD_BOTTOM_GAP;
-
-  return Math.max(bottomInset + COMPOSER_CLOSED_SAFE_GAP, fallbackGap);
-}
-
 function getChatKeyboardShift(
   drivenKeyboardHeight: number,
   closedComposerBottomPadding: number
@@ -4394,6 +4795,22 @@ export default function MemoryDetailScreen() {
   // accepting that live inset would add a React layout correction on top of
   // the UI-thread keyboard transform.
   const [frozenComposerBottomInset] = useState(() => insets.bottom);
+  const [frozenChatGeometryInputs] = useState(() => ({
+    fontScale: PixelRatio.getFontScale(),
+    pixelRatio: PixelRatio.get()
+  }));
+  const collapsedComposerGeometry = useMemo(
+    () => resolveMemoryChatCollapsedComposerGeometry({
+      bottomSafeAreaInset: frozenComposerBottomInset,
+      fontScale: frozenChatGeometryInputs.fontScale,
+      isEdgeToEdge:
+        IS_ANDROID_EDGE_TO_EDGE ||
+        (Platform.OS === "ios" && frozenComposerBottomInset > 0),
+      pixelRatio: frozenChatGeometryInputs.pixelRatio,
+      platform: Platform.OS
+    }),
+    [frozenChatGeometryInputs, frozenComposerBottomInset]
+  );
   const { resolvedTheme } = useThemePreference();
   const cachedRoomSummary = memoryRoomSummariesFromPages(
     queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
@@ -4411,7 +4828,9 @@ export default function MemoryDetailScreen() {
   const markRead = useMarkMemoryRoomReadMutation(roomId);
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
-  const myUsername = useSessionStore((state) => state.profile?.username ?? "");
+  const sessionProfile = useSessionStore((state) => state.profile);
+  const myUsername = sessionProfile?.username ?? "";
+  const myDisplayName = sessionProfile?.displayName || myUsername;
   const addMessageMutateAsyncRef = useRef(addMessage.mutateAsync);
   addMessageMutateAsyncRef.current = addMessage.mutateAsync;
   const markReadMutateRef = useRef(markRead.mutate);
@@ -4424,6 +4843,10 @@ export default function MemoryDetailScreen() {
   // Active chat uses the vendored inverted AnimatedFlatList (newest at offset 0).
   // Keep bottom-follow wired to that live list, not the inactive ChatTimeline.
   const scrollChatToBottom = useCallback((animated: boolean) => {
+    recordMemoryChatPlacement("CHAT_SCROLL_COMMAND", {
+      contentOffset: 0,
+      scrollCommandSource: "host_scroll_to_bottom"
+    });
     recordMemoryChatPlacement("BOTTOM_FOLLOW_REQUESTED", {
       scrollCommandSource: "host_scroll_to_bottom"
     });
@@ -4439,6 +4862,12 @@ export default function MemoryDetailScreen() {
   }, []);
   const readMarkerRef = useRef<string | null>(null);
   const markReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nativeReadMarkerRef = useRef<string | null>(null);
+  const nativeReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nativeReadInputRef = useRef<{
+    readAt: string;
+    remainingUnreadCount: number;
+  } | null>(null);
   const chatOpenMarkedRef = useRef(false);
   const deletingItemKeysRef = useRef<Set<string>>(new Set());
   const selectedItemKeysRef = useRef<string[]>([]);
@@ -4516,14 +4945,20 @@ export default function MemoryDetailScreen() {
     }
     requestRoomModeController(nextMode);
     requestAnimationFrame(() => {
-      if (nextMode !== "people") markMemoryRoomTransitionFirstFrame(nextMode);
+      const nativeChatOwnsVisibleTiming =
+        nextMode === "chat" && MEMORY_ROOM_CHAT_NATIVE_RENDERER;
+      if (nextMode !== "people" && !nativeChatOwnsVisibleTiming) {
+        markMemoryRoomTransitionFirstFrame(nextMode);
+      }
       recordMemoryRoomJourney(journeySession, "TAB_FIRST_FRAME", {
         durationMs: Date.now() - startedAt,
         screenState: "visible",
         tab: nextMode
       });
       InteractionManager.runAfterInteractions(() => {
-        if (nextMode !== "people") markMemoryRoomTransitionSettled(nextMode);
+        if (nextMode !== "people" && !nativeChatOwnsVisibleTiming) {
+          markMemoryRoomTransitionSettled(nextMode);
+        }
         recordMemoryRoomJourney(journeySession, "TAB_TRANSITION_SETTLED", {
           durationMs: Date.now() - startedAt,
           screenState: "usable",
@@ -5081,6 +5516,63 @@ export default function MemoryDetailScreen() {
     }, 400);
   }
 
+  function markVisibleNativeRoomRead(readAt: string) {
+    if (
+      !MEMORY_ROOM_CHAT_NATIVE_RENDERER ||
+      !Number.isFinite(Date.parse(readAt))
+    ) {
+      return;
+    }
+    const previousMarkerMs = Date.parse(nativeReadMarkerRef.current ?? "");
+    const nextMarkerMs = Date.parse(readAt);
+    if (Number.isFinite(previousMarkerMs) && previousMarkerMs >= nextMarkerMs) {
+      return;
+    }
+    nativeReadMarkerRef.current = readAt;
+    const currentRoom =
+      queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId)) ??
+      room.data;
+    const currentSummary = memoryRoomSummariesFromPages(
+      queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+    ).find((memory) => memory.id === roomId);
+    if ((currentSummary?.unreadCount ?? 0) <= 0) return;
+    const previousReadMs = Date.parse(currentRoom?.lastReadAt ?? "");
+    const newlyVisibleIncoming = currentRoom?.messages.filter((candidate) => {
+      const createdAt = Date.parse(candidate.createdAt);
+      return (
+        candidate.authorName !== myUsername &&
+        createdAt <= nextMarkerMs &&
+        (!Number.isFinite(previousReadMs) || createdAt > previousReadMs)
+      );
+    }).length ?? 0;
+    const remainingUnreadCount = Math.max(
+      0,
+      (currentSummary?.unreadCount ?? newlyVisibleIncoming) -
+        newlyVisibleIncoming
+    );
+    const input = { readAt, remainingUnreadCount };
+    nativeReadInputRef.current = input;
+    if (nativeReadTimeoutRef.current) clearTimeout(nativeReadTimeoutRef.current);
+    nativeReadTimeoutRef.current = setTimeout(() => {
+      nativeReadTimeoutRef.current = null;
+      nativeReadInputRef.current = null;
+      markRead.mutate(input, {
+        onError: () => {
+          nativeReadMarkerRef.current = null;
+        }
+      });
+    }, 300);
+  }
+
+  useEffect(() => () => {
+    if (!nativeReadTimeoutRef.current) return;
+    clearTimeout(nativeReadTimeoutRef.current);
+    nativeReadTimeoutRef.current = null;
+    const pending = nativeReadInputRef.current;
+    nativeReadInputRef.current = null;
+    if (pending) markReadMutateRef.current(pending);
+  }, []);
+
   useEffect(() => () => {
     if (!markReadTimeoutRef.current) return;
     clearTimeout(markReadTimeoutRef.current);
@@ -5096,6 +5588,7 @@ export default function MemoryDetailScreen() {
   // anchored. Requiring "near bottom" here left rooms permanently unread whenever the
   // entry anchored at the unread divider, so every entry re-anchored to stale unread.
   useEffect(() => {
+    if (MEMORY_ROOM_CHAT_NATIVE_RENDERER) return;
     if (mode !== "chat") {
       chatOpenMarkedRef.current = false;
       return;
@@ -5106,6 +5599,7 @@ export default function MemoryDetailScreen() {
   }, [markRead, mode, roomId]);
 
   useEffect(() => {
+    if (MEMORY_ROOM_CHAT_NATIVE_RENDERER) return;
     if (mode !== "chat" || !nearBottomRef.current) return;
     markLatestRoomRead();
   }, [markRead, mode, room.data, roomId]);
@@ -5126,7 +5620,7 @@ export default function MemoryDetailScreen() {
     target: targetKeyboardHeight
   } = useDrivenKeyboardHeight();
   const isChatMode = mode === "chat";
-  const closedComposerBottomPadding = getComposerClosedBottomPadding(frozenComposerBottomInset);
+  const closedComposerBottomPadding = collapsedComposerGeometry.closedBottomPadding;
   const chatKeyboardShift = useDerivedValue(() => {
     if (!isChatMode) return 0;
     return getChatKeyboardShift(
@@ -5164,7 +5658,9 @@ export default function MemoryDetailScreen() {
 
   function handleChatNearBottomChange(isNearBottom: boolean) {
     nearBottomRef.current = isNearBottom;
-    if (isNearBottom) markLatestRoomRead();
+    if (isNearBottom && !MEMORY_ROOM_CHAT_NATIVE_RENDERER) {
+      markLatestRoomRead();
+    }
   }
 
   function showPeopleToast(message: string) {
@@ -5246,7 +5742,11 @@ export default function MemoryDetailScreen() {
     setSelectedParticipants((current) => current.filter((item) => item.username.toLowerCase() !== username.toLowerCase()));
   }
 
-  async function submitMessage(draftOverride?: string, clientIdOverride?: string) {
+  async function submitMessage(
+    draftOverride?: string,
+    clientIdOverride?: string,
+    clientCreatedAtOverride?: string
+  ) {
     const draftBody = draftOverride ?? messageDraftRef.current;
     try {
       if (editingMessage) {
@@ -5263,10 +5763,10 @@ export default function MemoryDetailScreen() {
         if (!clientIdOverride) {
           recordMemoryChatPlacement("SEND_PRESS", {
             clientId,
-            composerHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT
+            composerHeight: collapsedComposerGeometry.messageBoxHeight
           });
         }
-        const clientCreatedAt = new Date().toISOString();
+        const clientCreatedAt = clientCreatedAtOverride ?? new Date().toISOString();
         const clientSequence = sendSequenceRef.current;
         sendSequenceRef.current += 1;
         const clientOrderKey = `${clientCreatedAt}:${String(clientSequence).padStart(16, "0")}:${clientId}`;
@@ -5320,7 +5820,7 @@ export default function MemoryDetailScreen() {
   }
 
   function retryFailedMessage(target: MemoryMessage) {
-    if (target.deliveryStatus !== "failed") return;
+    if (!canRetryMemoryDelivery(target.deliveryStatus)) return;
     const clientId = target.clientId ?? createRequestId();
     const clientCreatedAt = target.clientCreatedAt || new Date().toISOString();
     const clientSequence = target.clientSequence ?? sendSequenceRef.current++;
@@ -5370,7 +5870,10 @@ export default function MemoryDetailScreen() {
   }
 
   function cancelFailedMessage(target: MemoryMessage) {
-    if (target.deliveryStatus !== "failed") return;
+    if (!hasMemoryDeliveryStrip(target.deliveryStatus)) return;
+    if (target.attachments.length > 0 && target.clientId) {
+      void cancelPendingMemoryUploadBatch(roomId, target.clientId).catch(() => undefined);
+    }
     dismissFailedMessage(target.clientId ?? target.id);
   }
 
@@ -5598,7 +6101,7 @@ export default function MemoryDetailScreen() {
     const outgoingReply = replyingToMessage;
     recordMemoryChatPlacement("SEND_PRESS", {
       clientId,
-      composerHeight: COMPOSER_MESSAGE_BOX_MIN_HEIGHT
+      composerHeight: collapsedComposerGeometry.messageBoxHeight
     });
     updateMessageDraft("");
     setReplyingToMessage(null);
@@ -5803,11 +6306,23 @@ export default function MemoryDetailScreen() {
     return () => prefetchTask.cancel();
   }, [galleryPhotos, mode]);
   const hasLoadedOlderMessagePages = Boolean(olderMessages.data?.pages.length);
-  // SQLite may contain fewer than the server bootstrap size (an older install,
-  // a partial sync, or a room that was first opened offline). Any non-empty
-  // local range gets one boundary lookup; the returned page cursor then walks
-  // cached rows first and hands off to the server only at the cache boundary.
-  const cachedHistoryMayHaveOlder = (room.data?.messages.length ?? 0) > 0;
+  // Do not show a speculative "Load earlier messages" row when the room
+  // summary already proves that every server-backed message is present
+  // locally. Pending/failed optimistic rows are excluded from this comparison
+  // because they are not part of the server's message count. If the summary is
+  // absent or indicates a larger history, preserve the one boundary lookup
+  // used by older installs, partial syncs and offline-first rooms.
+  const cachedServerMessageCount = room.data?.messages.reduce(
+    (count, candidate) => count + (memoryMessageServerId(candidate) ? 1 : 0),
+    0
+  ) ?? 0;
+  const knownMessageCount = cachedRoomSummary?.messageCount;
+  const cachedHistoryKnownComplete =
+    typeof knownMessageCount === "number" &&
+    knownMessageCount > 0 &&
+    cachedServerMessageCount >= knownMessageCount;
+  const cachedHistoryMayHaveOlder =
+    cachedServerMessageCount > 0 && !cachedHistoryKnownComplete;
   const canLoadOlderMessages = cachedHistoryMayHaveOlder && Boolean(olderMessagesCursor) && (
     !hasLoadedOlderMessagePages || Boolean(olderMessages.hasNextPage)
   );
@@ -5863,6 +6378,7 @@ export default function MemoryDetailScreen() {
   const stableSendAudio = useStableHandler(sendAudioMessage);
   const stableToggleReaction = useStableHandler(toggleMessageReaction);
   const stableNearBottomChange = useStableHandler(handleChatNearBottomChange);
+  const stableVisibleReadPosition = useStableHandler(markVisibleNativeRoomRead);
   const captureTableScroll = useCallback((offset: number) => {
     captureMemoryRoomScrollOffset(scrollSessionRef.current, "overview", offset);
   }, []);
@@ -5916,6 +6432,47 @@ export default function MemoryDetailScreen() {
   }, [paneTabMode, placementRoomReady, stableSendAudio]);
 
   const projectedRoomData = mergedRoomData ?? room.data ?? null;
+  const projectedSummaryUnreadCount = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).find((memory) => memory.id === projectedRoomData?.id)?.unreadCount;
+  const projectedUnreadCount = projectedRoomData
+    ? projectedSummaryUnreadCount ??
+      unreadChatMessageCount(projectedRoomData, myUsername)
+    : 0;
+  const cachedUnreadAnchorId = projectedRoomData
+    ? firstUnreadMemoryMessageId(
+      projectedRoomData.messages,
+      projectedRoomData.lastReadAt,
+      myUsername
+    )
+    : null;
+  const nativeUnreadAnchorLookupNeeded =
+    MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
+    Boolean(projectedRoomData) &&
+    projectedUnreadCount > 0 &&
+    !cachedUnreadAnchorId;
+  const nativeUnreadAnchor = useMemoryUnreadAnchorQuery(
+    roomId,
+    projectedRoomData?.lastReadAt ?? null,
+    nativeUnreadAnchorLookupNeeded
+  );
+  const projectedRoomDataWithUnreadAnchor = useMemo(
+    () => projectedRoomData && nativeUnreadAnchor.data?.messages.length
+      ? mergeRoomMessages(
+        projectedRoomData,
+        nativeUnreadAnchor.data.messages
+      )
+      : projectedRoomData,
+    [nativeUnreadAnchor.data, projectedRoomData]
+  );
+  const resolvedUnreadAnchorId =
+    cachedUnreadAnchorId ??
+    nativeUnreadAnchor.data?.anchorMessageId ??
+    null;
+  const nativeAnchorReady =
+    !nativeUnreadAnchorLookupNeeded || nativeUnreadAnchor.isSuccess;
+  const nativeAnchorFailed =
+    nativeUnreadAnchorLookupNeeded && nativeUnreadAnchor.isError;
   // This anchor belongs to the room-screen lifetime, not the Chat pane
   // lifetime. Chat is intentionally unmounted when inactive, so keeping the
   // ref inside Chat recreated its entire row projection after mark-read changed
@@ -5925,49 +6482,80 @@ export default function MemoryDetailScreen() {
     roomId: string;
   } | null>(null);
   if (
-    projectedRoomData &&
-    roomUnreadAnchorRef.current?.roomId !== projectedRoomData.id
+    projectedRoomDataWithUnreadAnchor &&
+    roomUnreadAnchorRef.current?.roomId !== projectedRoomDataWithUnreadAnchor.id
   ) {
     roomUnreadAnchorRef.current = {
-      id: firstUnreadMemoryMessageId(
-        projectedRoomData.messages,
-        projectedRoomData.lastReadAt,
-        myUsername
-      ),
-      roomId: projectedRoomData.id
+      id: resolvedUnreadAnchorId,
+      roomId: projectedRoomDataWithUnreadAnchor.id
     };
+  } else if (
+    resolvedUnreadAnchorId &&
+    roomUnreadAnchorRef.current &&
+    !roomUnreadAnchorRef.current.id
+  ) {
+    roomUnreadAnchorRef.current.id = resolvedUnreadAnchorId;
   }
-  // Prepare stable logical rows once per room snapshot at the lightweight room
-  // owner. Tab changes do not rebuild Date/user/reaction/reply objects, and the
-  // inactive state retains no native Chat pane.
+  const productionProjectionStoreRef = useRef<MemoryChatIncrementalProjectionStore<MemoryMessage, MemoryChatMainMessage> | null>(null);
+  if (!productionProjectionStoreRef.current) {
+    productionProjectionStoreRef.current = new MemoryChatIncrementalProjectionStore();
+  }
+  // Ordinary own-text insertion and confirmation are projected incrementally:
+  // the new row (and only its immediate grouping neighbour) changes identity.
+  // Media, dishes, reactions, unread anchors, and history pages deliberately
+  // fall back to the canonical mixed-timeline projector.
   const projectedChatMessages = useMemo(() => (
-    projectedRoomData
+    projectedRoomDataWithUnreadAnchor
       ? traceMemoryRoomSection(
         "MemoryRoomChatCachedMessages",
-        () => buildMemoryChatMainMessages({
-          data: projectedRoomData,
-          myUsername,
-          reactions: messageReactions,
-          unreadAnchorMessageId: roomUnreadAnchorRef.current?.id ?? null
+        () => productionProjectionStoreRef.current!.project({
+          buildFull: () => buildMemoryChatMainMessages({
+            data: projectedRoomDataWithUnreadAnchor,
+            myUsername,
+            reactions: messageReactions,
+            unreadAnchorMessageId: roomUnreadAnchorRef.current?.id ?? null
+          }),
+          buildOwnTextRow: (candidate) => (
+            candidate.authorName === myUsername &&
+            candidate.attachments.length === 0 &&
+            Boolean(candidate.body.trim())
+              ? buildMemoryChatMainMessageRow({
+                message: candidate,
+                reactions: messageReactions,
+                showSenderDetails: false
+              })
+              : null
+          ),
+          dependencies: [
+            projectedRoomDataWithUnreadAnchor.id,
+            projectedRoomDataWithUnreadAnchor.photos,
+            projectedRoomDataWithUnreadAnchor.dishes,
+            messageReactions,
+            myUsername,
+            roomUnreadAnchorRef.current?.id ?? null
+          ],
+          messageIdentity: (candidate) => memoryChatRowKey(candidate),
+          messages: projectedRoomDataWithUnreadAnchor.messages,
+          rowIdentity: (row) => String(row._id)
         })
       )
       : []
-  ), [messageReactions, myUsername, projectedRoomData]);
+  ), [messageReactions, myUsername, projectedRoomDataWithUnreadAnchor]);
   const liteRowStoreRef = useRef<MemoryChatRowModelStore | null>(null);
   if (!liteRowStoreRef.current) {
     liteRowStoreRef.current = new MemoryChatRowModelStore();
   }
   const projectedLiteChatRows = useMemo(
     () =>
-      MEMORY_ROOM_CHAT_LITE_RENDERER && projectedRoomData
+      MEMORY_ROOM_CHAT_LITE_RENDERER && projectedRoomDataWithUnreadAnchor
         ? traceMemoryRoomSection("MemoryRoomChatLiteRows", () =>
           liteRowStoreRef.current!.project(
-            projectedRoomData,
+            projectedRoomDataWithUnreadAnchor,
             myUsername,
             roomUnreadAnchorRef.current?.id ?? null
           ))
         : [],
-    [myUsername, projectedRoomData]
+    [myUsername, projectedRoomDataWithUnreadAnchor]
   );
   const visiblePaneTabMode = profilePrecreateEnabled
     ? profilePaneTransition.visible
@@ -6155,19 +6743,24 @@ export default function MemoryDetailScreen() {
                     canDeleteSelected={canDeleteSelected}
                     canLoadOlderMessages={canLoadOlderMessages}
                     chatMessages={chatMessagesForHost}
+                    collapsedComposerGeometry={collapsedComposerGeometry}
                     deleteError={errorMessage(deleteItems.error)}
                     deletePending={deleteItems.isPending}
                     editableSelectedMessage={editableSelectedMessage}
                     editingMessage={editingMessage}
                     inputRef={messageInputRef}
                     initialScrollOffset={readMemoryRoomScrollOffset(scrollSessionRef.current, "chat")}
+                    initialUnreadMessageId={roomUnreadAnchorRef.current?.id ?? null}
                     journeySession={journeySession}
                     keyboardTopReserve={chatKeyboardTopReserve}
                     listRef={chatMainListRef}
                     liteRows={projectedLiteChatRows}
                     loadingOlderMessages={olderMessages.isFetchingNextPage}
                     message={message}
+                    myDisplayName={myDisplayName}
                     myUsername={myUsername}
+                    nativeAnchorFailed={nativeAnchorFailed}
+                    nativeAnchorReady={nativeAnchorReady}
                     selectedItemKeys={selectedItemKeys}
                     onBeginSelection={stableBeginSelection}
                     onCancelEdit={stableCancelEdit}
@@ -6180,6 +6773,7 @@ export default function MemoryDetailScreen() {
                     onEditMessage={stableEditMessage}
                     onLoadOlderMessages={loadOlderMessages}
                     onNearBottomChange={stableNearBottomChange}
+                    onVisibleReadPosition={stableVisibleReadPosition}
                     onScrollOffsetChange={captureChatScroll}
                     onOpenDish={setDetailDishId}
                     onOpenMedia={stableOpenMedia}
@@ -6194,7 +6788,6 @@ export default function MemoryDetailScreen() {
                     replyingToMessage={replyingToMessage}
                     roomId={roomId}
                     resolvedTheme={resolvedTheme}
-                    closedComposerBottomPadding={closedComposerBottomPadding}
                     surfaceKeyboardStyle={chatMainSurfaceKeyboardStyle}
                     toolbarInsetStyle={composerBottomInsetStyle}
                   />
@@ -6799,7 +7392,10 @@ function RoomModeTabs({
   const { width: windowWidth } = useWindowDimensions();
   const derivedTabWidth = Math.max(
     0,
-    Math.min(windowWidth, ROOM_MAX_WIDTH) - ROOM_HEADER_CONTENT_INSET * 2 - MODE_TABS_PADDING * 2
+    Math.min(windowWidth, ROOM_MAX_WIDTH)
+      - ROOM_HEADER_HORIZONTAL_PADDING * 2
+      - ROOM_HEADER_CONTENT_INSET * 2
+      - MODE_TABS_PADDING * 2
   ) / ROOM_TABS.length;
   // Layout corrections land here rather than in state, so a correction can
   // never re-render the header mid-transition.
@@ -8900,29 +9496,31 @@ function MessageDeliveryState({
   onRetry: () => void;
   status?: MemoryMessage["deliveryStatus"];
 }) {
-  if (status !== "failed") return null;
+  if (!hasMemoryDeliveryStrip(status)) return null;
+  const label = status === "failed"
+    ? "Not sent"
+    : status === "processing"
+      ? "Processing media"
+      : status === "processing_delayed"
+        ? "Still processing"
+        : status === "processing_failed"
+          ? "Processing failed"
+          : "Media was not accepted";
+  const retryable = canRetryMemoryDelivery(status);
 
   return (
     <View style={[styles.failedMessageActions, mine && styles.failedMessageActionsMine]}>
-      <Text style={styles.failedMessageText}>Not sent</Text>
-      <Pressable accessibilityRole="button" hitSlop={6} onPress={onRetry} style={styles.failedMessageButton}>
-        <Text style={styles.failedMessageButtonText}>Retry</Text>
-      </Pressable>
+      <Text style={styles.failedMessageText}>{label}</Text>
+      {retryable ? (
+        <Pressable accessibilityRole="button" hitSlop={6} onPress={onRetry} style={styles.failedMessageButton}>
+          <Text style={styles.failedMessageButtonText}>Retry</Text>
+        </Pressable>
+      ) : null}
       <Pressable accessibilityRole="button" hitSlop={6} onPress={onCancel} style={styles.failedMessageButton}>
         <Text style={styles.failedMessageButtonText}>Cancel</Text>
       </Pressable>
     </View>
   );
-}
-
-function timestampReservePlaceholder(time: string) {
-  const reserveUnits = Array.from(time).reduce((total, character) => {
-    if (character === ":") return total + 0.35;
-    if (character === " ") return total + 0.25;
-    return total + 0.9;
-  }, 0);
-
-  return `\u2009${"\u2007".repeat(Math.max(4, Math.ceil(reserveUnits)))}`;
 }
 
 function InlineTimestampText({
@@ -8953,19 +9551,30 @@ function InlineTimestampText({
         minWidth && minWidth > 0 ? { minWidth } : null
       ]}
     >
-      <Text style={[styles.inlineTimestampMessageText, textStyle]}>
+      <Text
+        accessibilityLabel={text}
+        style={[styles.inlineTimestampMessageText, textStyle]}
+      >
         <SmartMessageTextContent
           linkStyle={styles.messageLinkText}
           text={text}
           textStyle={textStyle}
         />
-        <Text
+        <View
+          accessible={false}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={[timeStyle, styles.inlineTimestampReserve]}
-        >
-          {timestampReservePlaceholder(time)}
-        </Text>
+          style={[
+            styles.inlineTimestampReserve,
+            {
+              width: memoryChatTimestampReservationWidth(time, {
+                fontScale: PixelRatio.getFontScale(),
+                fontSize: CHAT_TIME_FONT_SIZE,
+                gap: CHAT_TIME_GAP
+              })
+            }
+          ]}
+        />
       </Text>
       <View pointerEvents="none" style={styles.inlineTimestampPinnedMeta}>
         <MessageMeta
@@ -9078,7 +9687,7 @@ function MessageBubble({
   }
 
   function renderBubbleWithDeliveryState(bubble: ReactNode) {
-    const bubbleWithStatus = message.deliveryStatus !== "failed"
+    const bubbleWithStatus = !hasMemoryDeliveryStrip(message.deliveryStatus)
       ? bubble
       : (
         <View style={[styles.messageStatusStack, mine && styles.messageStatusStackMine]}>
@@ -9135,7 +9744,9 @@ function MessageBubble({
             {(
               message.deliveryStatus === "pending" ||
               message.deliveryStatus === "retrying" ||
-              message.deliveryStatus === "uploading"
+              message.deliveryStatus === "uploading" ||
+              message.deliveryStatus === "processing" ||
+              message.deliveryStatus === "processing_delayed"
             ) ? <StreamingCursor /> : null}
           </Text>
           <MessageBubbleMeta mine={mine} status={message.deliveryStatus} time={timestampLabel} />
@@ -11815,13 +12426,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainToolbarShell: {
     backgroundColor: ROOM_COLORS.panel,
     borderTopColor: ROOM_COLORS.border,
-    borderTopWidth: 1,
+    borderTopWidth: CHAT_COMPOSER_LAYOUT_CONTRACT.toolbarBorderWidth,
     bottom: 0,
     gap: 6,
     left: 0,
-    paddingBottom: Platform.OS === "android" ? 7 : 8,
+    paddingBottom: COMPOSER_CLOSED_SAFE_GAP,
     paddingHorizontal: Platform.OS === "web" ? spacing.md : 12,
-    paddingTop: 7,
+    paddingTop: CHAT_COMPOSER_LAYOUT_CONTRACT.toolbarPaddingTop,
     position: "absolute",
     right: 0,
     zIndex: 20
@@ -12143,9 +12754,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainGroupedRowGap: {
     marginBottom: CHAT_GROUPED_MESSAGE_GAP
   },
+  chatMainRowBreakGap: {
+    marginBottom: 10
+  },
   chatMainFailedRow: {
-    marginBottom: 2,
-    marginTop: 4
+    marginTop: CHAT_GROUPED_MESSAGE_GAP
   },
   liteChatRow: {
     paddingHorizontal: CHAT_ROW_SIDE_PADDING,
@@ -12297,17 +12910,15 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainBodyWithTimeStretch: {
     alignSelf: "stretch"
   },
-  // Inline spacer inside the Text reserving the time's width; when it wraps
-  // it adds only this much height — tighter than a normal 22px text line.
-  chatMainTimeSpacer: {
-    height: CHAT_TIME_SPACER_HEIGHT
-  },
-  // Host Text for the body spans + inline spacer. Tiny font so the metric
-  // floor it imposes on every line stays below the spacer height; all real
-  // text styling lives on the nested spans.
+  // Host Text for the body span + non-text timestamp spacer. Tiny font keeps
+  // the host metric below the nested body/spacer metrics; all visible styling
+  // lives on the body span and the one pinned timestamp.
   chatMainBodyHostText: {
     fontSize: 4,
     includeFontPadding: false
+  },
+  chatMainTimeSpacer: {
+    height: CHAT_TIME_SPACER_HEIGHT
   },
   // Hangs below the text box just enough that the visible line under the
   // last text line cuts the time in half (the timestamp placement rule).
@@ -12814,7 +13425,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flexDirection: "row",
     gap: 3,
     justifyContent: "center",
-    minHeight: 52,
+    minHeight: 34,
     position: "relative",
     zIndex: 1
   },
@@ -13245,7 +13856,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
   messageStatusStack: {
     alignItems: "flex-start",
     flexShrink: 1,
-    gap: 4
+    gap: CHAT_GROUPED_MESSAGE_GAP
   },
   messageStatusStackMine: {
     alignItems: "flex-end"
@@ -13663,12 +14274,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.timestamp
   },
   inlineTimestampReserve: {
-    ...fontStyles.semiBold,
-    color: "transparent",
-    fontSize: 11,
-    includeFontPadding: false,
-    lineHeight: 5,
-    opacity: 0
+    height: 5
   },
   inlineTimestampPinnedMeta: {
     alignItems: "center",

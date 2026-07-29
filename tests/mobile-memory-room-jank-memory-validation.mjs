@@ -18,6 +18,9 @@ const chatRendererCandidate =
 const artifactDir = process.env.MEMORY_RELEASE_ARTIFACT_DIR ??
   "/private/tmp/memory-room-release-jank";
 const repetitions = Number(process.env.MEMORY_RELEASE_TRANSITION_REPETITIONS ?? 20);
+const expectedNativeRows = Number(
+  process.env.MEMORY_RELEASE_EXPECTED_NATIVE_ROWS ?? 50
+);
 const prepareWaitMs = Number(process.env.MEMORY_RELEASE_PREPARE_WAIT_MS ?? 1_500);
 const captureExit = process.env.MEMORY_RELEASE_CAPTURE_EXIT === "1";
 const pairs = (process.env.MEMORY_RELEASE_PAIRS ??
@@ -94,6 +97,120 @@ function pointFor(xml, labels) {
   };
 }
 
+function boundsForNode(node) {
+  const bounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node ?? "");
+  return bounds
+    ? {
+      bottom: Number(bounds[4]),
+      left: Number(bounds[1]),
+      right: Number(bounds[3]),
+      top: Number(bounds[2])
+    }
+    : null;
+}
+
+function nativeVisibilityReport(xml) {
+  const reportNode = nodes(xml).find((node) =>
+    /content-desc="Memory Chat list;/.test(node)
+  );
+  if (!reportNode) return null;
+  const description = /content-desc="([^"]+)"/.exec(reportNode)?.[1] ?? "";
+  const report =
+    /Memory Chat list; alpha=([\d.]+); rows=(\d+); visible=(\d+); first=(-?\d+); last=(-?\d+); anchor=([^;]*); anchorPosition=(-?\d+)/.exec(
+      description
+    );
+  if (!report) return null;
+  return {
+    alpha: Number(report[1]),
+    anchor: report[6],
+    anchorPosition: Number(report[7]),
+    bounds: boundsForNode(reportNode),
+    first: Number(report[4]),
+    last: Number(report[5]),
+    rows: Number(report[2]),
+    visible: Number(report[3])
+  };
+}
+
+function accessibleMessageNodeCount(xml) {
+  const tabBounds = boundsForNode(nodeFor(xml, ["Chat"]));
+  const composerBounds = boundsForNode(nodeFor(xml, ["Type a message"]));
+  if (!tabBounds || !composerBounds) return 0;
+  const viewportTop = tabBounds.bottom;
+  const viewportBottom = composerBounds.top;
+  return nodes(xml).filter((node) => {
+    const description = /content-desc="([^"]+)"/.exec(node)?.[1] ?? "";
+    const bounds = boundsForNode(node);
+    if (!description || !bounds) return false;
+    if (
+      description === "Chat" ||
+      description.startsWith("Memory Chat list;") ||
+      description.startsWith("Jump to latest")
+    ) {
+      return false;
+    }
+    return (
+      bounds.bottom > viewportTop &&
+      bounds.top < viewportBottom &&
+      bounds.right > bounds.left &&
+      bounds.bottom > bounds.top
+    );
+  }).length;
+}
+
+function assertVisibleChat(xml) {
+  assert.ok(tabSelected(xml, "Chat"), "chat_visibility_checked_while_inactive");
+  const accessibilityRows = accessibleMessageNodeCount(xml);
+  if (chatRendererCandidate === "native-recycler") {
+    const report = nativeVisibilityReport(xml);
+    assert.ok(report, "native_chat_visibility_report_missing");
+    assert.equal(report.alpha, 1, "native_chat_alpha_not_revealed");
+    assert.equal(report.rows, expectedNativeRows, "native_chat_logical_row_count_mismatch");
+    assert.ok(report.visible > 0, "native_chat_visible_row_count_zero");
+    assert.ok(report.first >= 0, "native_chat_first_visible_position_invalid");
+    assert.ok(report.last >= report.first, "native_chat_visible_range_invalid");
+    assert.ok(
+      report.anchorPosition >= report.first &&
+        report.anchorPosition <= report.last,
+      "native_chat_anchor_not_visible_before_reveal"
+    );
+    assert.ok(
+      report.bounds &&
+        report.bounds.right > report.bounds.left &&
+        report.bounds.bottom > report.bounds.top,
+      "native_chat_viewport_bounds_invalid"
+    );
+    return { accessibilityRows, ...report };
+  }
+  assert.ok(accessibilityRows > 0, "vendor_chat_visible_message_nodes_missing");
+  return {
+    accessibilityRows,
+    alpha: 1,
+    anchor: "vendor",
+    anchorPosition: -1,
+    bounds: null,
+    first: -1,
+    last: -1,
+    rows: null,
+    visible: accessibilityRows
+  };
+}
+
+async function waitForVisibleChat(timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const xml = await uiXml();
+    try {
+      return { report: assertVisibleChat(xml), xml };
+    } catch (error) {
+      lastError = error;
+      await delay(50);
+    }
+  }
+  throw lastError ?? new Error("chat_visibility_not_proven");
+}
+
 async function uiXml() {
   await adbRun(
     ["shell", "uiautomator", "dump", "/sdcard/memory-jank.xml"],
@@ -134,7 +251,10 @@ function tabSelected(xml, label) {
 
 async function switchTab(label) {
   const before = await uiXml();
-  if (tabSelected(before, label)) return;
+  if (tabSelected(before, label)) {
+    if (label === "Chat") await waitForVisibleChat();
+    return;
+  }
   const point = pointFor(before, [label]);
   assert.ok(point, `missing_${label}_tab`);
   await delay(125);
@@ -142,6 +262,7 @@ async function switchTab(label) {
   await delay(450);
   const after = await uiXml();
   assert.ok(tabSelected(after, label), `${label}_transition_not_selected`);
+  if (label === "Chat") await waitForVisibleChat();
 }
 
 function valueFor(output, label) {
@@ -338,6 +459,35 @@ function traceCounterStats(trace, name) {
   };
 }
 
+function traceEventDelays(trace, transitionName, counterName) {
+  const ranges = asyncTraceRanges(trace, transitionName);
+  const escaped = counterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const timestamps = trace
+    .split("\n")
+    .filter((line) =>
+      new RegExp(`tracing_mark_write:\\s+C\\|\\d+\\|${escaped}\\|`).test(line)
+    )
+    .map(timestampForTraceLine)
+    .filter(Number.isFinite);
+  return stats(ranges.map(({ start, end }) => {
+    const timestamp = timestamps.find((candidate) =>
+      candidate >= start && candidate <= end
+    );
+    return timestamp === undefined ? Number.NaN : (timestamp - start) * 1_000;
+  }));
+}
+
+async function captureScreenshot(name) {
+  const result = await execFileAsync(
+    adb,
+    ["-s", serial, "exec-out", "screencap", "-p"],
+    { encoding: null, maxBuffer: 16 * 1024 * 1024, timeout: 30_000 }
+  );
+  const path = `${artifactDir}/${name}.png`;
+  writeFileSync(path, result.stdout);
+  return path;
+}
+
 async function ensureRoomOpen() {
   let xml = await uiXml();
   if (pointFor(xml, ["Table"]) && pointFor(xml, ["Chat"])) return;
@@ -371,6 +521,8 @@ async function runPair({ from, to }) {
   const before = await sampleMemory(`${from}_to_${to}_before`);
   await startAtrace();
   const frames = [];
+  const visibility = [];
+  let screenshot = null;
   for (let index = 0; index < repetitions; index += 1) {
     await switchTab(from);
     const xml = await uiXml();
@@ -385,6 +537,13 @@ async function runPair({ from, to }) {
     ));
     const selected = await uiXml();
     assert.ok(tabSelected(selected, to), `${from}_to_${to}_ignored`);
+    if (to === "Chat") {
+      const visible = await waitForVisibleChat();
+      visibility.push(visible.report);
+      if (screenshot === null) {
+        screenshot = await captureScreenshot(`${from.toLowerCase()}-to-chat-visible`);
+      }
+    }
   }
   const after = await sampleMemory(`${from}_to_${to}_after`);
   const traceName = `${from.toLowerCase()}-to-${to.toLowerCase()}`;
@@ -397,6 +556,11 @@ async function runPair({ from, to }) {
     before,
     firstFrameMs: stats(
       durations.get(`MemoryRoomTabFirstFrame_${suffix}`) ?? []
+    ),
+    anchorMs: traceEventDelays(
+      trace,
+      transitionName,
+      "NATIVE_CHAT_ANCHOR_APPLIED"
     ),
     fabric: fabricWorkByTransition(trace, transitionName),
     frames: {
@@ -438,13 +602,59 @@ async function runPair({ from, to }) {
       chatGestureOwners: traceCounterStats(
         trace,
         "MemoryRoomMountedChatGestureOwners"
+      ),
+      nativeAttachedCells: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatAttachedCells"
+      ),
+      nativeBoundRows: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatBoundRows"
+      ),
+      nativeCreatedCells: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatCreatedCells"
+      ),
+      nativePooledCells: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatPooledCells"
+      ),
+      nativeRecycledCells: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatRecycledCells"
+      ),
+      nativeRowCount: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatRowCount"
+      ),
+      nativeRevealFailed: traceCounterStats(
+        trace,
+        "NATIVE_CHAT_REVEAL_FAILED"
+      ),
+      nativeRevealed: traceCounterStats(
+        trace,
+        "NATIVE_CHAT_REVEALED"
       )
     },
+    revealMs: traceEventDelays(
+      trace,
+      transitionName,
+      "NATIVE_CHAT_REVEALED"
+    ),
+    screenshot,
     settledMs: stats(
       durations.get(`MemoryRoomTabSettled_${suffix}`) ?? []
     ),
     to,
     trace: path,
+    visibility: {
+      accessibilityRows: stats(
+        visibility.map((sample) => sample.accessibilityRows)
+      ),
+      alpha: stats(visibility.map((sample) => sample.alpha)),
+      count: visibility.length,
+      visibleRows: stats(visibility.map((sample) => sample.visible))
+    },
     usableMs: stats(
       durations.get(transitionName) ?? []
     )

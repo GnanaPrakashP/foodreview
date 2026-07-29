@@ -14,6 +14,91 @@ Next required work: execute the Phase 8 external release gates and the checked-i
 
 Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry/load credentials; deploy canonical disposable staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run the Phase 9 launch, stress, soak, recovery, restore and physical-device evidence matrix. Do not publish automatically.
 
+## Memory Room initial Chat bottom anchor (2026-07-28)
+
+Status: **PASS for the scoped initial-anchor correction and authenticated
+physical Android matrix; not a production release PASS.** Chat now resolves one
+closed-composer geometry contract synchronously from the frozen safe-area
+inset, font scale, pixel ratio and platform before its first rows mount. The
+initial list spacer, composer input minimum, toolbar inset and native keyboard
+host consume that same result. Collapsed-toolbar `onLayout` validates the model
+but cannot replace the active clearance; expanded reply/edit/selection/voice
+structures still use their measured height after an explicit user action.
+
+The second independent geometry correction removes the timestamp-width cache,
+estimated width, delayed hug confirmation, negative margin and post-paint
+layout decision. A deterministic non-text inline spacer, sized synchronously
+from the bundled DM Sans timestamp metrics plus the established 8 px gap, now
+participates in the body Text's first native line-break pass while the sole
+actual timestamp remains pinned in its established position. This avoids both
+Android drawing a second timestamp and the whitespace approximation adding
+excess gap for two-digit hours. Message tails, received-user avatars, reply
+swipe motion, bubble colors and delivery-state UI are unchanged. First-eight
+coordinate sampling is development-only, generation-safe, physical-pixel
+rounded, bounded to 800 ms and records no message body, URL, Storage path or
+user identity. Production configuration continues to reject the diagnostics
+switch.
+
+The authenticated physical matrix passed on the connected Motorola edge 70
+fusion, Android 16, Gboard, 1272x2772 display. It covered exactly 50 cached
+messages and exactly 8 cached messages; short and multiline text; incoming and
+outgoing rows; replies; pending-to-sent; keyboard closed and previously open;
+first Chat opening; cold room entry and re-entry; warm returns from Table,
+Media and Dishes. Eleven independent Chat generations sampled the same first
+eight rows for at least 750 ms: **88/88 rows had zero top, bottom or height
+movement in physical pixels**, every list began at inverted offset 0, and zero
+programmatic Chat scroll commands, geometry mismatches or native re-anchor
+corrections were observed. Native composer layout was 80.3555298 dp and the
+model was 80.3555556 dp; both rounded to 226 physical pixels. The former 88 dp
+guess is absent.
+
+After the timestamp follow-up, a cold development-client remount on that same
+physical device exposed 13 timestamped message rows and zero accessibility
+nodes containing a repeated timestamp. The subsequent gap correction removes
+timestamp text from the reservation entirely and restores the established
+8 px body-to-time clearance from bundled font metrics. The corrected physical
+screen was inspected with one- and two-digit hours plus multiline text; its
+final accessibility hierarchy exposed 18 timestamped message descriptions,
+zero repeated timestamps and zero inline-object characters in those accessible
+descriptions.
+
+The matrix ran from a signed, minified, resource-shrunk Hermes release/profile
+APK using an explicitly disposable two-day validation certificate. APK
+signature verification, R8 mapping presence, embedded Hermes bytecode and
+privacy/server-secret scans pass. APK/Hermes sizes are
+138,323,296/7,165,628 bytes with SHA-256
+`3b0d97237dcac1d6aef6b37b9f242a957a20faeb44a5378d2b5dcbd9858894d9` and
+`3689cd65d289338057861ba76b5913cdbd109057ed03be83f07d8d9e0966d77c`.
+The complete journey recorded 1,010 frames, 96 janky frames (9.50%) and p95
+34 ms. Across the eleven Chat generations, list first layout was
+12.09-18.89 ms, composer first layout was 13.34-20.45 ms and first sampled row
+geometry was 30.95-130.63 ms after the synchronous model event. The
+diagnostic matrix began at 207,526 KB PSS/217 native views on the post-login
+baseline surface and ended inside Chat after the full journey at 339,503 KB
+PSS/542 views. That +131,977 KB/+325-view workload endpoint delta is retained
+as evidence, not mislabelled as a before/after implementation regression or a
+memory-soak result; the focused change removes visible-row measurement state,
+timers and a cache, while placement diagnostics remain disabled outside the
+explicit profile build. These whole-journey numbers are not a general
+release-performance claim.
+
+Physical evidence is retained under
+`/private/tmp/memory-chat-anchor-final-3/`: `report.json`, `events.json`,
+`journey-events.json`, `memory-chat-visual.mp4`, `contact-sheet.png`, thirteen
+checkpoint screenshots, `apk-signature.txt`, `apk-verification.json` and
+`profile-instrumentation-scan.json`. The instrumentation scan covered 330
+allowlisted events and passed monotonic-timestamp and privacy-field checks.
+
+Automated scoped evidence passes: initial-anchor/visual/rapid-send/Phase 4 and
+release-profile selection 110/110; Memory hardening 105/105; rapid-send 14/14;
+Phase 1 security 19/19; Phase 2 media security 20/20; journey/release-profile
+35/35; root and mobile typechecks; zero-error lint; `git diff --check`; and the
+96-page Next production build. The full repository suite is 1,779/1,798: its
+19 failures are outside Memory Room Chat in existing post-media worker,
+Explore/Profile layout and review-upload source contracts. They were not
+weakened or changed for this correction. No API, database, Supabase migration
+or deployment change was made.
+
 ## Memory Room rapid-send reconciliation (2026-07-27)
 
 Status: **PASS for the authenticated physical rapid-send and visual-placement
@@ -916,3 +1001,188 @@ suite remains 1,771/1,790 with 19 unrelated existing failures.
 
 Full evidence:
 `docs/performance/MEMORY_ROOM_CHAT_RENDERER_EXPERIMENT_2026-07-28.md`.
+
+### Native recycled Chat implementation
+
+The 2026-07-30 Android native-recycler work is **NOT ACCEPTED — PHYSICAL
+STAGE A FAILED**. A profile-only Expo Android module now gives a native
+`RecyclerView` ownership of Stage 1 text/reply/date/unread rows, native
+anchoring, stable-ID diffing and a bounded view-type-specific recycled pool.
+JavaScript remains authoritative for authentication, canonical messages,
+optimistic/outbox state, HTTP/Realtime reconciliation, SQLite, pagination and
+monotonic read position. The existing native composer and keyboard-inset host
+are unchanged. Unsupported rich rows and missing/failed native registration
+fall back to the vendored renderer; production still rejects the selector and
+defaults to the vendored cold active-only path.
+
+Unread lookup is bounded locally around the first indexed incoming row and by
+a member-scoped server anchor page. Opening native Chat no longer marks all
+messages read. Visibility advances a debounced local/server position through
+`mark_shared_memory_read_v1`, whose local pgTAP matrix passes 8/8 and proves
+authenticated-only execution, membership-aware state, monotonic multi-device
+merge and future-time clamping. All 90 migrations reset locally and the
+manifest validates 90 canonical/108 historical entries. The repository-wide
+pgTAP result remains 224/225 solely because the pre-existing
+`media_assets_memory_full_frame_check` constraint is intentionally
+unvalidated.
+
+The initial native physical timing is invalid performance evidence. Although
+its metadata reported 50 rows, the `RecyclerView` remained at alpha zero
+because reveal could race the post-anchor layout. The corrected native module
+installs a generation-scoped pre-draw listener before `requestLayout`, and
+requires the expected row count, non-zero bounds, attached visible message
+cells, a valid visible range and a visible latest/unread anchor before setting
+alpha to one. A bounded four-frame fallback uses the same predicate. Stale or
+detached callbacks cannot reveal; exhaustion keeps the view transparent,
+emits a content-free failure event and safely selects the vendored renderer.
+
+Focused verification passes: native renderer/reveal source tests 10/10,
+debug/release Kotlin module tests including adapter/layout ordering, once-only
+generation reveal, empty-room handling, stale generations and failure paths;
+rapid send 14/14; Memory hardening 105/105; combined journey/Phase
+4/release-profile checks 124/124; both typechecks; zero-error lint; signed
+Android release assembly; both standard and Turbopack Next production builds;
+and `git diff --check`. The full dirty-branch repository result is
+1,803/1,813; the same ten unrelated Review, Profile, Explore and post-media
+source-contract assertions fail. The corrected signed,
+minified Hermes native preview APK is
+`com.circlebites.mobile.preview` (SHA-256
+`55e192d0ddde94555e26dc46742624bca16a7706ef4bd3024148b10d6040877f`),
+has one signer and verifies under APK v2/v3. The generated Hermes bundle
+contains no service-role name, `.env.local` marker or developer workspace
+path. The strict whole-APK privacy gate remains blocked because React Native
+native libraries contain absolute build paths.
+
+The corrected native APK and a newly built vendored control were physically
+exercised on the same unlocked Motorola edge 70 fusion, preview API, signer,
+account and cached 50-text-message room. Both completed 30 `Table -> Chat` and
+30 `Chat -> Table` transitions with zero fatal errors. Vendor Chat visibility
+was proven through accessible message nodes. Native visibility was proven on
+all 30 measured entries with alpha one, exactly 50 logical rows, 15 visible
+rows, non-zero bounds, attached cells and the requested anchor inside the
+visible range; no native reveal failure occurred.
+
+The visible vendored control recorded 109 ms `Table -> Chat` frame p95,
+271.024 ms fully-usable p95, +126,878 KiB entry-block PSS and +159,437 KiB
+whole-run active PSS. The corrected native candidate recorded 61 ms
+`Table -> Chat` frame p95, 104.648 ms first-frame p95, 104.697 ms
+fully-usable p95, +74,818 KiB entry-block PSS and +142,648 KiB whole-run
+active PSS. Native `Chat -> Table` was 18 ms p95 but added another
+61,210 KiB PSS; process views grew from 670 to 10,125. It materially improves
+the visible control, but still misses the unchanged 20 ms frame budget by
+41 ms and exceeds the 40 MiB PSS-growth budget.
+
+Stage A therefore rejects the architecture in its current lifecycle. Per the
+required stop rule, unread, rapid-send/reply, plateau, soak and
+rich/media-cell physical stages were not started. Production continues to use
+the vendored renderer. The Android/iOS parity and authority contract plus
+content-free evidence paths are documented in
+`docs/performance/MEMORY_ROOM_NATIVE_CHAT_ARCHITECTURE_2026-07-29.md`.
+
+### Memory Room header selector geometry follow-up
+
+The 2026-07-29 UI correction restores the established compact selector
+geometry: each Table/Chat/Media/Dishes control is 34 dp high inside a 38 dp
+track, and the expanded room header is 183 dp high. This leaves the original
+10 dp clearance between the selector and the header divider, so the divider is
+rendered as one continuous line instead of two exposed edge fragments. The
+first-frame tab-width calculation now also includes the header's 18 dp outer
+insets, matching the measured layout immediately and avoiding a later
+horizontal indicator correction.
+
+Memory hardening passes 105/105, the focused room/profile checks pass 70/70,
+both root and mobile typechecks pass, and changed-file lint has zero errors
+(existing warnings remain). The full root suite retains the same 19 unrelated
+branch failures. Physical screenshot verification was deferred because the
+connected Android device was in an active phone call; no app interaction was
+performed while the call was active.
+
+Security conclusion: no RLS, Storage, private-media, authentication,
+rate-limit, API, database, offline/outbox, persistence or logging contract
+changed.
+
+The failed-delivery follow-up treats `Not sent · Retry · Cancel` as a message
+row for spacing. The failed bubble groups into the recovery row at 3 dp; the
+recovery row then uses the normal 3 dp grouped or 10 dp group-break spacing to
+the following message or composer. The former extra 4 dp top and 2 dp bottom
+offsets are removed for both text and media failures. Verification is
+intentionally deferred to the connected-device test requested by the user.
+
+### Media processing and optimistic bubble latency follow-up
+
+The 2026-07-29 scoped result is **PASS WITH BLOCKERS**. Ordinary outgoing text
+now enters a screen-owned, same-client-ID overlay synchronously with the native
+submit, before React Query, SQLite and HTTP. The production row projection
+performs an incremental newest-row insert and same-identity confirmation;
+unchanged rows retain their object references and a normal insert affects only
+the new row plus its immediate grouping neighbour. The existing timestamp,
+profile icon, bubble-tail, reply animation, bottom anchoring and visual
+renderer remain in place.
+
+Durable media state is now distinct from source-upload failure. An uploaded
+asset remains `processing` or `processing_delayed` when bounded polling ends;
+retryable worker failure becomes `processing_failed`, permanent rejection
+becomes `rejected`, and only an actual source/send failure is shown as
+`Not sent`. Targeted retry calls the authenticated, rate-limited
+`/api/media/retry` contract and requeues the same owner-scoped asset/job without
+uploading the source or creating a second logical row. Client callers cannot
+claim jobs; service-role enforcement remains inside the database RPC.
+
+The continuous worker is defined as two Render background-worker instances in
+`render.yaml`, using the hardened Node 22/FFmpeg image, atomic database claims,
+bounded concurrency/backoff, five-minute leases, heartbeats and a five-minute
+graceful shutdown. `docs/operations/MEDIA_WORKER_DEPLOYMENT.md` records the
+exact provider setup, secrets and verification commands. The local image built
+successfully and reported Node 22.18.0 and FFmpeg 5.1.9.
+
+Hosted acceptance is still blocked. No authenticated Render CLI/provider
+session is available in this workspace, so the service was not deployed.
+Read-only production health at `2026-07-29T16:04:41.502Z` reported 2 queued
+jobs, 0 running jobs, no worker heartbeat, no lease/reclaim activity and an
+oldest queued age of 255,991 seconds. The queue and worker-unavailable alerts
+were critical. A proposed one-shot production drain was not run because
+processing shared production jobs requires explicit authorization. The
+Supabase migration history is current through `202607270001`; the health
+report's `migrationHeadMatches: false` reflects missing/stale release metadata,
+not an unapplied migration for this change.
+
+Scoped verification passes: media-worker plus focused latency/state tests
+16/16, rapid-send 14/14, Memory hardening 105/105, and combined
+journey/Phase-4/release-profile 85/85. Root and mobile typechecks, zero-error
+lint, Next production build and `git diff --check` pass. The complete
+repository suite is 1,793/1,803; its ten failures are existing Review,
+Profile and Explore contract assertions outside this Memory Room change.
+
+The connected Motorola edge 70 fusion was recognized and both debug and
+release APKs built and installed, but the physical runs stopped at setup
+because the phone was behind the secure Android keyguard. The release artifact
+is a 138,331,124-byte minified Hermes APK; APK Signature Scheme v2 verification
+and the embedded-bundle privacy/secret scan pass. No chat timing samples were
+produced, so the required `<= 50 ms` p95 optimistic first-layout budget,
+physical 8/50-row and text matrices, and hosted image/video matrix are not
+claimed.
+
+Security conclusion: authentication, room membership, RLS, private Storage,
+service-only worker claims, rate limits, bounded request bodies, stable
+idempotency and privacy-safe logging remain enforced. Whole-application
+production release remains blocked by the inactive hosted worker, missing
+hosted/physical media evidence, missing physical optimistic-latency evidence,
+the ten unrelated root-suite failures and the independently documented Memory
+Room release-performance failure.
+
+### Chat earlier-history affordance follow-up
+
+The Chat header no longer shows `Load earlier messages` when the cached
+server-backed message count already meets the room summary's known total.
+Pending and failed optimistic rows are excluded from that comparison. When the
+summary is absent or reports more messages than the local replica, the
+existing offline-first boundary lookup and cursor pagination remain enabled.
+This is a client presentation correction only; message authority, SQLite,
+HTTP/Realtime reconciliation, authentication, membership, RLS, private media
+and logging contracts are unchanged.
+
+Focused Phase 4 checks pass 50/50, Memory hardening passes 105/105, Phase 1/2
+security checks pass 39/39, both typechecks and zero-error lint pass, and
+`git diff --check` is clean. The full dirty-branch suite remains 1,803/1,813
+with the same ten unrelated Review, Profile, Explore and post-media contract
+failures.

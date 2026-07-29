@@ -48,6 +48,7 @@ import {
   isOfflineMemoryPersistenceError,
   readOfflineMemoryMediaPage,
   readOfflineMemoryMessagesPage,
+  readOfflineMemoryUnreadAnchorPage,
   readOfflineMemoryRoom,
   readOfflineMemoryRoomSyncCursor,
   readOfflineMemorySummaries,
@@ -232,6 +233,13 @@ export type MemoryMessagesPage = {
   nextCursor: string | null;
 };
 
+export type MemoryUnreadAnchorPage = MemoryMessagesPage & {
+  anchorMessageId: string | null;
+  hasNewer: boolean;
+  latestMessageId: string | null;
+  totalUnreadCount: number;
+};
+
 export type MemoryMediaPage = {
   photos: MemoryPhoto[];
   nextCursor: string | null;
@@ -273,11 +281,15 @@ type MemoryChatPageProfileRow = {
 };
 
 type MemoryChatPageRpcPayload = {
+  anchorMessageId?: string | null;
+  hasNewer?: boolean;
+  latestMessageId?: string | null;
   messages?: MemoryMessageRow[];
   nextCursor?: string | null;
   photos?: MemoryPhotoRow[];
   profiles?: MemoryChatPageProfileRow[];
   replyMessages?: MemoryMessageRow[];
+  totalUnreadCount?: number;
 };
 
 type MemoryRoomSyncPayload = {
@@ -1446,6 +1458,8 @@ async function recoverPendingMemoryMessages(
   const pendingMediaMessages = room.messages
     .filter((message) => (
       (message.deliveryStatus === "uploading" ||
+        message.deliveryStatus === "processing" ||
+        message.deliveryStatus === "processing_delayed" ||
         message.deliveryStatus === "pending" ||
         message.deliveryStatus === "retrying") &&
       message.attachments.length > 0 &&
@@ -1559,6 +1573,47 @@ export async function getMemoryMessagesPage(
       replyMessages: messagePage.replyMessages
     }),
     nextCursor: messagePage.nextCursor
+  };
+}
+
+export async function getMemoryUnreadAnchorPage(
+  roomId: string,
+  input: {
+    after: string | null;
+    afterLimit?: number;
+    beforeLimit?: number;
+  }
+): Promise<MemoryUnreadAnchorPage | null> {
+  const params = new URLSearchParams({
+    action: "chatAnchor",
+    afterLimit: String(Math.min(Math.max(input.afterLimit ?? 24, 1), 40)),
+    beforeLimit: String(Math.min(Math.max(input.beforeLimit ?? 12, 1), 24)),
+    roomId
+  });
+  if (input.after) params.set("lastReadAt", input.after);
+  const payload = await authorizedJson<MemoryChatPageRpcPayload>(
+    `/api/mobile/memories/read?${params.toString()}`,
+    { method: "GET" },
+    { action: "anchoring unread memory messages", timeoutMs: 12_000 }
+  );
+  if (!payload.anchorMessageId) return null;
+  const rows = rpcArray(payload.messages);
+  const replyMessages = rpcArray(payload.replyMessages);
+  const photos = rpcArray(payload.photos);
+  const namesByUsername = displayNameMapFromProfiles(rpcArray(payload.profiles));
+  const mappedPhotos = mapMemoryPhotos({ namesByUsername, photos });
+  return {
+    anchorMessageId: payload.anchorMessageId,
+    hasNewer: Boolean(payload.hasNewer),
+    latestMessageId: payload.latestMessageId ?? null,
+    messages: mapMemoryMessages({
+      messages: rows,
+      namesByUsername,
+      photos: mappedPhotos,
+      replyMessages
+    }),
+    nextCursor: payload.nextCursor ?? null,
+    totalUnreadCount: Math.max(0, Number(payload.totalUnreadCount ?? 0))
   };
 }
 
@@ -1724,6 +1779,25 @@ export async function getMemoryMessagesPageOfflineFirst(
   }
 }
 
+export async function getMemoryUnreadAnchorPageOfflineFirst(
+  roomId: string,
+  viewerName: string,
+  input: {
+    after: string | null;
+    afterLimit?: number;
+    beforeLimit?: number;
+  }
+): Promise<MemoryUnreadAnchorPage | null> {
+  const cached = await readOfflineMemoryUnreadAnchorPage(roomId, {
+    ...input,
+    viewerName
+  });
+  if (cached) return cached;
+  const page = await getMemoryUnreadAnchorPage(roomId, input);
+  if (page) await saveOfflineMemoryMessagePage(roomId, page);
+  return page;
+}
+
 // SQLite-first, matching messages and the room snapshot. This used to await the
 // network on every call and only touch the offline store on error, so opening
 // the Media tab always cost a round trip even when the page was already on
@@ -1761,26 +1835,28 @@ export async function fetchMemoryMediaPage(
   }
 }
 
-export async function markMemoryRoomRead(roomId: string) {
-  const username = await myUsername();
-  await assertMemoryRoomMember(roomId, username);
-  const now = new Date().toISOString();
-
-  const { error } = await supabase
-    .from("shared_memory_reads")
-    .upsert({
-      last_read_at: now,
-      room_id: roomId,
-      updated_at: now,
-      user_name: username
-    }, { onConflict: "room_id,user_name" });
+export async function markMemoryRoomRead(roomId: string, readAt?: string) {
+  const target = readAt ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(target))) {
+    throw new Error("Invalid memory read position");
+  }
+  const { data, error } = await supabase.rpc("mark_shared_memory_read_v1", {
+    p_read_at: target,
+    p_room_id: roomId
+  });
 
   if (error) {
     if (isMissingMemoryReadsTable(error)) return { ok: false, skipped: true };
     throw memoryTablesError(error);
   }
 
-  return { ok: true, skipped: false };
+  return {
+    ok: true,
+    readAt: typeof data === "string" && Number.isFinite(Date.parse(data))
+      ? data
+      : target,
+    skipped: false
+  };
 }
 
 export async function addMemoryParticipant(roomId: string, rawUsername: string) {
@@ -2171,6 +2247,7 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
       mediaKind,
       mimeType,
       onUploadProgress: asset.onUploadProgress,
+      onSourceStaged: asset.onSourceStaged,
       replyToMessageId: input.replyToMessageId ?? null,
       roomId: input.roomId,
       uri,

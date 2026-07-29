@@ -47,9 +47,21 @@ export type ChatGroupingMetadata = {
 };
 
 export type ChatRowViewModel = {
+  accessibilityLabel: string;
+  authorName: string;
   body: string;
   clientId: string | null;
-  deliveryState: "failed" | "pending" | "retrying" | "sent" | "uploading";
+  createdAt: string;
+  deliveryState:
+    | "failed"
+    | "pending"
+    | "processing"
+    | "processing_delayed"
+    | "processing_failed"
+    | "rejected"
+    | "retrying"
+    | "sent"
+    | "uploading";
   direction: ChatRowDirection;
   grouping: ChatGroupingMetadata;
   itemType: ChatRowItemType;
@@ -139,8 +151,11 @@ function itemTypeForMessage(
 
 function signatureForRow(row: ChatRowViewModel) {
   return JSON.stringify([
+    row.accessibilityLabel,
+    row.authorName,
     row.body,
     row.clientId,
+    row.createdAt,
     row.deliveryState,
     row.direction,
     row.grouping.showSender,
@@ -270,8 +285,18 @@ export class MemoryChatRowModelStore {
         const reply = message.replyToMessage;
         const key = memoryChatRowKey(message);
         row = {
+          accessibilityLabel: [
+            message.authorDisplayName,
+            message.body.trim() || "Message",
+            formatDisplayTime(message.createdAt),
+            normalizedDeliveryState(message.deliveryStatus) === "sent"
+              ? ""
+              : normalizedDeliveryState(message.deliveryStatus)
+          ].filter(Boolean).join(", "),
+          authorName: message.authorName,
           body: message.body.trim(),
           clientId: message.clientId,
+          createdAt: message.createdAt,
           deliveryState: normalizedDeliveryState(message.deliveryStatus),
           direction,
           grouping,
@@ -294,8 +319,11 @@ export class MemoryChatRowModelStore {
       } else if (item.type === "media") {
         const media = item.value;
         row = {
+          accessibilityLabel: `${media.uploaderDisplayName}, Media, ${formatDisplayTime(media.createdAt)}`,
+          authorName: media.uploaderName,
           body: "",
           clientId: null,
+          createdAt: media.createdAt,
           deliveryState: "sent",
           direction,
           grouping,
@@ -312,8 +340,11 @@ export class MemoryChatRowModelStore {
       } else {
         const dish = item.value;
         row = {
+          accessibilityLabel: `${dish.addedByDisplayName} added ${dish.dishName}`,
+          authorName: dish.addedBy,
           body: `${dish.addedByDisplayName} added ${dish.dishName}`,
           clientId: null,
+          createdAt: dish.createdAt,
           deliveryState: "sent",
           direction,
           grouping: {
@@ -341,8 +372,11 @@ export class MemoryChatRowModelStore {
         item.value.id === unreadAnchorMessageId
       ) {
         const unreadRow: ChatRowViewModel = {
+          accessibilityLabel: "Unread messages",
+          authorName: "",
           body: "Unread messages",
           clientId: null,
+          createdAt: item.createdAt,
           deliveryState: "sent",
           direction: "incoming",
           grouping: {
@@ -366,8 +400,11 @@ export class MemoryChatRowModelStore {
       if (older && dayKey(older.createdAt) !== dayKey(item.createdAt)) {
         const dateKey = dayKey(item.createdAt);
         const dateRow: ChatRowViewModel = {
+          accessibilityLabel: formatDisplayDate(item.createdAt),
+          authorName: "",
           body: formatDisplayDate(item.createdAt),
           clientId: null,
+          createdAt: item.createdAt,
           deliveryState: "sent",
           direction: "incoming",
           grouping: {

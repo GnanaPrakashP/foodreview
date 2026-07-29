@@ -11,22 +11,35 @@ export async function GET(req: NextRequest) {
   try {
     if (!mediaModerationProviderConfigured()) throw new Error("media_moderation_provider_unavailable");
     mediaWorkerConfig();
+    const admin = createAdminClient();
     const [queue] = await Promise.all([
-      mediaWorkerQueueHealth(createAdminClient()),
+      mediaWorkerQueueHealth(admin),
       runMediaBinaryCheck("ffmpeg"),
       runMediaBinaryCheck("ffprobe")
     ]);
-    if (req.nextUrl.searchParams.get("startup") !== "1") {
-      const { data: heartbeat, error } = await createAdminClient()
-        .from("operational_scheduler_heartbeats")
-        .select("last_succeeded_at, next_expected_at")
-        .eq("job_name", "media-processing")
-        .maybeSingle<{ last_succeeded_at: string | null; next_expected_at: string | null }>();
-      if (error || !heartbeat?.last_succeeded_at || !heartbeat.next_expected_at || new Date(heartbeat.next_expected_at).getTime() + 60_000 < Date.now()) {
-        return NextResponse.json({ ok: false, ready: false }, { headers: { "Cache-Control": "no-store" }, status: 503 });
-      }
+    const startup = req.nextUrl.searchParams.get("startup") === "1";
+    const degradedReasons = startup
+      ? []
+      : [
+        ...(queue.workerHeartbeatDue || queue.workerHeartbeatAgeSeconds === null
+          ? ["worker_heartbeat_stale"]
+          : []),
+        ...(queue.queued > 0 && queue.oldestQueuedAgeSeconds > 120 && queue.claimsPerMinute === 0
+          ? ["queued_jobs_unclaimed"]
+          : []),
+        ...(queue.staleRunningLeases > 0 ? ["stale_running_lease"] : []),
+        ...(queue.deadLetters24h > 0 ? ["dead_letters_present"] : [])
+      ];
+    if (degradedReasons.length > 0) {
+      return NextResponse.json(
+        { degradedReasons, ok: false, queue, ready: false },
+        { headers: { "Cache-Control": "no-store" }, status: 503 }
+      );
     }
-    return NextResponse.json({ ok: true, ready: true, queue }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      { degradedReasons, ok: true, ready: true, queue },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch {
     return NextResponse.json({ ok: false, ready: false }, { headers: { "Cache-Control": "no-store" }, status: 503 });
   }

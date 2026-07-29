@@ -14,7 +14,8 @@ const MEMORY_ROOM_CHAT_LIFECYCLES = new Set([
 const MEMORY_ROOM_CHAT_RENDERERS = new Set([
   "vendor",
   "lite-flatlist",
-  "lite-flashlist"
+  "lite-flashlist",
+  "native-recycler"
 ]);
 const PROD_IDENTITY = Object.freeze({
   androidPackage: "com.circlebites.mobile",
@@ -120,7 +121,7 @@ function validateClientConfiguration(env = process.env, extra = {}) {
     !MEMORY_ROOM_CHAT_RENDERERS.has(configuredMemoryRoomChatRenderer)
   ) {
     throw new Error(
-      "EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER must be vendor, lite-flatlist or lite-flashlist"
+      "EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER must be vendor, lite-flatlist, lite-flashlist or native-recycler"
     );
   }
   if (

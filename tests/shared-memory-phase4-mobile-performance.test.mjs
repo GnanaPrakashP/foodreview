@@ -51,6 +51,10 @@ const nativeChatInputWrapper = readFileSync(
   "utf8"
 );
 const memoryAddDishScreen = readFileSync("mobile/app/memories/[id]/add-dish.tsx", "utf8");
+const memoryChatGeometry = readFileSync(
+  "mobile/src/features/memories/chat/memoryChatGeometry.mjs",
+  "utf8"
+);
 
 test("phase 4 chat and media lists use bounded render windows", () => {
   for (const expected of [
@@ -81,9 +85,14 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   assert.match(vendoredChatTypes, /initiallyInitialized\?: boolean/);
   assert.doesNotMatch(memoryRoomScreen, /MemoryChatInstantPreview|chatListMounted|setChatListMounted/);
   assert.doesNotMatch(memoryRoomScreen, /startTransition/);
+  assert.match(memoryRoomScreen, /\{nativeRendererWaiting \? \(/);
   assert.match(
     memoryRoomScreen,
-    /<View style=\{styles\.chatMainMessagesLayer\}>\s*\{liteRendererActive \? liteList : \(\s*<ChatMain<MemoryChatMainMessage>/
+    /\) : nativeRendererActive \? \(\s*<>\s*<NativeMemoryChatList/
+  );
+  assert.match(
+    memoryRoomScreen,
+    /\) : liteRendererActive \? liteList : \(\s*<ChatMain<MemoryChatMainMessage>/
   );
   assert.match(memoryRoomScreen, /initialNumToRender=\{CHAT_TIMELINE_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{CHAT_TIMELINE_MAX_RENDER_BATCH\}/);
@@ -179,7 +188,7 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   const roomHeaderBody = memoryRoomScreen.match(/function RoomHeader\([\s\S]*?\nfunction RoomModeTabs/)?.[0] ?? "";
   const keyboardContainerBody = memoryRoomScreen.match(/function RoomKeyboardContainer\([\s\S]*?\nfunction RoomHeader/)?.[0] ?? "";
 
-  assert.match(memoryRoomScreen, /const ROOM_HEADER_EXPANDED_HEIGHT = 190/);
+  assert.match(memoryRoomScreen, /const ROOM_HEADER_EXPANDED_HEIGHT = 183/);
   assert.match(roomHeaderBody, /styles\.headerExpansionSurface/);
   assert.match(roomHeaderBody, /styles\.movingRoomTitle/);
   assert.match(roomHeaderBody, /styles\.headerDetailsClip/);
@@ -190,6 +199,15 @@ test("room tab transitions keep the header layout-stable and start cold panes im
   assert.doesNotMatch(roomHeaderBody, /opacity: interpolate\(collapseProgress\.value/);
   assert.doesNotMatch(roomHeaderBody, /(fontSize|left|lineHeight|maxHeight|marginRight|marginTop|right|top|width): interpolate/);
   assert.doesNotMatch(roomHeaderBody, /onHeightChange|onLayout=\{\(event\) => onHeightChange/);
+
+  const roomModeTabsBody = memoryRoomScreen.match(
+    /function RoomModeTabs\([\s\S]*?\nfunction friendSummaryName/
+  )?.[0] ?? "";
+  assert.match(
+    roomModeTabsBody,
+    /Math\.min\(windowWidth, ROOM_MAX_WIDTH\)[\s\S]*?- ROOM_HEADER_HORIZONTAL_PADDING \* 2[\s\S]*?- ROOM_HEADER_CONTENT_INSET \* 2[\s\S]*?- MODE_TABS_PADDING \* 2/
+  );
+  assert.match(memoryRoomScreen, /modeButton:\s*\{[\s\S]*?minHeight:\s*34/);
 
   assert.match(keyboardContainerBody, /return \(\s*<KeyboardAvoidingView/);
   assert.doesNotMatch(keyboardContainerBody, /if \(chatMode\)/);
@@ -330,7 +348,10 @@ test("memory chat keyboard motion is owned by one native parent surface", () => 
   )?.[0] ?? "";
 
   assert.match(memoryRoomScreen, /const \[frozenComposerBottomInset\] = useState\(\(\) => insets\.bottom\)/);
-  assert.match(keyboardBody, /getComposerClosedBottomPadding\(frozenComposerBottomInset\)/);
+  assert.match(memoryRoomScreen, /fontScale: PixelRatio\.getFontScale\(\)/);
+  assert.match(memoryRoomScreen, /pixelRatio: PixelRatio\.get\(\)/);
+  assert.match(memoryRoomScreen, /resolveMemoryChatCollapsedComposerGeometry\(\{/);
+  assert.match(keyboardBody, /const closedComposerBottomPadding = collapsedComposerGeometry\.closedBottomPadding/);
   assert.match(memoryRoomScreen, /function getChatKeyboardShift\(/);
   assert.match(memoryRoomScreen, /const closedSafeAreaGap = Math\.max\(0, closedComposerBottomPadding - COMPOSER_KEYBOARD_OPEN_GAP\)/);
   assert.match(memoryRoomScreen, /return -Math\.max\(0, drivenKeyboardHeight - closedSafeAreaGap\)/);
@@ -349,6 +370,8 @@ test("memory chat keyboard motion is owned by one native parent surface", () => 
   assert.doesNotMatch(keyboardBody, /keyboardMotion|useKeyboardMotion/);
   assert.doesNotMatch(memoryRoomScreen, /onInputFocus|handleComposerFocus|prepareChatKeyboardOpen/);
   assert.match(memoryRoomScreen, /chatKeyboardBridge:[\s\S]*backgroundColor: ROOM_COLORS\.panel/);
+  assert.match(memoryChatGeometry, /listClearance: composerHeight/);
+  assert.match(memoryChatGeometry, /closedBottomPadding/);
 });
 
 test("dish sheet uses the native keyboard inset path without a live safe-area correction", () => {
@@ -434,14 +457,17 @@ test("rapid newline and backspace use one native Android composer height transac
     /function MemoryChatMainInputToolbar\([\s\S]*?\n\}\n\nfunction MemoryChatMainSelectionToolbar/
   )?.[0] ?? "";
 
-  assert.match(chatSurfaceBody, /const messageBoxHeight = useSharedValue\(COMPOSER_MESSAGE_BOX_MIN_HEIGHT\)/);
-  assert.match(chatSurfaceBody, /const composerClearance = useSharedValue\(CHAT_COMPOSER_CLEARANCE\)/);
+  assert.match(chatSurfaceBody, /const messageBoxHeight = useSharedValue\(collapsedComposerGeometry\.messageBoxHeight\)/);
+  assert.match(chatSurfaceBody, /const composerClearance = useSharedValue\(collapsedComposerGeometry\.listClearance\)/);
   assert.match(chatSurfaceBody, /height: composerClearance\.value/);
   assert.match(chatSurfaceBody, /renderBottomSpacer=\{renderComposerListSpacer\}/);
   assert.match(chatSurfaceBody, /contentContainerStyle: styles\.chatMainListContent/);
   assert.match(chatSurfaceBody, /const toolbarLayoutIdentity = selectionMode/);
   assert.match(chatSurfaceBody, /measuredToolbarLayoutIdentityRef\.current === toolbarLayoutIdentity/);
   assert.match(chatSurfaceBody, /activeToolbarLayoutIdentityRef\.current !== toolbarLayoutIdentity/);
+  assert.match(chatSurfaceBody, /const collapsedToolbarStructure =/);
+  assert.match(chatSurfaceBody, /const targetClearance = collapsedToolbarStructure\s*\?\s*modeledHeight\s*:\s*measuredHeight/);
+  assert.doesNotMatch(memoryRoomScreen, /const CHAT_COMPOSER_CLEARANCE = 88/);
   assert.match(vendoredMessageTypes, /renderBottomSpacer\?: \(\) => React\.ReactNode/);
   assert.match(vendoredMessages, /<>\{BottomSpacerComponent\}\{ListFooterComponent\}<\/>/);
 
@@ -478,7 +504,8 @@ test("rapid newline and backspace use one native Android composer height transac
   assert.match(nativeChatInput, /onHeightChange\(NativeChatInputHeightEvent/);
 
   let messageBoxHeight = 42;
-  let composerClearance = 88;
+  const collapsedClearance = 80;
+  let composerClearance = collapsedClearance;
   const trace = [];
   const applyNativeContentHeight = (nextHeight) => {
     const previousHeight = messageBoxHeight;
@@ -489,12 +516,12 @@ test("rapid newline and backspace use one native Android composer height transac
 
   [63, 42, 63, 84, 63, 42].forEach(applyNativeContentHeight);
   assert.deepEqual(trace, [
-    { composerClearance: 109, messageBoxHeight: 63 },
-    { composerClearance: 88, messageBoxHeight: 42 },
-    { composerClearance: 109, messageBoxHeight: 63 },
-    { composerClearance: 130, messageBoxHeight: 84 },
-    { composerClearance: 109, messageBoxHeight: 63 },
-    { composerClearance: 88, messageBoxHeight: 42 }
+    { composerClearance: 101, messageBoxHeight: 63 },
+    { composerClearance: 80, messageBoxHeight: 42 },
+    { composerClearance: 101, messageBoxHeight: 63 },
+    { composerClearance: 122, messageBoxHeight: 84 },
+    { composerClearance: 101, messageBoxHeight: 63 },
+    { composerClearance: 80, messageBoxHeight: 42 }
   ]);
 });
 
@@ -581,15 +608,20 @@ test("outgoing pending messages do not insert a temporary typing row", () => {
 });
 
 test("phase 6 production default mounts chat only while selected and renders timestamps on the first frame", () => {
-  const timeBody = memoryRoomScreen.match(/function ChatMainBodyWithTime\([\s\S]*?\nfunction estimateChatTimestampWidth/)?.[0] ?? "";
+  const timeBody = memoryRoomScreen.match(
+    /function ChatMainBodyWithTime\([\s\S]*?\nfunction formatAudioPlaybackTime/
+  )?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.doesNotMatch(memoryRoomScreen, /setChatPreloaded|panesPreloaded/);
   assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
   assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "chat"\}/);
   assert.match(memoryRoomScreen, /mounted=\{paneMounted\("chat"\)\}/);
   assert.match(roomPaneBody, /if \(!mounted\) return null/);
-  assert.match(timeBody, /const estimatedTimeWidth = estimateChatTimestampWidth\(time\)/);
+  assert.match(timeBody, /memoryChatTimestampReservationWidth\(time/);
+  assert.match(timeBody, /styles\.chatMainTimeSpacer/);
   assert.match(timeBody, /style=\{styles\.chatMainTimePinned\}/);
+  assert.doesNotMatch(timeBody, /useState|setLayoutDecision|setMeasuredTime|setTimeout/);
+  assert.doesNotMatch(memoryRoomScreen, /chatTimestampWidthCache|estimateChatTimestampWidth/);
   assert.doesNotMatch(memoryRoomScreen, /chatMainTimeMeasuring/);
 });
 
@@ -865,8 +897,20 @@ test("older chat pages read SQLite before starting the network request", () => {
   assert.match(offlineFirstMessagesPage, /if \(cached\) return refreshMemoryMessagePageMedia\(cached\)/);
 });
 
-test("a short mounted cache still performs one older-history boundary lookup", () => {
-  assert.match(memoryRoomScreen, /const cachedHistoryMayHaveOlder = \(room\.data\?\.messages\.length \?\? 0\) > 0/);
+test("fully cached chat history hides the earlier-message probe while partial history can page", () => {
+  assert.match(
+    memoryRoomScreen,
+    /const cachedServerMessageCount = room\.data\?\.messages\.reduce\([\s\S]*memoryMessageServerId\(candidate\)/
+  );
+  assert.match(memoryRoomScreen, /const knownMessageCount = cachedRoomSummary\?\.messageCount/);
+  assert.match(
+    memoryRoomScreen,
+    /const cachedHistoryKnownComplete =[\s\S]*cachedServerMessageCount >= knownMessageCount/
+  );
+  assert.match(
+    memoryRoomScreen,
+    /const cachedHistoryMayHaveOlder =\s*cachedServerMessageCount > 0 && !cachedHistoryKnownComplete/
+  );
   assert.match(
     memoryRoomScreen,
     /const canLoadOlderMessages = cachedHistoryMayHaveOlder && Boolean\(olderMessagesCursor\)/
@@ -938,7 +982,12 @@ test("text sends persist an outbox row and use stable server idempotency", () =>
   assert.match(memoryMessageRoute, /author_name: actor\.actorName/);
   assert.match(memoryMessageRoute, /\.eq\("room_id", roomId\)/);
   assert.match(memoryService, /headers: \{ "Idempotency-Key": idempotencyKey \}/);
-  assert.match(memoryHooks, /await saveOfflineMemoryOutboxMessage\(clientId, optimisticMessage\)/);
+  assert.match(memoryHooks, /const outboxWrite = saveOfflineMemoryOutboxMessage\(clientId, optimisticMessage\)/);
+  assert.match(memoryHooks, /observeOfflineMemoryWrite\(outboxWrite, "outbox_insert"\)/);
+  assert.doesNotMatch(
+    memoryHooks.match(/onMutate: \(input\) => \{[\s\S]*?\n    onError:/)?.[0] ?? "",
+    /await saveOfflineMemoryOutboxMessage/
+  );
   assert.match(memoryHooks, /commitOfflineMemoryOutboxMessage\(context\.clientId, sentMessage\)/);
   assert.match(memoryOfflineStore, /create table if not exists memory_message_outbox/);
   assert.match(memorySyncMigration, /shared_memory_messages_author_client_id_uidx/);

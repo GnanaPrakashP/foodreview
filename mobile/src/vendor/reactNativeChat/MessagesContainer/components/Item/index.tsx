@@ -142,8 +142,81 @@ const ItemComponent = <TMessage extends IMessage>(props: ItemProps<TMessage>) =>
 // of wall clock with the surface component itself running only 13ms, i.e. the
 // work was cell re-renders, not app state changes.
 //
-// A plain shallow compare is safe here: every prop is either value-stable
-// during a scroll (the message objects, the Reanimated shared values, the
-// isDayAnimationEnabled flag) or a callback/config object whose identity
-// changes exactly when the surface re-renders and rows genuinely must follow.
-export const Item = memo(ItemComponent) as typeof ItemComponent
+function samePositionStyle(previous?: Record<string, unknown>, next?: Record<string, unknown>) {
+  if (previous === next)
+    return true
+  return previous?.left === next?.left && previous?.right === next?.right
+}
+
+function sameReplyConfig(previous: any, next: any) {
+  if (previous === next)
+    return true
+  return (
+    previous?.swipe?.direction === next?.swipe?.direction &&
+    previous?.swipe?.isEnabled === next?.swipe?.isEnabled &&
+    previous?.swipe?.isGestureEnabled === next?.swipe?.isGestureEnabled &&
+    samePositionStyle(previous?.messageStyle, next?.messageStyle)
+  )
+}
+
+function sameReactionConfig(previous: any, next: any) {
+  if (previous === next)
+    return true
+  const previousEmojis = previous?.emojis ?? []
+  const nextEmojis = next?.emojis ?? []
+  return (
+    previous?.isEnabled === next?.isEnabled &&
+    previous?.renderReactionPicker === next?.renderReactionPicker &&
+    previous?.renderReactions === next?.renderReactions &&
+    previousEmojis.length === nextEmojis.length &&
+    previousEmojis.every((emoji: string, index: number) => emoji === nextEmojis[index])
+  )
+}
+
+function itemPropsEqual(previous: any, next: any) {
+  if (
+    previous.currentMessage !== next.currentMessage ||
+    previous.previousMessage !== next.previousMessage ||
+    previous.nextMessage !== next.nextMessage ||
+    previous.position !== next.position ||
+    previous.user !== next.user ||
+    previous.isInverted !== next.isInverted ||
+    previous.isDayAnimationEnabled !== next.isDayAnimationEnabled ||
+    previous.renderMessage !== next.renderMessage ||
+    previous.renderDay !== next.renderDay ||
+    previous.renderBubble !== next.renderBubble ||
+    previous.renderSystemMessage !== next.renderSystemMessage ||
+    previous.renderAvatar !== next.renderAvatar ||
+    previous.renderMessageText !== next.renderMessageText ||
+    previous.renderMessageImage !== next.renderMessageImage ||
+    previous.renderMessageVideo !== next.renderMessageVideo ||
+    previous.renderMessageAudio !== next.renderMessageAudio ||
+    previous.renderCustomView !== next.renderCustomView ||
+    previous.renderTime !== next.renderTime ||
+    previous.renderTicks !== next.renderTicks ||
+    previous.onPressMessage !== next.onPressMessage ||
+    previous.onLongPressMessage !== next.onLongPressMessage ||
+    previous.isUserAvatarVisible !== next.isUserAvatarVisible ||
+    previous.isAvatarOnTop !== next.isAvatarOnTop ||
+    previous.isAvatarVisibleForEveryMessage !== next.isAvatarVisibleForEveryMessage ||
+    previous.isUsernameVisible !== next.isUsernameVisible ||
+    previous.scrolledY !== next.scrolledY ||
+    previous.daysPositions !== next.daysPositions ||
+    previous.listHeight !== next.listHeight ||
+    previous.floatingRenderedDate !== next.floatingRenderedDate ||
+    !samePositionStyle(previous.avatarImageStyle, next.avatarImageStyle) ||
+    previous.avatarTextStyle !== next.avatarTextStyle ||
+    !samePositionStyle(previous.wrapperStyle, next.wrapperStyle) ||
+    !samePositionStyle(previous.containerStyle, next.containerStyle) ||
+    !sameReplyConfig(previous.reply, next.reply) ||
+    !sameReactionConfig(previous.reactions, next.reactions)
+  )
+    return false
+
+  return true
+}
+
+// Composer, list-window and load-earlier props intentionally do not invalidate
+// every visible message. A normal newest-row insert changes only that row and
+// the one row whose neighbour relationship changed.
+export const Item = memo(ItemComponent, itemPropsEqual) as typeof ItemComponent

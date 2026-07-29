@@ -21,6 +21,9 @@ export type NativeChatInputHasTextEvent = {
 
 export type NativeChatInputSubmitResult = {
   eventCount: number;
+  inputClearedAtMs: number;
+  nativeSubmitAtMs: number;
+  payloadCapturedAtMs: number;
   text: string;
   wasComposing: boolean;
 };

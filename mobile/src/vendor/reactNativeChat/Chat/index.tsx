@@ -205,10 +205,10 @@ function Chat<TMessage extends IMessage = IMessage> (
 
       const newMessages: TMessage[] = messages.map(message => {
         return {
+          user: message.user || user!,
+          createdAt: message.createdAt || new Date(),
+          _id: message._id ?? messageIdGenerator?.(),
           ...message,
-          user: user!,
-          createdAt: new Date(),
-          _id: messageIdGenerator?.(),
           // Attach reply message if exists
           ...(replyMessage ? { replyMessage } : {}),
         }

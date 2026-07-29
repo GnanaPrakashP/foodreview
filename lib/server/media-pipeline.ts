@@ -1209,8 +1209,11 @@ async function processClaimedMediaJob(
       .in("status", ["uploaded", "processing"]);
     if (processingError) throw new Error("database_temporarily_unavailable");
 
+    const derivativeStarted = Date.now();
     const dimensions = await processMediaAsset(admin, asset, lease, config);
+    const derivativeGenerationDurationMs = Date.now() - derivativeStarted;
     await lease.checkpoint("before_metadata_finalization");
+    const finalizationStarted = Date.now();
     const { data: completed, error: completionError } = await admin.rpc("complete_media_processing_job", {
       p_claim_token: job.claim_token,
       p_duration_ms: dimensions.durationMs,
@@ -1222,11 +1225,14 @@ async function processClaimedMediaJob(
     });
     if (completionError) throw new Error("database_temporarily_unavailable");
     if (completed !== true) throw new Error("lease_lost");
+    const finalizationDurationMs = Date.now() - finalizationStarted;
     authoritativeCompleted = true;
     await options.failureInjector?.("after_metadata_finalization", job);
     recordMediaWorkerEvent("job_succeeded", {
       attempt: job.attempts,
+      derivativeGenerationDurationMs,
       durationMs: Date.now() - started,
+      finalizationDurationMs,
       jobId: job.id,
       mediaType: asset.media_type,
       staleReclaimed: job.stale_reclaimed,
@@ -1397,11 +1403,105 @@ export async function mediaWorkerQueueHealth(admin: AdminClient) {
     .limit(1)
     .maybeSingle();
   if (oldestError) throw new Error("database_temporarily_unavailable");
+
+  const since24Hours = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const sinceOneMinute = new Date(Date.now() - 60_000).toISOString();
+  const [runningResult, eventsResult, heartbeatResult] = await Promise.all([
+    admin
+      .from("media_processing_jobs")
+      .select("heartbeat_at,lock_expires_at")
+      .eq("status", "running"),
+    admin
+      .from("media_processing_events")
+      .select("job_id,event_type,created_at")
+      .gte("created_at", since24Hours)
+      .order("created_at", { ascending: true })
+      .limit(5000),
+    admin
+      .from("operational_scheduler_heartbeats")
+      .select("last_succeeded_at,next_expected_at")
+      .eq("job_name", "media-processing")
+      .maybeSingle()
+  ]);
+  if (runningResult.error || eventsResult.error || heartbeatResult.error) {
+    throw new Error("database_temporarily_unavailable");
+  }
+  const runningRows = (runningResult.data ?? []) as Array<{
+    heartbeat_at: string | null;
+    lock_expires_at: string | null;
+  }>;
+  const events = (eventsResult.data ?? []) as Array<{
+    created_at: string;
+    event_type: string;
+    job_id: string | null;
+  }>;
+  const heartbeat = heartbeatResult.data as {
+    last_succeeded_at: string | null;
+    next_expected_at: string | null;
+  } | null;
+  const now = Date.now();
+  const eventCount = (eventType: string) => events.filter((event) => event.event_type === eventType).length;
+  const claimedAtByJob = new Map<string, number>();
+  const processingDurations: number[] = [];
+  for (const event of events) {
+    if (!event.job_id) continue;
+    const createdAt = new Date(event.created_at).getTime();
+    if (!Number.isFinite(createdAt)) continue;
+    if (event.event_type === "claimed" || event.event_type === "lease_reclaimed") {
+      claimedAtByJob.set(event.job_id, createdAt);
+      continue;
+    }
+    if (!["succeeded", "retry_scheduled", "rejected", "dead_lettered"].includes(event.event_type)) continue;
+    const claimedAt = claimedAtByJob.get(event.job_id);
+    if (claimedAt !== undefined && createdAt >= claimedAt) {
+      processingDurations.push(createdAt - claimedAt);
+    }
+  }
+  processingDurations.sort((left, right) => left - right);
+  const percentile = (fraction: number) => {
+    if (processingDurations.length === 0) return 0;
+    return processingDurations[Math.min(
+      processingDurations.length - 1,
+      Math.max(0, Math.ceil(processingDurations.length * fraction) - 1)
+    )];
+  };
+  const heartbeatAt = heartbeat?.last_succeeded_at
+    ? new Date(heartbeat.last_succeeded_at).getTime()
+    : Number.NaN;
+
   return {
+    activeLeases: runningRows.filter((row) => (
+      row.lock_expires_at && new Date(row.lock_expires_at).getTime() > now
+    )).length,
+    claimsPerMinute: events.filter((event) => (
+      (event.event_type === "claimed" || event.event_type === "lease_reclaimed") &&
+      event.created_at >= sinceOneMinute
+    )).length,
     deadLetter: counts.dead_letter,
+    deadLetters24h: eventCount("dead_lettered"),
+    leaseReclaims24h: eventCount("lease_reclaimed"),
     oldestQueuedAgeSeconds: oldest?.created_at ? Math.max(0, Math.floor((Date.now() - new Date(oldest.created_at).getTime()) / 1000)) : 0,
+    permanentFailures24h: eventCount("rejected"),
+    processingDurationMs: {
+      max: processingDurations[processingDurations.length - 1] ?? 0,
+      p50: percentile(0.5),
+      p95: percentile(0.95),
+      samples: processingDurations.length
+    },
     queued: counts.queued,
+    retries24h: eventCount("retry_scheduled"),
     retryWait: counts.retry_wait,
-    running: counts.running
+    running: counts.running,
+    staleRunningLeases: runningRows.filter((row) => (
+      !row.lock_expires_at || new Date(row.lock_expires_at).getTime() <= now
+    )).length,
+    successes24h: eventCount("succeeded"),
+    workerHeartbeatAgeSeconds: Number.isFinite(heartbeatAt)
+      ? Math.max(0, Math.floor((now - heartbeatAt) / 1000))
+      : null,
+    workerHeartbeatDue: Boolean(
+      heartbeat?.next_expected_at &&
+      new Date(heartbeat.next_expected_at).getTime() + 60_000 < now
+    )
   };
 }

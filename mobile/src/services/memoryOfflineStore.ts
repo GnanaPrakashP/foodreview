@@ -7,7 +7,11 @@ import {
   memoryDatabaseDirectoryForScope
 } from "@/services/accountFileStore";
 import { isValidCacheOwnerScope, LOCAL_DATA_SCHEMA_VERSION } from "@/security/cacheOwnership";
-import type { MemoryMediaPage, MemoryMessagesPage } from "@/services/memories";
+import type {
+  MemoryMediaPage,
+  MemoryMessagesPage,
+  MemoryUnreadAnchorPage
+} from "@/services/memories";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary } from "@/types/models";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 import {
@@ -208,6 +212,7 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
         message_id text primary key not null,
         server_id text,
         client_id text,
+        author_name text,
         room_id text not null,
         created_at text not null,
         client_sequence integer,
@@ -256,6 +261,7 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
         on memory_message_outbox(room_id, created_at, message_id);
     `);
     await ensureTableColumns(db, "memory_messages", {
+      author_name: "text",
       client_id: "text",
       client_order_key: "text",
       client_sequence: "integer",
@@ -277,6 +283,7 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
     await db.execAsync(`
       update memory_messages
       set
+        author_name = coalesce(author_name, json_extract(payload, '$.authorName')),
         server_id = coalesce(server_id, message_id),
         server_created_at = coalesce(server_created_at, created_at),
         delivery_status = coalesce(delivery_status, 'sent')
@@ -289,6 +296,9 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
         on memory_messages(client_id) where client_id is not null;
       create index if not exists memory_messages_room_client_order_idx
         on memory_messages(room_id, created_at, client_sequence, client_order_key);
+      create index if not exists memory_messages_room_server_order_idx
+        on memory_messages(room_id, server_created_at, server_id)
+        where server_id is not null;
     `);
     const meta = await db.getFirstAsync<{ owner_scope: string; schema_version: number }>(
       "select owner_scope, schema_version from local_cache_meta where singleton = 1"
@@ -502,14 +512,15 @@ async function saveMessages(db: SQLite.SQLiteDatabase, roomId: string, messages:
     }
     await db.runAsync(
       `insert into memory_messages (
-         message_id, server_id, client_id, room_id, created_at,
+         message_id, server_id, client_id, author_name, room_id, created_at,
          client_sequence, client_order_key, server_created_at,
          delivery_status, payload, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict(message_id) do update set
          server_id = excluded.server_id,
          client_id = excluded.client_id,
+         author_name = excluded.author_name,
          room_id = excluded.room_id,
          created_at = excluded.created_at,
          client_sequence = excluded.client_sequence,
@@ -521,6 +532,7 @@ async function saveMessages(db: SQLite.SQLiteDatabase, roomId: string, messages:
       logicalId,
       serverId,
       message.clientId,
+      message.authorName,
       roomId,
       message.clientCreatedAt || message.createdAt,
       message.clientSequence,
@@ -992,6 +1004,120 @@ export async function readOfflineMemoryMessagesPage(
   }
 }
 
+export async function readOfflineMemoryUnreadAnchorPage(
+  roomId: string,
+  input: {
+    after: string | null;
+    afterLimit?: number;
+    beforeLimit?: number;
+    viewerName: string;
+  }
+): Promise<MemoryUnreadAnchorPage | null> {
+  const finishProfile = beginMemoryRoomSqliteOperation("unread_anchor_read", "read");
+  try {
+    const db = await offlineDb();
+    const after = Number.isFinite(Date.parse(input.after ?? ""))
+      ? input.after!
+      : "1970-01-01T00:00:00.000Z";
+    const beforeLimit = Math.min(Math.max(input.beforeLimit ?? 12, 0), 24);
+    const afterLimit = Math.min(Math.max(input.afterLimit ?? 24, 1), 40);
+    const anchor = await db.getFirstAsync<StoredCursorRow>(
+      `select server_id as id, server_created_at as created_at, payload
+       from memory_messages
+       where room_id = ?
+         and server_id is not null
+         and server_created_at > ?
+         and lower(coalesce(author_name, '')) <> lower(?)
+         and (delivery_status = 'sent' or delivery_status is null)
+       order by server_created_at asc, server_id asc
+       limit 1`,
+      roomId,
+      after,
+      input.viewerName
+    );
+    if (!anchor) return null;
+
+    const beforeRows = beforeLimit > 0
+      ? await db.getAllAsync<StoredCursorRow>(
+        `select server_id as id, server_created_at as created_at, payload
+         from memory_messages
+         where room_id = ?
+           and server_id is not null
+           and (
+             server_created_at < ?
+             or (server_created_at = ? and server_id < ?)
+           )
+           and (delivery_status = 'sent' or delivery_status is null)
+         order by server_created_at desc, server_id desc
+         limit ?`,
+        roomId,
+        anchor.created_at,
+        anchor.created_at,
+        anchor.id,
+        beforeLimit
+      )
+      : [];
+    const afterRows = await db.getAllAsync<StoredCursorRow>(
+      `select server_id as id, server_created_at as created_at, payload
+       from memory_messages
+       where room_id = ?
+         and server_id is not null
+         and (
+           server_created_at > ?
+           or (server_created_at = ? and server_id >= ?)
+         )
+         and (delivery_status = 'sent' or delivery_status is null)
+       order by server_created_at asc, server_id asc
+       limit ?`,
+      roomId,
+      anchor.created_at,
+      anchor.created_at,
+      anchor.id,
+      afterLimit + 1
+    );
+    const selectedAfter = afterRows.slice(0, afterLimit);
+    const messages = [...beforeRows.reverse(), ...selectedAfter]
+      .map((row) => safeParse<MemoryMessage>(row.payload))
+      .filter((message): message is MemoryMessage => Boolean(message))
+      .map((message) => sanitizeOfflineMemoryMessage(message));
+    const latest = await db.getFirstAsync<{ id: string }>(
+      `select server_id as id
+       from memory_messages
+       where room_id = ? and server_id is not null
+       order by server_created_at desc, server_id desc
+       limit 1`,
+      roomId
+    );
+    const unread = await db.getFirstAsync<{ value: number }>(
+      `select count(*) as value
+       from memory_messages
+       where room_id = ?
+         and server_id is not null
+         and server_created_at > ?
+         and lower(coalesce(author_name, '')) <> lower(?)
+         and (delivery_status = 'sent' or delivery_status is null)`,
+      roomId,
+      after,
+      input.viewerName
+    );
+    return {
+      anchorMessageId: anchor.id,
+      hasNewer: afterRows.length > afterLimit,
+      latestMessageId: latest?.id ?? null,
+      messages,
+      nextCursor: encodeMemoryPageCursor(
+        messages[0]?.serverCreatedAt ?? messages[0]?.createdAt,
+        messages[0] ? memoryMessageServerId(messages[0]) : null
+      ),
+      totalUnreadCount: unread?.value ?? 0
+    };
+  } catch {
+    return null;
+  } finally {
+    finishProfile();
+  }
+}
+
 export async function saveOfflineMemoryMediaPage(roomId: string, page: MemoryMediaPage) {
   if (page.photos.length === 0) return;
 
@@ -1017,7 +1143,11 @@ export async function deleteOfflineMemoryRoom(roomId: string) {
   });
 }
 
-export async function saveOfflineMemoryReadState(roomId: string, lastReadAt: string) {
+export async function saveOfflineMemoryReadState(
+  roomId: string,
+  lastReadAt: string,
+  remainingUnreadCount = 0
+) {
   return criticalOfflineWrite("read_state", async () => {
     const db = await offlineDb();
     const now = Date.now();
@@ -1028,9 +1158,15 @@ export async function saveOfflineMemoryReadState(roomId: string, lastReadAt: str
       );
       const room = snapshot ? safeParse<MemoryRoom>(snapshot.payload) : null;
       if (room) {
+        const storedReadMs = Date.parse(room.lastReadAt ?? "");
+        const requestedReadMs = Date.parse(lastReadAt);
+        const nextReadAt =
+          Number.isFinite(storedReadMs) && storedReadMs > requestedReadMs
+            ? room.lastReadAt
+            : lastReadAt;
         await db.runAsync(
           "update memory_room_snapshots set payload = ?, updated_at = ? where room_id = ?",
-          JSON.stringify({ ...room, lastReadAt }),
+          JSON.stringify({ ...room, lastReadAt: nextReadAt }),
           now,
           roomId
         );
@@ -1043,7 +1179,13 @@ export async function saveOfflineMemoryReadState(roomId: string, lastReadAt: str
       if (summary) {
         await db.runAsync(
           "update memory_room_summaries set payload = ?, updated_at = ? where room_id = ?",
-          JSON.stringify({ ...summary, unreadCount: 0 }),
+          JSON.stringify({
+            ...summary,
+            unreadCount: Math.min(
+              summary.unreadCount,
+              Math.max(0, remainingUnreadCount)
+            )
+          }),
           now,
           roomId
         );

@@ -26,6 +26,7 @@
 # production
 /build
 /mobile/modules/keyboard-inset/android/build/
+/mobile/modules/memory-chat-list/android/build/
 
 # misc
 .DS_Store

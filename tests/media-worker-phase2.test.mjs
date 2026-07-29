@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
 import fsPromises from "node:fs/promises";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readFileSync } from "node:fs";
@@ -57,6 +58,7 @@ function loadPipeline() {
   });
   return loadTs("lib/server/media-pipeline.ts", (id) => {
     if (id === "node:crypto") return crypto;
+    if (id === "node:fs") return fs;
     if (id === "node:fs/promises") return fsPromises;
     if (id === "node:os") return os;
     if (id === "node:path") return path;
@@ -64,6 +66,12 @@ function loadPipeline() {
     if (id === "sharp") return sharp;
     if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
     if (id === "@/lib/server/media-delivery-contract") return deliveryContract;
+    if (id === "@/lib/server/memory-media") return {
+      moderateMemoryMediaBuffer: async () => ({ decision: "approved", reasonCode: null })
+    };
+    if (id === "@/lib/server/api-security") return {
+      hashSecurityIdentifier: () => "test-operator-hash"
+    };
     if (id === "@/lib/observability/server") return {
       mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
     };
@@ -143,6 +151,7 @@ async function imageWorkerAdmin({ attempts = 1, completeLease = true, failAt = n
     duration_ms: null,
     id: "22222222-2222-4222-8222-222222222222",
     media_type: "image",
+    moderation_status: "approved",
     original_extension: "jpg",
     original_file_size_bytes: image.byteLength,
     original_height: 600,
@@ -340,6 +349,7 @@ async function videoWorkerAdmin({ failAt = null } = {}) {
     duration_ms: 1000,
     id: "66666666-6666-4666-8666-666666666666",
     media_type: "video",
+    moderation_status: "approved",
     original_extension: "mp4",
     original_file_size_bytes: video.byteLength,
     original_height: 400,
@@ -550,7 +560,7 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
   const owner = { scope: "user-11111111-1111-4111-8111-111111111111", userId: "11111111-1111-4111-8111-111111111111" };
 
   async function scenario(initialState, serverStatus = "ready") {
-    const calls = { finalize: 0, intent: 0, removed: 0, status: 0, upload: 0 };
+    const calls = { errors: [], finalize: 0, intent: 0, removed: 0, status: 0, upload: 0 };
     let record = {
       accessClass: "private_post",
       assetId: initialState === "prepared" ? null : assetId,
@@ -570,6 +580,7 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
       schemaVersion: 2,
       sourceUri: `file:///private/${owner.scope}/source.jpg`,
       state: initialState,
+      surface: "post",
       uploadBucket: initialState === "prepared" ? null : "media-sources",
       uploadPath: initialState === "prepared" ? null : `sources/post/${owner.userId}/${assetId}/original.jpg`,
       width: 100
@@ -646,13 +657,22 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
     };
     const pipeline = loadTs("mobile/src/services/mediaPipeline.ts", (id) => {
       if (id === "expo-image-manipulator") return { ImageManipulator: {}, SaveFormat: { JPEG: "jpeg" } };
+      if (id === "expo-file-system/legacy") return {
+        FileSystemSessionType: { BACKGROUND: "background" },
+        FileSystemUploadType: { BINARY_CONTENT: "binary" },
+        createUploadTask: () => ({ cancelAsync: async () => {}, uploadAsync: async () => null }),
+        deleteAsync: async () => {},
+        getInfoAsync: async () => ({ exists: true, isDirectory: false, size: 4 })
+      };
+      if (id === "react-native") return { Platform: { OS: "web" } };
       if (id === "@/api/client") return { authorizedApiHeaders: async () => ({ Authorization: "Bearer test-token" }) };
       if (id === "@/api/config") return { apiBaseUrl: "http://local.test", apiUrl: (value) => value };
       if (id === "@/api/supabase") return { resolvedSupabaseAnonKey: "anon", resolvedSupabaseUrl: "http://supabase.test", supabase };
       if (id === "@/services/accountFileStore") return { stageAccountFile: async (uri) => uri };
+      if (id === "@/services/installIdentity") return { createRequestId: () => "test-request-id" };
       if (id === "@/services/mediaUploadRecovery") return recovery;
       if (id === "@/observability/mobileTelemetry") return {
-        captureMobileError: () => {},
+        captureMobileError: (_event, error) => calls.errors.push(error?.message ?? String(error)),
         recordMobileFlow: () => {}
       };
       if (id === "@/security/cacheOwnership") return {
@@ -663,21 +683,22 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
       if (id === "@/security/sensitiveResourceRegistry") return { registerSensitiveResourceCleanup: () => {} };
       throw new Error(`Unexpected import: ${id}`);
     }, { fetch });
-    const result = await pipeline.reconcilePendingPostMediaUploads();
+    const result = await pipeline.reconcilePendingMediaUploads();
     return { calls, record, result };
   }
 
   const prepared = await scenario("prepared");
-  assert.deepEqual({ ...prepared.result }, { pending: 0, ready: 1, terminal: 0 });
-  assert.deepEqual({ ...prepared.calls }, { finalize: 1, intent: 1, removed: 0, status: 1, upload: 1 });
+  assert.deepEqual({ ...prepared.calls }, { errors: [], finalize: 1, intent: 1, removed: 0, status: 1, upload: 1 });
+  assert.deepEqual({ ...prepared.result }, { attached: 0, pending: 0, ready: 1, terminal: 0 });
   assert.equal(prepared.record.state, "ready");
 
   const alreadyUploaded = await scenario("source_uploaded");
-  assert.deepEqual({ ...alreadyUploaded.result }, { pending: 0, ready: 1, terminal: 0 });
-  assert.deepEqual({ ...alreadyUploaded.calls }, { finalize: 1, intent: 0, removed: 0, status: 1, upload: 0 });
+  assert.deepEqual({ ...alreadyUploaded.result }, { attached: 0, pending: 0, ready: 1, terminal: 0 });
+  assert.deepEqual({ ...alreadyUploaded.calls }, { errors: [], finalize: 1, intent: 0, removed: 0, status: 1, upload: 0 });
 
   const terminal = await scenario("processing", "rejected");
-  assert.deepEqual({ ...terminal.result }, { pending: 0, ready: 0, terminal: 1 });
+  assert.deepEqual({ ...terminal.result }, { attached: 0, pending: 0, ready: 0, terminal: 1 });
+  assert.deepEqual(terminal.calls.errors, []);
   assert.equal(terminal.calls.removed, 1);
   assert.equal(terminal.record, null);
 });
@@ -688,7 +709,8 @@ test("worker artifact, internal routes, and reconciliation tooling are productio
   const auth = source("lib/server/internal-media-auth.ts");
   const reconcile = source("scripts/media-reconcile.mjs");
   const mobile = source("mobile/src/services/mediaPipeline.ts");
-  assert.match(dockerfile, /node:20\.19\.4-bookworm-slim/);
+  const memories = source("mobile/src/services/memories.ts");
+  assert.match(dockerfile, /node:22\.18\.0-bookworm-slim/);
   assert.match(dockerfile, /apt-get install[\s\S]*ffmpeg/);
   assert.match(dockerfile, /USER mediaworker/);
   assert.match(dockerfile, /HEALTHCHECK/);
@@ -699,7 +721,9 @@ test("worker artifact, internal routes, and reconciliation tooling are productio
   assert.doesNotMatch(auth, /ACCOUNT_MEDIA_CLEANUP_SECRET|MEMORY_UPLOAD_CLEANUP_SECRET/);
   assert.match(reconcile, /--apply|args\.get\("apply"\)/);
   assert.match(reconcile, /MEDIA_PIPELINE_RECOVERY/);
-  assert.match(mobile, /reconcilePendingPostMediaUploads/);
+  assert.match(memories, /recoverPendingMemoryMessages/);
+  assert.match(mobile, /processing_delayed/);
+  assert.match(mobile, /processing_failed/);
   assert.match(mobile, /isCacheGenerationActive/);
-  assert.match(mobile, /still processing/);
+  assert.match(mobile, /still processing/i);
 });

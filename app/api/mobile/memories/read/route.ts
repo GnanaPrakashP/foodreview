@@ -23,6 +23,10 @@ function boundedSyncLimit(value: string | null) {
   return Math.min(Math.max(Number.isFinite(parsed) ? Math.floor(parsed) : 200, 1), 500);
 }
 
+function validTimestamp(value: string | null) {
+  return value && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 function changeCursor(value: string | null) {
   if (!value || !/^\d{1,19}$/.test(value)) return null;
   const normalized = value.replace(/^0+(?=\d)/, "");
@@ -164,6 +168,99 @@ export async function GET(req: NextRequest) {
       return privateJson({
         ...await signMemoryPhotoPayload(payload, roomId),
         nextCursor: opaqueMemoryCursor(payload.nextCursor),
+      });
+    }
+
+    if (action === "chatAnchor") {
+      const rawLastReadAt = req.nextUrl.searchParams.get("lastReadAt");
+      const lastReadAt = rawLastReadAt
+        ? validTimestamp(rawLastReadAt)
+        : "1970-01-01T00:00:00.000Z";
+      if (!lastReadAt) {
+        return privateJson({ error: "Invalid read position" }, { status: 400 });
+      }
+      const beforeLimit = boundedLimit(
+        req.nextUrl.searchParams.get("beforeLimit"),
+        12
+      );
+      const afterLimit = boundedLimit(
+        req.nextUrl.searchParams.get("afterLimit"),
+        24
+      );
+      const { data: anchor, error: anchorError } = await supabase
+        .from("shared_memory_messages")
+        .select("id, created_at")
+        .eq("room_id", roomId)
+        .gt("created_at", lastReadAt)
+        .neq("author_name", actor.actorName)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (anchorError) throw anchorError;
+      if (!anchor) {
+        return privateJson({
+          anchorMessageId: null,
+          hasNewer: false,
+          latestMessageId: null,
+          messages: [],
+          nextCursor: null,
+          photos: [],
+          profiles: [],
+          replyMessages: [],
+          totalUnreadCount: 0
+        });
+      }
+
+      const tieSafeAfterFilter =
+        `created_at.gt.${anchor.created_at},and(created_at.eq.${anchor.created_at},id.gt.${anchor.id})`;
+      const [newerResult, latestResult, unreadResult] = await Promise.all([
+        supabase
+          .from("shared_memory_messages")
+          .select("id, created_at")
+          .eq("room_id", roomId)
+          .or(tieSafeAfterFilter)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(afterLimit + 1),
+        supabase
+          .from("shared_memory_messages")
+          .select("id")
+          .eq("room_id", roomId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("shared_memory_messages")
+          .select("id", { count: "exact", head: true })
+          .eq("room_id", roomId)
+          .gt("created_at", lastReadAt)
+          .neq("author_name", actor.actorName)
+      ]);
+      if (newerResult.error) throw newerResult.error;
+      if (latestResult.error) throw latestResult.error;
+      if (unreadResult.error) throw unreadResult.error;
+      const newer = newerResult.data ?? [];
+      const boundary = newer.length > afterLimit ? newer[afterLimit] : null;
+      const selectedNewerCount = Math.min(newer.length, afterLimit);
+      const { data, error } = await supabase.rpc("shared_memory_chat_page_v2", {
+        p_before_created_at: boundary?.created_at ?? null,
+        p_before_message_id: boundary?.id ?? null,
+        p_limit: Math.min(beforeLimit + 1 + selectedNewerCount, 50),
+        p_room_id: roomId
+      });
+      if (error) throw error;
+      const payload = data && typeof data === "object" && !Array.isArray(data)
+        ? data as JsonRecord
+        : {};
+      return privateJson({
+        ...await signMemoryPhotoPayload(payload, roomId),
+        anchorMessageId: anchor.id,
+        hasNewer: Boolean(boundary),
+        latestMessageId: latestResult.data?.id ?? null,
+        nextCursor: opaqueMemoryCursor(payload.nextCursor),
+        totalUnreadCount: unreadResult.count ?? 0
       });
     }
 

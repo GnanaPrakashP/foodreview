@@ -195,13 +195,20 @@ test("profile-only lifecycle selector preserves cold production default", () => 
 test("profile-only Chat renderer preserves the vendored production default", () => {
   assert.deepEqual(
     [...loadChatRenderer().MEMORY_ROOM_CHAT_RENDERER_CANDIDATES],
-    ["vendor", "lite-flatlist", "lite-flashlist"]
+    ["vendor", "lite-flatlist", "lite-flashlist", "native-recycler"]
   );
   assert.equal(
     loadChatRenderer({
       EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "lite-flatlist"
     }).MEMORY_ROOM_CHAT_RENDERER,
     "vendor"
+  );
+  assert.equal(
+    loadChatRenderer({
+      EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "native-recycler",
+      EXPO_PUBLIC_PERFORMANCE_PROFILE: "1"
+    }).MEMORY_ROOM_CHAT_NATIVE_RENDERER,
+    true
   );
   assert.equal(
     loadChatRenderer({
@@ -602,14 +609,14 @@ test("profile hooks preserve one-press-one-transition and end at the target usab
   assert.match(jankHarness, /room_exit_plus_60s/);
 });
 
-test("physical accessibility fixes distinguish rooms, size tabs, and preserve gallery access", () => {
+test("physical room fixes distinguish rooms, preserve compact tabs, and preserve gallery access", () => {
   assert.match(
     profileScreen,
     /accessibilityLabel=\{`Open \$\{memory\.title \|\| "memory"\} room/
   );
   assert.doesNotMatch(profileScreen, /accessibilityLabel="Open memory room"/);
-  assert.match(roomScreen, /ROOM_HEADER_EXPANDED_HEIGHT\s*=\s*190/);
-  assert.match(roomScreen, /modeButton:\s*\{[\s\S]*?minHeight:\s*52/);
+  assert.match(roomScreen, /ROOM_HEADER_EXPANDED_HEIGHT\s*=\s*183/);
+  assert.match(roomScreen, /modeButton:\s*\{[\s\S]*?minHeight:\s*34/);
 
   const deniedState = cameraScreen.match(
     /if \(cameraPermission\.denied\) \{[\s\S]*?\n  \}\n\n  return \(/

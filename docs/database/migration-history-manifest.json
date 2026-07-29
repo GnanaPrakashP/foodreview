@@ -2961,7 +2961,27 @@
       "sizeBytes": 8606,
       "sourceRoot": "supabase/migrations",
       "version": "202607270001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "mark_shared_memory_read_v1",
+        "shared_memory_reads"
+      ],
+      "description": "shared_memory_monotonic_reads",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202607290001_shared_memory_monotonic_reads.sql",
+      "objectCategories": [
+        "functions",
+        "memory"
+      ],
+      "sha256": "6ac15e7a4a6965dddc7ead35fe1771089716cf3002014f2d915ae63573bb99f7",
+      "sizeBytes": 1673,
+      "sourceRoot": "supabase/migrations",
+      "version": "202607290001"
     }
   ],
-  "currentCanonicalMigrations": 89
+  "currentCanonicalMigrations": 90
 }

@@ -1,7 +1,8 @@
 export const MEMORY_ROOM_CHAT_RENDERER_CANDIDATES = [
   "vendor",
   "lite-flatlist",
-  "lite-flashlist"
+  "lite-flashlist",
+  "native-recycler"
 ] as const;
 
 export type MemoryRoomChatRendererCandidate =
@@ -24,3 +25,6 @@ export const MEMORY_ROOM_CHAT_RENDERER_CODE =
 
 export const MEMORY_ROOM_CHAT_LITE_RENDERER =
   MEMORY_ROOM_CHAT_RENDERER !== "vendor";
+
+export const MEMORY_ROOM_CHAT_NATIVE_RENDERER =
+  MEMORY_ROOM_CHAT_RENDERER === "native-recycler";

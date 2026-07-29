@@ -220,9 +220,51 @@ test("row diagnostics and the physical validator cannot hide a missed first tap"
   assert.doesNotMatch(androidRuntimeValidation, /retryable rapid send button/);
 });
 
+test("physical initial-anchor validation hard-fails any first-frame pixel movement", () => {
+  assert.match(
+    androidRuntimeValidation,
+    /\["anchor", "exit", "full", "journey", "media", "stale", "tail"\]/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /scenario === "anchor"[\s\S]*app:assembleRelease/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /-Pandroid\.enableMinifyInReleaseBuilds=true/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /CHAT_ROW_LAYOUT_CHANGED"\)\.length,\s*0/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /movementThresholdPhysicalPixels: 0/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /observationWindowMs: 750/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /exact50_cold_first_open_from_table_keyboard_closed/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /exact8_cold_first_open_from_table_keyboard_closed/
+  );
+  assert.match(
+    androidRuntimeValidation,
+    /createAnchorContactSheet\(\)/
+  );
+});
+
 test("active inverted data is newest-first at its final index before first render", () => {
   assert.match(screen, /return -compareMemoryMessages\(a\.value, b\.value\)/);
-  assert.match(screen, /placementIndex: index/);
+  assert.match(screen, /const placementIndexByRowKeyRef = useRef\(new Map<string, number>\(\)\)/);
+  assert.match(screen, /displayChatMessages\.map\(\(chatMessage, index\) => \[String\(chatMessage\._id\), index\]\)/);
+  assert.match(screen, /renderIndex=\{placementIndex\}/);
+  assert.doesNotMatch(screen, /placementIndex: index/);
   assert.match(
     screen,
     /maintainVisibleContentPosition: chatMainPreserveHistoryViewport\s*\?\s*CHAT_MAIN_SCROLL_POSITION_CONFIG\s*:\s*undefined/
@@ -280,26 +322,33 @@ test("optimistic cache insertion precedes persistence and transport confirmation
     /export function useAddMemoryMessageMutation[\s\S]*?export function useDismissFailedMemoryMessage/
   )?.[0] ?? "";
   assert.ok(messageMutation);
-  assert.ok(
-    messageMutation.indexOf('recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED"') <
-      messageMutation.indexOf("await saveOfflineMemoryOutboxMessage")
+  assert.match(messageMutation, /onMutate: \(input\) => \{/);
+  assert.match(
+    messageMutation,
+    /queryClient\.setQueryData<MemoryRoom>[\s\S]*?recordMemoryChatPlacement\("REACT_QUERY_COMMIT"[\s\S]*?const outboxWrite = saveOfflineMemoryOutboxMessage/
   );
-  assert.ok(
-    messageMutation.indexOf('recordMemoryChatPlacement("OPTIMISTIC_ENTITY_INSERTED"') <
-      messageMutation.indexOf('recordMemoryChatPlacement("HTTP_CONFIRMED"')
+  assert.doesNotMatch(
+    messageMutation.match(/onMutate: \(input\) => \{[\s\S]*?\n    onError:/)?.[0] ?? "",
+    /await saveOfflineMemoryOutboxMessage/
   );
+  assert.match(messageMutation, /recordMemoryChatPlacement\("HTTP_STARTED"/);
+  assert.match(messageMutation, /recordMemoryChatPlacement\("HTTP_CONFIRMED"/);
 });
 
 test("stale refresh cannot replay a foreground-owned durable outbox row", () => {
   assert.match(
     hooks,
-    /beginForegroundMemoryMessageSend\(clientId\)[\s\S]*?await saveOfflineMemoryOutboxMessage\(clientId, optimisticMessage\)/
+    /beginForegroundMemoryMessageSend\(clientId\)[\s\S]*?const outboxWrite = saveOfflineMemoryOutboxMessage\(clientId, optimisticMessage\)/
   );
   assert.match(
     memoryService,
     /message\.deliveryStatus === "pending"[\s\S]*?!isForegroundMemoryMessageSend\(message\.clientId\)/
   );
   assert.match(hooks, /commitWrite\.then\([\s\S]*?endForegroundMemoryMessageSend/);
+  assert.doesNotMatch(
+    hooks.match(/onMutate: \(input\) => \{[\s\S]*?\n    onError:/)?.[0] ?? "",
+    /endForegroundMemoryMessageSend/
+  );
 });
 
 test("rapid text confirmations cannot overlap a media outbox SQLite transaction", () => {

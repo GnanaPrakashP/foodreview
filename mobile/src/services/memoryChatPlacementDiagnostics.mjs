@@ -1,6 +1,17 @@
 const EVENT_NAMES = new Set([
+  "NATIVE_SUBMIT",
+  "JS_SUBMIT_RECEIVED",
+  "PAYLOAD_CAPTURED",
+  "INPUT_CLEARED",
+  "OPTIMISTIC_ENTITY_CREATED",
   "SEND_PRESS",
   "OPTIMISTIC_ENTITY_INSERTED",
+  "REACT_QUERY_COMMIT",
+  "ROW_MODEL_INSERTED",
+  "LIST_DATA_COMMIT",
+  "ROW_FIRST_LAYOUT",
+  "HTTP_STARTED",
+  "SQLITE_STARTED",
   "LIST_DATA_RECEIVED",
   "ROW_RENDERED",
   "ROW_MOUNTED",
@@ -15,27 +26,44 @@ const EVENT_NAMES = new Set([
   "REALTIME_CONFIRMED",
   "ROW_STATUS_UPDATED",
   "STALE_REFRESH_REQUESTED",
-  "STALE_REFRESH_RESOLVED"
+  "STALE_REFRESH_RESOLVED",
+  "CHAT_GEOMETRY_MODEL_READY",
+  "CHAT_LIST_FIRST_LAYOUT",
+  "CHAT_COMPOSER_FIRST_LAYOUT",
+  "CHAT_ROW_FIRST_LAYOUT",
+  "CHAT_ROW_LAYOUT_CHANGED",
+  "CHAT_TEXT_MEASUREMENT_RECEIVED",
+  "CHAT_GEOMETRY_MISMATCH",
+  "CHAT_SCROLL_COMMAND"
 ]);
 
 const NUMERIC_FIELDS = new Set([
   "bottomClearance",
   "composerHeight",
+  "composerModelHeight",
   "contentHeight",
   "contentOffset",
+  "affectedRows",
+  "durationMs",
   "eventTimestamp",
+  "fontScale",
   "framesToStable",
   "keyboardInset",
+  "layoutGeneration",
+  "lineCount",
+  "pixelRatio",
   "renderIndex",
   "rowBottom",
   "rowHeight",
   "rowTop",
+  "safeAreaInset",
   "viewportHeight"
 ]);
 
 const STRING_FIELDS = new Set([
   "clientId",
   "deliveryStatus",
+  "rowKey",
   "scrollCommandSource"
 ]);
 
@@ -66,6 +94,16 @@ function safeString(value) {
 
 function safeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function monotonicNow() {
+  if (
+    typeof performance !== "undefined" &&
+    typeof performance.now === "function"
+  ) {
+    return performance.now();
+  }
+  return Date.now();
 }
 
 function sanitizeDetails(details) {
@@ -134,6 +172,10 @@ export function configureMemoryChatPlacementDiagnostics(options = {}) {
   eventSink = typeof options.sink === "function" ? options.sink : null;
 }
 
+export function memoryChatPlacementDiagnosticsEnabled() {
+  return environmentEnabled();
+}
+
 export function resetMemoryChatPlacementDiagnostics() {
   activeClientId = null;
   sharedContext = {};
@@ -157,7 +199,7 @@ export function recordMemoryChatPlacement(name, details = {}) {
     ...sharedContext,
     ...sanitized,
     clientId: clientId ?? undefined,
-    eventTimestamp: safeNumber(details.eventTimestamp) ?? Date.now(),
+    eventTimestamp: safeNumber(details.eventTimestamp) ?? monotonicNow(),
     name
   };
   appendLifecycle(event);

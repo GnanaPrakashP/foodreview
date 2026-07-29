@@ -1,0 +1,62 @@
+services:
+  - type: worker
+    name: circlebites-media-worker
+    runtime: docker
+    region: singapore
+    plan: starter
+    numInstances: 2
+    dockerContext: .
+    dockerfilePath: ./Dockerfile.media-worker
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: APP_MIGRATION_HEAD
+        value: "202607270001"
+      - key: APP_RELEASE
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MEDIA_WORKER_SECRET
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0.1"
+      - key: MEDIA_WORKER_CONCURRENCY
+        value: "2"
+      - key: MEDIA_WORKER_BATCH_LIMIT
+        value: "4"
+      - key: MEDIA_WORKER_INTERVAL_MS
+        value: "5000"
+      - key: MEDIA_WORKER_LEASE_SECONDS
+        value: "300"
+      - key: MEDIA_WORKER_HEARTBEAT_MS
+        value: "30000"
+      - key: MEDIA_WORKER_CLEANUP_EVERY
+        value: "12"
+      - key: MEDIA_WORKER_REQUEST_TIMEOUT_MS
+        value: "360000"
+      - key: MEDIA_WORKER_FFMPEG_TIMEOUT_MS
+        value: "240000"
+      - key: MEDIA_WORKER_FFPROBE_TIMEOUT_MS
+        value: "30000"
+      - key: MEDIA_WORKER_DOWNLOAD_TIMEOUT_MS
+        value: "120000"
+      - key: MEDIA_WORKER_UPLOAD_TIMEOUT_MS
+        value: "120000"
+      - key: MEDIA_WORKER_MAX_TEMP_BYTES
+        value: "536870912"
+      - key: MEDIA_WORKER_MAX_ATTEMPTS
+        value: "5"
+      - key: MEDIA_WORKER_RETRY_BASE_SECONDS
+        value: "30"
+      - key: MEDIA_WORKER_RETRY_MAX_SECONDS
+        value: "3600"
