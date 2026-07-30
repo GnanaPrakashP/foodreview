@@ -4,7 +4,7 @@ services:
     runtime: docker
     region: singapore
     plan: starter
-    numInstances: 2
+    numInstances: 1
     dockerContext: .
     dockerfilePath: ./Dockerfile.media-worker
     autoDeployTrigger: checksPass

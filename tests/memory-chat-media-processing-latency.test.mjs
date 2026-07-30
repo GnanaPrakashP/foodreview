@@ -99,7 +99,7 @@ test("media processing keeps truthful states and retry requeues the same asset w
   assert.match(retryRoute, /job\.failure_class === "retryable"/);
   assert.match(retryRoute, /requeue_media_processing_job/);
   assert.match(blueprint, /type: worker/);
-  assert.match(blueprint, /numInstances: 2/);
+  assert.match(blueprint, /numInstances: 1/);
   assert.match(blueprint, /SUPABASE_SERVICE_ROLE_KEY[\s\S]*?sync: false/);
 });
 

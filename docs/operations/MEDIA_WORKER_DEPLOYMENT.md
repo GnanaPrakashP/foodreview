@@ -35,10 +35,13 @@ request lifetime and must keep polling independently of user traffic.
 `APP_MIGRATION_HEAD` is non-secret and is pinned in the Blueprint. Update it
 whenever a newer production migration becomes the release head.
 
-The Blueprint creates two Singapore worker instances. Each process generates a
-unique worker ID, uses atomic database claims, sends lease heartbeats, and
-honours a five-minute graceful shutdown window. Automatic deployment is gated
-on repository checks.
+The Blueprint starts with one Singapore worker instance to keep the initial
+hosting cost bounded. The process generates a unique worker ID, uses atomic
+database claims, sends lease heartbeats, and honours a five-minute graceful
+shutdown window. This has no instance-level redundancy; scale to two instances
+only after queue/CPU/memory evidence justifies the additional cost and then run
+the documented two-replica termination test. Automatic deployment is gated on
+repository checks.
 
 ## Release and verification
 

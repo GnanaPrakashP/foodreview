@@ -1273,6 +1273,15 @@ running. The stale head comparison was a metadata defect, but the independent
 Render worker outage remains a critical hosted blocker until the worker is
 deployed and its heartbeat and queue drain are observed.
 
+Cost-topology follow-up on 2026-07-31: the active Blueprint now starts with one
+Starter worker instead of two. This deliberately bounds the initial hosting
+cost while retaining atomic claims, leases, heartbeat and bounded in-process
+concurrency, but it provides no instance-level redundancy. Scaling back to two
+requires queue/CPU/memory evidence and the documented two-replica termination
+test; this cost correction does not close any hosted acceptance blocker.
+Focused media/worker contracts pass 16/16, Memory hardening passes 106/106,
+root typecheck passes and `git diff --check` is clean.
+
 Scoped verification passes: media-worker plus focused latency/state tests
 16/16, rapid-send 14/14, Memory hardening 105/105, and combined
 journey/Phase-4/release-profile 85/85. Root and mobile typechecks, zero-error
