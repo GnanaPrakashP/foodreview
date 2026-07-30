@@ -45,7 +45,6 @@ export type MemoryRoomResourceCounter =
   | "MemoryRoomMountedChatRows"
   | "MemoryRoomMountedChatTextRows"
   | "MemoryRoomMountedChatVisualRows"
-  | "MemoryRoomMountedChatShells"
   | "MemoryRoomMountedDishRows"
   | "MemoryRoomMountedMediaTiles";
 
@@ -259,27 +258,6 @@ export function recordMemoryRoomCacheProfileSnapshot(
   }
 }
 
-export function recordMemoryRoomChatLifecycleCandidate(candidateCode: number) {
-  if (!traceAvailable()) return;
-  const value = Math.max(0, Math.floor(candidateCode));
-  if (androidTrace) {
-    androidTrace.setMemoryRoomTraceCounter(
-      "MemoryRoomChatLifecycleCandidate",
-      value
-    );
-  } else {
-    Systrace.counterEvent("MemoryRoomChatLifecycleCandidate", value);
-  }
-  // Re-emit the live ownership snapshot at each measured transition. A warm
-  // candidate may retain its host for the entire trace, so mount-only counter
-  // events would otherwise be absent even though the native resources exist.
-  for (const [name, count] of resourceCounters.entries()) {
-    const normalized = Math.max(0, count);
-    if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, normalized);
-    else Systrace.counterEvent(name, normalized);
-  }
-}
-
 export type MemoryRoomNativeChatMetrics = {
   activations: number;
   attachedCells: number;
@@ -332,6 +310,14 @@ export function recordMemoryRoomChatRendererCandidate(candidateCode: number) {
     );
   } else {
     Systrace.counterEvent("MemoryRoomChatRendererCandidate", value);
+  }
+  // Re-emit the live ownership snapshot at each measured transition. Chat is
+  // retained for the whole room visit, so mount-only counter events would
+  // otherwise be absent from a trace even though the native resources exist.
+  for (const [name, count] of resourceCounters.entries()) {
+    const normalized = Math.max(0, count);
+    if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, normalized);
+    else Systrace.counterEvent(name, normalized);
   }
 }
 

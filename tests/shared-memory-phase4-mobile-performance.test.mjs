@@ -6,10 +6,6 @@ const memoryRoomScreen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
 const profileScreen = readFileSync("mobile/app/(tabs)/profile.tsx", "utf8");
 const notificationsScreen = readFileSync("mobile/app/notifications.tsx", "utf8");
 const memoryRoomController = readFileSync("mobile/src/features/memories/room/useMemoryRoomController.ts", "utf8");
-const memoryRoomChatLifecycle = readFileSync(
-  "mobile/src/performance/memoryRoomChatLifecycle.ts",
-  "utf8"
-);
 const vendoredBubble = readFileSync("mobile/src/vendor/reactNativeChat/Bubble/index.tsx", "utf8");
 const vendoredChat = readFileSync("mobile/src/vendor/reactNativeChat/Chat/index.tsx", "utf8");
 const vendoredChatTypes = readFileSync("mobile/src/vendor/reactNativeChat/Chat/types.ts", "utf8");
@@ -73,18 +69,24 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   }
 
   const chatMainBody = memoryRoomScreen.match(/<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/)?.[0] ?? "";
-  // The initial window is now computed rather than literal, because entering
-  // on an unread anchor has to render down to that anchor before it can be
-  // scrolled to. It stays bounded by the named constants at both ends.
+  // The initial window is computed, not literal, because entering on an unread
+  // anchor has to render down to that anchor before it can be scrolled to. It
+  // stays bounded by the named constants at both ends — a far-back divider
+  // withholds the rows newer than it rather than growing the first commit, so
+  // the render count is driven by the plan's own index either way.
   assert.match(chatMainBody, /initialNumToRender: unreadAnchorPlan\.initialRenderCount/);
   assert.match(
     memoryRoomScreen,
-    /Math\.max\(CHAT_MAIN_INITIAL_RENDER_COUNT, anchorIndex \+ 2\)/
+    /Math\.max\(CHAT_MAIN_INITIAL_RENDER_COUNT, index \+ 2\)/
   );
   assert.match(
     memoryRoomScreen,
     /anchorIndex \+ 2 <= CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT/
   );
+  // Withheld rows are restored by scrolling toward the present, and the
+  // boundary is a row key so arrivals at index 0 cannot slide it.
+  assert.match(memoryRoomScreen, /const \[chatWindowHeadKey, setChatWindowHeadKey\]/);
+  assert.match(memoryRoomScreen, /CHAT_MAIN_ANCHOR_WINDOW_LEAD_ROWS/);
   assert.match(chatMainBody, /maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH/);
   assert.match(chatMainBody, /windowSize: CHAT_MAIN_WINDOW_SIZE/);
   assert.match(chatMainBody, /updateCellsBatchingPeriod: 50/);
@@ -97,7 +99,7 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   assert.match(vendoredChatTypes, /initiallyInitialized\?: boolean/);
   assert.doesNotMatch(memoryRoomScreen, /MemoryChatInstantPreview|chatListMounted|setChatListMounted/);
   assert.doesNotMatch(memoryRoomScreen, /startTransition/);
-  assert.match(memoryRoomScreen, /\{nativeRendererWaiting \? \(/);
+  assert.match(memoryRoomScreen, /\{unreadAnchorPending \? \(/);
   assert.match(
     memoryRoomScreen,
     /\) : nativeRendererActive \? \(\s*<>\s*<NativeMemoryChatList/
@@ -229,10 +231,13 @@ test("media viewer mounts from a concrete selection so a stale index cannot flas
   assert.match(memoryRoomScreen, /useState\(selection\?\.index \?\? 0\)/);
 });
 
-test("phase 4 production default unmounts inactive heavy tabs", () => {
+test("phase 4 retains only Chat and still unmounts the other inactive tabs", () => {
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
-  assert.match(memoryRoomChatLifecycle, /const profileEnabled = process\.env\.EXPO_PUBLIC_PERFORMANCE_PROFILE === "1"/);
-  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
+  // Chat is carried for the room visit; Table, Media and Dishes are not.
+  assert.match(
+    memoryRoomScreen,
+    /tab === "chat"\s*\n\s*\? chatWarmReady \|\| paneTabMode === "chat"\s*\n\s*: paneTabMode === tab/
+  );
   assert.match(roomPaneBody, /if \(!mounted\) return null/);
   assert.match(roomPaneBody, /styles\.roomPagerPage/);
   assert.doesNotMatch(roomPaneBody, /lazy|hasMounted|shouldPrewarm|Reanimated\.View/);
@@ -294,7 +299,6 @@ test("production defaults to selected-only native ownership", () => {
   assert.match(requestRoomModeBody, /setPaneTabMode\(nextTabMode\)/);
   assert.doesNotMatch(requestRoomModeBody, /setTimeout/);
   assert.doesNotMatch(memoryRoomScreen, /RoomPaneMountHintContext/);
-  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
   assert.match(roomPaneBody, /if \(!mounted\) return null/);
   assert.match(roomPaneBody, /styles\.roomPagerPage/);
   assert.doesNotMatch(roomPaneBody, /hasMounted|shouldPrewarm|withTiming|Reanimated\.View/);
@@ -347,13 +351,15 @@ test("room exit destroys profile-only retained panes and defers pending read per
   )?.[0] ?? "";
 
   assert.match(roomPaneBody, /if \(!mounted\) return null/);
-  assert.match(memoryRoomChatLifecycle, /export function exitMemoryRoomPaneTransition/);
-  assert.match(memoryRoomChatLifecycle, /mounted: \[\]/);
+  // Route teardown is the ownership boundary now that nothing coordinates a
+  // staged transition: exiting destroys whatever is mounted, including the
+  // retained Chat pane.
+  assert.match(memoryRoomScreen, /beginMemoryRoomExitTrace\(\);/);
   assert.match(
     memoryRoomScreen,
-    /MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE !== "warm-bounded"[\s\S]*?MEMORY_ROOM_CHAT_WARM_DELAY_MS/
+    /if \(chatWarmReady \|\| !room\.data\) return undefined;[\s\S]*?MEMORY_ROOM_CHAT_WARM_DELAY_MS/
   );
-  assert.doesNotMatch(memoryRoomScreen, /chatWarmed|markPanesWarm|warm=\{/);
+  assert.doesNotMatch(memoryRoomScreen, /markPanesWarm|warm=\{/);
   assert.match(pendingReadCleanup, /InteractionManager\.runAfterInteractions/);
   assert.doesNotMatch(pendingReadCleanup, /markRead\.mutate\(undefined\)/);
 });
@@ -676,7 +682,6 @@ test("phase 6 production default mounts chat only while selected and renders tim
   )?.[0] ?? "";
   const roomPaneBody = memoryRoomScreen.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.doesNotMatch(memoryRoomScreen, /setChatPreloaded|panesPreloaded/);
-  assert.match(memoryRoomChatLifecycle, /:\s*"cold";/);
   assert.match(memoryRoomScreen, /active=\{visiblePaneTabMode === "chat"\}/);
   assert.match(memoryRoomScreen, /mounted=\{paneMounted\("chat"\)\}/);
   assert.match(roomPaneBody, /if \(!mounted\) return null/);

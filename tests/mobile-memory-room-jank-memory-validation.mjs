@@ -12,7 +12,7 @@ const serial = process.env.ANDROID_SERIAL ?? "ZA223JVWG7";
 const packageName = process.env.ANDROID_APP_PACKAGE ?? "com.circlebites.mobile.dev";
 const roomTitle = process.env.MEMORY_RELEASE_ROOM_TITLE ?? "Release jank fixture";
 const lifecycleCandidate =
-  process.env.MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE ?? "unknown";
+  "retained-chat";
 const chatRendererCandidate =
   process.env.MEMORY_ROOM_CHAT_RENDERER_CANDIDATE ?? "unknown";
 const artifactDir = process.env.MEMORY_RELEASE_ARTIFACT_DIR ??

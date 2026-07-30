@@ -244,15 +244,17 @@ test("notifications patch their pages and have no duplicate interval polling", (
   assert.doesNotMatch(notifications, /invalidateQueries/);
 });
 
-test("Memory releases inactive panes and realtime deltas avoid immediate reloads", () => {
+test("Memory retains only Chat, releases the rest, and realtime deltas avoid immediate reloads", () => {
   const room = source("mobile/app/memories/[id].tsx");
-  const lifecycle = source("mobile/src/performance/memoryRoomChatLifecycle.ts");
   const memories = source("mobile/src/hooks/useMemories.ts");
   const pane = room.match(/function RoomPane\([\s\S]*?\nfunction PaneReveal/)?.[0] ?? "";
   assert.match(pane, /if \(!mounted\) return null/);
   assert.doesNotMatch(pane, /hasMounted|shouldPrewarm/);
-  assert.match(lifecycle, /const profileEnabled = process\.env\.EXPO_PUBLIC_PERFORMANCE_PROFILE === "1"/);
-  assert.match(lifecycle, /:\s*"cold";/);
+  // Chat alone is carried across a switch; the other panes still unmount.
+  assert.match(
+    room,
+    /tab === "chat"\s*\n\s*\? chatWarmReady \|\| paneTabMode === "chat"\s*\n\s*: paneTabMode === tab/
+  );
   assert.doesNotMatch(room, /panesPreloaded|setChatPreloaded/);
   assert.match(memories, /REALTIME_FALLBACK_RECONCILE_DELAY_MS = 10_000/);
   assert.match(memories, /REALTIME_SUMMARY_RECONCILE_DELAY_MS = 2_000/);

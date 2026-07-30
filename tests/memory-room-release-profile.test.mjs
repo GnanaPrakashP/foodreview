@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import vm from "node:vm";
@@ -24,37 +24,6 @@ function loadScrollState() {
   })(module, module.exports, () => {
     throw new Error("scroll state has no runtime imports");
   });
-  return module.exports;
-}
-
-function loadChatLifecycle(environment = {}) {
-  const { outputText } = ts.transpileModule(
-    source("mobile/src/performance/memoryRoomChatLifecycle.ts"),
-    {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2022
-      }
-    }
-  );
-  const module = { exports: {} };
-  vm.runInNewContext(`(function(module, exports, require, process) {${outputText}\n})`, {
-    module
-  })(
-    module,
-    module.exports,
-    (specifier) => {
-      // The renderer selector is the one legitimate runtime dependency: the
-      // retained-native-host flag is the conjunction of both selectors, so it
-      // has to read the renderer's resolved value rather than re-parse the
-      // env var and drift from it. Everything else still has to be absent.
-      if (specifier === "@/performance/memoryRoomChatRenderer") {
-        return loadChatRenderer(environment);
-      }
-      throw new Error(`chat lifecycle has no runtime imports: ${specifier}`);
-    },
-    { env: environment }
-  );
   return module.exports;
 }
 
@@ -128,7 +97,6 @@ const roomScreen = source("mobile/app/memories/[id].tsx");
 const releaseProfile = source("mobile/src/performance/memoryRoomReleaseProfile.ts");
 const jankHarness = source("tests/mobile-memory-room-jank-memory-validation.mjs");
 const releaseFixture = source("tests/mobile-memory-room-release-fixture.mjs");
-const chatLifecycle = source("mobile/src/performance/memoryRoomChatLifecycle.ts");
 const chatRenderer = source("mobile/src/performance/memoryRoomChatRenderer.ts");
 const chatRowModel = source("mobile/src/features/memories/chat/memoryChatRowModel.ts");
 const nativeChatInput = source("mobile/modules/keyboard-inset/android/src/main/java/expo/modules/keyboardinset/NativeChatInputView.kt");
@@ -178,25 +146,37 @@ test("pane ownership remains explicit, inaccessible and non-interactive while hi
   assert.match(roomScreen, /captureMemoryRoomScrollOffset\(scrollSessionRef\.current, "chat", offset\)/);
 });
 
-test("profile-only lifecycle selector preserves cold production default", () => {
-  assert.deepEqual(
-    [...loadChatLifecycle().MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATES],
-    ["cold", "retained-shell", "warm-bounded", "precreate"]
+test("Chat is retained for the room visit and every other pane is not", () => {
+  // One lifecycle, not a selector. Chat is the only pane worth carrying: it
+  // rebuilt ~291 native views per switch, where Table/Media/Dishes are small
+  // enough that their cold mount is imperceptible.
+  assert.match(
+    roomScreen,
+    /const paneMounted = \(tab: RoomTabMode\) => \(\s*\n\s*tab === "chat"\s*\n\s*\? chatWarmReady \|\| paneTabMode === "chat"\s*\n\s*: paneTabMode === tab/
   );
-  assert.equal(
-    loadChatLifecycle({
-      EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE: "warm-bounded"
-    }).MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE,
-    "cold"
+  // Warmed late so the room's opening frames stay clear of it.
+  assert.match(
+    roomScreen,
+    /if \(chatWarmReady \|\| !room\.data\) return undefined;[\s\S]*?InteractionManager\.runAfterInteractions\([\s\S]*?MEMORY_ROOM_CHAT_WARM_DELAY_MS/
   );
-  assert.equal(
-    loadChatLifecycle({
-      EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE: "warm-bounded",
-      EXPO_PUBLIC_PERFORMANCE_PROFILE: "1"
-    }).MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE,
-    "warm-bounded"
+  // The room id is the ownership boundary: a retained host must not cross it.
+  assert.match(roomScreen, /setChatWarmReady\(paneTabMode === "chat"\);/);
+});
+
+test("a retained but inactive Chat pane holds no interactive ownership", () => {
+  // Retention makes this mandatory rather than optional: a mounted pane that
+  // is not the active tab must not keep IME focus, a reply target, a selection
+  // or an open reaction picker.
+  assert.match(
+    roomScreen,
+    /if \(mode === "chat"\) return;\s*\n\s*void messageInputRef\.current\?\.blur\(\)/
   );
-  assert.match(chatLifecycle, /: "cold";/);
+  // Read position may only advance from the ACTIVE pane's viewport, or a
+  // retained pane laid out behind another tab would mark messages read.
+  assert.match(
+    roomScreen,
+    /const handleChatMainViewableItems = useStableHandler\([\s\S]*?if \(!active\) return;/
+  );
 });
 
 test("profile-only Chat renderer preserves the vendored production default", () => {
@@ -419,59 +399,21 @@ test("lite list path is viewport bounded and mounts one screen-level action laye
   assert.match(roomScreen, /row\.deliveryState === "failed"/);
 });
 
-test("precreate coordinator supersedes stale work and never exposes two interactive panes", () => {
-  const lifecycle = loadChatLifecycle();
-  let state = lifecycle.createMemoryRoomPaneTransitionState("overview");
-  state = lifecycle.prepareMemoryRoomPaneTransition(state, "chat");
-  const staleGeneration = state.generation;
-  assert.equal(state.interactive, null);
-  assert.deepEqual([...state.mounted], ["overview", "chat"]);
-
-  state = lifecycle.prepareMemoryRoomPaneTransition(state, "dishes");
-  const finalGeneration = state.generation;
-  assert.ok(finalGeneration > staleGeneration);
-  assert.equal(
-    lifecycle.commitPreparedMemoryRoomPaneTransition(state, staleGeneration),
-    state
-  );
-
-  state = lifecycle.commitPreparedMemoryRoomPaneTransition(state, finalGeneration);
-  assert.equal(state.visible, "dishes");
-  assert.equal(state.interactive, "dishes");
-  assert.equal(
-    [state.interactive].filter((tab) => state.mounted.includes(tab)).length,
-    1
-  );
-  assert.equal(lifecycle.settleMemoryRoomPaneTransition(state, staleGeneration), state);
-  state = lifecycle.settleMemoryRoomPaneTransition(state, finalGeneration);
-  assert.deepEqual([...state.mounted], ["dishes"]);
+test("no pane-transition coordinator survives to reintroduce a second path", () => {
+  // The precreate coordinator and the retained-shell placeholder were both
+  // rejected experiments. They are gone rather than dormant, so nothing can
+  // mount two panes as interactive or select a lifecycle at runtime.
+  assert.doesNotMatch(roomScreen, /precreate|MemoryChatRetainedShell|profilePaneTransition/);
+  assert.doesNotMatch(roomScreen, /MEMORY_ROOM_CHAT_LIFECYCLE/);
+  assert.equal(existsSync("mobile/src/performance/memoryRoomChatLifecycle.ts"), false);
 });
 
-test("transition exit and background reset leave one consistent ownership state", () => {
-  const lifecycle = loadChatLifecycle();
-  const preparing = lifecycle.prepareMemoryRoomPaneTransition(
-    lifecycle.createMemoryRoomPaneTransitionState("chat"),
-    "media"
-  );
-  const exited = lifecycle.exitMemoryRoomPaneTransition(preparing);
-  assert.equal(exited.phase, "exited");
-  assert.equal(exited.interactive, null);
-  assert.deepEqual([...exited.mounted], []);
-  assert.equal(
-    lifecycle.commitPreparedMemoryRoomPaneTransition(exited, preparing.generation),
-    exited
-  );
-
-  const reset = lifecycle.resetMemoryRoomPaneTransition(preparing, "overview");
-  assert.equal(reset.interactive, "overview");
-  assert.equal(reset.visible, "overview");
-  assert.deepEqual([...reset.mounted], ["overview"]);
-});
-
-test("bounded warm Chat has one host, releases focus and owns no inactive player", () => {
+test("the retained Chat host is one host, releases focus and owns no inactive player", () => {
   assert.match(roomScreen, /MemoryRoomMountedChatHosts/);
   assert.match(roomScreen, /MemoryRoomMountedChatInputs/);
-  assert.match(roomScreen, /MemoryRoomMountedChatShells/);
+  // No shell counter: the content-free placeholder was a rejected candidate
+  // and the retained pane keeps its real content instead.
+  assert.doesNotMatch(roomScreen, /MemoryRoomMountedChatShells/);
   assert.match(roomScreen, /active\s*\?\s*<ChatMainAudioMessage[\s\S]*?: null/);
   assert.match(roomScreen, /editable=\{active\}/);
   assert.match(roomScreen, /messageInputRef\.current\?\.blur\(\)/);

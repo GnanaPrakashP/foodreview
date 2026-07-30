@@ -184,9 +184,16 @@ test("read acknowledgements are monotonic and opening Chat does not mark latest"
     screen,
     /if \(!nearBottomRef\.current\) return;\s*markLatestRoomRead\(\);/
   );
+  // Near-bottom must NOT mark the room read. It is the position the list lands
+  // in whenever an unread anchor cannot be applied, so marking there declared
+  // every unread message read on entry having shown a viewport of them.
   assert.match(
     screen,
-    /if \(isNearBottom && !MEMORY_ROOM_CHAT_NATIVE_RENDERER\) \{\s*markLatestRoomRead\(\);/
+    /function handleChatNearBottomChange\(isNearBottom: boolean\) \{\s*\n\s*nearBottomRef\.current = isNearBottom;/
+  );
+  assert.doesNotMatch(
+    screen,
+    /isNearBottom &&[\s\S]{0,80}markLatestRoomRead\(\)/
   );
 });
 
@@ -198,19 +205,19 @@ test("unsupported rich rows and missing native registration fall back safely", (
     screen,
     /MEMORY_ROOM_CHAT_NATIVE_RENDERER[\s\S]*nativeMemoryChatListAvailable[\s\S]*litePrototypeSupported/
   );
-  assert.match(screen, /nativeAnchorFailed/);
+  assert.match(screen, /unreadAnchorLookupFailed/);
 });
 
 // ---------------------------------------------------------------------------
 // Retained host + recycled rows.
 //
-// The two prior experiments each measured one half of this: `warm-bounded` kept
-// a vendored tree alive, and `native-recycler` recycled rows inside a host that
+// The two prior experiments each measured one half of this: retention kept a
+// vendored tree alive, and `native-recycler` recycled rows inside a host that
 // was destroyed on every exit — which is why its cross-activation pooled and
-// recycled counters stayed at zero. These cover the composition.
+// recycled counters stayed at zero. Retention is now the single production
+// lifecycle, so the composition holds for whichever renderer is selected.
 // ---------------------------------------------------------------------------
 
-const lifecycle = source("mobile/src/performance/memoryRoomChatLifecycle.ts");
 const releaseProfile = source(
   "mobile/src/performance/memoryRoomReleaseProfile.ts"
 );
@@ -218,17 +225,15 @@ const resumeState = source(
   "mobile/modules/memory-chat-list/android/src/main/java/expo/modules/memorychatlist/NativeMemoryChatRevealState.kt"
 );
 
-test("the retained-native-host combination requires BOTH profile selectors", () => {
+test("retention is the single lifecycle, with no selector left to choose another", () => {
   assert.match(
-    lifecycle,
-    /MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST\s*=\s*\n?\s*MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&\s*\n?\s*MEMORY_ROOM_CHAT_RENDERER === "native-recycler"/
+    screen,
+    /tab === "chat"\s*\n\s*\? chatWarmReady \|\| paneTabMode === "chat"\s*\n\s*: paneTabMode === tab/
   );
-  // Both selectors already refuse to leave the profile build, so the combined
-  // flag cannot reach production without them.
-  assert.match(
-    lifecycle,
-    /profileEnabled &&[\s\S]*requestedCandidate as MemoryRoomChatLifecycleCandidate\s*\n?\s*:\s*"cold"/
-  );
+  assert.doesNotMatch(screen, /MEMORY_ROOM_CHAT_LIFECYCLE|precreate|MemoryChatRetainedShell/);
+  // The renderer selector survives and is still profile-only; the lifecycle
+  // selector does not exist at all.
+  assert.match(screen, /MEMORY_ROOM_CHAT_NATIVE_RENDERER/);
 });
 
 test("a retained host resumes instead of re-running the reveal handshake", () => {
@@ -313,14 +318,13 @@ test("a resume closes the Chat transition spans like a cold reveal does", () => 
   assert.match(screen, /"native_chat_resumed"/);
 });
 
-test("the retained native host reads live rows rather than the frozen projection", () => {
-  // `warm-bounded` freezes the projection for the vendored tree. The recycler
-  // renders live `liteRows`, so freezing would leave visible rows that no
-  // lookup could resolve into a message.
-  assert.match(
-    screen,
-    /MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&\s*\n?\s*!MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST\s*\n?\s*\? retainedChatMessagesRef\.current\.messages/
-  );
+test("the retained host reads live rows rather than a frozen projection", () => {
+  // The rejected warm-bounded candidate froze the projection while inactive. A
+  // retained pane that ignores arrivals shows stale history on return, and the
+  // row-identity lookups read the live list — so a frozen list also rendered
+  // rows that no tap could resolve.
+  assert.match(screen, /const chatMessagesForHost = projectedChatMessages;/);
+  assert.doesNotMatch(screen, /retainedChatMessagesRef/);
 });
 
 test("the first Chat entry is warmed during idle rather than paid at the tap", () => {
@@ -352,10 +356,7 @@ test("the first Chat entry is warmed during idle rather than paid at the tap", (
 test("warming is opt-in, ordering-safe and tied to the retained host", () => {
   assert.match(nativeModule, /Prop\("warmWhileInactive"\)/);
   assert.match(wrapper, /warmWhileInactive: boolean/);
-  assert.match(
-    screen,
-    /warmWhileInactive=\{MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST\}/
-  );
+  assert.match(screen, /warmWhileInactive\s*\n/);
   // Props arrive in no guaranteed order, so enabling warming after the rows
   // have landed must still start the cycle.
   assert.match(
