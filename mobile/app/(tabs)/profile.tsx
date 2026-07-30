@@ -14,7 +14,9 @@ import { AppText } from "@/components/ui/AppText";
 import { EmptyState, ErrorState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { UnderlineTabBar } from "@/components/ui/UnderlineTabBar";
-import { memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMemories";
+import { useQueryClient } from "@tanstack/react-query";
+import { memoryKeys, memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMemories";
+import { readOfflineMemoryRoom } from "@/services/memoryOfflineStore";
 import { useCurrentProfilePageQuery, useProfilePostsInfiniteQuery, useSetupCurrentProfileMutation } from "@/hooks/useProfiles";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
@@ -1016,8 +1018,25 @@ function profileListKey(item: ProfileListRow) {
 
 function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const openMemory = useCallback(() => {
     beginMemoryRoomEntry("overview");
+    // Start the local read here rather than on the room screen's first commit.
+    // useMemoryRoomQuery reports isLoading during even a warm SQLite lookup, and
+    // the room screen returns MemoryRoomLoadingShell for the whole of it — so an
+    // open mounts the shell, tears it down and mounts the real screen, with
+    // `animation: "none"` leaving nothing to cover the swap. Seeding the detail
+    // key before the route mounts removes that second mount whenever the read
+    // wins the race with navigation.
+    //
+    // Only ever seeds a HIT. Caching a null would make room.data null on the
+    // screen, which renders "Could not load memory" instead of the cold-load
+    // skeleton the miss path is supposed to show.
+    void readOfflineMemoryRoom(memory.id)
+      .then((cached) => {
+        if (cached) queryClient.setQueryData(memoryKeys.detail(memory.id), cached);
+      })
+      .catch(() => {});
     if (!memoryRoomJourneyDiagnosticsEnabled()) {
       router.push({ pathname: "/memories/[id]", params: { id: memory.id } });
       return;
@@ -1035,7 +1054,7 @@ function MemoryTimelineItem({ memory }: { memory: MemoryRoomSummary }) {
         roomSessionId: journeySession.roomSessionId
       }
     });
-  }, [memory.id, router]);
+  }, [memory.id, queryClient, router]);
 
   return (
     <MemoryRow

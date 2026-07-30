@@ -496,6 +496,26 @@ const CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT = 40;
 // the budget reveals anyway at the ordinary newest-first position rather than
 // leaving a blank surface.
 const CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES = 4;
+// Ceiling on how long Chat may hold a blank surface waiting for the server-side
+// unread anchor. useMemoryUnreadAnchorQuery carries React Query's default retry
+// policy, so a flaky network can keep it un-settled for tens of seconds — far
+// past the point where showing the ordinary newest-first entry is the better
+// answer. Same principle as CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES: bound the wait,
+// then degrade to the placement that always works.
+const CHAT_MAIN_ANCHOR_LOOKUP_MAX_WAIT_MS = 600;
+// Past CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT the entry no longer renders the
+// tail down to the divider — it WITHHOLDS the rows newer than the divider and
+// opens on a window instead. These are the rows kept immediately newer than it,
+// which fill the screen beneath the divider so a far-back entry looks identical
+// to a near one. Everything newer is restored by scrolling toward the newest
+// message, or at once from "Jump to latest".
+const CHAT_MAIN_ANCHOR_WINDOW_LEAD_ROWS = 12;
+const CHAT_MAIN_ANCHOR_WINDOW_EXPAND_ROWS = 30;
+// Deliberately much larger than the 96px near-bottom threshold. Restoring rows
+// adds them at index 0, which on an inverted list is the visual bottom, so the
+// expansion has to happen while `maintainVisibleContentPosition` is still armed
+// (that is, while NOT near-bottom) or the viewport jumps under the reader.
+const CHAT_MAIN_ANCHOR_WINDOW_EXPAND_THRESHOLD = 600;
 const CHAT_MAIN_MAX_RENDER_BATCH = 6;
 // Keep only the visible viewport plus one render-ahead viewport on either side.
 // A window of nine mounted every row in medium rooms (42 messages produced
@@ -1572,8 +1592,8 @@ function MemoryChatMainSurface({
   message,
   myDisplayName,
   myUsername,
-  nativeAnchorFailed,
-  nativeAnchorReady,
+  unreadAnchorLookupFailed,
+  unreadAnchorLookupReady,
   olderMessagesFailed,
   inputRef,
   initialScrollOffset,
@@ -1626,8 +1646,8 @@ function MemoryChatMainSurface({
   message: string;
   myDisplayName: string;
   myUsername: string;
-  nativeAnchorFailed: boolean;
-  nativeAnchorReady: boolean;
+  unreadAnchorLookupFailed: boolean;
+  unreadAnchorLookupReady: boolean;
   olderMessagesFailed: boolean;
   inputRef: RefObject<NativeChatInputHandle | null>;
   initialScrollOffset: number;
@@ -1769,6 +1789,7 @@ function MemoryChatMainSurface({
   const unreadAnchorPlanRef = useRef<{
     index: number;
     initialRenderCount: number;
+    windowHeadKey: string | null;
   } | null>(null);
   if (!unreadAnchorPlanRef.current) {
     const anchorIndex = unreadAnchorRowKey
@@ -1778,17 +1799,66 @@ function MemoryChatMainSurface({
       : -1;
     // index 0 is the newest row, which the ordinary bottom placement already
     // shows; only an anchor genuinely above the fold is worth a scroll.
-    const anchorable =
+    const withinFirstCommit =
       anchorIndex > 0 &&
       anchorIndex + 2 <= CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT;
+    // A far-back divider used to be abandoned here: the entry fell back to
+    // newest-first and the unread point was never shown, which is precisely the
+    // case a reader most needs it. Rendering down to it instead would mean an
+    // unbounded first commit. Neither is necessary — withholding the rows newer
+    // than the divider puts it near the head of the list, so the SAME bounded
+    // first commit lands on it.
+    const windowed = anchorIndex > 0 && !withinFirstCommit;
+    const windowHeadIndex = windowed
+      ? anchorIndex - CHAT_MAIN_ANCHOR_WINDOW_LEAD_ROWS
+      : 0;
+    const index = windowed
+      ? CHAT_MAIN_ANCHOR_WINDOW_LEAD_ROWS
+      : withinFirstCommit ? anchorIndex : -1;
     unreadAnchorPlanRef.current = {
-      index: anchorable ? anchorIndex : -1,
-      initialRenderCount: anchorable
-        ? Math.max(CHAT_MAIN_INITIAL_RENDER_COUNT, anchorIndex + 2)
-        : CHAT_MAIN_INITIAL_RENDER_COUNT
+      index,
+      initialRenderCount: index > 0
+        ? Math.max(CHAT_MAIN_INITIAL_RENDER_COUNT, index + 2)
+        : CHAT_MAIN_INITIAL_RENDER_COUNT,
+      // Held as a KEY, not an index. New messages arrive at index 0, so an
+      // index-based boundary would silently slide one row older per arrival.
+      windowHeadKey: windowHeadIndex > 0
+        ? String(displayChatMessages[windowHeadIndex]?._id ?? "") || null
+        : null
     };
   }
   const unreadAnchorPlan = unreadAnchorPlanRef.current;
+  const [chatWindowHeadKey, setChatWindowHeadKey] = useState<string | null>(
+    unreadAnchorPlan.windowHeadKey
+  );
+  const chatWindowHeadOffset = useMemo(() => {
+    if (!chatWindowHeadKey) return 0;
+    const index = displayChatMessages.findIndex(
+      (row) => String(row._id) === chatWindowHeadKey
+    );
+    // A vanished boundary (deleted message, replaced projection) opens the
+    // window rather than stranding the reader in a window with no exit.
+    return index > 0 ? index : 0;
+  }, [chatWindowHeadKey, displayChatMessages]);
+  const windowedChatMessages = useMemo(
+    () => (chatWindowHeadOffset > 0
+      ? displayChatMessages.slice(chatWindowHeadOffset)
+      : displayChatMessages),
+    [chatWindowHeadOffset, displayChatMessages]
+  );
+  const chatWindowActive = chatWindowHeadOffset > 0;
+  const expandChatWindow = useCallback(() => {
+    setChatWindowHeadKey((current) => {
+      if (!current) return current;
+      const index = displayChatMessages.findIndex(
+        (row) => String(row._id) === current
+      );
+      if (index <= 0) return null;
+      const nextIndex = index - CHAT_MAIN_ANCHOR_WINDOW_EXPAND_ROWS;
+      if (nextIndex <= 0) return null;
+      return String(displayChatMessages[nextIndex]?._id ?? "") || null;
+    });
+  }, [displayChatMessages]);
   const [unreadAnchorSettled, setUnreadAnchorSettled] = useState(
     unreadAnchorPlan.index < 0
   );
@@ -2277,6 +2347,13 @@ function MemoryChatMainSurface({
     chatMainFollowBottomRef.current = true;
     chatMainNearBottomRef.current = true;
     chatMainAtBottomRef.current = true;
+    // Reaching this point means the viewport is committing to the bottom, so
+    // the bottom has to be the room's newest row rather than the window's. It
+    // matters most for the user's OWN send: the new row sits above a withheld
+    // boundary, so without this the composer would clear and nothing would
+    // appear. Someone else's message does not get here — the guard above
+    // returns while the reader is parked at the divider.
+    setChatWindowHeadKey(null);
     onNearBottomChange(true);
     // Inverted data already places the immutable newest row at index 0. When
     // following the bottom, maintainVisibleContentPosition applies the single
@@ -2322,6 +2399,22 @@ function MemoryChatMainSurface({
     chatMainNearBottomRef.current = isNearBottom;
     chatMainAtBottomRef.current = isAtBottom;
     setChatMainPreserveHistoryViewport(!isNearBottom);
+    // Restore withheld rows a viewport early, so the rows land while the list
+    // is still position-maintained rather than under a reader sitting at the
+    // bottom edge. Repeated calls are cheap: expandChatWindow is a no-op once
+    // the boundary reaches index 0.
+    //
+    // Held until the anchor has settled. Restoring rows prepends them at index
+    // 0, which moves the divider's index — and the entry scroll targets that
+    // index. Expanding first would leave scrollToIndex pointing at whatever row
+    // had shifted into position 12.
+    if (
+      chatWindowActive &&
+      unreadAnchorSettled &&
+      distanceFromBottom < CHAT_MAIN_ANCHOR_WINDOW_EXPAND_THRESHOLD
+    ) {
+      expandChatWindow();
+    }
     const nextLatestVisible =
       distanceFromBottom > CHAT_LATEST_BUTTON_OFFSET_THRESHOLD;
     setChatLatestButtonVisible((current) =>
@@ -2336,12 +2429,15 @@ function MemoryChatMainSurface({
     }
   }, [
     active,
+    chatWindowActive,
     composerClearance,
+    expandChatWindow,
     journeySession,
     keyboardTopReserve,
     messageBoxHeight,
     onNearBottomChange,
-    onScrollOffsetChange
+    onScrollOffsetChange,
+    unreadAnchorSettled
   ]);
   const handleLiteChatScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -2552,17 +2648,32 @@ function MemoryChatMainSurface({
   const nativeRendererActive =
     MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
     nativeMemoryChatListAvailable &&
-    nativeAnchorReady &&
-    !nativeAnchorFailed &&
+    unreadAnchorLookupReady &&
+    !unreadAnchorLookupFailed &&
     !nativeRevealFailed &&
     litePrototypeSupported;
-  const nativeRendererWaiting =
-    MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
-    nativeMemoryChatListAvailable &&
-    !nativeAnchorReady &&
-    !nativeAnchorFailed &&
-    !nativeRevealFailed &&
-    litePrototypeSupported;
+  // Holds the list for EVERY renderer, not just the native one. The vendored
+  // surface latches its anchor plan — initialNumToRender and the single
+  // scrollToIndex — on its FIRST render and never recomputes it, so committing
+  // before the lookup settles discards the anchor permanently. Only reachable
+  // when unread exists and is absent from the local cache, so the ordinary
+  // entry still commits immediately.
+  // `unreadAnchorLookupReady` is already true whenever no lookup was needed, so
+  // this is only ever pending for the case it exists to cover: unread present
+  // and absent from the local cache. The ordinary entry still commits at once.
+  const [unreadAnchorWaitExpired, setUnreadAnchorWaitExpired] = useState(false);
+  useEffect(() => {
+    if (unreadAnchorLookupReady || unreadAnchorLookupFailed) return undefined;
+    const timer = setTimeout(
+      () => setUnreadAnchorWaitExpired(true),
+      CHAT_MAIN_ANCHOR_LOOKUP_MAX_WAIT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [unreadAnchorLookupFailed, unreadAnchorLookupReady]);
+  const unreadAnchorPending =
+    !unreadAnchorLookupReady &&
+    !unreadAnchorLookupFailed &&
+    !unreadAnchorWaitExpired;
   const liteRendererActive =
     MEMORY_ROOM_CHAT_LITE_RENDERER &&
     !MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
@@ -2729,6 +2840,10 @@ function MemoryChatMainSurface({
     chatMainFollowBottomRef.current = true;
     chatMainNearBottomRef.current = true;
     setChatLatestButtonVisible(false);
+    // Restore the whole timeline first. Scrolling to offset 0 while rows are
+    // still withheld would land on the newest row of the WINDOW, not the newest
+    // row of the room — the button would silently under-deliver.
+    setChatWindowHeadKey(null);
     listRef.current?.scrollToOffset({ animated: true, offset: 0 });
   }, [listRef]);
   const jumpNativeToLatest = useCallback(() => {
@@ -3432,7 +3547,7 @@ function MemoryChatMainSurface({
           !unreadAnchorSettled && styles.chatMainMessagesLayerAnchoring
         ]}
       >
-        {nativeRendererWaiting ? (
+        {unreadAnchorPending ? (
           <View
             accessibilityLabel="Loading unread messages"
             style={styles.chatMainMessages}
@@ -3574,7 +3689,7 @@ function MemoryChatMainSurface({
               right: styles.messageTextMine
             }
           }}
-          messages={displayChatMessages}
+          messages={windowedChatMessages}
           messagesContainerRef={listRef as RefObject<ChatMainAnimatedList<MemoryChatMainMessage>>}
           messagesContainerStyle={styles.chatMainMessages}
           onQuickReply={(replies) => {
@@ -3648,7 +3763,7 @@ function MemoryChatMainSurface({
           }}
           user={currentUser}
           />
-          {chatLatestButtonVisible && displayChatMessages.length > 0 ? (
+          {(chatLatestButtonVisible || chatWindowActive) && displayChatMessages.length > 0 ? (
             <Pressable
               accessibilityLabel={
                 unreadCount > 0
@@ -5453,6 +5568,22 @@ export default function MemoryDetailScreen() {
       if (timer) clearTimeout(timer);
     };
   }, [chatWarmReady, room.data]);
+  // The chat row projection used to run unconditionally in the render body, so
+  // every room open built the entire timeline even when the user opened Table,
+  // never touched Chat, and backed straight out. It is O(messages) and it sat
+  // directly on the open path. Arming it after the first idle keeps it off that
+  // path without moving the cost onto the Chat tap — and a tap that beats the
+  // idle callback still projects synchronously, exactly as it does today.
+  const [chatProjectionArmed, setChatProjectionArmed] = useState(
+    initialJourneyTab === "chat"
+  );
+  useEffect(() => {
+    if (chatProjectionArmed || !room.data) return undefined;
+    const task = InteractionManager.runAfterInteractions(() => {
+      setChatProjectionArmed(true);
+    });
+    return () => task.cancel();
+  }, [chatProjectionArmed, room.data]);
   useEffect(() => {
     if (
       !profilePrecreateEnabled ||
@@ -5928,9 +6059,11 @@ export default function MemoryDetailScreen() {
   // position advances from what the viewport reports, which is the same
   // contract the native renderer was designed against.
   //
-  // Reaching the newest message still marks the room fully read: that is the
-  // near-bottom path below and in handleChatNearBottomChange, and it is what
-  // stops a room from staying unread once the user has caught up.
+  // A message ARRIVING while the user is already parked at the newest row is
+  // the one case a blanket mark is honest: they are looking at it. Entry does
+  // not qualify and is handled by markVisibleRoomRead instead — nearBottomRef
+  // starts false and is only set by a real scroll event, so a fresh mount
+  // cannot reach this.
   useEffect(() => {
     if (mode !== "chat") return;
     if (!nearBottomRef.current) return;
@@ -5991,9 +6124,17 @@ export default function MemoryDetailScreen() {
 
   function handleChatNearBottomChange(isNearBottom: boolean) {
     nearBottomRef.current = isNearBottom;
-    if (isNearBottom && !MEMORY_ROOM_CHAT_NATIVE_RENDERER) {
-      markLatestRoomRead();
-    }
+    // Deliberately does NOT mark the room read. Near-bottom is the position the
+    // list LANDS in whenever an unread anchor could not be applied — no anchor
+    // in the local cache, or an anchor past the initial-render bound — so
+    // marking here declared 50 unread messages read on entry having shown ten
+    // of them. That is the same defect the comment above markLatestRoomRead
+    // describes being removed from the open path; it had simply come back
+    // through this handler.
+    //
+    // Catching up still clears the room: markVisibleRoomRead advances the read
+    // position to the newest message the viewport actually reports, so genuinely
+    // scrolling to the newest message marks it read — and only what was seen.
   }
 
   function showPeopleToast(message: string) {
@@ -6787,15 +6928,21 @@ export default function MemoryDetailScreen() {
       myUsername
     )
     : null;
-  const nativeUnreadAnchorLookupNeeded =
-    MEMORY_ROOM_CHAT_NATIVE_RENDERER &&
+  // Renderer-independent on purpose. This was gated on the native recycler,
+  // which is profile-only, so in every shipping build the bounded server-side
+  // anchor lookup — the API action, the indexed owner-scoped SQLite page and
+  // its tests — was unreachable code. Production resolved the anchor purely
+  // from `cachedUnreadAnchorId`, so an unread message older than the local
+  // cache window produced no divider and no jump at all: the room simply
+  // opened at the newest row as though nothing were unread.
+  const unreadAnchorLookupNeeded =
     Boolean(projectedRoomData) &&
     projectedUnreadCount > 0 &&
     !cachedUnreadAnchorId;
   const nativeUnreadAnchor = useMemoryUnreadAnchorQuery(
     roomId,
     projectedRoomData?.lastReadAt ?? null,
-    nativeUnreadAnchorLookupNeeded
+    unreadAnchorLookupNeeded
   );
   const projectedRoomDataWithUnreadAnchor = useMemo(
     () => projectedRoomData && nativeUnreadAnchor.data?.messages.length
@@ -6810,10 +6957,10 @@ export default function MemoryDetailScreen() {
     cachedUnreadAnchorId ??
     nativeUnreadAnchor.data?.anchorMessageId ??
     null;
-  const nativeAnchorReady =
-    !nativeUnreadAnchorLookupNeeded || nativeUnreadAnchor.isSuccess;
-  const nativeAnchorFailed =
-    nativeUnreadAnchorLookupNeeded && nativeUnreadAnchor.isError;
+  const unreadAnchorLookupReady =
+    !unreadAnchorLookupNeeded || nativeUnreadAnchor.isSuccess;
+  const unreadAnchorLookupFailed =
+    unreadAnchorLookupNeeded && nativeUnreadAnchor.isError;
   // This anchor belongs to the room-screen lifetime, not the Chat pane
   // lifetime. Chat is intentionally unmounted when inactive, so keeping the
   // ref inside Chat recreated its entire row projection after mark-read changed
@@ -6852,8 +6999,9 @@ export default function MemoryDetailScreen() {
   // the new row (and only its immediate grouping neighbour) changes identity.
   // Media, dishes, reactions, unread anchors, and history pages deliberately
   // fall back to the canonical mixed-timeline projector.
+  const chatProjectionNeeded = chatProjectionArmed || paneTabMode === "chat";
   const projectedChatMessages = useMemo(() => (
-    projectedRoomDataWithUnreadAnchor
+    chatProjectionNeeded && projectedRoomDataWithUnreadAnchor
       ? traceMemoryRoomSection(
         "MemoryRoomChatCachedMessages",
         () => productionProjectionStoreRef.current!.project({
@@ -6888,7 +7036,12 @@ export default function MemoryDetailScreen() {
         })
       )
       : []
-  ), [messageReactions, myUsername, projectedRoomDataWithUnreadAnchor]);
+  ), [
+    chatProjectionNeeded,
+    messageReactions,
+    myUsername,
+    projectedRoomDataWithUnreadAnchor
+  ]);
   const liteRowStoreRef = useRef<MemoryChatRowModelStore | null>(null);
   if (!liteRowStoreRef.current) {
     liteRowStoreRef.current = new MemoryChatRowModelStore();
@@ -7120,8 +7273,8 @@ export default function MemoryDetailScreen() {
                     message={message}
                     myDisplayName={myDisplayName}
                     myUsername={myUsername}
-                    nativeAnchorFailed={nativeAnchorFailed}
-                    nativeAnchorReady={nativeAnchorReady}
+                    unreadAnchorLookupFailed={unreadAnchorLookupFailed}
+                    unreadAnchorLookupReady={unreadAnchorLookupReady}
                     olderMessagesFailed={olderMessagesFailed}
                     selectedItemKeys={selectedItemKeys}
                     unreadCount={unreadChatCount}
