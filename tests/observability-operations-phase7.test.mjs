@@ -70,7 +70,7 @@ test("Sentry is fail-closed for production configuration and strips private cont
   const [server, mobile, next, appConfig] = await Promise.all([
     read("lib/observability/config.ts"),
     read("mobile/src/observability/mobileTelemetry.ts"),
-    read("next.config.ts"),
+    read("next.config.mjs"),
     read("mobile/app.config.js")
   ]);
   assert.match(server, /production_sentry_dsn_required/);

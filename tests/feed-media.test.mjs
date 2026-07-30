@@ -17,7 +17,7 @@ test("circle feed cards use next/image in a stable responsive media box", () => 
 });
 
 test("next image config allows Supabase originals and transformed thumbnails", () => {
-  const source = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../next.config.mjs", import.meta.url), "utf8");
 
   assert.match(source, /\/storage\/v1\/object\/public\/\*\*/);
   assert.match(source, /\/storage\/v1\/render\/image\/public\/\*\*/);
