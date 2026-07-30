@@ -1,4 +1,5 @@
 import type { MemoryRoomTabMode } from "@/features/memories/room/useMemoryRoomController";
+import { MEMORY_ROOM_CHAT_RENDERER } from "@/performance/memoryRoomChatRenderer";
 
 export const MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATES = [
   "cold",
@@ -26,6 +27,22 @@ export const MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE =
   MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATES.indexOf(
     MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE
   );
+
+/**
+ * Retained host + recycled rows — the combination neither prior experiment
+ * measured. `warm-bounded` was scored against the vendored renderer, where a
+ * retained tree is a retained cost; `native-recycler` was scored against a
+ * host that was destroyed on every exit, so its pool never survived to be
+ * reused (cross-activation pooled/recycled counters were zero throughout).
+ * Together the pool outlives the switch, which is the property that makes
+ * re-entry cheap rather than merely cheaper.
+ *
+ * Behaviour that is only correct when BOTH are on gates on this flag, so
+ * either selector alone keeps the behaviour each was measured with.
+ */
+export const MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST =
+  MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&
+  MEMORY_ROOM_CHAT_RENDERER === "native-recycler";
 
 export type MemoryRoomPaneTransitionState = {
   departing: MemoryRoomTabMode | null;

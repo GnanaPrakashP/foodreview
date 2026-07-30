@@ -1836,7 +1836,10 @@ export function useMemoryMessagePagesQuery(
     },
     initialPageParam: before ?? "",
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: false
+    enabled: false,
+    // An edge-triggered list must not silently repeat a failed request while
+    // it remains parked at the same edge. Chat exposes an explicit retry.
+    retry: false
   });
 }
 

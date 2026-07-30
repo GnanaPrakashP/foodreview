@@ -97,6 +97,7 @@ import { NativeKeyboardInsetView } from "@/components/chat/NativeKeyboardInsetVi
 import {
   NativeMemoryChatList,
   nativeMemoryChatListAvailable,
+  type NativeMemoryChatMetricsEvent,
   type NativeMemoryChatRevealEvent,
   type NativeMemoryChatScrollCommand,
   type NativeMemoryChatVisibleEvent
@@ -128,6 +129,7 @@ import {
   recordMemoryRoomCacheProfileSnapshot,
   recordMemoryRoomChatLifecycleCandidate,
   recordMemoryRoomChatRendererCandidate,
+  recordMemoryRoomNativeChatMetrics,
   recordMemoryRoomSurfaceLifecycle,
   traceMemoryRoomSection
 } from "@/performance/memoryRoomReleaseProfile";
@@ -137,6 +139,7 @@ import {
   exitMemoryRoomPaneTransition,
   MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE,
   MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE_CODE,
+  MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST,
   prepareMemoryRoomPaneTransition,
   resetMemoryRoomPaneTransition,
   settleMemoryRoomPaneTransition
@@ -162,7 +165,10 @@ import {
   Chat as ChatMain,
   Message as ChatMainMessageRow
 } from "@/vendor/reactNativeChat";
-import type { BubbleProps as ChatMainBubbleProps } from "@/vendor/reactNativeChat/Bubble";
+import type {
+  BubbleLongPressAnchor,
+  BubbleProps as ChatMainBubbleProps
+} from "@/vendor/reactNativeChat/Bubble";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
 import type { AnimatedList as ChatMainAnimatedList } from "@/vendor/reactNativeChat/MessagesContainer";
@@ -270,6 +276,15 @@ type MediaViewerState = {
 type OpenMediaHandler = (media: MemoryPhoto, group?: MemoryPhoto[]) => void;
 type ChatListScrollRef = {
   scrollToOffset: (options: { animated?: boolean; offset: number }) => void;
+  // Present on both FlatList and FlashList. Optional because the vendored
+  // container forwards whichever list engine is mounted, and the unread anchor
+  // must degrade to the existing bottom placement rather than throw.
+  scrollToIndex?: (options: {
+    animated?: boolean;
+    index: number;
+    viewOffset?: number;
+    viewPosition?: number;
+  }) => void;
 };
 type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
@@ -353,10 +368,9 @@ function createRoomColors(tokens: MemoryRoomTokens) {
 type RoomColors = ReturnType<typeof createRoomColors>;
 
 let ROOM_COLORS: RoomColors = createRoomColors(memoryRoomTokens.dark);
-// Chat bubbles: own carries the memory-room purple identity, other sits on a
-// neutral raised surface so both read clearly above the doodle wallpaper.
-let CHAT_OWN_BUBBLE_COLOR = ROOM_COLORS.sentBubble;
-let CHAT_OTHER_BUBBLE_COLOR = ROOM_COLORS.receivedBubble;
+// Bubble styles read sentBubble/receivedBubble directly from the current
+// createStyles argument; keeping a second mutable color source can apply the
+// previous room's occasion theme.
 const CHAT_ACCENTS = avatarAccents;
 const CHAT_COMPOSER_LAYOUT_CONTRACT = memoryChatComposerLayoutContract(Platform.OS);
 const COMPOSER_TOP_GAP = 8;
@@ -456,12 +470,32 @@ const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
 const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
-// A normal phone viewport contains at most eight compact chat rows. Rendering
-// 18 rows during every Chat activation made Fabric create roughly two
-// viewports of text/gesture/native-input work before the first usable frame.
-// Older rows are still present in the same logical timeline and mount through
-// FlatList's ordinary render-ahead window.
-const CHAT_MAIN_INITIAL_RENDER_COUNT = 8;
+// One viewport, not half of one. The previous value of 8 was chosen on the
+// assumption that "a normal phone viewport contains at most eight compact chat
+// rows"; three independent physical measurements contradict it — the vendored
+// list settles at 29 mounted rows with windowSize 3 (~10 per viewport), the
+// FlashList candidate's settled viewport was visually full with 12 rows, and
+// the native recycler reported 15 visible rows per check. Rendering 8 therefore
+// guaranteed a structurally incomplete first frame that maxToRenderPerBatch
+// then filled in 6-row steps at least updateCellsBatchingPeriod apart, which is
+// the staged "rows appearing in batches" the room has always shown.
+//
+// This is only affordable because the row itself got cheaper: the vendored
+// bottom metadata subtree (two Views, Time's View/Text plus a dayjs format, and
+// the tick Views/Texts) is no longer built per row now that renderBubble
+// returns null for it. Treat the pair as one change when A/B-ing on device.
+const CHAT_MAIN_INITIAL_RENDER_COUNT = 14;
+// Anchoring on the first unread has to render down to the anchor before
+// scrollToIndex can measure it, but a room that has been unread for weeks must
+// not turn that into an unbounded first commit. Past this many rows the entry
+// keeps the ordinary newest-first placement and the unread divider is reached
+// by scrolling, exactly as it is today.
+const CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT = 40;
+// Bounded reveal, mirroring the reviewed native contract: hold the list
+// transparent until the requested anchor is applied, then reveal. Exhausting
+// the budget reveals anyway at the ordinary newest-first position rather than
+// leaving a blank surface.
+const CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES = 4;
 const CHAT_MAIN_MAX_RENDER_BATCH = 6;
 // Keep only the visible viewport plus one render-ahead viewport on either side.
 // A window of nine mounted every row in medium rooms (42 messages produced
@@ -481,6 +515,13 @@ const CHAT_TEXT_SEND_MIC_GUARD_MS = 3_000;
 // animated placement after the optimistic row was already mounted.
 const CHAT_MAIN_SCROLL_POSITION_CONFIG = {
   minIndexForVisible: 0
+};
+// Module-level: VirtualizedList rejects a viewabilityConfig whose identity
+// changes after mount. minimumViewTime keeps a fast fling from reporting every
+// row it passes as read.
+const CHAT_MAIN_VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 60,
+  minimumViewTime: 150
 };
 const CHAT_TIMELINE_PROGRESSIVE_INITIAL_ROWS = 18;
 const CHAT_TIMELINE_INITIAL_RENDER_COUNT = 18;
@@ -1503,6 +1544,11 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
   );
 });
 
+// Module-level so the identity is stable: passing an inline arrow to the
+// vendored Bubble would churn its `props` object (and therefore its memoised
+// render callbacks) on every row render.
+const renderNoBubbleBottom = () => null;
+
 const LiteChatSystemRow = memo(function LiteChatSystemRow({
   row
 }: {
@@ -1528,6 +1574,7 @@ function MemoryChatMainSurface({
   myUsername,
   nativeAnchorFailed,
   nativeAnchorReady,
+  olderMessagesFailed,
   inputRef,
   initialScrollOffset,
   initialUnreadMessageId,
@@ -1539,6 +1586,7 @@ function MemoryChatMainSurface({
   editableSelectedMessage,
   editingMessage,
   selectedItemKeys,
+  unreadCount,
   onBeginSelection,
   onCancelFailedMessage,
   onCancelReply,
@@ -1580,6 +1628,7 @@ function MemoryChatMainSurface({
   myUsername: string;
   nativeAnchorFailed: boolean;
   nativeAnchorReady: boolean;
+  olderMessagesFailed: boolean;
   inputRef: RefObject<NativeChatInputHandle | null>;
   initialScrollOffset: number;
   initialUnreadMessageId: string | null;
@@ -1591,6 +1640,7 @@ function MemoryChatMainSurface({
   editableSelectedMessage: MemoryMessage | null;
   editingMessage: MemoryMessage | null;
   selectedItemKeys: string[];
+  unreadCount: number;
   onBeginSelection: (target: MemoryActionTarget) => void;
   onCancelFailedMessage: (message: MemoryMessage) => void;
   onCancelReply: () => void;
@@ -1703,7 +1753,120 @@ function MemoryChatMainSurface({
     ? String(latestChatMessage.user?._id ?? "") === String(currentUser._id ?? "")
     : false;
   const selectionMode = selectedItemKeys.length > 0;
+  // ---- First-unread anchoring --------------------------------------------
+  // The unread divider has always been spliced into this timeline, but nothing
+  // on this renderer ever moved the viewport to it: the vendored list is a
+  // plain inverted AnimatedFlatList with no getItemLayout, so an index can only
+  // be scrolled to once its row has actually been rendered. The plan is latched
+  // on the surface's FIRST render — the surface remounts on every activation,
+  // so that is exactly "on entry" — and drives three things: how many rows the
+  // first commit builds, the one scroll command, and the reveal gate that keeps
+  // the correction off screen. Everything degrades to today's newest-first
+  // placement if any part of it does not resolve.
+  const unreadAnchorRowKey = initialUnreadMessageId
+    ? `unread:${initialUnreadMessageId}`
+    : null;
+  const unreadAnchorPlanRef = useRef<{
+    index: number;
+    initialRenderCount: number;
+  } | null>(null);
+  if (!unreadAnchorPlanRef.current) {
+    const anchorIndex = unreadAnchorRowKey
+      ? displayChatMessages.findIndex(
+        (row) => String(row._id) === unreadAnchorRowKey
+      )
+      : -1;
+    // index 0 is the newest row, which the ordinary bottom placement already
+    // shows; only an anchor genuinely above the fold is worth a scroll.
+    const anchorable =
+      anchorIndex > 0 &&
+      anchorIndex + 2 <= CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT;
+    unreadAnchorPlanRef.current = {
+      index: anchorable ? anchorIndex : -1,
+      initialRenderCount: anchorable
+        ? Math.max(CHAT_MAIN_INITIAL_RENDER_COUNT, anchorIndex + 2)
+        : CHAT_MAIN_INITIAL_RENDER_COUNT
+    };
+  }
+  const unreadAnchorPlan = unreadAnchorPlanRef.current;
+  const [unreadAnchorSettled, setUnreadAnchorSettled] = useState(
+    unreadAnchorPlan.index < 0
+  );
+  // VirtualizedList does NOT throw when the target index is past the highest
+  // measured frame and no getItemLayout exists — it calls onScrollToIndexFailed
+  // synchronously and returns. So failure has to be observed through this flag,
+  // read immediately after the call, not through a try/catch.
+  const unreadAnchorFailedRef = useRef(false);
+  const handleChatMainScrollToIndexFailed = useCallback(() => {
+    unreadAnchorFailedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (unreadAnchorSettled || !active || unreadAnchorPlan.index < 0) {
+      return undefined;
+    }
+    let frame: number | null = null;
+    let attempt = 0;
+    const reveal = () => {
+      frame = null;
+      setUnreadAnchorSettled(true);
+    };
+    const applyAnchor = () => {
+      attempt += 1;
+      const list = listRef.current;
+      if (!list?.scrollToIndex) {
+        reveal();
+        return;
+      }
+      unreadAnchorFailedRef.current = false;
+      list.scrollToIndex({
+        animated: false,
+        index: unreadAnchorPlan.index,
+        // Inverted list: scroll-space "start" is the visual BOTTOM, so
+        // viewPosition 1 places the divider at the visual top of the viewport
+        // with the unread messages below it.
+        viewPosition: 1
+      });
+      // Rows from the first commit are still being measured for a frame or
+      // two. Retry within a bounded budget, then reveal at the ordinary
+      // newest-first position rather than leaving a blank surface.
+      if (
+        unreadAnchorFailedRef.current &&
+        attempt < CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES
+      ) {
+        frame = requestAnimationFrame(applyAnchor);
+        return;
+      }
+      reveal();
+    };
+    frame = requestAnimationFrame(applyAnchor);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [active, listRef, unreadAnchorPlan, unreadAnchorSettled]);
+  // Advance the read position from what the viewport actually shows — the same
+  // contract the native renderer reports through onVisibleRangeChanged, and the
+  // reason opening Chat no longer has to mark the whole room read. The callback
+  // and the config must both keep a stable identity: VirtualizedList refuses a
+  // changed onViewableItemsChanged/viewabilityConfig after mount.
+  const handleChatMainViewableItems = useStableHandler((info: {
+    viewableItems: Array<{ item?: MemoryChatMainMessage | null }>;
+  }) => {
+    if (!active) return;
+    let newestVisibleMs = 0;
+    let newestVisibleAt: string | null = null;
+    for (const entry of info.viewableItems) {
+      const createdAt = entry.item?.memoryMessage?.createdAt;
+      if (!createdAt) continue;
+      const createdAtMs = Date.parse(createdAt);
+      if (Number.isFinite(createdAtMs) && createdAtMs > newestVisibleMs) {
+        newestVisibleMs = createdAtMs;
+        newestVisibleAt = createdAt;
+      }
+    }
+    if (newestVisibleAt) onVisibleReadPosition(newestVisibleAt);
+  });
   const [chatMainPreserveHistoryViewport, setChatMainPreserveHistoryViewport] = useState(false);
+  const [chatLatestButtonVisible, setChatLatestButtonVisible] = useState(false);
   const chatMainNearBottomRef = useRef(true);
   const chatMainAtBottomRef = useRef(true);
   const chatMainFollowBottomRef = useRef(true);
@@ -2159,6 +2322,10 @@ function MemoryChatMainSurface({
     chatMainNearBottomRef.current = isNearBottom;
     chatMainAtBottomRef.current = isAtBottom;
     setChatMainPreserveHistoryViewport(!isNearBottom);
+    const nextLatestVisible =
+      distanceFromBottom > CHAT_LATEST_BUTTON_OFFSET_THRESHOLD;
+    setChatLatestButtonVisible((current) =>
+      current === nextLatestVisible ? current : nextLatestVisible);
     onNearBottomChange(isNearBottom);
     // A native scroll event only records intent. It must never issue another
     // scroll command or it will fight the user's drag on the next frame.
@@ -2253,20 +2420,44 @@ function MemoryChatMainSurface({
     if (!loadingOlderMessages) olderPageRequestGuardRef.current.inFlight = false;
   }, [loadingOlderMessages]);
 
-  const requestOlderPage = useCallback(() => {
+  const runOlderPageRequest = useCallback((explicitRetry: boolean) => {
     // A hidden prewarmed list can report an end-reached event while it lays out.
     // Only the active inverted list may extend the history window.
-    if (!active || !canLoadOlderMessages || loadingOlderMessages) return;
+    // After a failed edge request, remain idle while the list is still parked
+    // at that edge. Only the visible retry control may start another request.
+    if (
+      !active ||
+      !canLoadOlderMessages ||
+      loadingOlderMessages ||
+      (olderMessagesFailed && !explicitRetry)
+    ) {
+      return;
+    }
     const now = Date.now();
     if (
       olderPageRequestGuardRef.current.inFlight ||
-      now - olderPageRequestGuardRef.current.lastRequestAt < CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS
+      (
+        !explicitRetry &&
+        now - olderPageRequestGuardRef.current.lastRequestAt < CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS
+      )
     ) {
       return;
     }
     olderPageRequestGuardRef.current = { inFlight: true, lastRequestAt: now };
     onLoadOlderMessages();
-  }, [active, canLoadOlderMessages, loadingOlderMessages, onLoadOlderMessages]);
+  }, [
+    active,
+    canLoadOlderMessages,
+    loadingOlderMessages,
+    olderMessagesFailed,
+    onLoadOlderMessages
+  ]);
+  const requestOlderPage = useCallback(() => {
+    runOlderPageRequest(false);
+  }, [runOlderPageRequest]);
+  const retryOlderPage = useCallback(() => {
+    runOlderPageRequest(true);
+  }, [runOlderPageRequest]);
 
   const buildMenuActions = useCallback((target: MemoryChatMainMessage | undefined): MemoryChatMenuAction[] => {
     const actionTarget = memoryChatActionTarget(target);
@@ -2479,6 +2670,12 @@ function MemoryChatMainSurface({
     },
     [onNearBottomChange, onVisibleReadPosition]
   );
+  const handleNativeMetrics = useCallback(
+    (event: NativeSyntheticEvent<NativeMemoryChatMetricsEvent>) => {
+      recordMemoryRoomNativeChatMetrics(event.nativeEvent);
+    },
+    []
+  );
   const handleNativeRevealState = useCallback(
     (event: NativeSyntheticEvent<NativeMemoryChatRevealEvent>) => {
       const state = event.nativeEvent;
@@ -2486,13 +2683,23 @@ function MemoryChatMainSurface({
         setNativeRevealFailed(true);
         return;
       }
-      if (state.event !== "NATIVE_CHAT_REVEALED") return;
+      // A resume is a completed Chat entry just as much as a cold reveal is;
+      // the transition spans have to close on either, or a retained host would
+      // read as a transition that never finished.
+      if (
+        state.event !== "NATIVE_CHAT_REVEALED" &&
+        state.event !== "NATIVE_CHAT_RESUMED"
+      ) {
+        return;
+      }
       markMemoryRoomTransitionFirstFrame("chat");
       markMemoryRoomSurfaceUsable("chat");
       markMemoryRoomTransitionSettled("chat");
       recordMemoryRoomJourney(journeySession, "TAB_USABLE", {
         screenState: "usable",
-        surface: "native_chat_revealed",
+        surface: state.event === "NATIVE_CHAT_RESUMED"
+          ? "native_chat_resumed"
+          : "native_chat_revealed",
         tab: "chat"
       });
     },
@@ -2516,6 +2723,14 @@ function MemoryChatMainSurface({
     ) => openLiteMessageMenu(key, anchor),
     [openLiteMessageMenu]
   );
+  // Inverted list: offset 0 IS the newest message. Returning to it also hands
+  // bottom-follow back, so an arriving message keeps the viewport pinned.
+  const jumpChatToLatest = useCallback(() => {
+    chatMainFollowBottomRef.current = true;
+    chatMainNearBottomRef.current = true;
+    setChatLatestButtonVisible(false);
+    listRef.current?.scrollToOffset({ animated: true, offset: 0 });
+  }, [listRef]);
   const jumpNativeToLatest = useCallback(() => {
     setNativeScrollCommand((current) => ({
       generation: current.generation + 1,
@@ -2800,6 +3015,38 @@ function MemoryChatMainSurface({
     );
   }, [journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
 
+  // The long-press action menu used to arrive through the vendor's reactions
+  // wrapper, so `reactions.isEnabled` had to stay true purely to get a
+  // long-press handler even though emoji reactions are off. That put a
+  // useState, a second useState for the anchor, a useSharedValue, an
+  // useAnimatedStyle, an extra Reanimated view and a per-row menu publisher on
+  // EVERY mounted row. The vendor's default bubble path already exposes
+  // onLongPressMessage and now reports the bubble's window geometry with it, so
+  // the menu opens from there and rows stop paying for the wrapper.
+  const handleLongPressMessage = useCallback((
+    _context: unknown,
+    message?: MemoryChatMainMessage,
+    anchor?: BubbleLongPressAnchor
+  ) => {
+    if (selectionMode || !message || !anchor) return;
+    const actions = buildMenuActions(message);
+    if (actions.length === 0) return;
+    setMemoryChatMenuRequest({
+      actions,
+      bubbleHeight: anchor.bubbleHeight,
+      bubbleWidth: anchor.bubbleWidth,
+      emojis: [],
+      onDismiss: () => setMemoryChatMenuRequest(null),
+      onSelect: () => undefined,
+      pageX: anchor.pageX,
+      pageY: anchor.pageY,
+      position: String(message.user?._id ?? "") === String(currentUser._id ?? "")
+        ? "right"
+        : "left",
+      showEmojis: false
+    });
+  }, [buildMenuActions, currentUser._id, selectionMode]);
+
   // Message group tails are rendered by renderCustomView so they live INSIDE
   // the vendor's animated wrapper and scale together with the bubble on
   // long-press.
@@ -2818,13 +3065,22 @@ function MemoryChatMainSurface({
             showTail && styles.chatMainBubbleRightWithTail
           ]
         }}
-        bottomContainerStyle={{
-          left: styles.chatMainBubbleBottomHidden,
-          right: styles.chatMainBubbleBottomHidden
-        }}
+        // This surface owns its own timestamp and delivery marks: the time is
+        // pinned inside the message text by ChatMainStableMessageText, and a
+        // failed send gets the recovery strip in renderMessage. The vendor's
+        // bottom metadata row was therefore built on EVERY mounted row and then
+        // clipped to height 0 — two wrapper Views, Time's View/Text plus a
+        // dayjs format per render, and the tick View/Texts, all invisible.
+        // Returning null here means the vendor skips the container entirely
+        // (see Bubble's renderBubbleBody), so the row stops paying for it.
+        // Do not reintroduce a hidden bottomContainerStyle: it would make any
+        // future bottom content silently invisible instead of merely unstyled.
+        renderTime={renderNoBubbleBottom}
+        renderTicks={renderNoBubbleBottom}
+        onLongPressMessage={handleLongPressMessage}
       />
     );
-  }, []);
+  }, [handleLongPressMessage]);
 
   const renderMessageText = useCallback((textProps: ChatMainMessageTextProps<MemoryChatMainMessage>) => {
     const { currentMessage, position = "left" } = textProps;
@@ -2974,11 +3230,15 @@ function MemoryChatMainSurface({
   }, []);
 
   const renderSystemMessage = useCallback((props: { currentMessage?: MemoryChatMainMessage }) => {
-    if (props.currentMessage?.kind === "unread") return <UnreadDivider />;
+    if (props.currentMessage?.kind === "unread") {
+      // UnreadDivider has always accepted onJumpToLatest and never been given
+      // one here, so the "Latest" escape from the divider was dead.
+      return <UnreadDivider onJumpToLatest={jumpChatToLatest} />;
+    }
     const dish = props.currentMessage?.memoryDish;
     if (!dish) return null;
     return <MemoryChatMainDishSystemMessage dish={dish} onOpenDish={onOpenDish} />;
-  }, [onOpenDish]);
+  }, [jumpChatToLatest, onOpenDish]);
 
   const renderReactionPicker = useCallback((pickerProps: ChatMainReactionPickerProps<MemoryChatMainMessage>) => {
     if (selectionMode) return null;
@@ -3055,10 +3315,27 @@ function MemoryChatMainSurface({
     () => renderComposerListSpacer(),
     [renderComposerListSpacer]
   );
-  const liteListFooter = useMemo(
-    () => renderKeyboardTopSpacer(),
-    [renderKeyboardTopSpacer]
-  );
+  const liteListFooter = useMemo(() => (
+    <>
+      {renderKeyboardTopSpacer()}
+      {(canLoadOlderMessages || loadingOlderMessages || olderMessagesFailed) ? (
+        <View style={styles.invertedListEdge}>
+          <ChatHistoryHeader
+            error={olderMessagesFailed ? "history_request_failed" : undefined}
+            hasMore={canLoadOlderMessages}
+            loading={loadingOlderMessages}
+            onLoad={retryOlderPage}
+          />
+        </View>
+      ) : null}
+    </>
+  ), [
+    canLoadOlderMessages,
+    loadingOlderMessages,
+    olderMessagesFailed,
+    renderKeyboardTopSpacer,
+    retryOlderPage
+  ]);
   const liteListKeyExtractor = useCallback(
     (row: ChatRowViewModel) => row.key,
     []
@@ -3145,7 +3422,16 @@ function MemoryChatMainSurface({
 
   const surfaceInner = (
     <>
-      <View style={styles.chatMainMessagesLayer}>
+      {/* Held transparent only while an unread anchor is still being applied,
+          so the entry cannot show the newest messages and then jump to the
+          divider. With no unread anchor this is always 1 and the layer behaves
+          exactly as before. */}
+      <View
+        style={[
+          styles.chatMainMessagesLayer,
+          !unreadAnchorSettled && styles.chatMainMessagesLayerAnchoring
+        ]}
+      >
         {nativeRendererWaiting ? (
           <View
             accessibilityLabel="Loading unread messages"
@@ -3171,6 +3457,7 @@ function MemoryChatMainSurface({
               }}
               onMessagePress={(event) =>
                 handleNativeMessagePress(event.nativeEvent.key)}
+              onMetrics={handleNativeMetrics}
               onReplySwipe={(event) =>
                 replyToLiteMessage(event.nativeEvent.key)}
               onRevealStateChanged={handleNativeRevealState}
@@ -3180,6 +3467,7 @@ function MemoryChatMainSurface({
               selectedKeys={nativeSelectedRowKeys}
               style={styles.chatMainMessages}
               topClearance={CHAT_HEADER_CLEARANCE}
+              warmWhileInactive={MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST}
             />
             {!nativeNearLatest && liteRows.length > 0 ? (
               <Pressable
@@ -3199,15 +3487,29 @@ function MemoryChatMainSurface({
                 <Text style={styles.chatLatestButtonText}>Latest</Text>
               </Pressable>
             ) : null}
+            {olderMessagesFailed ? (
+              <View style={styles.chatHistoryRetryOverlay}>
+                <ChatHistoryHeader
+                  error="history_request_failed"
+                  hasMore={canLoadOlderMessages}
+                  loading={loadingOlderMessages}
+                  onLoad={retryOlderPage}
+                />
+              </View>
+            ) : null}
           </>
         ) : liteRendererActive ? liteList : (
+          <>
           <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
           disableKeyboardProvider
           initiallyInitialized
           provideSafeAreaContext={false}
           isDayAnimationEnabled={false}
-          isScrollToBottomEnabled
+          // The vendor's built-in control is not styled by this app, so it
+          // rendered its unstyled fallback: a 40x40 white circle containing the
+          // literal glyph "V". The room owns the real affordance below.
+          isScrollToBottomEnabled={false}
           isAvatarOnTop
           isUserAvatarVisible={false}
           avatarImageStyle={{ left: styles.chatMainAvatarImage }}
@@ -3220,7 +3522,10 @@ function MemoryChatMainSurface({
             contentOffset: { x: 0, y: initialScrollOffset },
             directionalLockEnabled: true,
             extraData: selectedItemKeys.join("|"),
-            initialNumToRender: CHAT_MAIN_INITIAL_RENDER_COUNT,
+            initialNumToRender: unreadAnchorPlan.initialRenderCount,
+            onScrollToIndexFailed: handleChatMainScrollToIndexFailed,
+            onViewableItemsChanged: handleChatMainViewableItems,
+            viewabilityConfig: CHAT_MAIN_VIEWABILITY_CONFIG,
             maintainVisibleContentPosition: chatMainPreserveHistoryViewport
               ? CHAT_MAIN_SCROLL_POSITION_CONFIG
               : undefined,
@@ -3247,9 +3552,10 @@ function MemoryChatMainSurface({
           }}
           loadEarlierMessagesProps={{
             isAvailable: canLoadOlderMessages,
-            isInfiniteScrollEnabled: true,
+            isInfiniteScrollEnabled: !olderMessagesFailed,
             isLoading: loadingOlderMessages,
-            onPress: requestOlderPage
+            label: olderMessagesFailed ? "Could not load earlier messages · Retry" : undefined,
+            onPress: retryOlderPage
           }}
           messageTextProps={{
             hashtag: true,
@@ -3322,10 +3628,13 @@ function MemoryChatMainSurface({
           }}
           reactions={{
             emojis: [...MEMORY_REACTION_EMOJIS],
-            // This gate owns the long-press message-options surface as well as
-            // reactions in the vendored chat. Keep options enabled even while
-            // emoji reactions remain disabled for this release.
-            isEnabled: active && MEMORY_MESSAGE_OPTIONS_ENABLED,
+            // Emoji reactions ONLY. This gate mounts the vendor's reactions
+            // wrapper on every row, so it must not be used to obtain a
+            // long-press handler — the menu comes from onLongPressMessage on
+            // the default bubble path instead. Turning emoji reactions on
+            // restores the wrapper along with its own long-press behaviour,
+            // and the menu wiring needs revisiting at that point.
+            isEnabled: active && MEMORY_REACTIONS_ENABLED,
             onReactionPress: (target, emoji) => {
               if (!MEMORY_REACTIONS_ENABLED || selectionMode) return;
               if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
@@ -3339,6 +3648,33 @@ function MemoryChatMainSurface({
           }}
           user={currentUser}
           />
+          {chatLatestButtonVisible && displayChatMessages.length > 0 ? (
+            <Pressable
+              accessibilityLabel={
+                unreadCount > 0
+                  ? `Jump to latest, ${unreadCount} unread`
+                  : "Jump to latest memory activity"
+              }
+              accessibilityRole="button"
+              onPress={jumpChatToLatest}
+              style={[
+                styles.chatLatestButton,
+                { bottom: collapsedComposerGeometry.listClearance + 12 }
+              ]}
+            >
+              <Ionicons
+                name="chevron-down"
+                size={15}
+                color={ROOM_COLORS.onCool}
+              />
+              <Text style={styles.chatLatestButtonText}>
+                {unreadCount > 0
+                  ? `${unreadCount > 99 ? "99+" : unreadCount} new`
+                  : "Latest"}
+              </Text>
+            </Pressable>
+          ) : null}
+          </>
         )}
       </View>
       <View pointerEvents="none" style={styles.chatKeyboardBridge} />
@@ -4862,13 +5198,12 @@ export default function MemoryDetailScreen() {
   }, []);
   const readMarkerRef = useRef<string | null>(null);
   const markReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nativeReadMarkerRef = useRef<string | null>(null);
-  const nativeReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nativeReadInputRef = useRef<{
+  const visibleReadMarkerRef = useRef<string | null>(null);
+  const visibleReadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleReadInputRef = useRef<{
     readAt: string;
     remainingUnreadCount: number;
   } | null>(null);
-  const chatOpenMarkedRef = useRef(false);
   const deletingItemKeysRef = useRef<Set<string>>(new Set());
   const selectedItemKeysRef = useRef<string[]>([]);
   const sendSequenceRef = useRef(0);
@@ -5516,19 +5851,19 @@ export default function MemoryDetailScreen() {
     }, 400);
   }
 
-  function markVisibleNativeRoomRead(readAt: string) {
-    if (
-      !MEMORY_ROOM_CHAT_NATIVE_RENDERER ||
-      !Number.isFinite(Date.parse(readAt))
-    ) {
-      return;
-    }
-    const previousMarkerMs = Date.parse(nativeReadMarkerRef.current ?? "");
+  // Advance the read position to the newest message the user has actually
+  // seen. This used to be reachable only from the native renderer; the vendored
+  // renderer instead marked the WHOLE room read the moment Chat was opened,
+  // which destroyed the unread anchor it had just computed and made "open the
+  // room, see where you left off" impossible on a second visit.
+  function markVisibleRoomRead(readAt: string) {
+    if (!Number.isFinite(Date.parse(readAt))) return;
+    const previousMarkerMs = Date.parse(visibleReadMarkerRef.current ?? "");
     const nextMarkerMs = Date.parse(readAt);
     if (Number.isFinite(previousMarkerMs) && previousMarkerMs >= nextMarkerMs) {
       return;
     }
-    nativeReadMarkerRef.current = readAt;
+    visibleReadMarkerRef.current = readAt;
     const currentRoom =
       queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId)) ??
       room.data;
@@ -5551,25 +5886,25 @@ export default function MemoryDetailScreen() {
         newlyVisibleIncoming
     );
     const input = { readAt, remainingUnreadCount };
-    nativeReadInputRef.current = input;
-    if (nativeReadTimeoutRef.current) clearTimeout(nativeReadTimeoutRef.current);
-    nativeReadTimeoutRef.current = setTimeout(() => {
-      nativeReadTimeoutRef.current = null;
-      nativeReadInputRef.current = null;
+    visibleReadInputRef.current = input;
+    if (visibleReadTimeoutRef.current) clearTimeout(visibleReadTimeoutRef.current);
+    visibleReadTimeoutRef.current = setTimeout(() => {
+      visibleReadTimeoutRef.current = null;
+      visibleReadInputRef.current = null;
       markRead.mutate(input, {
         onError: () => {
-          nativeReadMarkerRef.current = null;
+          visibleReadMarkerRef.current = null;
         }
       });
     }, 300);
   }
 
   useEffect(() => () => {
-    if (!nativeReadTimeoutRef.current) return;
-    clearTimeout(nativeReadTimeoutRef.current);
-    nativeReadTimeoutRef.current = null;
-    const pending = nativeReadInputRef.current;
-    nativeReadInputRef.current = null;
+    if (!visibleReadTimeoutRef.current) return;
+    clearTimeout(visibleReadTimeoutRef.current);
+    visibleReadTimeoutRef.current = null;
+    const pending = visibleReadInputRef.current;
+    visibleReadInputRef.current = null;
     if (pending) markReadMutateRef.current(pending);
   }, []);
 
@@ -5584,23 +5919,21 @@ export default function MemoryDetailScreen() {
     InteractionManager.runAfterInteractions(() => persistReadState(undefined));
   }, []);
 
-  // Opening the chat tab counts as reading the room, no matter where the list is
-  // anchored. Requiring "near bottom" here left rooms permanently unread whenever the
-  // entry anchored at the unread divider, so every entry re-anchored to stale unread.
+  // Opening Chat does NOT mark the room read any more. It used to, on the
+  // grounds that requiring "near bottom" left rooms permanently unread when the
+  // entry anchored at the unread divider — but the entry never actually
+  // anchored there on this renderer, so the rule only had the effect of
+  // erasing the unread state before it could ever be shown. The anchor is now
+  // applied on entry (unreadAnchorPlan in MemoryChatMainSurface) and the read
+  // position advances from what the viewport reports, which is the same
+  // contract the native renderer was designed against.
+  //
+  // Reaching the newest message still marks the room fully read: that is the
+  // near-bottom path below and in handleChatNearBottomChange, and it is what
+  // stops a room from staying unread once the user has caught up.
   useEffect(() => {
-    if (MEMORY_ROOM_CHAT_NATIVE_RENDERER) return;
-    if (mode !== "chat") {
-      chatOpenMarkedRef.current = false;
-      return;
-    }
-    if (chatOpenMarkedRef.current) return;
-    chatOpenMarkedRef.current = true;
-    markLatestRoomRead();
-  }, [markRead, mode, roomId]);
-
-  useEffect(() => {
-    if (MEMORY_ROOM_CHAT_NATIVE_RENDERER) return;
-    if (mode !== "chat" || !nearBottomRef.current) return;
+    if (mode !== "chat") return;
+    if (!nearBottomRef.current) return;
     markLatestRoomRead();
   }, [markRead, mode, room.data, roomId]);
 
@@ -6326,6 +6659,8 @@ export default function MemoryDetailScreen() {
   const canLoadOlderMessages = cachedHistoryMayHaveOlder && Boolean(olderMessagesCursor) && (
     !hasLoadedOlderMessagePages || Boolean(olderMessages.hasNextPage)
   );
+  const olderMessagesFailed =
+    canLoadOlderMessages && olderMessages.isFetchNextPageError;
   const loadOlderMessages = useCallback(() => {
     if (!canLoadOlderMessages || olderMessages.isFetchingNextPage) return;
     void olderMessages.fetchNextPage();
@@ -6378,7 +6713,7 @@ export default function MemoryDetailScreen() {
   const stableSendAudio = useStableHandler(sendAudioMessage);
   const stableToggleReaction = useStableHandler(toggleMessageReaction);
   const stableNearBottomChange = useStableHandler(handleChatNearBottomChange);
-  const stableVisibleReadPosition = useStableHandler(markVisibleNativeRoomRead);
+  const stableVisibleReadPosition = useStableHandler(markVisibleRoomRead);
   const captureTableScroll = useCallback((offset: number) => {
     captureMemoryRoomScrollOffset(scrollSessionRef.current, "overview", offset);
   }, []);
@@ -6397,6 +6732,12 @@ export default function MemoryDetailScreen() {
     for (const timer of placementStaleRefreshTimersRef.current) clearTimeout(timer);
     placementStaleRefreshTimersRef.current.clear();
   }, []);
+
+  // Runs after the Chat surface's first render, so that render still receives
+  // the anchor and every later remount in this room visit does not.
+  useEffect(() => {
+    if (paneTabMode === "chat") roomUnreadAnchorConsumedRef.current = true;
+  }, [paneTabMode]);
 
   useEffect(() => {
     const fixtureKinds = memoryChatPlacementFixtureKinds();
@@ -6481,6 +6822,12 @@ export default function MemoryDetailScreen() {
     id: string | null;
     roomId: string;
   } | null>(null);
+  // The anchor id lives for the whole room visit so the divider keeps its place
+  // in the timeline, but the viewport may only be MOVED to it once. Without
+  // this, leaving Chat for Media and coming back would remount the surface,
+  // re-latch the same anchor and drag the user back up to a divider they had
+  // already read past, discarding their restored scroll offset.
+  const roomUnreadAnchorConsumedRef = useRef(false);
   if (
     projectedRoomDataWithUnreadAnchor &&
     roomUnreadAnchorRef.current?.roomId !== projectedRoomDataWithUnreadAnchor.id
@@ -6489,6 +6836,7 @@ export default function MemoryDetailScreen() {
       id: resolvedUnreadAnchorId,
       roomId: projectedRoomDataWithUnreadAnchor.id
     };
+    roomUnreadAnchorConsumedRef.current = false;
   } else if (
     resolvedUnreadAnchorId &&
     roomUnreadAnchorRef.current &&
@@ -6579,8 +6927,17 @@ export default function MemoryDetailScreen() {
       roomId
     };
   }
+  // `warm-bounded` freezes the projection while Chat is inactive so a retained
+  // VENDORED tree does not re-render off-screen. The native host has no such
+  // cost — and freezing actively breaks it: the recycler renders `liteRows`,
+  // which stay live, while every lookup that resolves a tapped row
+  // (`liteMessageByKey`, `nativeSelectedRowKeys`) derives from this frozen
+  // list. A message arriving on another tab would then be visible but
+  // unactionable. Live rows are also the behaviour being tested: the point of
+  // the retained host is that the newest message is already there on return.
   const chatMessagesForHost =
-    MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded"
+    MEMORY_ROOM_CHAT_LIFECYCLE_CANDIDATE === "warm-bounded" &&
+    !MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST
       ? retainedChatMessagesRef.current.messages
       : projectedChatMessages;
   const paneMounted = (tab: RoomTabMode) => {
@@ -6750,7 +7107,11 @@ export default function MemoryDetailScreen() {
                     editingMessage={editingMessage}
                     inputRef={messageInputRef}
                     initialScrollOffset={readMemoryRoomScrollOffset(scrollSessionRef.current, "chat")}
-                    initialUnreadMessageId={roomUnreadAnchorRef.current?.id ?? null}
+                    initialUnreadMessageId={
+                      roomUnreadAnchorConsumedRef.current
+                        ? null
+                        : roomUnreadAnchorRef.current?.id ?? null
+                    }
                     journeySession={journeySession}
                     keyboardTopReserve={chatKeyboardTopReserve}
                     listRef={chatMainListRef}
@@ -6761,7 +7122,9 @@ export default function MemoryDetailScreen() {
                     myUsername={myUsername}
                     nativeAnchorFailed={nativeAnchorFailed}
                     nativeAnchorReady={nativeAnchorReady}
+                    olderMessagesFailed={olderMessagesFailed}
                     selectedItemKeys={selectedItemKeys}
+                    unreadCount={unreadChatCount}
                     onBeginSelection={stableBeginSelection}
                     onCancelEdit={stableCancelEdit}
                     onCancelFailedMessage={stableCancelFailedMessage}
@@ -7801,7 +8164,7 @@ function ChatHistoryHeader({
   if (error) {
     return (
       <Pressable accessibilityRole="button" onPress={onLoad} style={styles.timelineHistoryStatus}>
-        <Text style={styles.timelineHistoryText}>Could not load earlier messages</Text>
+        <Text style={styles.timelineHistoryText}>Could not load earlier messages · Retry</Text>
       </Pressable>
     );
   }
@@ -7819,7 +8182,10 @@ const prefetchedMemoryMediaKeys = new Set<string>();
 // Reactions are intentionally disabled until they have server authority,
 // realtime delivery and a SQLite projection. Do not present component-only
 // state as a shared room feature.
-const MEMORY_MESSAGE_OPTIONS_ENABLED = true;
+//
+// There is no longer a separate "message options" flag: the long-press menu is
+// always available and no longer rides on the reactions wrapper, so a flag that
+// existed only to keep that wrapper mounted would now be misleading.
 const MEMORY_REACTIONS_ENABLED = false;
 
 function memoryMediaCacheKey(media: MemoryPhoto) {
@@ -12403,6 +12769,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainMessagesLayer: {
     flex: 1
   },
+  chatMainMessagesLayerAnchoring: {
+    opacity: 0
+  },
   chatKeyboardBridge: {
     backgroundColor: ROOM_COLORS.panel,
     height: CHAT_KEYBOARD_BRIDGE_HEIGHT,
@@ -12700,13 +13069,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
     position: "absolute",
     right: -8,
     top: -1
-  },
-  chatMainBubbleBottomHidden: {
-    height: 0,
-    minHeight: 0,
-    overflow: "hidden",
-    paddingBottom: 0,
-    paddingHorizontal: 0
   },
   chatMainTimeLeft: {
     color: ROOM_COLORS.timestamp
@@ -13080,6 +13442,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
     color: ROOM_COLORS.coolOnContainer,
     fontSize: 12,
     lineHeight: 16
+  },
+  chatHistoryRetryOverlay: {
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: CHAT_HEADER_CLEARANCE,
+    zIndex: 6
   },
   chatMainEmpty: {
     alignItems: "center",
@@ -13663,7 +14032,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
   typingIndicatorBubble: {
     alignItems: "center",
     alignSelf: "flex-start",
-    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.receivedBubble,
     borderColor: ROOM_COLORS.border,
     borderRadius: 16,
     borderWidth: 1,
@@ -13897,7 +14266,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     maxWidth: Platform.OS === "web" ? "68%" : "73%"
   },
   textMessageBubble: {
-    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.receivedBubble,
     borderColor: ROOM_COLORS.border,
     borderRadius: 16,
     borderWidth: 1,
@@ -13911,7 +14280,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   textMessageBubbleMine: {
     alignSelf: "flex-end",
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.sentBubble,
     borderColor: ROOM_COLORS.sentBubbleBorder,
     minWidth: 64
   },
@@ -13975,13 +14344,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   dishTimelineBubbleMine: {
     alignSelf: "flex-end",
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.sentBubble,
     borderColor: ROOM_COLORS.sentBubbleBorder,
     minWidth: 230
   },
   dishTimelineBubbleOther: {
     alignSelf: "flex-start",
-    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.receivedBubble,
     borderColor: ROOM_COLORS.border,
     minWidth: 240
   },
@@ -14068,11 +14437,11 @@ function createStyles(ROOM_COLORS: RoomColors) {
     zIndex: 1
   },
   mediaMessageCardMine: {
-    backgroundColor: CHAT_OWN_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.sentBubble,
     borderColor: ROOM_COLORS.sentBubbleBorder
   },
   mediaMessageCardOther: {
-    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.receivedBubble,
     borderColor: ROOM_COLORS.border
   },
   messageMediaCardFill: {
@@ -14226,7 +14595,7 @@ function createStyles(ROOM_COLORS: RoomColors) {
     maxWidth: "100%"
   },
   mediaSenderHeader: {
-    backgroundColor: CHAT_OTHER_BUBBLE_COLOR,
+    backgroundColor: ROOM_COLORS.receivedBubble,
     paddingBottom: 7,
     paddingHorizontal: 12,
     paddingTop: 10,
@@ -16038,7 +16407,5 @@ function roomThemeFor(resolvedTheme: keyof typeof memoryRoomTokens, occasionType
 function applyRoomTheme(resolvedTheme: keyof typeof memoryRoomTokens, occasionType: OccasionType) {
   const theme = roomThemeFor(resolvedTheme, occasionType);
   ROOM_COLORS = theme.colors;
-  CHAT_OWN_BUBBLE_COLOR = theme.colors.sentBubble;
-  CHAT_OTHER_BUBBLE_COLOR = theme.colors.receivedBubble;
   styles = theme.styles;
 }

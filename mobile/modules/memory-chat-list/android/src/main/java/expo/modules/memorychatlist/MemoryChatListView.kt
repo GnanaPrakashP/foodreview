@@ -56,6 +56,8 @@ private const val EVENT_PRE_DRAW = "NATIVE_CHAT_PRE_DRAW"
 private const val EVENT_REVEALED = "NATIVE_CHAT_REVEALED"
 private const val EVENT_REVEAL_FALLBACK = "NATIVE_CHAT_REVEAL_FALLBACK"
 private const val EVENT_REVEAL_FAILED = "NATIVE_CHAT_REVEAL_FAILED"
+private const val EVENT_RESUMED = "NATIVE_CHAT_RESUMED"
+private const val EVENT_PREPARED = "NATIVE_CHAT_PREPARED"
 
 private const val INCOMING_BUBBLE = 0xFFF7F3EC.toInt()
 private const val OUTGOING_BUBBLE = 0xFFE0F0D4.toInt()
@@ -95,9 +97,11 @@ private class VisibleRangeEvent(
   @Field val nearLatest: Boolean
 ) : Record
 private class MetricsEvent(
+  @Field val activations: Int,
   @Field val attachedCells: Int,
   @Field val boundRows: Int,
   @Field val createdCells: Int,
+  @Field val createdCellsThisActivation: Int,
   @Field val pooledCells: Int,
   @Field val recycledCells: Int,
   @Field val rowCount: Int
@@ -183,6 +187,19 @@ class MemoryChatListView(
   private var anchorGeneration = Int.MIN_VALUE
   private var pendingInitialAnchor: NativeMemoryChatAnchor? = null
   private var currentAnchor: NativeMemoryChatAnchor? = null
+  // The entry anchor is one-shot per anchor generation. Retention means a later
+  // reveal cycle can run on a host the user has already scrolled; re-applying
+  // would drag them back to a divider they read past several minutes ago.
+  private var anchorConsumed = false
+  // Set the first time the reveal gate passes — whether or not that reveal was
+  // visible — and cleared only by a real detach, the one event that actually
+  // discards the measured layout.
+  private var hasSettledLayout = false
+  // Allows the layout/anchor half of the reveal to run while Chat is inactive,
+  // so the FIRST entry is a resume too. Opt-in: it only pays off on a host that
+  // outlives the switch, and it moves real work into the room's idle window.
+  private var warmWhileInactive = false
+  private val activationMetrics = NativeMemoryChatActivationMetrics()
   private var diagnosticsEnabled = false
   private var expectedRowCount = 0
   private val revealGate = NativeMemoryChatRevealGate()
@@ -218,12 +235,42 @@ class MemoryChatListView(
   fun setActive(value: Boolean) {
     if (active == value) return
     active = value
-    if (value) {
-      if (recyclerView.alpha < 1f) beginRevealCycle()
-      postVisibility()
-    } else {
+    if (!value) {
+      // Alpha, deliberately: the tree stays attached and keeps laying out, so
+      // rows arriving on another tab are already measured when Chat returns.
+      // GONE or a detach would discard exactly what retention is buying.
       recyclerView.alpha = 0f
       cancelRevealCycle(invalidate = true)
+      return
+    }
+    activationMetrics.onActivated(adapter.createdCells)
+    val resume = nativeMemoryChatResumeDecision(
+      NativeMemoryChatResumeSnapshot(
+        adapterRows = adapter.itemCount,
+        attached = attached,
+        expectedRows = expectedRowCount,
+        hasSettledLayout = hasSettledLayout
+      )
+    )
+    if (resume == NativeMemoryChatResumeDecision.RESUME) {
+      recyclerView.alpha = 1f
+      emitRevealEvent(EVENT_RESUMED, revealGate.current())
+      postVisibility()
+      emitMetrics()
+      return
+    }
+    if (recyclerView.alpha < 1f) beginRevealCycle()
+    postVisibility()
+  }
+
+  fun setWarmWhileInactive(value: Boolean) {
+    if (warmWhileInactive == value) return
+    warmWhileInactive = value
+    // Props arrive in no guaranteed order, so this may land after the rows that
+    // would otherwise have started the cycle. Without this the host would sit
+    // un-warmed until the user tapped Chat, which is the case being removed.
+    if (value && !active && canRunRevealCycle() && !hasSettledLayout) {
+      beginRevealCycle()
     }
   }
 
@@ -255,6 +302,7 @@ class MemoryChatListView(
     if (value.generation == anchorGeneration) return
     anchorGeneration = value.generation
     currentAnchor = value
+    anchorConsumed = false
     recyclerView.alpha = 0f
     pendingInitialAnchor = value
     beginRevealCycle()
@@ -271,7 +319,11 @@ class MemoryChatListView(
       val preserve = captureVisibleAnchor()
       previousRowCount = oldCount
       expectedRowCount = rows.size
-      val hidden = recyclerView.alpha < 1f
+      // A retained host is hidden but fully built, so an update that lands
+      // while Chat is inactive takes the ordinary position policy rather than
+      // the cold reveal path. Without this a message arriving on another tab
+      // would sit below the fold when the user came back.
+      val hidden = recyclerView.alpha < 1f && !(hasSettledLayout && attached)
       val rowGeneration = if (hidden) beginRevealCycle() else {
         revealGate.nextGeneration().also { cancelRevealObservation() }
       }
@@ -313,6 +365,9 @@ class MemoryChatListView(
     recyclerView.stopScroll()
     attached = false
     recyclerView.alpha = 0f
+    // A detach is the one event that genuinely invalidates the measured tree,
+    // so the next activation has to earn its reveal again.
+    hasSettledLayout = false
     cancelRevealCycle(invalidate = true)
     super.onDetachedFromWindow()
   }
@@ -320,12 +375,21 @@ class MemoryChatListView(
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     attached = true
-    if (active && recyclerView.alpha < 1f) beginRevealCycle()
+    // Also the entry point for warming: the pane is mounted while inactive, so
+    // this is the first moment the cycle has an attached view to measure.
+    if (canRunRevealCycle() && recyclerView.alpha < 1f) beginRevealCycle()
   }
 
   private fun applyPadding() {
     recyclerView.setPadding(0, topClearancePx, 0, bottomClearancePx)
   }
+
+  /**
+   * The layout/anchor work needs an attached view, but not a visible one. When
+   * warming is on it runs while Chat is inactive and stops one step short of
+   * flipping alpha, so the first entry is a resume like every later one.
+   */
+  private fun canRunRevealCycle() = attached && (active || warmWhileInactive)
 
   private fun beginRevealCycle(): Long {
     val generation = revealGate.nextGeneration()
@@ -334,10 +398,10 @@ class MemoryChatListView(
     revealAnchorApplied = false
     revealAnchorPosition = RecyclerView.NO_POSITION
     revealFrame = 0
-    if (!active || !attached) return generation
+    if (!canRunRevealCycle()) return generation
 
     val listener = ViewTreeObserver.OnPreDrawListener {
-      if (!revealGate.isCurrent(generation) || !active || !attached) {
+      if (!revealGate.isCurrent(generation) || !canRunRevealCycle()) {
         removeRevealPreDrawListener()
         true
       } else {
@@ -371,7 +435,19 @@ class MemoryChatListView(
     if (expectedRowCount == 0) {
       revealAnchorPosition = RecyclerView.NO_POSITION
       revealAnchorApplied = true
+      anchorConsumed = true
       pendingInitialAnchor = null
+      emitRevealEvent(EVENT_ANCHOR_APPLIED, generation)
+      return true
+    }
+    if (anchorConsumed) {
+      // Already honoured for this anchor generation. Hold the viewport where
+      // the user left it and satisfy the gate against the current first
+      // visible row instead of scrolling anywhere.
+      val position = layoutManager.findFirstVisibleItemPosition()
+      if (position == RecyclerView.NO_POSITION) return false
+      revealAnchorPosition = position
+      revealAnchorApplied = true
       emitRevealEvent(EVENT_ANCHOR_APPLIED, generation)
       return true
     }
@@ -390,6 +466,7 @@ class MemoryChatListView(
       nearLatest = true
     }
     revealAnchorApplied = true
+    anchorConsumed = true
     pendingInitialAnchor = null
     emitRevealEvent(EVENT_ANCHOR_APPLIED, generation)
     recyclerView.requestLayout()
@@ -402,7 +479,7 @@ class MemoryChatListView(
     finalAttempt: Boolean,
     usedFallback: Boolean
   ) {
-    if (!revealGate.isCurrent(generation) || !active || !attached) return
+    if (!revealGate.isCurrent(generation) || !canRunRevealCycle()) return
     val boundsReady = recyclerView.width > 0 && recyclerView.height > 0
     if (boundsReady) emitRevealEvent(EVENT_BOUNDS_READY, generation)
     if (!applyAnchorIfReady(generation)) {
@@ -432,10 +509,17 @@ class MemoryChatListView(
       NativeMemoryChatRevealDecision.REVEAL_ROWS -> {
         if (!revealGate.commitReveal(generation)) return
         if (usedFallback) emitRevealEvent(EVENT_REVEAL_FALLBACK, generation)
-        recyclerView.alpha = 1f
+        hasSettledLayout = true
         removeRevealPreDrawListener()
         revealFrameRunnable?.let(recyclerView::removeCallbacks)
         revealFrameRunnable = null
+        if (!active) {
+          // Warmed, not shown. Every precondition the reveal checks is proven,
+          // so the host stays transparent and the next activation is a resume.
+          emitRevealEvent(EVENT_PREPARED, generation)
+          return
+        }
+        recyclerView.alpha = 1f
         emitRevealEvent(EVENT_REVEALED, generation)
         postVisibility()
       }
@@ -501,7 +585,7 @@ class MemoryChatListView(
 
   private fun scheduleRevealFrame(generation: Long) {
     val runnable = Runnable {
-      if (!revealGate.isCurrent(generation) || !active || !attached) return@Runnable
+      if (!revealGate.isCurrent(generation) || !canRunRevealCycle()) return@Runnable
       revealFrame += 1
       val finalAttempt = revealFrame >= MAX_REVEAL_FRAMES
       attemptReveal(generation, finalAttempt, usedFallback = revealFrame > 1)
@@ -659,9 +743,12 @@ class MemoryChatListView(
     recordTraceCounters(pooled)
     onMetrics(
       MetricsEvent(
+        activations = activationMetrics.activations,
         attachedCells = recyclerView.childCount,
         boundRows = adapter.boundRows,
         createdCells = adapter.createdCells,
+        createdCellsThisActivation =
+          activationMetrics.createdThisActivation(adapter.createdCells),
         pooledCells = pooled,
         recycledCells = adapter.recycledCells,
         rowCount = adapter.itemCount
@@ -685,6 +772,17 @@ class MemoryChatListView(
     Trace.setCounter("MemoryRoomNativeChatPooledCells", pooledCells.toLong())
     Trace.setCounter("MemoryRoomNativeChatRecycledCells", adapter.recycledCells.toLong())
     Trace.setCounter("MemoryRoomNativeChatRowCount", adapter.itemCount.toLong())
+    Trace.setCounter(
+      "MemoryRoomNativeChatActivations",
+      activationMetrics.activations.toLong()
+    )
+    // Zero here from the second activation onward is the whole point of the
+    // combination: the host was retained, so the cells were reused rather than
+    // rebuilt. A cold host reports a fresh viewport's worth every entry.
+    Trace.setCounter(
+      "MemoryRoomNativeChatCreatedCellsThisActivation",
+      activationMetrics.createdThisActivation(adapter.createdCells).toLong()
+    )
   }
 
   private fun dp(value: Double) = (value * density).roundToInt()

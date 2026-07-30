@@ -1,11 +1,74 @@
 package expo.modules.memorychatlist
 
+import kotlin.math.max
+
 internal enum class NativeMemoryChatRevealDecision {
   FAIL,
   REVEAL_EMPTY,
   REVEAL_ROWS,
   STALE,
   WAIT
+}
+
+internal enum class NativeMemoryChatResumeDecision {
+  /** Already-built host: restoring visibility is the whole activation. */
+  RESUME,
+  /** Nothing reusable survives; run the full anchor/reveal handshake. */
+  REVEAL_CYCLE
+}
+
+internal data class NativeMemoryChatResumeSnapshot(
+  val adapterRows: Int,
+  val attached: Boolean,
+  val expectedRows: Int,
+  /**
+   * The reveal gate has passed at least once: measured bounds, applied anchor
+   * and attached cells are all proven. Deliberately NOT "the user has seen
+   * it" — a host warmed while Chat was inactive satisfies every precondition
+   * without ever having been visible, and that is exactly the case that makes
+   * the FIRST entry cheap rather than only later ones.
+   */
+  val hasSettledLayout: Boolean
+)
+
+/**
+ * A settled host keeps its view tree, its measured layout and its scroll
+ * position, so entering Chat should cost one alpha write. Running the reveal
+ * handshake again would re-request layout and re-apply the entry anchor —
+ * precisely the work retention and warming exist to avoid. Anything less than
+ * a proven-complete host still takes the cold path.
+ */
+internal fun nativeMemoryChatResumeDecision(
+  snapshot: NativeMemoryChatResumeSnapshot
+): NativeMemoryChatResumeDecision = if (
+  snapshot.hasSettledLayout &&
+  snapshot.attached &&
+  snapshot.expectedRows > 0 &&
+  snapshot.adapterRows == snapshot.expectedRows
+) {
+  NativeMemoryChatResumeDecision.RESUME
+} else {
+  NativeMemoryChatResumeDecision.REVEAL_CYCLE
+}
+
+/**
+ * Cells created during the CURRENT activation. This is the number that decides
+ * whether retention plus recycling actually compose: a cold host creates one
+ * viewport of cells on every entry, a retained one creates none after the
+ * first because the pool and the attached cells both survived.
+ */
+internal class NativeMemoryChatActivationMetrics {
+  var activations = 0
+    private set
+  private var createdAtActivationStart = 0
+
+  fun onActivated(createdCells: Int) {
+    activations += 1
+    createdAtActivationStart = createdCells
+  }
+
+  fun createdThisActivation(createdCells: Int) =
+    max(0, createdCells - createdAtActivationStart)
 }
 
 internal data class NativeMemoryChatRevealSnapshot(
@@ -28,6 +91,8 @@ internal data class NativeMemoryChatRevealSnapshot(
 internal class NativeMemoryChatRevealGate {
   private var generation = 0L
   private var revealedGeneration = Long.MIN_VALUE
+
+  fun current() = generation
 
   fun nextGeneration(): Long {
     generation += 1

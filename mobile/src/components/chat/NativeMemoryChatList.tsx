@@ -45,7 +45,15 @@ export type NativeMemoryChatRevealEvent = {
     | "NATIVE_CHAT_PRE_DRAW"
     | "NATIVE_CHAT_REVEALED"
     | "NATIVE_CHAT_REVEAL_FALLBACK"
-    | "NATIVE_CHAT_REVEAL_FAILED";
+    | "NATIVE_CHAT_REVEAL_FAILED"
+    // A retained host re-entering Chat: no layout pass, no anchor, no
+    // handshake — the activation is one alpha write. Reported separately from
+    // NATIVE_CHAT_REVEALED so a trace can tell a resume from a cold build.
+    | "NATIVE_CHAT_RESUMED"
+    // The reveal gate passed while Chat was still inactive: the host is
+    // measured and anchored but deliberately not shown, so the first entry
+    // resumes like every later one. Not a transition — nothing was entered.
+    | "NATIVE_CHAT_PREPARED";
   firstVisiblePosition: number;
   generation: number;
   height: number;
@@ -60,9 +68,11 @@ export type NativeMemoryChatRevealEvent = {
 };
 
 export type NativeMemoryChatMetricsEvent = {
+  activations: number;
   attachedCells: number;
   boundRows: number;
   createdCells: number;
+  createdCellsThisActivation: number;
   pooledCells: number;
   recycledCells: number;
   rowCount: number;
@@ -106,6 +116,12 @@ type NativeMemoryChatListNativeProps = ViewProps & {
   scrollCommand: NativeMemoryChatScrollCommand;
   selectedKeys: readonly string[];
   topClearance: number;
+  /**
+   * Run the layout/anchor half of the reveal while Chat is inactive. Only
+   * worth it on a host that outlives the tab switch — otherwise the warmed
+   * layout is thrown away on the way out and paid for again on the way in.
+   */
+  warmWhileInactive: boolean;
 };
 
 type NativeMemoryChatListComponent = ComponentType<

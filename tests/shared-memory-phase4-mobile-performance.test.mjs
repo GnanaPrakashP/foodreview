@@ -10,6 +10,7 @@ const memoryRoomChatLifecycle = readFileSync(
   "mobile/src/performance/memoryRoomChatLifecycle.ts",
   "utf8"
 );
+const vendoredBubble = readFileSync("mobile/src/vendor/reactNativeChat/Bubble/index.tsx", "utf8");
 const vendoredChat = readFileSync("mobile/src/vendor/reactNativeChat/Chat/index.tsx", "utf8");
 const vendoredChatTypes = readFileSync("mobile/src/vendor/reactNativeChat/Chat/types.ts", "utf8");
 const vendoredMessages = readFileSync("mobile/src/vendor/reactNativeChat/MessagesContainer/index.tsx", "utf8");
@@ -72,7 +73,18 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   }
 
   const chatMainBody = memoryRoomScreen.match(/<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/)?.[0] ?? "";
-  assert.match(chatMainBody, /initialNumToRender: CHAT_MAIN_INITIAL_RENDER_COUNT/);
+  // The initial window is now computed rather than literal, because entering
+  // on an unread anchor has to render down to that anchor before it can be
+  // scrolled to. It stays bounded by the named constants at both ends.
+  assert.match(chatMainBody, /initialNumToRender: unreadAnchorPlan\.initialRenderCount/);
+  assert.match(
+    memoryRoomScreen,
+    /Math\.max\(CHAT_MAIN_INITIAL_RENDER_COUNT, anchorIndex \+ 2\)/
+  );
+  assert.match(
+    memoryRoomScreen,
+    /anchorIndex \+ 2 <= CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT/
+  );
   assert.match(chatMainBody, /maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH/);
   assert.match(chatMainBody, /windowSize: CHAT_MAIN_WINDOW_SIZE/);
   assert.match(chatMainBody, /updateCellsBatchingPeriod: 50/);
@@ -90,10 +102,15 @@ test("phase 4 chat and media lists use bounded render windows", () => {
     memoryRoomScreen,
     /\) : nativeRendererActive \? \(\s*<>\s*<NativeMemoryChatList/
   );
+  // The vendored branch is a fragment now: the room owns its own jump-to-latest
+  // control alongside the list, because the vendor's built-in one rendered an
+  // unstyled placeholder glyph.
   assert.match(
     memoryRoomScreen,
-    /\) : liteRendererActive \? liteList : \(\s*<ChatMain<MemoryChatMainMessage>/
+    /\) : liteRendererActive \? liteList : \(\s*<>\s*<ChatMain<MemoryChatMainMessage>/
   );
+  assert.match(memoryRoomScreen, /isScrollToBottomEnabled=\{false\}/);
+  assert.match(memoryRoomScreen, /onPress=\{jumpChatToLatest\}/);
   assert.match(memoryRoomScreen, /initialNumToRender=\{CHAT_TIMELINE_INITIAL_RENDER_COUNT\}/);
   assert.match(memoryRoomScreen, /maxToRenderPerBatch=\{CHAT_TIMELINE_MAX_RENDER_BATCH\}/);
   assert.match(memoryRoomScreen, /windowSize=\{CHAT_TIMELINE_WINDOW_SIZE\}/);
@@ -114,10 +131,47 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   const chatInitialRenderCount = Number(
     memoryRoomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]
   );
+  // One viewport is 12-15 rows, not 6-10. The old range encoded an assumption
+  // ("~8 compact rows fit") that three physical measurements contradict: the
+  // vendored list settles at 29 mounted rows with windowSize 3, the FlashList
+  // candidate's settled viewport was full at 12 rows, and the native recycler
+  // reported 15 visible rows per check. Painting fewer than a viewport is what
+  // made the first frame arrive incomplete and fill in visible batches. The
+  // upper bound still forbids constructing a second viewport up front.
   assert.ok(
-    chatInitialRenderCount >= 6 && chatInitialRenderCount <= 10,
-    "cold chat must paint one compact phone viewport without constructing a second viewport"
+    chatInitialRenderCount >= 12 && chatInitialRenderCount <= 20,
+    "cold chat must paint one measured phone viewport without constructing a second viewport"
   );
+});
+
+test("chat rows build no invisible metadata and no reactions wrapper for a long press", () => {
+  // The vendored bubble used to build its bottom metadata row on every mounted
+  // message and clip it to height zero: two wrapper Views, Time's View/Text
+  // plus a dayjs format per render, and the delivery-tick Views/Texts. This
+  // surface draws its own pinned timestamp inside the message text, so none of
+  // it was ever visible.
+  assert.match(vendoredBubble, /const hasBottomContent = Boolean\(username \|\| time \|\| ticks\)/);
+  assert.match(vendoredBubble, /\{hasBottomContent\s*\?\s*\(/);
+  assert.match(memoryRoomScreen, /renderTime=\{renderNoBubbleBottom\}/);
+  assert.match(memoryRoomScreen, /renderTicks=\{renderNoBubbleBottom\}/);
+  // The hidden style must stay gone: reintroducing it would make any future
+  // bottom content silently invisible instead of merely unstyled.
+  assert.doesNotMatch(memoryRoomScreen, /chatMainBubbleBottomHidden/);
+
+  // The reactions wrapper mounts a useState, an anchor useState, a
+  // useSharedValue, an useAnimatedStyle and an extra Reanimated view on every
+  // row. It must be gated on emoji reactions ONLY — never used as a way to
+  // obtain a long-press handler, which the default bubble path already gives.
+  assert.match(memoryRoomScreen, /isEnabled: active && MEMORY_REACTIONS_ENABLED/);
+  assert.doesNotMatch(memoryRoomScreen, /MEMORY_MESSAGE_OPTIONS_ENABLED/);
+  assert.match(memoryRoomScreen, /onLongPressMessage=\{handleLongPressMessage\}/);
+  // The default path has to report bubble geometry, or the menu cannot be
+  // positioned without the wrapper.
+  assert.match(vendoredBubble, /node\.measure\(\(_x, _y, width, height, pageX, pageY\)/);
+  assert.match(vendoredBubble, /<View ref=\{bubbleContainerRef\} style=\{containerStyle\?\.\[position\]\}>/);
+  // Hold time and existing reaction pills must survive the move off the wrapper.
+  assert.match(vendoredBubble, /delayLongPress=\{350\}[\s\S]{0,200}\{renderBubbleBody\(\)\}/);
+  assert.match(vendoredBubble, /\{renderQuickReplies\(\)\}\s*\{renderReactionsDisplay\(\)\}/);
 });
 
 test("active chat anchors the viewport and prefetches older rows before the edge", () => {
@@ -360,7 +414,16 @@ test("memory chat keyboard motion is owned by one native parent surface", () => 
   assert.equal((keyboardBody.match(/chatKeyboardShift\.value/g) ?? []).length, 1);
   assert.match(chatSurfaceBody, /<NativeKeyboardInsetView[\s\S]*style=\{styles\.chatKeyboardInsetContainer\}/);
   assert.match(chatSurfaceBody, /<View style=\{styles\.chatMainSurface\}>[\s\S]*\{surfaceInner\}/);
-  assert.match(chatSurfaceBody, /<View style=\{styles\.chatMainMessagesLayer\}>/);
+  // Still exactly one messages layer under the native keyboard surface; it now
+  // also carries the unread-anchor reveal gate.
+  assert.equal(
+    (chatSurfaceBody.match(/styles\.chatMainMessagesLayer\b/g) ?? []).length,
+    1
+  );
+  assert.match(
+    chatSurfaceBody,
+    /<View\s+style=\{\[\s*styles\.chatMainMessagesLayer,\s*!unreadAnchorSettled && styles\.chatMainMessagesLayerAnchoring\s*\]\}\s*>/
+  );
   assert.match(chatSurfaceBody, /<View pointerEvents="none" style=\{styles\.chatKeyboardBridge\} \/>/);
   assert.match(keyboardBody, /const composerBottomInsetStyle = useMemo<ViewStyle>\(\(\) => \(\{\s*paddingBottom: closedComposerBottomPadding\s*\}\)/);
   assert.match(memoryRoomScreen, /chatKeyboardBridge:[\s\S]*top: "100%"/);

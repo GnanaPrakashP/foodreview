@@ -28,6 +28,7 @@ class MemoryChatListModule : Module() {
       Prop("scrollCommand") { view, value: NativeMemoryChatScrollCommand -> view.applyScrollCommand(value) }
       Prop("selectedKeys") { view, value: List<String> -> view.setSelectedKeys(value) }
       Prop("topClearance") { view, value: Double -> view.setTopClearance(value) }
+      Prop("warmWhileInactive") { view, value: Boolean -> view.setWarmWhileInactive(value) }
     }
   }
 }

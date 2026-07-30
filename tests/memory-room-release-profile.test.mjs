@@ -43,8 +43,15 @@ function loadChatLifecycle(environment = {}) {
   })(
     module,
     module.exports,
-    () => {
-      throw new Error("chat lifecycle has no runtime imports");
+    (specifier) => {
+      // The renderer selector is the one legitimate runtime dependency: the
+      // retained-native-host flag is the conjunction of both selectors, so it
+      // has to read the renderer's resolved value rather than re-parse the
+      // env var and drift from it. Everything else still has to be absent.
+      if (specifier === "@/performance/memoryRoomChatRenderer") {
+        return loadChatRenderer(environment);
+      }
+      throw new Error(`chat lifecycle has no runtime imports: ${specifier}`);
     },
     { env: environment }
   );
@@ -501,14 +508,32 @@ test("Chat projection and unread anchor belong to the room lifetime, not each ta
   assert.match(roomScreen, /chatMessages=\{chatMessagesForHost\}/);
   assert.doesNotMatch(chatSurface, /buildMemoryChatMainMessages\(/);
   assert.doesNotMatch(chatSurface, /firstUnreadMemoryMessageId\(/);
-  assert.equal(
-    Number(roomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]),
-    8
+  // One viewport, not half of one. 8 was set on the assumption that a phone
+  // viewport holds ~8 compact rows; the vendored list settling at 29 mounted
+  // rows with windowSize 3, the FlashList candidate filling its viewport with
+  // 12 rows and the native recycler reporting 15 visible rows all contradict
+  // it, and the shortfall is what made the first frame arrive incomplete and
+  // fill in visible batches afterwards.
+  const initialRenderCount = Number(
+    roomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]
+  );
+  assert.equal(initialRenderCount, 14);
+  assert.ok(
+    initialRenderCount >= 12,
+    "initial render count must cover a measured viewport"
   );
   assert.equal(
     Number(roomScreen.match(/const CHAT_MAIN_MAX_RENDER_BATCH = (\d+);/)?.[1]),
     6
   );
+  // Anchoring on a long-unread room must stay bounded rather than turning the
+  // first commit into the whole history.
+  const anchorCap = Number(
+    roomScreen.match(/const CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT = (\d+);/)?.[1]
+  );
+  assert.ok(Number.isFinite(anchorCap) && anchorCap <= 60, "anchor render cap must be bounded");
+  assert.ok(anchorCap > initialRenderCount);
+  assert.match(roomScreen, /anchorIndex \+ 2 <= CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT/);
 });
 
 test("release-profile tracing enumerates every directed tab pair and contains no content fields", () => {

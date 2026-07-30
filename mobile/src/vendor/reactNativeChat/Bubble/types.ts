@@ -58,6 +58,13 @@ export interface BubbleReplyProps<TMessage extends IMessage> extends MessageRepl
   onPress?: (replyMessage: ReplyMessage) => void
 }
 
+export type BubbleLongPressAnchor = {
+  bubbleHeight: number
+  bubbleWidth: number
+  pageX: number
+  pageY: number
+}
+
 export interface BubbleProps<TMessage extends IMessage> {
   user?: User
   touchableProps?: ComponentProps<typeof Pressable>
@@ -81,7 +88,15 @@ export interface BubbleProps<TMessage extends IMessage> {
   quickReplyContainerStyle?: StyleProp<ViewStyle>
   messageTextProps?: Partial<MessageTextProps<TMessage>>
   onPressMessage?: (context?: unknown, message?: unknown) => void
-  onLongPressMessage?: (context?: unknown, message?: unknown) => void
+  // `message` is TMessage here to match Chat's own declaration of this prop;
+  // it was `unknown` only because this file is not typechecked.
+  onLongPressMessage?: (
+    context?: unknown,
+    message?: TMessage,
+    // Window coordinates of the bubble, measured by the default path so a host
+    // can position its own action menu without the reactions wrapper.
+    anchor?: BubbleLongPressAnchor
+  ) => void
   onQuickReply?: (replies: Reply[]) => void
   renderMessageImage?: (
     props: RenderMessageImageProps<TMessage>

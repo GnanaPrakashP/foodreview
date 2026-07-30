@@ -280,6 +280,48 @@ export function recordMemoryRoomChatLifecycleCandidate(candidateCode: number) {
   }
 }
 
+export type MemoryRoomNativeChatMetrics = {
+  activations: number;
+  attachedCells: number;
+  boundRows: number;
+  createdCells: number;
+  createdCellsThisActivation: number;
+  pooledCells: number;
+  recycledCells: number;
+  rowCount: number;
+};
+
+/**
+ * Mirrors the native recycler's own counters onto the JS trace so one report
+ * can answer whether retention and recycling actually composed.
+ * `createdCellsThisActivation` is the decisive column: it stays at a full
+ * viewport on every entry when the host is rebuilt, and drops to zero from the
+ * second entry onward when the host survives the switch.
+ */
+export function recordMemoryRoomNativeChatMetrics(
+  metrics: MemoryRoomNativeChatMetrics
+) {
+  if (!traceAvailable()) return;
+  const counters: Array<[string, number]> = [
+    ["MemoryRoomNativeChatActivations", metrics.activations],
+    ["MemoryRoomNativeChatAttachedCells", metrics.attachedCells],
+    ["MemoryRoomNativeChatBoundRows", metrics.boundRows],
+    ["MemoryRoomNativeChatCreatedCells", metrics.createdCells],
+    [
+      "MemoryRoomNativeChatCreatedCellsThisActivation",
+      metrics.createdCellsThisActivation
+    ],
+    ["MemoryRoomNativeChatPooledCells", metrics.pooledCells],
+    ["MemoryRoomNativeChatRecycledCells", metrics.recycledCells],
+    ["MemoryRoomNativeChatRowCount", metrics.rowCount]
+  ];
+  for (const [name, value] of counters) {
+    const normalized = Math.max(0, Math.floor(value));
+    if (androidTrace) androidTrace.setMemoryRoomTraceCounter(name, normalized);
+    else Systrace.counterEvent(name, normalized);
+  }
+}
+
 export function recordMemoryRoomChatRendererCandidate(candidateCode: number) {
   if (!traceAvailable()) return;
   const value = Math.max(0, Math.floor(candidateCode));

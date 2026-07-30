@@ -162,6 +162,95 @@ leaving Chat destroys the native host and later entries recreate those cells;
 cross-activation pooled/recycled counters remain zero. Production continues
 to select the vendored renderer.
 
+## Retained host + recycled rows (prototype, 2026-07-30)
+
+The zero cross-activation counters above are not a property of recycling; they
+are a property of measuring recycling inside a host that was destroyed on every
+exit. Stage A ran `native-recycler` against the production `cold` lifecycle, and
+the lifecycle experiment ran `warm-bounded` against the vendored renderer. The
+combination — a host that survives the tab switch, holding a pool that is
+therefore still warm when Chat is re-entered — was never built or measured.
+
+It is now selectable by setting both profile selectors:
+
+```text
+EXPO_PUBLIC_PERFORMANCE_PROFILE=1
+EXPO_PUBLIC_MEMORY_ROOM_CHAT_LIFECYCLE=warm-bounded
+EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER=native-recycler
+```
+
+`MEMORY_ROOM_CHAT_RETAINED_NATIVE_HOST` is the conjunction of the two, so each
+selector alone keeps exactly the behaviour it was previously measured with.
+Neither can leave a profile build, so production remains `cold` + `vendor`.
+
+What the combination changes:
+
+- **Deactivation hides, it does not dismantle.** `setActive(false)` drops the
+  RecyclerView to alpha zero and leaves it attached and laying out. `GONE` or a
+  detach would discard the measured tree that retention exists to keep.
+- **Re-entry resumes.** `nativeMemoryChatResumeDecision` admits a host that has
+  revealed at least once, is still attached, and whose adapter matches the row
+  count JavaScript believes it is showing. Such a host reveals with one alpha
+  write — no layout request, no anchor, no pre-draw handshake. Anything less
+  takes the ordinary cold reveal path.
+- **The entry anchor becomes one-shot.** Previously `currentAnchor` persisted
+  and every reveal cycle re-applied it. On a retained host that would drag the
+  user back to an unread divider they had already scrolled past, so a consumed
+  anchor now holds the current viewport instead.
+- **Updates that land while Chat is inactive follow the ordinary position
+  policy** rather than the cold reveal path, so a message arriving on another
+  tab is already in place — and already measured — on return.
+- **A detach still invalidates.** Route teardown is the one event that genuinely
+  discards the layout, so the next activation earns its reveal again.
+- **The first entry is warmed during idle.** The layout/anchor half of the
+  reveal needs an attached view, not a visible one, so with `warmWhileInactive`
+  it runs while Chat is still inactive and stops one step short of flipping
+  alpha, emitting `NATIVE_CHAT_PREPARED`. The host is then measured, anchored
+  and cell-attached before the tab is ever tapped, so entry 1 resumes exactly
+  like entry 2. The resume precondition is named `hasSettledLayout`, not
+  "revealed", precisely because a warmed host qualifies without ever having
+  been seen.
+
+`NATIVE_CHAT_PREPARED` is deliberately not a transition: nothing was entered, so
+it does not close the Chat transition spans the way `NATIVE_CHAT_REVEALED` and
+`NATIVE_CHAT_RESUMED` do. Visibility reporting stays gated on the pane actually
+being active, so warming cannot mark a room read — the "opening a native room
+does not mark the latest message read" contract above is unchanged.
+
+Warming is opt-in and tied to the retained host. On a host that is destroyed on
+exit the warmed layout is thrown away on the way out and paid for again on the
+way in, so it is only enabled when both selectors are set. The trade-off to
+watch on device is room open: this moves a real layout and one viewport of cell
+creation into the room's idle window, which already carries the Chat pane mount
+behind `runAfterInteractions` plus `MEMORY_ROOM_CHAT_WARM_DELAY_MS` (450 ms).
+The standing tension from the lifecycle work applies unchanged — panes existing
+buys instant switching, panes not existing buys fast open and exit — and this
+prototype spends further on the first side. Room-open and room-exit timings are
+therefore part of its acceptance, not just Chat entry.
+
+The decisive counter is `MemoryRoomNativeChatCreatedCellsThisActivation`,
+reported per activation alongside `MemoryRoomNativeChatActivations` and mirrored
+onto the JS trace through `recordMemoryRoomNativeChatMetrics`. A destroyed host
+creates a fresh viewport of cells on every entry; a retained one should report
+zero from the first entry onward, because warming built that viewport during
+idle before any activation was counted — with `pooledCells`/`recycledCells`
+non-zero across the switch. If that number does not fall, retention and
+recycling did not compose and the prototype has failed regardless of what the
+frame timings say.
+
+Status: **implemented, not yet measured.** No physical run has been performed,
+so no frame, PSS or Stage-A claim is made or implied here. The Kotlin has not
+been compiled — the authoring machine has no JDK — so a build is the first
+gate. The prior Stage A rejection stands until this configuration is run
+against a freshly built vendored control on the same device and account.
+
+One measurement note carried over from the earlier reports: Stage A rejected
+every candidate against absolute budgets (`<= 20 ms` frames, `<= 40 MiB` active
+PSS growth) that the shipping `cold` baseline also misses, at 93 ms and
+99.3 MiB. Those gates cannot separate candidates while the baseline fails them.
+This prototype should be scored against a concurrently built control, not
+against the absolute bar alone.
+
 Content-free evidence is stored outside the repository at:
 
 ```text

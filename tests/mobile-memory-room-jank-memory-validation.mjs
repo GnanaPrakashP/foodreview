@@ -603,6 +603,10 @@ async function runPair({ from, to }) {
         trace,
         "MemoryRoomMountedChatGestureOwners"
       ),
+      nativeActivations: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatActivations"
+      ),
       nativeAttachedCells: traceCounterStats(
         trace,
         "MemoryRoomNativeChatAttachedCells"
@@ -614,6 +618,13 @@ async function runPair({ from, to }) {
       nativeCreatedCells: traceCounterStats(
         trace,
         "MemoryRoomNativeChatCreatedCells"
+      ),
+      // Decides whether retention and recycling composed. A destroyed host
+      // reports a full viewport on every Chat entry; a retained one reports it
+      // once and zero thereafter.
+      nativeCreatedCellsThisActivation: traceCounterStats(
+        trace,
+        "MemoryRoomNativeChatCreatedCellsThisActivation"
       ),
       nativePooledCells: traceCounterStats(
         trace,

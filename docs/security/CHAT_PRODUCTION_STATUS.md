@@ -14,6 +14,111 @@ Next required work: execute the Phase 8 external release gates and the checked-i
 
 Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry/load credentials; deploy canonical disposable staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run the Phase 9 launch, stress, soak, recovery, restore and physical-device evidence matrix. Do not publish automatically.
 
+## Memory Room Chat entry: viewport completeness and first-unread anchor (2026-07-30)
+
+Status: **PASS locally for the scoped corrections; NOT physically verified.** No
+Android device was connected for this change, so no frame, PSS, first-frame or
+usable timing is claimed and none of the rejected Stage A results are superseded.
+Every claim below is source- and test-level only.
+
+Four production defects on the vendored renderer were corrected.
+
+The vendored bubble built its bottom metadata row on every mounted message and
+then clipped it to height zero: two wrapper Views, `Time`'s View/Text plus a
+`dayjs` format per render, and the delivery-tick View/Texts. This surface has
+rendered its own pinned timestamp inside the message text since the timestamp
+work, so none of it was ever visible. `renderBubble` now passes
+`renderTime`/`renderTicks` that return null, and the vendored `Bubble` omits the
+container entirely when nothing renders into it. The former hidden
+`bottomContainerStyle` was removed rather than kept, so any future bottom content
+fails visibly instead of silently.
+
+The long-press action menu was moved off the vendored reactions wrapper. Emoji
+reactions are disabled (`MEMORY_REACTIONS_ENABLED` is false), but
+`reactions.isEnabled` was held true by a separate "message options" flag purely
+to obtain a long-press handler, which mounted the wrapper on every row: a
+`useState` for picker visibility, a second `useState` for the anchor, a
+`useSharedValue`, an `useAnimatedStyle`, an extra Reanimated view and a per-row
+menu publisher. The vendored bubble's default path already exposes
+`onLongPressMessage`; it now also measures and reports the bubble's window
+geometry, so the room opens its own menu from there. `reactions.isEnabled` is
+gated on emoji reactions alone and the redundant options flag was deleted.
+Hold time is preserved by matching the wrapper's 350 ms `delayLongPress`, and
+the default path now renders `renderReactionsDisplay()` so an already-reacted
+message cannot lose its pills. The one intended behaviour change is that
+long-press no longer scales the bubble.
+
+`CHAT_MAIN_INITIAL_RENDER_COUNT` moved from 8 to 14. The previous value encoded
+an assumption that a phone viewport holds about eight compact rows, which three
+retained physical measurements contradict: the vendored list settles at 29
+mounted rows with `windowSize` 3, the FlashList Stage A viewport was visually
+full with 12 rows, and the native recycler reported 15 visible rows per check.
+Rendering below one viewport is what made the first Chat frame arrive
+structurally incomplete and then fill in `maxToRenderPerBatch` steps at least
+`updateCellsBatchingPeriod` apart. The two changes are one unit for measurement
+purposes: the larger first window is affordable only because the row no longer
+builds the invisible bottom subtree.
+
+Opening Chat no longer marks the whole room read. That rule computed an unread
+anchor and then erased it before it could ever be shown, because this renderer
+never actually moved the viewport to the anchor. The read position now advances
+from the reported visible range through the existing monotonic, debounced,
+membership-aware path that was previously reachable only from the native
+renderer; reaching the newest message still marks the room fully read. The
+first-unread anchor is applied once per room visit, bounded to
+`CHAT_MAIN_ANCHOR_MAX_INITIAL_RENDER_COUNT` rows, behind a bounded four-frame
+reveal gate that mirrors the reviewed native contract, and degrades to the
+existing newest-first placement whenever the anchor cannot be resolved. The
+anchor is consumed once so a later re-entry keeps its restored scroll offset.
+
+The jump-to-latest control on the production renderer was the vendored library's
+unstyled fallback: a 40x40 white circle containing the literal glyph `V`. The
+room now owns the control, shows the unread count when the room has unread, and
+supplies the `onJumpToLatest` handler that `UnreadDivider` has always accepted
+and never been given.
+
+Focused verification: memory chat/room suites 86/86, Memory hardening 105/105,
+root suite 1,806/1,816 with the same ten pre-existing unrelated Review, Profile,
+Explore and post-media contract failures (confirmed identical on a clean tree),
+both typechecks, zero-error lint and `git diff --check`. Five contract tests were
+updated rather than removed, because each pinned a value or shape this change
+deliberately alters; the invariants they existed to protect — no second
+placement of an already visible row, a bounded initial window, one messages
+layer, monotonic reads, no mark-on-open — are all still asserted, and in the
+read-position case the assertion now covers both renderers instead of one.
+
+Security conclusion: no authentication, membership, RLS, private Storage, API,
+database, rate-limit, offline/outbox or logging contract changed. The read RPC,
+its clamping and its membership checks are untouched.
+
+Required next step: physical A/B on the connected Android device — the row-cost
+and initial-window pair as one variable, then the unread anchor's `viewPosition`
+placement and reveal gate — before any of this is described as a performance
+improvement.
+
+## Memory Room bounded chat-history retry (2026-07-30)
+
+Status: **PASS locally for the scoped pagination correction; not a production
+release PASS.** A failed or timed-out older-history request now disarms every
+automatic top-edge trigger while the list remains parked at that edge. The
+active vendor, FlashList and native-recycler candidates expose an explicit
+generic retry control, and the member-scoped infinite query performs no hidden
+React Query retry. A successful page continues through its opaque cursor and a
+terminal null cursor removes the affordance. No message body, cursor, identity,
+private-media reference or raw error is rendered or logged, and no API,
+database, RLS or storage boundary changed.
+
+## Memory Room Dish bubble theme parity (2026-07-30)
+
+Status: **PASS locally for the scoped style correction; not a production
+release PASS.** Dish poll cards, text bubbles, media cards and typing indicators
+now resolve their sent/received backgrounds directly from the current
+occasion-aware `ROOM_COLORS` passed to `createStyles`. The former mutable global
+bubble colors were removed, eliminating the ordering path where styles were
+created from the previous room theme and the globals were updated only
+afterward. No authorization, private-media, API, database or Supabase policy
+boundary changed.
+
 ## Memory Room initial Chat bottom anchor (2026-07-28)
 
 Status: **PASS for the scoped initial-anchor correction and authenticated

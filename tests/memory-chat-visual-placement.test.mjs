@@ -164,6 +164,57 @@ test("delivery confirmation cannot rebuild the measured multiline text subtree",
   );
 });
 
+test("dish and message bubbles resolve colors from the same current room theme", () => {
+  assert.doesNotMatch(screen, /CHAT_(?:OWN|OTHER)_BUBBLE_COLOR/);
+  assert.match(
+    screen,
+    /chatMainBubbleRight:\s*\{[\s\S]*?backgroundColor: ROOM_COLORS\.sentBubble/
+  );
+  assert.match(
+    screen,
+    /dishTimelineBubbleMine:\s*\{[\s\S]*?backgroundColor: ROOM_COLORS\.sentBubble/
+  );
+  assert.match(
+    screen,
+    /chatMainBubbleLeft:\s*\{[\s\S]*?backgroundColor: ROOM_COLORS\.receivedBubble/
+  );
+  assert.match(
+    screen,
+    /dishTimelineBubbleOther:\s*\{[\s\S]*?backgroundColor: ROOM_COLORS\.receivedBubble/
+  );
+});
+
+test("failed older-history loads stop automatic edge retries until explicit retry", () => {
+  const historyQuery = hooks.match(
+    /export function useMemoryMessagePagesQuery[\s\S]*?(?=export function useMemoryMediaPagesQuery)/
+  )?.[0] ?? "";
+  assert.ok(historyQuery);
+  assert.match(
+    screen,
+    /olderMessagesFailed && !explicitRetry/
+  );
+  assert.match(
+    screen,
+    /const requestOlderPage = useCallback\(\(\) => \{\s*runOlderPageRequest\(false\)/
+  );
+  assert.match(
+    screen,
+    /const retryOlderPage = useCallback\(\(\) => \{\s*runOlderPageRequest\(true\)/
+  );
+  assert.match(
+    screen,
+    /isInfiniteScrollEnabled: !olderMessagesFailed/
+  );
+  assert.match(
+    screen,
+    /label: olderMessagesFailed \? "Could not load earlier messages · Retry" : undefined/
+  );
+  assert.match(
+    historyQuery,
+    /getNextPageParam: \(lastPage\) => lastPage\.nextCursor \?\? undefined,[\s\S]*?retry: false/
+  );
+});
+
 test("diagnostic payload discards bodies, tokens, URLs, paths, and arbitrary identifiers", () => {
   const events = [];
   configureMemoryChatPlacementDiagnostics({ enabled: true, sink: (event) => events.push(event) });

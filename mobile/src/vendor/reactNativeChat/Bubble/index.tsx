@@ -190,8 +190,32 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
     onPressMessageProp?.(context, currentMessage)
   }, [onPressMessageProp, context, currentMessage])
 
+  // Anchor geometry for a host-owned action menu. The reactions path measures
+  // its own bubble; the default path had no way to report where the row is, so
+  // a host that only wants a long-press menu was forced through the reactions
+  // wrapper and paid its shared value, animated style and extra views on every
+  // row. Measuring here lets the cheap path carry the menu instead.
+  const bubbleContainerRef = useRef<View>(null)
+
   const onLongPress = useCallback(() => {
-    onLongPressMessageProp?.(context, currentMessage)
+    if (!onLongPressMessageProp)
+      return
+
+    const node = bubbleContainerRef.current
+
+    if (!node) {
+      onLongPressMessageProp(context, currentMessage)
+      return
+    }
+
+    node.measure((_x, _y, width, height, pageX, pageY) => {
+      onLongPressMessageProp(context, currentMessage, {
+        bubbleHeight: height,
+        bubbleWidth: width,
+        pageX,
+        pageY,
+      })
+    })
   }, [
     currentMessage,
     context,
@@ -513,23 +537,40 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
     props.isCustomViewBottom,
   ])
 
-  const renderBubbleBody = useCallback(() => (
-    <>
-      {renderBubbleContent()}
-      <View
-        style={[
-          styles.bottom,
-          bottomContainerStyle?.[position],
-        ]}
-      >
-        {renderUsername()}
-        <View style={styles.messageTimeAndStatusContainer}>
-          {renderTime()}
-          {renderTicks()}
-        </View>
-      </View>
-    </>
-  ), [
+  const renderBubbleBody = useCallback(() => {
+    const username = renderUsername()
+    const time = renderTime()
+    const ticks = renderTicks()
+    // A host that renders its own timestamp inside the message text (and so
+    // passes renderTime/renderTicks returning null) used to keep paying for this
+    // whole subtree on every row: two wrapper Views, Time's View/Text plus its
+    // per-render dayjs format, and the tick View/Texts — all of it clipped to
+    // height 0 by bottomContainerStyle and never visible. Build the container
+    // only when something actually renders into it.
+    const hasBottomContent = Boolean(username || time || ticks)
+
+    return (
+      <>
+        {renderBubbleContent()}
+        {hasBottomContent
+          ? (
+            <View
+              style={[
+                styles.bottom,
+                bottomContainerStyle?.[position],
+              ]}
+            >
+              {username}
+              <View style={styles.messageTimeAndStatusContainer}>
+                {time}
+                {ticks}
+              </View>
+            </View>
+          )
+          : null}
+      </>
+    )
+  }, [
     position,
     bottomContainerStyle,
     renderBubbleContent,
@@ -587,10 +628,14 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
 
   // Default path: unchanged behaviour for existing users, preserving
   // touchableProps, native press feedback, and the onLongPressMessage callback.
+  // delayLongPress matches the reactions path so a host can move its menu here
+  // without the hold time changing. Existing reactions still render, so turning
+  // the reactions wrapper off cannot hide pills that are already on a message.
   return (
-    <View style={containerStyle?.[position]}>
+    <View ref={bubbleContainerRef} style={containerStyle?.[position]}>
       <View style={wrapperStyleList}>
         <Pressable
+          delayLongPress={350}
           onPress={onPress}
           onLongPress={onLongPress}
           {...props.touchableProps}
@@ -599,6 +644,7 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
         </Pressable>
       </View>
       {renderQuickReplies()}
+      {renderReactionsDisplay()}
     </View>
   )
 }

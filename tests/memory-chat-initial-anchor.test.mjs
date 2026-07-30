@@ -177,15 +177,45 @@ test("initial chat ownership is offset zero with no mount-time scroll correction
     chatList,
     /maintainVisibleContentPosition: chatMainPreserveHistoryViewport\s*\?\s*CHAT_MAIN_SCROLL_POSITION_CONFIG\s*:\s*undefined/
   );
-  assert.doesNotMatch(
-    surface,
-    /listRef\.current\?\.(?:scrollToOffset|scrollToEnd|scrollToIndex)/
-  );
+  // The regression this test exists for is a SECOND placement of a row that is
+  // already mounted and visible: the newest/optimistic row appearing and then
+  // moving. That is still forbidden everywhere on the latest path. It is NOT
+  // the same thing as the first-unread anchor, which runs once on entry while
+  // the list layer is still transparent and never touches the send path, so
+  // the assertion is scoped to the paths that produced the defect rather than
+  // banning the string outright.
+  // These bodies document the original defect in prose ("a deferred
+  // scrollToOffset(0) made the row appear and then move a second time"), so the
+  // assertions must look at code, not comments.
+  const stripComments = (source) => source.replace(/^\s*\/\/.*$/gm, "");
+
   assert.match(surface, /onContentSizeChange: handleChatMainContentSizeChange/);
   const contentSizeHandler = surface.match(
     /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  const surfaceInner)/
   )?.[0] ?? "";
-  assert.doesNotMatch(contentSizeHandler, /scrollToOffset|scrollToEnd|scrollToIndex/);
+  assert.notEqual(contentSizeHandler, "");
+  assert.doesNotMatch(
+    stripComments(contentSizeHandler),
+    /scrollToOffset|scrollToEnd|scrollToIndex/
+  );
+
+  const newestMessageEffect = surface.match(
+    /const previousLatestMessageId = latestChatMessageIdRef\.current;[\s\S]*?\}, \[active, latestChatMessageId/
+  )?.[0] ?? "";
+  assert.notEqual(newestMessageEffect, "");
+  assert.doesNotMatch(
+    stripComments(newestMessageEffect),
+    /scrollToOffset|scrollToEnd|scrollToIndex/
+  );
+
+  // Exactly one mount-time scroll command may exist, it must be the unread
+  // anchor, and it must be reveal-gated.
+  assert.equal((stripComments(surface).match(/scrollToIndex\(\{/g) ?? []).length, 1);
+  assert.match(surface, /const \[unreadAnchorSettled, setUnreadAnchorSettled\] = useState\(\s*unreadAnchorPlan\.index < 0\s*\)/);
+  assert.match(surface, /!unreadAnchorSettled && styles\.chatMainMessagesLayerAnchoring/);
+  // Failure must reveal rather than strand the surface behind the gate.
+  assert.match(surface, /attempt < CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES/);
+  assert.match(surface, /onScrollToIndexFailed: handleChatMainScrollToIndexFailed/);
 });
 
 test("anchor diagnostics are opt-in, privacy-safe and forbidden in production", () => {
