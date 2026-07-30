@@ -1259,6 +1259,20 @@ Supabase migration history is current through `202607270001`; the health
 report's `migrationHeadMatches: false` reflects missing/stale release metadata,
 not an unapplied migration for this change.
 
+Follow-up on 2026-07-31: the linked database and local migration ledger now
+match through `202607290001`. Active Blueprint, release, health, restore-drill
+and load-test expectations have been advanced to that head; historical
+migration evidence remains unchanged. A read-only production media health
+check after the correction reports `migrationHeadMatches: true`, 4 queued
+jobs, 0 running jobs, a missed worker heartbeat and an oldest queued age of
+365,675 seconds. The linked migration dry run reports no pending migration.
+Focused observability 10/10, load 23/23, worker 16/16, native migration 21/21,
+Memory hardening 106/106 and root typecheck pass. The local Phase 7 runtime
+validator could not run because the local Supabase services are not fully
+running. The stale head comparison was a metadata defect, but the independent
+Render worker outage remains a critical hosted blocker until the worker is
+deployed and its heartbeat and queue drain are observed.
+
 Scoped verification passes: media-worker plus focused latency/state tests
 16/16, rapid-send 14/14, Memory hardening 105/105, and combined
 journey/Phase-4/release-profile 85/85. Root and mobile typechecks, zero-error

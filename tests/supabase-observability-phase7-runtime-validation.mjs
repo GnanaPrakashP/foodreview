@@ -104,7 +104,7 @@ try {
   const denied = await anon.rpc("production_operations_health");
   assert.ok(denied.error, "anonymous operations health unexpectedly succeeded");
   const health = allowed(await admin.rpc("production_operations_health"), "service operations health");
-  assert.equal(health.migrationHead, "202607160001");
+  assert.equal(health.migrationHead, "202607290001");
   assert.ok(health.media.deadLetter >= 1, "media dead letter is not visible");
   assert.ok(health.media.imageDeadLetter >= 1, "image dead letter is not classified");
   assert.equal(health.media.workerHeartbeatMissed, 0, "fresh worker heartbeat is not healthy");
