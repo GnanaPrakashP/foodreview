@@ -7,7 +7,13 @@ services:
     numInstances: 1
     dockerContext: .
     dockerfilePath: ./Dockerfile.media-worker
-    autoDeployTrigger: checksPass
+    # `commit`, not `checksPass`. No GitHub check ever reports on this branch —
+    # application-ci.yml only runs on push for main/master/production-hardening
+    # and hardening/**, and memory-hardening.yml is pull_request-only. With
+    # checksPass and zero checks there is nothing to pass, so Render silently
+    # ignored every push after the Blueprint's initial deploy. Move back to
+    # checksPass once CI runs green on this branch.
+    autoDeployTrigger: commit
     maxShutdownDelaySeconds: 300
     envVars:
       - key: APP_ENVIRONMENT
