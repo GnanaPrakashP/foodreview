@@ -1131,6 +1131,14 @@ pgTAP result remains 224/225 solely because the pre-existing
 `media_assets_memory_full_frame_check` constraint is intentionally
 unvalidated.
 
+The linked Supabase project applied
+`202607290001_shared_memory_monotonic_reads.sql` on 2026-07-31. The post-apply
+remote ledger matches all 90 local migrations through `202607290001`, and a
+second linked `db push --dry-run` reports the database is up to date with zero
+pending migrations. This closes only the migration-deployment item; it does
+not change the rejected native-renderer result or the broader production
+release blockers.
+
 The initial native physical timing is invalid performance evidence. Although
 its metadata reported 50 rows, the `RecyclerView` remained at alpha zero
 because reveal could race the post-anchor layout. The corrected native module
