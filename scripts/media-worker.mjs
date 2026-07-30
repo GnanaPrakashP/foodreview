@@ -78,7 +78,17 @@ async function internalRequest(path, body, method = "POST") {
 }
 
 async function verifyReadiness() {
-  const result = await internalRequest("/api/internal/media/health", undefined, "GET");
+  // `startup=1` is required, not optional. Without it the health endpoint also
+  // reports fleet-health degradation, and the first such reason is a missing or
+  // stale `media-processing` heartbeat — a row written ONLY by
+  // /api/internal/media/process, which only this loop ever calls. Gating
+  // startup on it means the worker refuses to start until a worker has already
+  // run, and the exit propagates through the entrypoint to kill the container,
+  // so Render crash-loops and the heartbeat can never appear. The startup
+  // branch still verifies everything that is genuinely a precondition here:
+  // moderation provider, worker config, database reachability and the
+  // ffmpeg/ffprobe binaries. The entrypoint's own probe already uses it.
+  const result = await internalRequest("/api/internal/media/health?startup=1", undefined, "GET");
   if (!result.ready) throw new Error("media_worker_not_ready");
 }
 
