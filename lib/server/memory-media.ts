@@ -1,3 +1,4 @@
+import { createOperationalLogger } from "@/lib/observability/structured-log.mjs";
 import {
   MEMORY_IMAGE_MAX_RESOLUTION,
   MEMORY_IMAGE_MAX_UPLOAD_BYTES,
@@ -62,6 +63,29 @@ const UNSAFE_IMAGE_LIKELIHOODS: Set<SafeSearchLikelihood> = new Set(["LIKELY", "
 const UNSAFE_VIDEO_LIKELIHOODS: Set<VideoLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
 const MAX_INLINE_VIDEO_MODERATION_BYTES = 20 * 1024 * 1024;
 const MODERATION_REQUEST_TIMEOUT_MS = 20_000;
+// Cloud Vision's ceiling for inline base64 image content in images:annotate.
+// Compared against the RAW buffer, so the threshold already accounts for the
+// ~4/3 base64 expansion that happens when the request is built.
+const VISION_INLINE_IMAGE_MAX_BYTES = Math.floor(10 * 1024 * 1024 * 3 / 4);
+const moderationLog = createOperationalLogger({ service: "media-moderation" });
+
+/**
+ * Google reports the actionable part of a failure in `error.status` —
+ * PERMISSION_DENIED, RESOURCE_EXHAUSTED, INVALID_ARGUMENT. Only that symbol is
+ * read: the human message can echo request details, and nothing here may put
+ * user content into a log line.
+ */
+async function providerErrorStatus(response: Response) {
+  try {
+    const body = await response.clone().json() as { error?: { status?: unknown } };
+    const status = body?.error?.status;
+    return typeof status === "string" && /^[A-Z_]{1,64}$/.test(status)
+      ? status
+      : "unknown";
+  } catch {
+    return "unparseable";
+  }
+}
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_PATH_REGEX = /^[A-Za-z0-9._~/-]+$/;
 
@@ -346,6 +370,20 @@ async function moderationFetch(url: string, init: RequestInit = {}) {
 }
 
 async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<MemoryMediaModerationResult> {
+  // Vision rejects an inline request whose base64 payload exceeds its own
+  // limit, and base64 inflates a buffer by about a third — so a source image
+  // at the 10 MiB policy ceiling arrives as roughly 13.3 MiB and is refused.
+  // Naming it here is the difference between a one-line answer and inferring
+  // it from a generic transport failure.
+  if (buffer.byteLength > VISION_INLINE_IMAGE_MAX_BYTES) {
+    moderationLog.warn("moderation_inline_payload_too_large", {
+      encoded_bytes: Math.ceil(buffer.byteLength * 4 / 3),
+      limit_bytes: VISION_INLINE_IMAGE_MAX_BYTES,
+      source_bytes: buffer.byteLength
+    });
+    return { reason: "image_too_large_for_inline_moderation", status: "pending" };
+  }
+
   let response: Response;
   try {
     response = await moderationFetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
@@ -358,11 +396,32 @@ async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<Memo
       headers: { "Content-Type": "application/json" },
       method: "POST"
     });
-  } catch {
-    return { reason: "moderation_service_unavailable", status: "pending" };
+  } catch (error) {
+    // AbortError is the 20s budget expiring; anything else is transport. These
+    // were the same string before, so a slow network and a broken one looked
+    // identical in the worker log.
+    const timedOut = (error as { name?: string } | null)?.name === "AbortError";
+    moderationLog.warn(
+      timedOut ? "moderation_request_timed_out" : "moderation_transport_failed",
+      { source_bytes: buffer.byteLength, timeout_ms: MODERATION_REQUEST_TIMEOUT_MS }
+    );
+    return {
+      reason: timedOut ? "moderation_check_timed_out" : "moderation_check_failed",
+      status: "pending"
+    };
   }
 
-  if (!response.ok) return { reason: "moderation_service_unavailable", status: "pending" };
+  if (!response.ok) {
+    // Google's own error code is the whole diagnosis: PERMISSION_DENIED,
+    // RESOURCE_EXHAUSTED and INVALID_ARGUMENT need completely different fixes
+    // and were previously indistinguishable.
+    moderationLog.warn("moderation_provider_rejected", {
+      http_status: response.status,
+      provider_status: await providerErrorStatus(response),
+      source_bytes: buffer.byteLength
+    });
+    return { reason: "moderation_provider_error", status: "pending" };
+  }
   let data: {
     responses?: Array<{
       error?: unknown;

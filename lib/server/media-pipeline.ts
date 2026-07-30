@@ -503,6 +503,7 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
     case "moderation_check_failed":
     case "moderation_check_timed_out":
     case "video_too_large_for_inline_moderation":
+    case "image_too_large_for_inline_moderation":
       return "Media is still awaiting safety review.";
     case "owner_cancelled":
     case "cancelled":
