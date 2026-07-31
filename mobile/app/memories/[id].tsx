@@ -453,9 +453,8 @@ const CHAT_KEYBOARD_BRIDGE_HEIGHT = 1000;
 
 const MEDIA_GALLERY_GAP = 2;
 const MEDIA_GALLERY_HALF_GAP = MEDIA_GALLERY_GAP / 2;
-const COMPACT_ROOM_HEADER_HEIGHT = 106;
 const MEMBERS_HEADER_CLEARANCE = spacing.sm + 34 + 14 + 1;
-const MEDIA_GALLERY_TOP_CLEARANCE = COMPACT_ROOM_HEADER_HEIGHT + MEDIA_GALLERY_HALF_GAP;
+const MEDIA_GALLERY_TOP_CLEARANCE = ROOM_HEADER_COMPACT_HEIGHT + MEDIA_GALLERY_HALF_GAP;
 const PEOPLE_PANEL_ENTER_DURATION = 230;
 const PEOPLE_PANEL_EXIT_DURATION = 190;
 // One viewport, not half of one. The previous value of 8 was chosen on the
@@ -4501,7 +4500,14 @@ function MemoryChatMainInputToolbar({
             >
               {Platform.OS === "android" ? (
                 <AnimatedNativeChatInput
-                  accessibilityLabel={active ? "Type a message" : undefined}
+                  // Unconditional: the native prop is declared `String`, not
+                  // `String?`, so passing undefined fails conversion. It never
+                  // did before Chat was retained, because the surface only
+                  // existed while active. An inactive pane is hidden from
+                  // assistive tech by RoomPane's accessibilityElementsHidden
+                  // and importantForAccessibility, so the label does not need
+                  // to be withheld here as well.
+                  accessibilityLabel="Type a message"
                   borderRadius={radius.input}
                   borderWidth={1}
                   bottomPadding={10}
