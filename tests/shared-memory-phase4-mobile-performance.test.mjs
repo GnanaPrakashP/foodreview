@@ -89,7 +89,20 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   assert.match(memoryRoomScreen, /CHAT_MAIN_ANCHOR_WINDOW_LEAD_ROWS/);
   assert.match(chatMainBody, /maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH/);
   assert.match(chatMainBody, /windowSize: CHAT_MAIN_WINDOW_SIZE/);
-  assert.match(chatMainBody, /updateCellsBatchingPeriod: 50/);
+  // Fill rate is tuned separately from retention: the batching period may move
+  // to keep a fast fling from outrunning the renderer, but it stays bounded so
+  // a burst cannot merge into one oversized commit.
+  assert.match(
+    chatMainBody,
+    /updateCellsBatchingPeriod: CHAT_MAIN_CELL_BATCHING_PERIOD_MS/
+  );
+  const chatBatchingPeriod = Number(
+    memoryRoomScreen.match(/const CHAT_MAIN_CELL_BATCHING_PERIOD_MS = (\d+);/)?.[1]
+  );
+  assert.ok(
+    chatBatchingPeriod >= 16 && chatBatchingPeriod <= 50,
+    "chat cell batching must stay within one frame and the previous ceiling"
+  );
   assert.match(chatMainBody, /isDayAnimationEnabled=\{false\}/);
   assert.match(chatMainBody, /initiallyInitialized/);
   assert.match(

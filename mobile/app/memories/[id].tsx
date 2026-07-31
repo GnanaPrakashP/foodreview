@@ -503,11 +503,22 @@ const CHAT_MAIN_ANCHOR_WINDOW_EXPAND_ROWS = 30;
 // expansion has to happen while `maintainVisibleContentPosition` is still armed
 // (that is, while NOT near-bottom) or the viewport jumps under the reader.
 const CHAT_MAIN_ANCHOR_WINDOW_EXPAND_THRESHOLD = 600;
-const CHAT_MAIN_MAX_RENDER_BATCH = 6;
+// Fill RATE, not retention. A fast fling used to outrun the renderer and leave
+// bare background until it caught up, because rows are variable height: with no
+// getItemLayout the list must render sequentially to discover where anything
+// is, and 6 rows per 50ms is only ~120 rows/second. Raising the batch and
+// shortening the interval fills roughly five times faster while the window
+// below still governs how many rows are RETAINED, so peak mounted views are
+// unchanged.
+const CHAT_MAIN_MAX_RENDER_BATCH = 10;
+const CHAT_MAIN_CELL_BATCHING_PERIOD_MS = 16;
 // Keep only the visible viewport plus one render-ahead viewport on either side.
 // A window of nine mounted every row in medium rooms (42 messages produced
 // ~1,000 native views), making both background warm-up and route teardown scale
 // with total history even though FlatList already owns incremental rendering.
+// Retention strengthens this bound rather than relaxing it: the pane now
+// survives every tab switch, so whatever the window holds is held for the whole
+// room visit instead of being freed on the way out of Chat.
 const CHAT_MAIN_WINDOW_SIZE = 3;
 const CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS = 650;
 const CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD = 0.55;
@@ -3656,7 +3667,7 @@ function MemoryChatMainSurface({
             // transformed/inverted clipping behaves differently there.
             removeClippedSubviews: Platform.OS === "android",
             scrollEnabled: true,
-            updateCellsBatchingPeriod: 50,
+            updateCellsBatchingPeriod: CHAT_MAIN_CELL_BATCHING_PERIOD_MS,
             windowSize: CHAT_MAIN_WINDOW_SIZE
           }}
           loadEarlierMessagesProps={{
