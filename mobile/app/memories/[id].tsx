@@ -3757,7 +3757,12 @@ function MemoryChatMainSurface({
           }}
           user={currentUser}
           />
-          {(chatLatestButtonVisible || chatWindowActive) && displayChatMessages.length > 0 ? (
+          {/* Scroll position alone decides this. Forcing it visible for the
+              whole life of an unread window pinned the pill over the newest
+              messages once the reader scrolled down to them, and it was
+              redundant anyway: a windowed entry sits about twelve rows from
+              the bottom, well past the threshold that shows it naturally. */}
+          {chatLatestButtonVisible && displayChatMessages.length > 0 ? (
             <Pressable
               accessibilityLabel={
                 unreadCount > 0
