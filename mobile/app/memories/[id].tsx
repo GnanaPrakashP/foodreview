@@ -550,6 +550,13 @@ const MEDIA_GALLERY_INITIAL_RENDER_COUNT = 8;
 const MEDIA_GALLERY_MAX_RENDER_BATCH = 8;
 const MEDIA_GALLERY_PREFETCH_COUNT = 12;
 const MEDIA_GALLERY_WINDOW_SIZE = 7;
+// The Table pane is the tab the room OPENS on, so every view it builds is on
+// the room-open path and every view it holds is on the back-exit path. It was
+// a plain ScrollView mapping the whole stop list, which made both costs scale
+// with the number of places in the memory rather than with what is on screen.
+const ITINERARY_INITIAL_RENDER_COUNT = 4;
+const ITINERARY_MAX_RENDER_BATCH = 4;
+const ITINERARY_WINDOW_SIZE = 3;
 const DISHES_INITIAL_RENDER_COUNT = 4;
 const DISHES_MAX_RENDER_BATCH = 4;
 const DISHES_WINDOW_SIZE = 3;
@@ -7932,6 +7939,11 @@ function AddMenuStack({
 }) {
   const stackBottom = Math.max(FLOATING_ADD_EDGE_OFFSET, bottomInset + 6) + FLOATING_ADD_BUTTON_SIZE + FLOATING_ADD_MENU_GAP;
   const stackRight = FLOATING_ADD_EDGE_OFFSET + ((FLOATING_ADD_BUTTON_SIZE - FLOATING_ADD_ACTION_ICON_SIZE) / 2);
+  // Latched, not mirrored: once the menu has been opened the actions stay so a
+  // second open costs nothing and the closing animation still has children.
+  const renderedRef = useRef(open);
+  if (open) renderedRef.current = true;
+  const rendered = renderedRef.current;
 
   return (
     <Animated.View
@@ -7944,9 +7956,18 @@ function AddMenuStack({
         }
       ]}
     >
-      <AddMenuAction icon="location-outline" label="Place" onPress={onStop} progress={progress} stackIndexFromBottom={2} />
-      <AddMenuAction icon="restaurant-outline" label="Dish" onPress={onDish} progress={progress} stackIndexFromBottom={1} />
-      <AddMenuAction icon="camera-outline" label="Media" onPress={onMedia} progress={progress} stackIndexFromBottom={0} />
+      {/* Built on first open, not on every room open. The speed-dial is closed
+          for almost the whole life of the room, and its actions were mounting
+          on the room-open path and tearing down on the back-exit path to sit
+          invisible in between. Kept mounted once opened so reopening it stays
+          instant, and so the close animation has something to animate. */}
+      {rendered ? (
+        <>
+          <AddMenuAction icon="location-outline" label="Place" onPress={onStop} progress={progress} stackIndexFromBottom={2} />
+          <AddMenuAction icon="restaurant-outline" label="Dish" onPress={onDish} progress={progress} stackIndexFromBottom={1} />
+          <AddMenuAction icon="camera-outline" label="Media" onPress={onMedia} progress={progress} stackIndexFromBottom={0} />
+        </>
+      ) : null}
     </Animated.View>
   );
 }
@@ -10790,64 +10811,89 @@ function ItineraryPanel({
   }
 
   return (
-    <ScrollView
+    <FlatList
       contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
       contentOffset={{ x: 0, y: initialScrollOffset }}
+      data={stops}
+      initialNumToRender={ITINERARY_INITIAL_RENDER_COUNT}
+      keyExtractor={(stop) => stop.id}
+      ListHeaderComponent={(
+        <>
+          <View style={styles.tablePostActionRow}>
+            <Pressable
+              accessibilityLabel="Post this table memory"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: true }}
+              disabled
+              style={styles.tablePostButton}
+            >
+              <Ionicons name="create-outline" size={16} color={ROOM_COLORS.onCool} />
+              <Text style={styles.tablePostButtonText}>Post</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.itineraryHeading}>Places Visited</Text>
+        </>
+      )}
+      maxToRenderPerBatch={ITINERARY_MAX_RENDER_BATCH}
       onMomentumScrollBegin={scrollDiagnostics.begin}
       onMomentumScrollEnd={scrollDiagnostics.settle}
       onScroll={scrollDiagnostics.capture}
       onScrollBeginDrag={scrollDiagnostics.begin}
       onScrollEndDrag={scrollDiagnostics.settle}
+      removeClippedSubviews={Platform.OS === "android"}
+      renderItem={({ index, item }) => (
+        <ItineraryStopRow
+          isFirstStop={index === 0}
+          isLastStop={index === stops.length - 1}
+          stop={item}
+        />
+      )}
       scrollEventThrottle={32}
       showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.tablePostActionRow}>
-        <Pressable
-          accessibilityLabel="Post this table memory"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: true }}
-          disabled
-          style={styles.tablePostButton}
-        >
-          <Ionicons name="create-outline" size={16} color={ROOM_COLORS.onCool} />
-          <Text style={styles.tablePostButtonText}>Post</Text>
-        </Pressable>
-      </View>
-      <Text style={styles.itineraryHeading}>Places Visited</Text>
-      {stops.map((stop, index) => {
-        const isFirstStop = index === 0;
-        const isLastStop = index === stops.length - 1;
-        return (
-          <View
-            key={stop.id}
-            style={styles.stopTimelineRow}
-          >
-            <View pointerEvents="none" style={styles.stopTimelineRail}>
-              {!isFirstStop ? <View style={styles.stopTimelineConnectorTop} /> : null}
-              {!isLastStop ? <View style={styles.stopTimelineConnectorBottom} /> : null}
-              <View style={styles.stopTimelineMarker}>
-                <Ionicons name="location" size={16} color={ROOM_COLORS.onCool} />
-              </View>
-            </View>
-
-            <View style={[styles.stopCard, styles.stopTimelineCard]}>
-              <View style={styles.stopHeaderRow}>
-                <View style={styles.stopHeaderText}>
-                  <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
-                  {stop.note ? (
-                    <Text ellipsizeMode="tail" numberOfLines={1} style={styles.stopLocation}>
-                      {stop.note}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            </View>
-          </View>
-        );
-      })}
-    </ScrollView>
+      updateCellsBatchingPeriod={50}
+      windowSize={ITINERARY_WINDOW_SIZE}
+    />
   );
 }
+
+// The rail draws the timeline, so a row needs to know where it sits in the
+// list: the top connector is omitted on the first stop and the bottom one on
+// the last, which is what makes the line start and stop at the markers rather
+// than running off both ends.
+const ItineraryStopRow = memo(function ItineraryStopRow({
+  isFirstStop,
+  isLastStop,
+  stop
+}: {
+  isFirstStop: boolean;
+  isLastStop: boolean;
+  stop: MemoryStop;
+}) {
+  return (
+    <View style={styles.stopTimelineRow}>
+      <View pointerEvents="none" style={styles.stopTimelineRail}>
+        {!isFirstStop ? <View style={styles.stopTimelineConnectorTop} /> : null}
+        {!isLastStop ? <View style={styles.stopTimelineConnectorBottom} /> : null}
+        <View style={styles.stopTimelineMarker}>
+          <Ionicons name="location" size={16} color={ROOM_COLORS.onCool} />
+        </View>
+      </View>
+
+      <View style={[styles.stopCard, styles.stopTimelineCard]}>
+        <View style={styles.stopHeaderRow}>
+          <View style={styles.stopHeaderText}>
+            <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
+            {stop.note ? (
+              <Text ellipsizeMode="tail" numberOfLines={1} style={styles.stopLocation}>
+                {stop.note}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+});
 
 const DishesPanelRow = memo(function DishesPanelRow({
   dish,
