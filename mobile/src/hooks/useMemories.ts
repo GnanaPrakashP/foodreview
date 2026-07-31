@@ -644,6 +644,20 @@ type MemoryRoomEntityRealtimePayload = {
 const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>>();
 registerSensitiveResourceCleanup(() => pendingMemoryDeleteBatches.clear());
 
+// Cancelling a stuck upload has to outlive the request that is stuck. The media
+// mutation can still be polling for a ready asset for well over a minute after
+// the user taps Cancel, and its failure handler re-upserts the row from the
+// mutation context — so the message vanished and then came back, which read as
+// Cancel doing nothing at all. Identities recorded here are refused by that
+// handler. Keyed by clientId, which is unique per send, so an entry can never
+// suppress a later message.
+const dismissedMemoryOutboxIds = new Set<string>();
+registerSensitiveResourceCleanup(() => dismissedMemoryOutboxIds.clear());
+
+export function isDismissedMemoryOutboxMessage(identity?: string | null) {
+  return Boolean(identity && dismissedMemoryOutboxIds.has(identity));
+}
+
 function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAsset[] {
   const uploadBatchId = input.uploadBatchId ?? createRequestId();
   input.uploadBatchId = uploadBatchId;
@@ -2616,6 +2630,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
 export function useDismissFailedMemoryMessage(roomId: string) {
   const queryClient = useQueryClient();
   return useCallback((messageIdentity: string) => {
+    dismissedMemoryOutboxIds.add(messageIdentity);
     let removedMessage: MemoryMessage | null = null;
     let latestRemaining: MemoryMessage | null = null;
     queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
@@ -3088,7 +3103,11 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       };
     },
     onError: (error, _input, context) => {
-      if (context?.optimisticMessage && context.clientId) {
+      if (
+        context?.optimisticMessage &&
+        context.clientId &&
+        !isDismissedMemoryOutboxMessage(context.clientId)
+      ) {
         const issueKind = mediaProcessingIssueKind(error);
         const deliveryStatus: MemoryMessage["deliveryStatus"] = issueKind === "delayed"
           ? "processing_delayed"
@@ -3123,7 +3142,15 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       }
     },
     onSuccess: (result, _input, context) => {
-      if (context?.optimisticMessageId && profile?.username) {
+      // A cancel that raced a successful upload still stands locally. The row
+      // exists server-side, so the ordinary reconcile restores it if it is
+      // genuinely there — re-inserting it here would resurrect a message the
+      // user had already dismissed from their own timeline.
+      if (
+        context?.optimisticMessageId &&
+        profile?.username &&
+        !isDismissedMemoryOutboxMessage(context.clientId)
+      ) {
         if (context.clientId) {
           recordMemoryChatPlacement("HTTP_CONFIRMED", {
             clientId: context.clientId,
