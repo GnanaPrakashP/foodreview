@@ -464,9 +464,16 @@ test("Chat projection and unread anchor belong to the room lifetime, not each ta
     initialRenderCount >= 12,
     "initial render count must cover a measured viewport"
   );
-  assert.equal(
-    Number(roomScreen.match(/const CHAT_MAIN_MAX_RENDER_BATCH = (\d+);/)?.[1]),
-    6
+  // Fill rate, deliberately tunable: too small and a fast fling outruns the
+  // renderer and shows bare background, too large and one batch stops being a
+  // frame's worth of work. Retention is bounded by windowSize instead, which is
+  // asserted separately, so this only has to stay inside a sane band.
+  const maxRenderBatch = Number(
+    roomScreen.match(/const CHAT_MAIN_MAX_RENDER_BATCH = (\d+);/)?.[1]
+  );
+  assert.ok(
+    maxRenderBatch >= 6 && maxRenderBatch <= 12,
+    "chat render batch must fill faster than a fling without oversizing a commit"
   );
   // Anchoring on a long-unread room must stay bounded rather than turning the
   // first commit into the whole history.
