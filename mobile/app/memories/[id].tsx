@@ -5448,6 +5448,16 @@ export default function MemoryDetailScreen() {
   const [chatProjectionArmed, setChatProjectionArmed] = useState(
     initialJourneyTab === "chat"
   );
+  const [mediaProjectionArmed, setMediaProjectionArmed] = useState(
+    initialJourneyTab === "media"
+  );
+  useEffect(() => {
+    if (mediaProjectionArmed || !room.data) return undefined;
+    const task = InteractionManager.runAfterInteractions(() => {
+      setMediaProjectionArmed(true);
+    });
+    return () => task.cancel();
+  }, [mediaProjectionArmed, room.data]);
   useEffect(() => {
     if (chatProjectionArmed || !room.data) return undefined;
     const task = InteractionManager.runAfterInteractions(() => {
@@ -6586,9 +6596,16 @@ export default function MemoryDetailScreen() {
   const pagedMediaPhotos = useMemo(() => (
     mediaPages.data?.pages.flatMap((page) => page.photos) ?? []
   ), [mediaPages.data]);
+  // Media-only, and armed the same way the chat projection is. It de-duplicates
+  // and sorts every photo in the room, which was pure waste when the user opened
+  // to Table and backed out without ever touching Media. A Media tap that beats
+  // the idle callback still merges synchronously, exactly as before.
+  const mediaProjectionNeeded = mediaProjectionArmed || mode === "media";
   const galleryPhotos = useMemo(() => (
-    mergedRoomData ? mergeMemoryPhotos(pagedMediaPhotos, mergedRoomData.photos) : []
-  ), [mergedRoomData, pagedMediaPhotos]);
+    mediaProjectionNeeded && mergedRoomData
+      ? mergeMemoryPhotos(pagedMediaPhotos, mergedRoomData.photos)
+      : []
+  ), [mediaProjectionNeeded, mergedRoomData, pagedMediaPhotos]);
   useEffect(() => {
     if (mode !== "media") return;
     const prefetchTask = InteractionManager.runAfterInteractions(() => {
