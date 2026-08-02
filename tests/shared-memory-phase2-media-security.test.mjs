@@ -13,6 +13,7 @@ const memoryPipeline = readFileSync("mobile/src/services/mediaPipeline.ts", "utf
 const memoryLegacyMedia = readFileSync("mobile/src/services/memoryLegacyMedia.ts", "utf8");
 const memoryMediaRoute = readFileSync("app/api/mobile/memories/[roomId]/media/route.ts", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
+const sharedMediaPipeline = readFileSync("lib/server/media-pipeline.ts", "utf8");
 const phase2Migration = readFileSync(
   "supabase/migrations/202606180003_shared_memory_phase2_media_upload_hardening.sql",
   "utf8"
@@ -127,8 +128,28 @@ test("finalize creates media rows server-side without trusting client room path 
   assert.doesNotMatch(finalizeRoute, /public_url:\s*body/);
 });
 
+test("table memory room media skips the mature-content check, and only that", () => {
+  // Product decision: a table memory room is private to its members, so its
+  // media is NOT screened for mature content — that check belongs to the public
+  // post flow. Both memory upload paths are exempt.
+  assert.doesNotMatch(finalizeRoute, /await moderateMemoryMediaBuffer\(/);
+  assert.match(sharedMediaPipeline, /asset\.surface === "memory"\s*\n?\s*\? \{ status: "approved" \}/);
+  // Exempt, never left pending: the attach RPC and the media_assets trigger
+  // both require `moderation_status = 'approved'`, so a skipped asset that
+  // stayed pending would silently never reach the room.
+  assert.doesNotMatch(sharedMediaPipeline, /asset\.surface === "memory"[\s\S]{0,120}status: "pending"/);
+  // Every other surface still goes through the provider.
+  assert.match(sharedMediaPipeline, /:\s*await moderateMemoryMediaBuffer\(/);
+  assert.match(
+    readFileSync("app/api/mobile/review-media/finalize-upload/route.ts", "utf8"),
+    /await moderateImageContent\(/
+  );
+});
+
 test("pending moderation is fail-closed for other room members", () => {
-  assert.match(finalizeRoute, /moderateMemoryMediaBuffer/);
+  // Still load-bearing after the exemption above: a photo can be pending from
+  // an operator action or a legacy row, and must stay invisible to everyone
+  // except whoever uploaded it.
   assert.match(serverMedia, /moderation_provider_not_configured/);
   assert.match(serverMedia, /status: "pending"/);
   assert.match(phase2Migration, /coalesce\(photo\.moderation_status, 'approved'\) = 'approved'/);

@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import {
   assertSafeMemoryStoragePath,
   mediaLimitResponse,
-  moderateMemoryMediaBuffer,
   normalizeMimeType,
-  validateDetectedMemoryMedia
+  validateDetectedMemoryMedia,
+  type MemoryMediaModerationResult
 } from "@/lib/server/memory-media";
 import { MEMORY_MEDIA_BUCKET, MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS, memoryMediaMaxBytes, type MemoryMediaKind } from "@/lib/memory-media-policy";
 import { memoryErrorKind, memoryOperationDurationMs, recordMemoryOperation } from "@/lib/server/memory-observability";
@@ -263,10 +263,12 @@ export async function POST(req: NextRequest) {
       expectedMimeType: intent.mime_type
     });
 
-    const moderation = await moderateMemoryMediaBuffer({
-      buffer,
-      kind: intent.media_type
-    });
+    // Table memory rooms are private to their members and deliberately do not
+    // run the mature-content check — that belongs to the public post flow. The
+    // rejected branch below is kept because an intent can still be rejected by
+    // an operator action, and because this route must keep behaving correctly
+    // if screening is ever turned back on here.
+    const moderation: MemoryMediaModerationResult = { status: "approved" };
 
     if (moderation.status === "rejected") {
       const { error: rejectedRemoveError } = await admin.storage

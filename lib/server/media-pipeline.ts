@@ -6,7 +6,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import sharp from "sharp";
 import { mediaWorkerLogger } from "@/lib/observability/server";
-import { moderateMemoryMediaBuffer } from "@/lib/server/memory-media";
+import {
+  moderateMemoryMediaBuffer,
+  type MemoryMediaModerationResult
+} from "@/lib/server/memory-media";
 import { hashSecurityIdentifier } from "@/lib/server/api-security";
 import {
   accessClassForPostVisibility,
@@ -664,10 +667,18 @@ async function ensureMediaAssetModeration(
   if (asset.moderation_status === "rejected") throw new Error("moderation_rejected");
 
   await lease?.checkpoint("before_moderation");
-  const moderation = await moderateMemoryMediaBuffer({
-    buffer,
-    kind: asset.media_type
-  });
+  // Table memory rooms are private to their members, so their media is not
+  // screened for mature content — that check belongs to the public post flow
+  // (surface "post"). The asset is still marked approved rather than left
+  // pending: `attach_shared_memory_media_assets_v1` selects only assets with
+  // `moderation_status = 'approved'`, and the media_assets trigger enforces the
+  // same, so a skipped asset would simply never reach the room.
+  const moderation: MemoryMediaModerationResult = asset.surface === "memory"
+    ? { status: "approved" }
+    : await moderateMemoryMediaBuffer({
+      buffer,
+      kind: asset.media_type
+    });
   await lease?.checkpoint("after_moderation");
   if (moderation.status === "pending") {
     throw new Error(moderation.reason ?? "moderation_service_unavailable");

@@ -2981,7 +2981,24 @@
       "sizeBytes": 1673,
       "sourceRoot": "supabase/migrations",
       "version": "202607290001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "shared_memory_stops"
+      ],
+      "description": "shared_memory_stop_place_id",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608020001_shared_memory_stop_place_id.sql",
+      "objectCategories": [
+        "constraints",
+        "memory"
+      ],
+      "sha256": "ab88cf09d97440165d438c9146463c36d2811a43b18afd98c73388fd83e28417",
+      "sizeBytes": 1169,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608020001"
     }
   ],
-  "currentCanonicalMigrations": 90
+  "currentCanonicalMigrations": 91
 }

@@ -228,3 +228,18 @@ its 4:5 feed crop, and avatars may continue using a square crop.
 Rollback is roll-forward. Do not remove the private buckets, weaken the
 service-role guards, make Table Memory derivatives public, or restore
 `memoryStorage`.
+
+### Table Memory stop place id
+
+`202608020001_shared_memory_stop_place_id.sql` adds a nullable `place_id` to
+`public.shared_memory_stops`. A stop is created from a places-autocomplete
+suggestion, but only the two display lines were kept (`name` = main text,
+`note` = the address line), so "open in Maps" from the Table tab could only run
+a text search. The stored id makes that link an exact `query_place_id` match.
+
+Additive and safe to apply at any time: the column is nullable with no backfill,
+existing stops keep working as text searches, and a stop named without picking a
+suggestion still stores nothing. The mobile client falls back to the
+pre-migration column list on both the stop read and the stop insert, so an
+un-migrated database keeps working rather than surfacing the stops-migration
+hint.
