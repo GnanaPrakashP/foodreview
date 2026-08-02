@@ -2998,7 +2998,39 @@
       "sizeBytes": 1169,
       "sourceRoot": "supabase/migrations",
       "version": "202608020001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "profiles",
+        "shared_memory_chat_changes",
+        "shared_memory_chat_page",
+        "shared_memory_dish_ratings",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_room_bootstrap_v1",
+        "shared_memory_room_sync_v1",
+        "shared_memory_rooms",
+        "shared_memory_stops"
+      ],
+      "description": "shared_memory_dish_ratings_payload",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608020002_shared_memory_dish_ratings_payload.sql",
+      "objectCategories": [
+        "functions",
+        "memory",
+        "profiles"
+      ],
+      "sha256": "19e481e67eea9b3d4901b7768da1ff766eebf49777c539e88a7982b4474c036a",
+      "sizeBytes": 9248,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608020002"
     }
   ],
-  "currentCanonicalMigrations": 91
+  "currentCanonicalMigrations": 92
 }
