@@ -243,3 +243,26 @@ suggestion still stores nothing. The mobile client falls back to the
 pre-migration column list on both the stop read and the stop insert, so an
 un-migrated database keeps working rather than surfacing the stops-migration
 hint.
+
+### Table Memory dish ratings payload
+
+`202608020002_shared_memory_dish_ratings_payload.sql` redefines
+`shared_memory_room_sync_v1` and `shared_memory_room_bootstrap_v1` so their
+`dishRatings` payload carries rows instead of bare numbers.
+
+`shared_memory_dish_ratings` has a column named `rating`, and both functions
+aliased the table `rating` too. PostgreSQL resolves a bare identifier against
+column names before table aliases, so `to_jsonb(rating)` emitted the numeric
+column: the client received `[5, 4, 5]` rather than objects with
+`dish_id`/`rated_by`/`rating`. Grouping by `rating.dish_id` then produced
+nothing, so every dish fell back to the legacy `shared_memory_dishes.rating`
+column — written only when the dish is created. A re-rating was stored
+correctly in `shared_memory_dish_ratings` and never displayed.
+
+`to_jsonb(dish)` in the same statements is unaffected: `shared_memory_dishes`
+has no column called `dish`. Renaming the ratings alias is the whole change; the
+function bodies are otherwise reproduced verbatim from 202607250001.
+
+Apply with no app release: the fix is server-side and the existing client
+already maps the row shape. Ratings stored while the bug was live are intact and
+appear as soon as this is applied.

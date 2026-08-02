@@ -1423,6 +1423,31 @@ test("returning from the capture flow opens chat on a room that never remounted"
   );
 });
 
+test("dish ratings reach the client as rows, not bare numbers", () => {
+  // shared_memory_dish_ratings has a column named `rating`, and the room RPCs
+  // aliased the TABLE `rating` as well. Postgres resolves a bare identifier
+  // against columns before table aliases, so `to_jsonb(rating)` emitted the
+  // numeric COLUMN: dishRatings arrived as [5, 4, 5] instead of rows. The
+  // client groups by `rating.dish_id`, undefined on a number, so every dish
+  // fell back to the legacy shared_memory_dishes.rating column — which is only
+  // written at creation, so a changed rating never displayed.
+  const fixMigration = readFileSync(
+    "supabase/migrations/202608020002_shared_memory_dish_ratings_payload.sql",
+    "utf8"
+  );
+  assert.match(fixMigration, /create or replace function public\.shared_memory_room_sync_v1/);
+  assert.match(fixMigration, /create or replace function public\.shared_memory_room_bootstrap_v1/);
+  assert.match(
+    fixMigration,
+    /'dishRatings', coalesce\(\(select jsonb_agg\(to_jsonb\(dish_rating\)/
+  );
+  // The ambiguous form must not come back in the redefinition.
+  assert.doesNotMatch(fixMigration, /jsonb_agg\(to_jsonb\(rating\)/);
+  // to_jsonb(dish) is correct and must stay: shared_memory_dishes has no
+  // column named `dish`, so there the alias wins.
+  assert.match(fixMigration, /jsonb_agg\(to_jsonb\(dish\)/);
+});
+
 test("a dish card lines up with the bubbles around it", () => {
   // A dish card is returned from renderMessage BEFORE the vendor's Message
   // wrapper, so it never inherits that wrapper's side margin the way text and
