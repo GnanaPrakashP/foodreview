@@ -397,6 +397,22 @@ test("an interrupted cache-to-durable SQLite migration preserves the source and 
       sanitizeOfflineMemoryPhoto: (value) => value,
       sanitizeOfflineMemoryRoom: (value) => value
     };
+    if (id === "@/services/memoryPageCursor") return {
+      encodeMemoryPageCursor: (createdAt, cursorId) => (
+        createdAt && cursorId ? `${createdAt}|${cursorId}` : null
+      ),
+      memoryPageCursorFromMessage: (message) => (
+        message?.serverCreatedAt && message?.serverId
+          ? `${message.serverCreatedAt}|${message.serverId}`
+          : null
+      ),
+      parseMemoryPageCursor: (cursor) => {
+        if (!cursor) return null;
+        const at = cursor.lastIndexOf("|");
+        if (at <= 0) return { createdAt: cursor, id: null };
+        return { createdAt: cursor.slice(0, at), id: cursor.slice(at + 1) || null };
+      }
+    };
     throw new Error(`Unexpected import: ${id}`);
   });
 

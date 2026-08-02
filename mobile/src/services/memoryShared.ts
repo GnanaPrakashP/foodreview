@@ -47,6 +47,9 @@ export type MemoryStopRow = {
   stop_type: string;
   name: string;
   note: string | null;
+  // Optional: rows created before the place_id migration, and any stop added
+  // without picking an autocomplete suggestion, simply do not carry one.
+  place_id?: string | null;
   position: number;
   created_by: string;
   created_at: string;

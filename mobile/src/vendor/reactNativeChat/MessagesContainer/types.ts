@@ -36,8 +36,46 @@ export type AnimatedListProps<TMessage extends IMessage = IMessage> = Partial<
 
 export type AnimatedList<TMessage> = FlatList<TMessage>
 
+/**
+ * Which list engine backs the message list. FlatList mounts and unmounts rows;
+ * FlashList recycles them, which is the point — a fling profile on a populated
+ * room put the cost in per-row mount work (Fabric host-node creation and React
+ * reconcile), and recycling is what removes it rather than trimming it.
+ */
+export type MessagesContainerListEngine = 'flatlist' | 'flashlist'
+
+/**
+ * listProps is FlatList-shaped, so these have to be dropped before they reach
+ * FlashList: FlashList either does not accept them or reads them differently.
+ * Virtualization tuning has no FlashList equivalent at all (it uses a pixel
+ * drawDistance instead of item batches and windows), and
+ * maintainVisibleContentPosition takes a different shape, so it is translated
+ * separately rather than forwarded.
+ */
+export const FLATLIST_ONLY_LIST_PROPS = [
+  'initialNumToRender',
+  'maxToRenderPerBatch',
+  'windowSize',
+  'updateCellsBatchingPeriod',
+  'removeClippedSubviews',
+  'onScrollToIndexFailed',
+  'maintainVisibleContentPosition',
+  'getItemLayout',
+] as const
+
 export interface MessagesContainerProps<TMessage extends IMessage = IMessage>
   extends Omit<TypingIndicatorProps, 'style'> {
+  /** Defaults to 'flatlist' so existing hosts are untouched. */
+  listEngine?: MessagesContainerListEngine
+  /**
+   * FlashList only, and effectively required when it is used: FlashList reuses
+   * a row instance for the next item of the SAME type, so anything whose
+   * subtree differs in shape (media, audio, a dish card, a system row) must
+   * report a distinct type or it will be recycled into a mismatched tree.
+   */
+  getItemType?: (item: TMessage, index: number) => string | number
+  /** FlashList-specific props, e.g. drawDistance. Ignored by FlatList. */
+  flashListProps?: Record<string, unknown>
   /** Ref for the FlatList message container */
   forwardRef?: RefObject<AnimatedList<TMessage>>
   /** Messages to display */

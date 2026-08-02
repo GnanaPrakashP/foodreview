@@ -18,7 +18,8 @@ import { DayAnimated } from './components/DayAnimated'
 import { Item } from './components/Item'
 import { ItemProps } from './components/Item/types'
 import styles from './styles'
-import { MessagesContainerProps, DaysPositions, AnimatedFlatList } from './types'
+import { FlashList } from '@shopify/flash-list'
+import { MessagesContainerProps, DaysPositions, AnimatedFlatList, FLATLIST_ONLY_LIST_PROPS } from './types'
 
 export * from './types'
 
@@ -48,6 +49,9 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     scrollToBottomComponent: scrollToBottomComponentProp,
     renderDay: renderDayProp,
     isDayAnimationEnabled = true,
+    listEngine = 'flatlist',
+    getItemType,
+    flashListProps,
   } = props
 
   const listPropsOnScrollProp = listProps?.onScroll
@@ -173,9 +177,28 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     previousLatestMessageId.current = latestMessageId
   }, [latestMessageId, isInverted, doScrollToBottom, contentHeight, lastScrolledY, listHeight, scrollToBottomOffset])
 
+  // `props` is a new object on EVERY render, so this memo recomputed every time
+  // and handed back a new `rest` — which made renderItem below a new function,
+  // which makes VirtualizedList recreate every cell element on every render of
+  // this container. The rows themselves still bail out at the Item memo, but
+  // the element creation and one itemPropsEqual per visible row are paid
+  // regardless. Reuse the previous object whenever the spread contents are
+  // actually unchanged; the values handed to each message are identical either
+  // way, only the reference is preserved.
+  const restPropsRef = useRef<Record<string, unknown> | null>(null)
   const restProps = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { messages: _, ...rest } = props
+    const previous = restPropsRef.current
+    if (previous) {
+      const previousKeys = Object.keys(previous)
+      const nextKeys = Object.keys(rest)
+      const unchanged = previousKeys.length === nextKeys.length &&
+        nextKeys.every(key => Object.is(previous[key], (rest as Record<string, unknown>)[key]))
+      if (unchanged)
+        return previous
+    }
+    restPropsRef.current = rest as Record<string, unknown>
     return rest
   }, [props])
 
@@ -457,6 +480,99 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
     })
   }, [messages, daysPositions, isInverted, isDayAnimationEnabled])
 
+  const isFlashList = listEngine === 'flashlist'
+
+  // Day-position tracking rides on FlatList's CellRendererComponent, whose prop
+  // shape FlashList does not share, so the floating day header cannot work on
+  // this engine yet. Say so loudly: a feature that silently stops working is
+  // worse than one that refuses, and a host with the header off (the case this
+  // engine exists for) never sees this.
+  useEffect(() => {
+    if (isFlashList && isDayAnimationEnabled)
+      warning(
+        'Chat: isDayAnimationEnabled is not supported by listEngine="flashlist"; the floating day header will not update.'
+      )
+  }, [isFlashList, isDayAnimationEnabled])
+
+  // FlashList is driven from a plain JS onScroll rather than a Reanimated
+  // animated handler. The shared values below feed only DayAnimated and the
+  // scroll-to-bottom control, so a host with both disabled is unaffected; a
+  // host that enables either gets a header that follows on the JS thread
+  // instead of the UI thread. That is a deliberate trade for not wrapping
+  // FlashList in createAnimatedComponent, whose scroll-event plumbing is the
+  // part most likely to break.
+  const handleFlashListScroll = useCallback(event => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
+    const contentOffsetY = contentOffset.y
+    const scrollingTowardBottom =
+      (isInverted && lastScrolledY.value > contentOffsetY) ||
+      (!isInverted && lastScrolledY.value < contentOffsetY)
+
+    scrolledY.value = contentOffsetY
+    isScrollingDown.value = scrollingTowardBottom
+    lastScrolledY.value = contentOffsetY
+    contentHeight.value = contentSize.height
+
+    if (isScrollToBottomEnabled) {
+      const nextScrollToBottomVisible = isInverted
+        ? contentOffsetY > scrollToBottomOffset!
+        : contentOffsetY >= scrollToBottomOffset! &&
+          contentSize.height - layoutMeasurement.height > scrollToBottomOffset!
+
+      if (isScrollToBottomVisibleOnUI.value !== nextScrollToBottomVisible) {
+        isScrollToBottomVisibleOnUI.value = nextScrollToBottomVisible
+        changeScrollToBottomVisibility(nextScrollToBottomVisible, scrollingTowardBottom)
+      }
+    }
+
+    // The FlatList path forwards the Reanimated worklet event, which is FLAT
+    // (`event.contentOffset`); FlashList hands us an RN synthetic event, where
+    // the same fields sit under `nativeEvent`. Hosts are written against the
+    // flat shape, so unwrap it here or they read `.y` off undefined on the
+    // first finger move.
+    listPropsOnScrollProp?.(event.nativeEvent)
+  }, [
+    changeScrollToBottomVisibility,
+    contentHeight,
+    isInverted,
+    isScrollToBottomEnabled,
+    isScrollToBottomVisibleOnUI,
+    isScrollingDown,
+    lastScrolledY,
+    listPropsOnScrollProp,
+    scrollToBottomOffset,
+    scrolledY,
+  ])
+
+  // Strip what FlashList cannot take, then re-express the one prop that exists
+  // on both under a different shape. FlatList signals "hold the viewport" by
+  // supplying maintainVisibleContentPosition and "let it follow" by omitting
+  // it; FlashList keeps the behaviour on always and takes a `disabled` flag.
+  const flashListForwardedProps = useMemo(() => {
+    if (!isFlashList)
+      return null
+
+    const forwarded = { ...listProps }
+    for (const key of FLATLIST_ONLY_LIST_PROPS)
+      delete forwarded[key]
+    delete forwarded.onScroll
+
+    return {
+      ...forwarded,
+      maintainVisibleContentPosition: {
+        disabled: !listProps?.maintainVisibleContentPosition,
+      },
+      ...flashListProps,
+    }
+  }, [flashListProps, isFlashList, listProps])
+
+  const listHeaderComponent = isInverted
+    ? <>{BottomSpacerComponent}{ListFooterComponent}</>
+    : <>{TopSpacerComponent}{ListHeaderComponent}</>
+  const listFooterComponent = isInverted
+    ? <>{TopSpacerComponent}{ListHeaderComponent}</>
+    : <>{ListFooterComponent}{BottomSpacerComponent}</>
+
   return (
     <View
       style={[
@@ -464,6 +580,30 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
         isAlignedTop ? styles.containerAlignTop : stylesCommon.fill,
       ]}
     >
+      {isFlashList ? (
+        <FlashList
+          ref={forwardRef}
+          keyExtractor={keyExtractor}
+          data={messages}
+          renderItem={renderItem}
+          getItemType={getItemType}
+          inverted={isInverted}
+          automaticallyAdjustContentInsets={false}
+          style={stylesCommon.fill}
+          contentContainerStyle={styles.messagesContainer}
+          ListEmptyComponent={renderChatEmpty}
+          ListFooterComponent={listFooterComponent}
+          ListHeaderComponent={listHeaderComponent}
+          scrollEventThrottle={16}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.1}
+          keyboardDismissMode='interactive'
+          keyboardShouldPersistTaps='handled'
+          {...flashListForwardedProps}
+          onScroll={handleFlashListScroll}
+          onLayout={onLayoutList}
+        />
+      ) : (
       <AnimatedFlatList
         ref={forwardRef}
         keyExtractor={keyExtractor}
@@ -474,16 +614,8 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
         style={stylesCommon.fill}
         contentContainerStyle={styles.messagesContainer}
         ListEmptyComponent={renderChatEmpty}
-        ListFooterComponent={
-          isInverted
-            ? <>{TopSpacerComponent}{ListHeaderComponent}</>
-            : <>{ListFooterComponent}{BottomSpacerComponent}</>
-        }
-        ListHeaderComponent={
-          isInverted
-            ? <>{BottomSpacerComponent}{ListFooterComponent}</>
-            : <>{TopSpacerComponent}{ListHeaderComponent}</>
-        }
+        ListFooterComponent={listFooterComponent}
+        ListHeaderComponent={listHeaderComponent}
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.1}
@@ -494,6 +626,7 @@ export const MessagesContainer = <TMessage extends IMessage>(props: MessagesCont
         onLayout={onLayoutList}
         CellRendererComponent={renderCell}
       />
+      )}
       <ScrollToBottomWrapper />
       {isDayAnimationEnabled && (
         <DayAnimated

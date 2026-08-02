@@ -13,6 +13,7 @@ const vendoredMessages = readFileSync("mobile/src/vendor/reactNativeChat/Message
 const vendoredMessageTypes = readFileSync("mobile/src/vendor/reactNativeChat/MessagesContainer/types.ts", "utf8");
 const vendoredMessage = readFileSync("mobile/src/vendor/reactNativeChat/Message/index.tsx", "utf8");
 const memoryPreviewScreen = readFileSync("mobile/src/components/memories/camera/MediaPreviewScreen.tsx", "utf8");
+const memoryCaptureSession = readFileSync("mobile/src/services/memoryCaptureSession.ts", "utf8");
 const memoryService = readFileSync("mobile/src/services/memories.ts", "utf8");
 const memoryHooks = readFileSync("mobile/src/hooks/useMemories.ts", "utf8");
 const memoryOfflineStore = readFileSync("mobile/src/services/memoryOfflineStore.ts", "utf8");
@@ -68,7 +69,7 @@ test("phase 4 chat and media lists use bounded render windows", () => {
     assert.match(memoryRoomScreen, new RegExp(expected));
   }
 
-  const chatMainBody = memoryRoomScreen.match(/<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/)?.[0] ?? "";
+  const chatMainBody = memoryRoomScreen.match(/const chatMainListProps = useMemo[\s\S]*?<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{chatMainListProps\}/)?.[0] ?? "";
   // The initial window is computed, not literal, because entering on an unread
   // anchor has to render down to that anchor before it can be scrolled to. It
   // stays bounded by the named constants at both ends — a far-back divider
@@ -139,9 +140,16 @@ test("phase 4 chat and media lists use bounded render windows", () => {
   const chatWindowSize = Number(
     memoryRoomScreen.match(/const CHAT_MAIN_WINDOW_SIZE = (\d+);/)?.[1]
   );
+  // Raised from 3 to 5 on device evidence (2026-08-01): a window of 3 is the
+  // direct cause of the bare-wallpaper gaps on a fast fling — identical driven
+  // fling bursts scored 8.4% mean content with 3 of 6 frames essentially empty
+  // at 3, against 18.4% with 1 of 12 empty at 5. The ceiling stays, because
+  // frame timing degrades in the same direction (janky frames 9.2% -> 13.4%)
+  // and a window of 9 is what once mounted ~1,000 native views in a medium
+  // room. Beyond this, make rows cheaper rather than the window wider.
   assert.ok(
-    chatWindowSize > 0 && chatWindowSize <= 3,
-    "populated chat must not retain more than three viewport windows"
+    chatWindowSize > 0 && chatWindowSize <= 5,
+    "populated chat must not retain more than five viewport windows"
   );
   const chatInitialRenderCount = Number(
     memoryRoomScreen.match(/const CHAT_MAIN_INITIAL_RENDER_COUNT = (\d+);/)?.[1]
@@ -157,6 +165,185 @@ test("phase 4 chat and media lists use bounded render windows", () => {
     chatInitialRenderCount >= 12 && chatInitialRenderCount <= 20,
     "cold chat must paint one measured phone viewport without constructing a second viewport"
   );
+});
+
+test("a confirmed send does not leave its optimistic preview in the Media tab", () => {
+  const hooks = readFileSync("mobile/src/hooks/useMemories.ts", "utf8");
+  // A send whose media is still processing confirms with NO photos, so the
+  // reconcile keeps the optimistic previews and re-points them at the real
+  // message — deliberately, so the row does not go blank.
+  assert.match(hooks, /const fallbackPhotos = photos\.length > 0/);
+  // Their ids stay optimistic, and mergeMemoryPhotos de-duplicates by id, so
+  // once the real photos arrive BOTH survive and the Media tab shows the same
+  // picture twice — the real one plus a stale preview still wearing its upload
+  // overlay. A preview is stale as soon as its message carries a real
+  // attachment.
+  // The pair lives on the message's own `attachments`, which the bubble renders
+  // verbatim — the same picture as a two-up grid mid-upload — so the settle has
+  // to run on the projection every surface reads, not on the photo list alone.
+  // Rules are exercised for real in tests/memory-media-settle.test.mjs.
+  assert.match(
+    memoryRoomScreen,
+    /settleMemoryRoomMedia\(mergeRoomMessages\(room\.data, olderMessageItems\)\)/
+  );
+  // photosFromMessages reads attachments verbatim, so the open viewer has to
+  // settle before it re-derives, or the superseded preview comes straight back.
+  assert.match(
+    memoryRoomScreen,
+    /const settledRoom = settleMemoryRoomMedia\(room\.data\);\s*\n\s*const latestPhotos = mergeMemoryPhotos\(\s*settledRoom\.photos,\s*photosFromMessages\(settledRoom\.messages\)/
+  );
+  assert.doesNotMatch(memoryRoomScreen, /withoutSupersededOptimisticPhotos/);
+});
+
+test("confirming an upload does not blank the picture it is replacing", () => {
+  const hooks = readFileSync("mobile/src/hooks/useMemories.ts", "utf8");
+  // Confirmation swaps a LOCAL preview for a remote URL. Mounting an image
+  // whose bytes are not cached paints a blank frame first, which is the picture
+  // disappearing and coming back the moment upload hits 100%.
+  assert.match(hooks, /async function warmMemoryPhotoCache\(photos: MemoryPhoto\[\]\)/);
+  assert.match(hooks, /Image\.prefetch\(url, "memory-disk"\)/);
+  assert.match(hooks, /await warmMemoryPhotoCache\(photos\);/);
+  // Bounded: confirmation must never wait on the network.
+  assert.match(hooks, /const MEMORY_PHOTO_CACHE_WARM_TIMEOUT_MS = 1_500;/);
+  assert.match(hooks, /Promise\.race\(\[/);
+
+  // The transfer reports 1 as soon as the PUT finishes while the server is
+  // still processing, so the last phase must stop claiming a percentage.
+  assert.match(memoryRoomScreen, /const complete = normalizedProgress >= 1;/);
+  assert.match(memoryRoomScreen, /\{complete \? null : <Text style=\{styles\.uploadProgressText\}>/);
+  assert.match(memoryRoomScreen, /\{complete \? "Processing" : "Uploading"\}/);
+});
+
+test("a chat row attaches no layout listener when diagnostics are off", () => {
+  // onLayout on the row made RN deliver a layout event for EVERY mounted row,
+  // and the handler exists only to feed placement diagnostics whose recorders
+  // already early-return when profiling is off. Removing the listener is
+  // invisible — verified byte-identical by pixel diff — and measurably cheaper:
+  // fling frames that were essentially empty went from 7 of 12 to 8 of 24.
+  assert.match(
+    memoryRoomScreen,
+    /const placementDiagnosticsOn = memoryChatPlacementDiagnosticsEnabled\(\);/
+  );
+  assert.match(
+    memoryRoomScreen,
+    /onLayout=\{placementDiagnosticsOn \? handleLayout : undefined\}/
+  );
+  // The journey probe is a fiber plus a dep-less effect per row; same reasoning.
+  assert.match(
+    memoryRoomScreen,
+    /\{MEMORY_ROOM_RELEASE_PROFILE_ENABLED \? \([\s\S]{0,200}?<MemoryJourneyRenderProbe/
+  );
+});
+
+test("the chat list keeps one renderItem instead of recreating every cell", () => {
+  const vendoredMessages = readFileSync(
+    "mobile/src/vendor/reactNativeChat/MessagesContainer/index.tsx",
+    "utf8"
+  );
+  const vendoredChat = readFileSync("mobile/src/vendor/reactNativeChat/Chat/index.tsx", "utf8");
+
+  // The container spreads `restProps` into EVERY message, and it was derived
+  // from `props` — a new object on every render — so renderItem was a new
+  // function every time and VirtualizedList recreated every cell element. Rows
+  // still bailed at the Item memo, but element creation plus one
+  // itemPropsEqual per visible row was paid on every render regardless.
+  assert.match(vendoredMessages, /const restPropsRef = useRef<Record<string, unknown> \| null>\(null\)/);
+  assert.match(vendoredMessages, /if \(unchanged\)\s*return previous/);
+  // The vendored Chat rebuilt the reply object on every render for the same
+  // downstream effect.
+  assert.match(vendoredChat, /const replyWithSwipeHandler = useMemo\(/);
+  assert.match(vendoredChat, /reply=\{replyWithSwipeHandler\}/);
+
+  // None of that helps unless the host stops handing over fresh objects, so the
+  // props spread into every message are memoised rather than JSX literals.
+  for (const prop of [
+    "listProps=\\{chatMainListProps\\}",
+    "messageTextProps=\\{chatMainMessageTextProps\\}",
+    "loadEarlierMessagesProps=\\{chatMainLoadEarlierProps\\}",
+    "textInputProps=\\{chatMainTextInputProps\\}",
+    "avatarImageStyle=\\{chatMainAvatarImageStyle\\}",
+    "keyboardAvoidingViewProps=\\{chatMainKeyboardAvoidingProps\\}",
+    "reply=\\{chatMainReply\\}",
+    "reactions=\\{chatMainReactions\\}",
+    "onQuickReply=\\{handleChatMainQuickReply\\}",
+    "onSend=\\{handleChatMainSend\\}"
+  ]) assert.match(memoryRoomScreen, new RegExp(prop));
+
+  // And pane activation must not rebuild the scroll/paging callbacks, which are
+  // spread into every message the same way. They read it from a ref.
+  assert.match(memoryRoomScreen, /const activeRef = useRef\(active\);\s*activeRef\.current = active;/);
+  assert.match(memoryRoomScreen, /if \(!activeRef\.current\) return;/);
+  assert.match(memoryRoomScreen, /!activeRef\.current \|\|\s*!canLoadOlderMessages/);
+});
+
+test("the FlashList engine swaps the list under the shipping rows, not the rows", () => {
+  const vendoredMessages = readFileSync(
+    "mobile/src/vendor/reactNativeChat/MessagesContainer/index.tsx",
+    "utf8"
+  );
+  const vendoredMessagesTypes = readFileSync(
+    "mobile/src/vendor/reactNativeChat/MessagesContainer/types.ts",
+    "utf8"
+  );
+  const vendoredMessage = readFileSync(
+    "mobile/src/vendor/reactNativeChat/Message/index.tsx",
+    "utf8"
+  );
+  const renderer = readFileSync(
+    "mobile/src/performance/memoryRoomChatRenderer.ts",
+    "utf8"
+  );
+
+  // The engine is swapped underneath; the rows, bubbles and renderers above it
+  // are the shipping ones, so this stays an A/B of mount-and-unmount against
+  // recycling rather than a second chat implementation.
+  assert.match(vendoredMessagesTypes, /export type MessagesContainerListEngine = 'flatlist' \| 'flashlist'/);
+  assert.match(vendoredMessages, /const isFlashList = listEngine === 'flashlist'/);
+  assert.match(vendoredMessages, /\{isFlashList \? \(\s*<FlashList/);
+  assert.match(vendoredMessages, /renderItem=\{renderItem\}[\s\S]{0,200}getItemType=\{getItemType\}/);
+
+  // FlatList-only virtualization tuning must be stripped, never forwarded.
+  assert.match(vendoredMessagesTypes, /export const FLATLIST_ONLY_LIST_PROPS = \[/);
+  for (const key of [
+    "initialNumToRender",
+    "maxToRenderPerBatch",
+    "windowSize",
+    "updateCellsBatchingPeriod",
+    "removeClippedSubviews",
+    "onScrollToIndexFailed"
+  ]) assert.match(vendoredMessagesTypes, new RegExp(`'${key}'`));
+  assert.match(vendoredMessages, /for \(const key of FLATLIST_ONLY_LIST_PROPS\)\s*delete forwarded\[key\]/);
+  // Same intent, different shape: FlatList signals "hold the viewport" by
+  // supplying the prop, FlashList by a disabled flag.
+  assert.match(
+    vendoredMessages,
+    /maintainVisibleContentPosition: \{\s*disabled: !listProps\?\.maintainVisibleContentPosition,/
+  );
+
+  // Recycling correctness: a reused row must not inherit the previous message's
+  // armed reply affordance or a mid-swipe translate.
+  assert.match(vendoredMessage, /const recycledMessageIdRef = useRef\(currentMessage\?\._id\)/);
+  assert.match(
+    vendoredMessage,
+    /if \(recycledMessageIdRef\.current !== currentMessage\?\._id\) \{[\s\S]*?replySwipeX\.value = 0/
+  );
+  // ...and a text row must never be recycled into a media/audio/dish/system row.
+  assert.match(memoryRoomScreen, /function memoryChatItemType\(/);
+  for (const kind of ["dish", "system"])
+    assert.match(memoryRoomScreen, new RegExp(`return "${kind}"`));
+  for (const kind of ["audio", "media-grid", "media-one", "reply", "text"])
+    assert.match(memoryRoomScreen, new RegExp(`return \`${kind}-\\\$\\{side\\}\``));
+  assert.match(memoryRoomScreen, /getItemType=\{chatMainItemType\}/);
+
+  // The day header rides on FlatList's CellRendererComponent, so the engine must
+  // refuse loudly rather than silently stop updating it.
+  assert.match(vendoredMessages, /isDayAnimationEnabled is not supported by listEngine="flashlist"/);
+
+  // Both vendor engines drive the vendored surface, so neither may switch on the
+  // lite prototype rows.
+  assert.match(renderer, /MEMORY_ROOM_CHAT_RENDERER !== "vendor" &&\s*MEMORY_ROOM_CHAT_RENDERER !== "vendor-flashlist"/);
+  // FlatList is the production default; FlashList is the named alternative.
+  assert.match(renderer, /: "vendor";/);
 });
 
 test("chat rows build no invisible metadata and no reactions wrapper for a long press", () => {
@@ -177,21 +364,41 @@ test("chat rows build no invisible metadata and no reactions wrapper for a long 
   // useSharedValue, an useAnimatedStyle and an extra Reanimated view on every
   // row. It must be gated on emoji reactions ONLY — never used as a way to
   // obtain a long-press handler, which the default bubble path already gives.
-  assert.match(memoryRoomScreen, /isEnabled: active && MEMORY_REACTIONS_ENABLED/);
+  // Folded into a named constant so the reactions object does NOT depend on
+  // `active`: the container spreads it into every message, so a tab switch
+  // rebuilding it recreated every cell element.
+  assert.match(memoryRoomScreen, /const reactionsEnabled = active && MEMORY_REACTIONS_ENABLED;/);
+  assert.match(memoryRoomScreen, /isEnabled: reactionsEnabled,/);
   assert.doesNotMatch(memoryRoomScreen, /MEMORY_MESSAGE_OPTIONS_ENABLED/);
-  assert.match(memoryRoomScreen, /onLongPressMessage=\{handleLongPressMessage\}/);
-  // The default path has to report bubble geometry, or the menu cannot be
-  // positioned without the wrapper.
-  assert.match(vendoredBubble, /node\.measure\(\(_x, _y, width, height, pageX, pageY\)/);
-  assert.match(vendoredBubble, /<View ref=\{bubbleContainerRef\} style=\{containerStyle\?\.\[position\]\}>/);
-  // Hold time and existing reaction pills must survive the move off the wrapper.
-  assert.match(vendoredBubble, /delayLongPress=\{350\}[\s\S]{0,200}\{renderBubbleBody\(\)\}/);
+
+  // Press handling belongs to the ROW, not the bubble. React Native gives a
+  // touch to the innermost view that claims it, so a Pressable inside the
+  // bubble would win every press that lands on one and the row would only ever
+  // see the empty space beside it — which is the whole area a long press has to
+  // work in. The bubble therefore renders its body bare when the host passes no
+  // handlers, which also drops a Pressable per mounted row.
+  assert.match(
+    vendoredBubble,
+    /const hasBubblePressHandlers = Boolean\(\s*onPressMessageProp \|\| onLongPressMessageProp \|\| props\.touchableProps\s*\)/
+  );
+  assert.match(vendoredBubble, /\{hasBubblePressHandlers\s*\?\s*\(/);
+  assert.match(vendoredBubble, /\)\s*:\s*renderBubbleBody\(\)\}/);
+  assert.doesNotMatch(memoryRoomScreen, /onLongPressMessage=|onPressMessage=\{handlePressMessage\}/);
+  assert.match(memoryRoomScreen, /onLongPress=\{\(\) => handleRowLongPress\(rowMessage\)\}/);
+  assert.match(
+    memoryRoomScreen,
+    /onPress=\{selectionMode \? \(\) => handleRowPress\(rowMessage\) : undefined\}/
+  );
+  // Long press selects; there is no intermediate menu to open.
+  assert.match(memoryRoomScreen, /onBeginSelection\(actionTarget\);/);
+  assert.doesNotMatch(memoryRoomScreen, /buildMenuActions/);
+  // Existing reaction pills and quick replies must survive the bare-body path.
   assert.match(vendoredBubble, /\{renderQuickReplies\(\)\}\s*\{renderReactionsDisplay\(\)\}/);
 });
 
 test("active chat anchors the viewport and prefetches older rows before the edge", () => {
   const chatMainBody = memoryRoomScreen.match(
-    /<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/
+    /const chatMainListProps = useMemo[\s\S]*?<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{chatMainListProps\}/
   )?.[0] ?? "";
   const scrollPositionConfig = memoryRoomScreen.match(
     /const CHAT_MAIN_SCROLL_POSITION_CONFIG = \{[\s\S]*?\};/
@@ -536,7 +743,7 @@ test("rapid newline and backspace use one native Android composer height transac
     /function MemoryChatMainSurface\([\s\S]*?\n\}\n\n\/\/ Timestamp placement rule/
   )?.[0] ?? "";
   const toolbarBody = memoryRoomScreen.match(
-    /function MemoryChatMainInputToolbar\([\s\S]*?\n\}\n\nfunction MemoryChatMainSelectionToolbar/
+    /function MemoryChatMainInputToolbar\([\s\S]*?\n\}\n\n(?:\/\/[^\n]*\n)*function MemoryChatMainSelectionToolbar/
   )?.[0] ?? "";
 
   assert.match(chatSurfaceBody, /const messageBoxHeight = useSharedValue\(collapsedComposerGeometry\.messageBoxHeight\)/);
@@ -615,7 +822,7 @@ test("chat scrolling stays user-owned and the oldest message remains reachable a
     /const handleChatMainScroll = useCallback\([\s\S]*?(?=\n\n  const clearChatMainInteractionRelease)/
   )?.[0] ?? "";
   const contentSizeHandlerBody = chatSurfaceBody.match(
-    /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  const surfaceInner)/
+    /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  (?:\/\/[^\n]*\n  )*const surfaceInner)/
   )?.[0] ?? "";
   const keyboardBody = memoryRoomScreen.match(/\/\/ Keyboard handling:[\s\S]*?function showPeopleToast/)?.[0] ?? "";
 
@@ -708,9 +915,43 @@ test("phase 6 production default mounts chat only while selected and renders tim
 
 test("phase 4 media images use disk cache and stable recycling keys", () => {
   assert.match(memoryRoomScreen, /cachePolicy="memory-disk"/);
-  assert.match(memoryRoomScreen, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
+  // Keyed on IDENTITY, not the URL. An in-flight upload rewrites publicUrl
+  // underneath the same photo TWICE — once when the picker file is staged to an
+  // account-scoped file mid-upload, once when it becomes a remote URL — and a
+  // changed recyclingKey tells expo-image to reset the view, which is the image
+  // visibly disappearing and reappearing. memoryMediaCacheKey falls back to the
+  // photo id, which does not move while the upload is in flight.
+  assert.match(memoryRoomScreen, /recyclingKey=\{memoryMediaCacheKey\(media\)\}/);
+  assert.doesNotMatch(memoryRoomScreen, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
   assert.match(memoryRoomScreen, /const VIDEO_THUMBNAIL_CACHE_LIMIT = 80/);
   assert.match(memoryRoomScreen, /cacheKey=\{memoryMediaCacheKey\(media\)\}/);
+});
+
+test("a confirmed upload swaps the picture without tearing down its view", () => {
+  // A photo's own identity MOVES on confirmation: the optimistic preview
+  // (`optimistic-media:…`, no storagePath) is replaced by the real photo, so
+  // memoryMediaCacheKey jumps from the preview id to the real storagePath.
+  // Keying the React element or expo-image's recyclingKey on that rebuilds the
+  // tile at exactly the moment the picture is swapped — the image blanking once
+  // processing finishes, even though its bytes are already prefetched. The slot
+  // does not move, so the view is keyed on it instead.
+  assert.match(
+    memoryRoomScreen,
+    /function memoryMediaSlotViewKey\(rowKey: string, media: MemoryPhoto, index: number\) \{[\s\S]*?return `\$\{rowKey\}:\$\{Number\.isFinite\(media\.position\) \? media\.position : index\}`;/
+  );
+  // `_id` is memoryChatRowKey(message), which survives optimistic -> confirmed.
+  assert.match(memoryRoomScreen, /const rowKey = String\(props\.currentMessage\._id\);/);
+  assert.match(memoryRoomScreen, /viewKey=\{memoryMediaSlotViewKey\(rowKey, media, 0\)\}/);
+  // Grid tiles: the React key must move to the slot as well, or the element is
+  // unmounted before recyclingKey ever gets a say.
+  assert.match(memoryRoomScreen, /key=\{tileKey\(item, index\)\}/);
+  assert.doesNotMatch(memoryRoomScreen, /<MediaGridTile[\s\S]{0,200}key=\{item\.id\}/);
+  // The generated video-thumbnail cache stays keyed on CONTENT: a thumbnail
+  // extracted from a local file must not be served after that file is gone.
+  assert.match(
+    memoryRoomScreen,
+    /<VideoThumbnailLayer cacheKey=\{memoryMediaCacheKey\(media\)\}[^\n]*viewKey=\{viewKey\}/
+  );
 });
 
 test("single-image chat media keeps one effective rounded clip and stable image identity", () => {
@@ -759,7 +1000,7 @@ test("single-image chat media keeps one effective rounded clip and stable image 
   // primitive URI, stable recycling key, static leaf style, and no transition,
   // key, keyboard, or progress prop capable of recreating its native layer.
   assert.match(imageNode, /source=\{media\.thumbnailUrl \|\| media\.publicUrl\}/);
-  assert.match(imageNode, /recyclingKey=\{media\.storagePath \|\| media\.publicUrl\}/);
+  assert.match(imageNode, /recyclingKey=\{viewKey \?\? memoryMediaCacheKey\(media\)\}/);
   assert.match(imageNode, /style=\{styles\.mediaImage\}/);
   assert.doesNotMatch(imageNode, /source=\{\{/);
   assert.doesNotMatch(imageNode, /\bkey=/);
@@ -769,7 +1010,16 @@ test("single-image chat media keeps one effective rounded clip and stable image 
     singleMediaPreviewBody,
     /\b(?:keyboardHeight|keyboardProgress|surfaceKeyboardStyle)=\{/
   );
-  assert.match(renderMessageMediaBody, /\}, \[onOpenMedia, screenWidth\]\)/);
+  assert.match(
+    renderMessageMediaBody,
+    /\}, \[handleRowLongPress, onOpenMedia, screenWidth, selectionMode\]\)/
+  );
+  // Media claims its own touch to open the viewer, so it has to hand the row
+  // back both gestures: `disabled` while selecting (a disabled Pressable
+  // declines the responder) and the long press forwarded outright.
+  assert.match(renderMessageMediaBody, /disabled=\{selectionMode\}/);
+  assert.match(renderMessageMediaBody, /onLongPress=\{selectRow\}/);
+  assert.match(renderMessageMediaBody, /onMediaLongPress=\{selectRow\}/);
 });
 
 test("phase 4 media gallery warms the first media assets on activation", () => {
@@ -1026,7 +1276,7 @@ test("a short cached chat page still exposes an older-history cursor", () => {
   assert.match(offlineMessagesPageRead, /if \(messages\.length === 0\) return null/);
   assert.match(
     offlineMessagesPageRead,
-    /nextCursor: encodeMemoryPageCursor\(messages\[0\]\?\.createdAt, messages\[0\]\?\.id\)/
+    /nextCursor: memoryPageCursorFromMessage\(messages\[0\]\)/
   );
   assert.doesNotMatch(offlineMessagesPageRead, /nextCursor:\s*rows\.length > limit/);
 });
@@ -1143,6 +1393,55 @@ test("camera preview persists a non-blocking optimistic send before returning to
   assert.doesNotMatch(memoryRoomScreen, /postCaptureId/);
 });
 
+test("returning from the capture flow opens chat on a room that never remounted", () => {
+  // `router.dismissTo` returns to the room still sitting on the stack, so a
+  // `tab` param cannot carry the destination: the screen keeps the mode it was
+  // left on (Table, where the add-media button lives). The request is handed
+  // over through the capture session and consumed when the room refocuses.
+  assert.match(memoryPreviewScreen, /requestMemoryRoomTab\(roomId, "chat"\)/);
+  assert.match(
+    memoryPreviewScreen,
+    /requestMemoryRoomTab\(roomId, "chat"\);\s*\n\s*router\.dismissTo\(/
+  );
+  assert.match(memoryCaptureSession, /const pendingRoomTabs = new Map<string, MemoryRoomTabMode>\(\)/);
+  // Consuming must clear the request, or every later focus would yank the user
+  // back to chat.
+  assert.match(
+    memoryCaptureSession,
+    /export function consumeMemoryRoomTab\(roomId: string\) \{[\s\S]*pendingRoomTabs\.delete\(roomId\);[\s\S]*return tab;/
+  );
+  assert.match(memoryCaptureSession, /clearMemoryCaptureSession[\s\S]*pendingRoomTabs\.clear\(\)/);
+  // A dish lands in the chat as its own row, so adding one hands the tab over
+  // the same way rather than dropping the user back on Table.
+  assert.match(
+    readFileSync("mobile/app/memories/[id]/add-dish.tsx", "utf8"),
+    /requestMemoryRoomTab\(roomId, "chat"\);\s*\n\s*if \(router\.canGoBack\(\)\)/
+  );
+  assert.match(
+    memoryRoomScreen,
+    /useFocusEffect\(useCallback\(\(\) => \{\s*\n\s*const requestedTab = consumeMemoryRoomTab\(roomId\);\s*\n\s*if \(requestedTab\) requestRoomMode\(requestedTab\);/
+  );
+});
+
+test("a dish card lines up with the bubbles around it", () => {
+  // A dish card is returned from renderMessage BEFORE the vendor's Message
+  // wrapper, so it never inherits that wrapper's side margin the way text and
+  // media bubbles do. With the row padding also zeroed it sat flush against the
+  // row container and overhung every neighbour — measured on device at 34px
+  // from the screen edge against 55px for a text bubble.
+  assert.match(memoryRoomScreen, /const CHAT_VENDOR_BUBBLE_SIDE_MARGIN = 8;/);
+  // Scoped to the style block: an unbounded [\s\S]*? would run past the closing
+  // brace and match a paddingHorizontal from any later style.
+  const dishPollRowStyle = memoryRoomScreen.match(/chatMainDishPollRow: \{[^}]*\}/)?.[0] ?? "";
+  assert.match(dishPollRowStyle, /paddingHorizontal: CHAT_VENDOR_BUBBLE_SIDE_MARGIN/);
+  assert.doesNotMatch(dishPollRowStyle, /paddingHorizontal: 0/);
+  // The constant must keep tracking the vendor, which is where the real value
+  // lives for every other bubble.
+  const vendorMessageStyles = readFileSync("mobile/src/vendor/reactNativeChat/Message/styles.ts", "utf8");
+  assert.match(vendorMessageStyles, /container_right: \{[\s\S]*?marginRight: 8/);
+  assert.match(vendorMessageStyles, /container_left: \{[\s\S]*?marginLeft: 8/);
+});
+
 test("adding a dish uses the dedicated route and returns to the originating room", () => {
   const openDishBody = memoryRoomScreen.match(
     /function openFloatingAddDish\(\) \{[\s\S]*?\n  \}/
@@ -1154,7 +1453,16 @@ test("adding a dish uses the dedicated route and returns to the originating room
   assert.match(openDishBody, /setFloatingAddMenuOpen\(false\)/);
   assert.match(openDishBody, /pathname: "\/memories\/\[id\]\/add-dish"/);
   assert.match(submitDishBody, /await addDish\.mutateAsync/);
-  assert.match(submitDishBody, /router\.back\(\)/);
-  assert.doesNotMatch(submitDishBody, /router\.replace|requestRoomMode/);
+  // Popping stays the normal path — the room must not be remounted. `replace`
+  // appears only as the no-history fallback, mirroring `close()`, so a cold
+  // entry cannot strand the user on the form after a successful add.
+  assert.match(submitDishBody, /if \(router\.canGoBack\(\)\) \{\s*\n\s*router\.back\(\);/);
+  assert.match(
+    submitDishBody,
+    /router\.replace\(\{ pathname: "\/memories\/\[id\]", params: \{ id: roomId, tab: "chat" \} \}\)/
+  );
+  // The tab is still handed over out-of-band; this screen never reaches into
+  // the room's controller.
+  assert.doesNotMatch(submitDishBody, /requestRoomMode/);
   assert.doesNotMatch(memoryAddDishScreen, /stopId/);
 });

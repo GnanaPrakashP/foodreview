@@ -13,6 +13,12 @@ import {
 } from "@/services/memoryMessageReconciliation.mjs";
 import { isForegroundMemoryMessageSend } from "@/services/memoryMessageSendRegistry.mjs";
 import {
+  encodeMemoryPageCursor,
+  parseMemoryPageCursor
+} from "@/services/memoryPageCursor";
+
+export { memoryHistoryCursorFromMessages } from "@/services/memoryPageCursor";
+import {
   memoryTablesError,
   normalizeUsername,
   occasionConfidenceForRoom,
@@ -68,7 +74,6 @@ export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
 export const MEMORY_CHAT_PAGE_SIZE = 50;
 export const MEMORY_MEDIA_PAGE_SIZE = 30;
 export const MEMORY_ROOM_SUMMARY_PAGE_SIZE = 12;
-const MEMORY_PAGE_CURSOR_SEPARATOR = "|";
 const MEMORY_SYNC_PAGE_LIMIT = 200;
 const MEMORY_SYNC_YIELD_EVERY_PAGES = 8;
 const MEMORY_SYNC_MAX_PAGES_PER_CHUNK = 500;
@@ -90,7 +95,12 @@ const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id
 const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
 const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
-const MEMORY_STOP_SELECT = "id, room_id, stop_type, name, note, position, created_by, created_at";
+const MEMORY_STOP_SELECT = "id, room_id, stop_type, name, note, place_id, position, created_by, created_at";
+// place_id ships in migration 202608020001. Until it is applied both the select
+// and the insert fail, so every stop read would degrade to the cached list and
+// adding a place would surface the stops-migration hint. Fall back to the
+// pre-migration shape instead: places keep working, just without the exact id.
+const MEMORY_STOP_SELECT_WITHOUT_PLACE_ID = "id, room_id, stop_type, name, note, position, created_by, created_at";
 
 function memoryRoomOverviewVersion(roomId: string) {
   return memoryRoomOverviewVersions.get(`${getActiveCacheGeneration()}:${roomId}`) ?? 0;
@@ -204,6 +214,7 @@ export type CreateMemoryStopInput = {
   stopType: MemoryStopType;
   name: string;
   note?: string | null;
+  placeId?: string | null;
 };
 
 export type UpdateMemoryStopInput = {
@@ -322,21 +333,6 @@ type MemoryMessagePageBundle = MemoryMessageRowsPage & {
   photos: MemoryPhotoRow[];
   replyMessages: MemoryMessageRow[];
 };
-
-function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
-  if (!createdAt || !id) return null;
-  return `${createdAt}${MEMORY_PAGE_CURSOR_SEPARATOR}${id}`;
-}
-
-function parseMemoryPageCursor(cursor?: string | null) {
-  if (!cursor) return null;
-  const separatorIndex = cursor.lastIndexOf(MEMORY_PAGE_CURSOR_SEPARATOR);
-  if (separatorIndex <= 0) return { createdAt: cursor, id: null };
-  return {
-    createdAt: cursor.slice(0, separatorIndex),
-    id: cursor.slice(separatorIndex + 1) || null
-  };
-}
 
 async function displayNameMap(usernames: string[]) {
   const unique = Array.from(new Set(usernames.filter(Boolean)));
@@ -565,6 +561,15 @@ function isMissingMemoryChatPageRpc(error: { message?: string; code?: string } |
 // True when the shared_memory_stops table or the stop_id columns added alongside
 // it are not present yet (migration 202606220001 not applied). Lets rooms keep
 // working with room-level dishes/photos until the stops migration is run.
+function isMissingMemoryStopPlaceIdColumn(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  // 42703 is what Postgres actually returns for an undefined column and is what
+  // this database returns today ("column shared_memory_stops.place_id does not
+  // exist"). PGRST204 is PostgREST's own schema-cache variant, which is what
+  // surfaces on an insert against a stale cache.
+  return error?.code === "42703" || error?.code === "PGRST204" || /place_id/i.test(message);
+}
+
 function isMissingMemoryStopsSchema(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01" ||
@@ -1349,13 +1354,18 @@ async function restoreAuthoritativeMemoryStops(
 ) {
   if (!force && room.stops.length > 0) return room;
 
-  const { data, error } = await supabase
+  const readStops = (columns: string) => supabase
     .from("shared_memory_stops")
-    .select(MEMORY_STOP_SELECT)
+    .select(columns)
     .eq("room_id", room.id)
     .order("position", { ascending: true })
     .order("created_at", { ascending: true })
     .returns<MemoryStopRow[]>();
+
+  let { data, error } = await readStops(MEMORY_STOP_SELECT);
+  if (error && isMissingMemoryStopPlaceIdColumn(error)) {
+    ({ data, error } = await readStops(MEMORY_STOP_SELECT_WITHOUT_PLACE_ID));
+  }
 
   if (error) {
     // A transient secondary read must never turn a known populated timeline
@@ -2045,21 +2055,34 @@ export async function createMemoryStop(input: CreateMemoryStopInput): Promise<Me
     .maybeSingle<{ position: number }>();
   const position = (lastStop?.position ?? -1) + 1;
 
-  const { data, error } = await supabase
+  // Record<string, unknown> so the optional place_id can be added without the
+  // generated insert type rejecting it, matching updateMemoryStop's patch.
+  const stopRow: Record<string, unknown> = {
+    room_id: input.roomId,
+    created_by: createdBy,
+    stop_type: input.stopType,
+    name,
+    note: input.note?.trim() || null,
+    position
+  };
+  const placeId = input.placeId?.trim() || null;
+
+  let { data, error } = await supabase
     .from("shared_memory_stops")
-    .insert({
-      room_id: input.roomId,
-      created_by: createdBy,
-      stop_type: input.stopType,
-      name,
-      note: input.note?.trim() || null,
-      position
-    })
-    .select("id, room_id, stop_type, name, note, position, created_by, created_at")
+    .insert(placeId ? { ...stopRow, place_id: placeId } : stopRow)
+    .select(MEMORY_STOP_SELECT)
     .single<MemoryStopRow>();
+  if (error && isMissingMemoryStopPlaceIdColumn(error)) {
+    ({ data, error } = await supabase
+      .from("shared_memory_stops")
+      .insert(stopRow)
+      .select(MEMORY_STOP_SELECT_WITHOUT_PLACE_ID)
+      .single<MemoryStopRow>());
+  }
 
   if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
   if (error) throw memoryTablesError(error);
+  if (!data) throw new Error("Could not add this place");
   bumpMemoryRoomOverviewVersion(input.roomId);
   void notifyMemoryRoomActivity({ kind: "dish", preview: name, roomId: input.roomId }).catch(() => {});
   return mapMemoryStop(data, { [createdBy]: createdBy });

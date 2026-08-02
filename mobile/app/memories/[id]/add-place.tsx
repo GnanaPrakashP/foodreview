@@ -104,6 +104,9 @@ export default function AddMemoryPlaceScreen() {
       await createStop.mutateAsync({
         name: selectedPlace.mainText.trim(),
         note: selectedPlace.secondaryText.trim() || undefined,
+        // Kept so the Table card can open this exact venue in Maps rather than
+        // running a text search over the two display lines.
+        placeId: selectedPlace.placeId || undefined,
         stopType: "other"
       });
       Keyboard.dismiss();

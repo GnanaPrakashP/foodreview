@@ -333,6 +333,22 @@ test("Memory SQLite opens separate owner directories and never queries Alice row
       sanitizeOfflineMemoryRoom: (value) => value
     };
     if (id === "@/services/memories" || id === "@/types/models") return {};
+    if (id === "@/services/memoryPageCursor") return {
+      encodeMemoryPageCursor: (createdAt, cursorId) => (
+        createdAt && cursorId ? `${createdAt}|${cursorId}` : null
+      ),
+      memoryPageCursorFromMessage: (message) => (
+        message?.serverCreatedAt && message?.serverId
+          ? `${message.serverCreatedAt}|${message.serverId}`
+          : null
+      ),
+      parseMemoryPageCursor: (cursor) => {
+        if (!cursor) return null;
+        const at = cursor.lastIndexOf("|");
+        if (at <= 0) return { createdAt: cursor, id: null };
+        return { createdAt: cursor.slice(0, at), id: cursor.slice(at + 1) || null };
+      }
+    };
     if (id === "@/observability/mobileTelemetry") return {
       captureMobileError: () => {},
       recordMobileFlow: () => {}

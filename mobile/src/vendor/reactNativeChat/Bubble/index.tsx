@@ -631,17 +631,33 @@ export const Bubble = <TMessage extends IMessage = IMessage>(props: BubbleProps<
   // delayLongPress matches the reactions path so a host can move its menu here
   // without the hold time changing. Existing reactions still render, so turning
   // the reactions wrapper off cannot hide pills that are already on a message.
+  //
+  // A host that handles presses at the ROW level must be able to turn this off.
+  // React Native's responder system gives the touch to the innermost view that
+  // claims it, so a Pressable here wins over any ancestor and there is no way
+  // to resolve that in the row's favour — the row would only ever see presses
+  // on the empty space beside the bubble. With no handler to claim it for, the
+  // bubble body renders bare and the touch reaches whoever wants it. This also
+  // drops a Pressable per mounted row.
+  const hasBubblePressHandlers = Boolean(
+    onPressMessageProp || onLongPressMessageProp || props.touchableProps
+  )
+
   return (
     <View ref={bubbleContainerRef} style={containerStyle?.[position]}>
       <View style={wrapperStyleList}>
-        <Pressable
-          delayLongPress={350}
-          onPress={onPress}
-          onLongPress={onLongPress}
-          {...props.touchableProps}
-        >
-          {renderBubbleBody()}
-        </Pressable>
+        {hasBubblePressHandlers
+          ? (
+            <Pressable
+              delayLongPress={350}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              {...props.touchableProps}
+            >
+              {renderBubbleBody()}
+            </Pressable>
+          )
+          : renderBubbleBody()}
       </View>
       {renderQuickReplies()}
       {renderReactionsDisplay()}

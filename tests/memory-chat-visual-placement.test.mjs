@@ -153,15 +153,43 @@ test("delivery confirmation cannot rebuild the measured multiline text subtree",
   )?.[0] ?? "";
   assert.ok(stableText);
   assert.doesNotMatch(stableText, /deliveryStatus|streaming|pending|sent/);
-  assert.match(screen, /isEnabled: true,\s*isGestureEnabled: canReply/);
+  // The swipe wrapper stays mounted from the first optimistic frame; only the
+  // gesture is gated. It also stands down while a selection is open, so a swipe
+  // cannot open the composer on a message the selection toolbar is acting on.
+  assert.match(
+    screen,
+    /isEnabled: true,[\s\S]{0,320}isGestureEnabled: canReply && !selectionMode/
+  );
   assert.match(
     vendorMessage,
     /const isSwipeToReplyGestureEnabled = swipeToReply\?\.isGestureEnabled \?\? isSwipeToReplyEnabled/
   );
   assert.match(
     vendorMessage,
-    /\.enabled\(Boolean\(isSwipeToReplyGestureEnabled && onSwipeToReply && !currentMessage\?\.system\)\)/
+    /\.enabled\(Boolean\(isGestureEnabled && onSwipe\)\)/
   );
+  // Every Reanimated allocation a swipe needs belongs to SwipeToReplyRow, never
+  // to Message: hooks cannot be conditional, so declaring them in Message made
+  // date separators, the unread divider, dish cards and standalone media rows
+  // each build and serialize a gesture they threw away on the early return.
+  // ~9.5% of JS thread time during a fling was this serialization, all of it
+  // per mounted row.
+  const messageBody = vendorMessage.match(
+    /export const Message = <TMessage[\s\S]*?\n\}\n/
+  )?.[0] ?? "";
+  assert.ok(messageBody);
+  assert.doesNotMatch(messageBody, /useSharedValue|useAnimatedStyle|Gesture\.Pan|GestureDetector/);
+  assert.match(messageBody, /<SwipeToReplyRow/);
+  // System rows are excluded structurally by the early return rather than by a
+  // condition inside the gesture, so the gesture never has to know about them.
+  assert.match(
+    messageBody,
+    /if \(currentMessage\.system \|\| !isSwipeToReplyEnabled\)/
+  );
+  // The worklets must not close over the per-row message: a fresh closure is
+  // serialized per row instead of being served from Reanimated's cache.
+  assert.match(vendorMessage, /const swipeStateRef = useRef\(\{ currentMessage, onSwipe \}\)/);
+  assert.match(vendorMessage, /const \{ currentMessage: message, onSwipe: handler \} = swipeStateRef\.current/);
 });
 
 test("dish and message bubbles resolve colors from the same current room theme", () => {
@@ -193,9 +221,21 @@ test("failed older-history loads stop automatic edge retries until explicit retr
     screen,
     /olderMessagesFailed && !explicitRetry/
   );
+  // The edge is still detected immediately, but the request is HELD while
+  // momentum runs: a page of older messages falls through the incremental
+  // projection's fast path to buildFull, which rebuilds every row object and
+  // re-renders every mounted row — mid-fling that is exactly what leaves bare
+  // wallpaper on screen. It is released when the fling settles, and a drag that
+  // stops without throwing momentum must release it too, or the edge is
+  // detected and never acted on.
   assert.match(
     screen,
-    /const requestOlderPage = useCallback\(\(\) => \{\s*runOlderPageRequest\(false\)/
+    /const requestOlderPage = useCallback\(\(\) => \{[\s\S]{0,120}?if \(chatMainMomentumRef\.current\) \{\s*pendingOlderPageRef\.current = true;\s*return;\s*\}\s*runOlderPageRequest\(false\)/
+  );
+  assert.match(screen, /const flushPendingOlderPage = useCallback\(/);
+  assert.match(
+    screen,
+    /const handleChatMainMomentumEnd = useCallback\(\(\) => \{\s*finishChatMainInteraction\(\);\s*flushPendingOlderPage\(\);/
   );
   assert.match(
     screen,

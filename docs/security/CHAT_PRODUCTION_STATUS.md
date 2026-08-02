@@ -14,6 +14,16 @@ Next required work: execute the Phase 8 external release gates and the checked-i
 
 Required sequence: assign PH-001 credential ownership and rotate if privileged; adjudicate PH-002 and the PH-003 Expo advisory chain; configure protected staging/EAS/Apple/Google/APNs/OAuth/Sentry/load credentials; deploy canonical disposable staging; build production-signed candidates; execute the documented physical-device, two-account, install/upgrade, push, auth, media, deletion and accessibility matrices; obtain legal/store declaration approval; execute Phase 7 hosted drills; then run the Phase 9 launch, stress, soak, recovery, restore and physical-device evidence matrix. Do not publish automatically.
 
+## Memory Room Media grid spacing parity (2026-07-31)
+
+Status: **PASS locally for the scoped layout correction; not physically
+verified.** The filled Media grid now derives its top clearance from the actual
+96 dp compact room-header height instead of a separate stale 106 dp estimate.
+Including the first tile's 1 dp half-gap, the visible header-to-first-row gap is
+now the same 2 dp used horizontally and vertically between media tiles. No
+media processing, private Storage, upload, moderation, API, database, RLS or
+logging contract changed. Mobile typecheck and `git diff --check` pass.
+
 ## Memory Room Chat entry: viewport completeness and first-unread anchor (2026-07-30)
 
 Status: **PASS locally for the scoped corrections; NOT physically verified.** No

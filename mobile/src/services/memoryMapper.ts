@@ -59,6 +59,7 @@ export function mapMemoryStop(stop: MemoryStopRow, namesByUsername: Record<strin
     stopType: normalizeStopType(stop.stop_type),
     name: stop.name,
     note: stop.note,
+    placeId: stop.place_id ?? null,
     position: stop.position ?? 0,
     createdBy: stop.created_by,
     createdByDisplayName: namesByUsername[stop.created_by] ?? stop.created_by,

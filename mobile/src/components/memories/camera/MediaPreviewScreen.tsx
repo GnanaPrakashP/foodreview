@@ -14,7 +14,7 @@ import {
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { removeMemoryCapture } from "@/services/memoryCaptureSession";
+import { removeMemoryCapture, requestMemoryRoomTab } from "@/services/memoryCaptureSession";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { useAddMemoryPhotoMutation } from "@/hooks/useMemories";
 import { createRequestId } from "@/services/installIdentity";
@@ -112,6 +112,10 @@ export function MediaPreviewScreen({
     });
     removeMemoryCapture(asset.id);
     setNavigating(true);
+    // The post belongs to the chat, so that is where the room must land. The
+    // `tab` param below is kept for a cold entry that really does mount the
+    // room; a room already on the stack only sees this request.
+    requestMemoryRoomTab(roomId, "chat");
     router.dismissTo({
       pathname: "/memories/[id]",
       params: {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Image } from "expo-image";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { InteractionManager } from "react-native";
 import { supabase } from "@/api/supabase";
@@ -58,6 +59,10 @@ import {
   endForegroundMemoryMessageSend,
   resetForegroundMemoryMessageSends
 } from "@/services/memoryMessageSendRegistry.mjs";
+import {
+  forgetMemoryUploadProgress,
+  recordMemoryUploadProgress
+} from "@/services/memoryUploadProgress.mjs";
 import { notificationKeys } from "@/hooks/useNotifications";
 import { postMemoryRoomMedia, type PostMemoryRoomMediaInput } from "@/services/mediaUploadService";
 import {
@@ -691,6 +696,26 @@ function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAss
 function clampUploadProgress(progress: number) {
   if (!Number.isFinite(progress)) return 0;
   return Math.max(0, Math.min(progress, 1));
+}
+
+// Confirmation swaps a photo's LOCAL preview for a remote URL. Mounting an
+// image whose bytes are not cached yet paints a blank frame first, which is the
+// picture visibly disappearing and coming back the moment upload hits 100%.
+// Warming the cache before the swap makes it paint immediately instead. Bounded
+// because confirmation must never wait on the network: if the warm does not
+// finish in time the swap happens anyway and behaves exactly as before.
+const MEMORY_PHOTO_CACHE_WARM_TIMEOUT_MS = 1_500;
+
+async function warmMemoryPhotoCache(photos: MemoryPhoto[]) {
+  const urls = photos
+    .filter((photo) => photo.mediaType === "image")
+    .map((photo) => photo.thumbnailUrl || photo.publicUrl)
+    .filter((url): url is string => Boolean(url));
+  if (urls.length === 0) return;
+  await Promise.race([
+    Promise.all(urls.map((url) => Image.prefetch(url, "memory-disk").catch(() => undefined))),
+    new Promise((resolve) => setTimeout(resolve, MEMORY_PHOTO_CACHE_WARM_TIMEOUT_MS))
+  ]);
 }
 
 function withPhotoProgress(photo: MemoryPhoto, photoId: string, progress: number): MemoryPhoto {
@@ -2936,6 +2961,10 @@ export function useAddMemoryPhotoMutation(roomId: string) {
   const updateOptimisticProgress = (clientId: string, progress: number) => {
     const detailKey = memoryKeys.detail(roomId);
     const photoId = `optimistic-media:${clientId}`;
+    // Held outside the room cache too: a refetch rebuilds that cache from
+    // SQLite, where this photo is stored with the progress it had when it was
+    // persisted, and would otherwise drag the percentage back to 0.
+    recordMemoryUploadProgress(photoId, progress);
 
     queryClient.setQueryData<MemoryRoom>(detailKey, (current) => {
       if (!current) return current;
@@ -3141,7 +3170,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         );
       }
     },
-    onSuccess: (result, _input, context) => {
+    onSuccess: async (result, _input, context) => {
       // A cancel that raced a successful upload still stands locally. The row
       // exists server-side, so the ordinary reconcile restores it if it is
       // genuinely there — re-inserting it here would resurrect a message the
@@ -3161,6 +3190,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         const photos = result.photos
           .map((photo) => mapUploadedMemoryPhoto(photo, uploaderDisplayName))
           .sort((first, second) => first.position - second.position);
+        await warmMemoryPhotoCache(photos);
         const actualMessage: MemoryMessage = {
           attachments: photos,
           authorDisplayName: uploaderDisplayName,
@@ -3231,6 +3261,11 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         }
       }
       persistCurrentMemorySummary(queryClient, roomId, "media_send_summary");
+    },
+    onSettled: (_result, _error, _input, context) => {
+      // The send is over either way, so the live progress entries have nothing
+      // left to report and must not outlive it.
+      forgetMemoryUploadProgress(context?.optimisticPhotoIds);
     }
   });
 }

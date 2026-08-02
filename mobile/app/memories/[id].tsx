@@ -19,7 +19,7 @@ import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbn
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
-import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, memo, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -135,6 +135,7 @@ import {
 import {
   MEMORY_ROOM_CHAT_LITE_RENDERER,
   MEMORY_ROOM_CHAT_NATIVE_RENDERER,
+  MEMORY_ROOM_CHAT_VENDOR_FLASHLIST,
   MEMORY_ROOM_CHAT_RENDERER,
   MEMORY_ROOM_CHAT_RENDERER_CODE
 } from "@/performance/memoryRoomChatRenderer";
@@ -154,14 +155,12 @@ import {
   Message as ChatMainMessageRow
 } from "@/vendor/reactNativeChat";
 import type {
-  BubbleLongPressAnchor,
   BubbleProps as ChatMainBubbleProps
 } from "@/vendor/reactNativeChat/Bubble";
 import type { MessageProps as ChatMainMessageRowProps } from "@/vendor/reactNativeChat/Message";
 import type { MessageTextProps as ChatMainMessageTextProps } from "@/vendor/reactNativeChat/MessageText";
 import type { AnimatedList as ChatMainAnimatedList } from "@/vendor/reactNativeChat/MessagesContainer";
 import type { IMessage as ChatMainMessage, MessageAudioProps as ChatMainMessageAudioProps, MessageReaction as ChatMainMessageReaction, ReplyMessage as ChatMainReplyMessage } from "@/vendor/reactNativeChat/Models";
-import type { ReactionPickerProps as ChatMainReactionPickerProps } from "@/vendor/reactNativeChat/Reactions/types";
 import { useCircleAccessStatusesQuery } from "@/hooks/useCircle";
 import { useRequestCircleAccessMutation } from "@/hooks/useEngagement";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
@@ -188,7 +187,13 @@ import {
   useSetMemoryDishRatingMutation
 } from "@/hooks/useMemories";
 import type { CircleAccessStatus } from "@/services/circle";
+import { consumeMemoryRoomTab } from "@/services/memoryCaptureSession";
 import { memoryChatRowKey } from "@/services/memoryChatRowKeys";
+import {
+  isOptimisticMemoryMedia,
+  settleMemoryRoomMedia
+} from "@/services/memoryMediaSettle.mjs";
+import { resolveMemoryUploadProgress } from "@/services/memoryUploadProgress.mjs";
 import {
   memoryChatPlacementDiagnosticsEnabled,
   recordMemoryChatPlacement,
@@ -213,6 +218,7 @@ import {
 import { createRequestId } from "@/services/installIdentity";
 import { cancelPendingMemoryUploadBatch } from "@/services/mediaPipeline";
 import { validateMemoryMediaAssets } from "@/services/memoryMediaValidation";
+import { memoryHistoryCursorFromMessages } from "@/services/memories";
 import type { AddMemoryMediaAsset, MemoryRoomsPage } from "@/services/memories";
 import { MEMORY_AUDIO_MAX_DURATION_MS } from "@/constants/memoryMediaPolicy";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
@@ -267,12 +273,17 @@ type ChatListScrollRef = {
   // Present on both FlatList and FlashList. Optional because the vendored
   // container forwards whichever list engine is mounted, and the unread anchor
   // must degrade to the existing bottom placement rather than throw.
+  // FlatList returns nothing and reports failure through onScrollToIndexFailed;
+  // FlashList returns a promise that resolves when the scroll completes and has
+  // no failure callback at all. The anchor below handles both.
   scrollToIndex?: (options: {
     animated?: boolean;
     index: number;
     viewOffset?: number;
     viewPosition?: number;
-  }) => void;
+  }) => void | Promise<void>;
+  /** FlashList only: undefined until the row has a resolved layout. */
+  getLayout?: (index: number) => unknown;
 };
 type MemoryActionTarget =
   | { type: "message"; value: MemoryMessage }
@@ -381,6 +392,11 @@ const USE_NATIVE_KEYBOARD_INSET = Platform.OS === "android";
 const NATIVE_KEYBOARD_INSET_DEBUG = false;
 const MEDIA_GRID_GAP = 4;
 const CHAT_ROW_SIDE_PADDING = Platform.OS === "web" ? spacing.base : spacing.md;
+// Mirrors the vendored Message container's own side margin
+// (`container_left`/`container_right` in vendor/reactNativeChat/Message/styles.ts).
+// Rows that bypass that wrapper have to reproduce it or they sit wider than
+// every bubble around them.
+const CHAT_VENDOR_BUBBLE_SIDE_MARGIN = 8;
 const CHAT_SENT_TEXT_ROW_MAX_WIDTH = "80%";
 const CHAT_RECEIVED_TEXT_ROW_MAX_WIDTH = "74%";
 const CHAT_GROUPED_MESSAGE_GAP = 3;
@@ -512,15 +528,41 @@ const CHAT_MAIN_ANCHOR_WINDOW_EXPAND_THRESHOLD = 600;
 // unchanged.
 const CHAT_MAIN_MAX_RENDER_BATCH = 10;
 const CHAT_MAIN_CELL_BATCHING_PERIOD_MS = 16;
-// Keep only the visible viewport plus one render-ahead viewport on either side.
-// A window of nine mounted every row in medium rooms (42 messages produced
-// ~1,000 native views), making both background warm-up and route teardown scale
-// with total history even though FlatList already owns incremental rendering.
-// Retention strengthens this bound rather than relaxing it: the pane now
-// survives every tab switch, so whatever the window holds is held for the whole
-// room visit instead of being freed on the way out of Chat.
-const CHAT_MAIN_WINDOW_SIZE = 3;
+// Runway, and the fling gaps are made of it. A window of 3 is one render-ahead
+// viewport on either side, and a hard fling crosses that in ~200ms — less than
+// the scroll-event → setState → render → Fabric commit → layout pipeline takes
+// for a screen of these rows, so the reader outruns the renderer and lands on
+// bare wallpaper until it catches up.
+//
+// Measured on device 2026-08-01 (Motorola Edge 70 Fusion, identical driven
+// fling bursts, screenshots scored by how much of the message area is not bare
+// wallpaper; a settled viewport reads ~25%):
+//   window 3 → mean  8.4% content, 3 of 6 sampled frames essentially EMPTY
+//   window 5 → mean 18.4% content, 1 of 12 sampled frames EMPTY  (12 samples)
+//   window 7 → mean 21.3% content, 0 of 6 frames EMPTY
+// Frame timing moves the other way — janky frames 9.2% / 13.4% / 21.6% and 90th
+// percentile 31 / 44 / 48ms — so this is a trade, not a free win, and 5 is the
+// point where full blanks stop without buying them with visible choppiness.
+//
+// The earlier bound of 3 was set against a window of NINE mounting every row in
+// medium rooms (42 messages produced ~1,000 native views); 5 is well short of
+// that, and repeated PSS/View sampling could not resolve a retention cost at
+// this size above run-to-run noise.
+//
+// Raising this further is the wrong next move: the real cost is what a row
+// costs to mount (a fling profile put ~12% of JS in Fabric node creation and
+// ~9.5% in Reanimated worklet serialization). Make rows cheaper and the
+// remaining gaps go without buying them back in jank.
+const CHAT_MAIN_WINDOW_SIZE = 5;
+// FlashList has no windowSize/maxToRenderPerBatch: it renders ahead by a pixel
+// distance instead. ~2 phone viewports, chosen to match the runway that
+// CHAT_MAIN_WINDOW_SIZE buys the FlatList engine so the two can be compared.
+const CHAT_MAIN_FLASHLIST_PROPS = { drawDistance: 1600 };
 const CHAT_MAIN_LOAD_OLDER_DEBOUNCE_MS = 650;
+// Long press selects the row outright. Kept a touch shorter than the RN default
+// of 500ms so selecting feels deliberate rather than slow, and long enough that
+// a fling that starts with a stationary finger does not select on the way past.
+const CHAT_ROW_LONG_PRESS_DELAY_MS = 300;
 const CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD = 0.55;
 const CHAT_TEXT_SEND_MIC_GUARD_MS = 3_000;
 // Inverted list: index 0 is the NEWEST message, at the visual bottom.
@@ -666,6 +708,7 @@ function photosFromMessages(messages: MemoryMessage[]) {
   return messages.flatMap((message) => message.attachments);
 }
 
+
 function mergeMemoryPhotos(...groups: MemoryPhoto[][]) {
   const byId = new Map<string, MemoryPhoto>();
   for (const group of groups) {
@@ -767,6 +810,28 @@ function memoryChatAudioAttachment(message: MemoryChatMainMessage | undefined): 
   return null;
 }
 
+// FlashList reuses a row instance for the next item of the SAME type, so this
+// has to separate rows whose subtree SHAPE differs — not merely their content.
+// A text row recycled into a media row would have to build the whole media
+// subtree anyway (losing the point of recycling) and would briefly reconcile a
+// mismatched tree; splitting by side as well keeps a tail, sender header and
+// bubble alignment stable within a pool, which is where the reuse pays.
+function memoryChatItemType(
+  message: MemoryChatMainMessage | undefined,
+  currentUserId: string
+): string {
+  if (!message) return "text";
+  if (message.memoryDish) return "dish";
+  if (message.system) return "system";
+  const side = String(message.user?._id ?? "") === currentUserId ? "mine" : "other";
+  if (memoryChatAudioAttachment(message)) return `audio-${side}`;
+  const attachments = memoryChatMessageAttachments(message);
+  if (attachments.length > 1) return `media-grid-${side}`;
+  if (attachments.length === 1) return `media-one-${side}`;
+  if (message.replyMessage) return `reply-${side}`;
+  return `text-${side}`;
+}
+
 function memoryChatActionTarget(message: MemoryChatMainMessage | undefined): MemoryActionTarget | null {
   if (!message) return null;
   if (message.memoryMessage) return { type: "message", value: message.memoryMessage };
@@ -791,6 +856,19 @@ function canEditMemoryMessage(message: MemoryMessage, myUsername: string) {
   );
 }
 
+// Delete is a server operation and needs a landed message; discard is the local
+// counterpart for one that never got there. Without it an upload stuck at
+// "Uploading" is unrecoverable from the UI: the recovery pill deliberately does
+// not render for in-progress states, and Delete below refuses anything that is
+// not `sent`, so the row could be neither cancelled nor removed.
+function canDiscardMemoryMessage(message: MemoryMessage, myUsername: string) {
+  return (
+    message.authorName === myUsername &&
+    message.deliveryStatus !== undefined &&
+    message.deliveryStatus !== "sent"
+  );
+}
+
 function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: string) {
   if (target.type === "message") {
     return (
@@ -801,10 +879,14 @@ function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: str
   return target.value.uploaderName === myUsername;
 }
 
+// Only outcomes a person has to act on. In-progress states — `uploading`,
+// `processing`, `processing_delayed` — deliberately render nothing here: the
+// media tile already carries the progress ring and its "Uploading" label, and
+// an upload flips to `processing` at 90% (updateOptimisticProgress in
+// useMemories), so a perfectly healthy send used to grow a red, danger-bordered
+// failure pill under a bubble whose own tile still said it was uploading.
 function hasMemoryDeliveryStrip(status: MemoryMessage["deliveryStatus"]) {
   return status === "failed" ||
-    status === "processing" ||
-    status === "processing_delayed" ||
     status === "processing_failed" ||
     status === "rejected";
 }
@@ -1045,6 +1127,8 @@ function MemoryChatPlacementRow({
   clientId,
   deliveryStatus,
   layoutGeneration,
+  onLongPress,
+  onPress,
   renderIndex,
   rowKey,
   style
@@ -1053,6 +1137,8 @@ function MemoryChatPlacementRow({
   clientId?: string | null;
   deliveryStatus?: MemoryMessage["deliveryStatus"];
   layoutGeneration: number;
+  onLongPress?: () => void;
+  onPress?: () => void;
   renderIndex?: number;
   rowKey: string;
   style: StyleProp<ViewStyle>;
@@ -1186,10 +1272,34 @@ function MemoryChatPlacementRow({
     }
   }, []);
 
+  // The row is the press surface, not the bubble: a long press has to work on
+  // the empty space beside a bubble too, which is outside the vendor's Message
+  // container (it hugs its content and aligns to one edge). The bubble's own
+  // Pressable is suppressed for the same reason — see the vendored Bubble.
+  // Attaching onLayout makes RN deliver a layout event for EVERY row, and the
+  // handler exists only to feed placement diagnostics whose recorders already
+  // early-return when profiling is off. Passing undefined instead means no
+  // listener is attached at all. It cannot affect layout — nothing reads the
+  // callback's result but the diagnostics.
+  const placementDiagnosticsOn = memoryChatPlacementDiagnosticsEnabled();
+
   return (
-    <View ref={rowRef} onLayout={handleLayout} style={style}>
+    <Pressable
+      // Pressable defaults `accessible` to true, which would merge the whole
+      // row into ONE accessibility node — swallowing the message text and,
+      // worse, the Retry/Cancel buttons a failed send hangs below the bubble.
+      // The row is a gesture surface, not a control; its children keep the
+      // nodes they already had.
+      accessible={false}
+      delayLongPress={CHAT_ROW_LONG_PRESS_DELAY_MS}
+      onLayout={placementDiagnosticsOn ? handleLayout : undefined}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      ref={rowRef}
+      style={style}
+    >
       {children}
-    </View>
+    </Pressable>
   );
 }
 
@@ -1283,13 +1393,6 @@ function useMemoryJourneyScrollDiagnostics(
   return { begin, capture, settle };
 }
 
-type LiteChatRowAnchor = {
-  height: number;
-  pageX: number;
-  pageY: number;
-  width: number;
-};
-
 const LITE_CHAT_REPLY_TRIGGER_DISTANCE = 54;
 const LITE_CHAT_REPLY_VERTICAL_TOLERANCE = 4;
 
@@ -1297,10 +1400,10 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
   canReply,
   index,
   journeySession,
-  onOpenMenu,
   onReply,
   onCancelFailed,
   onRetryFailed,
+  onSelect,
   onToggleSelection,
   row,
   selected,
@@ -1309,16 +1412,15 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
   canReply: boolean;
   index: number;
   journeySession: MemoryRoomJourneySession;
-  onOpenMenu: (key: string, anchor: LiteChatRowAnchor) => void;
   onReply: (key: string) => void;
   onCancelFailed: (key: string) => void;
   onRetryFailed: (key: string) => void;
+  onSelect: (key: string) => void;
   onToggleSelection: (key: string) => void;
   row: ChatRowViewModel;
   selected: boolean;
   selectionMode: boolean;
 }) {
-  const bubbleRef = useRef<View>(null);
   const initialPlacementRef = useRef({
     deliveryStatus: row.deliveryState,
     renderIndex: index
@@ -1388,10 +1490,8 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
       onToggleSelection(row.key);
       return;
     }
-    bubbleRef.current?.measureInWindow((pageX, pageY, width, height) => {
-      onOpenMenu(row.key, { height, pageX, pageY, width });
-    });
-  }, [onOpenMenu, onToggleSelection, row.key, selectionMode]);
+    onSelect(row.key);
+  }, [onSelect, onToggleSelection, row.key, selectionMode]);
 
   const handlePress = useCallback(() => {
     if (selectionMode) onToggleSelection(row.key);
@@ -1429,7 +1529,7 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
         ? [{ label: "Reply", name: "reply" as const }]
         : []),
       {
-        label: selectionMode ? "Toggle selection" : "Message actions",
+        label: selectionMode ? "Toggle selection" : "Select message",
         name: "activate" as const
       }
     ],
@@ -1459,7 +1559,7 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
           accessibilityLabel={`${row.senderLabel || (mine ? "You" : "Message")}: ${row.body}${deliveryLabel}`}
           accessibilityRole="button"
           accessibilityState={{ selected }}
-          delayLongPress={350}
+          delayLongPress={CHAT_ROW_LONG_PRESS_DELAY_MS}
           onAccessibilityAction={(event) => {
             if (event.nativeEvent.actionName === "reply" && canReply) {
               triggerReply();
@@ -1469,7 +1569,6 @@ const LiteChatTextRow = memo(function LiteChatTextRow({
           }}
           onLongPress={handleLongPress}
           onPress={handlePress}
-          ref={bubbleRef}
           style={[
             styles.liteChatBubble,
             mine ? styles.liteChatBubbleMine : styles.liteChatBubbleOther,
@@ -1606,10 +1705,13 @@ function MemoryChatMainSurface({
   journeySession,
   listRef,
   canDeleteSelected,
+  copyableSelectedMessage,
   deleteError,
+  discardableSelectedMessage,
   deletePending,
   editableSelectedMessage,
   editingMessage,
+  replyableSelectedMessage,
   selectedItemKeys,
   unreadCount,
   onBeginSelection,
@@ -1618,7 +1720,7 @@ function MemoryChatMainSurface({
   onCancelEdit,
   onCancelSelection,
   onChangeMessage,
-  onDeleteTarget,
+  onCopyMessage,
   onDeleteSelected,
   onEditMessage,
   onLoadOlderMessages,
@@ -1660,10 +1762,13 @@ function MemoryChatMainSurface({
   journeySession: MemoryRoomJourneySession;
   listRef: RefObject<ChatListScrollRef | null>;
   canDeleteSelected: boolean;
+  copyableSelectedMessage: MemoryMessage | null;
   deleteError?: string;
+  discardableSelectedMessage: MemoryMessage | null;
   deletePending: boolean;
   editableSelectedMessage: MemoryMessage | null;
   editingMessage: MemoryMessage | null;
+  replyableSelectedMessage: MemoryMessage | null;
   selectedItemKeys: string[];
   unreadCount: number;
   onBeginSelection: (target: MemoryActionTarget) => void;
@@ -1672,7 +1777,7 @@ function MemoryChatMainSurface({
   onCancelEdit: () => void;
   onCancelSelection: () => void;
   onChangeMessage: (value: string) => void;
-  onDeleteTarget: (target: MemoryActionTarget) => void;
+  onCopyMessage: (message: MemoryMessage) => void;
   onDeleteSelected: () => void;
   onEditMessage: (message: MemoryMessage) => void;
   onLoadOlderMessages: () => void;
@@ -1881,9 +1986,18 @@ function MemoryChatMainSurface({
     }
     let frame: number | null = null;
     let attempt = 0;
+    let cancelled = false;
     const reveal = () => {
       frame = null;
-      setUnreadAnchorSettled(true);
+      if (!cancelled) setUnreadAnchorSettled(true);
+    };
+    const retryOrReveal = () => {
+      if (cancelled) return;
+      if (attempt < CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES) {
+        frame = requestAnimationFrame(applyAnchor);
+        return;
+      }
+      reveal();
     };
     const applyAnchor = () => {
       attempt += 1;
@@ -1892,8 +2006,19 @@ function MemoryChatMainSurface({
         reveal();
         return;
       }
+      // FlashList only: an index whose row has no resolved layout yet scrolls
+      // to an estimate and lands short. Waiting a frame for the real layout is
+      // the same "is this index real yet?" question FlatList answers through
+      // onScrollToIndexFailed, just asked before the scroll instead of after.
+      if (
+        typeof list.getLayout === "function" &&
+        list.getLayout(unreadAnchorPlan.index) === undefined
+      ) {
+        retryOrReveal();
+        return;
+      }
       unreadAnchorFailedRef.current = false;
-      list.scrollToIndex({
+      const scrolled = list.scrollToIndex({
         animated: false,
         index: unreadAnchorPlan.index,
         // Inverted list: scroll-space "start" is the visual BOTTOM, so
@@ -1901,20 +2026,26 @@ function MemoryChatMainSurface({
         // with the unread messages below it.
         viewPosition: 1
       });
-      // Rows from the first commit are still being measured for a frame or
-      // two. Retry within a bounded budget, then reveal at the ordinary
-      // newest-first position rather than leaving a blank surface.
-      if (
-        unreadAnchorFailedRef.current &&
-        attempt < CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES
-      ) {
-        frame = requestAnimationFrame(applyAnchor);
+      // FlashList resolves when the scroll has actually completed, so the
+      // reveal waits for it rather than for a frame that may be too early.
+      // There is no failure callback on that engine — a rejected or
+      // never-settling promise must still reveal, or the surface stays blank.
+      if (scrolled && typeof (scrolled as Promise<void>).then === "function") {
+        void (scrolled as Promise<void>).then(reveal, reveal);
+        return;
+      }
+      // FlatList: VirtualizedList does not throw for an index past its highest
+      // measured frame, it calls onScrollToIndexFailed synchronously, so the
+      // outcome is readable immediately after the call.
+      if (unreadAnchorFailedRef.current) {
+        retryOrReveal();
         return;
       }
       reveal();
     };
     frame = requestAnimationFrame(applyAnchor);
     return () => {
+      cancelled = true;
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [active, listRef, unreadAnchorPlan, unreadAnchorSettled]);
@@ -1942,11 +2073,17 @@ function MemoryChatMainSurface({
   });
   const [chatMainPreserveHistoryViewport, setChatMainPreserveHistoryViewport] = useState(false);
   const [chatLatestButtonVisible, setChatLatestButtonVisible] = useState(false);
+  // Read by the scroll and load-older callbacks so pane activation does not
+  // rebuild them. They are spread into every message via the container's
+  // restProps, so a new identity there recreates every cell element.
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const chatMainNearBottomRef = useRef(true);
   const chatMainAtBottomRef = useRef(true);
   const chatMainFollowBottomRef = useRef(true);
   const chatMainInteractingRef = useRef(false);
   const chatMainMomentumRef = useRef(false);
+  const pendingOlderPageRef = useRef(false);
   const chatMainInteractionReleaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const olderPageRequestGuardRef = useRef({ inFlight: false, lastRequestAt: 0 });
   const latestChatMessageIdRef = useRef(latestChatMessageId);
@@ -2367,7 +2504,7 @@ function MemoryChatMainSurface({
   }, [active, latestChatMessageId, latestChatMessageMine, onNearBottomChange]);
 
   const handleChatMainScroll = useCallback((event: ScrollEvent) => {
-    if (!active) return;
+    if (!activeRef.current) return;
     const distanceFromBottom = event.contentOffset.y;
     onScrollOffsetChange(distanceFromBottom);
     const previousOffset = placementScrollOffsetRef.current;
@@ -2433,7 +2570,6 @@ function MemoryChatMainSurface({
       chatMainFollowBottomRef.current = true;
     }
   }, [
-    active,
     chatWindowActive,
     composerClearance,
     expandChatWindow,
@@ -2483,6 +2619,14 @@ function MemoryChatMainSurface({
     });
   }, [clearChatMainInteractionRelease, journeySession]);
 
+  // Held through a ref because the drag handler is declared above the runner.
+  const runOlderPageRequestRef = useRef<((explicitRetry: boolean) => void) | null>(null);
+  const flushPendingOlderPage = useCallback(() => {
+    if (!pendingOlderPageRef.current) return;
+    pendingOlderPageRef.current = false;
+    runOlderPageRequestRef.current?.(false);
+  }, []);
+
   const handleChatMainScrollEndDrag = useCallback(() => {
     clearChatMainInteractionRelease();
     // Momentum begins just after end-drag. Keep ownership with the user across
@@ -2491,6 +2635,9 @@ function MemoryChatMainSurface({
       chatMainInteractionReleaseRef.current = null;
       if (chatMainMomentumRef.current) return;
       chatMainInteractingRef.current = false;
+      // A drag that stops without throwing momentum still has to release a held
+      // older-page request, or the edge is detected and never acted on.
+      flushPendingOlderPage();
       if (chatMainAtBottomRef.current) chatMainFollowBottomRef.current = true;
       recordMemoryRoomJourney(journeySession, "LIST_SCROLL_SETTLED", {
         contentHeight: placementContentHeightRef.current,
@@ -2510,7 +2657,8 @@ function MemoryChatMainSurface({
 
   const handleChatMainMomentumEnd = useCallback(() => {
     finishChatMainInteraction();
-  }, [finishChatMainInteraction]);
+    flushPendingOlderPage();
+  }, [finishChatMainInteraction, flushPendingOlderPage]);
 
   useEffect(() => () => {
     clearChatMainInteractionRelease();
@@ -2527,7 +2675,7 @@ function MemoryChatMainSurface({
     // After a failed edge request, remain idle while the list is still parked
     // at that edge. Only the visible retry control may start another request.
     if (
-      !active ||
+      !activeRef.current ||
       !canLoadOlderMessages ||
       loadingOlderMessages ||
       (olderMessagesFailed && !explicitRetry)
@@ -2547,85 +2695,31 @@ function MemoryChatMainSurface({
     olderPageRequestGuardRef.current = { inFlight: true, lastRequestAt: now };
     onLoadOlderMessages();
   }, [
-    active,
     canLoadOlderMessages,
     loadingOlderMessages,
     olderMessagesFailed,
     onLoadOlderMessages
   ]);
+  // Loading a page mid-fling is the worst possible moment for it. The
+  // incremental projection store only has a fast path for a single message
+  // appended at the NEWEST end; a page of older messages falls through to
+  // buildFull, which rebuilds every row object and therefore re-renders every
+  // mounted row. Doing that while momentum is running is exactly what leaves
+  // bare wallpaper on screen. The edge is still detected immediately — the
+  // request is just held until the fling settles, which is fractions of a
+  // second later and invisible to a reader who has not arrived yet.
+  runOlderPageRequestRef.current = runOlderPageRequest;
   const requestOlderPage = useCallback(() => {
+    if (chatMainMomentumRef.current) {
+      pendingOlderPageRef.current = true;
+      return;
+    }
     runOlderPageRequest(false);
   }, [runOlderPageRequest]);
   const retryOlderPage = useCallback(() => {
     runOlderPageRequest(true);
   }, [runOlderPageRequest]);
 
-  const buildMenuActions = useCallback((target: MemoryChatMainMessage | undefined): MemoryChatMenuAction[] => {
-    const actionTarget = memoryChatActionTarget(target);
-    if (!actionTarget) return [];
-
-    const actions: MemoryChatMenuAction[] = [];
-
-    if (actionTarget.type === "message") {
-      const targetMessage = actionTarget.value;
-      const body = targetMessage.body.trim();
-      if (canReplyToMemoryMessage(targetMessage)) {
-        actions.push({
-          icon: "arrow-undo-outline",
-          key: "reply",
-          label: "Reply",
-          onPress: () => onReplyMessage(targetMessage)
-        });
-      }
-
-      if (body.length > 0) {
-        actions.push({
-          icon: "copy-outline",
-          key: "copy",
-          label: "Copy",
-          onPress: () => {
-            void Clipboard.setStringAsync(targetMessage.body);
-          }
-        });
-      }
-
-      if (canEditMemoryMessage(targetMessage, myUsername)) {
-        actions.push({
-          icon: "create-outline",
-          key: "edit",
-          label: "Edit",
-          onPress: () => onEditMessage(targetMessage)
-        });
-      }
-
-      if (canDeleteMemoryActionTarget(actionTarget, myUsername)) {
-        actions.push({
-          destructive: true,
-          icon: "trash-outline",
-          key: "delete",
-          label: "Delete",
-          onPress: () => onDeleteTarget(actionTarget)
-        });
-      }
-    } else if (canDeleteMemoryActionTarget(actionTarget, myUsername)) {
-      actions.push({
-        destructive: true,
-        icon: "trash-outline",
-        key: "delete",
-        label: "Delete",
-        onPress: () => onDeleteTarget(actionTarget)
-      });
-    }
-
-    actions.push({
-      icon: "checkmark-circle-outline",
-      key: "select",
-      label: "Select",
-      onPress: () => onBeginSelection(actionTarget)
-    });
-
-    return actions;
-  }, [myUsername, onBeginSelection, onDeleteTarget, onEditMessage, onReplyMessage]);
   const liteMessageByKey = useMemo(
     () =>
       new Map(
@@ -2691,27 +2785,14 @@ function MemoryChatMainSurface({
     (key: string) => liteMessageByKey.get(key),
     [liteMessageByKey]
   );
-  const openLiteMessageMenu = useCallback(
-    (key: string, anchor: LiteChatRowAnchor) => {
-      const target = liteMessageForKey(key);
-      if (!target) return;
-      const actions = buildMenuActions(target);
-      if (actions.length === 0) return;
-      const dismiss = () => setMemoryChatMenuRequest(null);
-      setMemoryChatMenuRequest({
-        actions,
-        bubbleHeight: anchor.height,
-        bubbleWidth: anchor.width,
-        emojis: [],
-        onDismiss: dismiss,
-        onSelect: () => undefined,
-        pageX: anchor.pageX,
-        pageY: anchor.pageY,
-        position: target.user?._id === currentUser._id ? "right" : "left",
-        showEmojis: false
-      });
+  // Long press selects on every renderer, so the profiling candidates measure
+  // the gesture the shipping surface actually has.
+  const selectLiteMessage = useCallback(
+    (key: string) => {
+      const target = memoryChatActionTarget(liteMessageForKey(key));
+      if (target) onBeginSelection(target);
     },
-    [buildMenuActions, currentUser._id, liteMessageForKey]
+    [liteMessageForKey, onBeginSelection]
   );
   const replyToLiteMessage = useCallback(
     (key: string) => {
@@ -2828,16 +2909,14 @@ function MemoryChatMainSurface({
     [selectionMode, toggleLiteMessageSelection]
   );
   const handleNativeMessageLongPress = useCallback(
-    (
-      key: string,
-      anchor: {
-        height: number;
-        pageX: number;
-        pageY: number;
-        width: number;
+    (key: string) => {
+      if (selectionMode) {
+        toggleLiteMessageSelection(key);
+        return;
       }
-    ) => openLiteMessageMenu(key, anchor),
-    [openLiteMessageMenu]
+      selectLiteMessage(key);
+    },
+    [selectLiteMessage, selectionMode, toggleLiteMessageSelection]
   );
   // Inverted list: offset 0 IS the newest message. Returning to it also hands
   // bottom-follow back, so an arriving message keeps the viewport pinned.
@@ -2876,7 +2955,7 @@ function MemoryChatMainSurface({
           index={index}
           journeySession={journeySession}
           onCancelFailed={cancelLiteMessage}
-          onOpenMenu={openLiteMessageMenu}
+          onSelect={selectLiteMessage}
           onReply={replyToLiteMessage}
           onRetryFailed={retryLiteMessage}
           onToggleSelection={toggleLiteMessageSelection}
@@ -2898,7 +2977,7 @@ function MemoryChatMainSurface({
       journeySession,
       liteMessageForKey,
       liteSelectionKeys,
-      openLiteMessageMenu,
+      selectLiteMessage,
       replyToLiteMessage,
       retryLiteMessage,
       selectionMode,
@@ -2981,14 +3060,20 @@ function MemoryChatMainSurface({
   const composerToolbar = selectionMode ? (
     <MemoryChatMainSelectionToolbar
       canDelete={canDeleteSelected}
+      copyableMessage={copyableSelectedMessage}
       count={selectedItemKeys.length}
+      discardableMessage={discardableSelectedMessage}
+      onDiscard={onCancelFailedMessage}
       deleteError={deleteError}
       deleting={deletePending}
       editableMessage={editableSelectedMessage}
       onCancel={onCancelSelection}
+      onCopy={onCopyMessage}
       onDelete={onDeleteSelected}
       onEdit={onEditMessage}
       onInputToolbarLayout={handleInputToolbarLayout}
+      onReply={onReplyMessage}
+      replyableMessage={replyableSelectedMessage}
       toolbarInsetStyle={toolbarInsetStyle}
     />
   ) : (
@@ -3024,7 +3109,133 @@ function MemoryChatMainSurface({
     />
   );
 
-  const handlePressMessage = useCallback((_context: unknown, target: MemoryChatMainMessage) => {
+  const chatMainTextInputProps = useMemo(() => ({
+    maxLength: MEMORY_TEXT_MAX_LENGTH,
+    onChangeText: onChangeMessage
+  }), [onChangeMessage]);
+
+  const chatMainLoadEarlierProps = useMemo(() => ({
+    isAvailable: canLoadOlderMessages,
+    isInfiniteScrollEnabled: !olderMessagesFailed,
+    isLoading: loadingOlderMessages,
+    label: olderMessagesFailed ? "Could not load earlier messages · Retry" : undefined,
+    onPress: retryOlderPage
+  }), [canLoadOlderMessages, loadingOlderMessages, olderMessagesFailed, retryOlderPage]);
+
+  const handleChatMainQuickReply = useCallback((replies: Array<{ title?: string; value?: string }>) => {
+    replies.forEach((reply) => {
+      const value = (reply.value || reply.title || "").trim();
+      if (value) onSend(value);
+    });
+  }, [onSend]);
+
+  const handleChatMainSend = useCallback((outgoingMessages: Array<Partial<MemoryChatMainMessage>>) => {
+    onSend(outgoingMessages[0]?.text ?? "");
+  }, [onSend]);
+
+  // Memoised for the same reason as the static props below: the container
+  // spreads these into every message, so a fresh object each render rebuilt its
+  // renderItem and made VirtualizedList recreate every cell element.
+  const chatMainReply = useMemo(() => ({
+    message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
+    onClear: onCancelReply,
+    renderMessageReply: (replyProps: { position?: "left" | "right"; replyMessage?: ChatMainReplyMessage | null }) => {
+      const reply = replyProps.replyMessage;
+      if (!reply) return null;
+      const authorId = String(reply.user?._id ?? "");
+      const author = authorId && authorId === myUsername ? "You" : reply.user?.name || "Unknown";
+      return (
+        <View style={styles.chatMainReplyWrap}>
+          <ReplyPreviewBlock
+            author={author}
+            body={reply.text || "Message"}
+            mine={replyProps.position === "right"}
+            style={styles.chatMainReplyBlock}
+          />
+        </View>
+      );
+    },
+    swipe: {
+      direction: "right" as const,
+      // renderMessage sets the real per-row value (true for a message, and the
+      // whole prop is dropped for a row that cannot be replied to), so this
+      // only exists to arm the container. Holding it constant matters because
+      // the row memo compares it BY VALUE: `active` here re-rendered every
+      // mounted row on each tab switch.
+      isEnabled: true,
+      onSwipe: (target: MemoryChatMainMessage) => {
+        if (target.memoryMessage && canReplyToMemoryMessage(target.memoryMessage)) {
+          onReplyMessage(target.memoryMessage);
+        }
+      }
+    }
+  }), [myUsername, onCancelReply, onReplyMessage, replyingToMessage]);
+
+  // Folded out so this memo does NOT depend on `active`: MEMORY_REACTIONS_ENABLED
+  // is false, so the value is constant and a tab switch cannot invalidate it.
+  // Turning emoji reactions on brings `active` back, and that needs revisiting
+  // together with where selection is armed.
+  const reactionsEnabled = active && MEMORY_REACTIONS_ENABLED;
+  const chatMainReactions = useMemo(() => ({
+    emojis: [...MEMORY_REACTION_EMOJIS],
+    // Emoji reactions ONLY. This gate mounts the vendor's reactions wrapper on
+    // every row, and that wrapper brings its own long press and its own
+    // Pressable — both of which would fight the row for the gesture that now
+    // selects a message.
+    isEnabled: reactionsEnabled,
+    onReactionPress: (target: MemoryChatMainMessage, emoji: string) => {
+      if (!MEMORY_REACTIONS_ENABLED || selectionMode) return;
+      if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
+    }
+  }), [onToggleReaction, reactionsEnabled, selectionMode]);
+
+  // Passed straight through to every message by the vendored container, so an
+  // object literal in JSX made its `restProps` — and therefore its renderItem —
+  // a new reference on every render, which makes VirtualizedList recreate every
+  // cell element. These never change, so they are built once.
+  const chatMainAvatarImageStyle = useMemo(() => ({ left: styles.chatMainAvatarImage }), []);
+  const chatMainKeyboardAvoidingProps = useMemo(() => ({ enabled: false }), []);
+  const chatMainMessageTextProps = useMemo(() => ({
+    hashtag: true,
+    customTextStyle: styles.textOnlyBubbleText,
+    linkStyle: {
+      left: styles.messageLinkText,
+      right: styles.messageLinkTextMine
+    },
+    mention: true,
+    onPress: (_message: unknown, url: string) => {
+      void Linking.openURL(url);
+    },
+    stripPrefix: false,
+    textStyle: {
+      left: styles.messageTextOther,
+      right: styles.messageTextMine
+    }
+  }), []);
+
+  // FlashList only. Recycling reuses a row instance for the next item of the
+  // same type, so this is what stops a text row being reused as a media row.
+  const chatMainItemType = useCallback(
+    (item: MemoryChatMainMessage) => memoryChatItemType(item, String(currentUser._id ?? "")),
+    [currentUser._id]
+  );
+
+  // A long press selects outright — there is no intermediate menu. Holding a
+  // row while a selection is already open extends it, which is the same thing
+  // a tap does, so the two gestures never disagree about what a hold means.
+  const handleRowLongPress = useCallback((target: MemoryChatMainMessage | undefined) => {
+    const actionTarget = memoryChatActionTarget(target);
+    if (!actionTarget) return;
+    if (selectionMode) {
+      onToggleSelection(actionTarget);
+      return;
+    }
+    onBeginSelection(actionTarget);
+  }, [onBeginSelection, onToggleSelection, selectionMode]);
+
+  // Tapping a row only means anything once something is selected; otherwise it
+  // has to stay inert so opening media and jumping to a reply keep working.
+  const handleRowPress = useCallback((target: MemoryChatMainMessage | undefined) => {
     if (!selectionMode) return;
     const actionTarget = memoryChatActionTarget(target);
     if (actionTarget) onToggleSelection(actionTarget);
@@ -3093,27 +3304,38 @@ function MemoryChatMainSurface({
     const placementClientId = replyTarget?.clientId;
     const placementRowKey = String(messageProps.currentMessage?._id ?? "");
     const placementIndex = placementIndexByRowKeyRef.current.get(placementRowKey);
+    const rowMessage = messageProps.currentMessage;
     return (
       <MemoryChatPlacementRow
         clientId={placementClientId}
         deliveryStatus={replyTarget?.deliveryStatus}
         layoutGeneration={layoutGeneration}
+        onLongPress={() => handleRowLongPress(rowMessage)}
+        onPress={selectionMode ? () => handleRowPress(rowMessage) : undefined}
         renderIndex={placementIndex}
         rowKey={placementRowKey}
         style={[styles.chatMainRowSelectionFrame, selected && styles.chatMainRowSelectedBackground]}
       >
-        <MemoryJourneyRenderProbe
-          journeySession={journeySession}
-          surface="chat_row"
-          tab="chat"
-        />
+        {/* Diagnostics only, and it is not free at row scale: a fiber plus a
+            DEP-LESS useEffect that re-runs on every render of every mounted
+            row, to call recorders that early-return when profiling is off. */}
+        {MEMORY_ROOM_RELEASE_PROFILE_ENABLED ? (
+          <MemoryJourneyRenderProbe
+            journeySession={journeySession}
+            surface="chat_row"
+            tab="chat"
+          />
+        ) : null}
         <ChatMainMessageRow<MemoryChatMainMessage>
           {...messageProps}
           swipeToReply={replyTarget
             ? {
               ...messageProps.swipeToReply,
               isEnabled: true,
-              isGestureEnabled: canReply
+              // Swiping while a selection is open would open the composer on a
+              // message the toolbar is still acting on, so the gesture stands
+              // down for as long as the selection does.
+              isGestureEnabled: canReply && !selectionMode
             }
             : undefined}
           containerStyle={{
@@ -3133,7 +3355,7 @@ function MemoryChatMainSurface({
         ) : null}
       </MemoryChatPlacementRow>
     );
-  }, [journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys]);
+  }, [handleRowLongPress, handleRowPress, journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys, selectionMode]);
 
   // The long-press action menu used to arrive through the vendor's reactions
   // wrapper, so `reactions.isEnabled` had to stay true purely to get a
@@ -3143,30 +3365,6 @@ function MemoryChatMainSurface({
   // EVERY mounted row. The vendor's default bubble path already exposes
   // onLongPressMessage and now reports the bubble's window geometry with it, so
   // the menu opens from there and rows stop paying for the wrapper.
-  const handleLongPressMessage = useCallback((
-    _context: unknown,
-    message?: MemoryChatMainMessage,
-    anchor?: BubbleLongPressAnchor
-  ) => {
-    if (selectionMode || !message || !anchor) return;
-    const actions = buildMenuActions(message);
-    if (actions.length === 0) return;
-    setMemoryChatMenuRequest({
-      actions,
-      bubbleHeight: anchor.bubbleHeight,
-      bubbleWidth: anchor.bubbleWidth,
-      emojis: [],
-      onDismiss: () => setMemoryChatMenuRequest(null),
-      onSelect: () => undefined,
-      pageX: anchor.pageX,
-      pageY: anchor.pageY,
-      position: String(message.user?._id ?? "") === String(currentUser._id ?? "")
-        ? "right"
-        : "left",
-      showEmojis: false
-    });
-  }, [buildMenuActions, currentUser._id, selectionMode]);
-
   // Message group tails are rendered by renderCustomView so they live INSIDE
   // the vendor's animated wrapper and scale together with the bubble on
   // long-press.
@@ -3195,12 +3393,17 @@ function MemoryChatMainSurface({
         // (see Bubble's renderBubbleBody), so the row stops paying for it.
         // Do not reintroduce a hidden bottomContainerStyle: it would make any
         // future bottom content silently invisible instead of merely unstyled.
+        //
+        // Deliberately NO onPressMessage/onLongPressMessage: the row owns both
+        // gestures now (see MemoryChatPlacementRow). Handing either of them to
+        // the bubble puts a Pressable back inside it, and that Pressable would
+        // win every touch that lands on the bubble, so a long press would only
+        // select when it landed on the empty space beside one.
         renderTime={renderNoBubbleBottom}
         renderTicks={renderNoBubbleBottom}
-        onLongPressMessage={handleLongPressMessage}
       />
     );
-  }, [handleLongPressMessage]);
+  }, []);
 
   const renderMessageText = useCallback((textProps: ChatMainMessageTextProps<MemoryChatMainMessage>) => {
     const { currentMessage, position = "left" } = textProps;
@@ -3234,11 +3437,24 @@ function MemoryChatMainSurface({
     const hasCaption = Boolean(props.currentMessage.text?.trim());
     const timestamp = hasCaption ? undefined : memoryChatTimestampLabel(props.currentMessage);
 
+    // Media owns its own touch (open the viewer), so the row underneath cannot
+    // see a press on it. `disabled` while selecting hands the touch back — a
+    // disabled Pressable declines the responder — and the long press is
+    // forwarded so holding a photo selects it exactly like holding text does.
+    const selectRow = () => handleRowLongPress(props.currentMessage);
+    // `_id` is memoryChatRowKey(message) — it does NOT move when the send
+    // confirms, so it anchors a view identity that survives the swap from the
+    // optimistic preview to the real photo.
+    const rowKey = String(props.currentMessage._id);
+
     if (attachments.length === 1) {
       const media = attachments[0];
       return (
         <Pressable
           accessibilityRole="imagebutton"
+          delayLongPress={CHAT_ROW_LONG_PRESS_DELAY_MS}
+          disabled={selectionMode}
+          onLongPress={selectRow}
           onPress={() => onOpenMedia(media, attachments)}
           style={styles.chatMainMediaFrame}
         >
@@ -3247,6 +3463,7 @@ function MemoryChatMainSurface({
             sizeOverride={memoryChatSingleMediaSize(media, screenWidth)}
             timestamp={timestamp}
             timestampPlacement="bottom-right"
+            viewKey={memoryMediaSlotViewKey(rowKey, media, 0)}
           />
         </Pressable>
       );
@@ -3257,22 +3474,34 @@ function MemoryChatMainSurface({
         <MediaAttachmentGrid
           gridWidth={memoryChatGridWidth(screenWidth)}
           media={attachments}
-          onMediaLongPress={() => undefined}
+          onMediaLongPress={selectRow}
           onOpenMedia={onOpenMedia}
+          rowKey={rowKey}
+          selectionMode={selectionMode}
           shouldIgnoreMediaOpen={() => false}
           timestamp={timestamp}
         />
       </View>
     );
-  }, [onOpenMedia, screenWidth]);
+  }, [handleRowLongPress, onOpenMedia, screenWidth, selectionMode]);
 
+  // Deliberately NOT dependent on `active`: the gate reads that from context, so
+  // a tab switch stops invalidating every row through this callback's identity.
   const renderMessageAudio = useCallback((
     audioProps: ChatMainMessageAudioProps<MemoryChatMainMessage>
   ) => (
-    active
-      ? <ChatMainAudioMessage {...audioProps} journeySession={journeySession} />
-      : null
-  ), [active, journeySession]);
+    // Keyed by message so a RECYCLED audio row cannot carry the previous
+    // message's player: FlashList reuses the instance for the next item of the
+    // same type, and useAudioPlayer would keep the old playback state while the
+    // row now points at different audio. The message text does the same thing
+    // for its latched measurement state.
+    <ChatMainAudioMessageGate
+      {...audioProps}
+      journeySession={journeySession}
+      key={String(audioProps.currentMessage?._id ?? "")}
+      selectionMode={selectionMode}
+    />
+  ), [journeySession, selectionMode]);
 
   const renderCustomView = useCallback((props: {
     currentMessage: MemoryChatMainMessage;
@@ -3359,26 +3588,6 @@ function MemoryChatMainSurface({
     if (!dish) return null;
     return <MemoryChatMainDishSystemMessage dish={dish} onOpenDish={onOpenDish} />;
   }, [jumpChatToLatest, onOpenDish]);
-
-  const renderReactionPicker = useCallback((pickerProps: ChatMainReactionPickerProps<MemoryChatMainMessage>) => {
-    if (selectionMode) return null;
-
-    const target = pickerProps.message;
-    const targetMessage = target?.memoryMessage;
-    const showEmojis = Boolean(
-      MEMORY_REACTIONS_ENABLED &&
-      targetMessage &&
-      targetMessage.deliveryStatus === "sent"
-    );
-
-    return (
-      <MemoryChatMessageMenu
-        {...pickerProps}
-        actions={buildMenuActions(target)}
-        showEmojis={showEmojis}
-      />
-    );
-  }, [buildMenuActions, selectionMode]);
 
   const handleChatMainLayout = useCallback((event: LayoutChangeEvent) => {
     if (!chatListLayoutMarkedRef.current) {
@@ -3540,8 +3749,69 @@ function MemoryChatMainSurface({
       />
     );
 
+  // Memoised because FlashList recomputes layout when its props change, and an
+  // object literal in JSX is a NEW object on every render of this surface —
+  // every keystroke, every realtime tick. FlatList tolerated the churn; on
+  // FlashList it roughly doubled the frame-time tail during a tab switch
+  // (90th 61ms -> 117ms measured on device).
+  const chatMainListProps = useMemo(() => ({
+        contentContainerStyle: styles.chatMainListContent,
+        contentOffset: { x: 0, y: initialScrollOffset },
+        directionalLockEnabled: true,
+        extraData: selectedItemKeys.join("|"),
+        initialNumToRender: unreadAnchorPlan.initialRenderCount,
+        onScrollToIndexFailed: handleChatMainScrollToIndexFailed,
+        onViewableItemsChanged: handleChatMainViewableItems,
+        viewabilityConfig: CHAT_MAIN_VIEWABILITY_CONFIG,
+        maintainVisibleContentPosition: chatMainPreserveHistoryViewport
+          ? CHAT_MAIN_SCROLL_POSITION_CONFIG
+          : undefined,
+        maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH,
+        nestedScrollEnabled: true,
+        onEndReached: requestOlderPage,
+        onEndReachedThreshold: CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD,
+        onScroll: handleChatMainScroll,
+        onScrollBeginDrag: handleChatMainScrollBeginDrag,
+        onScrollEndDrag: handleChatMainScrollEndDrag,
+        onMomentumScrollBegin: handleChatMainMomentumBegin,
+        onMomentumScrollEnd: handleChatMainMomentumEnd,
+        onContentSizeChange: handleChatMainContentSizeChange,
+        onLayout: handleChatMainLayout,
+        // Android otherwise keeps off-window message subtrees attached to
+        // the native hierarchy even though FlatList has virtualized their
+        // React rows. Detaching them is essential for bounded route pop
+        // cost in populated rooms; iOS retains its safer default because
+        // transformed/inverted clipping behaves differently there.
+        //
+        // Measured 2026-08-01: forcing this off does NOT reduce the blank
+        // gaps on a fast fling (device A/B, gaps unchanged), so Android's
+        // inverted-list clipping is not what causes them. The render window
+        // above is. Do not flip this again chasing blanks.
+        removeClippedSubviews: Platform.OS === "android",
+        scrollEnabled: true,
+        updateCellsBatchingPeriod: CHAT_MAIN_CELL_BATCHING_PERIOD_MS,
+        windowSize: CHAT_MAIN_WINDOW_SIZE
+  }), [
+    chatMainPreserveHistoryViewport,
+    handleChatMainContentSizeChange,
+    handleChatMainLayout,
+    handleChatMainMomentumBegin,
+    handleChatMainMomentumEnd,
+    handleChatMainScroll,
+    handleChatMainScrollBeginDrag,
+    handleChatMainScrollEndDrag,
+    handleChatMainScrollToIndexFailed,
+    handleChatMainViewableItems,
+    initialScrollOffset,
+    requestOlderPage,
+    selectedItemKeys,
+    unreadAnchorPlan.initialRenderCount
+  ]);
+
+  // One provider around both return paths, so activation reaches the audio rows
+  // that need it without travelling through the row memo's identity checks.
   const surfaceInner = (
-    <>
+    <ChatSurfaceActiveContext.Provider value={active}>
       {/* Held transparent only while an unread anchor is still being applied,
           so the entry cannot show the newest messages and then jump to the
           divider. With no unread anchor this is always 1 and the layer behaves
@@ -3566,15 +3836,8 @@ function MemoryChatMainSurface({
               initialAnchor={nativeInitialAnchor}
               myUsername={myUsername}
               onLoadOlder={requestOlderPage}
-              onMessageLongPress={(event) => {
-                const { height, key, pageX, pageY, width } = event.nativeEvent;
-                handleNativeMessageLongPress(key, {
-                  height,
-                  pageX,
-                  pageY,
-                  width
-                });
-              }}
+              onMessageLongPress={(event) =>
+                handleNativeMessageLongPress(event.nativeEvent.key)}
               onMessagePress={(event) =>
                 handleNativeMessagePress(event.nativeEvent.key)}
               onMetrics={handleNativeMetrics}
@@ -3601,10 +3864,9 @@ function MemoryChatMainSurface({
               >
                 <Ionicons
                   name="chevron-down"
-                  size={15}
+                  size={20}
                   color={ROOM_COLORS.onCool}
                 />
-                <Text style={styles.chatLatestButtonText}>Latest</Text>
               </Pressable>
             ) : null}
             {olderMessagesFailed ? (
@@ -3622,6 +3884,9 @@ function MemoryChatMainSurface({
           <>
           <ChatMain<MemoryChatMainMessage>
           colorScheme={resolvedTheme}
+          listEngine={MEMORY_ROOM_CHAT_VENDOR_FLASHLIST ? "flashlist" : "flatlist"}
+          getItemType={chatMainItemType}
+          flashListProps={CHAT_MAIN_FLASHLIST_PROPS}
           disableKeyboardProvider
           initiallyInitialized
           provideSafeAreaContext={false}
@@ -3632,82 +3897,19 @@ function MemoryChatMainSurface({
           isScrollToBottomEnabled={false}
           isAvatarOnTop
           isUserAvatarVisible={false}
-          avatarImageStyle={{ left: styles.chatMainAvatarImage }}
+          avatarImageStyle={chatMainAvatarImageStyle}
           avatarTextStyle={styles.chatMainAvatarText}
-          keyboardAvoidingViewProps={{ enabled: false }}
+          keyboardAvoidingViewProps={chatMainKeyboardAvoidingProps}
           renderBottomSpacer={renderComposerListSpacer}
           renderTopSpacer={renderKeyboardTopSpacer}
-          listProps={{
-            contentContainerStyle: styles.chatMainListContent,
-            contentOffset: { x: 0, y: initialScrollOffset },
-            directionalLockEnabled: true,
-            extraData: selectedItemKeys.join("|"),
-            initialNumToRender: unreadAnchorPlan.initialRenderCount,
-            onScrollToIndexFailed: handleChatMainScrollToIndexFailed,
-            onViewableItemsChanged: handleChatMainViewableItems,
-            viewabilityConfig: CHAT_MAIN_VIEWABILITY_CONFIG,
-            maintainVisibleContentPosition: chatMainPreserveHistoryViewport
-              ? CHAT_MAIN_SCROLL_POSITION_CONFIG
-              : undefined,
-            maxToRenderPerBatch: CHAT_MAIN_MAX_RENDER_BATCH,
-            nestedScrollEnabled: true,
-            onEndReached: requestOlderPage,
-            onEndReachedThreshold: CHAT_MAIN_OLDER_PAGE_PREFETCH_THRESHOLD,
-            onScroll: handleChatMainScroll,
-            onScrollBeginDrag: handleChatMainScrollBeginDrag,
-            onScrollEndDrag: handleChatMainScrollEndDrag,
-            onMomentumScrollBegin: handleChatMainMomentumBegin,
-            onMomentumScrollEnd: handleChatMainMomentumEnd,
-            onContentSizeChange: handleChatMainContentSizeChange,
-            onLayout: handleChatMainLayout,
-            // Android otherwise keeps off-window message subtrees attached to
-            // the native hierarchy even though FlatList has virtualized their
-            // React rows. Detaching them is essential for bounded route pop
-            // cost in populated rooms; iOS retains its safer default because
-            // transformed/inverted clipping behaves differently there.
-            removeClippedSubviews: Platform.OS === "android",
-            scrollEnabled: true,
-            updateCellsBatchingPeriod: CHAT_MAIN_CELL_BATCHING_PERIOD_MS,
-            windowSize: CHAT_MAIN_WINDOW_SIZE
-          }}
-          loadEarlierMessagesProps={{
-            isAvailable: canLoadOlderMessages,
-            isInfiniteScrollEnabled: !olderMessagesFailed,
-            isLoading: loadingOlderMessages,
-            label: olderMessagesFailed ? "Could not load earlier messages · Retry" : undefined,
-            onPress: retryOlderPage
-          }}
-          messageTextProps={{
-            hashtag: true,
-            customTextStyle: styles.textOnlyBubbleText,
-            linkStyle: {
-              left: styles.messageLinkText,
-              right: styles.messageLinkTextMine
-            },
-            mention: true,
-            onPress: (_message, url) => {
-              void Linking.openURL(url);
-            },
-            stripPrefix: false,
-            textStyle: {
-              left: styles.messageTextOther,
-              right: styles.messageTextMine
-            }
-          }}
+          listProps={chatMainListProps}
+          loadEarlierMessagesProps={chatMainLoadEarlierProps}
+          messageTextProps={chatMainMessageTextProps}
           messages={windowedChatMessages}
           messagesContainerRef={listRef as RefObject<ChatMainAnimatedList<MemoryChatMainMessage>>}
           messagesContainerStyle={styles.chatMainMessages}
-          onQuickReply={(replies) => {
-            replies.forEach((reply) => {
-              const value = (reply.value || reply.title || "").trim();
-              if (value) onSend(value);
-            });
-          }}
-          onSend={(outgoingMessages) => {
-            const outgoingText = outgoingMessages[0]?.text ?? "";
-            onSend(outgoingText);
-          }}
-          onPressMessage={handlePressMessage}
+          onQuickReply={handleChatMainQuickReply}
+          onSend={handleChatMainSend}
           renderBubble={renderBubble}
           renderCustomView={renderCustomView}
           renderInputToolbar={renderInputToolbar}
@@ -3717,55 +3919,10 @@ function MemoryChatMainSurface({
           renderMessageText={renderMessageText}
           renderMessageVideo={renderMessageMedia}
           renderSystemMessage={renderSystemMessage}
-          reply={{
-            message: replyingToMessage ? memoryChatReplyMessage(replyingToMessage) : null,
-            onClear: onCancelReply,
-            renderMessageReply: (replyProps) => {
-              const reply = replyProps.replyMessage;
-              if (!reply) return null;
-              const authorId = String(reply.user?._id ?? "");
-              const author = authorId && authorId === myUsername ? "You" : reply.user?.name || "Unknown";
-              return (
-                <View style={styles.chatMainReplyWrap}>
-                  <ReplyPreviewBlock
-                    author={author}
-                    body={reply.text || "Message"}
-                    mine={replyProps.position === "right"}
-                    style={styles.chatMainReplyBlock}
-                  />
-                </View>
-              );
-            },
-            swipe: {
-              direction: "right",
-              isEnabled: active,
-              onSwipe: (target) => {
-                if (target.memoryMessage && canReplyToMemoryMessage(target.memoryMessage)) {
-                  onReplyMessage(target.memoryMessage);
-                }
-              }
-            }
-          }}
-          reactions={{
-            emojis: [...MEMORY_REACTION_EMOJIS],
-            // Emoji reactions ONLY. This gate mounts the vendor's reactions
-            // wrapper on every row, so it must not be used to obtain a
-            // long-press handler — the menu comes from onLongPressMessage on
-            // the default bubble path instead. Turning emoji reactions on
-            // restores the wrapper along with its own long-press behaviour,
-            // and the menu wiring needs revisiting at that point.
-            isEnabled: active && MEMORY_REACTIONS_ENABLED,
-            onReactionPress: (target, emoji) => {
-              if (!MEMORY_REACTIONS_ENABLED || selectionMode) return;
-              if (target.memoryMessage) onToggleReaction(target.memoryMessage.id, emoji);
-            },
-            renderReactionPicker
-          }}
+          reply={chatMainReply}
+          reactions={chatMainReactions}
           text={message}
-          textInputProps={{
-            maxLength: MEMORY_TEXT_MAX_LENGTH,
-            onChangeText: onChangeMessage
-          }}
+          textInputProps={chatMainTextInputProps}
           user={currentUser}
           />
           {/* Scroll position alone decides this. Forcing it visible for the
@@ -3789,14 +3946,9 @@ function MemoryChatMainSurface({
             >
               <Ionicons
                 name="chevron-down"
-                size={15}
+                size={20}
                 color={ROOM_COLORS.onCool}
               />
-              <Text style={styles.chatLatestButtonText}>
-                {unreadCount > 0
-                  ? `${unreadCount > 99 ? "99+" : unreadCount} new`
-                  : "Latest"}
-              </Text>
             </Pressable>
           ) : null}
           </>
@@ -3805,7 +3957,7 @@ function MemoryChatMainSurface({
       <View pointerEvents="none" style={styles.chatKeyboardBridge} />
       {composerToolbar}
       {voiceRecorderMounted ? <VoiceRecorderHost onReady={handleVoiceRecorderReady} /> : null}
-    </>
+    </ChatSurfaceActiveContext.Provider>
   );
 
   // Android: a native WindowInsetsAnimation-driven container moves the whole
@@ -4030,10 +4182,12 @@ function pauseMediaPlayerQuietly(player: { pause: () => void }) {
 function ChatMainAudioMessage({
   currentMessage,
   journeySession,
-  position = "left"
+  position = "left",
+  selectionMode = false
 }: ChatMainMessageAudioProps<MemoryChatMainMessage> & {
   journeySession: MemoryRoomJourneySession;
   position?: "left" | "right";
+  selectionMode?: boolean;
 }) {
   const uri = currentMessage.audio ?? null;
   const mine = position === "right";
@@ -4091,8 +4245,10 @@ function ChatMainAudioMessage({
       <Pressable
         accessibilityLabel={isPlaying ? "Pause audio message" : "Play audio message"}
         accessibilityRole="button"
-        accessibilityState={{ disabled: isError }}
-        disabled={isError}
+        accessibilityState={{ disabled: isError || selectionMode }}
+        // Same rule as media: while a selection is open the row owns the touch,
+        // so tapping anywhere — including here — extends or clears it.
+        disabled={isError || selectionMode}
         hitSlop={8}
         onPress={togglePlayback}
         style={[styles.chatMainAudioButton, mine && styles.chatMainAudioButtonMine, isError && styles.chatMainAudioButtonDisabled]}
@@ -4612,27 +4768,42 @@ function MemoryChatMainInputToolbar({
   );
 }
 
+// Everything the retired long-press menu could do lives here. Reply and Copy
+// only appear for a single message — they have no meaning for a multi
+// selection — which is the same rule Edit already followed.
 function MemoryChatMainSelectionToolbar({
   canDelete,
+  copyableMessage,
   count,
   deleteError,
   deleting,
+  discardableMessage,
   editableMessage,
   onCancel,
+  onCopy,
   onDelete,
+  onDiscard,
   onEdit,
   onInputToolbarLayout,
+  onReply,
+  replyableMessage,
   toolbarInsetStyle
 }: {
   canDelete: boolean;
+  copyableMessage: MemoryMessage | null;
   count: number;
   deleteError?: string;
   deleting: boolean;
+  discardableMessage: MemoryMessage | null;
   editableMessage: MemoryMessage | null;
   onCancel: () => void;
+  onCopy: (message: MemoryMessage) => void;
   onDelete: () => void;
+  onDiscard: (message: MemoryMessage) => void;
   onEdit: (message: MemoryMessage) => void;
   onInputToolbarLayout: (event: LayoutChangeEvent) => void;
+  onReply: (message: MemoryMessage) => void;
+  replyableMessage: MemoryMessage | null;
   toolbarInsetStyle: StyleProp<ViewStyle>;
 }) {
   return (
@@ -4648,6 +4819,28 @@ function MemoryChatMainSelectionToolbar({
               {count} selected
             </Text>
           </View>
+          {replyableMessage ? (
+            <Pressable
+              accessibilityLabel="Reply to selected message"
+              accessibilityRole="button"
+              disabled={deleting}
+              onPress={() => onReply(replyableMessage)}
+              style={[styles.selectionActionButton, deleting && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name="arrow-undo-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onSurface} />
+            </Pressable>
+          ) : null}
+          {copyableMessage ? (
+            <Pressable
+              accessibilityLabel="Copy selected message"
+              accessibilityRole="button"
+              disabled={deleting}
+              onPress={() => onCopy(copyableMessage)}
+              style={[styles.selectionActionButton, deleting && styles.selectionDeleteButtonDisabled]}
+            >
+              <Ionicons name="copy-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onSurface} />
+            </Pressable>
+          ) : null}
           {editableMessage ? (
             <Pressable
               accessibilityLabel="Edit selected message"
@@ -4657,6 +4850,20 @@ function MemoryChatMainSelectionToolbar({
               style={[styles.selectionEditButton, deleting && styles.selectionDeleteButtonDisabled]}
             >
               <Ionicons name="create-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.onCool} />
+            </Pressable>
+          ) : null}
+          {/* Mutually exclusive with Delete: Delete needs a landed message,
+              Discard needs one that never landed. Discard is the only way out
+              of an upload stuck mid-flight, since the recovery pill does not
+              render for in-progress states. */}
+          {discardableMessage ? (
+            <Pressable
+              accessibilityLabel="Discard unsent message"
+              accessibilityRole="button"
+              onPress={() => onDiscard(discardableMessage)}
+              style={styles.selectionDeleteButton}
+            >
+              <Ionicons name="close-circle-outline" size={SELECTION_SECONDARY_ICON_SIZE} color={ROOM_COLORS.white} />
             </Pressable>
           ) : null}
           {canDelete ? (
@@ -4715,256 +4922,6 @@ function MemoryChatMainDishSystemMessage({
         </View>
       ) : null}
     </Pressable>
-  );
-}
-
-type MemoryChatMenuAction = {
-  destructive?: boolean;
-  icon: keyof typeof Ionicons.glyphMap;
-  key: string;
-  label: string;
-  onPress: () => void;
-};
-
-const CHAT_MENU_EMOJI_SIZE = 44;
-const CHAT_MENU_EMOJI_ROW_HEIGHT = 54;
-const CHAT_MENU_ACTION_HEIGHT = 44;
-const CHAT_MENU_PADDING = 6;
-const CHAT_MENU_OFFSET = 8;
-const CHAT_MENU_MIN_WIDTH = 216;
-
-// Anchored long-press menu for chat bubbles: quick-react emoji row on top,
-// message actions below. Replaces the library's emoji-only ReactionPicker via
-// the reactions.renderReactionPicker override.
-// The open long-press menu, published by the pressed row and rendered once by
-// MemoryChatMenuHost at the screen root.
-//
-// This used to be an RN `Modal` rendered inside the bubble. On Android a Modal
-// takes its own window, so it cannot receive the per-frame
-// WindowInsetsAnimation callbacks the rest of this screen rides, and it takes
-// IME focus — long-pressing a message while typing dropped the keyboard and
-// then had to raise it again once you picked Reply. This screen already learned
-// that with the attachment sheet, and PostCommentsSheet learned it again; every
-// keyboard-adjacent surface here has to be an in-tree overlay under the single
-// root KeyboardProvider.
-type MemoryChatMenuRequest = {
-  actions: MemoryChatMenuAction[];
-  bubbleHeight: number;
-  bubbleWidth: number;
-  emojis: string[];
-  onDismiss: () => void;
-  onSelect: (emoji: string) => void;
-  pageX: number;
-  pageY: number;
-  position: "left" | "right";
-  showEmojis: boolean;
-};
-
-let memoryChatMenuRequest: MemoryChatMenuRequest | null = null;
-const memoryChatMenuListeners = new Set<() => void>();
-
-function getMemoryChatMenuRequest() {
-  return memoryChatMenuRequest;
-}
-
-function setMemoryChatMenuRequest(next: MemoryChatMenuRequest | null) {
-  if (memoryChatMenuRequest === next) return;
-  memoryChatMenuRequest = next;
-  memoryChatMenuListeners.forEach((listener) => listener());
-}
-
-function subscribeMemoryChatMenu(listener: () => void) {
-  memoryChatMenuListeners.add(listener);
-  return () => {
-    memoryChatMenuListeners.delete(listener);
-  };
-}
-
-function MemoryChatMessageMenu({
-  actions,
-  showEmojis,
-  ...pickerProps
-}: ChatMainReactionPickerProps<MemoryChatMainMessage> & {
-  actions: MemoryChatMenuAction[];
-  showEmojis: boolean;
-}) {
-  const {
-    visible,
-    emojis,
-    onSelect,
-    onDismiss,
-    position,
-    pageX = 0,
-    pageY = 0,
-    bubbleWidth = 0,
-    bubbleHeight = 0
-  } = pickerProps;
-  const open = Boolean(visible) && (showEmojis || actions.length > 0);
-
-  // Actions and callbacks are rebuilt on every row render, so they are read
-  // through a ref instead of being effect dependencies — depending on them
-  // would clear and republish the request on each render and flicker the menu.
-  // The anchor is primitives, so it can be depended on directly, which matters
-  // because measure() resolves asynchronously and can land after `visible`.
-  const requestRef = useRef<Omit<MemoryChatMenuRequest, "bubbleHeight" | "bubbleWidth" | "pageX" | "pageY">>({
-    actions,
-    emojis,
-    onDismiss,
-    onSelect,
-    position: position ?? "left",
-    showEmojis
-  });
-  requestRef.current = {
-    actions,
-    emojis,
-    onDismiss,
-    onSelect,
-    position: position ?? "left",
-    showEmojis
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const request: MemoryChatMenuRequest = {
-      ...requestRef.current,
-      bubbleHeight,
-      bubbleWidth,
-      pageX,
-      pageY
-    };
-    setMemoryChatMenuRequest(request);
-    return () => {
-      // Only retract our own request: a newer row may already own the host.
-      if (getMemoryChatMenuRequest() === request) setMemoryChatMenuRequest(null);
-    };
-  }, [open, bubbleHeight, bubbleWidth, pageX, pageY]);
-
-  return null;
-}
-
-function MemoryChatMenuHost() {
-  const request = useSyncExternalStore(
-    subscribeMemoryChatMenu,
-    getMemoryChatMenuRequest,
-    getMemoryChatMenuRequest
-  );
-  // The anchor arrives in window coordinates, so the host has to know where its
-  // own box sits in the window to place the menu — it is mounted inside the
-  // screen's padding box, not at the window origin.
-  const hostRef = useRef<View>(null);
-  const [hostBox, setHostBox] = useState({ height: 0, width: 0, x: 0, y: 0 });
-
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    const { height, width } = event.nativeEvent.layout;
-    hostRef.current?.measureInWindow((x, y) => {
-      setHostBox((current) => (
-        current.height === height && current.width === width && current.x === x && current.y === y
-          ? current
-          : { height, width, x, y }
-      ));
-    });
-  }, []);
-
-  const onDismiss = request?.onDismiss;
-  useEffect(() => {
-    if (!onDismiss) return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      onDismiss();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [onDismiss]);
-
-  let content: ReactNode = null;
-  if (request && hostBox.height > 0 && hostBox.width > 0) {
-    const { actions, bubbleHeight, bubbleWidth, emojis, pageX, pageY, position, showEmojis } = request;
-    const emojiRowWidth = emojis.length * CHAT_MENU_EMOJI_SIZE + CHAT_MENU_PADDING * 2;
-    const menuWidth = Math.min(
-      hostBox.width - 16,
-      Math.max(CHAT_MENU_MIN_WIDTH, showEmojis ? emojiRowWidth : CHAT_MENU_MIN_WIDTH)
-    );
-    const menuHeight =
-      (showEmojis ? CHAT_MENU_EMOJI_ROW_HEIGHT + (actions.length > 0 ? 1 : 0) : 0) +
-      actions.length * CHAT_MENU_ACTION_HEIGHT +
-      CHAT_MENU_PADDING * 2;
-
-    const anchorX = pageX - hostBox.x;
-    const anchorY = pageY - hostBox.y;
-    const showAbove = anchorY >= menuHeight + CHAT_MENU_OFFSET;
-    let menuTop = showAbove
-      ? anchorY - menuHeight - CHAT_MENU_OFFSET
-      : anchorY + bubbleHeight + CHAT_MENU_OFFSET;
-    menuTop = Math.max(8, Math.min(menuTop, hostBox.height - menuHeight - 8));
-
-    let menuLeft = position === "right" ? anchorX + bubbleWidth - menuWidth : anchorX;
-    menuLeft = Math.max(8, Math.min(menuLeft, hostBox.width - menuWidth - 8));
-
-    const runAction = (action: MemoryChatMenuAction) => {
-      request.onDismiss();
-      // No modal window to tear down, so follow-up UI (the delete Alert, the
-      // composer focus behind Reply) runs in this same event — which is what
-      // beginReplyMessage needs to start the IME slide with the reply chip.
-      action.onPress();
-    };
-
-    content = (
-      <>
-        <Pressable onPress={request.onDismiss} style={StyleSheet.absoluteFill} />
-        <View style={[styles.chatMainMenu, { left: menuLeft, top: menuTop, width: menuWidth }]}>
-          {showEmojis ? (
-            <View style={styles.chatMainMenuEmojiRow}>
-              {emojis.map((emoji) => (
-                <Pressable
-                  accessibilityLabel={`React with ${emoji}`}
-                  accessibilityRole="button"
-                  key={emoji}
-                  onPress={() => {
-                    request.onSelect(emoji);
-                    request.onDismiss();
-                  }}
-                  style={({ pressed }) => [styles.chatMainMenuEmojiButton, pressed && styles.chatMainMenuEmojiButtonPressed]}
-                >
-                  <Text style={styles.chatMainMenuEmoji}>{emoji}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-          {showEmojis && actions.length > 0 ? <View style={styles.chatMainMenuDivider} /> : null}
-          {actions.map((action) => (
-            <Pressable
-              accessibilityLabel={action.label}
-              accessibilityRole="button"
-              key={action.key}
-              onPress={() => runAction(action)}
-              style={({ pressed }) => [styles.chatMainMenuAction, pressed && styles.chatMainMenuActionPressed]}
-            >
-              <Ionicons
-                name={action.icon}
-                size={17}
-                color={action.destructive ? ROOM_COLORS.danger : ROOM_COLORS.onSurface}
-              />
-              <Text style={[styles.chatMainMenuActionLabel, action.destructive && styles.chatMainMenuActionLabelDestructive]}>
-                {action.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </>
-    );
-  }
-
-  // Always mounted so its window offset is measured well before the first
-  // long-press; inert until a row publishes.
-  return (
-    <View
-      collapsable={false}
-      onLayout={handleLayout}
-      pointerEvents={content ? "auto" : "none"}
-      ref={hostRef}
-      style={styles.chatMainMenuHost}
-    >
-      {content}
-    </View>
   );
 }
 
@@ -5202,6 +5159,26 @@ function VoiceRecorderHost({ onReady }: { onReady: (recorder: VoiceRecorder) => 
 // handlers that actually changed.
 const ItineraryPanelPane = memo(ItineraryPanel);
 const MemoryChatMainSurfacePane = memo(MemoryChatMainSurface);
+
+// Pane activation used to travel to every row. The vendored Item memo compares
+// the render callbacks by IDENTITY, so `active` sitting in renderMessageAudio's
+// dependency list re-rendered EVERY mounted row on every tab switch — measured
+// at ~58 row renders per switch against ~29 mounted rows. Activation is only
+// meaningful to one kind of row (audio owns a player), so it travels by context
+// instead: flipping it now re-renders the audio rows that read it and nothing
+// else, while "an inactive Chat pane owns no audio player" still holds.
+const ChatSurfaceActiveContext = createContext(true);
+
+function ChatMainAudioMessageGate(
+  props: ChatMainMessageAudioProps<MemoryChatMainMessage> & {
+    journeySession: MemoryRoomJourneySession;
+    selectionMode?: boolean;
+  }
+) {
+  const active = useContext(ChatSurfaceActiveContext);
+  if (!active) return null;
+  return <ChatMainAudioMessage {...props} />;
+}
 const MediaGalleryPane = memo(MediaGallery);
 const DishesPanelPane = memo(DishesPanel);
 
@@ -5325,8 +5302,6 @@ export default function MemoryDetailScreen() {
   const sendSequenceRef = useRef(0);
   const placementStaleRefreshTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const placementFixtureRunRef = useRef(false);
-  const suppressSelectionToggleRef = useRef<string | null>(null);
-  const suppressSelectionToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peopleToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const roomMountedAtRef = useRef(Date.now());
   const roomExitStartedRef = useRef(false);
@@ -5402,6 +5377,13 @@ export default function MemoryDetailScreen() {
   const requestRoomMode = useCallback((nextMode: RoomMode) => {
     commitRoomMode(nextMode);
   }, [commitRoomMode]);
+  // Coming back from the capture flow. `dismissTo` returns to this screen
+  // without remounting it, so the destination tab arrives out-of-band instead
+  // of through `params.tab` — see requestMemoryRoomTab.
+  useFocusEffect(useCallback(() => {
+    const requestedTab = consumeMemoryRoomTab(roomId);
+    if (requestedTab) requestRoomMode(requestedTab);
+  }, [requestRoomMode, roomId]));
   const handleRoomTabPress = useCallback((nextMode: RoomMode) => {
     recordMemoryRoomJourney(journeySession, "TAB_PRESS", {
       fromTab: mode,
@@ -5621,7 +5603,13 @@ export default function MemoryDetailScreen() {
     if (!room.data) return;
     setSelectedMedia((current) => {
       if (!current) return current;
-      const latestPhotos = mergeMemoryPhotos(room.data.photos, photosFromMessages(room.data.messages));
+      // Settled first: photosFromMessages reads attachments verbatim, so an
+      // unsettled room would put the superseded preview straight back.
+      const settledRoom = settleMemoryRoomMedia(room.data);
+      const latestPhotos = mergeMemoryPhotos(
+        settledRoom.photos,
+        photosFromMessages(settledRoom.messages)
+      );
       const latestById = new Map(latestPhotos.map((photo) => [photo.id, photo]));
       let changed = false;
       const items = current.items.map((item) => {
@@ -5649,7 +5637,6 @@ export default function MemoryDetailScreen() {
 
   useEffect(() => () => {
     if (peopleToastTimeoutRef.current) clearTimeout(peopleToastTimeoutRef.current);
-    if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
   }, []);
 
   useEffect(() => {
@@ -6171,7 +6158,11 @@ export default function MemoryDetailScreen() {
   }
 
   function cancelFailedMessage(target: MemoryMessage) {
-    if (!hasMemoryDeliveryStrip(target.deliveryStatus)) return;
+    // Gated on the message never having landed, NOT on the recovery pill being
+    // visible: the pill only renders for outright failures, while the same
+    // cancel is what rescues a send stuck mid-upload from the selection bar.
+    if (target.deliveryStatus === "sent") return;
+    if (!target.deliveryStatus) return;
     if (target.attachments.length > 0 && target.clientId) {
       void cancelPendingMemoryUploadBatch(roomId, target.clientId).catch(() => undefined);
     }
@@ -6219,6 +6210,11 @@ export default function MemoryDetailScreen() {
     recordMemoryRoomJourney(journeySession, "REPLY_CANCELLED", { tab: "chat" });
   }
 
+  // Selection is armed by a long press, and React Native does not fire onPress
+  // after onLongPress, so the press that opened the selection can never also
+  // toggle it. The guard that used to swallow one following tap per row is gone
+  // with the menu that needed it: keeping it would eat the user's first attempt
+  // to deselect the row they just held.
   function beginSelection(target: MemoryActionTarget) {
     const key = memoryActionKey(target);
     setReactionPickerMessageId(null);
@@ -6227,32 +6223,11 @@ export default function MemoryDetailScreen() {
     updateMessageDraft("");
     selectedItemKeysRef.current = [key];
     setSelectedItemKeys([key]);
-    suppressSelectionToggleRef.current = key;
-    if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
-    suppressSelectionToggleTimeoutRef.current = null;
     requestRoomMode("chat");
-  }
-
-  function finishSelectionPress(target: MemoryActionTarget) {
-    const key = memoryActionKey(target);
-    if (suppressSelectionToggleRef.current !== key) return;
-    if (suppressSelectionToggleTimeoutRef.current) clearTimeout(suppressSelectionToggleTimeoutRef.current);
-    suppressSelectionToggleTimeoutRef.current = setTimeout(() => {
-      if (suppressSelectionToggleRef.current === key) suppressSelectionToggleRef.current = null;
-      suppressSelectionToggleTimeoutRef.current = null;
-    }, 700);
   }
 
   function toggleSelectedItem(target: MemoryActionTarget) {
     const key = memoryActionKey(target);
-    if (suppressSelectionToggleRef.current === key) {
-      suppressSelectionToggleRef.current = null;
-      if (suppressSelectionToggleTimeoutRef.current) {
-        clearTimeout(suppressSelectionToggleTimeoutRef.current);
-        suppressSelectionToggleTimeoutRef.current = null;
-      }
-      return;
-    }
     setSelectedItemKeys((current) => {
       const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
       selectedItemKeysRef.current = next;
@@ -6263,6 +6238,14 @@ export default function MemoryDetailScreen() {
   function cancelSelection() {
     selectedItemKeysRef.current = [];
     setSelectedItemKeys([]);
+  }
+
+  // Closing the selection is the only confirmation a copy gets — the clipboard
+  // write itself is silent — so it has to happen, and it matches what Edit and
+  // Reply already do when they take over from the toolbar.
+  function copyMessageBody(target: MemoryMessage) {
+    void Clipboard.setStringAsync(target.body);
+    cancelSelection();
   }
 
   function openReactionPicker(messageId: string) {
@@ -6361,14 +6344,6 @@ export default function MemoryDetailScreen() {
         }
       ]
     );
-  }
-
-  function deleteChatTarget(target: MemoryActionTarget) {
-    const label = target.type === "message" ? "message" : "media";
-    confirmDeleteMemoryItemKeys([memoryActionKey(target)], {
-      clearSelection: false,
-      title: `Delete ${label}?`
-    });
   }
 
   function removeSelectedItems() {
@@ -6582,7 +6557,14 @@ export default function MemoryDetailScreen() {
     olderMessagesAnchorRef.current = { cursor: null, roomId };
   }
   if (!olderMessagesAnchorRef.current.cursor) {
-    olderMessagesAnchorRef.current.cursor = room.data?.messages[0]?.createdAt ?? null;
+    // Must be the opaque {createdAt, id} cursor the mobile API decodes, not the
+    // oldest row's raw createdAt: the route base64url-decodes what it is given,
+    // so a bare timestamp came back 400 "Invalid cursor" and every network page
+    // past the SQLite cache failed. That is what put "Could not load earlier
+    // messages" at the top of history.
+    olderMessagesAnchorRef.current.cursor = memoryHistoryCursorFromMessages(
+      room.data?.messages
+    );
   }
   const olderMessagesCursor = olderMessagesAnchorRef.current.cursor;
   const olderMessages = useMemoryMessagePagesQuery(roomId, olderMessagesCursor, journeySession);
@@ -6590,7 +6572,9 @@ export default function MemoryDetailScreen() {
     olderMessages.data?.pages.flatMap((page) => page.messages) ?? []
   ), [olderMessages.data]);
   const mergedRoomData = useMemo(() => (
-    room.data ? mergeRoomMessages(room.data, olderMessageItems) : null
+    room.data
+      ? settleMemoryRoomMedia(mergeRoomMessages(room.data, olderMessageItems))
+      : null
   ), [olderMessageItems, room.data]);
   const mediaPages = useMemoryMediaPagesQuery(roomId, mode === "media", journeySession);
   const pagedMediaPhotos = useMemo(() => (
@@ -6676,13 +6660,18 @@ export default function MemoryDetailScreen() {
   const stableToggleSelection = useStableHandler(toggleSelectedItem);
   const stableCancelSelection = useStableHandler(cancelSelection);
   const stableDeleteSelected = useStableHandler(removeSelectedItems);
-  const stableDeleteTarget = useStableHandler(deleteChatTarget);
   const stableEditMessage = useStableHandler(beginEditMessage);
   const stableCancelEdit = useStableHandler(cancelEditMessage);
   const stableReplyMessage = useStableHandler(beginReplyMessage);
   const stableCancelReply = useStableHandler(cancelReplyMessage);
   const stableRetryFailedMessage = useStableHandler(retryFailedMessage);
   const stableCancelFailedMessage = useStableHandler(cancelFailedMessage);
+  const stableCopyMessage = useStableHandler(copyMessageBody);
+  // React Query's result object is a new reference on every render, so
+  // loadOlderMessages was too — and it is the ONE prop that broke the chat
+  // pane's memo on every single non-bailing render (14 of 14 measured). Every
+  // other handler on that pane already goes through useStableHandler.
+  const stableLoadOlderMessages = useStableHandler(loadOlderMessages);
   const stableChangeMessage = useStableHandler(syncComposerDraft);
   const stableSend = useStableHandler(submitMessage);
   const stableSendAudio = useStableHandler(sendAudioMessage);
@@ -6965,11 +6954,29 @@ export default function MemoryDetailScreen() {
   const canDeleteSelected = selectedTargets.length > 0 && selectedTargets.every((target) => (
     canDeleteMemoryActionTarget(target, myUsername)
   ));
-  const editableSelectedMessage =
-    selectedTargets.length === 1 &&
-    selectedTargets[0].type === "message" &&
-    canEditMemoryMessage(selectedTargets[0].value, myUsername)
+  // Everything the retired long-press menu offered now lives on the selection
+  // toolbar. Copy and Reply act on a single message by definition, so they are
+  // resolved the same way Edit already was rather than by folding a multi
+  // selection into one action.
+  const singleSelectedMessage =
+    selectedTargets.length === 1 && selectedTargets[0].type === "message"
       ? selectedTargets[0].value
+      : null;
+  const editableSelectedMessage =
+    singleSelectedMessage && canEditMemoryMessage(singleSelectedMessage, myUsername)
+      ? singleSelectedMessage
+      : null;
+  const copyableSelectedMessage =
+    singleSelectedMessage && singleSelectedMessage.body.trim().length > 0
+      ? singleSelectedMessage
+      : null;
+  const replyableSelectedMessage =
+    singleSelectedMessage && canReplyToMemoryMessage(singleSelectedMessage)
+      ? singleSelectedMessage
+      : null;
+  const discardableSelectedMessage =
+    singleSelectedMessage && canDiscardMemoryMessage(singleSelectedMessage, myUsername)
+      ? singleSelectedMessage
       : null;
   const floatingAddAvailable = !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
@@ -7034,6 +7041,8 @@ export default function MemoryDetailScreen() {
                     canLoadOlderMessages={canLoadOlderMessages}
                     chatMessages={chatMessagesForHost}
                     collapsedComposerGeometry={collapsedComposerGeometry}
+                    copyableSelectedMessage={copyableSelectedMessage}
+                    discardableSelectedMessage={discardableSelectedMessage}
                     deleteError={errorMessage(deleteItems.error)}
                     deletePending={deleteItems.isPending}
                     editableSelectedMessage={editableSelectedMessage}
@@ -7056,6 +7065,7 @@ export default function MemoryDetailScreen() {
                     unreadAnchorLookupFailed={unreadAnchorLookupFailed}
                     unreadAnchorLookupReady={unreadAnchorLookupReady}
                     olderMessagesFailed={olderMessagesFailed}
+                    replyableSelectedMessage={replyableSelectedMessage}
                     selectedItemKeys={selectedItemKeys}
                     unreadCount={unreadChatCount}
                     onBeginSelection={stableBeginSelection}
@@ -7064,10 +7074,10 @@ export default function MemoryDetailScreen() {
                     onCancelReply={stableCancelReply}
                     onCancelSelection={stableCancelSelection}
                     onChangeMessage={stableChangeMessage}
+                    onCopyMessage={stableCopyMessage}
                     onDeleteSelected={stableDeleteSelected}
-                    onDeleteTarget={stableDeleteTarget}
                     onEditMessage={stableEditMessage}
-                    onLoadOlderMessages={loadOlderMessages}
+                    onLoadOlderMessages={stableLoadOlderMessages}
                     onNearBottomChange={stableNearBottomChange}
                     onVisibleReadPosition={stableVisibleReadPosition}
                     onScrollOffsetChange={captureChatScroll}
@@ -7153,7 +7163,6 @@ export default function MemoryDetailScreen() {
       {/* Outside RoomKeyboardContainer and outside the chat's keyboard-inset
           view, so the menu is placed in stable screen space rather than riding
           the composer's translation while it is open. */}
-      <MemoryChatMenuHost />
       {/* Scrim for the speed-dial only. Place, Dish and Media each navigate to
           their own route, so this layer disappears before the next screen opens. */}
       {floatingAddMenuOpen ? (
@@ -8130,6 +8139,20 @@ function memoryMediaCacheKey(media: MemoryPhoto) {
   return media.storagePath || media.id || media.publicUrl;
 }
 
+// A photo's own identity MOVES when the send confirms: the optimistic preview
+// (`optimistic-media:…`, no storagePath) is replaced by the real photo, so
+// memoryMediaCacheKey jumps from the preview's id to the real storagePath. That
+// changes both the React key and expo-image's recyclingKey, which tears the tile
+// down and rebuilds it — the picture visibly blanking the moment processing
+// finishes, even though warmMemoryPhotoCache already has its bytes on disk.
+//
+// The SLOT does not move. Key the view on the message's logical row key (stable
+// across optimistic -> confirmed, see memoryChatRowKey) plus the position, so
+// the same view survives the swap and expo-image just crossfades the source.
+function memoryMediaSlotViewKey(rowKey: string, media: MemoryPhoto, index: number) {
+  return `${rowKey}:${Number.isFinite(media.position) ? media.position : index}`;
+}
+
 function prefetchMemoryMedia(media: MemoryPhoto) {
   const cacheKey = memoryMediaCacheKey(media);
   if (!media.publicUrl || prefetchedMemoryMediaKeys.has(cacheKey)) return;
@@ -8936,8 +8959,7 @@ function ChatTimeline({
           onPress={() => jumpToLatest(true)}
           style={[styles.chatLatestButton, { bottom: bottomClearance + 12 }]}
         >
-          <Ionicons name="chevron-down" size={15} color={ROOM_COLORS.onCool} />
-          <Text style={styles.chatLatestButtonText}>{hasUnseenLatest ? "New" : "Latest"}</Text>
+          <Ionicons name="chevron-down" size={20} color={ROOM_COLORS.onCool} />
         </Pressable>
       ) : null}
       {timelineRows.length === 0 ? (
@@ -9032,9 +9054,6 @@ function senderAccent(name: string) {
   return CHAT_ACCENTS[total % CHAT_ACCENTS.length];
 }
 
-function isOptimisticMemoryMedia(media: MemoryPhoto) {
-  return media.id.startsWith("optimistic-media:");
-}
 
 const VIDEO_THUMBNAIL_TIME_MS = 100;
 const VIDEO_THUMBNAIL_CACHE_LIMIT = 80;
@@ -9119,12 +9138,17 @@ function VideoThumbnailLayer({
   cacheKey,
   contentFit = "cover",
   posterUri,
-  uri
+  uri,
+  // View identity, kept separate from `cacheKey`: that one keys the GENERATED
+  // thumbnail cache and must follow the content, or a thumbnail extracted from
+  // a local file could be served after that file is gone.
+  viewKey
 }: {
   cacheKey: string;
   contentFit?: "contain" | "cover";
   posterUri?: string | null;
   uri: string;
+  viewKey?: string;
 }) {
   if (posterUri) {
     return (
@@ -9133,7 +9157,7 @@ function VideoThumbnailLayer({
           cachePolicy="memory-disk"
           contentFit={contentFit}
           priority="high"
-          recyclingKey={`${cacheKey}:poster`}
+          recyclingKey={`${viewKey ?? cacheKey}:poster`}
           source={posterUri}
           style={styles.videoThumbnailImage}
         />
@@ -9290,6 +9314,12 @@ function WebVideoThumbnailLayer({
 function UploadProgressOverlay({ progress }: { progress?: number | null }) {
   const normalizedProgress = Math.max(0, Math.min(progress ?? 0, 1));
   const progressPercent = Math.round(normalizedProgress * 100);
+  // The transfer reports 1 as soon as the PUT finishes, but the send is not
+  // done — the server still has to process the media, and the row stays
+  // optimistic throughout. Sitting on "Uploading 100%" for that whole stretch
+  // claims something untrue, so the last phase says what is actually happening
+  // and drops the number, which has nothing left to count.
+  const complete = normalizedProgress >= 1;
   const ringSize = 44;
   const ringStroke = 3;
   const ringRadius = (ringSize - ringStroke) / 2;
@@ -9320,9 +9350,9 @@ function UploadProgressOverlay({ progress }: { progress?: number | null }) {
             transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
           />
         </Svg>
-        <Text style={styles.uploadProgressText}>{progressPercent}%</Text>
+        {complete ? null : <Text style={styles.uploadProgressText}>{progressPercent}%</Text>}
       </View>
-      <Text style={styles.mediaPendingText}>Uploading</Text>
+      <Text style={styles.mediaPendingText}>{complete ? "Processing" : "Uploading"}</Text>
     </View>
   );
 }
@@ -9803,13 +9833,9 @@ function MessageDeliveryState({
   if (!hasMemoryDeliveryStrip(status)) return null;
   const label = status === "failed"
     ? "Not sent"
-    : status === "processing"
-      ? "Processing media"
-      : status === "processing_delayed"
-        ? "Still processing"
-        : status === "processing_failed"
-          ? "Processing failed"
-          : "Media was not accepted";
+    : status === "processing_failed"
+      ? "Processing failed"
+      : "Media was not accepted";
   const retryable = canRetryMemoryDelivery(status);
 
   return (
@@ -10125,6 +10151,7 @@ function MessageBubble({
               sizeOverride={previewSize}
               timestamp={isMediaOnly ? timestampLabel : undefined}
               timestampPlacement="bottom-right"
+              viewKey={memoryMediaSlotViewKey(memoryChatRowKey(message), media, 0)}
             />
           </Pressable>
           {isMediaWithCaption ? (
@@ -10199,6 +10226,7 @@ function MessageBubble({
             }}
             media={message.attachments}
             onOpenMedia={onOpenMedia}
+            rowKey={memoryChatRowKey(message)}
             selectionMode={selectionMode}
             shouldIgnoreMediaOpen={shouldIgnoreMediaOpen}
             timestamp={isMediaOnly ? timestampLabel : undefined}
@@ -10465,6 +10493,7 @@ function MediaAttachmentGrid({
   onMediaPressIn,
   onMediaPressOut,
   onOpenMedia,
+  rowKey,
   selectionMode,
   shouldIgnoreMediaOpen,
   timestamp
@@ -10475,12 +10504,19 @@ function MediaAttachmentGrid({
   onMediaPressIn?: () => void;
   onMediaPressOut?: () => void;
   onOpenMedia: OpenMediaHandler;
+  rowKey?: string;
   selectionMode?: boolean;
   shouldIgnoreMediaOpen: () => boolean;
   timestamp?: string;
 }) {
   const visible = media.slice(0, 4);
   const hiddenCount = Math.max(0, media.length - visible.length);
+  // The photo id moves when the send confirms, so keying the tiles on it tears
+  // them down and rebuilds them at exactly the moment the picture is swapped.
+  // The slot the photo occupies does not move.
+  const tileKey = (item: MemoryPhoto, index: number) => (
+    rowKey ? memoryMediaSlotViewKey(rowKey, item, index) : item.id
+  );
 
   function handleOpenMedia(item: MemoryPhoto) {
     if (shouldIgnoreMediaOpen()) return;
@@ -10494,11 +10530,12 @@ function MediaAttachmentGrid({
     return (
       <View style={[styles.attachmentGridFrame, { width: gridWidth }]}>
         <View style={[styles.multiMediaGrid, { width: gridWidth }]}>
-          {visible.slice(0, 2).map((item) => (
+          {visible.slice(0, 2).map((item, index) => (
             <MediaGridTile
               hiddenCount={0}
-              key={item.id}
+              key={tileKey(item, index)}
               media={item}
+              viewKey={tileKey(item, index)}
               onLongPress={onMediaLongPress}
               onPress={() => handleOpenMedia(item)}
               onPressIn={onMediaPressIn}
@@ -10529,7 +10566,9 @@ function MediaAttachmentGrid({
         <View style={[styles.multiMediaGrid, { height: gridHeight, width: gridWidth }]}>
           <MediaGridTile
             hiddenCount={0}
+            key={tileKey(visible[0], 0)}
             media={visible[0]}
+            viewKey={tileKey(visible[0], 0)}
             onLongPress={onMediaLongPress}
             onPress={() => handleOpenMedia(visible[0])}
             onPressIn={onMediaPressIn}
@@ -10538,11 +10577,12 @@ function MediaAttachmentGrid({
             style={{ height: gridHeight, width: leftWidth }}
           />
           <View style={styles.mediaGridStack}>
-            {visible.slice(1, 3).map((item) => (
+            {visible.slice(1, 3).map((item, index) => (
               <MediaGridTile
                 hiddenCount={0}
-                key={item.id}
+                key={tileKey(item, index + 1)}
                 media={item}
+                viewKey={tileKey(item, index + 1)}
                 onLongPress={onMediaLongPress}
                 onPress={() => handleOpenMedia(item)}
                 onPressIn={onMediaPressIn}
@@ -10575,8 +10615,9 @@ function MediaAttachmentGrid({
           return (
             <MediaGridTile
               hiddenCount={showHiddenCount ? hiddenCount : 0}
-              key={item.id}
+              key={tileKey(item, index)}
               media={item}
+              viewKey={tileKey(item, index)}
               onLongPress={onMediaLongPress}
               onPress={() => handleOpenMedia(item)}
               onPressIn={onMediaPressIn}
@@ -10611,7 +10652,8 @@ function MediaGridTile({
   onPressIn,
   onPressOut,
   selectionMode,
-  style
+  style,
+  viewKey
 }: {
   hiddenCount: number;
   media: MemoryPhoto;
@@ -10621,6 +10663,7 @@ function MediaGridTile({
   onPressOut?: () => void;
   selectionMode?: boolean;
   style: MediaPreviewSize;
+  viewKey?: string;
 }) {
   const mediaLabel = memoryMediaOpenLabel(media);
   const accessibilityLabel = hiddenCount > 0 ? `${mediaLabel}, plus ${hiddenCount} more` : mediaLabel;
@@ -10637,7 +10680,7 @@ function MediaGridTile({
       onPressOut={!selectionMode ? onPressOut : undefined}
       style={[styles.mediaGridTile, style]}
     >
-      <GridMediaPreview media={media} />
+      <GridMediaPreview media={media} viewKey={viewKey} />
       {hiddenCount > 0 ? (
         <View style={styles.attachmentMoreOverlay}>
           <Text style={styles.attachmentMoreText}>+{hiddenCount}</Text>
@@ -10647,7 +10690,7 @@ function MediaGridTile({
   );
 }
 
-function GridMediaPreview({ media }: { media: MemoryPhoto }) {
+function GridMediaPreview({ media, viewKey }: { media: MemoryPhoto; viewKey?: string }) {
   const uploading = isOptimisticMemoryMedia(media);
 
   if (memoryMediaKind(media) === "audio") {
@@ -10657,7 +10700,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={styles.gridVideoPreview}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
           {!uploading ? (
@@ -10669,7 +10712,7 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
             <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
             <Text style={styles.mediaTypeBadgeText}>Video</Text>
           </View>
-          {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+          {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
         </View>
       </View>
     );
@@ -10680,11 +10723,11 @@ function GridMediaPreview({ media }: { media: MemoryPhoto }) {
       <Image
         cachePolicy="memory-disk"
         contentFit="contain"
-        recyclingKey={media.storagePath || media.publicUrl}
+        recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
         source={media.thumbnailUrl || media.publicUrl}
         style={styles.gridMediaFill}
       />
-      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
     </View>
   );
 }
@@ -10827,6 +10870,17 @@ function ItineraryPanel({
   const topPadding = topInset != null ? topInset + 10 : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
   const isEmpty = stops.length === 0;
+  // Newest place on top. The server hands these back by ascending `position`
+  // (addMemoryStop assigns last + 1), which put a just-added place at the
+  // bottom, out of sight. Display-only: the stored order is untouched, and the
+  // rail's first/last connectors key off the RENDERED index, so they still
+  // start and stop at the end markers.
+  const orderedStops = useMemo(() => (
+    [...stops].sort((first, second) => (
+      second.position - first.position ||
+      timeValue(second.createdAt) - timeValue(first.createdAt)
+    ))
+  ), [stops]);
 
   if (isEmpty) {
     return (
@@ -10853,7 +10907,7 @@ function ItineraryPanel({
     <FlatList
       contentContainerStyle={[styles.itineraryContent, { paddingBottom: bottomPadding, paddingTop: topPadding }]}
       contentOffset={{ x: 0, y: initialScrollOffset }}
-      data={stops}
+      data={orderedStops}
       initialNumToRender={ITINERARY_INITIAL_RENDER_COUNT}
       keyExtractor={(stop) => stop.id}
       ListHeaderComponent={(
@@ -10883,7 +10937,7 @@ function ItineraryPanel({
       renderItem={({ index, item }) => (
         <ItineraryStopRow
           isFirstStop={index === 0}
-          isLastStop={index === stops.length - 1}
+          isLastStop={index === orderedStops.length - 1}
           stop={item}
         />
       )}
@@ -10899,6 +10953,25 @@ function ItineraryPanel({
 // list: the top connector is omitted on the first stop and the bottom one on
 // the last, which is what makes the line start and stop at the markers rather
 // than running off both ends.
+// The universal maps URL is used rather than a `geo:` intent because it hands
+// off to the Google Maps app when it is installed and degrades to the browser
+// when it is not, on both platforms.
+//
+// `query_place_id` pins the exact venue, but the API still requires `query` —
+// it is the human-readable fallback and the text shown while the place
+// resolves. Stops created before the place_id migration, and any stop named
+// without picking a suggestion, have no id and stay a plain text search over
+// the two display lines.
+function openMemoryStopInMaps(stop: MemoryStop) {
+  const query = [stop.name, stop.note].map((part) => part?.trim()).filter(Boolean).join(", ");
+  if (!query) return;
+  const params = new URLSearchParams({ api: "1", query });
+  if (stop.placeId) params.set("query_place_id", stop.placeId);
+  Linking.openURL(`https://www.google.com/maps/search/?${params.toString()}`).catch(() => {
+    Alert.alert("Could not open Maps", "No app on this device can open map links.");
+  });
+}
+
 const ItineraryStopRow = memo(function ItineraryStopRow({
   isFirstStop,
   isLastStop,
@@ -10918,7 +10991,17 @@ const ItineraryStopRow = memo(function ItineraryStopRow({
         </View>
       </View>
 
-      <View style={[styles.stopCard, styles.stopTimelineCard]}>
+      <Pressable
+        accessibilityHint="Opens this place in Maps"
+        accessibilityLabel={stop.note ? `${stop.name}, ${stop.note}` : stop.name}
+        accessibilityRole="button"
+        onPress={() => openMemoryStopInMaps(stop)}
+        style={({ pressed }) => [
+          styles.stopCard,
+          styles.stopTimelineCard,
+          pressed && styles.stopCardPressed
+        ]}
+      >
         <View style={styles.stopHeaderRow}>
           <View style={styles.stopHeaderText}>
             <Text numberOfLines={1} style={styles.stopName}>{stop.name}</Text>
@@ -10928,8 +11011,14 @@ const ItineraryStopRow = memo(function ItineraryStopRow({
               </Text>
             ) : null}
           </View>
+          <Ionicons
+            color={ROOM_COLORS.muted}
+            name="open-outline"
+            size={16}
+            style={styles.stopOpenIcon}
+          />
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 });
@@ -12023,7 +12112,7 @@ function MediaViewer({
           cachePolicy="memory-disk"
           contentFit="contain"
           onError={onMediaError}
-          recyclingKey={media.storagePath || media.publicUrl}
+          recyclingKey={memoryMediaCacheKey(media)}
           source={media.publicUrl}
           style={styles.viewerImage}
         />
@@ -12128,7 +12217,7 @@ function MediaViewer({
                     <Image
                       cachePolicy="memory-disk"
                       contentFit="cover"
-                      recyclingKey={media.storagePath || media.publicUrl}
+                      recyclingKey={memoryMediaCacheKey(media)}
                       source={media.publicUrl}
                       style={styles.viewerThumbnailImage}
                     />
@@ -12272,12 +12361,14 @@ function SingleMediaPreview({
   media,
   sizeOverride,
   timestamp,
-  timestampPlacement = "bottom-right"
+  timestampPlacement = "bottom-right",
+  viewKey
 }: {
   media: MemoryPhoto;
   sizeOverride?: MediaPreviewSize;
   timestamp?: string;
   timestampPlacement?: MediaTimestampPlacement;
+  viewKey?: string;
 }) {
   const { width: screenWidth } = useWindowDimensions();
   const previewSize = sizeOverride ?? getSingleMediaPreviewSize({
@@ -12295,7 +12386,7 @@ function SingleMediaPreview({
 
   return (
     <View style={[styles.singleMediaContainer, imageClipPassthrough, previewSize]}>
-      <MediaPreview media={media} style={[styles.singleMediaFill, imageClipPassthrough]} />
+      <MediaPreview media={media} style={[styles.singleMediaFill, imageClipPassthrough]} viewKey={viewKey} />
       {timestamp ? (
         <MediaTimestampOverlay
           placement={timestampPlacement}
@@ -12351,7 +12442,7 @@ function AudioMediaPreview({
           {duration}
         </Text>
       ) : null}
-      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
     </View>
   );
 }
@@ -12359,11 +12450,13 @@ function AudioMediaPreview({
 function MediaPreview({
   contentFit = "contain",
   media,
-  style
+  style,
+  viewKey
 }: {
   contentFit?: "contain" | "cover";
   media: MemoryPhoto;
   style?: StyleProp<ViewStyle>;
+  viewKey?: string;
 }) {
   const uploading = isOptimisticMemoryMedia(media);
 
@@ -12374,7 +12467,7 @@ function MediaPreview({
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} posterUri={media.posterUrl} uri={media.publicUrl} />
+        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
@@ -12385,7 +12478,7 @@ function MediaPreview({
             <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
           </View>
         ) : null}
-        {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+        {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
       </View>
     );
   }
@@ -12395,11 +12488,16 @@ function MediaPreview({
       <Image
         cachePolicy="memory-disk"
         contentFit={contentFit}
-        recyclingKey={media.storagePath || media.publicUrl}
+        // Keyed on the SLOT where one is known, otherwise on identity — never
+        // on the URL. An in-flight upload rewrites publicUrl underneath the same
+        // photo, and confirmation replaces the photo outright; a changed
+        // recyclingKey tells expo-image to reset the view, which is the image
+        // visibly disappearing and coming back. See memoryMediaSlotViewKey.
+        recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
         source={media.thumbnailUrl || media.publicUrl}
         style={styles.mediaImage}
       />
-      {uploading ? <UploadProgressOverlay progress={media.uploadProgress} /> : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
     </View>
   );
 }
@@ -13434,69 +13532,6 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMainReactionText: {
     color: ROOM_COLORS.onSurface
   },
-  chatMainMenuHost: {
-    ...StyleSheet.absoluteFillObject,
-    // Above the speed-dial scrim (30) so a long-press menu is never buried.
-    zIndex: 40
-  },
-  chatMainMenu: {
-    backgroundColor: ROOM_COLORS.surfaceHigh,
-    borderColor: ROOM_COLORS.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    elevation: 8,
-    padding: CHAT_MENU_PADDING,
-    position: "absolute",
-    shadowColor: ROOM_COLORS.black,
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12
-  },
-  chatMainMenuEmojiRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    height: CHAT_MENU_EMOJI_ROW_HEIGHT,
-    justifyContent: "space-between"
-  },
-  chatMainMenuEmojiButton: {
-    alignItems: "center",
-    borderRadius: CHAT_MENU_EMOJI_SIZE / 2,
-    height: CHAT_MENU_EMOJI_SIZE,
-    justifyContent: "center",
-    width: CHAT_MENU_EMOJI_SIZE
-  },
-  chatMainMenuEmojiButtonPressed: {
-    backgroundColor: ROOM_COLORS.glass,
-    transform: [{ scale: 1.15 }]
-  },
-  chatMainMenuEmoji: {
-    fontSize: 24,
-    lineHeight: 30
-  },
-  chatMainMenuDivider: {
-    backgroundColor: ROOM_COLORS.border,
-    height: 1,
-    marginVertical: 0
-  },
-  chatMainMenuAction: {
-    alignItems: "center",
-    borderRadius: 12,
-    flexDirection: "row",
-    gap: 10,
-    height: CHAT_MENU_ACTION_HEIGHT,
-    paddingHorizontal: 10
-  },
-  chatMainMenuActionPressed: {
-    backgroundColor: ROOM_COLORS.glass
-  },
-  chatMainMenuActionLabel: {
-    ...fontStyles.medium,
-    color: ROOM_COLORS.onSurface,
-    fontSize: 14
-  },
-  chatMainMenuActionLabelDestructive: {
-    color: ROOM_COLORS.danger
-  },
   header: {
     alignSelf: "center",
     height: ROOM_HEADER_EXPANDED_HEIGHT,
@@ -13792,6 +13827,13 @@ function createStyles(ROOM_COLORS: RoomColors) {
     zIndex: 1
   },
   roomPagerPageInactive: {
+    // display:none, not just opacity:0. A hidden-by-opacity pane still takes
+    // part in layout and drawing, so every tab switch re-composited the whole
+    // retained Chat subtree — measured 37.8% janky frames with ~29 rows mounted
+    // against 5.4% with the chat content removed entirely, and 18.8% with this.
+    // The pane stays MOUNTED either way, so retention and scroll position are
+    // unaffected (verified on device across a tab round trip).
+    display: "none",
     opacity: 0,
     zIndex: 0
   },
@@ -13890,6 +13932,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatTimelineHidden: {
     opacity: 0
   },
+  // Icon-only and horizontally centred. `alignSelf` is what centres an
+  // absolutely positioned child here, so it must NOT be paired with `right` —
+  // an edge offset wins and pins the button back to the corner.
   chatLatestButton: {
     alignItems: "center",
     alignSelf: "center",
@@ -13897,23 +13942,15 @@ function createStyles(ROOM_COLORS: RoomColors) {
     borderColor: ROOM_COLORS.coolBorder,
     borderRadius: radius.pill,
     borderWidth: 1,
-    flexDirection: "row",
-    gap: 4,
-    minHeight: 34,
-    paddingHorizontal: spacing.base,
+    height: 36,
+    justifyContent: "center",
     position: "absolute",
-    right: spacing.lg,
     shadowColor: ROOM_COLORS.black,
     shadowOffset: { height: 5, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 12,
+    width: 36,
     zIndex: 5
-  },
-  chatLatestButtonText: {
-    ...fontStyles.extraBold,
-    color: ROOM_COLORS.onCool,
-    fontSize: 12,
-    lineHeight: 15
   },
   chatWallpaper: {
     ...StyleSheet.absoluteFillObject,
@@ -14083,9 +14120,16 @@ function createStyles(ROOM_COLORS: RoomColors) {
   chatMessageRowMedia: {
     alignItems: "flex-end"
   },
+  // A dish card is returned before the vendor's Message wrapper, so it never
+  // picks up that wrapper's 8dp side margin (container_left/container_right in
+  // vendor/reactNativeChat/Message/styles.ts) the way every text and media
+  // bubble does. Zeroing the row padding as well left the card flush with the
+  // row container — measured on device at 34px from the screen edge against
+  // 55px for a text bubble — so it visibly overhung every neighbour. Match the
+  // vendor's inset rather than chatMessageRow's wider CHAT_ROW_SIDE_PADDING.
   chatMainDishPollRow: {
     marginBottom: 10,
-    paddingHorizontal: 0
+    paddingHorizontal: CHAT_VENDOR_BUBBLE_SIDE_MARGIN
   },
   chatMessageRowAfterBreak: {
     marginTop: 0
@@ -15247,6 +15291,18 @@ function createStyles(ROOM_COLORS: RoomColors) {
     justifyContent: "center",
     width: COMPOSER_ACTION_BUTTON_SIZE
   },
+  // Neutral so the accent stays on Edit and the danger colour stays unique to
+  // Delete: four filled buttons in a row would read as four equal warnings.
+  selectionActionButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.borderStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: COMPOSER_ACTION_BUTTON_SIZE,
+    justifyContent: "center",
+    width: COMPOSER_ACTION_BUTTON_SIZE
+  },
   selectionDeleteButtonDisabled: {
     opacity: 0.5
   },
@@ -15523,10 +15579,16 @@ function createStyles(ROOM_COLORS: RoomColors) {
     flex: 1,
     minWidth: 0
   },
+  stopCardPressed: {
+    opacity: 0.72
+  },
   stopHeaderRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.s
+  },
+  stopOpenIcon: {
+    flexShrink: 0
   },
   stopHeaderText: {
     flex: 1,

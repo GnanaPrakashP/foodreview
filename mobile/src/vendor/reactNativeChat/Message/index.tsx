@@ -1,6 +1,6 @@
 // @ts-nocheck
 import Ionicons from '@expo/vector-icons/Ionicons'
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { View, StyleSheet } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
@@ -97,6 +97,144 @@ const SwipeActionLayer = ({
   )
 }
 
+// Every piece of Reanimated state this row needs lives HERE, not in Message,
+// because hooks cannot be conditional: with the shared value, the animated
+// style and the Pan gesture declared in Message, a date separator, an unread
+// divider, a dish card and a standalone media row each built and serialized a
+// gesture they then threw away on the `!isSwipeToReplyEnabled` early return. A
+// fling profile put ~9.5% of JS thread time in Reanimated worklet
+// serialization (makeMutableNative for the shared value, registerEventHandler
+// for the detector, cloneWorklet for the callbacks), all of it per mounted row,
+// so rows that cannot swipe now pay none of it.
+const SwipeToReplyRow = ({
+  actionContainerStyle,
+  children,
+  currentMessage,
+  direction,
+  isGestureEnabled,
+  onMessageLayout,
+  onSwipe,
+  position,
+  renderAction,
+}) => {
+  const replySwipeX = useSharedValue(0)
+  const replySwipeContentStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: replySwipeX.value }],
+  }), [replySwipeX])
+  // Recycling safety. Under FlashList this component instance is REUSED for the
+  // next message of the same type instead of being unmounted, so state and the
+  // translate survive into a row they do not belong to: a recycled row would
+  // keep a previous row's armed reply icon, and could inherit a mid-swipe
+  // offset. Resetting during render on identity change is the derived-state
+  // pattern and is a no-op under FlatList, where the instance never outlives
+  // its message.
+  const recycledMessageIdRef = useRef(currentMessage?._id)
+  // Arm only after the horizontal pan activates. Arming on finger-down caused
+  // a React update while the nested bubble's long-press timer was running,
+  // cancelling the message-options gesture. Never disarmed: this remains a
+  // one-time cost per row, paid only by rows that are actually swiped.
+  const [isSwipeArmed, setIsSwipeArmed] = useState(false)
+  if (recycledMessageIdRef.current !== currentMessage?._id) {
+    recycledMessageIdRef.current = currentMessage?._id
+    replySwipeX.value = 0
+    if (isSwipeArmed)
+      setIsSwipeArmed(false)
+  }
+  // The gesture's worklets capture whatever these close over, and a closure is
+  // serialized per row rather than served from Reanimated's shareable cache.
+  // Reading the message from a ref keeps `currentMessage` — which changes
+  // identity on every row — out of the closure, so what crosses to the UI
+  // runtime is two stable functions and a couple of primitives.
+  const swipeStateRef = useRef({ currentMessage, onSwipe })
+  swipeStateRef.current = { currentMessage, onSwipe }
+  const armSwipe = useCallback(() => {
+    setIsSwipeArmed(current => (current ? current : true))
+  }, [])
+  const triggerSwipeReply = useCallback(() => {
+    const { currentMessage: message, onSwipe: handler } = swipeStateRef.current
+    if (handler && message)
+      handler(message)
+  }, [])
+  const isRightward = direction === 'right'
+  const replySwipeGesture = useMemo(() => (
+    Gesture.Pan()
+      .enabled(Boolean(isGestureEnabled && onSwipe))
+      .activeOffsetX(
+        isRightward
+          ? REPLY_SWIPE_ACTIVATION_DISTANCE
+          : -REPLY_SWIPE_ACTIVATION_DISTANCE
+      )
+      .failOffsetY([-REPLY_SWIPE_VERTICAL_TOLERANCE, REPLY_SWIPE_VERTICAL_TOLERANCE])
+      .onStart(() => {
+        runOnJS(armSwipe)()
+      })
+      .onUpdate(event => {
+        const directionalDistance = isRightward
+          ? Math.max(0, event.translationX)
+          : Math.min(0, event.translationX)
+        replySwipeX.value = isRightward
+          ? Math.min(directionalDistance, REPLY_SWIPE_MAX_TRANSLATE)
+          : Math.max(directionalDistance, -REPLY_SWIPE_MAX_TRANSLATE)
+      })
+      // Decide from onFinalize rather than onEnd. At the newest edge of an
+      // inverted Android list, the list/composer can cancel an otherwise
+      // deliberate pan during gesture arbitration. Cancelled pans skip onEnd
+      // but always finalize, which previously made the newest rows animate
+      // without ever opening the reply composer.
+      .onFinalize(event => {
+        const directionalDistance = isRightward
+          ? event.translationX
+          : -event.translationX
+        const deliberateReplySwipe = (
+          directionalDistance >= REPLY_SWIPE_TRIGGER_DISTANCE &&
+          directionalDistance > Math.abs(event.translationY) * 1.5
+        )
+        if (deliberateReplySwipe)
+          runOnJS(triggerSwipeReply)()
+        replySwipeX.value = withTiming(0, {
+          duration: 150,
+          easing: Easing.out(Easing.cubic),
+        })
+      })
+  ), [
+    armSwipe,
+    isGestureEnabled,
+    isRightward,
+    onSwipe,
+    replySwipeX,
+    triggerSwipeReply,
+  ])
+
+  return (
+    <View onLayout={onMessageLayout} style={localStyles.swipeContainer}>
+      {isSwipeArmed ? (
+        <View
+          pointerEvents="none"
+          style={[
+            localStyles.swipeActionLayer,
+            isRightward
+              ? localStyles.swipeActionLayerLeft
+              : localStyles.swipeActionLayerRight,
+          ]}
+        >
+          <SwipeActionLayer
+            direction={direction}
+            position={position}
+            renderAction={renderAction}
+            style={actionContainerStyle}
+            translation={replySwipeX}
+          />
+        </View>
+      ) : null}
+      <GestureDetector gesture={replySwipeGesture} touchAction="pan-y">
+        <Animated.View style={[localStyles.swipeContent, replySwipeContentStyle]}>
+          {children}
+        </Animated.View>
+      </GestureDetector>
+    </View>
+  )
+}
+
 export const Message = <TMessage extends IMessage = IMessage>(props: MessageProps<TMessage>) => {
   const {
     currentMessage,
@@ -118,73 +256,6 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
   const onSwipeToReply = swipeToReply?.onSwipe
   const renderSwipeToReplyActionProp = swipeToReply?.renderAction
   const swipeToReplyActionContainerStyle = swipeToReply?.actionContainerStyle
-  const replySwipeX = useSharedValue(0)
-  const replySwipeContentStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: replySwipeX.value }],
-  }), [replySwipeX])
-  // Arm only after the horizontal pan activates. Arming on finger-down caused
-  // a React update while the nested bubble's long-press timer was running,
-  // cancelling the message-options gesture. Never disarmed: this remains a
-  // one-time cost per row, paid only by rows that are actually swiped.
-  const [isSwipeArmed, setIsSwipeArmed] = useState(false)
-  const armSwipe = useCallback(() => {
-    setIsSwipeArmed(current => (current ? current : true))
-  }, [])
-  const triggerSwipeReply = useCallback(() => {
-    if (onSwipeToReply && currentMessage)
-      onSwipeToReply(currentMessage)
-  }, [onSwipeToReply, currentMessage])
-  const replySwipeGesture = useMemo(() => (
-    Gesture.Pan()
-      .enabled(Boolean(isSwipeToReplyGestureEnabled && onSwipeToReply && !currentMessage?.system))
-      .activeOffsetX(
-        swipeToReplyDirection === 'right'
-          ? REPLY_SWIPE_ACTIVATION_DISTANCE
-          : -REPLY_SWIPE_ACTIVATION_DISTANCE
-      )
-      .failOffsetY([-REPLY_SWIPE_VERTICAL_TOLERANCE, REPLY_SWIPE_VERTICAL_TOLERANCE])
-      .onStart(() => {
-        runOnJS(armSwipe)()
-      })
-      .onUpdate(event => {
-        const directionalDistance = swipeToReplyDirection === 'right'
-          ? Math.max(0, event.translationX)
-          : Math.min(0, event.translationX)
-        replySwipeX.value = swipeToReplyDirection === 'right'
-          ? Math.min(directionalDistance, REPLY_SWIPE_MAX_TRANSLATE)
-          : Math.max(directionalDistance, -REPLY_SWIPE_MAX_TRANSLATE)
-      })
-      // Decide from onFinalize rather than onEnd. At the newest edge of an
-      // inverted Android list, the list/composer can cancel an otherwise
-      // deliberate pan during gesture arbitration. Cancelled pans skip onEnd
-      // but always finalize, which previously made the newest rows animate
-      // without ever opening the reply composer.
-      .onFinalize(event => {
-        const directionalDistance = swipeToReplyDirection === 'right'
-          ? event.translationX
-          : -event.translationX
-        const deliberateReplySwipe = (
-          directionalDistance >= REPLY_SWIPE_TRIGGER_DISTANCE &&
-          directionalDistance > Math.abs(event.translationY) * 1.5
-        )
-        if (deliberateReplySwipe)
-          runOnJS(triggerSwipeReply)()
-        replySwipeX.value = withTiming(0, {
-          duration: 150,
-          easing: Easing.out(Easing.cubic),
-        })
-      })
-  ), [
-    armSwipe,
-    currentMessage?.system,
-    isSwipeToReplyEnabled,
-    isSwipeToReplyGestureEnabled,
-    onSwipeToReply,
-    replySwipeX,
-    swipeToReplyDirection,
-    triggerSwipeReply,
-  ])
-
   const renderBubble = useCallback(() => {
     const {
       /* eslint-disable @typescript-eslint/no-unused-vars */
@@ -291,32 +362,18 @@ export const Message = <TMessage extends IMessage = IMessage>(props: MessageProp
     )
 
   return (
-    <View onLayout={onMessageLayout} style={localStyles.swipeContainer}>
-      {isSwipeArmed ? (
-        <View
-          pointerEvents="none"
-          style={[
-            localStyles.swipeActionLayer,
-            swipeToReplyDirection === 'right'
-              ? localStyles.swipeActionLayerLeft
-              : localStyles.swipeActionLayerRight,
-          ]}
-        >
-          <SwipeActionLayer
-            direction={swipeToReplyDirection}
-            position={position}
-            renderAction={renderSwipeToReplyActionProp}
-            style={swipeToReplyActionContainerStyle}
-            translation={replySwipeX}
-          />
-        </View>
-      ) : null}
-      <GestureDetector gesture={replySwipeGesture} touchAction="pan-y">
-        <Animated.View style={[localStyles.swipeContent, replySwipeContentStyle]}>
-          {messageContent}
-        </Animated.View>
-      </GestureDetector>
-    </View>
+    <SwipeToReplyRow
+      actionContainerStyle={swipeToReplyActionContainerStyle}
+      currentMessage={currentMessage}
+      direction={swipeToReplyDirection}
+      isGestureEnabled={isSwipeToReplyGestureEnabled}
+      onMessageLayout={onMessageLayout}
+      onSwipe={onSwipeToReply}
+      position={position}
+      renderAction={renderSwipeToReplyActionProp}
+    >
+      {messageContent}
+    </SwipeToReplyRow>
   )
 }
 

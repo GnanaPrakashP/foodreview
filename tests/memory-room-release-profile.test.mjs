@@ -163,6 +163,22 @@ test("Chat is retained for the room visit and every other pane is not", () => {
   assert.match(roomScreen, /setChatWarmReady\(paneTabMode === "chat"\);/);
 });
 
+test("an inactive pane is removed from layout, not just made transparent", () => {
+  // A pane hidden with opacity:0 still takes part in layout and drawing, so
+  // every tab switch re-composited the whole retained Chat subtree on the UI
+  // thread. Measured on device across four Table<->Chat round trips: 37.8%
+  // janky frames with ~29 rows mounted, 5.4% with the chat content removed
+  // entirely, 18.8% with display:none. The pane stays MOUNTED either way, so
+  // retention and scroll position are unaffected.
+  assert.match(
+    roomScreen,
+    /roomPagerPageInactive: \{[\s\S]*?display: "none",[\s\S]*?opacity: 0,/
+  );
+  assert.match(roomScreen, /roomPagerPageActive: \{\s*opacity: 1,/);
+  // Still mounted: hiding must never be implemented by dropping children.
+  assert.match(roomScreen, /if \(!mounted\) return null;/);
+});
+
 test("a retained but inactive Chat pane holds no interactive ownership", () => {
   // Retention makes this mandatory rather than optional: a mounted pane that
   // is not the active tab must not keep IME focus, a reply target, a selection
@@ -179,11 +195,30 @@ test("a retained but inactive Chat pane holds no interactive ownership", () => {
   );
 });
 
-test("profile-only Chat renderer preserves the vendored production default", () => {
+test("Chat ships the FlatList engine and keeps FlashList one env var away", () => {
   assert.deepEqual(
     [...loadChatRenderer().MEMORY_ROOM_CHAT_RENDERER_CANDIDATES],
-    ["vendor", "lite-flatlist", "lite-flashlist", "native-recycler"]
+    ["vendor", "vendor-flashlist", "lite-flatlist", "lite-flashlist", "native-recycler"]
   );
+  // FlatList ships: FlashList closes the fling gaps but doubles the tab-switch
+  // frame tail (90th 61ms -> 125ms on device), and transition smoothness is the
+  // higher priority.
+  const shipped = loadChatRenderer();
+  assert.equal(shipped.MEMORY_ROOM_CHAT_RENDERER, "vendor");
+  assert.equal(shipped.MEMORY_ROOM_CHAT_VENDOR_FLASHLIST, false);
+  assert.equal(shipped.MEMORY_ROOM_CHAT_LITE_RENDERER, false);
+  assert.equal(shipped.MEMORY_ROOM_CHAT_NATIVE_RENDERER, false);
+  // FlashList stays reachable and fully wired for the day the synchronous
+  // tab-switch render is fixed. It is an engine swap, not a different chat, so
+  // it must never switch on the lite prototype rows.
+  const flashList = loadChatRenderer({
+    EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "vendor-flashlist",
+    EXPO_PUBLIC_PERFORMANCE_PROFILE: "1"
+  });
+  assert.equal(flashList.MEMORY_ROOM_CHAT_VENDOR_FLASHLIST, true);
+  assert.equal(flashList.MEMORY_ROOM_CHAT_LITE_RENDERER, false);
+  assert.equal(flashList.MEMORY_ROOM_CHAT_NATIVE_RENDERER, false);
+  // The prototype renderers stay profile-gated.
   assert.equal(
     loadChatRenderer({
       EXPO_PUBLIC_MEMORY_ROOM_CHAT_RENDERER: "lite-flatlist"
@@ -382,7 +417,7 @@ test("reply row model is bounded and contains no complete domain message", () =>
   assert.equal(JSON.stringify(row).includes("ignoredPrivateField"), false);
 });
 
-test("lite list path is viewport bounded and mounts one screen-level action layer", () => {
+test("lite list path is viewport bounded and selects straight from a long press", () => {
   assert.match(roomScreen, /<FlatList<ChatRowViewModel>/);
   assert.match(roomScreen, /<FlashList<ChatRowViewModel>/);
   assert.match(roomScreen, /initialNumToRender=\{10\}/);
@@ -391,11 +426,12 @@ test("lite list path is viewport bounded and mounts one screen-level action laye
   assert.match(roomScreen, /getItemType=\{liteListItemType\}/);
   assert.match(roomScreen, /keyExtractor=\{liteListKeyExtractor\}/);
   assert.match(roomScreen, /const LiteChatTextRow = memo/);
-  assert.match(roomScreen, /setMemoryChatMenuRequest\(\{/);
-  assert.equal(
-    (roomScreen.match(/<MemoryChatMenuHost \/>/g) ?? []).length,
-    1
-  );
+  // A long press selects outright on every renderer. The anchored action menu
+  // it replaced is gone entirely — no store, no host, no per-row publisher — so
+  // there is no second definition of what holding a message means.
+  assert.match(roomScreen, /const selectLiteMessage = useCallback/);
+  assert.match(roomScreen, /onSelect=\{selectLiteMessage\}/);
+  assert.doesNotMatch(roomScreen, /MemoryChatMenuHost|MemoryChatMessageMenu|setMemoryChatMenuRequest/);
   assert.match(roomScreen, /row\.deliveryState === "failed"/);
 });
 
@@ -414,7 +450,27 @@ test("the retained Chat host is one host, releases focus and owns no inactive pl
   // No shell counter: the content-free placeholder was a rejected candidate
   // and the retained pane keeps its real content instead.
   assert.doesNotMatch(roomScreen, /MemoryRoomMountedChatShells/);
-  assert.match(roomScreen, /active\s*\?\s*<ChatMainAudioMessage[\s\S]*?: null/);
+  // An inactive Chat pane still owns no audio player — but activation now
+  // reaches the audio row through CONTEXT rather than through the render
+  // callback's dependency list. The vendored Item memo compares render
+  // callbacks by identity, so `active` sitting in renderMessageAudio's deps
+  // re-rendered EVERY mounted row on every tab switch (~58 row renders per
+  // switch against ~29 mounted rows; 695 -> 101 across 12 switches after this).
+  assert.match(roomScreen, /const ChatSurfaceActiveContext = createContext\(true\)/);
+  assert.match(
+    roomScreen,
+    /function ChatMainAudioMessageGate\([\s\S]*?const active = useContext\(ChatSurfaceActiveContext\);\s*if \(!active\) return null;/
+  );
+  assert.match(roomScreen, /<ChatSurfaceActiveContext\.Provider value=\{active\}>/);
+  // The callback must NOT take `active` back as a dependency.
+  const audioRenderer = roomScreen.match(
+    /const renderMessageAudio = useCallback\([\s\S]*?\}, \[[^\]]*\]\);/
+  )?.[0] ?? "";
+  assert.ok(audioRenderer);
+  assert.doesNotMatch(audioRenderer, /\bactive\b/);
+  // Same reason for the swipe config: the row memo compares reply.swipe
+  // BY VALUE, so a flipping isEnabled invalidated every row too.
+  assert.match(roomScreen, /direction: "right" as const,[\s\S]{0,700}?isEnabled: true,/);
   assert.match(roomScreen, /editable=\{active\}/);
   assert.match(roomScreen, /messageInputRef\.current\?\.blur\(\)/);
   assert.match(nativeChatInput, /fun blurInput\(\)/);

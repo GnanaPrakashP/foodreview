@@ -7,6 +7,11 @@ import {
   memoryDatabaseDirectoryForScope
 } from "@/services/accountFileStore";
 import { isValidCacheOwnerScope, LOCAL_DATA_SCHEMA_VERSION } from "@/security/cacheOwnership";
+import {
+  encodeMemoryPageCursor,
+  memoryPageCursorFromMessage,
+  parseMemoryPageCursor
+} from "@/services/memoryPageCursor";
 import type {
   MemoryMediaPage,
   MemoryMessagesPage,
@@ -369,21 +374,6 @@ export async function memoryOfflineDiagnostics() {
   } catch {
     return { namespaceCount: 0, signedUrlRecordCount: 0 };
   }
-}
-
-function encodeMemoryPageCursor(createdAt: string | null | undefined, id: string | null | undefined) {
-  if (!createdAt || !id) return null;
-  return `${createdAt}${MEMORY_PAGE_CURSOR_SEPARATOR}${id}`;
-}
-
-function parseMemoryPageCursor(cursor?: string | null) {
-  if (!cursor) return null;
-  const separatorIndex = cursor.lastIndexOf(MEMORY_PAGE_CURSOR_SEPARATOR);
-  if (separatorIndex <= 0) return { createdAt: cursor, id: null };
-  return {
-    createdAt: cursor.slice(0, separatorIndex),
-    id: cursor.slice(separatorIndex + 1) || null
-  };
 }
 
 function safeParse<T>(payload: string): T | null {
@@ -995,7 +985,12 @@ export async function readOfflineMemoryMessagesPage(
       // SQLite only knows how far this device has cached. Even a short local
       // page must hand off at its oldest row so the next request can ask the
       // server whether earlier history exists.
-      nextCursor: encodeMemoryPageCursor(messages[0]?.createdAt, messages[0]?.id)
+      // Server identity, not client: this cursor is answered by the network
+      // whenever the following page misses the cache, and the API paginates on
+      // its own created_at with a UUID tie-breaker. The anchor page below
+      // already did this; this path did not, and handed back a client
+      // timestamp with a possibly-optimistic id.
+      nextCursor: memoryPageCursorFromMessage(messages[0])
     };
   } catch {
     return null;
@@ -1105,10 +1100,7 @@ export async function readOfflineMemoryUnreadAnchorPage(
       hasNewer: afterRows.length > afterLimit,
       latestMessageId: latest?.id ?? null,
       messages,
-      nextCursor: encodeMemoryPageCursor(
-        messages[0]?.serverCreatedAt ?? messages[0]?.createdAt,
-        messages[0] ? memoryMessageServerId(messages[0]) : null
-      ),
+      nextCursor: memoryPageCursorFromMessage(messages[0]),
       totalUnreadCount: unread?.value ?? 0
     };
   } catch {

@@ -241,7 +241,7 @@ test("Android composer contract atomically captures native text and never branch
     "utf8"
   );
   const toolbar = screen.match(
-    /function MemoryChatMainInputToolbar\([\s\S]*?\n\}\n\nfunction MemoryChatMainSelectionToolbar/
+    /function MemoryChatMainInputToolbar\([\s\S]*?\n\}\n\n(?:\/\/[^\n]*\n)*function MemoryChatMainSelectionToolbar/
   )?.[0] ?? "";
 
   assert.match(nativeInput, /fun submitAndClear\(\): NativeChatInputSubmitResult/);

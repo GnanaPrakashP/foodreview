@@ -1,7 +1,14 @@
+import type { MemoryRoomTabMode } from "@/features/memories/room/useMemoryRoomController";
 import type { MemoryCapturedMedia, MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 
 const captures = new Map<string, MemoryCapturedMedia>();
 const pendingPosts = new Map<string, { caption?: string; dishName?: string }>();
+// Where the room should land when the capture flow hands control back. A `tab`
+// route param cannot carry this: the room screen is still mounted underneath,
+// so `router.dismissTo` returns to the existing route rather than remounting
+// it, and re-sending a value the param already holds is not a change the room
+// can observe. Requested before the dismiss, consumed when the room refocuses.
+const pendingRoomTabs = new Map<string, MemoryRoomTabMode>();
 
 export function saveMemoryCapture(input: MemoryCapturedMediaInput) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -45,6 +52,17 @@ export function consumeMemoryCapturePost(id: string) {
   };
 }
 
+export function requestMemoryRoomTab(roomId: string, tab: MemoryRoomTabMode) {
+  pendingRoomTabs.set(roomId, tab);
+}
+
+export function consumeMemoryRoomTab(roomId: string) {
+  const tab = pendingRoomTabs.get(roomId);
+  if (!tab) return null;
+  pendingRoomTabs.delete(roomId);
+  return tab;
+}
+
 export function removeMemoryCapture(id: string) {
   pendingPosts.delete(id);
   captures.delete(id);
@@ -53,4 +71,5 @@ export function removeMemoryCapture(id: string) {
 export function clearMemoryCaptureSession() {
   captures.clear();
   pendingPosts.clear();
+  pendingRoomTabs.clear();
 }

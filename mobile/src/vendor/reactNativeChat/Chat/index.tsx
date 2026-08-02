@@ -145,6 +145,14 @@ function Chat<TMessage extends IMessage = IMessage> (
     onClearReply?.()
   }, [replyMessageProp, onClearReply])
 
+  const replyWithSwipeHandler = useMemo(() => ({
+    ...reply,
+    swipe: reply?.swipe ? {
+      ...reply.swipe,
+      onSwipe: handleSwipeToReply,
+    } : undefined,
+  }), [reply, handleSwipeToReply])
+
   const renderMessages = useMemo(() => {
     if (!isInitialized)
       return null
@@ -159,13 +167,7 @@ function Chat<TMessage extends IMessage = IMessage> (
           messages={messages}
           forwardRef={messagesContainerRef}
           isTyping={isTyping}
-          reply={{
-            ...reply,
-            swipe: reply?.swipe ? {
-              ...reply.swipe,
-              onSwipe: handleSwipeToReply,
-            } : undefined,
-          }}
+          reply={replyWithSwipeHandler}
         />
         {renderComponentOrElement(renderChatFooter, {})}
       </View>

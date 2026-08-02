@@ -369,6 +369,9 @@ export type MemoryStop = {
   stopType: MemoryStopType;
   name: string;
   note: string | null;
+  // The places-provider id behind this stop, when it came from an autocomplete
+  // suggestion. Null for legacy rows and for manually named stops.
+  placeId: string | null;
   position: number;
   createdBy: string;
   createdByDisplayName: string;

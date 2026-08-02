@@ -168,7 +168,7 @@ test("initial chat ownership is offset zero with no mount-time scroll correction
     /function MemoryChatMainSurface\([\s\S]*?\n\}\n\n\/\/ Timestamp placement rule/
   )?.[0] ?? "";
   const chatList = surface.match(
-    /<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{\{[\s\S]*?\}\}/
+    /const chatMainListProps = useMemo[\s\S]*?<ChatMain<MemoryChatMainMessage>[\s\S]*?listProps=\{chatMainListProps\}/
   )?.[0] ?? "";
 
   assert.match(scrollState, /chat: 0/);
@@ -191,7 +191,7 @@ test("initial chat ownership is offset zero with no mount-time scroll correction
 
   assert.match(surface, /onContentSizeChange: handleChatMainContentSizeChange/);
   const contentSizeHandler = surface.match(
-    /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  const surfaceInner)/
+    /const handleChatMainContentSizeChange = useCallback\([\s\S]*?(?=\n\n  (?:\/\/[^\n]*\n  )*const surfaceInner)/
   )?.[0] ?? "";
   assert.notEqual(contentSizeHandler, "");
   assert.doesNotMatch(
@@ -271,4 +271,40 @@ test("anchor diagnostics are opt-in, privacy-safe and forbidden in production", 
     appConfig,
     /env\.EXPO_PUBLIC_CHAT_PLACEMENT_DIAGNOSTICS === "1"[\s\S]*Memory Room diagnostics and fixtures are forbidden in production/
   );
+});
+
+test("the unread anchor resolves on both list engines, and always reveals", () => {
+  const screen = readFileSync("mobile/app/memories/[id].tsx", "utf8");
+
+  // Two engines report "that index is not real yet" in opposite directions:
+  // FlatList calls onScrollToIndexFailed synchronously and returns nothing,
+  // FlashList returns a promise and has no failure callback at all. The anchor
+  // has to read both or it reveals at the wrong position on one of them.
+  assert.match(
+    screen,
+    /typeof list\.getLayout === "function" &&\s*list\.getLayout\(unreadAnchorPlan\.index\) === undefined/
+  );
+  assert.match(
+    screen,
+    /if \(scrolled && typeof \(scrolled as Promise<void>\)\.then === "function"\)/
+  );
+  // A rejected or never-settling promise must still reveal: a hidden surface is
+  // worse than an imperfectly placed one.
+  assert.match(screen, /\.then\(reveal, reveal\)/);
+  assert.match(screen, /if \(unreadAnchorFailedRef\.current\) \{\s*retryOrReveal\(\);/);
+
+  // Every retry path stays bounded by the same frame budget.
+  assert.match(
+    screen,
+    /const retryOrReveal = \(\) => \{[\s\S]*?attempt < CHAT_MAIN_ANCHOR_REVEAL_MAX_FRAMES/
+  );
+  // Unmounting mid-anchor must not reveal into a torn-down surface.
+  assert.match(screen, /let cancelled = false;/);
+  assert.match(screen, /if \(!cancelled\) setUnreadAnchorSettled\(true\)/);
+  assert.match(screen, /cancelled = true;\s*if \(frame !== null\) cancelAnimationFrame\(frame\)/);
+
+  // scrollToIndex may return a promise now, and getLayout only exists on one
+  // engine, so the shared ref contract has to admit both.
+  assert.match(screen, /\}\) => void \| Promise<void>;/);
+  assert.match(screen, /getLayout\?: \(index: number\) => unknown;/);
 });

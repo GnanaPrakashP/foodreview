@@ -14,6 +14,7 @@ import {
 import { MemoryComposerHeader } from "@/components/memories/MemoryComposerHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { useAddMemoryDishMutation } from "@/hooks/useMemories";
+import { requestMemoryRoomTab } from "@/services/memoryCaptureSession";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing } from "@/theme";
 
@@ -50,7 +51,17 @@ export default function AddMemoryDishScreen() {
         rating: rating || null
       });
       Keyboard.dismiss();
-      router.back();
+      // The dish lands in the chat as its own row, so that is where the room
+      // must go — the same handoff media uses. A `tab` param cannot do this on
+      // its own: the room is still mounted underneath and `back()` does not
+      // remount it. The param below only covers a cold entry with nothing to
+      // pop. See requestMemoryRoomTab.
+      requestMemoryRoomTab(roomId, "chat");
+      if (router.canGoBack()) {
+        router.back();
+        return;
+      }
+      router.replace({ pathname: "/memories/[id]", params: { id: roomId, tab: "chat" } });
     } catch {
       // The mutation error is rendered below the form.
     }

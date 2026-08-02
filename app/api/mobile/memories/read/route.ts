@@ -69,6 +69,48 @@ async function signNestedChanges(payload: JsonRecord, roomId: string) {
   return { ...payload, changes: await signMemoryPhotoPayload(payload.changes as JsonRecord, roomId) };
 }
 
+type MemoryReadCursor = { createdAt: string; id: string | null };
+
+// Builds already installed send the raw ISO timestamp of their oldest cached
+// message instead of the opaque {createdAt, id} cursor, and those installs
+// cannot be fixed retroactively — every one of them currently gets a 400 and a
+// permanent "Could not load earlier messages" at the top of chat history. So
+// accept the legacy shape and degrade to a timestamp-only cursor: every RPC
+// behind this route already treats the id as an optional tie-breaker, so the
+// only cost is a page boundary that cannot disambiguate rows sharing a
+// timestamp to the microsecond.
+const LEGACY_CURSOR_SEPARATOR = "|";
+const LEGACY_CURSOR_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function resolveMemoryReadCursor(raw: string | null): MemoryReadCursor | null {
+  const stable = decodeStableTimestampCursor(raw);
+  if (stable) return stable;
+  if (!raw || raw.length > 128) return null;
+
+  // `createdAt|uuid`. This is what the mobile app's OFFLINE reader emits, and
+  // that value flows straight back here as the next page request whenever the
+  // following page misses the SQLite cache — so rejecting it stranded chat
+  // history at the cache boundary even though the pair is perfectly usable.
+  const separatorIndex = raw.lastIndexOf(LEGACY_CURSOR_SEPARATOR);
+  if (separatorIndex > 0) {
+    const createdAt = raw.slice(0, separatorIndex);
+    const id = raw.slice(separatorIndex + 1);
+    const parsedPair = Date.parse(createdAt);
+    if (Number.isFinite(parsedPair) && LEGACY_CURSOR_UUID.test(id)) {
+      return { createdAt: new Date(parsedPair).toISOString(), id };
+    }
+    return null;
+  }
+
+  // A bare ISO timestamp, from the oldest seeds. Degrades to a timestamp-only
+  // cursor: every RPC behind this route already treats the id as an optional
+  // tie-breaker, so the only cost is a boundary that cannot disambiguate rows
+  // sharing a timestamp to the microsecond.
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return { createdAt: new Date(parsed).toISOString(), id: null };
+}
+
 export async function GET(req: NextRequest) {
   const { actor, supabase } = await getRouteActor(req);
   if (!actor) return privateJson({ error: "Unauthorized" }, { status: 401 });
@@ -78,7 +120,7 @@ export async function GET(req: NextRequest) {
     ? boundedSyncLimit(req.nextUrl.searchParams.get("limit"))
     : boundedLimit(req.nextUrl.searchParams.get("limit"), action === "rooms" ? 50 : 30);
   const rawCursor = req.nextUrl.searchParams.get("cursor");
-  const cursor = decodeStableTimestampCursor(rawCursor);
+  const cursor = resolveMemoryReadCursor(rawCursor);
   if (rawCursor && !cursor) return privateJson({ error: "Invalid cursor" }, { status: 400 });
 
   try {

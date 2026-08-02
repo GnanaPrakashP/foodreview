@@ -97,3 +97,60 @@ test("Phase 5 SQL has stable cursor indexes and service-only feed grants", async
   assert.match(sql, /jsonb_agg\(to_jsonb\(selected\) - 'storage_path' - 'public_url'/i);
   assert.doesNotMatch(sql, /page_photos as \([\s\S]{0,900}photo\.storage_path/i);
 });
+
+test("memory history paging speaks one cursor format on both sides", async () => {
+  const route = await read("app/api/mobile/memories/read/route.ts");
+  const cursor = await read("mobile/src/services/memoryPageCursor.ts");
+  const offlineStore = await read("mobile/src/services/memoryOfflineStore.ts");
+  const screen = await read("mobile/app/memories/[id].tsx");
+
+  // The bug: the client seeded "load older" with the oldest row's raw
+  // createdAt, the route base64url-decodes and JSON.parses whatever arrives, so
+  // every network page past the SQLite cache came back 400 "Invalid cursor" and
+  // the server's own (correctly encoded) nextCursor never arrived to unblock
+  // the rest. Chat history simply could not page beyond what was on disk.
+  assert.match(cursor, /export function encodeMemoryPageCursor\(/);
+  assert.match(cursor, /btoa\(JSON\.stringify\(\{ createdAt, id \}\)\)/);
+  assert.match(cursor, /\.replace\(\/\\\+\/g, "-"\)/);
+  assert.match(cursor, /\.replace\(\/=\+\$\/, ""\)/);
+
+  // The anchor must be a message the server knows about: the cursor id has to
+  // be a UUID, and the server paginates on ITS created_at, not the client
+  // timestamp the list is ordered by.
+  assert.match(cursor, /export function memoryHistoryCursorFromMessages\(/);
+  assert.match(cursor, /const id = memoryMessageServerId\(message\);/);
+  assert.match(cursor, /return id && createdAt \? encodeMemoryPageCursor\(createdAt, id\) : null;/);
+  assert.match(screen, /olderMessagesAnchorRef\.current\.cursor = memoryHistoryCursorFromMessages\(/);
+  assert.doesNotMatch(screen, /cursor = room\.data\?\.messages\[0\]\?\.createdAt/);
+
+  // Everything the client emits has to be API-shaped, including pages served
+  // from SQLite: React Query hands a page's nextCursor straight back as the
+  // next request, which may be answered by the network even though the previous
+  // page was not. Emitting the legacy pair there is what stranded history at
+  // the cache boundary.
+  // ONE definition, imported by both the network layer and the offline store.
+  // Two copies is how this broke: the offline reader emitted the legacy pair
+  // while the API layer emitted the opaque form.
+  assert.doesNotMatch(offlineStore, /function encodeMemoryPageCursor\(/);
+  assert.match(offlineStore, /from "@\/services\/memoryPageCursor"/);
+  assert.match(offlineStore, /nextCursor: memoryPageCursorFromMessage\(messages\[0\]\)/);
+  // ...and it has to READ every shape it has ever written, since old cursors
+  // are already sitting in SQLite.
+  assert.match(cursor, /function decodeOpaqueCursor\(cursor: string\)/);
+  assert.match(cursor, /if \(cursor\.includes\(MEMORY_PAGE_CURSOR_SEPARATOR\)\) return null;/);
+  assert.match(cursor, /const opaque = decodeOpaqueCursor\(cursor\);\s*if \(opaque\) return opaque;/);
+
+  // Installs already in the wild keep sending the legacy shapes and cannot be
+  // fixed retroactively, so the route accepts both rather than 400ing them
+  // forever: the `createdAt|uuid` pair its offline reader emits, and a bare
+  // timestamp from the oldest seeds.
+  assert.match(route, /function resolveMemoryReadCursor\(raw: string \| null\)/);
+  assert.match(route, /const stable = decodeStableTimestampCursor\(raw\);\s*if \(stable\) return stable;/);
+  assert.match(route, /LEGACY_CURSOR_UUID\.test\(id\)/);
+  assert.match(route, /return \{ createdAt: new Date\(parsedPair\)\.toISOString\(\), id \};/);
+  assert.match(route, /return \{ createdAt: new Date\(parsed\)\.toISOString\(\), id: null \};/);
+  assert.match(route, /const cursor = resolveMemoryReadCursor\(rawCursor\);/);
+  // Every RPC behind this route already treats the id as an optional
+  // tie-breaker, which is what makes the degraded cursor safe.
+  assert.match(route, /p_before_message_id: cursor\?\.id \?\? null/);
+});
