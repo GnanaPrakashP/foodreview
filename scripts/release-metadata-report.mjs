@@ -9,7 +9,7 @@ try {
   }
   console.log(JSON.stringify({
     applicationVersion: process.env.npm_package_version || "0.1.0",
-    databaseMigrationHead: "202608030003",
+    databaseMigrationHead: "202608030004",
     environment,
     generatedAt: new Date().toISOString(),
     release

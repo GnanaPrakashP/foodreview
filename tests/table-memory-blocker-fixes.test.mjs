@@ -111,6 +111,7 @@ test("per-tab unread cursors are monotonic and room summary is server-authoritat
 
 test("notification intent and push delivery are atomic and deduplicated", () => {
   const migration = source("supabase/migrations/202608030002_table_memory_notification_outbox.sql");
+  const nullSeparatorFix = source("supabase/migrations/202608030004_table_memory_notification_null_separator_fix.sql");
   const compatibilityRoute = source("app/api/mobile/memories/notify/route.ts");
   const client = source("mobile/src/services/memories.ts");
   assert.match(migration, /after insert on public\.shared_memory_messages/);
@@ -119,6 +120,8 @@ test("notification intent and push delivery are atomic and deduplicated", () => 
   assert.match(migration, /member\.user_name <> v_actor_name/);
   assert.match(migration, /token\.disabled_at is null/);
   assert.match(migration, /if v_kind = 'message'/);
+  assert.match(nullSeparatorFix, /convert_to\(v_notification_id::text \|\| ':' \|\| token\.id::text, 'UTF8'\)/);
+  assert.doesNotMatch(nullSeparatorFix, /chr\(0\)/);
   assert.doesNotMatch(compatibilityRoute, /exp\.host|sendExpoPush|push_tokens/);
   assert.doesNotMatch(client, /notifyMemoryRoomActivity/);
 });

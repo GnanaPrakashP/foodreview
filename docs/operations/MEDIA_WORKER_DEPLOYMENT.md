@@ -22,7 +22,7 @@ request lifetime and must keep polling independently of user traffic.
 3. Required secret values:
 
    ```text
-   APP_MIGRATION_HEAD=202608030003
+   APP_MIGRATION_HEAD=202608030004
    APP_RELEASE=<the deployed git SHA>
    NEXT_PUBLIC_SUPABASE_URL=<production project URL>
    NEXT_PUBLIC_SUPABASE_ANON_KEY=<production publishable/anon key>

@@ -36,8 +36,8 @@ try {
     "exec", container, "psql", "-U", restoreRole, "-d", database, "-At", "-v", "ON_ERROR_STOP=1", "-c",
     "select set_config('request.jwt.claim.role','service_role',false); select max(version) from supabase_migrations.schema_migrations; select (public.production_schema_contract()->'missingCriticalTables')::text; select (public.production_schema_contract()->'rlsDisabledTables')::text; select (public.production_operations_contract()->'missingTables')::text; select (public.production_operations_contract()->'rlsDisabledTables')::text;"
   ], { label: "restored_contract_checks_failed" }).split("\n").filter(Boolean);
-  if (!checks.includes("202608030003") || checks.filter((value) => value === "[]").length < 4) throw new Error("restored_contract_mismatch");
-  console.log(JSON.stringify({ backup: "created", contractChecks: "passed", database: "temporary", migrationHead: "202608030003", restore: "passed" }, null, 2));
+  if (!checks.includes("202608030004") || checks.filter((value) => value === "[]").length < 4) throw new Error("restored_contract_mismatch");
+  console.log(JSON.stringify({ backup: "created", contractChecks: "passed", database: "temporary", migrationHead: "202608030004", restore: "passed" }, null, 2));
 } catch (error) {
   console.error(`restore-drill: ${error instanceof Error ? error.message : "failed"}`);
   process.exitCode = 1;
