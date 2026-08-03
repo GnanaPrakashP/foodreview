@@ -41,7 +41,7 @@ function loadRatingCoordinator(setMemoryDishRating, outbox = new Map()) {
     require: (id) => {
       if (id === "@/api/client") return { MobileApiError };
       if (id === "@/services/installIdentity") {
-        return { createRequestId: () => `00000000-0000-4000-8000-${String(++requestSequence).padStart(12, "0")}` };
+        return { createUuid: () => `00000000-0000-4000-8000-${String(++requestSequence).padStart(12, "0")}` };
       }
       if (id === "@/services/memoryOfflineStore") {
         return {
@@ -86,6 +86,7 @@ test("rapid dish rating taps coalesce to one request carrying only the latest va
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].rating, 5);
+  assert.match(calls[0].clientMutationId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.equal(coordinator.outbox.size, 0);
 });
 

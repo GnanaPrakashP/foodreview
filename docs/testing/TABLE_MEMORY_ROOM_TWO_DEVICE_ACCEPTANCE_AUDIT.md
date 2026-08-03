@@ -654,3 +654,32 @@ Physical retest on Phone A:
 Result: **PASS on Phone A** for preview, hosted processing, idempotent same-asset retry, final canonical attachment and playback. Evidence: `/private/tmp/foodreview-video-linked-after-fix.png`. The full two-device video/Chat/Media case remains **BLOCKED**, because ADB currently exposes only Phone A (`ZA223JVWG7`) and no Phone B result was observed after the fix.
 
 The final audit verdict remains **NO-GO**.
+
+## 22. Phone A dish-rating identity fix and physical retest (2026-08-03)
+
+Phone A was reconnected and authenticated in `TMR AUDIT 0802 2151`. Phone B was not exposed by ADB, so simultaneous and peer-convergence cases remain blocked.
+
+Initial reproduction on `B-DISH-01`:
+
+1. Open Dishes and tap a star on the previously unrated dish.
+2. Observe the optimistic personal rating and two-rater aggregate.
+3. Wait for the API response.
+4. Observe `Invalid dish rating`, rollback to no personal rating/one rater, and the old Chat card aggregate.
+
+Root cause: `memoryDishRatingCoordinator.ts` used `createRequestId()` for `clientMutationId`. That helper intentionally returns a 64-character hexadecimal request nonce, while the entity route validates a UUID and the database RPC accepts a UUID. The request therefore failed HTTP 400 before the RPC. The focused test mock had incorrectly returned a UUID from its `createRequestId` stub and masked this runtime contract mismatch.
+
+Targeted fix: export the existing secure UUID-v4 generator from `installIdentity.ts`, use `createUuid()` only for dish-rating mutation identity, and make the regression mock expose only `createUuid`. The rapid-tap test now asserts that the transmitted `clientMutationId` is UUID-v4 shaped. No rating API, schema or unrelated UI behavior was changed.
+
+Verification:
+
+- Focused Table Memory/entity tests: **15/15 PASS**.
+- Mobile TypeScript check: **PASS**.
+- Phone A slow change: `B-DISH-01` persisted at 2/5 without rollback.
+- Phone A rapid input: 1→2→3→4→5 settled at the latest 5/5 value.
+- Dishes showed Gnana Prakash + Phantom, two ratings and personal 5/5.
+- Chat showed the same dish at aggregate 4.0 by two users without refresh.
+- After force-close, development-server reconnect and room reopen, Dishes still showed personal 5/5 and two ratings.
+
+Failure evidence: `/private/tmp/tmr-rating-chat-stale-phone-a.png` and `/private/tmp/tmr-rating-dishes-5-phone-a.png`. Successful retest evidence: `/private/tmp/tmr-rating-fixed-chat-phone-a.png` and `/private/tmp/tmr-rating-fixed-reopen-phone-a.png`.
+
+Result: **PASS on Phone A** for slow rating, rapid latest-intent behavior, Dishes/Chat consistency, no-refresh convergence and force-close persistence. **BLOCKED on Phone B** for the corrected build, including simultaneous A/B rating and live peer aggregate verification. The final audit verdict remains **NO-GO**.

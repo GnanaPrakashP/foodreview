@@ -1,5 +1,5 @@
 import { MobileApiError } from "@/api/client";
-import { createRequestId } from "@/services/installIdentity";
+import { createUuid } from "@/services/installIdentity";
 import {
   deleteOfflineMemoryDishRatingOutbox,
   readOfflineMemoryDishRatingOutbox,
@@ -128,7 +128,7 @@ export function queueMemoryDishRating(input: {
   const key = ratingKey(input.roomId, input.dishId);
   const current = ratingFlights.get(key);
   const intent: MemoryDishRatingOutboxEntry = {
-    clientMutationId: createRequestId(),
+    clientMutationId: createUuid(),
     clientSequence: nextRatingSequence(),
     confirmedRating: current?.confirmedRating ?? input.confirmedRating,
     desiredRating: input.rating,
