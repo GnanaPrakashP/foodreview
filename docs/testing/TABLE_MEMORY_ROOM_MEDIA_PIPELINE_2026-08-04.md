@@ -2,7 +2,7 @@
 
 Date: 2026-08-04
 Scope: image/video send only; continuation of the two-device acceptance audit
-Physical verdict: **NOT YET RETESTED — NO-GO remains**
+Physical verdict: **DEPLOYED DATABASE, NOT YET RETESTED — NO-GO remains**
 
 This document records the current end-to-end pipeline and the targeted changes made after the physical video/upload failures. Automated and local-database evidence below does not convert any physical two-phone case to PASS.
 
@@ -13,6 +13,7 @@ This document records the current end-to-end pipeline and the targeted changes m
 3. Every FFmpeg non-zero exit was labelled a temporary resource failure. A deterministic geometry/transcode failure was retried repeatedly instead of reaching a clear terminal state.
 4. A recovered room upload waited for `ready` before attaching and omitted the client timestamp/sequence/order fields required by the media API. A restart between finalize and attach could therefore strand the logical message.
 5. A media message and its photo could both contribute to unread state. Media needed one notification/unread owner, with the message retained only as the Chat timeline container.
+6. The linked migration attempts exposed historical messages/photos whose authors or uploaders had later left their rooms. The normal membership write guards correctly rejected the classification backfills. The migration now disables only each named guard around its exact historical `activity_kind`/`processing_status` update and immediately reenables it; all runtime writes retain the guards.
 
 ## Exact 15-stage timeline after the change
 
@@ -70,7 +71,7 @@ The deployed retest can report segments independently through these privacy-safe
 | First usable and final render | Mobile spans `memory.media_usable_render` and `memory.media_final_render`, separated by Chat/Media surface and sender/recipient role |
 | Full send-to-transaction boundary | Mobile span `memory.media_publication`; detailed spans above remain authoritative for diagnosis |
 
-Client events emit no room, account, asset, URL, storage-path or message identifiers. Phone A/Phone B values for these events remain unavailable until the coordinated build is deployed and the physical cases are executed.
+Client events emit no room, account, asset, URL, storage-path or message identifiers. Phone A/Phone B values for these events remain unavailable until the user-reported API/worker/mobile deployment is physically exercised.
 
 ## Implemented files
 
@@ -129,6 +130,6 @@ Audit/status evidence:
 
 ## Physical cases still required
 
-These changes are **not physically passed** until deployed and exercised on both authenticated phones: one image each direction, one portrait video each direction, rapid image/video batches, simultaneous mixed batches, Chat/Media consistency, no flicker/duplicate/reposition, background/terminated receiver behavior, temporary disconnect/restart recovery, signed-URL expiry, cancellation, permanent failure presentation, membership removal, and before/after timings. Capture both phones and sanitized server/worker events for every failure.
+Linked migration `202608040001` is applied and present in the remote ledger. The user reports the API, worker and mobile build were also redeployed/reinstalled, but those surfaces have not yet been physically verified in this continuation. These changes are **not physically passed** until exercised on both authenticated phones: one image each direction, one portrait video each direction, rapid image/video batches, simultaneous mixed batches, Chat/Media consistency, no flicker/duplicate/reposition, background/terminated receiver behavior, temporary disconnect/restart recovery, signed-URL expiry, cancellation, permanent failure presentation, membership removal, and before/after timings. Capture both phones and sanitized server/worker events for every failure.
 
 Final verdict remains **NO-GO** until those core two-phone cases pass with no open P0/P1.

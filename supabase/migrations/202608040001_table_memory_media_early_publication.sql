@@ -10,6 +10,14 @@ alter table public.shared_memory_messages
   add constraint shared_memory_messages_activity_kind_check
   check (activity_kind in ('chat', 'media'));
 
+-- Historical rooms may retain messages from members who later left. The
+-- ordinary write guard correctly rejects edits by/for former members, but
+-- this one data-only classification backfill must cover those immutable
+-- historical messages as well. Disable only that guard for the exact update;
+-- PostgreSQL rolls the trigger state back if the migration fails.
+alter table public.shared_memory_messages
+  disable trigger shared_memory_messages_security_guard;
+
 update public.shared_memory_messages message
 set activity_kind = 'media'
 where message.activity_kind = 'chat'
@@ -18,14 +26,26 @@ where message.activity_kind = 'chat'
     where photo.message_id = message.id
   );
 
+alter table public.shared_memory_messages
+  enable trigger shared_memory_messages_security_guard;
+
 alter table public.shared_memory_photos
   add column if not exists processing_status text,
   add column if not exists processing_failure_code text;
+
+-- The same historical-member condition applies to legacy media rows. This
+-- guard is replaced below with the split ready/processing guards, so bypass it
+-- only while setting the initial ready classification.
+alter table public.shared_memory_photos
+  disable trigger shared_memory_photos_security_guard;
 
 update public.shared_memory_photos
 set processing_status = 'ready'
 where media_asset_id is not null
   and processing_status is null;
+
+alter table public.shared_memory_photos
+  enable trigger shared_memory_photos_security_guard;
 
 alter table public.shared_memory_photos
   drop constraint if exists shared_memory_photos_processing_status_check;

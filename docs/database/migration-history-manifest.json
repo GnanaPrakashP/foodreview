@@ -3231,8 +3231,8 @@
         "social",
         "triggers"
       ],
-      "sha256": "4425ba026f007c231a93ef9cce798c1c7317abc94dcb86d17dad56c8036eb07d",
-      "sizeBytes": 28623,
+      "sha256": "03c7d5b00b08cc019d02f42ce2fcee231698adeddd074fe97edc5227daaf304f",
+      "sizeBytes": 29590,
       "sourceRoot": "supabase/migrations",
       "version": "202608040001"
     }

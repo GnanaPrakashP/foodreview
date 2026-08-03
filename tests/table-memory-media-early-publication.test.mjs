@@ -54,6 +54,8 @@ test("pending images get a bounded member-scoped source preview while videos sta
 });
 
 test("media unread and notification ownership cannot double count the container message", () => {
+  assert.match(migration, /disable trigger shared_memory_messages_security_guard[\s\S]*?set activity_kind = 'media'[\s\S]*?enable trigger shared_memory_messages_security_guard/);
+  assert.match(migration, /disable trigger shared_memory_photos_security_guard[\s\S]*?set processing_status = 'ready'[\s\S]*?enable trigger shared_memory_photos_security_guard/);
   assert.match(migration, /set activity_kind = 'media'[\s\S]*?photo\.message_id = message\.id/);
   assert.match(migration, /new\.activity_kind = 'media' then return new/);
   assert.match(migration, /v_kind := 'media'/);

@@ -1547,9 +1547,13 @@ mobile type checks, migration-manifest and diff validation, and the production
 Next build. Migration history now contains 99 canonical migrations and head
 metadata is `202608040001`.
 
-No hosted database, Vercel API, Render worker or phone build was changed in this
-continuation. The final ADB check exposed Phone A `ZA223JVWG7` only; Phone B was
-not connected. Physical image/video timing, Phone A/Phone B convergence,
+The linked database now records migration `202608040001`; its historical
+backfills were corrected to bypass only the named membership guards for the
+data-only updates, and a clean replay verified both guards enabled afterward.
+The user reports the Vercel API, Render worker and phone build were also
+redeployed/reinstalled; those three surfaces are not independently certified
+here. The final ADB check exposed Phone A `ZA223JVWG7` only; Phone B was not
+connected. Physical image/video timing, Phone A/Phone B convergence,
 flicker/duplicate/reposition behavior, background/terminated delivery,
 disconnect/restart recovery, cancellation and signed-expiry checks remain
 mandatory. Detailed evidence and the 15-stage pipeline are in
