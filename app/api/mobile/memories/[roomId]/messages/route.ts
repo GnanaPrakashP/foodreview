@@ -130,7 +130,16 @@ export async function POST(
         .eq("room_id", roomId)
         .maybeSingle<{ id: string }>();
       if (replyError) throw replyError;
-      if (!reply) return mobileApiError(req, METHODS, "invalid_input", "Invalid reply", 400);
+      if (!reply) {
+        const { data: dish, error: dishError } = await supabase
+          .from("shared_memory_dishes")
+          .select("id")
+          .eq("id", replyToMessageId)
+          .eq("room_id", roomId)
+          .maybeSingle<{ id: string }>();
+        if (dishError) throw dishError;
+        if (!dish) return mobileApiError(req, METHODS, "invalid_input", "Invalid reply", 400);
+      }
     }
 
     const normalizedRequest = { body: messageBody, ...clientMetadata, replyToMessageId, roomId };

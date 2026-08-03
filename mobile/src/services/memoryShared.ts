@@ -71,7 +71,7 @@ export type MemoryDishRatingRow = {
   room_id: string;
   dish_id: string;
   rated_by: string;
-  rating: number | string;
+  rating: number | string | null;
   created_at: string;
   updated_at: string;
 };

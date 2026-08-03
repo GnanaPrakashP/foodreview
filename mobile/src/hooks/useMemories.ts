@@ -668,7 +668,7 @@ type MemoryDishRatingRealtimePayload = {
     dish_id: string;
     id: string;
     rated_by: string;
-    rating: number;
+    rating: number | null;
     room_id: string;
     updated_at: string;
   }>;
@@ -677,7 +677,7 @@ type MemoryDishRatingRealtimePayload = {
     dish_id: string;
     id: string;
     rated_by: string;
-    rating: number;
+    rating: number | null;
     room_id: string;
     updated_at: string;
   }>;
@@ -946,6 +946,9 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
   const replyToMessage = replyToMessageId
     ? currentRoom.messages.find((message) => message.id === replyToMessageId) ?? null
     : null;
+  const replyToDish = replyToMessageId
+    ? currentRoom.dishes.find((dish) => dish.id === replyToMessageId) ?? null
+    : null;
 
   const clientCreatedAt = rowClientCreatedAt ?? createdAt;
   return {
@@ -965,11 +968,11 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
     id,
     serverCreatedAt: createdAt,
     serverId: id,
-    replyToMessage: replyToMessage
+    replyToMessage: replyToMessage || replyToDish
       ? {
-        authorDisplayName: replyToMessage.authorDisplayName,
-        body: replyToMessage.body || "Media",
-        id: replyToMessage.id
+        authorDisplayName: replyToMessage?.authorDisplayName ?? replyToDish?.addedByDisplayName ?? "Unknown",
+        body: replyToMessage?.body || (replyToDish ? `Dish: ${replyToDish.dishName}` : "Media"),
+        id: replyToMessage?.id ?? replyToDish!.id
       }
       : null,
     replyToMessageId: replyToMessageId ?? null,
@@ -2726,6 +2729,9 @@ export function useAddMemoryMessageMutation(roomId: string) {
       const replyToMessage = input.replyToMessageId
         ? findMemoryMessage(previousRoom?.messages ?? [], input.replyToMessageId) ?? null
         : null;
+      const replyToDish = input.replyToMessageId
+        ? previousRoom?.dishes.find((dish) => dish.id === input.replyToMessageId) ?? null
+        : null;
       const deferred = input.deferUntilOnline === true;
       const optimisticMessage: MemoryMessage = {
         attachments: [],
@@ -2744,14 +2750,16 @@ export function useAddMemoryMessageMutation(roomId: string) {
         sendAttemptCount: deferred ? 0 : 1,
         serverCreatedAt: null,
         serverId: null,
-        replyToMessage: replyToMessage
+        replyToMessage: replyToMessage || replyToDish
           ? {
-            id: memoryMessageServerId(replyToMessage) ?? replyToMessage.id,
-            authorDisplayName: replyToMessage.authorDisplayName,
-            body: replyToMessage.body || "Media"
+            id: replyToMessage ? memoryMessageServerId(replyToMessage) ?? replyToMessage.id : replyToDish!.id,
+            authorDisplayName: replyToMessage?.authorDisplayName ?? replyToDish?.addedByDisplayName ?? "Unknown",
+            body: replyToMessage?.body || (replyToDish ? `Dish: ${replyToDish.dishName}` : "Media")
           }
           : null,
-        replyToMessageId: replyToMessage ? memoryMessageServerId(replyToMessage) ?? replyToMessage.id : null,
+        replyToMessageId: replyToMessage
+          ? memoryMessageServerId(replyToMessage) ?? replyToMessage.id
+          : replyToDish?.id ?? null,
         roomId
       };
 
@@ -3053,7 +3061,15 @@ export function useDeleteMemoryDishMutation(roomId: string) {
       const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
       const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
       const nextRoom = previousRoom
-        ? { ...previousRoom, dishes: previousRoom.dishes.filter((dish) => dish.id !== dishId) }
+        ? {
+          ...previousRoom,
+          dishes: previousRoom.dishes.filter((dish) => dish.id !== dishId),
+          messages: previousRoom.messages.map((message) => (
+            message.replyToMessageId === dishId
+              ? { ...message, replyToMessage: null, replyToMessageId: null }
+              : message
+          ))
+        }
         : undefined;
       if (nextRoom) {
         queryClient.setQueryData(detailKey, nextRoom);

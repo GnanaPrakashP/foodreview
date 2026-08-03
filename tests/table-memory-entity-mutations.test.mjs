@@ -100,7 +100,7 @@ test("a new rating never overlaps an in-flight request and is sent immediately a
   });
 
   const first = coordinator.queueMemoryDishRating({ confirmedRating: null, dishId: "dish", rating: 2, roomId: "room" });
-  await delay(180);
+  await delay(340);
   const latest = coordinator.queueMemoryDishRating({ confirmedRating: 2, dishId: "dish", rating: 5, roomId: "room" });
   await delay(30);
   assert.equal(calls.length, 1);
@@ -130,7 +130,7 @@ test("temporary rating failure keeps the latest intent and retries automatically
     if (attempts === 1) throw new Error("temporary network failure");
   });
   const intent = coordinator.queueMemoryDishRating({ confirmedRating: 2, dishId: "dish", rating: 4, roomId: "room" });
-  await delay(220);
+  await delay(380);
   assert.equal(attempts, 1);
   assert.equal(coordinator.outbox.get("room:dish").desiredRating, 4);
   await intent;
@@ -199,9 +199,37 @@ test("optimistic rating projection replaces only the current user's row and reco
   assert.equal(next.dishes[0].ratings.find((rating) => rating.ratedBy === "user-b").rating, 4);
 });
 
+test("tapping the selected rating clears only the current user's row", async () => {
+  const calls = [];
+  const coordinator = loadRatingCoordinator(async (input) => { calls.push(input); });
+  const room = {
+    dishes: [{
+      averageRating: 4,
+      id: "dish",
+      myRating: 5,
+      ratingCount: 2,
+      ratings: [
+        { id: "mine", ratedBy: "user-a", ratedByDisplayName: "User A", rating: 5 },
+        { id: "theirs", ratedBy: "user-b", ratedByDisplayName: "User B", rating: 3 }
+      ]
+    }],
+    id: "room"
+  };
+  const cleared = coordinator.applyMemoryDishRating(room, "dish", "user-a", "User A", null);
+  assert.equal(cleared.dishes[0].myRating, null);
+  assert.equal(cleared.dishes[0].ratingCount, 1);
+  assert.equal(cleared.dishes[0].averageRating, 3);
+
+  await coordinator.queueMemoryDishRating({ confirmedRating: 5, dishId: "dish", rating: null, roomId: "room" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].rating, null);
+});
+
 test("place and dish mutations use the hardened idempotent member-authorized endpoint", () => {
   const route = source("app/api/mobile/memories/[roomId]/entities/route.ts");
+  const messageRoute = source("app/api/mobile/memories/[roomId]/messages/route.ts");
   const migration = source("supabase/migrations/202608030003_table_memory_entity_mutations.sql");
+  const interactionsMigration = source("supabase/migrations/202608030005_table_memory_dish_interactions.sql");
   const screen = source("mobile/app/memories/[id].tsx");
   const placeForm = source("mobile/app/memories/[id]/add-place.tsx");
   const coordinator = source("mobile/src/services/memoryDishRatingCoordinator.ts");
@@ -218,6 +246,13 @@ test("place and dish mutations use the hardened idempotent member-authorized end
   assert.match(screen, /accessibilityLabel="Place actions"/);
   assert.match(placeForm, /editing \? "Update" : "Add"/);
   assert.match(placeForm, /Alert\.alert\("Discard changes\?"/);
-  assert.match(coordinator, /const RATING_DEBOUNCE_MS = 140/);
+  assert.match(coordinator, /const RATING_DEBOUNCE_MS = 300/);
   assert.match(coordinator, /if \(flight\.inFlight\) return/);
+  assert.match(route, /Only the person who added this dish can delete it/);
+  assert.match(messageRoute, /from\("shared_memory_dishes"\)[\s\S]*Invalid reply/);
+  assert.match(interactionsMigration, /rating is null or \(rating >= 1 and rating <= 5\)/);
+  assert.match(interactionsMigration, /select dish\.room_id[\s\S]*where dish\.id = new\.reply_to_message_id/);
+  assert.match(screen, /memoryDishReplyTarget\(singleSelectedDish\)/);
+  assert.match(screen, /sameUsername\(target\.value\.addedBy, myUsername\)/);
+  assert.match(screen, /visualRatingRef\.current === star \? null : star/);
 });

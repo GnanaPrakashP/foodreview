@@ -147,6 +147,25 @@ export async function DELETE(
     activeIdempotency = idempotency;
 
     const table = kind === "place" ? "shared_memory_stops" : "shared_memory_dishes";
+    if (kind === "dish") {
+      const { data: dish, error: dishError } = await authorization.admin
+        .from("shared_memory_dishes")
+        .select("added_by")
+        .eq("id", entityId)
+        .eq("room_id", roomId)
+        .maybeSingle<{ added_by: string }>();
+      if (dishError) throw dishError;
+      if (!dish) {
+        await abandonIdempotency(idempotency).catch(() => undefined);
+        activeIdempotency = null;
+        return mobileApiError(req, METHODS, "permanent_denial", "Dish not found", 404);
+      }
+      if (dish.added_by.trim().toLowerCase() !== authorization.actor.actorName.trim().toLowerCase()) {
+        await abandonIdempotency(idempotency).catch(() => undefined);
+        activeIdempotency = null;
+        return mobileApiError(req, METHODS, "permanent_denial", "Only the person who added this dish can delete it", 403);
+      }
+    }
     const { error } = await authorization.admin
       .from(table)
       .delete()
@@ -179,13 +198,13 @@ export async function PUT(
     const dishId = typeof body.dishId === "string" ? body.dishId : "";
     const clientMutationId = typeof body.clientMutationId === "string" ? body.clientMutationId : "";
     const clientSequence = body.clientSequence;
-    const rating = body.rating;
+    const rating = body.rating === null ? null : body.rating;
     if (
       body.kind !== "rating" ||
       !UUID_PATTERN.test(dishId) ||
       !UUID_PATTERN.test(clientMutationId) ||
       !Number.isSafeInteger(clientSequence) || (clientSequence as number) < 1 ||
-      !Number.isInteger(rating) || (rating as number) < 1 || (rating as number) > 5
+      (rating !== null && (!Number.isInteger(rating) || (rating as number) < 1 || (rating as number) > 5))
     ) {
       return mobileApiError(req, METHODS, "invalid_input", "Invalid dish rating", 400);
     }

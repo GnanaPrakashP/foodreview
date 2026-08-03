@@ -10,7 +10,7 @@ import { setMemoryDishRating } from "@/services/memories";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import type { MemoryDish, MemoryDishRating, MemoryRoom } from "@/types/models";
 
-const RATING_DEBOUNCE_MS = 140;
+const RATING_DEBOUNCE_MS = 300;
 const MAX_AUTOMATIC_ATTEMPTS = 5;
 const ratingFlights = new Map<string, RatingFlight>();
 let lastRatingSequence = 0;
@@ -38,6 +38,10 @@ export class PermanentMemoryDishRatingError extends Error {
 
 function ratingKey(roomId: string, dishId: string) {
   return `${roomId}:${dishId}`;
+}
+
+function intentRating(value: number) {
+  return value === 0 ? null : value;
 }
 
 function nextRatingSequence() {
@@ -70,16 +74,16 @@ async function flushFlight(flight: RatingFlight) {
       clientMutationId: sent.clientMutationId,
       clientSequence: sent.clientSequence,
       dishId: sent.dishId,
-      rating: sent.desiredRating,
+      rating: intentRating(sent.desiredRating),
       roomId: sent.roomId
     });
     flight.attempt = 0;
-    flight.confirmedRating = sent.desiredRating;
+    flight.confirmedRating = intentRating(sent.desiredRating);
 
     if (flight.intent.clientSequence === sent.clientSequence) {
       await deleteOfflineMemoryDishRatingOutbox(sent.roomId, sent.dishId, sent.clientSequence);
       if (flight.intent.clientSequence !== sent.clientSequence) {
-        flight.intent = { ...flight.intent, confirmedRating: sent.desiredRating };
+        flight.intent = { ...flight.intent, confirmedRating: intentRating(sent.desiredRating) };
         await saveOfflineMemoryDishRatingOutbox(flight.intent);
         return;
       }
@@ -89,7 +93,7 @@ async function flushFlight(flight: RatingFlight) {
       return;
     }
 
-    flight.intent = { ...flight.intent, confirmedRating: sent.desiredRating };
+    flight.intent = { ...flight.intent, confirmedRating: intentRating(sent.desiredRating) };
     await saveOfflineMemoryDishRatingOutbox(flight.intent);
   } catch (error) {
     if (isPermanentRatingFailure(error) && flight.intent.clientSequence === sent.clientSequence) {
@@ -122,7 +126,7 @@ export function queueMemoryDishRating(input: {
   confirmedRating: number | null;
   deferUntilOnline?: boolean;
   dishId: string;
-  rating: number;
+  rating: number | null;
   roomId: string;
 }) {
   const key = ratingKey(input.roomId, input.dishId);
@@ -131,7 +135,7 @@ export function queueMemoryDishRating(input: {
     clientMutationId: createUuid(),
     clientSequence: nextRatingSequence(),
     confirmedRating: current?.confirmedRating ?? input.confirmedRating,
-    desiredRating: input.rating,
+    desiredRating: input.rating ?? 0,
     dishId: input.dishId,
     roomId: input.roomId,
     updatedAt: Date.now()
@@ -191,7 +195,8 @@ export async function recoverPendingMemoryDishRatings(
 }
 
 export function pendingMemoryDishRating(roomId: string, dishId: string) {
-  return ratingFlights.get(ratingKey(roomId, dishId))?.intent.desiredRating ?? null;
+  const desiredRating = ratingFlights.get(ratingKey(roomId, dishId))?.intent.desiredRating;
+  return desiredRating === undefined ? null : intentRating(desiredRating);
 }
 
 function sameUsername(first: string, second: string) {
@@ -203,13 +208,25 @@ export function applyMemoryDishRating(
   dishId: string,
   username: string,
   displayName: string,
-  rating: number
+  rating: number | null
 ): MemoryRoom {
   const now = new Date().toISOString();
   return {
     ...room,
     dishes: room.dishes.map((dish): MemoryDish => {
       if (dish.id !== dishId) return dish;
+      if (rating === null) {
+        const ratings = dish.ratings.filter((item) => !sameUsername(item.ratedBy, username));
+        return {
+          ...dish,
+          averageRating: ratings.length > 0
+            ? ratings.reduce((total, item) => total + item.rating, 0) / ratings.length
+            : null,
+          myRating: null,
+          ratingCount: ratings.length,
+          ratings
+        };
+      }
       const existing = dish.ratings.find((item) => sameUsername(item.ratedBy, username));
       const ownRating: MemoryDishRating = existing
         ? { ...existing, ratedByDisplayName: displayName || existing.ratedByDisplayName, rating, updatedAt: now }
@@ -245,25 +262,7 @@ export function applyConfirmedMemoryDishRating(
   displayName: string,
   confirmedRating: number | null
 ) {
-  if (confirmedRating !== null) {
-    return applyMemoryDishRating(room, dishId, username, displayName, confirmedRating);
-  }
-  return {
-    ...room,
-    dishes: room.dishes.map((dish) => {
-      if (dish.id !== dishId) return dish;
-      const ratings = dish.ratings.filter((item) => !sameUsername(item.ratedBy, username));
-      return {
-        ...dish,
-        averageRating: ratings.length > 0
-          ? ratings.reduce((total, item) => total + item.rating, 0) / ratings.length
-          : null,
-        myRating: null,
-        ratingCount: ratings.length,
-        ratings
-      };
-    })
-  };
+  return applyMemoryDishRating(room, dishId, username, displayName, confirmedRating);
 }
 
 export function overlayPendingMemoryDishRatings(
@@ -279,7 +278,7 @@ export function overlayPendingMemoryDishRatings(
       flight.intent.dishId,
       username,
       displayName,
-      flight.intent.desiredRating
+      intentRating(flight.intent.desiredRating)
     );
   }
   return next;

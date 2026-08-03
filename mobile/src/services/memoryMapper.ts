@@ -109,11 +109,13 @@ export function mapMemoryMessages({
   messages,
   namesByUsername,
   photos,
+  replyDishes = [],
   replyMessages = []
 }: {
   messages: MemoryMessageRow[];
   namesByUsername: Record<string, string>;
   photos: MemoryPhoto[];
+  replyDishes?: Array<Pick<MemoryDish, "addedByDisplayName" | "dishName" | "id">>;
   replyMessages?: MemoryMessageRow[];
 }): MemoryMessage[] {
   const photosByMessageId = photos.reduce<Record<string, MemoryPhoto[]>>((groups, photo) => {
@@ -127,10 +129,17 @@ export function mapMemoryMessages({
   }
 
   const messageRowsById = new Map([...replyMessages, ...messages].map((message) => [message.id, message]));
+  const replyDishesById = new Map(replyDishes.map((dish) => [dish.id, dish]));
 
   return sortMemoryMessages(messages.map((message): MemoryMessage => {
     const clientCreatedAt = message.client_created_at ?? message.created_at;
     const clientSequence = message.client_sequence == null ? null : Number(message.client_sequence);
+    const replyMessage = message.reply_to_message_id
+      ? messageRowsById.get(message.reply_to_message_id)
+      : undefined;
+    const replyDish = message.reply_to_message_id
+      ? replyDishesById.get(message.reply_to_message_id)
+      : undefined;
     return {
       id: message.id,
       clientId: message.client_id ?? null,
@@ -148,11 +157,13 @@ export function mapMemoryMessages({
       deliveryStatus: "sent",
       editedAt: message.edited_at ?? null,
       replyToMessageId: message.reply_to_message_id ?? null,
-      replyToMessage: message.reply_to_message_id && messageRowsById.has(message.reply_to_message_id)
+      replyToMessage: message.reply_to_message_id && (replyMessage || replyDish)
         ? {
           id: message.reply_to_message_id,
-          authorDisplayName: namesByUsername[messageRowsById.get(message.reply_to_message_id)?.author_name ?? ""] ?? messageRowsById.get(message.reply_to_message_id)?.author_name ?? "Unknown",
-          body: messageRowsById.get(message.reply_to_message_id)?.body || "Media"
+          authorDisplayName: replyMessage
+            ? namesByUsername[replyMessage.author_name] ?? replyMessage.author_name
+            : replyDish?.addedByDisplayName ?? "Unknown",
+          body: replyMessage?.body || (replyDish ? `Dish: ${replyDish.dishName}` : "Media")
         }
         : null
     };
@@ -277,7 +288,9 @@ export function mapMemoryRoom({
     dishes: dishes.map((dish): MemoryDish => {
       const legacyRating = dish.rating === null || dish.rating === undefined ? null : Number(dish.rating);
       const dishRatingRows = ratingsByDishId[dish.id] ?? [];
-      const ratings = dishRatingRows.map((rating) => ({
+      const ratings = dishRatingRows
+        .filter((rating) => rating.rating !== null && Number.isFinite(Number(rating.rating)))
+        .map((rating) => ({
         id: rating.id,
         roomId: rating.room_id,
         dishId: rating.dish_id,
@@ -287,7 +300,7 @@ export function mapMemoryRoom({
         createdAt: rating.created_at,
         updatedAt: rating.updated_at
       }));
-      const effectiveRatings = ratings.length > 0
+      const effectiveRatings = dishRatingRows.length > 0
         ? ratings
         : legacyRating !== null
           ? [{
@@ -323,7 +336,17 @@ export function mapMemoryRoom({
         createdAt: dish.created_at
       };
     }),
-    messages: mapMemoryMessages({ messages, namesByUsername, photos: mappedPhotos, replyMessages }),
+    messages: mapMemoryMessages({
+      messages,
+      namesByUsername,
+      photos: mappedPhotos,
+      replyDishes: dishes.map((dish) => ({
+        addedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
+        dishName: dish.dish_name,
+        id: dish.id
+      })),
+      replyMessages
+    }),
     photos: mappedPhotos
   };
 }

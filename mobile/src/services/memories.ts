@@ -234,7 +234,7 @@ export type SetMemoryDishRatingInput = {
   clientMutationId: string;
   clientSequence: number;
   dishId: string;
-  rating: number;
+  rating: number | null;
   roomId: string;
 };
 
@@ -1181,6 +1181,7 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
     messages: rpcArray(changes.messages),
     namesByUsername,
     photos: changedPhotos,
+    replyDishes: overview.dishes.length > 0 ? overview.dishes : current.dishes,
     replyMessages: rpcArray(changes.replyMessages)
   });
 
@@ -2202,10 +2203,10 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
 }
 
 export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
-  const rating = Number(input.rating);
+  const rating = input.rating === null ? null : Number(input.rating);
 
   if (!input.dishId) throw new Error("Dish is required");
-  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+  if (rating !== null && (!Number.isFinite(rating) || rating < 1 || rating > 5)) {
     throw new Error("Rating must be from 1 to 5");
   }
 

@@ -644,6 +644,29 @@ function useStableHandler<TArgs extends unknown[], TReturn>(handler: (...args: T
   return useCallback((...args: TArgs) => handlerRef.current(...args), []);
 }
 
+function useImmediateDishRating(
+  dishId: string,
+  confirmedRating: number | null,
+  onRateDish: (rating: number | null) => void
+) {
+  const visualRatingRef = useRef(confirmedRating);
+  const [visualRating, setVisualRating] = useState(confirmedRating);
+
+  useEffect(() => {
+    visualRatingRef.current = confirmedRating;
+    setVisualRating(confirmedRating);
+  }, [confirmedRating, dishId]);
+
+  const selectRating = useCallback((star: number) => {
+    const nextRating = visualRatingRef.current === star ? null : star;
+    visualRatingRef.current = nextRating;
+    setVisualRating(nextRating);
+    onRateDish(nextRating);
+  }, [onRateDish]);
+
+  return { selectRating, visualRating };
+}
+
 function effectiveRoomOccasionType(room: Pick<MemoryRoom, "occasionConfidence" | "occasionConfirmedByUser" | "occasionType">): OccasionType {
   if (room.occasionConfirmedByUser || room.occasionConfidence >= 0.85) return room.occasionType;
   return "unknown";
@@ -861,6 +884,28 @@ function canReplyToMemoryMessage(message: MemoryMessage) {
   return Boolean(memoryMessageServerId(message)) && message.deliveryStatus === "sent";
 }
 
+function memoryDishReplyTarget(dish: MemoryDish): MemoryMessage {
+  return {
+    attachments: [],
+    authorDisplayName: dish.addedByDisplayName,
+    authorName: dish.addedBy,
+    body: `Dish: ${dish.dishName}`,
+    clientCreatedAt: dish.createdAt,
+    clientId: null,
+    clientOrderKey: `dish:${dish.createdAt}:${dish.id}`,
+    clientSequence: null,
+    createdAt: dish.createdAt,
+    deliveryStatus: "sent",
+    editedAt: null,
+    id: dish.id,
+    replyToMessage: null,
+    replyToMessageId: null,
+    roomId: dish.roomId,
+    serverCreatedAt: dish.createdAt,
+    serverId: dish.id
+  };
+}
+
 function canEditMemoryMessage(message: MemoryMessage, myUsername: string) {
   return (
     message.authorName === myUsername &&
@@ -885,7 +930,7 @@ function canDiscardMemoryMessage(message: MemoryMessage, myUsername: string) {
 }
 
 function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: string) {
-  if (target.type === "dish") return true;
+  if (target.type === "dish") return sameUsername(target.value.addedBy, myUsername);
   if (target.type === "message") {
     return (
       target.value.authorName === myUsername &&
@@ -1803,7 +1848,7 @@ function MemoryChatMainSurface({
   onScrollOffsetChange: (offset: number) => void;
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
-  onRateDish: (dishId: string, rating: number) => void;
+  onRateDish: (dishId: string, rating: number | null) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onRetryFailedMessage: (message: MemoryMessage) => void;
   onSend: (draft?: string, clientId?: string, clientCreatedAt?: string) => void;
@@ -6720,7 +6765,7 @@ export default function MemoryDetailScreen() {
   // own data changes — not on chat typing or tab switches. setDetailDishId,
   // loadOlderMessages, loadMoreMedia and scrollChatToBottom are already stable.
   const stableOpenMedia = useStableHandler(openMediaViewer);
-  const stableRateDish = useStableHandler((dishId: string, rating: number) => {
+  const stableRateDish = useStableHandler((dishId: string, rating: number | null) => {
     recordMemoryRoomJourney(journeySession, "DISH_MUTATION_STARTED", {
       queryState: "mutating",
       tab: paneTabMode
@@ -7068,6 +7113,10 @@ export default function MemoryDetailScreen() {
     selectedTargets.length === 1 && selectedTargets[0].type === "message"
       ? selectedTargets[0].value
       : null;
+  const singleSelectedDish =
+    selectedTargets.length === 1 && selectedTargets[0].type === "dish"
+      ? selectedTargets[0].value
+      : null;
   const editableSelectedMessage =
     singleSelectedMessage && canEditMemoryMessage(singleSelectedMessage, myUsername)
       ? singleSelectedMessage
@@ -7079,7 +7128,9 @@ export default function MemoryDetailScreen() {
   const replyableSelectedMessage =
     singleSelectedMessage && canReplyToMemoryMessage(singleSelectedMessage)
       ? singleSelectedMessage
-      : null;
+      : singleSelectedDish
+        ? memoryDishReplyTarget(singleSelectedDish)
+        : null;
   const discardableSelectedMessage =
     singleSelectedMessage && canDiscardMemoryMessage(singleSelectedMessage, myUsername)
       ? singleSelectedMessage
@@ -8376,7 +8427,7 @@ function ChatTimeline({
   onOpenDish: (dishId: string) => void;
   onOpenMedia: OpenMediaHandler;
   onOpenReactionPicker: (messageId: string) => void;
-  onRateDish: (dishId: string, rating: number) => void;
+  onRateDish: (dishId: string, rating: number | null) => void;
   onCancelFailedMessage: (message: MemoryMessage) => void;
   onReplyMessage: (message: MemoryMessage) => void;
   onRetryFailedMessage: (message: MemoryMessage) => void;
@@ -8616,7 +8667,7 @@ function ChatTimeline({
   const messageRowIndexById = useMemo(() => {
     const byId = new Map<string, number>();
     invertedRows.forEach((row, index) => {
-      if (row.type === "message") byId.set(row.value.id, index);
+      if (row.type === "message" || row.type === "dish") byId.set(row.value.id, index);
     });
     return byId;
   }, [invertedRows]);
@@ -8821,7 +8872,7 @@ function ChatTimeline({
   const closeRowReactionPicker = useCallback(() => rowHandlersRef.current.onCloseReactionPicker(), []);
   const finishRowSelectionPress = useCallback((target: MemoryActionTarget) => rowHandlersRef.current.onSelectionPressOut(target), []);
   const openRowDish = useCallback((dishId: string) => rowHandlersRef.current.onOpenDish(dishId), []);
-  const rateRowDish = useCallback((dishId: string, rating: number) => rowHandlersRef.current.onRateDish(dishId, rating), []);
+  const rateRowDish = useCallback((dishId: string, rating: number | null) => rowHandlersRef.current.onRateDish(dishId, rating), []);
   const openRowMedia = useCallback<OpenMediaHandler>((media, group) => rowHandlersRef.current.onOpenMedia(media, group), []);
   const openRowReactionPicker = useCallback((messageId: string) => rowHandlersRef.current.onOpenReactionPicker(messageId), []);
   const replyToRow = useCallback((message: MemoryMessage) => rowHandlersRef.current.onReplyMessage(message), []);
@@ -10435,7 +10486,7 @@ function DishTimelineCard({
   onLongPress: () => void;
   onOpenDish: () => void;
   onPress?: () => void;
-  onRateDish: (rating: number) => void;
+  onRateDish: (rating: number | null) => void;
   rowStyle?: StyleProp<ViewStyle>;
   selected: boolean;
   selectionGestureOwnedByParent?: boolean;
@@ -10443,7 +10494,8 @@ function DishTimelineCard({
   showSenderDetails: boolean;
 }) {
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
-  const myRating = dish.myRating ?? 0;
+  const { selectRating, visualRating } = useImmediateDishRating(dish.id, dish.myRating, onRateDish);
+  const myRating = visualRating ?? 0;
 
   return (
     <MessageRow
@@ -10483,7 +10535,9 @@ function DishTimelineCard({
             <View style={styles.dishTimelineStars}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <Pressable
-                  accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
+                  accessibilityLabel={visualRating === star
+                    ? `Remove your rating from ${dish.dishName}`
+                    : `Rate ${dish.dishName} ${star} out of 5`}
                   accessibilityRole="button"
                   accessibilityState={{ disabled: selectionMode, selected: star <= myRating }}
                   delayLongPress={320}
@@ -10491,7 +10545,7 @@ function DishTimelineCard({
                   hitSlop={6}
                   key={star}
                   onLongPress={onLongPress}
-                  onPress={() => onRateDish(star)}
+                  onPress={() => selectRating(star)}
                   style={styles.dishTimelineStarButton}
                 >
                   <Star
@@ -11269,11 +11323,15 @@ const DishesPanelRow = memo(function DishesPanelRow({
   dish: MemoryDish;
   journeySession: MemoryRoomJourneySession;
   onOpenDish: (dishId: string) => void;
-  onRateDish: (dishId: string, rating: number) => void;
+  onRateDish: (dishId: string, rating: number | null) => void;
 }) {
   const ratingValue = dish.averageRating;
   const raterAvatars = dish.ratings.slice(0, 4);
   const extraRaterCount = Math.max(0, dish.ratingCount - raterAvatars.length);
+  const submitRating = useCallback((rating: number | null) => {
+    onRateDish(dish.id, rating);
+  }, [dish.id, onRateDish]);
+  const { selectRating, visualRating } = useImmediateDishRating(dish.id, dish.myRating, submitRating);
 
   return (
     <View style={styles.dishCard}>
@@ -11342,23 +11400,25 @@ const DishesPanelRow = memo(function DishesPanelRow({
 
         <View style={styles.dishYourRatingRow}>
           <Text style={styles.dishYourRatingLabel}>
-            {dish.myRating ? `Your rating ${dish.myRating}/5` : "Your rating"}
+            {visualRating ? `Your rating ${visualRating}/5` : "Your rating"}
           </Text>
           <View style={styles.dishYourStars}>
             {[1, 2, 3, 4, 5].map((star) => (
               <Pressable
-                accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
+                accessibilityLabel={visualRating === star
+                  ? `Remove your rating from ${dish.dishName}`
+                  : `Rate ${dish.dishName} ${star} out of 5`}
                 accessibilityRole="button"
-                accessibilityState={{ selected: star <= (dish.myRating ?? 0) }}
+                accessibilityState={{ selected: star <= (visualRating ?? 0) }}
                 hitSlop={6}
                 key={star}
-                onPress={() => onRateDish(dish.id, star)}
+                onPress={() => selectRating(star)}
                 style={styles.dishYourStarButton}
               >
                 <Star
                   size={19}
                   color={ROOM_COLORS.gold}
-                  fill={star <= (dish.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
+                  fill={star <= (visualRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
                   strokeWidth={1.8}
                 />
               </Pressable>
@@ -11385,7 +11445,7 @@ function DishesPanel({
   initialScrollOffset: number;
   journeySession: MemoryRoomJourneySession;
   onOpenDish: (dishId: string) => void;
-  onRateDish: (dishId: string, rating: number) => void;
+  onRateDish: (dishId: string, rating: number | null) => void;
   onScrollOffsetChange: (offset: number) => void;
   themeCopy: OccasionTheme["copy"];
 }) {
@@ -11452,7 +11512,7 @@ function DishDetailSheet({
   error?: string;
   myUsername: string;
   onClose: () => void;
-  onRateDish: (dishId: string, rating: number) => void;
+  onRateDish: (dishId: string, rating: number | null) => void;
 }) {
   const insets = useSafeAreaInsets();
   const visible = dish !== null;
@@ -11493,6 +11553,15 @@ function DishDetailSheet({
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: (1 - slide.value) * (sheetHeight.value || ATTACH_SHEET_FALLBACK_HEIGHT) }]
   }));
+  const renderedDishId = renderedDish?.id ?? "";
+  const submitRating = useCallback((rating: number | null) => {
+    if (renderedDish) onRateDish(renderedDish.id, rating);
+  }, [onRateDish, renderedDish]);
+  const { selectRating, visualRating } = useImmediateDishRating(
+    renderedDishId,
+    renderedDish?.myRating ?? null,
+    submitRating
+  );
 
   if (!mounted || !renderedDish) return null;
 
@@ -11529,23 +11598,25 @@ function DishDetailSheet({
 
           <View style={styles.dishSheetRateBlock}>
             <Text style={styles.dishSheetRateLabel}>
-              {dishData.myRating ? `Your rating · ${dishData.myRating}/5` : "Tap to rate"}
+              {visualRating ? `Your rating · ${visualRating}/5` : "Tap to rate"}
             </Text>
             <View style={styles.dishSheetStars}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <Pressable
-                  accessibilityLabel={`Rate ${dishData.dishName} ${star} out of 5`}
+                  accessibilityLabel={visualRating === star
+                    ? `Remove your rating from ${dishData.dishName}`
+                    : `Rate ${dishData.dishName} ${star} out of 5`}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: star <= (dishData.myRating ?? 0) }}
+                  accessibilityState={{ selected: star <= (visualRating ?? 0) }}
                   hitSlop={6}
                   key={star}
-                  onPress={() => onRateDish(dishData.id, star)}
+                  onPress={() => selectRating(star)}
                   style={styles.dishSheetStarButton}
                 >
                   <Star
                     size={30}
                     color={ROOM_COLORS.gold}
-                    fill={star <= (dishData.myRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
+                    fill={star <= (visualRating ?? 0) ? ROOM_COLORS.gold : "transparent"}
                     strokeWidth={1.7}
                   />
                 </Pressable>
