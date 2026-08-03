@@ -754,18 +754,21 @@ function clampUploadProgress(progress: number) {
   return Math.max(0, Math.min(progress, 1));
 }
 
-// Confirmation swaps a photo's LOCAL preview for a remote URL. Mounting an
-// image whose bytes are not cached yet paints a blank frame first, which is the
-// picture visibly disappearing and coming back the moment upload hits 100%.
-// Warming the cache before the swap makes it paint immediately instead. Bounded
-// because confirmation must never wait on the network: if the warm does not
-// finish in time the swap happens anyway and behaves exactly as before.
+// Confirmation swaps a LOCAL media preview for a remote image or video poster.
+// Mounting bytes that are not cached yet paints a blank frame first, which is
+// the tile visibly disappearing and coming back when upload finishes. Warm the
+// final visual before the swap; the timeout keeps confirmation network-bounded.
 const MEMORY_PHOTO_CACHE_WARM_TIMEOUT_MS = 1_500;
 
 async function warmMemoryPhotoCache(photos: MemoryPhoto[]) {
   const urls = photos
-    .filter((photo) => photo.mediaType === "image")
-    .map((photo) => photo.thumbnailUrl || photo.publicUrl)
+    .map((photo) => (
+      photo.mediaType === "video"
+        ? photo.posterUrl
+        : photo.mediaType === "image"
+          ? photo.thumbnailUrl || photo.publicUrl
+          : null
+    ))
     .filter((url): url is string => Boolean(url));
   if (urls.length === 0) return;
   await Promise.race([

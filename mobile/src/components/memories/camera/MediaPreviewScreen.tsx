@@ -5,8 +5,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -145,7 +146,13 @@ export function MediaPreviewScreen({
       <StatusBar hidden />
       <View style={styles.mediaLayer}>
         {asset.mediaType === "video" ? (
-          <CapturedVideo journeySession={journeySession} muted={videoMuted} uri={asset.uri} />
+          <CapturedVideo
+            bottomOffset={bottomInset + (postError ? 118 : 76)}
+            durationMs={asset.duration}
+            journeySession={journeySession}
+            muted={videoMuted}
+            uri={asset.uri}
+          />
         ) : (
           <Image alt="Captured photo" contentFit="contain" source={{ uri: asset.uri }} style={styles.imagePreview} />
         )}
@@ -194,11 +201,20 @@ export function MediaPreviewScreen({
   );
 }
 
+function formatPreviewVideoTime(seconds: number) {
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 function CapturedVideo({
+  bottomOffset,
+  durationMs,
   journeySession,
   muted,
   uri
 }: {
+  bottomOffset: number;
+  durationMs?: number | null;
   journeySession: MemoryRoomJourneySession;
   muted: boolean;
   uri: string;
@@ -206,8 +222,12 @@ function CapturedVideo({
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.muted = muted;
+    instance.timeUpdateEventInterval = 0.1;
     instance.play();
   });
+  const [isPlaying, setIsPlaying] = useState(true);
+  const playingRef = useRef(true);
+  const timelineWidthRef = useRef(0);
 
   useEffect(() => {
     recordMemoryRoomJourney(journeySession, "PLAYER_CREATED", {
@@ -231,15 +251,58 @@ function CapturedVideo({
     player.muted = muted;
   }, [muted, player]);
 
-  const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
+  const playingEvent = useEvent(player, "playingChange", { isPlaying: player.playing });
+  const timeEvent = useEvent(player, "timeUpdate");
+  const capturedDuration = durationMs && durationMs > 0 ? durationMs / 1000 : 0;
+  const duration = Math.max(0, player.duration || capturedDuration);
+  const currentTime = Math.max(0, Math.min(timeEvent?.currentTime ?? player.currentTime, duration || Number.MAX_SAFE_INTEGER));
+  const progress = duration > 0 ? Math.max(0, Math.min(currentTime / duration, 1)) : 0;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+
+  useEffect(() => {
+    playingRef.current = playingEvent.isPlaying;
+    setIsPlaying(playingEvent.isPlaying);
+  }, [playingEvent.isPlaying]);
+
+  function seekToTimelinePosition(position: number) {
+    const width = timelineWidthRef.current;
+    const latestDuration = durationRef.current;
+    if (width <= 0 || latestDuration <= 0) return;
+    player.currentTime = Math.max(0, Math.min(latestDuration, (position / width) * latestDuration));
+  }
+
+  const timelinePan = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (event) => seekToTimelinePosition(event.nativeEvent.locationX),
+    onPanResponderMove: (event) => seekToTimelinePosition(event.nativeEvent.locationX),
+    onStartShouldSetPanResponder: () => true
+  // `player` is stable for the lifetime of this captured URI. Duration and
+  // layout width are read from refs so the responder is not rebuilt at 10 Hz.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [player]);
 
   function togglePlay() {
-    if (player.playing) player.pause();
-    else player.play();
+    const nextPlaying = !playingRef.current;
+    playingRef.current = nextPlaying;
+    setIsPlaying(nextPlaying);
+    try {
+      if (nextPlaying) player.play();
+      else player.pause();
+    } catch {
+      playingRef.current = player.playing;
+      setIsPlaying(player.playing);
+    }
+  }
+
+  function seekRelative(seconds: number) {
+    const latestDuration = durationRef.current;
+    if (latestDuration <= 0) return;
+    player.currentTime = Math.max(0, Math.min(latestDuration, player.currentTime + seconds));
   }
 
   return (
-    <Pressable onPress={togglePlay} style={StyleSheet.absoluteFill}>
+    <View style={StyleSheet.absoluteFill}>
       <VideoView
         allowsFullscreen={false}
         allowsPictureInPicture={false}
@@ -249,6 +312,12 @@ function CapturedVideo({
         pointerEvents="none"
         style={styles.videoPreview}
       />
+      <Pressable
+        accessibilityLabel={isPlaying ? "Pause preview video" : "Play preview video"}
+        accessibilityRole="button"
+        onPress={togglePlay}
+        style={StyleSheet.absoluteFill}
+      />
       {!isPlaying ? (
         <View pointerEvents="none" style={styles.playOverlay}>
           <View style={styles.playButton}>
@@ -256,7 +325,54 @@ function CapturedVideo({
           </View>
         </View>
       ) : null}
-    </Pressable>
+      <View style={[styles.videoTransport, { bottom: bottomOffset }]}>
+        <View style={styles.videoTimelineRow}>
+          <Pressable
+            accessibilityLabel="Rewind preview video 10 seconds"
+            accessibilityRole="button"
+            hitSlop={6}
+            onPress={() => seekRelative(-10)}
+            style={styles.videoSeekButton}
+          >
+            <Ionicons name="play-back" size={18} color={colors.dark.white} />
+            <Text style={styles.videoSeekButtonText}>10</Text>
+          </Pressable>
+          <View
+            {...timelinePan.panHandlers}
+            accessibilityLabel="Preview video timeline"
+            accessibilityRole="adjustable"
+            accessibilityValue={{
+              max: Math.max(0, Math.round(duration)),
+              min: 0,
+              now: Math.max(0, Math.round(currentTime)),
+              text: `${formatPreviewVideoTime(currentTime)} of ${formatPreviewVideoTime(duration)}`
+            }}
+            onLayout={(event) => {
+              timelineWidthRef.current = event.nativeEvent.layout.width;
+            }}
+            style={styles.videoTimelineTouchTarget}
+          >
+            <View pointerEvents="none" style={styles.videoTimelineTrack}>
+              <View style={[styles.videoTimelineFill, { width: `${Math.round(progress * 100)}%` }]} />
+              <View style={[styles.videoTimelineThumb, { left: `${Math.round(progress * 100)}%` }]} />
+            </View>
+          </View>
+          <Pressable
+            accessibilityLabel="Forward preview video 10 seconds"
+            accessibilityRole="button"
+            hitSlop={6}
+            onPress={() => seekRelative(10)}
+            style={styles.videoSeekButton}
+          >
+            <Text style={styles.videoSeekButtonText}>10</Text>
+            <Ionicons name="play-forward" size={18} color={colors.dark.white} />
+          </Pressable>
+        </View>
+        <Text style={styles.videoTimelineTime}>
+          {formatPreviewVideoTime(currentTime)} / {formatPreviewVideoTime(duration)}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -277,6 +393,70 @@ const styles = StyleSheet.create({
   videoPreview: {
     height: "100%",
     width: "100%"
+  },
+  videoSeekButton: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 2,
+    height: 40,
+    justifyContent: "center",
+    minWidth: 48
+  },
+  videoSeekButtonText: {
+    ...fontStyles.bold,
+    color: colors.dark.white,
+    fontSize: 11,
+    letterSpacing: 0
+  },
+  videoTimelineFill: {
+    backgroundColor: colors.dark.memory,
+    borderRadius: radius.pill,
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    top: 0
+  },
+  videoTimelineRow: {
+    alignItems: "center",
+    flexDirection: "row"
+  },
+  videoTimelineThumb: {
+    backgroundColor: colors.dark.white,
+    borderRadius: radius.pill,
+    height: 12,
+    marginLeft: -6,
+    marginTop: -4,
+    position: "absolute",
+    top: "50%",
+    width: 12
+  },
+  videoTimelineTime: {
+    ...fontStyles.semiBold,
+    color: colors.dark.white,
+    fontSize: 11,
+    letterSpacing: 0,
+    textAlign: "center"
+  },
+  videoTimelineTouchTarget: {
+    flex: 1,
+    height: 40,
+    justifyContent: "center"
+  },
+  videoTimelineTrack: {
+    backgroundColor: "rgba(255,255,255,0.3)",
+    borderRadius: radius.pill,
+    height: 4
+  },
+  videoTransport: {
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: radius.card,
+    gap: 1,
+    left: spacing.lg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    position: "absolute",
+    right: spacing.lg,
+    zIndex: 4
   },
   postingState: {
     alignItems: "center",

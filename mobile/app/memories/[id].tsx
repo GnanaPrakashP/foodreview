@@ -9335,10 +9335,19 @@ function VideoThumbnailLayer({
   uri: string;
   viewKey?: string;
 }) {
-  if (posterUri) {
-    return (
+  // Keep the local preview mounted beneath the signed server poster during an
+  // optimistic -> confirmed swap. The poster URL belongs to a different media
+  // identity and may need a network/disk-cache read; removing the local frame
+  // first made the video tile go blank and then reappear at upload completion.
+  // This ref deliberately stops following `cacheKey` once a poster arrives.
+  const localFallbackRef = useRef<{ cacheKey: string; uri: string } | null>(null);
+  if (!posterUri) localFallbackRef.current = { cacheKey, uri };
+
+  if (Platform.OS === "web") {
+    return posterUri ? (
       <View style={styles.videoThumbnailLayer}>
         <Image
+          alt="Video preview"
           cachePolicy="memory-disk"
           contentFit={contentFit}
           priority="high"
@@ -9347,10 +9356,33 @@ function VideoThumbnailLayer({
           style={styles.videoThumbnailImage}
         />
       </View>
-    );
+    ) : <WebVideoThumbnailLayer contentFit={contentFit} uri={uri} />;
   }
-  if (Platform.OS === "web") {
-    return <WebVideoThumbnailLayer contentFit={contentFit} uri={uri} />;
+
+  const localFallback = localFallbackRef.current;
+  if (posterUri || localFallback) {
+    return (
+      <View style={styles.videoThumbnailLayer}>
+        {localFallback ? (
+          <NativeVideoThumbnailLayer
+            cacheKey={localFallback.cacheKey}
+            contentFit={contentFit}
+            uri={localFallback.uri}
+          />
+        ) : null}
+        {posterUri ? (
+          <Image
+            alt="Video preview"
+            cachePolicy="memory-disk"
+            contentFit={contentFit}
+            priority="high"
+            recyclingKey={`${viewKey ?? cacheKey}:poster`}
+            source={posterUri}
+            style={styles.videoThumbnailImage}
+          />
+        ) : null}
+      </View>
+    );
   }
 
   return <NativeVideoThumbnailLayer cacheKey={cacheKey} contentFit={contentFit} uri={uri} />;

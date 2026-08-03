@@ -103,6 +103,28 @@ test("media processing keeps truthful states and retry requeues the same asset w
   assert.match(blueprint, /SUPABASE_SERVICE_ROLE_KEY[\s\S]*?sync: false/);
 });
 
+test("video confirmation keeps its local frame while the server poster paints", () => {
+  const hook = source("mobile/src/hooks/useMemories.ts");
+  const room = source("mobile/app/memories/[id].tsx");
+
+  assert.match(hook, /photo\.mediaType === "video"[\s\S]*?photo\.posterUrl/);
+  assert.match(room, /const localFallbackRef = useRef<\{ cacheKey: string; uri: string \} \| null>\(null\)/);
+  assert.match(room, /if \(!posterUri\) localFallbackRef\.current = \{ cacheKey, uri \}/);
+  assert.match(room, /localFallback[\s\S]*?<NativeVideoThumbnailLayer[\s\S]*?posterUri[\s\S]*?<Image/);
+});
+
+test("captured-video preview has responsive playback, scrubbing and ten-second seeking", () => {
+  const preview = source("mobile/src/components/memories/camera/MediaPreviewScreen.tsx");
+
+  assert.match(preview, /instance\.timeUpdateEventInterval = 0\.1/);
+  assert.match(preview, /const timeEvent = useEvent\(player, "timeUpdate"\)/);
+  assert.match(preview, /onPress=\{togglePlay\}/);
+  assert.match(preview, /PanResponder\.create/);
+  assert.match(preview, /seekRelative\(-10\)/);
+  assert.match(preview, /seekRelative\(10\)/);
+  assert.match(preview, /formatPreviewVideoTime\(currentTime\).*formatPreviewVideoTime\(duration\)/s);
+});
+
 test("protected worker health exposes queue progress without private media identifiers", () => {
   const health = source("lib/server/media-pipeline.ts");
   const route = source("app/api/internal/media/health/route.ts");

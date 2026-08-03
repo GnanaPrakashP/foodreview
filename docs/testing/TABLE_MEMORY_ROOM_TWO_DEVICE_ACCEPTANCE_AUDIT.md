@@ -791,3 +791,47 @@ Successful retest evidence:
 - `/private/tmp/circlebites-memory-final-cold.db`
 
 Phone A is **PASS** for processing-video cancellation, including Chat/Media consistency, server cancellation fencing and cold-restart persistence. The underlying video-processing latency/FFmpeg investigation was deliberately deferred as requested and is not resolved by this cancellation fix. The full audit verdict remains **NO-GO** because Phone B confirmation and the other outstanding two-device cases are still required.
+
+## 26. Phone A video-preview controls and upload-thumbnail continuity (2026-08-04)
+
+Two focused video UX changes were implemented:
+
+1. The optimistic local video thumbnail now remains mounted beneath the signed server poster during confirmation, and the poster is prefetched before the cache swap. This prevents confirmation from removing the already visible local frame while the remote poster is still loading.
+2. The capture preview now updates playback state immediately, emits timeline updates every 100 ms, and provides a draggable timeline plus explicit −10-second and +10-second controls above `Post to Room`.
+
+Focused regression evidence:
+
+- Video-processing/settlement tests: **17/17 PASS**.
+- Targeted upload-identity and preview-control tests: **4/4 PASS**.
+- Mobile TypeScript check: **PASS**.
+- Targeted ESLint: **PASS with no errors**; the reported warnings are pre-existing warnings in the large room screen.
+- Diff whitespace validation: **PASS**.
+
+Physical Phone A results:
+
+| Focused physical case | Result | Observation |
+| --- | --- | --- |
+| Tap the captured video to pause | PASS | The accessibility state changed immediately to `Play preview video` and the paused frame remained visible |
+| Tap again to resume | PASS | Playback resumed, advanced the elapsed time and paused again on the next tap |
+| Seek forward 10 seconds | PASS | The displayed position changed from 0:07 to 0:17 |
+| Seek backward 10 seconds | PASS | The displayed position changed from 0:17 to 0:07 |
+| Drag the preview timeline | PASS | A physical drag moved the displayed position continuously to 0:20 of 0:25 |
+| Keep the local video tile visible during upload and processing | PASS | A 161-second screen recording showed the same local thumbnail continuously from preview through upload and the `Processing` state; no blank or removed row occurred |
+| Keep the tile visible across the final local-thumbnail → server-poster confirmation | BLOCKED | The 19.49 MiB, 17.51-second test asset uploaded successfully, but the server job remained `running` on attempt 2 and never reached `ready` during the observation window |
+| Confirm the same behavior on Phone B | BLOCKED | Phone B was not exposed by ADB during this focused retest |
+
+Evidence:
+
+- `/private/tmp/tmr-video-preview-controls.png`
+- `/private/tmp/video-preview-controls.xml`
+- `/private/tmp/video-preview-forward.xml`
+- `/private/tmp/video-preview-rewind.xml`
+- `/private/tmp/video-preview-scrub.xml`
+- `/private/tmp/video-preview-toggle.xml`
+- `/private/tmp/tmr-video-short-progress-10s.png`
+- `/private/tmp/tmr-video-short-progress-30s.png`
+- `/private/tmp/tmr-video-short-progress-55s.png`
+- `/private/tmp/tmr-video-upload-continuity-short.mp4`
+- `/private/tmp/tmr-video-upload-continuity-contact-sheet.png`
+
+The preview-control defect is **PASS on Phone A**. Upload/processing thumbnail continuity is **PASS up to the worker boundary**, but final confirmation remains **BLOCKED** by the separately deferred processing failure. This section does not claim that the video-processing latency/root cause is resolved. The full audit verdict remains **NO-GO**.
