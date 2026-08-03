@@ -168,7 +168,7 @@ import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
-import { captureMobileError } from "@/observability/mobileTelemetry";
+import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import {
   useAddMemoryMessageMutation,
@@ -830,6 +830,56 @@ function memoryChatReactionsForMessage(messageId: string, reactions: MemoryReact
 
 function memoryChatMediaUrl(media: MemoryPhoto | null | undefined) {
   return media?.publicUrl ?? undefined;
+}
+
+function memoryMediaNeedsStatusOverlay(media: MemoryPhoto) {
+  return isOptimisticMemoryMedia(media) || Boolean(
+    media.processingStatus && media.processingStatus !== "ready"
+  );
+}
+
+function memoryMediaHasVisual(media: MemoryPhoto) {
+  return Boolean(media.posterUrl || media.thumbnailUrl || media.publicUrl);
+}
+
+const memoryMediaRenderTelemetrySeen = new Set<string>();
+registerSensitiveResourceCleanup(() => memoryMediaRenderTelemetrySeen.clear());
+
+function useMemoryMediaRenderTelemetry(media: MemoryPhoto, surface: "chat" | "media") {
+  const profile = useSessionStore((state) => state.profile);
+  const hasVisual = memoryMediaHasVisual(media);
+  const status = media.processingStatus ?? null;
+  const viewerRole = profile && (
+    media.uploaderId === profile.userId || media.uploaderName === profile.username
+  ) ? "sender" : "recipient";
+
+  useEffect(() => {
+    if (!hasVisual || !status || !["uploaded", "processing", "ready"].includes(status)) return;
+    const createdAt = Date.parse(media.createdAt);
+    if (!Number.isFinite(createdAt)) return;
+    const durationMs = Math.max(0, Date.now() - createdAt);
+    const usableKey = `${media.id}:${viewerRole}:usable`;
+    if (!memoryMediaRenderTelemetrySeen.has(usableKey)) {
+      memoryMediaRenderTelemetrySeen.add(usableKey);
+      recordMobileFlow("memory.media_usable_render", durationMs, "success", {
+        media_kind: memoryMediaKind(media),
+        processing_status: status,
+        surface,
+        viewer_role: viewerRole
+      });
+    }
+    if (status === "ready") {
+      const finalKey = `${media.id}:${viewerRole}:final`;
+      if (!memoryMediaRenderTelemetrySeen.has(finalKey)) {
+        memoryMediaRenderTelemetrySeen.add(finalKey);
+        recordMobileFlow("memory.media_final_render", durationMs, "success", {
+          media_kind: memoryMediaKind(media),
+          surface,
+          viewer_role: viewerRole
+        });
+      }
+    }
+  }, [hasVisual, media.createdAt, media.id, media.mediaType, status, surface, viewerRole]);
 }
 
 function memoryChatMessageAttachments(message: MemoryChatMainMessage | undefined): MemoryPhoto[] {
@@ -9528,13 +9578,22 @@ function WebVideoThumbnailLayer({
   );
 }
 
-function UploadProgressOverlay({ progress }: { progress?: number | null }) {
+function UploadProgressOverlay({
+  progress,
+  status
+}: {
+  progress?: number | null;
+  status?: MemoryPhoto["processingStatus"];
+}) {
   const normalizedProgress = Math.max(0, Math.min(progress ?? 0, 1));
   // mediaPipeline maps preparation/intent work to 0..0.18, the direct storage
   // PUT to 0.18..0.90 and worker polling to 0.90..1. Keep those stages visible
   // instead of calling the entire operation "uploading".
-  const preparing = normalizedProgress < 0.18;
-  const processing = normalizedProgress >= 0.9;
+  const terminal = status === "failed" || status === "rejected" || status === "cancelled";
+  const preparing = !terminal && (status === "local" || (!status && normalizedProgress < 0.18));
+  const processing = !terminal && (
+    status === "uploaded" || status === "processing" || normalizedProgress >= 0.9
+  );
   const uploadFraction = preparing
     ? 0
     : Math.max(0, Math.min((normalizedProgress - 0.18) / 0.72, 1));
@@ -9569,9 +9628,15 @@ function UploadProgressOverlay({ progress }: { progress?: number | null }) {
             transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
           />
         </Svg>
-        {preparing || processing ? null : <Text style={styles.uploadProgressText}>{progressPercent}%</Text>}
+        {terminal ? (
+          <Ionicons color={ROOM_COLORS.white} name="alert" size={18} />
+        ) : preparing || processing ? null : (
+          <Text style={styles.uploadProgressText}>{progressPercent}%</Text>
+        )}
       </View>
-      <Text style={styles.mediaPendingText}>{preparing ? "Preparing" : processing ? "Processing" : "Uploading"}</Text>
+      <Text style={styles.mediaPendingText}>
+        {terminal ? "Could not process" : preparing ? "Preparing" : processing ? "Processing" : "Uploading"}
+      </Text>
     </View>
   );
 }
@@ -10336,7 +10401,7 @@ function MessageBubble({
     });
 
     function handleOpenMedia() {
-      if (shouldIgnoreMediaOpen()) return;
+      if (shouldIgnoreMediaOpen() || !memoryMediaHasVisual(media)) return;
       onOpenMedia(media, message.attachments);
     }
 
@@ -10673,7 +10738,7 @@ function MediaBubble({
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
 
   function handleOpenMedia() {
-    if (shouldIgnoreMediaOpen()) return;
+    if (shouldIgnoreMediaOpen() || !memoryMediaHasVisual(photo)) return;
     onOpenMedia(photo, [photo]);
   }
 
@@ -10762,7 +10827,7 @@ function MediaAttachmentGrid({
   );
 
   function handleOpenMedia(item: MemoryPhoto) {
-    if (shouldIgnoreMediaOpen()) return;
+    if (shouldIgnoreMediaOpen() || !memoryMediaHasVisual(item)) return;
     onOpenMedia(item, media);
   }
 
@@ -10934,7 +10999,9 @@ function MediaGridTile({
 }
 
 function GridMediaPreview({ media, viewKey }: { media: MemoryPhoto; viewKey?: string }) {
-  const uploading = isOptimisticMemoryMedia(media);
+  useMemoryMediaRenderTelemetry(media, "chat");
+  const uploading = memoryMediaNeedsStatusOverlay(media);
+  const hasVisual = memoryMediaHasVisual(media);
 
   if (memoryMediaKind(media) === "audio") {
     return <AudioMediaPreview compact media={media} style={styles.gridMediaFill} />;
@@ -10943,7 +11010,9 @@ function GridMediaPreview({ media, viewKey }: { media: MemoryPhoto; viewKey?: st
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={styles.gridVideoPreview}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
+        {hasVisual ? (
+          <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit="contain" posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
+        ) : null}
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.gridVideoOverlay}>
           {!uploading ? (
@@ -10955,7 +11024,7 @@ function GridMediaPreview({ media, viewKey }: { media: MemoryPhoto; viewKey?: st
             <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
             <Text style={styles.mediaTypeBadgeText}>Video</Text>
           </View>
-          {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
+          {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} status={media.processingStatus} /> : null}
         </View>
       </View>
     );
@@ -10963,14 +11032,16 @@ function GridMediaPreview({ media, viewKey }: { media: MemoryPhoto; viewKey?: st
 
   return (
     <View style={styles.gridMediaFill}>
-      <Image
-        cachePolicy="memory-disk"
-        contentFit="contain"
-        recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
-        source={media.thumbnailUrl || media.publicUrl}
-        style={styles.gridMediaFill}
-      />
-      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
+      {hasVisual ? (
+        <Image
+          cachePolicy="memory-disk"
+          contentFit="contain"
+          recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
+          source={media.thumbnailUrl || media.publicUrl}
+          style={styles.gridMediaFill}
+        />
+      ) : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} status={media.processingStatus} /> : null}
     </View>
   );
 }
@@ -11065,7 +11136,7 @@ function MediaGallery({
             onPress={() => onOpenMedia(photo, photos)}
             style={styles.galleryMediaButton}
           >
-            <MediaPreview contentFit="cover" media={photo} style={styles.galleryMediaPreview} />
+            <MediaPreview contentFit="cover" media={photo} style={styles.galleryMediaPreview} telemetrySurface="media" />
           </Pressable>
         </View>
       )}
@@ -12727,7 +12798,7 @@ function SingleMediaPreview({
 
   return (
     <View style={[styles.singleMediaContainer, imageClipPassthrough, previewSize]}>
-      <MediaPreview media={media} style={[styles.singleMediaFill, imageClipPassthrough]} viewKey={viewKey} />
+      <MediaPreview media={media} style={[styles.singleMediaFill, imageClipPassthrough]} telemetrySurface="chat" viewKey={viewKey} />
       {timestamp ? (
         <MediaTimestampOverlay
           placement={timestampPlacement}
@@ -12767,7 +12838,7 @@ function AudioMediaPreview({
   media: MemoryPhoto;
   style?: StyleProp<ViewStyle>;
 }) {
-  const uploading = isOptimisticMemoryMedia(media);
+  const uploading = memoryMediaNeedsStatusOverlay(media);
   const duration = media.durationMs ? formatAudioPlaybackTime(media.durationMs / 1000) : "Audio";
 
   return (
@@ -12783,7 +12854,7 @@ function AudioMediaPreview({
           {duration}
         </Text>
       ) : null}
-      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} status={media.processingStatus} /> : null}
     </View>
   );
 }
@@ -12792,14 +12863,18 @@ function MediaPreview({
   contentFit = "contain",
   media,
   style,
+  telemetrySurface = "chat",
   viewKey
 }: {
   contentFit?: "contain" | "cover";
   media: MemoryPhoto;
   style?: StyleProp<ViewStyle>;
+  telemetrySurface?: "chat" | "media";
   viewKey?: string;
 }) {
-  const uploading = isOptimisticMemoryMedia(media);
+  useMemoryMediaRenderTelemetry(media, telemetrySurface);
+  const uploading = memoryMediaNeedsStatusOverlay(media);
+  const hasVisual = memoryMediaHasVisual(media);
 
   if (memoryMediaKind(media) === "audio") {
     return <AudioMediaPreview media={media} style={style} />;
@@ -12808,7 +12883,9 @@ function MediaPreview({
   if (memoryMediaKind(media) === "video") {
     return (
       <View style={[styles.videoPreview, style as StyleProp<ViewStyle>]}>
-        <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
+        {hasVisual ? (
+          <VideoThumbnailLayer cacheKey={memoryMediaCacheKey(media)} contentFit={contentFit} posterUri={media.posterUrl} uri={media.publicUrl} viewKey={viewKey} />
+        ) : null}
         <View pointerEvents="none" style={styles.videoThumbnailScrim} />
         <View style={styles.mediaTypeBadge}>
           <Ionicons name="videocam" size={11} color={ROOM_COLORS.white} />
@@ -12819,26 +12896,28 @@ function MediaPreview({
             <Ionicons name="play" size={18} color={ROOM_COLORS.white} />
           </View>
         ) : null}
-        {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
+        {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} status={media.processingStatus} /> : null}
       </View>
     );
   }
 
   return (
     <View style={[styles.mediaImageWrap, style as StyleProp<ViewStyle>]}>
-      <Image
-        cachePolicy="memory-disk"
-        contentFit={contentFit}
+      {hasVisual ? (
+        <Image
+          cachePolicy="memory-disk"
+          contentFit={contentFit}
         // Keyed on the SLOT where one is known, otherwise on identity — never
         // on the URL. An in-flight upload rewrites publicUrl underneath the same
         // photo, and confirmation replaces the photo outright; a changed
         // recyclingKey tells expo-image to reset the view, which is the image
         // visibly disappearing and coming back. See memoryMediaSlotViewKey.
-        recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
-        source={media.thumbnailUrl || media.publicUrl}
-        style={styles.mediaImage}
-      />
-      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} /> : null}
+          recyclingKey={viewKey ?? memoryMediaCacheKey(media)}
+          source={media.thumbnailUrl || media.publicUrl}
+          style={styles.mediaImage}
+        />
+      ) : null}
+      {uploading ? <UploadProgressOverlay progress={resolveMemoryUploadProgress(media)} status={media.processingStatus} /> : null}
     </View>
   );
 }

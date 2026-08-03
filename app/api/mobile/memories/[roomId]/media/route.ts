@@ -162,7 +162,8 @@ export async function POST(
     activeIdempotency = idempotency;
 
     failureStage = "rpc";
-    const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v2", {
+    const databaseCommitStartedAt = Date.now();
+    const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v3", {
       p_asset_ids: assetIds,
       p_body: body,
       p_client_created_at: clientMetadata.clientCreatedAt,
@@ -175,6 +176,11 @@ export async function POST(
       p_room_id: roomId
     });
     if (error || !data || typeof data !== "object" || Array.isArray(data)) throw error ?? new Error("memory_media_attach_failed");
+    apiLogger.info("memory_media_attach_committed", {
+      correlation_id: requestCorrelation(req).requestId,
+      duration_ms: Date.now() - databaseCommitStartedAt,
+      item_count: assetIds.length
+    });
 
     failureStage = "signing";
     const responseBody = await signMemoryPhotoPayload(data as JsonRecord, roomId);

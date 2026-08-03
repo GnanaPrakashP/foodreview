@@ -2,7 +2,7 @@
 
 ## Symptoms and alert
 
-Deployment migration fails, head differs from `202608030005`, canonical contract reports drift, or invalid indexes/unvalidated constraints are nonzero.
+Deployment migration fails, head differs from `202608040001`, canonical contract reports drift, or invalid indexes/unvalidated constraints are nonzero.
 
 ## Immediate checks
 

@@ -1,6 +1,7 @@
 import { apiUrl } from "@/api/config";
 import { authorizedApiHeaders, authorizedJson, MobileApiError } from "@/api/client";
 import { createRequestId } from "@/services/installIdentity";
+import { recordMobileFlow } from "@/observability/mobileTelemetry";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
@@ -46,6 +47,7 @@ import {
 } from "@/services/memoryLegacyMedia";
 import {
   completeRecoveredMediaUploads,
+  markRecoveredMediaUploadsAttached,
   uploadMemoryMediaAsset
 } from "@/services/mediaPipeline";
 import {
@@ -95,7 +97,7 @@ type MemoryRoomSyncResult = {
 const MEMORY_MESSAGE_SELECT = "id, client_id, client_created_at, client_sequence, client_order_key, room_id, author_name, body, reply_to_message_id, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_WITHOUT_REPLY = "id, client_id, client_created_at, client_sequence, client_order_key, room_id, author_name, body, created_at, edited_at";
 const MEMORY_MESSAGE_SELECT_LEGACY = "id, room_id, author_name, body, created_at";
-const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_asset_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at";
+const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id, public_url, storage_path, media_asset_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, processing_status, processing_failure_code, file_size_bytes, mime_type, duration_ms, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
 const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
@@ -487,7 +489,7 @@ function isMissingMemoryPhotoDimensionColumn(error: { message?: string; code?: s
 function isMissingMemoryPhotoPhase2Column(error: { message?: string; code?: string } | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "PGRST204" ||
-    /uploader_id|upload_intent_id|media_asset_id|moderation_status|moderation_reason|file_size_bytes|mime_type|duration_ms|schema cache|could not find .*column/i.test(message);
+    /uploader_id|upload_intent_id|media_asset_id|moderation_status|moderation_reason|processing_status|processing_failure_code|file_size_bytes|mime_type|duration_ms|schema cache|could not find .*column/i.test(message);
 }
 
 function withMemoryPhotoPhase2Defaults<T extends Partial<MemoryPhotoRow>>(photo: T): MemoryPhotoRow {
@@ -502,6 +504,8 @@ function withMemoryPhotoPhase2Defaults<T extends Partial<MemoryPhotoRow>>(photo:
     mime_type: null,
     moderation_reason: null,
     moderation_status: "approved",
+    processing_failure_code: null,
+    processing_status: null,
     position: 0,
     public_url: null,
     upload_intent_id: null,
@@ -2242,6 +2246,7 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
   await assertMemoryRoomMember(input.roomId, uploaderName);
   const attachmentBatchId = input.uploadBatchId ?? createRequestId();
   const clientCreatedAt = input.clientCreatedAt ?? new Date().toISOString();
+  const clientSequence = input.clientSequence ?? Date.now();
   const clientOrderKey = input.clientOrderKey ?? `${clientCreatedAt}:${attachmentBatchId}`;
 
   const assets = input.assets?.length
@@ -2275,7 +2280,7 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
       clientCreatedAt,
       clientId: attachmentBatchId,
       clientOrderKey,
-      clientSequence: input.clientSequence ?? null,
+      clientSequence,
       replyToMessageId: input.replyToMessageId ?? null,
       roomId: input.roomId,
       uploaderName
@@ -2293,6 +2298,9 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
       attachmentCount: assets.length,
       attachmentPosition: position,
       body: messageBody,
+      clientCreatedAt,
+      clientOrderKey,
+      clientSequence,
       durationMs: normalizedMemoryDurationMs(asset.duration),
       fileSize: asset.fileSize,
       height: asset.imageHeight,
@@ -2307,24 +2315,39 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
     }));
   }
 
-  const result = await authorizedJson<AddMemoryPhotoResult>(
-    `/api/mobile/memories/${encodeURIComponent(input.roomId)}/media`,
-    {
-      body: JSON.stringify({
-        assetIds: uploaded.map((item) => item.assetId),
-        body: messageBody,
-        clientCreatedAt,
-        clientId: attachmentBatchId,
-        clientOrderKey,
-        clientSequence: input.clientSequence,
-        replyToMessageId: input.replyToMessageId ?? null
-      }),
-      headers: { "Idempotency-Key": attachmentBatchId },
-      method: "POST"
-    },
-    { action: "posting room media", timeoutMs: 30_000 }
+  const publicationStartedAt = Date.now();
+  let result: AddMemoryPhotoResult;
+  try {
+    result = await authorizedJson<AddMemoryPhotoResult>(
+      `/api/mobile/memories/${encodeURIComponent(input.roomId)}/media`,
+      {
+        body: JSON.stringify({
+          assetIds: uploaded.map((item) => item.assetId),
+          body: messageBody,
+          clientCreatedAt,
+          clientId: attachmentBatchId,
+          clientOrderKey,
+          clientSequence,
+          replyToMessageId: input.replyToMessageId ?? null
+        }),
+        headers: { "Idempotency-Key": attachmentBatchId },
+        method: "POST"
+      },
+      { action: "posting room media", timeoutMs: 30_000 }
+    );
+    recordMobileFlow("memory.media_publication", Date.now() - publicationStartedAt, "success", {
+      item_count: uploaded.length
+    });
+  } catch (error) {
+    recordMobileFlow("memory.media_publication", Date.now() - publicationStartedAt, "failure", {
+      item_count: uploaded.length
+    });
+    throw error;
+  }
+  markRecoveredMediaUploadsAttached(uploaded.map((item) => item.recoveryId));
+  await completeRecoveredMediaUploads(
+    uploaded.filter((item) => item.processingStatus === "ready").map((item) => item.recoveryId)
   );
-  await completeRecoveredMediaUploads(uploaded.map((item) => item.recoveryId));
   assets.forEach((asset) => asset.onUploadProgress?.(1));
   return result;
 }

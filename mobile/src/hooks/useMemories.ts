@@ -103,7 +103,7 @@ import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRe
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
 import { createRequestId } from "@/services/installIdentity";
 import { recordMemoryChatPlacement } from "@/services/memoryChatPlacementDiagnostics.mjs";
-import { mediaProcessingIssueKind } from "@/services/mediaPipeline";
+import { completeRecoveredMediaAssets, mediaProcessingIssueKind } from "@/services/mediaPipeline";
 import {
   createMemoryRoomRequestCoordinator,
   recordMemoryRoomJourney,
@@ -597,6 +597,7 @@ type MemoryDeleteSets = {
 type MemoryMessageRealtimePayload = {
   eventType: "DELETE" | "INSERT" | "UPDATE";
   new: Partial<{
+    activity_kind: "chat" | "media" | null;
     author_name: string;
     body: string;
     client_created_at: string | null;
@@ -610,6 +611,7 @@ type MemoryMessageRealtimePayload = {
     room_id: string;
   }>;
   old: Partial<{
+    activity_kind: "chat" | "media" | null;
     author_name: string;
     body: string;
     created_at: string;
@@ -631,6 +633,8 @@ type MemoryPhotoRealtimePayload = {
     media_type: "audio" | "image" | "video" | null;
     message_id: string | null;
     moderation_status: "approved" | "pending" | "rejected" | null;
+    processing_failure_code: string | null;
+    processing_status: "uploaded" | "processing" | "ready" | "failed" | "rejected" | "cancelled" | null;
     position: number | null;
     public_url: string | null;
     room_id: string;
@@ -651,6 +655,8 @@ type MemoryPhotoRealtimePayload = {
     media_type: "audio" | "image" | "video" | null;
     message_id: string | null;
     moderation_status: "approved" | "pending" | "rejected" | null;
+    processing_failure_code: string | null;
+    processing_status: "uploaded" | "processing" | "ready" | "failed" | "rejected" | "cancelled" | null;
     position: number | null;
     public_url: string | null;
     room_id: string;
@@ -797,6 +803,8 @@ function mapUploadedMemoryPhoto(
     messageId: photo.message_id ?? null,
     mimeType: photo.mime_type ?? null,
     moderationStatus: photo.moderation_status ?? "approved",
+    processingFailureCode: photo.processing_failure_code ?? null,
+    processingStatus: photo.processing_status ?? (photo.media_asset_id ? "ready" : null),
     position: photo.position ?? 0,
     publicUrl: photo.public_url || "",
     thumbnailUrl: photo.thumbnail_url ?? null,
@@ -1091,6 +1099,7 @@ function applyRealtimeMessageToSummaries(
       const alreadyReflected = timeFromIso(memory.latestActivityAt) >= timeFromIso(createdAt) &&
         memory.latestMessage === body;
       const fromViewer = authorName && viewerUsername ? sameUsername(authorName, viewerUsername) : false;
+      const mediaContainer = row.activity_kind === "media";
 
       return {
         ...memory,
@@ -1099,8 +1108,10 @@ function applyRealtimeMessageToSummaries(
           : createdAt,
         latestMessage: body,
         messageCount: alreadyReflected || fromViewer ? memory.messageCount : memory.messageCount + 1,
-        unreadCount: alreadyReflected || fromViewer ? memory.unreadCount : memory.unreadCount + 1,
-        unreadChatCount: alreadyReflected || fromViewer ? memory.unreadChatCount : memory.unreadChatCount + 1
+        unreadCount: alreadyReflected || fromViewer || mediaContainer ? memory.unreadCount : memory.unreadCount + 1,
+        unreadChatCount: alreadyReflected || fromViewer || mediaContainer
+          ? memory.unreadChatCount
+          : memory.unreadChatCount + 1
       };
     });
 }
@@ -1131,8 +1142,12 @@ function applyRealtimeMessageDeleteToSummaries(
       ? {
         ...memory,
         messageCount: fromViewer ? memory.messageCount : Math.max(0, memory.messageCount - 1),
-        unreadCount: fromViewer ? memory.unreadCount : Math.max(0, memory.unreadCount - 1),
-        unreadChatCount: fromViewer ? memory.unreadChatCount : Math.max(0, memory.unreadChatCount - 1)
+        unreadCount: fromViewer || row.activity_kind === "media"
+          ? memory.unreadCount
+          : Math.max(0, memory.unreadCount - 1),
+        unreadChatCount: fromViewer || row.activity_kind === "media"
+          ? memory.unreadChatCount
+          : Math.max(0, memory.unreadChatCount - 1)
       }
       : memory
   ));
@@ -1149,6 +1164,8 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     media_type: mediaType,
     message_id: messageId,
     moderation_status: moderationStatus,
+    processing_failure_code: processingFailureCode,
+    processing_status: processingStatus,
     position,
     public_url: publicUrl,
     room_id: rowRoomId,
@@ -1166,6 +1183,20 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     currentRoom.photos.find((photo) => sameUsername(photo.uploaderName, uploaderName))?.uploaderDisplayName ??
     uploaderName;
 
+  const localSlot = messageId
+    ? currentRoom.messages
+      .find((message) => message.id === messageId || message.serverId === messageId)
+      ?.attachments.find((attachment) => (
+        attachment.position === (position ?? 0) &&
+        (attachment.id.startsWith("optimistic-media:") || attachment.id === id) &&
+        Boolean(attachment.publicUrl)
+      ))
+    : null;
+
+  const terminalProcessing = processingStatus === "failed" ||
+    processingStatus === "rejected" ||
+    processingStatus === "cancelled";
+
   return {
     createdAt,
     durationMs: durationMs ?? null,
@@ -1176,13 +1207,16 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
     mediaType: mediaType === "audio" || mediaType === "video" ? mediaType : "image",
     messageId: messageId ?? null,
     moderationStatus: moderationStatus ?? "approved",
+    processingFailureCode: processingFailureCode ?? null,
+    processingStatus: processingStatus ?? (mediaAssetId ? "processing" : null),
     position: position ?? 0,
     posterUrl: posterUrl ?? null,
-    publicUrl: publicUrl || storagePath || "",
+    publicUrl: publicUrl || storagePath || (!terminalProcessing ? localSlot?.publicUrl : null) || "",
     roomId: rowRoomId,
     stopId: stopId ?? null,
     storagePath: storagePath ?? null,
     thumbnailUrl: thumbnailUrl ?? null,
+    uploadProgress: processingStatus === "ready" ? null : localSlot?.uploadProgress ?? 1,
     uploaderId: uploaderId ?? null,
     uploaderDisplayName,
     uploaderName
@@ -1213,13 +1247,27 @@ function placeholderMessageForPhoto(photo: MemoryPhoto): MemoryMessage | null {
 }
 
 function upsertPhotoInMessage(message: MemoryMessage, photo: MemoryPhoto) {
+  const attachments = upsertMemoryPhoto(message.attachments, photo).sort((first, second) => (
+    first.position - second.position ||
+    timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
+    first.id.localeCompare(second.id)
+  ));
+  const processingStatuses = attachments
+    .map((attachment) => attachment.processingStatus)
+    .filter((status): status is NonNullable<MemoryPhoto["processingStatus"]> => Boolean(status));
+  const deliveryStatus: MemoryMessage["deliveryStatus"] = processingStatuses.some((status) => status === "failed")
+    ? "processing_failed"
+    : processingStatuses.some((status) => status === "rejected" || status === "cancelled")
+      ? "rejected"
+      : processingStatuses.length > 0 && processingStatuses.every((status) => status === "ready")
+        ? "sent"
+        : message.deliveryStatus === "processing" || message.deliveryStatus === "processing_delayed"
+          ? "processing"
+          : message.deliveryStatus;
   return {
     ...message,
-    attachments: upsertMemoryPhoto(message.attachments, photo).sort((first, second) => (
-      first.position - second.position ||
-      timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
-      first.id.localeCompare(second.id)
-    ))
+    attachments,
+    deliveryStatus
   };
 }
 
@@ -2286,6 +2334,24 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
           return;
         }
 
+        const realtimeStartedAt = Date.parse(row.created_at ?? "");
+        if (Number.isFinite(realtimeStartedAt)) {
+          const isSender = Boolean(profile) && (
+            row.uploader_id === profile?.userId || row.uploader_name === profile?.username
+          );
+          recordMobileFlow(
+            "memory.media_realtime_delivery",
+            Math.max(0, Date.now() - realtimeStartedAt),
+            "success",
+            {
+              event_type: payload.eventType.toLowerCase(),
+              media_kind: row.media_type ?? "image",
+              processing_status: row.processing_status ?? "legacy",
+              viewer_role: isSender ? "sender" : "recipient"
+            }
+          );
+        }
+
         let mappedPhoto: MemoryPhoto | null = null;
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
@@ -2314,6 +2380,12 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
           saveOfflineMemoryPhoto(roomId, mappedPhoto),
           "realtime_photo_upsert"
         );
+        if (
+          row.media_asset_id &&
+          ["ready", "failed", "rejected", "cancelled"].includes(row.processing_status ?? "")
+        ) {
+          void completeRecoveredMediaAssets([row.media_asset_id]).catch(() => undefined);
+        }
         if (row.media_asset_id && !row.public_url) scheduleRefresh();
         return;
       }
@@ -3455,10 +3527,20 @@ export function useAddMemoryPhotoMutation(roomId: string) {
               (message.deliveryStatus === "uploading" || message.deliveryStatus === "retrying")
               ? "processing"
               : message.deliveryStatus,
-            attachments: message.attachments.map((attachment) => withPhotoProgress(attachment, photoId, progress))
+            attachments: message.attachments.map((attachment) => attachment.id === photoId
+              ? {
+                ...withPhotoProgress(attachment, photoId, progress),
+                processingStatus: progress >= 0.9 ? "uploaded" : progress >= 0.18 ? "uploading" : "local"
+              }
+              : attachment)
           };
         }),
-        photos: current.photos.map((photo) => withPhotoProgress(photo, photoId, progress))
+        photos: current.photos.map((photo) => photo.id === photoId
+          ? {
+            ...withPhotoProgress(photo, photoId, progress),
+            processingStatus: progress >= 0.9 ? "uploaded" : progress >= 0.18 ? "uploading" : "local"
+          }
+          : photo)
       };
     });
   };
@@ -3520,6 +3602,8 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           messageId: optimisticMessageId,
           mimeType: asset.mediaMimeType ?? asset.imageMimeType ?? null,
           moderationStatus: "pending",
+          processingFailureCode: null,
+          processingStatus: "local",
           position: index,
           publicUrl: uri,
           roomId,
@@ -3664,8 +3748,26 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           });
         }
         const uploaderDisplayName = profile.displayName || profile.username;
+        const currentMessage = findMemoryMessage(
+          queryClient.getQueryData<MemoryRoom>(memoryKeys.detail(roomId))?.messages ?? [],
+          context.clientId
+        );
+        const localByPosition = new Map(
+          (currentMessage?.attachments ?? context.optimisticMessage?.attachments ?? [])
+            .filter((photo) => photo.id.startsWith("optimistic-media:"))
+            .map((photo) => [photo.position, photo])
+        );
         const photos = result.photos
-          .map((photo) => mapUploadedMemoryPhoto(photo, uploaderDisplayName))
+          .map((photo) => {
+            const mapped = mapUploadedMemoryPhoto(photo, uploaderDisplayName);
+            const local = localByPosition.get(mapped.position);
+            if (!local || mapped.publicUrl) return mapped;
+            return {
+              ...mapped,
+              publicUrl: local.publicUrl,
+              uploadProgress: mapped.processingStatus === "ready" ? null : 1
+            };
+          })
           .sort((first, second) => first.position - second.position);
         await warmMemoryPhotoCache(photos);
         const actualMessage: MemoryMessage = {
@@ -3680,7 +3782,9 @@ export function useAddMemoryPhotoMutation(roomId: string) {
             ? context.optimisticMessage?.clientSequence ?? null
             : Number(result.message.client_sequence),
           createdAt: result.message.created_at,
-          deliveryStatus: "sent",
+          deliveryStatus: photos.some((photo) => photo.processingStatus && photo.processingStatus !== "ready")
+            ? "processing"
+            : "sent",
           editedAt: result.message.edited_at ?? null,
           id: result.message.id,
           serverCreatedAt: result.message.created_at,

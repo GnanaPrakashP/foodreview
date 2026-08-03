@@ -436,6 +436,18 @@ export type MemoryPhoto = {
   fileSizeBytes?: number | null;
   mimeType?: string | null;
   moderationStatus?: "pending" | "approved" | "rejected" | null;
+  /** Durable source/worker lifecycle for this one logical attachment. */
+  processingStatus?:
+    | "local"
+    | "uploading"
+    | "uploaded"
+    | "processing"
+    | "ready"
+    | "failed"
+    | "rejected"
+    | "cancelled"
+    | null;
+  processingFailureCode?: string | null;
   position: number;
   createdAt: string;
   uploadProgress?: number | null;

@@ -188,7 +188,7 @@ test("mobile uses the shared processed pipeline for room image/video and keeps l
   assert.match(memoryPipeline, /\/api\/media\/upload-intent/);
   assert.match(memoryPipeline, /\/api\/media\/finalize-upload/);
   assert.match(memoryService, /uploadMemoryMediaAsset/);
-  assert.match(memoryMediaRoute, /attach_shared_memory_media_assets_v2/);
+  assert.match(memoryMediaRoute, /attach_shared_memory_media_assets_v3/);
   assert.match(memoryMediaRoute, /SAFE_MEDIA_FAILURE_LABEL/);
   assert.match(memoryMediaRoute, /memory_media_attach_failed/);
   assert.match(memoryMediaRoute, /failure_stage: failureStage/);

@@ -98,6 +98,8 @@ export type MemoryPhotoRow = {
   upload_intent_id: string | null;
   moderation_status: "pending" | "approved" | "rejected" | null;
   moderation_reason: string | null;
+  processing_status?: "uploaded" | "processing" | "ready" | "failed" | "rejected" | "cancelled" | null;
+  processing_failure_code?: string | null;
   file_size_bytes: number | null;
   mime_type: string | null;
   duration_ms: number | null;

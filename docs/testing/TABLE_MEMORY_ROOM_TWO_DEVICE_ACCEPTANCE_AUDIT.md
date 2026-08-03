@@ -80,6 +80,16 @@ At continuation time ADB exposed only Phone A (`ZA223JVWG7`); Phone B was no lon
 
 The authoritative physical verdict therefore remains `NO-GO`.
 
+### 1.3 Media-pipeline remediation pending physical deployment (2026-08-04)
+
+The subsequent targeted media audit found that Table Memory publication itself was incorrectly waiting for worker readiness. Migration `202608040001_table_memory_media_early_publication.sql` and its paired client/server changes now publish one logical message plus its verified private attachment immediately after source finalize, then update that same attachment in place as the worker moves through `uploaded`, `processing`, `ready`, or a terminal state. The portrait-video worker now calculates crop geometry after display rotation, and deterministic FFmpeg exits no longer consume transient retry attempts.
+
+This work has passed a clean local migration replay, a local Supabase state/idempotency/unread/RLS fixture (11.6 ms local attachment transaction), a real rotated-portrait FFmpeg fixture, 57/57 focused tests, root/mobile type checks, migration-manifest validation, diff validation, and the production Next build. It has **not** been deployed or physically retested on Phone A/Phone B in this continuation. The final ADB check exposed only Phone A (`ZA223JVWG7`), not Phone B. Therefore no row in the physical matrix is upgraded to PASS. In particular, F-01 through F-04, J-01, K-04, and the two-phone portions of the section 1.1 media rows remain `BLOCKED`/`NOT EXECUTED` exactly as recorded until a new build, migration, API and worker are deployed together.
+
+The exact 15-stage pipeline, root cause, state model, code paths, and required after-timing/evidence are recorded in `docs/testing/TABLE_MEMORY_ROOM_MEDIA_PIPELINE_2026-08-04.md`.
+
+The authoritative physical verdict remains `NO-GO`.
+
 ## 2. Architecture and data-flow map
 
 ### 2.1 Runtime flow

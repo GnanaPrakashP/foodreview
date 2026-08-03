@@ -154,7 +154,7 @@ export async function GET(req: NextRequest) {
       // the caller's visible row set.
       const { data: photo, error } = await supabase
         .from("shared_memory_photos")
-        .select("id, room_id, stop_id, message_id, uploader_name, uploader_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, file_size_bytes, mime_type, duration_ms, created_at")
+        .select("id, room_id, stop_id, message_id, uploader_name, uploader_id, media_asset_id, media_type, image_width, image_height, position, upload_intent_id, moderation_status, moderation_reason, processing_status, processing_failure_code, file_size_bytes, mime_type, duration_ms, created_at")
         .eq("id", mediaId)
         .eq("room_id", roomId)
         .maybeSingle();

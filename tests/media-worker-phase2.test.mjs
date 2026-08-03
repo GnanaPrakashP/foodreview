@@ -111,12 +111,59 @@ test("failure classification separates retryable infrastructure from permanent m
     { code: "derivative_upload_timeout", failureClass: "retryable" }
   );
   assert.deepEqual(
+    { ...pipeline.classifyMediaProcessingFailure(new Error("media_video_transcode_failed")) },
+    { code: "media_video_transcode_failed", failureClass: "permanent" }
+  );
+  assert.deepEqual(
+    { ...pipeline.classifyMediaProcessingFailure(new Error("media_video_poster_failed")) },
+    { code: "media_video_poster_failed", failureClass: "permanent" }
+  );
+  assert.deepEqual(
     { ...pipeline.classifyMediaProcessingFailure(new Error("database password=private")) },
     { code: "media_processing_failed", failureClass: "retryable" }
   );
   assert.throws(
     () => pipeline.mediaWorkerConfig({ MEDIA_WORKER_CONCURRENCY: "0" }),
     /media_worker_concurrency_invalid/
+  );
+});
+
+test("video display geometry follows ffmpeg autorotation before crop", () => {
+  const pipeline = loadPipeline();
+  const cases = [
+    {
+      expected: { displayHeight: 1920, displayWidth: 1080, height: 1080, rotation: 90, width: 1920 },
+      input: { height: 1080, rotation: 90, width: 1920 },
+      label: "phone portrait stored as landscape plus rotation"
+    },
+    {
+      expected: { displayHeight: 1920, displayWidth: 1080, height: 1920, rotation: 0, width: 1080 },
+      input: { height: 1920, width: 1080 },
+      label: "raw portrait without rotation metadata"
+    },
+    {
+      expected: { displayHeight: 1080, displayWidth: 1920, height: 1080, rotation: 0, width: 1920 },
+      input: { height: 1080, rotation: 0, width: 1920 },
+      label: "landscape"
+    },
+    {
+      expected: { displayHeight: 1081, displayWidth: 1081, height: 1081, rotation: 270, width: 1081 },
+      input: { height: 1081, rotation: -90, width: 1081 },
+      label: "odd square with negative rotation"
+    },
+    {
+      expected: { displayHeight: 1081, displayWidth: 1921, height: 1921, rotation: 270, width: 1081 },
+      input: { height: 1921, rotation: 270, width: 1081 },
+      label: "odd rotated dimensions"
+    }
+  ];
+
+  for (const fixture of cases) {
+    assert.deepEqual({ ...pipeline.videoDisplayGeometry(fixture.input) }, fixture.expected, fixture.label);
+  }
+  assert.throws(
+    () => pipeline.videoDisplayGeometry({ height: 1080, rotation: 45, width: 1920 }),
+    /media_video_rotation_unsupported/
   );
 });
 
@@ -329,38 +376,47 @@ test("all image crash checkpoints recover, including crash after authoritative c
   }
 });
 
-async function videoWorkerAdmin({ failAt = null } = {}) {
+async function videoWorkerAdmin({ failAt = null, rotation = 0, surface = "post" } = {}) {
   const pipeline = loadPipeline();
   const fixtureDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "phase2-video-fixture-"));
   const fixturePath = path.join(fixtureDir, "source.mp4");
+  const encodedPath = rotation ? path.join(fixtureDir, "encoded.mp4") : fixturePath;
+  const rawSize = rotation === 90 || rotation === 270 ? "400x320" : "320x400";
   const generated = childProcess.spawnSync("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
-    "-f", "lavfi", "-i", "color=c=blue:s=320x400:d=1",
-    "-pix_fmt", "yuv420p", "-c:v", "libx264", fixturePath
+    "-f", "lavfi", "-i", `color=c=blue:s=${rawSize}:d=1`,
+    "-pix_fmt", "yuv420p", "-c:v", "libx264", encodedPath
   ], { encoding: "utf8", timeout: 20_000 });
   assert.equal(generated.status, 0, generated.stderr || "video fixture generation failed");
+  if (rotation) {
+    const rotated = childProcess.spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-display_rotation", String(rotation), "-i", encodedPath, "-c", "copy", fixturePath
+    ], { encoding: "utf8", timeout: 20_000 });
+    assert.equal(rotated.status, 0, rotated.stderr || "rotated video fixture generation failed");
+  }
   const video = await fsPromises.readFile(fixturePath);
   const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "phase2-video-worker-"));
   const calls = { completion: 0, failures: [], uploads: [], upserts: new Map() };
   const asset = {
-    access_class: "private_post",
+    access_class: surface === "memory" ? "memory_private" : "private_post",
     consumed_at: null,
-    crop_rect: { height: 1, targetAspect: 0.8, width: 1, x: 0, y: 0 },
+    crop_rect: { height: 1, targetAspect: surface === "memory" ? null : 0.8, width: 1, x: 0, y: 0 },
     duration_ms: 1000,
     id: "66666666-6666-4666-8666-666666666666",
     media_type: "video",
     moderation_status: "approved",
     original_extension: "mp4",
     original_file_size_bytes: video.byteLength,
-    original_height: 400,
+    original_height: rotation === 90 || rotation === 270 ? 320 : 400,
     original_mime_type: "video/mp4",
-    original_width: 320,
+    original_width: rotation === 90 || rotation === 270 ? 400 : 320,
     owner_id: "11111111-1111-4111-8111-111111111111",
     owner_name: "alice",
     source_bucket_id: pipeline.MEDIA_SOURCE_BUCKET,
-    source_storage_path: "sources/post/11111111-1111-4111-8111-111111111111/66666666-6666-4666-8666-666666666666/original.mp4",
+    source_storage_path: `sources/${surface}/11111111-1111-4111-8111-111111111111/66666666-6666-4666-8666-666666666666/original.mp4`,
     status: "uploaded",
-    surface: "post",
+    surface,
     visibility: "private"
   };
   const job = {
@@ -481,6 +537,23 @@ test("real ffmpeg video processing creates canonical and poster output and clean
     assert.deepEqual(await fsPromises.readdir(recovered.tempRoot), []);
   } finally {
     await recovered.cleanup();
+  }
+});
+
+test("real ffmpeg processing honors portrait display rotation before full-frame room crop", async () => {
+  const rotated = await videoWorkerAdmin({ rotation: 90, surface: "memory" });
+  try {
+    const completed = await rotated.pipeline.runMediaProcessingBatch(rotated.admin, {
+      config: rotated.config,
+      workerId: "video-worker-rotated-portrait"
+    });
+    assert.equal(completed.succeeded, 1);
+    assert.equal(rotated.calls.failures.length, 0);
+    const canonical = rotated.calls.upserts.get("66666666-6666-4666-8666-666666666666:canonical");
+    assert.equal(canonical.width, 320);
+    assert.equal(canonical.height, 400);
+  } finally {
+    await rotated.cleanup();
   }
 });
 

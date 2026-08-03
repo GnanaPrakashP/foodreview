@@ -77,6 +77,7 @@ export type UploadedMediaAsset = {
   height?: number | null;
   mediaKind: MediaKind;
   mimeType: string;
+  processingStatus: "processing" | "ready";
   recoveryId: string;
   width?: number | null;
 };
@@ -125,6 +126,9 @@ export type UploadMemoryMediaAssetInput = {
   attachmentCount: number;
   attachmentPosition: number;
   body?: string;
+  clientCreatedAt: string;
+  clientOrderKey: string;
+  clientSequence: number;
   durationMs?: number | null;
   fileSize?: number | null;
   height?: number | null;
@@ -633,7 +637,7 @@ async function reconcilePendingMediaUploadsInternal() {
       terminal += 1;
     }
   }
-  const attached = await attachReadyRecoveredMemoryUploads();
+  const attached = await attachRecoveredMemoryUploads();
   return { attached, pending: Math.max(0, candidates.length - ready - terminal - attached), ready, terminal };
 }
 
@@ -643,7 +647,30 @@ export async function completeRecoveredMediaUploads(recoveryIds: string[]) {
   }
 }
 
-async function attachReadyRecoveredMemoryUploads() {
+export async function completeRecoveredMediaAssets(assetIds: string[]) {
+  const ids = new Set(assetIds.filter(Boolean));
+  if (ids.size === 0) return;
+  await completeRecoveredMediaUploads(
+    pendingMediaUploads()
+      .filter((record) => record.assetId && ids.has(record.assetId))
+      .map((record) => record.localUploadId)
+  );
+}
+
+export function markRecoveredMediaUploadsAttached(recoveryIds: string[]) {
+  const attachedAt = Date.now();
+  for (const recoveryId of Array.from(new Set(recoveryIds.filter(Boolean)))) {
+    try {
+      updatePendingMediaUpload(recoveryId, { serverAttachedAt: attachedAt });
+    } catch {
+      // The server commit already succeeded. Account change, cleanup, or a
+      // concurrent ready reconciliation may have removed the local record;
+      // never turn that successful send into a visible failure.
+    }
+  }
+}
+
+async function attachRecoveredMemoryUploads() {
   const groups = new Map<string, PendingMediaUploadRecord[]>();
   for (const record of pendingMediaUploads()) {
     if (record.surface !== "memory" || !record.memoryAttachment) continue;
@@ -658,17 +685,31 @@ async function attachReadyRecoveredMemoryUploads() {
     const ordered = [...records].sort((a, b) => (
       (a.memoryAttachment?.position ?? 0) - (b.memoryAttachment?.position ?? 0)
     ));
+    const attachableStates: PendingMediaUploadRecord["state"][] = [
+      "processing",
+      "processing_delayed",
+      "ready"
+    ];
     const completeGroup = ordered.every((record, index) => (
-      record.state === "ready" &&
+      attachableStates.includes(record.state) &&
       Boolean(record.assetId) &&
       record.memoryAttachment?.position === index &&
       record.memoryAttachment.assetCount === first.assetCount &&
       record.memoryAttachment.batchId === first.batchId &&
       record.memoryAttachment.roomId === first.roomId &&
       record.memoryAttachment.body === first.body &&
+      record.memoryAttachment.clientCreatedAt === first.clientCreatedAt &&
+      record.memoryAttachment.clientOrderKey === first.clientOrderKey &&
+      record.memoryAttachment.clientSequence === first.clientSequence &&
       record.memoryAttachment.replyToMessageId === first.replyToMessageId
     ));
     if (!completeGroup) continue;
+    if (ordered.every((record) => record.serverAttachedAt !== null)) {
+      if (ordered.every((record) => record.state === "ready")) {
+        await completeRecoveredMediaUploads(ordered.map((record) => record.localUploadId));
+      }
+      continue;
+    }
 
     try {
       await authorizedMobileJson(
@@ -676,13 +717,20 @@ async function attachReadyRecoveredMemoryUploads() {
         {
           assetIds: ordered.map((record) => record.assetId),
           body: first.body,
+          clientCreatedAt: first.clientCreatedAt,
+          clientId: first.batchId,
+          clientOrderKey: first.clientOrderKey,
+          clientSequence: first.clientSequence,
           replyToMessageId: first.replyToMessageId
         },
         "POST",
         undefined,
         first.batchId
       );
-      await completeRecoveredMediaUploads(ordered.map((record) => record.localUploadId));
+      markRecoveredMediaUploadsAttached(ordered.map((record) => record.localUploadId));
+      await completeRecoveredMediaUploads(
+        ordered.filter((record) => record.state === "ready").map((record) => record.localUploadId)
+      );
       attached += ordered.length;
     } catch (error) {
       captureMobileError("media.memory_attach_recovery_failed", error, { item_count: ordered.length });
@@ -818,6 +866,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
       height: record.readyResult.height,
       mediaKind,
       mimeType: record.readyResult.mimeType,
+      processingStatus: "ready",
       recoveryId: record.localUploadId,
       width: record.readyResult.width
     };
@@ -946,6 +995,24 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
       state: "processing"
     });
   }
+  // A Table Memory attachment becomes shared as soon as its private source has
+  // been verified and the processing job is durable. The sender keeps this
+  // recovery record (and local preview) until Realtime/status reconciliation
+  // observes the canonical derivative. Post/avatar publication retains the
+  // stricter ready-before-attach contract.
+  if (input.surface === "memory") {
+    input.onUploadProgress?.(0.94);
+    return {
+      assetId,
+      fileSizeBytes: record.fileSizeBytes,
+      height: record.height,
+      mediaKind,
+      mimeType: record.mimeType,
+      processingStatus: "processing",
+      recoveryId: record.localUploadId,
+      width: record.width
+    };
+  }
   const processingStarted = Date.now();
   const { canonical } = await waitForReadyMedia(record, input.onUploadProgress);
   recordMobileFlow("media.hosted_processing", Date.now() - processingStarted, "success", {
@@ -960,6 +1027,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
     height: canonical.height,
     mediaKind,
     mimeType: canonical.mime_type,
+    processingStatus: "ready",
     recoveryId: record.localUploadId,
     width: canonical.width
   };
@@ -988,6 +1056,9 @@ export async function uploadMemoryMediaAsset(input: UploadMemoryMediaAssetInput)
       assetCount: input.attachmentCount,
       batchId: input.attachmentBatchId,
       body: input.body?.trim() ?? "",
+      clientCreatedAt: input.clientCreatedAt,
+      clientOrderKey: input.clientOrderKey,
+      clientSequence: input.clientSequence,
       position: input.attachmentPosition,
       replyToMessageId: input.replyToMessageId ?? null,
       roomId: input.roomId

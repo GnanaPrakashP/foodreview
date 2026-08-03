@@ -34,6 +34,9 @@ export type PendingMediaUploadRecord = {
     assetCount: number;
     batchId: string;
     body: string;
+    clientCreatedAt: string;
+    clientOrderKey: string;
+    clientSequence: number;
     position: number;
     replyToMessageId: string | null;
     roomId: string;
@@ -54,6 +57,7 @@ export type PendingMediaUploadRecord = {
     mimeType: string;
     width: number | null;
   } | null;
+  serverAttachedAt: number | null;
 };
 
 const KEY = "pending-uploads";
@@ -87,12 +91,22 @@ function recordIsValid(record: Partial<PendingMediaUploadRecord>, scope: string)
     new RegExp(`^sources/${surface}/[0-9a-f-]{36}/${record.assetId}/original\\.[a-z0-9]{1,8}$`, "i").test(record.uploadPath) &&
     !record.uploadPath.includes("..");
   const memoryAttachment = record.memoryAttachment;
+  const memoryCreatedAt = memoryAttachment ? Date.parse(memoryAttachment.clientCreatedAt) : Number.NaN;
   const hasValidMemoryAttachment = Boolean(
     memoryAttachment &&
     /^[0-9a-f-]{36}$/i.test(memoryAttachment.roomId) &&
     /^[A-Za-z0-9._:-]{16,128}$/.test(memoryAttachment.batchId) &&
     typeof memoryAttachment.body === "string" &&
     memoryAttachment.body.length <= 1000 &&
+    Number.isFinite(memoryCreatedAt) &&
+    memoryCreatedAt <= Date.now() + 5 * 60_000 &&
+    Number.isSafeInteger(memoryAttachment.clientSequence) &&
+    memoryAttachment.clientSequence >= 0 &&
+    typeof memoryAttachment.clientOrderKey === "string" &&
+    memoryAttachment.clientOrderKey.length >= 16 &&
+    memoryAttachment.clientOrderKey.length <= 200 &&
+    /^[\x20-\x7E]+$/.test(memoryAttachment.clientOrderKey) &&
+    memoryAttachment.clientOrderKey.endsWith(`:${memoryAttachment.batchId}`) &&
     Number.isSafeInteger(memoryAttachment.position) &&
     memoryAttachment.position >= 0 &&
     Number.isSafeInteger(memoryAttachment.assetCount) &&
@@ -141,6 +155,9 @@ function recordIsValid(record: Partial<PendingMediaUploadRecord>, scope: string)
     typeof record.mimeType === "string" &&
     /^(image\/(jpeg|png|webp|heic|heif)|video\/(mp4|quicktime|webm))$/.test(record.mimeType) &&
     ["prepared", "intent_created", "source_uploaded", "processing", "processing_delayed", "processing_failed", "ready"].includes(state) &&
+    (record.serverAttachedAt === null || (
+      typeof record.serverAttachedAt === "number" && Number.isFinite(record.serverAttachedAt)
+    )) &&
     (state === "prepared"
       ? record.assetId === null && record.uploadBucket === null && record.uploadPath === null
       : hasServerIdentity) &&
@@ -154,12 +171,33 @@ function readRecords(scope: string) {
     const parsed = JSON.parse(raw) as Array<Partial<PendingMediaUploadRecord>>;
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((record): Partial<PendingMediaUploadRecord> => ({
-        ...record,
-        audioPolicy: record.audioPolicy ?? "preserve",
-        memoryAttachment: record.memoryAttachment ?? null,
-        surface: record.surface ?? "post"
-      }))
+      .map((record): Partial<PendingMediaUploadRecord> => {
+        const legacyAttachment = record.memoryAttachment;
+        const legacyCreatedAt = typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+          ? Math.max(0, Math.floor(record.createdAt))
+          : 0;
+        const memoryAttachment = legacyAttachment
+          ? {
+            ...legacyAttachment,
+            clientCreatedAt: typeof legacyAttachment.clientCreatedAt === "string"
+              ? legacyAttachment.clientCreatedAt
+              : new Date(legacyCreatedAt).toISOString(),
+            clientOrderKey: typeof legacyAttachment.clientOrderKey === "string"
+              ? legacyAttachment.clientOrderKey
+              : `${new Date(legacyCreatedAt).toISOString()}:${legacyAttachment.batchId}`,
+            clientSequence: Number.isSafeInteger(legacyAttachment.clientSequence)
+              ? legacyAttachment.clientSequence
+              : legacyCreatedAt
+          }
+          : null;
+        return {
+          ...record,
+          audioPolicy: record.audioPolicy ?? "preserve",
+          memoryAttachment,
+          serverAttachedAt: record.serverAttachedAt ?? null,
+          surface: record.surface ?? "post"
+        };
+      })
       .filter((record): record is PendingMediaUploadRecord => recordIsValid(record, scope))
       .slice(0, MAX_RECORDS);
   } catch {
@@ -198,7 +236,7 @@ export function findPendingMediaUpload(
   )) ?? null;
 }
 
-export function createPendingMediaUpload(input: Omit<PendingMediaUploadRecord, "createdAt" | "lastCheckedAt" | "localUploadId" | "ownerScope" | "readyResult" | "schemaVersion" | "state">) {
+export function createPendingMediaUpload(input: Omit<PendingMediaUploadRecord, "createdAt" | "lastCheckedAt" | "localUploadId" | "ownerScope" | "readyResult" | "schemaVersion" | "serverAttachedAt" | "state">) {
   const { generation, owner } = activeContext();
   if (!isOwnedAccountFileUri(input.sourceUri, owner.scope) || !isOwnedAccountFileUri(input.preparedUri, owner.scope)) {
     throw new Error("media_upload_file_unowned");
@@ -211,6 +249,7 @@ export function createPendingMediaUpload(input: Omit<PendingMediaUploadRecord, "
     ownerScope: owner.scope,
     readyResult: null,
     schemaVersion: LOCAL_DATA_SCHEMA_VERSION,
+    serverAttachedAt: null,
     state: "prepared"
   };
   const records = readRecords(owner.scope).filter((item) => item.sourceUri !== input.sourceUri);

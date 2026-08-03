@@ -47,7 +47,7 @@ if (inputPath) {
 const effectiveSnapshot = section ? { [section]: snapshot?.[section] } : snapshot;
 const alerts = evaluateOperationalAlerts(configuration, snapshot);
 const summary = operationalAlertSummary(alerts);
-const migrationHeadMatches = String(snapshot?.migrationHead ?? "") === "202608030005";
+const migrationHeadMatches = String(snapshot?.migrationHead ?? "") === "202608040001";
 const report = sanitizeTelemetryValue({
   generatedAt: new Date().toISOString(),
   migrationHeadMatches,

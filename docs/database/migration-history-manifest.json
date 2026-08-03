@@ -3194,7 +3194,48 @@
       "sizeBytes": 6684,
       "sourceRoot": "supabase/migrations",
       "version": "202608030005"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "attach_shared_memory_media_assets_v3",
+        "can_read_shared_memory",
+        "current_profile_name",
+        "media_assets",
+        "media_derivatives",
+        "prepare_attached_memory_asset_ready_v1",
+        "profiles",
+        "role",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship",
+        "sync_shared_memory_photo_from_asset_v1",
+        "validate_shared_memory_photo_integrity",
+        "validate_shared_memory_processing_photo_v1"
+      ],
+      "description": "table_memory_media_early_publication",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608040001_table_memory_media_early_publication.sql",
+      "objectCategories": [
+        "account-deletion",
+        "auth",
+        "constraints",
+        "functions",
+        "memory",
+        "media-pipeline",
+        "notifications",
+        "profiles",
+        "rls",
+        "social",
+        "triggers"
+      ],
+      "sha256": "4425ba026f007c231a93ef9cce798c1c7317abc94dcb86d17dad56c8036eb07d",
+      "sizeBytes": 28623,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608040001"
     }
   ],
-  "currentCanonicalMigrations": 98
+  "currentCanonicalMigrations": 99
 }

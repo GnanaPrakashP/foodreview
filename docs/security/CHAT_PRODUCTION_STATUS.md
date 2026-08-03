@@ -1512,3 +1512,45 @@ operations and capacity checks 44/44; mobile typecheck; the 96-migration
 manifest; and the 97-route Next production build. The build completed its own
 TypeScript validation; the standalone root typecheck is rerun after the build
 to avoid concurrent `.next/types` regeneration.
+
+### Table Memory early media publication continuation (2026-08-04)
+
+Status: **Phase 9 targeted blocker fix implemented and locally validated;
+hosted deployment and physical two-phone acceptance remain BLOCKED/NOT
+EXECUTED, so release remains NO-GO.**
+
+The media sender no longer waits for image/video worker readiness before the
+room message exists. After the private source is finalized and its durable job
+is present, service-only RPC `attach_shared_memory_media_assets_v3` atomically
+inserts the media-container message and attachment rows. Asset status triggers
+update those same photo IDs in place at processing, ready or terminal state.
+Media attachments own their notification and Media unread; their logical
+message no longer increments Chat unread. Pending images may receive only a
+short-lived signed, displayable private source after actor-scoped room reads;
+pending videos expose no raw source. Deterministic terminal failure metadata is
+visible only to its uploader.
+
+The worker now derives crop dimensions from ffprobe display rotation before
+FFmpeg autorotation and separates deterministic transcode/poster exits from
+timeouts or process signals. The reproduced raw-landscape/90-degree portrait
+fixture now completes canonical MP4 and poster generation. Recovery records
+retain the original client ordering fields, can attach immediately after
+finalize, survive restart, and are removed after ready or terminal Realtime.
+
+Migration `202608040001_table_memory_media_early_publication.sql` was replayed
+from a clean local database. The targeted runtime fixture proved one stable
+photo ID across uploaded → processing → ready, idempotent repeated attach,
+Media unread 1 versus Chat unread 0 for the peer, one Media notification, and
+uploader-only terminal failure visibility; the isolated local attachment
+transaction took 11.6 ms. The focused gate passed 57/57 tests, both root and
+mobile type checks, migration-manifest and diff validation, and the production
+Next build. Migration history now contains 99 canonical migrations and head
+metadata is `202608040001`.
+
+No hosted database, Vercel API, Render worker or phone build was changed in this
+continuation. The final ADB check exposed Phone A `ZA223JVWG7` only; Phone B was
+not connected. Physical image/video timing, Phone A/Phone B convergence,
+flicker/duplicate/reposition behavior, background/terminated delivery,
+disconnect/restart recovery, cancellation and signed-expiry checks remain
+mandatory. Detailed evidence and the 15-stage pipeline are in
+`docs/testing/TABLE_MEMORY_ROOM_MEDIA_PIPELINE_2026-08-04.md`.

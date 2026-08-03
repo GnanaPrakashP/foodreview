@@ -90,6 +90,8 @@ export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<st
     fileSizeBytes: photo.file_size_bytes ?? null,
     mimeType: photo.mime_type ?? null,
     moderationStatus: photo.moderation_status ?? "approved",
+    processingFailureCode: photo.processing_failure_code ?? null,
+    processingStatus: photo.processing_status ?? (photo.media_asset_id ? "ready" : null),
     position: photo.position ?? 0,
     createdAt: photo.created_at
   };

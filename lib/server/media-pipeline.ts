@@ -477,6 +477,10 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
       return "Selected image could not be processed.";
     case "media_video_too_long":
       return "Video is longer than allowed.";
+    case "media_video_rotation_unsupported":
+    case "media_video_transcode_failed":
+    case "media_video_poster_failed":
+      return "Selected video could not be processed.";
     case "duration_exceeded":
       return "Video is longer than allowed.";
     case "dimensions_exceeded":
@@ -532,7 +536,10 @@ const PERMANENT_MEDIA_FAILURES = new Set([
   "visibility_contract_mismatch",
   "account_deleting",
   "intent_expired",
-  "moderation_rejected"
+  "moderation_rejected",
+  "media_video_poster_failed",
+  "media_video_rotation_unsupported",
+  "media_video_transcode_failed"
 ]);
 
 export function classifyMediaProcessingFailure(error: unknown): { code: string; failureClass: MediaFailureClass } {
@@ -869,16 +876,22 @@ async function processVideoAsset(
       mediaType: asset.media_type,
       workerId: lease.workerId
     });
-    if (probe.width * probe.height > MEDIA_VIDEO_MAX_PIXELS) throw new Error("dimensions_exceeded");
+    if (probe.displayWidth * probe.displayHeight > MEDIA_VIDEO_MAX_PIXELS) throw new Error("dimensions_exceeded");
     await lease?.checkpoint("after_video_probe");
     const maxDurationMs = MAX_VIDEO_DURATION_MS[asset.surface] ?? 0;
     if (maxDurationMs > 0 && probe.durationMs !== null && probe.durationMs > maxDurationMs + VIDEO_DURATION_TOLERANCE_MS) {
       throw new Error("duration_exceeded");
     }
-    const crop = cropPixelsForRect(asset.crop_rect, probe.width, probe.height);
+    // ffmpeg applies display-matrix rotation before -vf by default. Crop in
+    // that display-oriented coordinate space, not the encoded stream's raw
+    // width/height. A portrait phone clip is commonly stored as 1920x1080 +
+    // rotate=90; using 1920x1080 here asks the already-rotated 1080x1920 frame
+    // for an impossible 1920-wide crop.
+    const crop = cropPixelsForRect(asset.crop_rect, probe.displayWidth, probe.displayHeight);
     const filter = videoFilterFor(asset.surface, crop);
     const ffmpegArgs = [
       "-y",
+      "-autorotate",
       "-i",
       inputPath,
       "-map",
@@ -902,7 +915,10 @@ async function processVideoAsset(
       outputPath
     ];
     const transcodeStarted = Date.now();
-    await runCommand("ffmpeg", ffmpegArgs, config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    await runCommand("ffmpeg", ffmpegArgs, config.ffmpegTimeoutMs, {
+      exit: "media_video_transcode_failed",
+      timeout: "temporary_ffmpeg_resource_failure"
+    });
     if (lease) recordMediaWorkerEvent("video_transcode_completed", {
       durationMs: Date.now() - transcodeStarted,
       jobId: lease.job.id,
@@ -914,7 +930,10 @@ async function processVideoAsset(
     // videos still yield a frame.
     const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
     const posterStarted = Date.now();
-    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, {
+      exit: "media_video_poster_failed",
+      timeout: "temporary_ffmpeg_resource_failure"
+    });
     if (lease) recordMediaWorkerEvent("video_poster_completed", {
       durationMs: Date.now() - posterStarted,
       jobId: lease.job.id,
@@ -1011,6 +1030,34 @@ function videoOutputSize(
   };
 }
 
+export function normalizeVideoRotation(value: unknown) {
+  if (value === null || value === undefined || value === "") return 0;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  const normalized = ((Math.round(numeric) % 360) + 360) % 360;
+  if (![0, 90, 180, 270].includes(normalized)) {
+    throw new Error("media_video_rotation_unsupported");
+  }
+  return normalized as 0 | 90 | 180 | 270;
+}
+
+export function videoDisplayGeometry(input: { height: number; rotation?: unknown; width: number }) {
+  const width = Math.floor(Number(input.width));
+  const height = Math.floor(Number(input.height));
+  if (width <= 0 || height <= 0 || !Number.isFinite(width) || !Number.isFinite(height)) {
+    throw new Error("media_video_probe_failed");
+  }
+  const rotation = normalizeVideoRotation(input.rotation);
+  const swapsAxes = rotation === 90 || rotation === 270;
+  return {
+    displayHeight: swapsAxes ? width : height,
+    displayWidth: swapsAxes ? height : width,
+    height,
+    rotation,
+    width
+  };
+}
+
 async function ffprobe(inputPath: string, timeoutMs: number) {
   const output = await runCommand("ffprobe", [
     "-v",
@@ -1018,25 +1065,42 @@ async function ffprobe(inputPath: string, timeoutMs: number) {
     "-select_streams",
     "v:0",
     "-show_entries",
-    "stream=width,height:format=duration",
+    "stream=width,height:stream_tags=rotate:stream_side_data=rotation:format=duration",
     "-of",
     "json",
     inputPath
-  ], timeoutMs, "media_video_probe_failed");
+  ], timeoutMs, {
+    exit: "media_video_probe_failed",
+    timeout: "temporary_ffmpeg_resource_failure"
+  });
   try {
-    const parsed = JSON.parse(output.stdout) as { streams?: Array<{ width?: number; height?: number }>; format?: { duration?: string } };
+    const parsed = JSON.parse(output.stdout) as {
+      streams?: Array<{
+        height?: number;
+        side_data_list?: Array<{ rotation?: number | string }>;
+        tags?: { rotate?: number | string };
+        width?: number;
+      }>;
+      format?: { duration?: string };
+    };
     const stream = parsed.streams?.[0];
     const durationSeconds = parsed.format?.duration ? Number(parsed.format.duration) : null;
     if (!stream?.width || !stream.height) throw new Error("media_video_probe_failed");
     if (durationSeconds === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       throw new Error("media_video_probe_failed");
     }
-    return {
-      durationMs: Math.round(durationSeconds * 1000),
+    const sideDataRotation = stream.side_data_list?.find((item) => item.rotation !== undefined)?.rotation;
+    const geometry = videoDisplayGeometry({
       height: stream.height,
+      rotation: sideDataRotation ?? stream.tags?.rotate,
       width: stream.width
+    });
+    return {
+      ...geometry,
+      durationMs: Math.round(durationSeconds * 1000),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "media_video_rotation_unsupported") throw error;
     throw new Error("media_video_probe_failed");
   }
 }
@@ -1046,7 +1110,11 @@ export async function runMediaBinaryCheck(command: "ffmpeg" | "ffprobe", timeout
   return true;
 }
 
-async function runCommand(command: string, args: string[], timeoutMs: number, failureCode: string) {
+type MediaCommandFailure = string | { exit: string; timeout: string };
+
+async function runCommand(command: string, args: string[], timeoutMs: number, failure: MediaCommandFailure) {
+  const exitFailure = typeof failure === "string" ? failure : failure.exit;
+  const timeoutFailure = typeof failure === "string" ? failure : failure.timeout;
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -1056,7 +1124,7 @@ async function runCommand(command: string, args: string[], timeoutMs: number, fa
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
-      reject(new Error(failureCode));
+      reject(new Error(timeoutFailure));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
       if (stdout.length < 1_000_000) stdout += String(chunk).slice(0, 1_000_000 - stdout.length);
@@ -1070,12 +1138,12 @@ async function runCommand(command: string, args: string[], timeoutMs: number, fa
       clearTimeout(timeout);
       reject(new Error(`${command}_unavailable`));
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       if (code === 0) resolve({ stderr: stderrBytes > 0 ? "output_redacted" : "", stdout });
-      else reject(new Error(failureCode));
+      else reject(new Error(signal ? timeoutFailure : exitFailure));
     });
   });
 }
@@ -1166,6 +1234,10 @@ export async function enqueueMediaProcessingJob(admin: AdminClient, assetId: str
       updated_at: new Date().toISOString()
     }, { ignoreDuplicates: true, onConflict: "asset_id,job_type" });
   if (error) throw error;
+  recordMediaWorkerEvent("job_queued", {
+    assetHash: hashSecurityIdentifier("media-asset", assetId),
+    mediaType
+  });
 }
 
 export type MediaProcessingBatchOptions = {
@@ -1212,6 +1284,13 @@ async function processClaimedMediaJob(
   options: MediaProcessingBatchOptions
 ) {
   const started = Date.now();
+  recordMediaWorkerEvent("job_started", {
+    assetHash: hashSecurityIdentifier("media-asset", job.asset_id),
+    attempt: job.attempts,
+    jobId: job.id,
+    staleReclaimed: job.stale_reclaimed,
+    workerId
+  });
   let leaseLost = false;
   let heartbeatRunning = false;
   let authoritativeCompleted = false;

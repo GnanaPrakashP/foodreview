@@ -207,11 +207,11 @@ test("confirming an upload does not blank the picture it is replacing", () => {
   assert.match(hooks, /const MEMORY_PHOTO_CACHE_WARM_TIMEOUT_MS = 1_500;/);
   assert.match(hooks, /Promise\.race\(\[/);
 
-  // The transfer reports 1 as soon as the PUT finishes while the server is
-  // still processing, so the last phase must stop claiming a percentage.
-  assert.match(memoryRoomScreen, /const complete = normalizedProgress >= 1;/);
-  assert.match(memoryRoomScreen, /\{complete \? null : <Text style=\{styles\.uploadProgressText\}>/);
-  assert.match(memoryRoomScreen, /\{complete \? "Processing" : "Uploading"\}/);
+  // The transfer reports 1 before the worker is ready, so the overlay follows
+  // the explicit server state and never calls worker time "100% uploading".
+  assert.match(memoryRoomScreen, /status === "uploaded" \|\| status === "processing"/);
+  assert.match(memoryRoomScreen, /preparing \|\| processing \? null/);
+  assert.match(memoryRoomScreen, /terminal \? "Could not process" : preparing \? "Preparing" : processing \? "Processing" : "Uploading"/);
 });
 
 test("a chat row attaches no layout listener when diagnostics are off", () => {
