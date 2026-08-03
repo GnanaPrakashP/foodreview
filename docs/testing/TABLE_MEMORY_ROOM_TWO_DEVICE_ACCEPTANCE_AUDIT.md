@@ -12,7 +12,7 @@ The audit resumed after Phone B was authenticated as a distinct second account. 
 
 The initial join attempt exposed a deployed PostgreSQL ambiguity in `respond_to_shared_memory_invite`: the table-return variable `room_id` conflicted with `ON CONFLICT (room_id, user_name)`. Migration `202608020003_fix_memory_invite_join_conflict.sql` now targets the named membership constraint. The migration was deployed, the focused invitation-lifecycle regression passed 7/7, and the same physical invite/join case passed on retry with live membership convergence.
 
-The resumed physical verdict is still `NO-GO`. Both phones' original video uploads failed to become canonical because hosted processing repeatedly returned `moderation_service_unavailable`; one job reached dead letter and the other remained in retry. A targeted root-cause correction is now present locally, but it has not been deployed to the hosted worker or retested on two phones. OS notification cases are `BLOCKED`, not passed: the installed development APK has no Firebase app-option resources, and sanitized device logs report unsuccessful default Firebase initialization, so this build cannot register an Expo/FCM token. Room/place editing and owner removal were explicitly deferred from the current remediation run. Broader grouped variants that were not exercised remain `NOT EXECUTED` or `BLOCKED`; automated evidence is never used to convert them to a physical pass.
+The resumed physical verdict is still `NO-GO`. Both phones' original video uploads failed to become canonical because hosted processing repeatedly returned `moderation_service_unavailable`; one job reached dead letter and the other remained in retry. The corrected Render worker was subsequently deployed and a new five-second Phone A video reached processed `ready` state quickly, but the final room attachment still returned HTTP 500. The known hosted Vercel API health endpoint reports migration/build head `202607160001`, while the current release requires `202608030003`; the API deployment is therefore stale and the physical media case remains `FAIL`. OS notification cases are `BLOCKED`, not passed: the installed development APK has no Firebase app-option resources, and sanitized device logs report unsuccessful default Firebase initialization, so this build cannot register an Expo/FCM token. Room/place editing and owner removal were explicitly deferred from the current remediation run. Broader grouped variants that were not exercised remain `NOT EXECUTED` or `BLOCKED`; automated evidence is never used to convert them to a physical pass.
 
 One safe defect was fixed after the audit: identical room-creation retries now retain one idempotency key until success, so a server commit followed by a lost client response cannot create a second room on retry. The regression test passes.
 
@@ -21,7 +21,7 @@ Release-significant blockers remain:
 - Table Memory activity notification ownership has been moved from the sender client to database triggers. Migration `202608030002_table_memory_notification_outbox.sql` is live and atomically inserts deduplicated in-app notifications plus chat push jobs. The old direct route is now a compatibility no-op and exact active-chat foreground presentation is suppressed by the client. This is code/deployment evidence only; two-phone foreground/background/terminated delivery, provider receipt/retry and dedup remain physically `BLOCKED` until a Firebase-provisioned build exists.
 - Chat, Media and Dishes now have separate server-authoritative unread counters through live migration `202608030001_table_memory_activity_unread.sql`, with per-tab badges and monotonic per-surface acknowledgements. The two-phone media/dish unread cases have not yet been physically retested.
 - Offline text now persists as `waiting_for_connection`, replays automatically on reconnect with a stable client identity and bounded backoff, preserves compose time separately, and displays the server commit time after acknowledgement. The previous physical `Not sent / Retry` result remains a historical failure until the corrected build is retested on both phones.
-- The video worker now distinguishes missing audit-identity hashing configuration from moderation-provider failure, reports it in readiness, and records bounded stage timings. The hosted worker still needs `API_RATE_LIMIT_HMAC_SECRET` configured and the corrected release deployed before physical video retest.
+- The corrected video worker is now live on Render. A Phone A retest physically passed local video preview and hosted processing, but failed the final room attachment against a stale hosted Vercel API. The Vercel release must be updated and report migration/build head `202608030003` before the media retest can pass.
 - Dish and place creation are direct inserts with no stable client mutation key or offline outbox. A retry after an ambiguous timeout can duplicate data. Only text/media have a durable outbox; ratings are server-idempotent through `(dish_id, rated_by)` upsert but are not offline queued.
 - Required physical notification, video-processing, metadata-edit/removal, extended offline, and performance/recovery gates remain incomplete. The existing physical performance acceptance reports excessive PSS growth and jank.
 - The full repository suite, Playwright smoke suite, and local schema contract are not fully green, although the failures are not in the focused Table Memory correctness tests.
@@ -72,7 +72,7 @@ At continuation time ADB exposed only Phone A (`ZA223JVWG7`); Phone B was no lon
 | Remediation retest case | Result | Evidence/observation |
 | --- | --- | --- |
 | Latest client launches and restores audit room on Phone A | PASS (single-phone smoke only) | Room list and detail loaded from the latest bundle; `/private/tmp/tmr-fix-phone-a-memory-list.png`, `/private/tmp/tmr-fix-phone-a-room2.png` |
-| Video preview/stages and canonical A/B video completion | BLOCKED | Phone B disconnected; hosted worker correction and required HMAC configuration are not deployed |
+| Video preview/stages and canonical A/B video completion | FAIL on Phone A; BLOCKED on Phone B | Phone A preview rendered correctly and Render produced a ready canonical MP4, but final room attachment returned HTTP 500 and remained `Not sent / Retry / Cancel`. Phone B is disconnected. `/private/tmp/foodreview-video-preview.png`, `/private/tmp/foodreview-video-upload-state.png` |
 | Automatic offline text send, server-commit timestamp and peer delivery | BLOCKED | Two-phone retest unavailable; the A-only attempt was invalidated by the USB reverse API tunnel and is not counted |
 | Media and dish unread/badge/read-state on both phones | BLOCKED | Hosted counter migration is live, but Phone B disconnected before physical validation |
 | Durable activity notification, exact-chat suppression and other receiver states | BLOCKED | Phone B disconnected and installed APK remains unprovisioned for Firebase/FCM |
@@ -565,7 +565,7 @@ Required closure: two-device release/profile measurements, cached and uncached r
 
 ## 17. Remaining blockers
 
-1. Configure the environment-owned `API_RATE_LIMIT_HMAC_SECRET` on the hosted media worker, deploy the targeted worker/readiness changes, then retry video from both physical phones through canonical Chat/Media completion with stage timing and cleanup evidence.
+1. Deploy commit `723010c` to the hosted Vercel API, verify `/api/health` reports migration/build head `202608030003`, then retry the already-ready Phone A video and a fresh video from both phones through canonical Chat/Media completion. The corrected Render worker is already live.
 2. Provide the environment-owned Android Firebase configuration through `GOOGLE_SERVICES_JSON` or `EXPO_ANDROID_GOOGLE_SERVICES_FILE`, build/install the validation APK, register a deliverable token, then repeat exact-chat, other-tab, elsewhere, background, terminated, denied-permission, dedupe and cold-tap cases.
 3. Reconnect Phone B and physically retest automatic offline text replay/timestamp semantics, media/dish unread acknowledgements, durable notification creation/dedup, restart/reconnect and no-refresh behavior. The live migrations and focused tests do not substitute for this.
 4. Add client operation identity and, if product-supported, durable offline outboxes for dish/place and other non-message mutations.
@@ -576,7 +576,7 @@ Required closure: two-device release/profile measurements, cached and uncached r
 
 Do not release Table Memory Room as two-device production-ready yet. Two distinct authenticated phones previously passed the core room/join, chat/reply, in-app chat unread/catch-up, image, dish, independent rating, place-add, no-refresh and force-close persistence flows. The invite/join 500 was fixed narrowly, deployed and passed its two-phone retest.
 
-The blocker-remediation code now provides the shared local video poster/stages and timing, automatic durable offline text replay with commit-time ordering, per-tab media/dish unread state, server-owned durable activity notifications, exact-chat foreground suppression, worker configuration readiness and environment-owned Firebase build wiring. The two database migrations are live and focused checks pass 47/47, but those are not physical passes. The verdict cannot be upgraded because the hosted worker correction/configuration and Firebase-provisioned validation build are not deployed, Phone B is disconnected, and none of the corrected video/offline/unread/push paths has completed its required two-phone retest. Existing performance and non-text offline/idempotency gates also remain.
+The blocker-remediation code now provides the shared local video poster/stages and timing, automatic durable offline text replay with commit-time ordering, per-tab media/dish unread state, server-owned durable activity notifications, exact-chat foreground suppression, worker configuration readiness and environment-owned Firebase build wiring. The migrations are live and focused checks pass, but those are not physical passes. The verdict cannot be upgraded because the corrected Render worker is paired with a stale Vercel API deployment, the Firebase-provisioned validation build is unavailable, Phone B is disconnected, and none of the corrected video/offline/unread/push paths has completed its required two-phone retest. Existing performance and non-text offline/idempotency gates also remain.
 
 NO-GO
 
@@ -615,3 +615,21 @@ Current physical environment:
 The focused report is `docs/testing/TABLE_MEMORY_ROOM_ENTITY_MUTATION_AND_RATING_IMPLEMENTATION_2026-08-03.md`.
 
 The final audit verdict remains **NO-GO**. A GO verdict remains prohibited until both named physical phones converge on every core synchronization, notification, persistence, offline recovery, media, dish, rating, membership, and newly added entity-mutation case with no remaining P0/P1 issue.
+
+## 20. Post-Render Phone A video retest (2026-08-03)
+
+The Render Blueprint was manually deployed and reported Live. Phone A remained authenticated and connected with the Metro and local-API reverse tunnels present.
+
+Exact reproduction:
+
+1. Open `TMR AUDIT 0802 2151` on Phone A and choose a five-second gallery video.
+2. Confirm the full-screen preview, then tap `Post to Room`.
+3. Observe the local poster and `Processing` state.
+4. Wait for hosted processing and retry the failed row.
+5. Observe that the row remains `Not sent` with `Retry` and `Cancel`.
+
+Result: **FAIL**. The preview is a physical **PASS**. The source upload and Render processing are also successful: the owner-scoped recovery record reached `ready` with a canonical MP4. The subsequent `POST /api/mobile/memories/[roomId]/media` returned HTTP 500, so the processed asset was not attached to the canonical room message. Retrying reused the ready upload rather than retransmitting the video, but the same attachment request failed.
+
+Deployment root cause: the public health response from the known hosted Vercel API reports `databaseMigrationHead: 202607160001`; current commit `723010c` reports and requires `202608030003`. Render deployment alone updates processing, not the Next.js room-attachment API. This release skew explains why processing completes but the current attachment contract is unavailable. No unrelated source fix is justified until Vercel is deployed and the same case is retested.
+
+Evidence: `/private/tmp/foodreview-video-preview.png` and `/private/tmp/foodreview-video-upload-state.png`. Sanitized client diagnostics recorded HTTP 500 `temporary_failure`; no credential, signed URL, storage path, message body, or private account identifier is included.
