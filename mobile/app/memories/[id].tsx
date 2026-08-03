@@ -6254,10 +6254,20 @@ export default function MemoryDetailScreen() {
     // cancel is what rescues a send stuck mid-upload from the selection bar.
     if (target.deliveryStatus === "sent" || memoryMessageServerId(target)) return;
     if (!target.deliveryStatus) return;
+    // The selected row is about to disappear, so close selection immediately.
+    // Leaving its key armed kept the toolbar and purple selection overlay on
+    // screen and made a successful discard look like the button did nothing.
+    cancelSelection();
+    const messageIdentity = target.clientId ?? target.id;
+    dismissFailedMessage(messageIdentity);
     if (target.attachments.length > 0 && target.clientId) {
-      void cancelPendingMemoryUploadBatch(roomId, target.clientId).catch(() => undefined);
+      // Repeat the local delete after the server/pending-record cancellation.
+      // A source-staging SQLite write may already be in flight when the first
+      // delete runs; this final pass makes the cancellation durable.
+      void cancelPendingMemoryUploadBatch(roomId, target.clientId)
+        .catch(() => undefined)
+        .finally(() => dismissFailedMessage(messageIdentity));
     }
-    dismissFailedMessage(target.clientId ?? target.id);
   }
 
   function beginEditMessage(target: MemoryMessage) {

@@ -52,9 +52,15 @@ import {
   mergeMemoryMessageSnapshot,
   memoryMessageServerId,
   removeMemoryMessage,
+  removeMemoryMessageProjections,
   sortMemoryMessages,
   upsertMemoryMessage
 } from "@/services/memoryMessageReconciliation.mjs";
+import {
+  isDismissedMemoryOutboxMessage,
+  markDismissedMemoryOutboxMessage,
+  withoutDismissedMemoryOutboxMessages
+} from "@/services/memoryMessageDismissalRegistry";
 import {
   beginForegroundMemoryMessageSend,
   endForegroundMemoryMessageSend,
@@ -711,20 +717,6 @@ function withoutRecentlyDeletedMemoryStops(room: MemoryRoom) {
     (recentMemoryStopDeleteExpiries.get(`${room.id}:${stop.id}`) ?? 0) <= now
   ));
   return stops.length === room.stops.length ? room : { ...room, stops };
-}
-
-// Cancelling a stuck upload has to outlive the request that is stuck. The media
-// mutation can still be polling for a ready asset for well over a minute after
-// the user taps Cancel, and its failure handler re-upserts the row from the
-// mutation context — so the message vanished and then came back, which read as
-// Cancel doing nothing at all. Identities recorded here are refused by that
-// handler. Keyed by clientId, which is unique per send, so an entry can never
-// suppress a later message.
-const dismissedMemoryOutboxIds = new Set<string>();
-registerSensitiveResourceCleanup(() => dismissedMemoryOutboxIds.clear());
-
-export function isDismissedMemoryOutboxMessage(identity?: string | null) {
-  return Boolean(identity && dismissedMemoryOutboxIds.has(identity));
 }
 
 function prepareMemoryPhotoAssets(input: AddMemoryPhotoInput): AddMemoryMediaAsset[] {
@@ -1410,15 +1402,21 @@ function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
       profile.displayName || profile.username
     )
     : room;
-  if (!previousRoom) return applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes(nextRoom))));
+  if (!previousRoom) {
+    return withoutDismissedMemoryOutboxMessages(
+      applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes(nextRoom))))
+    );
+  }
 
   const photosById = new Map(previousRoom.photos.map((photo) => [photo.id, photo]));
   for (const photo of nextRoom.photos) photosById.set(photo.id, photo);
-  return applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
-    ...nextRoom,
-    messages: mergeMemoryMessageSnapshot(previousRoom.messages, nextRoom.messages),
-    photos: sortMemoryPhotos(Array.from(photosById.values()))
-  }))));
+  return withoutDismissedMemoryOutboxMessages(
+    applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
+      ...nextRoom,
+      messages: mergeMemoryMessageSnapshot(previousRoom.messages, nextRoom.messages),
+      photos: sortMemoryPhotos(Array.from(photosById.values()))
+    }))))
+  );
 }
 
 function normalizedDeleteSets(input: DeleteMemoryItemsInput): MemoryDeleteSets {
@@ -2882,15 +2880,45 @@ export function useAddMemoryMessageMutation(roomId: string) {
 export function useDismissFailedMemoryMessage(roomId: string) {
   const queryClient = useQueryClient();
   return useCallback((messageIdentity: string) => {
-    dismissedMemoryOutboxIds.add(messageIdentity);
+    markDismissedMemoryOutboxMessage(messageIdentity);
     let removedMessage: MemoryMessage | null = null;
     let latestRemaining: MemoryMessage | null = null;
     queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
       if (!current) return current;
       removedMessage = findMemoryMessage(current.messages, messageIdentity) ?? null;
-      const messages = removeMemoryMessage(current.messages, messageIdentity);
-      latestRemaining = messages[messages.length - 1] ?? null;
-      return { ...current, messages };
+      const next = removeMemoryMessageProjections(current, [messageIdentity]);
+      latestRemaining = next.messages[next.messages.length - 1] ?? null;
+      return next;
+    });
+    queryClient.setQueryData<InfiniteData<MemoryMessagesPage>>(memoryKeys.chat(roomId), (current) => (
+      current
+        ? {
+          ...current,
+          pages: current.pages.map((page) => ({
+            ...page,
+            messages: removeMemoryMessage(page.messages, messageIdentity)
+          }))
+        }
+        : current
+    ));
+    queryClient.setQueryData<InfiniteData<MemoryMediaPage>>(memoryKeys.media(roomId), (current) => {
+      if (!current || !removedMessage) return current;
+      const removedPhotoIds = new Set(removedMessage.attachments.map((attachment) => attachment.id));
+      const removedMessageIds = new Set([
+        removedMessage.id,
+        removedMessage.clientId,
+        memoryMessageServerId(removedMessage)
+      ].filter((identity): identity is string => Boolean(identity)));
+      return {
+        ...current,
+        pages: current.pages.map((page) => ({
+          ...page,
+          photos: page.photos.filter((photo) => (
+            !removedPhotoIds.has(photo.id) &&
+            !(photo.messageId && removedMessageIds.has(photo.messageId))
+          ))
+        }))
+      };
     });
     if (removedMessage) {
       setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
@@ -3389,7 +3417,20 @@ export function useAddMemoryPhotoMutation(roomId: string) {
       }
     }
     if (!updatedMessage?.clientId) throw new Error("memory_media_outbox_source_missing");
+    // Cancel can race this source-staging callback. The chat row is already
+    // gone at that point, but a stale SQLite snapshot can still supply it
+    // above; writing that snapshot back resurrects the cancelled upload after
+    // a process restart. Refuse the late write, and check once more after the
+    // awaited write in case Cancel landed while SQLite was committing.
+    if (isDismissedMemoryOutboxMessage(updatedMessage.clientId)) {
+      await deleteOfflineMemoryOutboxMessage(updatedMessage.clientId);
+      throw new Error("memory_media_upload_cancelled");
+    }
     await saveOfflineMemoryOutboxMessage(updatedMessage.clientId, updatedMessage);
+    if (isDismissedMemoryOutboxMessage(updatedMessage.clientId)) {
+      await deleteOfflineMemoryOutboxMessage(updatedMessage.clientId);
+      throw new Error("memory_media_upload_cancelled");
+    }
   };
   const updateOptimisticProgress = (clientId: string, progress: number) => {
     const detailKey = memoryKeys.detail(roomId);

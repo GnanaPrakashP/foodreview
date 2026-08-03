@@ -12,6 +12,7 @@ import {
   upsertMemoryMessage
 } from "@/services/memoryMessageReconciliation.mjs";
 import { isForegroundMemoryMessageSend } from "@/services/memoryMessageSendRegistry.mjs";
+import { withoutDismissedMemoryOutboxMessages } from "@/services/memoryMessageDismissalRegistry";
 import {
   encodeMemoryPageCursor,
   parseMemoryPageCursor
@@ -1322,18 +1323,19 @@ async function syncCachedMemoryRoomSingleFlight(
 }
 
 function mergeCachedMemoryChat(room: MemoryRoom, cached: MemoryRoom) {
-  const photosById = new Map(cached.photos.map((photo) => [photo.id, photo]));
+  const activeCached = withoutDismissedMemoryOutboxMessages(cached);
+  const photosById = new Map(activeCached.photos.map((photo) => [photo.id, photo]));
   for (const photo of room.photos) photosById.set(photo.id, photo);
 
-  return {
+  return withoutDismissedMemoryOutboxMessages({
     ...room,
-    messages: mergeMemoryMessageSnapshot(cached.messages, room.messages),
+    messages: mergeMemoryMessageSnapshot(activeCached.messages, room.messages),
     photos: Array.from(photosById.values()).sort((first, second) => (
       new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
       first.position - second.position ||
       first.id.localeCompare(second.id)
     ))
-  };
+  });
 }
 
 async function restoreAuthoritativeMemoryStops(
@@ -1392,7 +1394,11 @@ export function isReconciledOptimisticTextMessage(
 
 function mergeLocalOutboxMessages(room: MemoryRoom, cached: MemoryRoom | null) {
   if (!cached) return room;
-  return { ...room, messages: mergeMemoryMessageSnapshot(cached.messages, room.messages) };
+  const activeCached = withoutDismissedMemoryOutboxMessages(cached);
+  return withoutDismissedMemoryOutboxMessages({
+    ...room,
+    messages: mergeMemoryMessageSnapshot(activeCached.messages, room.messages)
+  });
 }
 
 async function recoverPendingMemoryMessages(
@@ -1748,18 +1754,22 @@ async function resolveMemoryRoomOfflineFirst(
         // Resolve only after the durable SQLite replica contains the same
         // room snapshot. Join/create navigation can then safely open from local
         // data without racing this write.
+        // A discard can land after this refresh captured its SQLite snapshot.
+        // Fence that stale optimistic row again immediately before the write,
+        // otherwise the refresh would recreate what Cancel just deleted.
+        roomWithFreshMedia = withoutDismissedMemoryOutboxMessages(roomWithFreshMedia);
         await saveOfflineMemoryRoom(roomWithFreshMedia, result.syncCursor, { replaceChat: result.replaceChat });
         if (memoryRoomOverviewVersion(roomId) === targetOverviewVersion) break;
       }
     }
-    return roomWithFreshMedia;
+    return withoutDismissedMemoryOutboxMessages(roomWithFreshMedia);
   } catch (error) {
     if (isAuthoritativeMemoryAccessError(error)) {
       await deleteOfflineMemoryRoom(roomId);
       throw error;
     }
     if (isOfflineMemoryPersistenceError(error)) throw error;
-    if (cached) return cached;
+    if (cached) return withoutDismissedMemoryOutboxMessages(cached);
     throw error;
   }
 }

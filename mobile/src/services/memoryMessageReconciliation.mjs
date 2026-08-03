@@ -229,3 +229,38 @@ export function findMemoryMessage(messages, identity) {
     memoryMessageServerId(message) === identity
   ));
 }
+
+// Remove the whole local projection for an unsent message. Media sends are
+// represented twice in a room snapshot: once as a chat message and again in
+// the room-level photo collection used by the Media tab. Removing only the
+// message leaves the same optimistic attachment visible in Media and lets a
+// stale room reconcile rebuild the chat row from that projection.
+export function removeMemoryMessageProjections(room, identities) {
+  const identitySet = identities instanceof Set ? identities : new Set(identities);
+  if (identitySet.size === 0) return room;
+
+  const removedMessages = room.messages.filter((message) => (
+    identitySet.has(message.id) ||
+    (message.clientId && identitySet.has(message.clientId)) ||
+    (memoryMessageServerId(message) && identitySet.has(memoryMessageServerId(message)))
+  ));
+  if (removedMessages.length === 0) return room;
+
+  const removedMessageIds = new Set(removedMessages.flatMap((message) => [
+    message.id,
+    message.clientId,
+    memoryMessageServerId(message)
+  ].filter(Boolean)));
+  const removedPhotoIds = new Set(removedMessages.flatMap((message) => (
+    message.attachments.map((attachment) => attachment.id)
+  )));
+
+  return {
+    ...room,
+    messages: room.messages.filter((message) => !removedMessages.includes(message)),
+    photos: room.photos.filter((photo) => (
+      !removedPhotoIds.has(photo.id) &&
+      !(photo.messageId && removedMessageIds.has(photo.messageId))
+    ))
+  };
+}

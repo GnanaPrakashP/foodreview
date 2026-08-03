@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  removeMemoryMessageProjections,
   upsertMemoryMessage
 } from "../mobile/src/services/memoryMessageReconciliation.mjs";
 
@@ -92,6 +93,44 @@ test("offline outbox automatically replays with stable identity and bounded back
   assert.match(bootstrap, /recoverOutbox: runtime\.isOnline/);
   assert.doesNotMatch(screen.match(/function hasMemoryDeliveryStrip[\s\S]*?\n\}/)?.[0] ?? "", /waiting_for_connection/);
   assert.match(screen, /target\.deliveryStatus === "sent" \|\| memoryMessageServerId\(target\)/);
+});
+
+test("discarding a processing upload removes its Chat and Media projections and closes selection", () => {
+  const processing = message({
+    attachments: [{ id: "optimistic-media:asset-1", messageId: "optimistic-media-message:room:batch-1" }],
+    clientId: "batch-1",
+    deliveryStatus: "processing",
+    id: "optimistic-media-message:room:batch-1"
+  });
+  const sibling = message({
+    attachments: [{ id: "server-photo-2", messageId: "server-message-2" }],
+    clientId: "client-message-2",
+    deliveryStatus: "sent",
+    id: "server-message-2",
+    serverId: "server-message-2"
+  });
+  const room = {
+    messages: [processing, sibling],
+    photos: [...processing.attachments, ...sibling.attachments]
+  };
+
+  const discarded = removeMemoryMessageProjections(room, new Set(["batch-1"]));
+  assert.deepEqual(discarded.messages, [sibling]);
+  assert.deepEqual(discarded.photos, sibling.attachments);
+
+  const screen = source("mobile/app/memories/[id].tsx");
+  const hooks = source("mobile/src/hooks/useMemories.ts");
+  const memories = source("mobile/src/services/memories.ts");
+  const dismissalRegistry = source("mobile/src/services/memoryMessageDismissalRegistry.ts");
+  assert.match(screen, /function cancelFailedMessage[\s\S]*?cancelSelection\(\);[\s\S]*?cancelPendingMemoryUploadBatch/);
+  assert.match(screen, /cancelPendingMemoryUploadBatch[\s\S]*?\.finally\(\(\) => dismissFailedMessage\(messageIdentity\)\)/);
+  assert.match(dismissalRegistry, /withoutDismissedMemoryOutboxMessages[\s\S]*?removeMemoryMessageProjections/);
+  assert.match(hooks, /memoryKeys\.media\(roomId\)[\s\S]*?removedPhotoIds/);
+  assert.match(
+    hooks,
+    /updateOptimisticSource[\s\S]*?isDismissedMemoryOutboxMessage\(updatedMessage\.clientId\)[\s\S]*?deleteOfflineMemoryOutboxMessage/
+  );
+  assert.match(memories, /roomWithFreshMedia = withoutDismissedMemoryOutboxMessages\(roomWithFreshMedia\);[\s\S]*?saveOfflineMemoryRoom/);
 });
 
 test("per-tab unread cursors are monotonic and room summary is server-authoritative", () => {

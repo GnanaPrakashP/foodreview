@@ -749,3 +749,45 @@ Physical evidence:
 No dish-action or rating error was displayed during the executed cases. A final Metro-log scan contained older media warnings and known development-client/KeyboardInset diagnostics, but no error correlated with the new reply, rating-clear, rapid-rating or creator-delete operations. These unrelated existing diagnostics did not interrupt this run and were not changed.
 
 Phone A is **PASS** for the four reported interaction defects and restart persistence. The full audit verdict remains **NO-GO**, because Phone B synchronization and the other previously documented two-device notification/offline/release blockers remain unresolved.
+
+## 25. Phone A processing-video cancellation fix and physical retest (2026-08-04)
+
+The reported defect was reproduced in `TMR AUDIT 0802 2151`: long-pressing a processing video exposed `Discard unsent message`, but tapping it left the selection toolbar and video row visible. The initial result was **FAIL**.
+
+The targeted investigation found multiple cancellation races in the local optimistic state. Cancel did not close selection, removed only the Chat projection, and an in-flight upload/source update or room refresh could write a stale processing row back to the outbox or SQLite cache. The fix now closes selection immediately, tombstones the cancelled client/message identity for the process lifetime, removes both Chat and Media projections, rejects late upload-source writes, deletes the offline row and applies the tombstone again immediately before refreshed room state is persisted.
+
+Focused verification completed before the physical retest:
+
+- Table Memory blocker and media-processing tests: **14/14 PASS**.
+- Mobile TypeScript check: **PASS**.
+- Diff whitespace validation: **PASS**.
+
+These automated checks are regression evidence only. The acceptance result below is based on the physical Phone A run.
+
+| Focused physical case | Result | Observation |
+| --- | --- | --- |
+| Long-press a pending/processing video and expose Cancel | PASS | Phone A displayed `1 selected` and `Discard unsent message` |
+| Tap Cancel and close selection immediately | PASS | The selection toolbar closed without another tap or refresh |
+| Remove the cancelled row from Chat | PASS | The processing video disappeared immediately |
+| Remove the corresponding projection from Media | PASS | The newly cancelled video was absent on the Media tab |
+| Fence server processing after upload registration | PASS | The matching job and asset became `cancelled`, with `owner_cancelled`; neither was processed or consumed |
+| Survive room reconciliation without resurrection | PASS | The cancelled row remained absent after the room refreshed and settled |
+| Survive force-close and cold reopen | PASS | No `Preparing` or `Processing` row returned after force-stop and room reopen |
+| Remove persistent offline state | PASS | The final Phone A SQLite query returned zero unsent `memory_messages` rows |
+| Confirm the same behavior on Phone B | BLOCKED | Phone B was not exposed by ADB during this focused retest |
+
+Failure evidence:
+
+- `/private/tmp/tmr-cancel-before.png`
+- `/private/tmp/tmr-cancel-toolbar.png`
+- `/private/tmp/tmr-cancel-after-tap.png`
+
+Successful retest evidence:
+
+- `/private/tmp/tmr-cancel-patched-after.png`
+- `/private/tmp/tmr-cancel-patched-media-tab.png`
+- `/private/tmp/tmr-final-cold-pass.png`
+- `/private/tmp/tmr-final-cold-pass.xml`
+- `/private/tmp/circlebites-memory-final-cold.db`
+
+Phone A is **PASS** for processing-video cancellation, including Chat/Media consistency, server cancellation fencing and cold-restart persistence. The underlying video-processing latency/FFmpeg investigation was deliberately deferred as requested and is not resolved by this cancellation fix. The full audit verdict remains **NO-GO** because Phone B confirmation and the other outstanding two-device cases are still required.
