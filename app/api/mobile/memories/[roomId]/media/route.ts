@@ -41,16 +41,27 @@ const SAFE_DATABASE_ERROR_CODE = /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/;
 function logRoomMediaFailure(req: NextRequest, error: unknown, failureStage: MediaFailureStage) {
   const record = error && typeof error === "object" ? error as JsonRecord : {};
   const message = typeof record.message === "string" ? record.message : error instanceof Error ? error.message : "";
+  const diagnosticText = [message, record.details, record.hint]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
   const code = typeof record.code === "string" && SAFE_DATABASE_ERROR_CODE.test(record.code)
     ? record.code
     : "unknown";
   const failureReason = SAFE_MEDIA_FAILURE_LABEL.test(message)
     ? message
-    : code === "54000" && /stack depth limit exceeded/i.test(message)
+    : code === "54000" && /stack depth limit exceeded/i.test(diagnosticText)
       ? "database_stack_depth_exceeded"
-      : code === "54000" && /statement is too complex/i.test(message)
+      : code === "54000" && /statement (?:is )?too complex/i.test(diagnosticText)
         ? "database_statement_too_complex"
-        : "unknown";
+        : code === "54000" && /index row (?:size|requires)/i.test(diagnosticText)
+          ? "database_index_row_too_large"
+          : code === "54000" && /row is too big/i.test(diagnosticText)
+            ? "database_row_too_large"
+            : code === "54000" && /too many (?:columns|arguments|entries)/i.test(diagnosticText)
+              ? "database_shape_limit_exceeded"
+              : code === "54000"
+                ? "database_program_limit_exceeded"
+                : "unknown";
   apiLogger.error("memory_media_attach_failed", new Error(failureReason), {
     correlation_id: requestCorrelation(req).requestId,
     database_error_code: code,
