@@ -717,3 +717,35 @@ These checks are regression evidence only and are not physical acceptance PASS r
 Connection evidence at the attempt: Phone A `ZA223JVWG7` appeared once in `adb devices -l`, then disappeared. The device runner waited 45 seconds and reported it absent. A subsequent ADB inspection reported zero connected devices.
 
 The final audit verdict remains **NO-GO**. The four cases above must be rerun on the deployed build after Phone A reconnects, followed by Phone B peer-convergence verification; automated evidence cannot upgrade them to PASS.
+
+## 24. Phone A dish-interaction physical retest (2026-08-04)
+
+This retest supersedes the Phone A BLOCKED rows in section 23. Phone A `ZA223JVWG7` was reconnected, the debug application was rebuilt/reinstalled from commit `66721e9`, and Metro was launched with `EXPO_PUBLIC_API_BASE_URL=https://foodreview-apyzhv26k-gnana-prakashs-projects-2da6e3af.vercel.app`. The Preview remained healthy at migration head `202608030005`. ADB exposed only Phone A throughout this run; Phone B peer verification remains blocked.
+
+Executed results in `TMR AUDIT 0802 2151`:
+
+| Focused physical case | Result | Observation |
+| --- | --- | --- |
+| Other member's dish long press offers Reply but no Delete | PASS | Selecting Phantom's `B-DISH-01` showed `1 selected` and `Reply to selected message`; `Delete selected items` was absent |
+| Own dish long press offers Reply and Delete | PASS | Temporary `A-DISH-ACTION-0804-0125` showed both actions; confirmed Delete removed it immediately without refresh or an error |
+| Reply to another member's dish | PASS | Composer showed `Phantom` and `Dish: B-DISH-01`; `A-REPLY-DISH-0804-0115` sent successfully with the same preview |
+| Dish reply force-close persistence | PASS | After force-stop/cold launch and room reopen, the reply row and dish preview were restored without refresh |
+| Tap selected star again to clear | PASS | `B-DISH-01` changed from personal 4/5 and aggregate 3.5/two ratings to no personal rating and Phantom-only 3.0/one rating |
+| Rapid 5→1→3 star input | PASS | Two rapid physical taps completed in approximately 0.25 seconds; the UI settled at personal 3/5 and aggregate 3.0/two ratings with no visible rollback |
+| Latest rating force-close persistence | PASS | After force-stop/cold launch and room reopen, `B-DISH-01` still showed personal 3/5 and two ratings |
+| Peer no-refresh convergence for reply/rating/clear | BLOCKED | Phone B was not exposed by ADB; no two-device observation was possible |
+
+Physical evidence:
+
+- `/private/tmp/tmr-dish-rating-before-clear.png`
+- `/private/tmp/tmr-dish-rating-cleared.png`
+- `/private/tmp/tmr-dish-rating-rapid-one-three.png`
+- `/private/tmp/tmr-dish-rating-rapid-restarted.png`
+- `/private/tmp/tmr-other-dish-reply-only.png`
+- `/private/tmp/tmr-dish-reply-sent.png`
+- `/private/tmp/tmr-own-dish-reply-delete.png`
+- UI hierarchies with the exact accessibility states and action controls are stored under `/private/tmp/tmr-*.xml`.
+
+No dish-action or rating error was displayed during the executed cases. A final Metro-log scan contained older media warnings and known development-client/KeyboardInset diagnostics, but no error correlated with the new reply, rating-clear, rapid-rating or creator-delete operations. These unrelated existing diagnostics did not interrupt this run and were not changed.
+
+Phone A is **PASS** for the four reported interaction defects and restart persistence. The full audit verdict remains **NO-GO**, because Phone B synchronization and the other previously documented two-device notification/offline/release blockers remain unresolved.
