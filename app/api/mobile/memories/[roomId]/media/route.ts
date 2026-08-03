@@ -33,20 +33,28 @@ const MAX_MEDIA_ITEMS = 10;
 const MAX_DELETE_ITEMS = 100;
 
 type JsonRecord = Record<string, unknown>;
+type MediaFailureStage = "actor" | "authorization" | "idempotency" | "request" | "rpc" | "signing";
 
 const SAFE_MEDIA_FAILURE_LABEL = /^(?:memory_media|shared_memory)_[a-z0-9_]+$/;
 const SAFE_DATABASE_ERROR_CODE = /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/;
 
-function logRoomMediaFailure(req: NextRequest, error: unknown) {
+function logRoomMediaFailure(req: NextRequest, error: unknown, failureStage: MediaFailureStage) {
   const record = error && typeof error === "object" ? error as JsonRecord : {};
   const message = typeof record.message === "string" ? record.message : error instanceof Error ? error.message : "";
   const code = typeof record.code === "string" && SAFE_DATABASE_ERROR_CODE.test(record.code)
     ? record.code
     : "unknown";
-  const failureReason = SAFE_MEDIA_FAILURE_LABEL.test(message) ? message : "unknown";
+  const failureReason = SAFE_MEDIA_FAILURE_LABEL.test(message)
+    ? message
+    : code === "54000" && /stack depth limit exceeded/i.test(message)
+      ? "database_stack_depth_exceeded"
+      : code === "54000" && /statement is too complex/i.test(message)
+        ? "database_statement_too_complex"
+        : "unknown";
   apiLogger.error("memory_media_attach_failed", new Error(failureReason), {
     correlation_id: requestCorrelation(req).requestId,
     database_error_code: code,
+    failure_stage: failureStage,
     failure_reason: failureReason
   });
 }
@@ -90,6 +98,7 @@ export async function POST(
   context: { params: Promise<{ roomId: string }> }
 ) {
   let activeIdempotency: Extract<IdempotencyClaim, { state: "claimed" }> | null = null;
+  let failureStage: MediaFailureStage = "actor";
   try {
     const { roomId } = await context.params;
     const { actor, supabase } = await getRouteActor(req);
@@ -98,6 +107,7 @@ export async function POST(
       return mobileApiError(req, METHODS, "invalid_input", "Invalid room", 400);
     }
 
+    failureStage = "request";
     const rate = await enforceRateLimit(req, "memory.message", { actorUserId: actor.userId });
     if (!rate.allowed) return rateLimitResponse(req, METHODS, rate);
     const parsed = await readBoundedJson<JsonRecord>(req, 16 * 1024);
@@ -125,6 +135,7 @@ export async function POST(
       return mobileApiError(req, METHODS, "invalid_input", "Invalid room media", 400);
     }
 
+    failureStage = "authorization";
     const admin = createAdminClient();
     await assertMemoryRoomMutationAllowed({
       actorName: actor.actorName,
@@ -133,11 +144,13 @@ export async function POST(
       supabase
     });
 
+    failureStage = "idempotency";
     const normalizedRequest = { assetIds, body, ...clientMetadata, replyToMessageId, roomId };
     const idempotency = await claimIdempotency(req, "memory.media.attach", actor.userId, normalizedRequest);
     if (idempotency.state !== "claimed") return idempotencyFailure(req, METHODS, idempotency);
     activeIdempotency = idempotency;
 
+    failureStage = "rpc";
     const { data, error } = await admin.rpc("attach_shared_memory_media_assets_v2", {
       p_asset_ids: assetIds,
       p_body: body,
@@ -152,13 +165,14 @@ export async function POST(
     });
     if (error || !data || typeof data !== "object" || Array.isArray(data)) throw error ?? new Error("memory_media_attach_failed");
 
+    failureStage = "signing";
     const responseBody = await signMemoryPhotoPayload(data as JsonRecord, roomId);
     await completeIdempotency(idempotency, 200, responseBody);
     activeIdempotency = null;
     return mobileApiJson(req, METHODS, responseBody);
   } catch (error) {
     if (activeIdempotency) await abandonIdempotency(activeIdempotency).catch(() => undefined);
-    logRoomMediaFailure(req, error);
+    logRoomMediaFailure(req, error, failureStage);
     return roomMediaError(req, memoryRoomSecurityErrorStatus(error));
   }
 }
